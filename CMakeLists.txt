@@ -95,6 +95,12 @@ target_include_directories(cgltf INTERFACE "${cgltf_SOURCE_DIR}")
 
 add_executable(zenith
     src/main.cpp
+    src/engine/graphics/renderer.cpp
+    src/engine/graphics/renderer.hpp
+    src/engine/graphics/vulkan/VulkanContext.cpp
+    src/engine/graphics/vulkan/VulkanContext.hpp
+    
+
 )
 
 # Compile each shader in shaders/ to a matching .spv file in the build tree.
@@ -128,7 +134,7 @@ foreach(shader_source IN LISTS ZENITH_SHADER_SOURCES)
         OUTPUT "${shader_binary}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${shader_binary_dir}"
         COMMAND $<TARGET_FILE:glslang-standalone>
-            --target-env vulkan1.3
+            --target-env vulkan1.4
             -V "${shader_source}"
             -o "${shader_binary}"
         DEPENDS "${shader_source}" glslang-standalone
