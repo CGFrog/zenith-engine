@@ -99,7 +99,10 @@ add_executable(zenith
     src/engine/graphics/renderer.hpp
     src/engine/graphics/vulkan/VulkanContext.cpp
     src/engine/graphics/vulkan/VulkanContext.hpp
-    
+    src/engine/graphics/swapchain/Swapchain.cpp
+    src/engine/graphics/swapchain/Swapchain.hpp
+    src/engine/graphics/pipeline/GraphicsPipeline.hpp
+
 
 )
 

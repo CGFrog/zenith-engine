@@ -18,9 +18,12 @@ bool initVMA();
 
 void closeInstance();
 
-
 VkInstance instance() const;
 VkPhysicalDevice pDevice() const;
+VkDevice device() const;
+VkQueue gfxQueue() const;
+uint32_t  gfxQueueIndex() const;
+VmaAllocator vmaAllocator() const;
 
 private:
     
@@ -30,5 +33,6 @@ VkPhysicalDevice m_pDevice{VK_NULL_HANDLE};
 VkDevice m_device{VK_NULL_HANDLE};
 uint32_t m_gfxQueueFamIdx {UINT32_MAX};
 VkQueue m_gfxQueue{VK_NULL_HANDLE};
-VmaAllocator vmaAllocator {VK_NULL_HANDLE};
+VmaAllocator m_vmaAllocator {VK_NULL_HANDLE};
+
 };
