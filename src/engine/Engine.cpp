@@ -5,7 +5,7 @@ bool Engine::init(){
         return false;
     }
 
-    if (!m_renderer.init()){
+    if (!m_renderer.init(m_window)){
         return false;
     }
 }
