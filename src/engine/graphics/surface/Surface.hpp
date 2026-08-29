@@ -13,7 +13,7 @@ public:
     std::vector<VkSurfaceFormatKHR> formats(VkPhysicalDevice physicalDevice) const;
     std::vector<VkPresentModeKHR> presentModes( VkPhysicalDevice physicalDevice) const;
     bool supportsPresent(VkPhysicalDevice physicalDevice, uint32_t queueFamily) const;
-    bool supportsFormat(VkPhysicalDevice physicalDevice, VkFormat swapchainFormat)
+    bool supportsFormat(VkPhysicalDevice physicalDevice, VkFormat swapchainFormat);
 private:
     VkSurfaceKHR m_surface{VK_NULL_HANDLE};
 };
