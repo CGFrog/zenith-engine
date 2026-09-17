@@ -1,38 +1,55 @@
 #pragma once
-#include <volk.h>
-#include <vk_mem_alloc.h>
-#include <SDL3/SDL.h>
-#include <glm/glm.hpp>
-#include <SDL3/SDL_vulkan.h>
-#include <iostream>
 #include "../surface/Surface.hpp"
+#include <vk_mem_alloc.h>
+#include <volk.h>
 
 class VulkanContext {
-public:
+  public:
+    VulkanContext() = default;
+    VulkanContext(const VulkanContext&) = delete;
+    VulkanContext& operator=(const VulkanContext&) = delete;
 
-bool initInstance();
-bool initPhysicalDevice(const Surface& surface);
-bool initGfxQueue(const Surface& surface);
-bool initDevice();
-bool initVMA();
+    bool initInstance();
+    bool initPhysicalDevice(const Surface& surface);
+    bool initGfxQueue(const Surface& surface);
+    bool initDevice();
+    bool initVMA();
+    void closeInstance();
+    void closeDevice();
 
-void closeInstance();
+    VkInstance instance() const {
+        return m_instance;
+    }
 
-VkInstance instance() const;
-VkPhysicalDevice pDevice() const;
-VkDevice device() const;
-VkQueue gfxQueue() const;
-uint32_t  gfxQueueIndex() const;
-VmaAllocator vmaAllocator() const;
+    VkPhysicalDevice pDevice() const {
+        return m_pDevice;
+    }
 
-private:
-    
-constexpr static uint32_t VulkanVersion {VK_API_VERSION_1_4};
-VkInstance m_instance{VK_NULL_HANDLE};
-VkPhysicalDevice m_pDevice{VK_NULL_HANDLE};
-VkDevice m_device{VK_NULL_HANDLE};
-uint32_t m_gfxQueueFamIdx {UINT32_MAX};
-VkQueue m_gfxQueue{VK_NULL_HANDLE};
-VmaAllocator m_vmaAllocator {VK_NULL_HANDLE};
+    VkDevice device() const {
+        return m_device;
+    }
 
+    VkQueue gfxQueue() const {
+        return m_gfxQueue;
+    }
+
+    uint32_t gfxQueueIndex() const {
+        return m_gfxQueueFamIdx;
+    }
+
+    VmaAllocator vmaAllocator() const {
+        return m_vmaAllocator;
+    }
+
+  private:
+    bool supportsDevice(VkPhysicalDevice device, const Surface& surface) const;
+
+    static constexpr uint32_t VulkanVersion = VK_API_VERSION_1_4;
+    VkInstance m_instance{VK_NULL_HANDLE};
+    VkDebugUtilsMessengerEXT m_debugMessenger{VK_NULL_HANDLE};
+    VkPhysicalDevice m_pDevice{VK_NULL_HANDLE};
+    VkDevice m_device{VK_NULL_HANDLE};
+    uint32_t m_gfxQueueFamIdx{UINT32_MAX};
+    VkQueue m_gfxQueue{VK_NULL_HANDLE};
+    VmaAllocator m_vmaAllocator{VK_NULL_HANDLE};
 };

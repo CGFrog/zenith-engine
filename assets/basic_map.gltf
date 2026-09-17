@@ -1,0 +1,58 @@
+{
+  "asset": { "version": "2.0", "generator": "Zenith basic map" },
+  "scene": 0,
+  "scenes": [{ "nodes": [0, 1, 2, 3, 4, 5, 6, 7] }],
+  "nodes": [
+    { "name": "Floor",      "mesh": 0, "translation": [0, -0.1, 0], "scale": [6, 0.1, 6] },
+    { "name": "North Wall", "mesh": 0, "translation": [0, 1.5, -6], "scale": [6, 1.5, 0.15] },
+    { "name": "South Wall", "mesh": 0, "translation": [0, 1.5, 6], "scale": [6, 1.5, 0.15] },
+    { "name": "West Wall",  "mesh": 0, "translation": [-6, 1.5, 0], "scale": [0.15, 1.5, 6] },
+    { "name": "East Wall",  "mesh": 0, "translation": [6, 1.5, 0], "scale": [0.15, 1.5, 6] },
+    { "name": "Center Block", "mesh": 0, "translation": [0, 1, 0], "scale": [1.2, 1, 1.2] },
+    { "name": "West Block", "mesh": 0, "translation": [-3.5, 0.75, -2.5], "scale": [0.8, 0.75, 1.5] },
+    { "name": "East Block", "mesh": 0, "translation": [3.5, 0.5, 2.5], "scale": [1.5, 0.5, 0.8] }
+  ],
+  "meshes": [{
+    "name": "Unit Cube",
+    "primitives": [{ "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 3 }, "indices": 2, "material": 0 }]
+  }],
+  "materials": [{
+    "name": "Outdoor Wood Siding",
+    "pbrMetallicRoughness": {
+      "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+      "baseColorTexture": { "index": 0 },
+      "metallicFactor": 1.0,
+      "roughnessFactor": 1.0,
+      "metallicRoughnessTexture": { "index": 2 }
+    },
+    "normalTexture": { "index": 1, "scale": 1.0 },
+    "occlusionTexture": { "index": 2, "strength": 1.0 }
+  }],
+  "samplers": [{ "magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497 }],
+  "images": [
+    { "uri": "textures/wood_siding_basecolor.png" },
+    { "uri": "textures/wood_siding_normal.png" },
+    { "uri": "textures/wood_siding_orm.png" }
+  ],
+  "textures": [
+    { "sampler": 0, "source": 0 },
+    { "sampler": 0, "source": 1 },
+    { "sampler": 0, "source": 2 }
+  ],
+  "buffers": [{
+    "byteLength": 840,
+    "uri": "data:application/octet-stream;base64,AACAvwAAgL8AAIA/AACAPwAAgL8AAIA/AACAPwAAgD8AAIA/AACAvwAAgD8AAIA/AACAPwAAgL8AAIC/AACAvwAAgL8AAIC/AACAvwAAgD8AAIC/AACAPwAAgD8AAIC/AACAPwAAgL8AAIA/AACAPwAAgL8AAIC/AACAPwAAgD8AAIC/AACAPwAAgD8AAIA/AACAvwAAgL8AAIC/AACAvwAAgL8AAIA/AACAvwAAgD8AAIA/AACAvwAAgD8AAIC/AACAvwAAgD8AAIA/AACAPwAAgD8AAIA/AACAPwAAgD8AAIC/AACAvwAAgD8AAIC/AACAvwAAgL8AAIC/AACAPwAAgL8AAIC/AACAPwAAgL8AAIA/AACAvwAAgL8AAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAABAAIAAAACAAMABAAFAAYABAAGAAcACAAJAAoACAAKAAsADAANAA4ADAAOAA8AEAARABIAEAASABMAFAAVABYAFAAWABcAAAAAAAAAAAAAAIA/AAAAAAAAgD8AAIA/AAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAACAPwAAgD8AAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAIA/AACAPwAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAgD8AAIA/AAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAACAPwAAgD8AAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAIA/AACAPwAAAAAAAIA/"
+  }],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 288, "target": 34962 },
+    { "buffer": 0, "byteOffset": 288, "byteLength": 288, "target": 34962 },
+    { "buffer": 0, "byteOffset": 576, "byteLength": 72, "target": 34963 },
+    { "buffer": 0, "byteOffset": 648, "byteLength": 192, "target": 34962 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 24, "type": "VEC3", "min": [-1, -1, -1], "max": [1, 1, 1] },
+    { "bufferView": 1, "componentType": 5126, "count": 24, "type": "VEC3" },
+    { "bufferView": 2, "componentType": 5123, "count": 36, "type": "SCALAR" },
+    { "bufferView": 3, "componentType": 5126, "count": 24, "type": "VEC2" }
+  ]
+}

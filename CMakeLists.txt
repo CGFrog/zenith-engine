@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.24)
 
 project(zenith VERSION 0.1.0 LANGUAGES C CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -18,8 +20,8 @@ FetchContent_Declare(
 )
 
 # Build Khronos's reference GLSL-to-SPIR-V compiler as part of the project.
-# SPIR-V optimization is disabled so glslang remains a self-contained
-# FetchContent dependency and does not require a separate SPIRV-Tools checkout.
+# SPIR-V optimization inside glslang is disabled; shaderc links the separately
+# fetched SPIRV-Tools targets below for its runtime compilation pipeline.
 set(ENABLE_GLSLANG_BINARIES ON CACHE BOOL "" FORCE)
 set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
 set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
@@ -29,6 +31,42 @@ FetchContent_Declare(
     glslang
     GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
     GIT_TAG vulkan-sdk-1.4.357.0
+    GIT_SHALLOW TRUE
+)
+
+# shaderc provides the in-process GLSL compiler used for shader hot reloading.
+# Keep its SPIR-V dependencies on the same Vulkan SDK release as glslang.
+set(SPIRV_HEADERS_SKIP_EXAMPLES ON CACHE BOOL "" FORCE)
+set(SPIRV_HEADERS_SKIP_INSTALL ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    SPIRV-Headers
+    GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Headers.git
+    GIT_TAG vulkan-sdk-1.4.357.0
+    GIT_SHALLOW TRUE
+)
+
+set(SPIRV_SKIP_EXECUTABLES ON CACHE BOOL "" FORCE)
+set(SPIRV_SKIP_TESTS ON CACHE BOOL "" FORCE)
+set(SKIP_SPIRV_TOOLS_INSTALL ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    SPIRV-Tools
+    GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Tools.git
+    GIT_TAG vulkan-sdk-1.4.357.0
+    GIT_SHALLOW TRUE
+)
+
+set(SHADERC_ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+# Match the DLL CRT used by Zenith and the other MSVC targets.
+set(SHADERC_ENABLE_SHARED_CRT ON CACHE BOOL "" FORCE)
+set(SHADERC_SKIP_INSTALL ON CACHE BOOL "" FORCE)
+set(SHADERC_SKIP_TESTS ON CACHE BOOL "" FORCE)
+set(SHADERC_SKIP_EXAMPLES ON CACHE BOOL "" FORCE)
+set(SHADERC_SKIP_EXECUTABLES ON CACHE BOOL "" FORCE)
+set(SHADERC_SKIP_COPYRIGHT_CHECK ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    shaderc
+    GIT_REPOSITORY https://github.com/google/shaderc.git
+    GIT_TAG v2026.3
     GIT_SHALLOW TRUE
 )
 
@@ -68,6 +106,38 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
+set(ENTT_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(ENTT_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    EnTT
+    GIT_REPOSITORY https://github.com/skypjack/entt.git
+    GIT_TAG v3.13.2
+    GIT_SHALLOW TRUE
+)
+
+# Jolt supplies the low-level collision detection and constraint solver. Zenith
+# owns the ECS-facing API so gameplay code is not required to use Jolt types.
+set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
+set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
+set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
+set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+set(TARGET_VIEWER OFF CACHE BOOL "" FORCE)
+set(CPP_RTTI_ENABLED ON CACHE BOOL "" FORCE)
+set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+set(JPH_USE_DX12 OFF CACHE BOOL "" FORCE)
+set(JPH_USE_VK OFF CACHE BOOL "" FORCE)
+set(JPH_USE_MTL OFF CACHE BOOL "" FORCE)
+set(JPH_USE_CPU_COMPUTE OFF CACHE BOOL "" FORCE)
+set(ENABLE_OBJECT_STREAM OFF CACHE BOOL "" FORCE)
+set(ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    JoltPhysics
+    GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+    GIT_TAG v5.6.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR Build
+)
+
 set(VMA_BUILD_DOCUMENTATION OFF CACHE BOOL "" FORCE)
 set(VMA_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
 set(VMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -80,11 +150,16 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(
     VulkanHeaders
+    SPIRV-Headers
+    SPIRV-Tools
     glslang
+    shaderc
     volk
     glm
     SDL
     cgltf
+    EnTT
+    JoltPhysics
     VulkanMemoryAllocator
 )
 
@@ -93,18 +168,32 @@ add_library(cgltf INTERFACE)
 add_library(cgltf::cgltf ALIAS cgltf)
 target_include_directories(cgltf INTERFACE "${cgltf_SOURCE_DIR}")
 
-add_executable(zenith
-    src/main.cpp
-    src/engine/graphics/renderer.cpp
-    src/engine/graphics/renderer.hpp
-    src/engine/graphics/vulkan/VulkanContext.cpp
-    src/engine/graphics/vulkan/VulkanContext.hpp
+add_library(stb INTERFACE)
+target_include_directories(stb INTERFACE "${sdl_SOURCE_DIR}/src/video")
+
+add_library(zenith_engine STATIC
+    src/engine/Engine.cpp
+    src/engine/assets/Assets.cpp
+    src/engine/assets/ModelImporter.cpp
+    src/engine/assets/ImageDecoder.cpp
+    src/engine/graphics/Renderer.cpp
+    src/engine/graphics/passes/MeshPass.cpp
+    src/engine/graphics/pipeline/GraphicsPipeline.cpp
+    src/engine/graphics/resources/FrameResources.cpp
+    src/engine/graphics/shader/ShaderModule.cpp
+    src/engine/graphics/surface/Surface.cpp
     src/engine/graphics/swapchain/Swapchain.cpp
-    src/engine/graphics/swapchain/Swapchain.hpp
-    src/engine/graphics/pipeline/GraphicsPipeline.hpp
-
-
+    src/engine/graphics/vulkan/VulkanContext.cpp
+    src/engine/input/InputManager.cpp
+    src/engine/physics/PhysicsWorld.cpp
+    src/engine/scene/FirstPersonController.cpp
+    src/engine/scene/TemplateScene.cpp
+    src/engine/scene/Scene.cpp
+    src/engine/window/Window.cpp
 )
+
+add_executable(zenith src/main.cpp)
+target_link_libraries(zenith PRIVATE zenith_engine)
 
 # Compile each shader in shaders/ to a matching .spv file in the build tree.
 # glslang infers the shader stage from the source extension.
@@ -148,25 +237,66 @@ foreach(shader_source IN LISTS ZENITH_SHADER_SOURCES)
 endforeach()
 
 add_custom_target(zenith_shaders ALL DEPENDS ${ZENITH_SHADER_BINARIES})
-add_dependencies(zenith zenith_shaders)
+add_dependencies(zenith_engine zenith_shaders)
 
-target_include_directories(zenith PRIVATE
+set(ZENITH_ASSET_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+set(ZENITH_ASSET_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/assets")
+add_custom_target(zenith_assets ALL
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+        "${ZENITH_ASSET_SOURCE_DIR}" "${ZENITH_ASSET_BINARY_DIR}"
+    COMMENT "Copying Zenith assets"
+)
+add_dependencies(zenith_engine zenith_assets)
+
+target_include_directories(zenith_engine PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
-target_compile_definitions(zenith PRIVATE VK_NO_PROTOTYPES)
+target_compile_definitions(zenith_engine PUBLIC VK_NO_PROTOTYPES
+    ZENITH_SHADER_DIR="${ZENITH_SHADER_BINARY_DIR}"
+    ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
 
-target_link_libraries(zenith PRIVATE
+target_link_libraries(zenith_engine PUBLIC
     Vulkan::Headers
     volk
     glm::glm
     SDL3::SDL3
     cgltf::cgltf
+    stb
+    EnTT::EnTT
+    Jolt
     GPUOpen::VulkanMemoryAllocator
+    shaderc
 )
 
 if(MSVC)
-    target_compile_options(zenith PRIVATE /W4 /permissive-)
+    target_compile_options(zenith_engine PRIVATE /W4 /permissive-)
 else()
-    target_compile_options(zenith PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(zenith_engine PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(zenith_asset_tests
+        tests/AssetSceneTests.cpp
+    )
+    target_compile_definitions(zenith_asset_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_asset_tests zenith_assets)
+    target_link_libraries(zenith_asset_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_asset_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_asset_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_asset_scene COMMAND zenith_asset_tests)
+
+    add_executable(zenith_physics_tests tests/PhysicsTests.cpp)
+    target_compile_definitions(zenith_physics_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_physics_tests zenith_assets)
+    target_link_libraries(zenith_physics_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_physics_tests PRIVATE /W4 /permissive-)
+    else()
+    target_compile_options(zenith_physics_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_physics COMMAND zenith_physics_tests)
 endif()

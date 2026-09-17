@@ -1,14 +1,25 @@
 #pragma once
 #include <volk.h>
-class GraphicsPipeline{
-public:
 
-bool initGraphicsPipeline();
+class GraphicsPipeline {
+  public:
+    GraphicsPipeline() = default;
+    GraphicsPipeline(const GraphicsPipeline&) = delete;
+    GraphicsPipeline& operator=(const GraphicsPipeline&) = delete;
 
-private:
+    bool initGraphicsPipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,
+                              VkDescriptorSetLayout cameraLayout, VkShaderModule vertex, VkShaderModule fragment);
+    void shutdown(VkDevice device);
 
-const char *entryPoint = "main";
-VkPipelineLayout m_pipelineLayout{VK_NULL_HANDLE};
-VkPipeline pipeline {VK_NULL_HANDLE};
+    VkPipeline handle() const {
+        return m_pipeline;
+    }
 
+    VkPipelineLayout layout() const {
+        return m_pipelineLayout;
+    }
+
+  private:
+    VkPipelineLayout m_pipelineLayout{VK_NULL_HANDLE};
+    VkPipeline m_pipeline{VK_NULL_HANDLE};
 };

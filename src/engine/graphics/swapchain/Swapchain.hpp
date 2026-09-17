@@ -1,28 +1,82 @@
 #pragma once
-#include <volk.h>
 #include "../../window/Window.hpp"
 #include "../surface/Surface.hpp"
 #include "../vulkan/VulkanContext.hpp"
-class Swapchain{
-public:
+#include <volk.h>
 
-constexpr static VkFormat swapchainFormat{ VK_FORMAT_B8G8R8A8_SRGB };
-constexpr static VkFormat depthFormat{ VK_FORMAT_D32_SFLOAT };
+class Swapchain {
+  public:
+    static constexpr VkFormat swapchainFormat = VK_FORMAT_B8G8R8A8_SRGB;
+    static constexpr VkFormat preferredDepthFormat = VK_FORMAT_D32_SFLOAT;
 
-bool initSwapchain(const Window& window, const Surface& surface, const VulkanContext& context);
-void destroySwapchain(const VulkanContext& context);
-const std::vector<VkImage>& swapchainImages() const;
-const std::vector<VkImageView>& swapchainImageViews() const;
-private:
-VkSwapchainKHR m_swapchain {VK_NULL_HANDLE};
-uint32_t m_scWidth{0};
-uint32_t m_scHeight{0};
+    Swapchain() = default;
+    Swapchain(const Swapchain&) = delete;
+    Swapchain& operator=(const Swapchain&) = delete;
 
-// Images are the actual stored memory and image views tell Vulkan how to understand the memory similar to sType.
-std::vector<VkImage> m_swapchainImages{};
-std::vector<VkImageView> m_swapchainImageViews{};
+    bool initSwapchain(const Window& window, const Surface& surface, const VulkanContext& context);
+    void destroySwapchain(const VulkanContext& context);
+    VkResult acquire(VkDevice device, VkSemaphore imageAcquired, uint32_t& imageIndex) const;
+    VkResult present(VkQueue queue, uint32_t imageIndex) const;
 
-VkImage m_depthImage {VK_NULL_HANDLE};
-VkImageView m_depthImageView {VK_NULL_HANDLE};
-VmaAllocation m_depthImageAllocation {VK_NULL_HANDLE};
+    VkSwapchainKHR handle() const {
+        return m_swapchain;
+    }
+
+    VkExtent2D extent() const {
+        return m_extent;
+    }
+
+    VkFormat format() const {
+        return m_format;
+    }
+
+    VkFormat depthFormat() const {
+        return m_depthFormat;
+    }
+
+    const char* presentModeName() const;
+
+    VkSemaphore renderComplete(uint32_t imageIndex) const {
+        return m_renderCompleteSemaphores[imageIndex];
+    }
+
+    const std::vector<VkImage>& swapchainImages() const {
+        return m_swapchainImages;
+    }
+
+    const std::vector<VkImageView>& swapchainImageViews() const {
+        return m_swapchainImageViews;
+    }
+
+    const VkImage& depthImage() const {
+        return m_depthImage;
+    }
+
+    const VkImageView& depthImageView() const {
+        return m_depthImageView;
+    }
+
+  private:
+    bool selectExtent(const Window& window, const VkSurfaceCapabilitiesKHR& caps);
+    bool selectFormat(const Surface& surface, VkPhysicalDevice device, VkSurfaceFormatKHR& format);
+    void selectPresentMode(const Surface& surface, VkPhysicalDevice device);
+    bool createHandle(VkDevice device, VkSurfaceKHR surface, const VkSurfaceCapabilitiesKHR& caps,
+                      VkSurfaceFormatKHR format);
+    bool createImageViews(VkDevice device);
+    bool createPresentationSemaphores(VkDevice device);
+    bool createDepthResources(const VulkanContext& context);
+    void destroyDepthResources(const VulkanContext& context);
+
+    VkSwapchainKHR m_swapchain{VK_NULL_HANDLE};
+    VkFormat m_format{swapchainFormat};
+    VkFormat m_depthFormat{preferredDepthFormat};
+    VkPresentModeKHR m_presentMode{VK_PRESENT_MODE_FIFO_KHR};
+    VkExtent2D m_extent{.width = 0, .height = 0};
+    std::vector<VkImage> m_swapchainImages;
+    std::vector<VkImageView> m_swapchainImageViews;
+    std::vector<VkSemaphore> m_renderCompleteSemaphores;
+
+    VkImage m_depthImage{VK_NULL_HANDLE};
+    VkImageView m_depthImageView{VK_NULL_HANDLE};
+    VmaAllocation m_depthImageAllocation{VK_NULL_HANDLE};
 };
