@@ -1,19 +1,25 @@
-#include "TemplateScene.hpp"
+#include "DemoScene.hpp"
 
-#include "../Engine.hpp"
+#include "engine/assets/Assets.hpp"
 
 #include <filesystem>
 #include <glm/gtc/matrix_transform.hpp>
+#include <iterator>
+#include <string>
 
-SceneResult createTemplateScene(Engine& engine) {
-    const auto map = engine.assets().loadModel(std::filesystem::path{ZENITH_ASSET_DIR} / "basic_map.gltf");
+SceneResult populateDemoScene(Scene& scene, AssetManager& assets, uint32_t benchmarkObjectCount) {
+    const auto map = assets.loadModel(std::filesystem::path{ZENITH_ASSET_DIR} / "basic_map.gltf");
     if (!map) {
         return {.error = map.error};
     }
 
-    Scene& scene = engine.scene();
+    const Entity sun = scene.createEntity("Sun");
+    scene.registry().emplace<DirectionalLightComponent>(sun);
+    const Entity environment = scene.createEntity("Environment");
+    scene.registry().emplace<EnvironmentLightComponent>(environment);
+
     const Entity mapRoot = scene.createEntity("Gameplay Room");
-    if (const SceneResult result = scene.instantiateModel(mapRoot, map.handle, engine.assets()); !result) {
+    if (const SceneResult result = scene.instantiateModel(mapRoot, map.handle, assets); !result) {
         return result;
     }
 
@@ -26,14 +32,14 @@ SceneResult createTemplateScene(Engine& engine) {
         scene.registry().emplace<RigidBodyComponent>(child);
     }
 
-    const ModelAsset* model = engine.assets().model(map.handle);
+    const ModelAsset* model = assets.model(map.handle);
     if (!model || model->nodes.empty() || !model->nodes.front().mesh) {
         return {.error = "Gameplay room does not contain a reusable prop mesh"};
     }
     const MeshHandle cubeMesh = model->nodes.front().mesh;
     const glm::vec3 propPositions[]{
         {-2.5f, 0.7f, 1.0f}, {-2.5f, 1.55f, 1.0f}, {-2.5f, 2.4f, 1.0f},
-        {2.2f, 0.7f, -1.2f}, {2.9f, 0.7f, -1.2f}, {2.55f, 1.55f, -1.2f},
+        {2.2f, 0.7f, -1.2f}, {2.9f, 0.7f, -1.2f},  {2.55f, 1.55f, -1.2f},
     };
     for (size_t i = 0; i < std::size(propPositions); ++i) {
         const Entity prop = scene.createEntity("Physics Prop " + std::to_string(i + 1));
@@ -51,26 +57,15 @@ SceneResult createTemplateScene(Engine& engine) {
         scene.registry().emplace<RigidBodyComponent>(prop, body);
     }
 
-    const Entity player = scene.createEntity("Player");
-    scene.registry().get<TransformComponent>(player).local =
-        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.2f, 4.0f));
-    CharacterControllerComponent controller;
-    const Entity camera = scene.createEntity("Player Camera");
-    controller.camera = camera;
-    scene.registry().emplace<CharacterControllerComponent>(player, controller);
-    scene.registry().emplace<ColliderComponent>(player, CapsuleCollider{controller.halfHeight, controller.radius});
-    RigidBodyComponent playerBody;
-    playerBody.motionType = PhysicsMotionType::Dynamic;
-    playerBody.layer = PhysicsLayer::Player;
-    playerBody.mass = 80.0f;
-    playerBody.friction = 0.0f;
-    playerBody.angularDamping = 1.0f;
-    playerBody.continuousCollision = true;
-    scene.registry().emplace<RigidBodyComponent>(player, playerBody);
+    for (uint32_t i = 0; i < benchmarkObjectCount; ++i) {
+        const Entity object = scene.createEntity("Benchmark object " + std::to_string(i + 1));
+        scene.attachMesh(object, cubeMesh);
+        const float x = (static_cast<float>(i % 40) - 19.5f) * 1.2f;
+        const float y = (static_cast<float>((i / 40) % 10) + 0.5f) * 1.2f;
+        const float z = -6.0f - static_cast<float>(i / 400) * 3.0f;
+        scene.registry().get<TransformComponent>(object).local =
+            glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z)) * glm::scale(glm::mat4(1.0f), glm::vec3(0.35f));
+    }
 
-    scene.registry().emplace<CameraComponent>(camera);
-    scene.setParent(camera, player);
-    scene.registry().get<TransformComponent>(camera).local =
-        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, controller.halfHeight + controller.radius, 0.0f));
     return {.success = true};
 }

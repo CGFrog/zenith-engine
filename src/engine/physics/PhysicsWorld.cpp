@@ -2,6 +2,8 @@
 #include "PhysicsWorld.hpp"
 
 #include <Jolt/Jolt.h>
+
+// Jolt/Jolt.h defines configuration macros required by all other Jolt headers.
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
@@ -27,7 +29,6 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace {
 constexpr JPH::BroadPhaseLayer broadPhaseStatic{0};
@@ -61,7 +62,8 @@ bool decomposeTransform(const glm::mat4& matrix, glm::vec3& translation, glm::qu
     }
     rotation = glm::normalize(rotation);
     scale = glm::abs(scale);
-    return std::isfinite(translation.x) && std::isfinite(rotation.w) && glm::all(glm::greaterThan(scale, glm::vec3(0.0f)));
+    return std::isfinite(translation.x) && std::isfinite(rotation.w) &&
+           glm::all(glm::greaterThan(scale, glm::vec3(0.0f)));
 }
 
 glm::mat4 composeTransform(const glm::vec3& translation, const glm::quat& rotation, const glm::vec3& scale) {
@@ -83,7 +85,8 @@ class PhysicsWorld::Impl {
 
     class BroadPhaseLayers final : public JPH::BroadPhaseLayerInterface {
       public:
-        explicit BroadPhaseLayers(const Impl& owner) : m_owner(owner) {}
+        explicit BroadPhaseLayers(const Impl& owner)
+            : m_owner(owner) {}
 
         uint32_t GetNumBroadPhaseLayers() const override {
             return 2;
@@ -105,7 +108,8 @@ class PhysicsWorld::Impl {
 
     class ObjectPairFilter final : public JPH::ObjectLayerPairFilter {
       public:
-        explicit ObjectPairFilter(const Impl& owner) : m_owner(owner) {}
+        explicit ObjectPairFilter(const Impl& owner)
+            : m_owner(owner) {}
 
         bool ShouldCollide(JPH::ObjectLayer first, JPH::ObjectLayer second) const override {
             const auto& a = m_owner.layer(first);
@@ -119,7 +123,8 @@ class PhysicsWorld::Impl {
 
     class ObjectBroadPhaseFilter final : public JPH::ObjectVsBroadPhaseLayerFilter {
       public:
-        explicit ObjectBroadPhaseFilter(const Impl& owner) : m_owner(owner) {}
+        explicit ObjectBroadPhaseFilter(const Impl& owner)
+            : m_owner(owner) {}
 
         bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer broadPhase) const override {
             const auto& source = m_owner.layer(layer);
@@ -146,7 +151,8 @@ class PhysicsWorld::Impl {
 
     class Contacts final : public JPH::ContactListener {
       public:
-        explicit Contacts(Impl& owner) : m_owner(owner) {}
+        explicit Contacts(Impl& owner)
+            : m_owner(owner) {}
 
         void OnContactAdded(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold& manifold,
                             JPH::ContactSettings&) override {
@@ -171,7 +177,11 @@ class PhysicsWorld::Impl {
         Impl& m_owner;
     };
 
-    Impl() : broadPhaseLayers(*this), pairFilter(*this), broadPhaseFilter(*this), contacts(*this) {}
+    Impl()
+        : broadPhaseLayers(*this)
+        , pairFilter(*this)
+        , broadPhaseFilter(*this)
+        , contacts(*this) {}
 
     const PhysicsLayerDefinition& layer(JPH::ObjectLayer value) const {
         for (const PhysicsLayerDefinition& definition : config.layers) {
@@ -198,7 +208,8 @@ class PhysicsWorld::Impl {
     std::mutex contactMutex;
 };
 
-PhysicsWorld::PhysicsWorld() : m_impl(std::make_unique<Impl>()) {}
+PhysicsWorld::PhysicsWorld()
+    : m_impl(std::make_unique<Impl>()) {}
 
 PhysicsWorld::~PhysicsWorld() {
     shutdown();
@@ -236,13 +247,7 @@ void PhysicsWorld::shutdown() {
         return;
     }
 
-    JPH::BodyInterface& bodies = m_impl->system->GetBodyInterface();
-    for (const auto& [_, state] : m_impl->bodies) {
-        bodies.RemoveBody(state.id);
-        bodies.DestroyBody(state.id);
-    }
-    m_impl->bodies.clear();
-    m_impl->bodyEntities.clear();
+    clear();
     m_impl->system.reset();
     m_impl->jobs.reset();
     m_impl->tempAllocator.reset();
@@ -250,6 +255,33 @@ void PhysicsWorld::shutdown() {
     delete JPH::Factory::sInstance;
     JPH::Factory::sInstance = nullptr;
     m_impl->initialized = false;
+}
+
+void PhysicsWorld::clear() {
+    if (!m_impl) {
+        return;
+    }
+
+    if (!m_impl->initialized) {
+        m_impl->bodies.clear();
+        m_impl->bodyEntities.clear();
+        m_impl->pendingContacts.clear();
+        m_impl->contactEvents.clear();
+        return;
+    }
+
+    JPH::BodyInterface& bodies = m_impl->system->GetBodyInterface();
+    for (const auto& [_, state] : m_impl->bodies) {
+        bodies.RemoveBody(state.id);
+        bodies.DestroyBody(state.id);
+    }
+    m_impl->bodies.clear();
+    m_impl->bodyEntities.clear();
+    {
+        std::scoped_lock lock(m_impl->contactMutex);
+        m_impl->pendingContacts.clear();
+    }
+    m_impl->contactEvents.clear();
 }
 
 namespace {
@@ -322,6 +354,11 @@ JPH::RefConst<JPH::Shape> createShape(const ColliderComponent& collider, const g
 } // namespace
 
 PhysicsResult PhysicsWorld::refreshBody(Entity entity, Scene& scene, const AssetManager& assets) {
+    scene.updateWorldTransforms();
+    return refreshBodyFromWorld(entity, scene, assets);
+}
+
+PhysicsResult PhysicsWorld::refreshBodyFromWorld(Entity entity, Scene& scene, const AssetManager& assets) {
     if (!m_impl->initialized) {
         return {.error = "Physics world is not initialized"};
     }
@@ -338,7 +375,6 @@ PhysicsResult PhysicsWorld::refreshBody(Entity entity, Scene& scene, const Asset
         return {.success = true};
     }
 
-    scene.updateWorldTransforms();
     const auto& transform = scene.registry().get<TransformComponent>(entity);
     const auto& collider = scene.registry().get<ColliderComponent>(entity);
     const auto& rigidBody = scene.registry().get<RigidBodyComponent>(entity);
@@ -374,12 +410,12 @@ PhysicsResult PhysicsWorld::refreshBody(Entity entity, Scene& scene, const Asset
     settings.mGravityFactor = rigidBody.gravityFactor;
     settings.mIsSensor = rigidBody.sensor;
     settings.mAllowSleeping = rigidBody.allowSleeping;
-    settings.mMotionQuality = rigidBody.continuousCollision ? JPH::EMotionQuality::LinearCast
-                                                            : JPH::EMotionQuality::Discrete;
+    settings.mMotionQuality =
+        rigidBody.continuousCollision ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
     settings.mUserData = static_cast<uint64_t>(entt::to_integral(entity));
-    if (scene.registry().any_of<CharacterControllerComponent>(entity)) {
-        settings.mAllowedDOFs = JPH::EAllowedDOFs::TranslationX | JPH::EAllowedDOFs::TranslationY |
-                                JPH::EAllowedDOFs::TranslationZ;
+    if (rigidBody.lockRotation) {
+        settings.mAllowedDOFs =
+            JPH::EAllowedDOFs::TranslationX | JPH::EAllowedDOFs::TranslationY | JPH::EAllowedDOFs::TranslationZ;
     }
     if (motion == JPH::EMotionType::Dynamic && rigidBody.mass > 0.0f) {
         settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
@@ -403,12 +439,10 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
     }
     scene.updateWorldTransforms();
 
-    std::unordered_set<Entity> current;
     auto view = scene.registry().view<TransformComponent, ColliderComponent, RigidBodyComponent>();
     for (Entity entity : view) {
-        current.insert(entity);
         if (!m_impl->bodies.contains(entity)) {
-            if (PhysicsResult result = refreshBody(entity, scene, assets); !result) {
+            if (PhysicsResult result = refreshBodyFromWorld(entity, scene, assets); !result) {
                 return result;
             }
         }
@@ -416,7 +450,8 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
 
     JPH::BodyInterface& interface = m_impl->system->GetBodyInterface();
     for (auto it = m_impl->bodies.begin(); it != m_impl->bodies.end();) {
-        if (!current.contains(it->first)) {
+        if (!scene.registry().valid(it->first) ||
+            !scene.registry().all_of<TransformComponent, ColliderComponent, RigidBodyComponent>(it->first)) {
             interface.RemoveBody(it->second.id);
             interface.DestroyBody(it->second.id);
             m_impl->bodyEntities.erase(bodyKey(it->second.id));
@@ -465,9 +500,10 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
         auto& transform = scene.registry().get<TransformComponent>(entity);
         const auto& relationship = scene.registry().get<RelationshipComponent>(entity);
         transform.world = world;
-        transform.local = relationship.parent != entt::null && scene.registry().valid(relationship.parent)
-                              ? glm::inverse(scene.registry().get<TransformComponent>(relationship.parent).world) * world
-                              : world;
+        transform.local =
+            relationship.parent != entt::null && scene.registry().valid(relationship.parent)
+                ? glm::inverse(scene.registry().get<TransformComponent>(relationship.parent).world) * world
+                : world;
     }
 
     m_impl->contactEvents.clear();
@@ -495,9 +531,10 @@ void PhysicsWorld::interpolate(Scene& scene, float alpha) const {
         auto& transform = scene.registry().get<TransformComponent>(entity);
         const auto& relationship = scene.registry().get<RelationshipComponent>(entity);
         transform.world = world;
-        transform.local = relationship.parent != entt::null && scene.registry().valid(relationship.parent)
-                              ? glm::inverse(scene.registry().get<TransformComponent>(relationship.parent).world) * world
-                              : world;
+        transform.local =
+            relationship.parent != entt::null && scene.registry().valid(relationship.parent)
+                ? glm::inverse(scene.registry().get<TransformComponent>(relationship.parent).world) * world
+                : world;
     }
 }
 
@@ -555,10 +592,9 @@ bool PhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& direction, 
     hit.fraction = result.mFraction;
     hit.position = origin + rayVector * result.mFraction;
     JPH::BodyLockRead lock(m_impl->system->GetBodyLockInterface(), result.mBodyID);
-    hit.normal = lock.Succeeded()
-                     ? fromJolt(lock.GetBody().GetWorldSpaceSurfaceNormal(result.mSubShapeID2,
-                                                                         ray.GetPointOnRay(result.mFraction)))
-                     : glm::vec3(0.0f);
+    hit.normal = lock.Succeeded() ? fromJolt(lock.GetBody().GetWorldSpaceSurfaceNormal(
+                                        result.mSubShapeID2, ray.GetPointOnRay(result.mFraction)))
+                                  : glm::vec3(0.0f);
     return true;
 }
 

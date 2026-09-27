@@ -1,23 +1,71 @@
 #include "Renderer.hpp"
 #include "vulkan/VulkanCheck.hpp"
 
+#include <algorithm>
+
 namespace {
 constexpr uint32_t surfaceRetryDelayMs = 16;
+
+void prepareColorAttachment(VkCommandBuffer commandBuffer, VkImage image) {
+    VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                  .srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                                  .srcAccessMask = 0,
+                                  .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                  .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                                  .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                                  .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                  .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                  .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                  .image = image,
+                                  .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                       .baseMipLevel = 0,
+                                                       .levelCount = 1,
+                                                       .baseArrayLayer = 0,
+                                                       .layerCount = 1}};
+    VkDependencyInfo dependency{
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier};
+    vkCmdPipelineBarrier2(commandBuffer, &dependency);
 }
 
-bool Renderer::init(const Window& window) {
+RenderCapabilities detectRenderCapabilities(VkPhysicalDevice device) {
+    VkPhysicalDeviceVulkan12Features vulkan12{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceFeatures2 features{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &vulkan12};
+    vkGetPhysicalDeviceFeatures2(device, &features);
+    const bool descriptorIndexing = vulkan12.runtimeDescriptorArray && vulkan12.descriptorBindingPartiallyBound &&
+                                    vulkan12.descriptorBindingVariableDescriptorCount &&
+                                    vulkan12.shaderSampledImageArrayNonUniformIndexing;
+    return {.descriptorIndexing = descriptorIndexing,
+            .multiDrawIndirect = features.features.multiDrawIndirect == VK_TRUE,
+            .indirectDrawCount = vulkan12.drawIndirectCount == VK_TRUE,
+            .gpuDrivenPath = false};
+}
+} // namespace
+
+bool Renderer::init(const Window& window, RenderRuntime& rendering) {
+    m_rendering = &rendering;
     if (!initContext(window)) {
         return false;
     }
+    rendering.m_capabilities = detectRenderCapabilities(m_context.pDevice());
     if (!createSwapchainResources(window)) {
         return false;
     }
-    if (!m_meshPass.init(m_context, m_swapchain.format(), m_swapchain.depthFormat(), framesInFlight)) {
+    if (!m_uiPass.init(m_context, window, m_swapchain.format(), m_swapchain.imageCount())) {
+        return false;
+    }
+    if (!m_viewportTarget.init(m_context, m_uiPass, m_swapchain.format(), m_swapchain.depthFormat(), framesInFlight,
+                               m_swapchain.extent())) {
+        return false;
+    }
+    if (!m_meshPass.init(m_context, m_swapchain.format(), m_swapchain.depthFormat(), framesInFlight,
+                         m_viewportTarget.extent(), m_viewportTarget.depthView())) {
         return false;
     }
     m_currentFrame = 0;
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(m_context.pDevice(), &properties);
     for (FrameResources& frame : m_frames) {
-        if (!frame.init(m_context.device(), m_context.gfxQueueIndex())) {
+        if (!frame.init(m_context.device(), m_context.gfxQueueIndex(), properties.limits.timestampPeriod)) {
             return false;
         }
     }
@@ -55,22 +103,40 @@ void Renderer::destroySwapchainResources() {
 }
 
 bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager& assets) {
-    scene.updateWorldTransforms();
     const FrameStatus surfaceStatus = prepareSurface(window);
     if (surfaceStatus != FrameStatus::Ready) {
+        m_uiPass.cancelFrame();
         return surfaceStatus == FrameStatus::Skipped;
     }
-    const FrameResources& frame = m_frames[m_currentFrame];
-    if (!frame.waitUntilAvailable(m_context.device())) {
+    if (m_viewportFailed) {
+        m_uiPass.cancelFrame();
         return false;
+    }
+    FrameResources& frame = m_frames[m_currentFrame];
+    if (!frame.waitUntilAvailable(m_context.device())) {
+        m_uiPass.cancelFrame();
+        return false;
+    }
+    if ((m_timingSampleCounter++ % 16) == 0) {
+        GpuFrameTimings gpuTimings;
+        if (!frame.collectTimings(m_context.device(), gpuTimings)) {
+            m_uiPass.cancelFrame();
+            return false;
+        }
+        m_rendering->m_stats.gpuFrameMilliseconds = gpuTimings.frameMilliseconds;
+        m_rendering->m_stats.gpuShadowMilliseconds = gpuTimings.shadowMilliseconds;
+        m_rendering->m_stats.gpuSceneMilliseconds = gpuTimings.sceneMilliseconds;
+        m_rendering->m_stats.gpuPostMilliseconds = gpuTimings.postMilliseconds;
     }
 
     uint32_t imageIndex = 0;
     const FrameStatus acquireStatus = acquireImage(frame, imageIndex);
     if (acquireStatus != FrameStatus::Ready) {
+        m_uiPass.cancelFrame();
         return acquireStatus == FrameStatus::Skipped;
     }
     if (!recordFrame(frame, imageIndex, scene, assets)) {
+        m_uiPass.cancelFrame();
         return false;
     }
     if (!frame.submit(m_context.device(), m_context.gfxQueue(), m_swapchain.renderComplete(imageIndex))) {
@@ -116,8 +182,30 @@ bool Renderer::recreateSwapchain(const Window& window) {
     if (!createSwapchainResources(window)) {
         return false;
     }
+    if (!m_rendering->m_viewportRequested) {
+        if (!m_viewportTarget.resize(m_context, m_uiPass, m_swapchain.extent()) ||
+            !m_meshPass.resize(m_context, m_viewportTarget.extent(), m_viewportTarget.depthView())) {
+            return false;
+        }
+    }
     m_resizeRequested = false;
     return true;
+}
+
+bool Renderer::prepareViewport() {
+    if (!m_rendering->m_viewportRequested) {
+        return true;
+    }
+    const VkExtent2D requested{std::clamp(m_rendering->m_requestedViewportWidth, 16u, 8192u),
+                               std::clamp(m_rendering->m_requestedViewportHeight, 16u, 8192u)};
+    if (requested.width == m_viewportTarget.extent().width && requested.height == m_viewportTarget.extent().height) {
+        return true;
+    }
+    if (!checkVulkan(vkDeviceWaitIdle(m_context.device()), "Wait before viewport resize")) {
+        return false;
+    }
+    return m_viewportTarget.resize(m_context, m_uiPass, requested) &&
+           m_meshPass.resize(m_context, requested, m_viewportTarget.depthView());
 }
 
 Renderer::FrameStatus Renderer::acquireImage(const FrameResources& frame, uint32_t& imageIndex) {
@@ -143,11 +231,48 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
     }
     const VkImage image = m_swapchain.swapchainImages()[imageIndex];
     const VkImageView view = m_swapchain.swapchainImageViews()[imageIndex];
-    if (!m_meshPass.record(frame.commandBuffer(), image, view, m_swapchain.depthImage(), m_swapchain.depthImageView(),
-                           m_swapchain.extent(), m_currentFrame, scene, assets)) {
+    const bool useViewport = m_rendering->m_viewportRequested;
+    const VkImage colorImage = useViewport ? m_viewportTarget.image(m_currentFrame) : image;
+    const VkImageView colorView = useViewport ? m_viewportTarget.view(m_currentFrame) : view;
+    const VkExtent2D extent = useViewport ? m_viewportTarget.extent() : m_swapchain.extent();
+    const VkImageLayout oldLayout =
+        useViewport ? m_viewportTarget.oldLayout(m_currentFrame) : VK_IMAGE_LAYOUT_UNDEFINED;
+    if (!m_meshPass.record(frame.commandBuffer(), colorImage, colorView, m_viewportTarget.depthImage(),
+                           m_viewportTarget.depthView(), extent, m_currentFrame, scene, assets, *m_rendering,
+                           frame.timestampQueries(), oldLayout)) {
         return false;
     }
+    if (useViewport) {
+        m_viewportTarget.transitionForSampling(frame.commandBuffer(), m_currentFrame);
+        prepareColorAttachment(frame.commandBuffer(), image);
+    }
+    if (!m_uiPass.record(frame.commandBuffer(), image, view, m_swapchain.extent(), useViewport)) {
+        return false;
+    }
+    frame.writeTimestamp(4, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     return frame.endRecording();
+}
+
+void Renderer::processUiEvent(const SDL_Event& event) {
+    m_uiPass.processEvent(event);
+}
+
+void Renderer::beginUiFrame() {
+    if (!prepareViewport()) {
+        m_viewportFailed = true;
+    }
+    if (m_rendering->m_viewportRequested) {
+        m_rendering->m_viewportTexture = {m_viewportTarget.texture(m_currentFrame)};
+        m_rendering->m_viewportWidth = m_viewportTarget.extent().width;
+        m_rendering->m_viewportHeight = m_viewportTarget.extent().height;
+    }
+    m_uiPass.beginFrame();
+}
+
+InputCapture Renderer::uiInputCapture() const {
+    const bool viewportInput = m_rendering != nullptr && m_rendering->m_viewportInputActive;
+    return {.keyboard = m_uiPass.wantsKeyboardCapture() && !viewportInput,
+            .mouse = m_uiPass.wantsMouseCapture() && !viewportInput};
 }
 
 bool Renderer::presentFrame(uint32_t imageIndex) {
@@ -167,9 +292,12 @@ void Renderer::shutdown() {
             frame.shutdown(device);
         }
         m_meshPass.shutdown(m_context);
+        m_viewportTarget.shutdown(m_context, m_uiPass);
+        m_uiPass.shutdown();
         destroySwapchainResources();
         m_context.closeDevice();
     }
     m_surface.shutdown(m_context.instance());
     m_context.closeInstance();
+    m_rendering = nullptr;
 }

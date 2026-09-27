@@ -6,11 +6,24 @@ namespace {
 constexpr uint64_t frameFenceTimeout = std::numeric_limits<uint64_t>::max();
 }
 
-bool FrameResources::init(VkDevice device, uint32_t queueFamily) {
+namespace {
+constexpr uint32_t timestampQueryCount = 5;
+}
+
+bool FrameResources::init(VkDevice device, uint32_t queueFamily, float timestampPeriod) {
+    m_timestampPeriod = timestampPeriod;
     if (!createCommandResources(device, queueFamily)) {
         return false;
     }
-    return createSynchronization(device);
+    return createSynchronization(device) && createTimestampQueries(device);
+}
+
+bool FrameResources::createTimestampQueries(VkDevice device) {
+    VkQueryPoolCreateInfo info{.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+                               .queryType = VK_QUERY_TYPE_TIMESTAMP,
+                               .queryCount = timestampQueryCount};
+    return checkVulkan(vkCreateQueryPool(device, &info, nullptr, &m_timestampQueries),
+                       "Create frame timestamp query pool");
 }
 
 bool FrameResources::createCommandResources(VkDevice device, uint32_t queueFamily) {
@@ -49,7 +62,12 @@ bool FrameResources::beginRecording() const {
     }
     VkCommandBufferBeginInfo begin{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    return checkVulkan(vkBeginCommandBuffer(m_commandBuffer, &begin), "Begin command buffer");
+    if (!checkVulkan(vkBeginCommandBuffer(m_commandBuffer, &begin), "Begin command buffer")) {
+        return false;
+    }
+    vkCmdResetQueryPool(m_commandBuffer, m_timestampQueries, 0, timestampQueryCount);
+    vkCmdWriteTimestamp2(m_commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, m_timestampQueries, 0);
+    return true;
 }
 
 bool FrameResources::endRecording() const {
@@ -81,7 +99,35 @@ bool FrameResources::submit(VkDevice device, VkQueue queue, VkSemaphore renderCo
     return checkVulkan(vkQueueSubmit2(queue, 1, &submit, m_fence), "Submit frame");
 }
 
+void FrameResources::writeTimestamp(uint32_t query, VkPipelineStageFlags2 stage) const {
+    vkCmdWriteTimestamp2(m_commandBuffer, stage, m_timestampQueries, query);
+}
+
+bool FrameResources::collectTimings(VkDevice device, GpuFrameTimings& timings) {
+    if (!m_timestampsPending) {
+        m_timestampsPending = true;
+        return true;
+    }
+    uint64_t values[timestampQueryCount]{};
+    const VkResult result = vkGetQueryPoolResults(device, m_timestampQueries, 0, timestampQueryCount, sizeof(values),
+                                                  values, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
+    if (result != VK_SUCCESS) {
+        return checkVulkan(result, "Read frame timestamp queries");
+    }
+    const auto elapsed = [&](uint32_t first, uint32_t last) {
+        return static_cast<double>(values[last] - values[first]) * static_cast<double>(m_timestampPeriod) / 1'000'000.0;
+    };
+    timings.frameMilliseconds = elapsed(0, 4);
+    timings.shadowMilliseconds = elapsed(0, 1);
+    timings.sceneMilliseconds = elapsed(1, 2);
+    timings.postMilliseconds = elapsed(2, 3);
+    return true;
+}
+
 void FrameResources::shutdown(VkDevice device) {
+    if (m_timestampQueries) {
+        vkDestroyQueryPool(device, m_timestampQueries, nullptr);
+    }
     if (m_fence) {
         vkDestroyFence(device, m_fence, nullptr);
     }
@@ -96,4 +142,6 @@ void FrameResources::shutdown(VkDevice device) {
     m_imageAcquired = VK_NULL_HANDLE;
     m_commandPool = VK_NULL_HANDLE;
     m_commandBuffer = VK_NULL_HANDLE;
+    m_timestampQueries = VK_NULL_HANDLE;
+    m_timestampsPending = false;
 }

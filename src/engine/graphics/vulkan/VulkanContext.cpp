@@ -72,7 +72,8 @@ bool supportsRenderingFeatures(VkPhysicalDevice device) {
     VkPhysicalDeviceFeatures2 features{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
                                        .pNext = &renderingFeatures};
     vkGetPhysicalDeviceFeatures2(device, &features);
-    return renderingFeatures.dynamicRendering && renderingFeatures.synchronization2;
+    return renderingFeatures.dynamicRendering && renderingFeatures.synchronization2 &&
+           features.features.samplerAnisotropy;
 }
 
 uint32_t findGraphicsQueueFamily(VkPhysicalDevice device, const Surface& surface) {
@@ -178,16 +179,32 @@ bool VulkanContext::initDevice() {
                                   .queueFamilyIndex = m_gfxQueueFamIdx,
                                   .queueCount = 1,
                                   .pQueuePriorities = &graphicsQueuePriority};
-    VkPhysicalDeviceVulkan13Features features{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+    VkPhysicalDeviceVulkan12Features supported12{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceFeatures2 supported{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &supported12};
+    vkGetPhysicalDeviceFeatures2(m_pDevice, &supported);
+    VkPhysicalDeviceVulkan12Features vulkan12{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .drawIndirectCount = supported12.drawIndirectCount,
+        .descriptorIndexing = supported12.descriptorIndexing,
+        .shaderSampledImageArrayNonUniformIndexing = supported12.shaderSampledImageArrayNonUniformIndexing,
+        .descriptorBindingPartiallyBound = supported12.descriptorBindingPartiallyBound,
+        .descriptorBindingVariableDescriptorCount = supported12.descriptorBindingVariableDescriptorCount,
+        .runtimeDescriptorArray = supported12.runtimeDescriptorArray,
+    };
+    VkPhysicalDeviceVulkan13Features vulkan13{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+                                              .pNext = &vulkan12,
                                               .synchronization2 = VK_TRUE,
                                               .dynamicRendering = VK_TRUE};
+    VkPhysicalDeviceFeatures enabledFeatures{.multiDrawIndirect = supported.features.multiDrawIndirect,
+                                             .samplerAnisotropy = VK_TRUE};
     const char* swapchainExtension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     VkDeviceCreateInfo deviceInfo{.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-                                  .pNext = &features,
+                                  .pNext = &vulkan13,
                                   .queueCreateInfoCount = 1,
                                   .pQueueCreateInfos = &queue,
                                   .enabledExtensionCount = 1,
-                                  .ppEnabledExtensionNames = &swapchainExtension};
+                                  .ppEnabledExtensionNames = &swapchainExtension,
+                                  .pEnabledFeatures = &enabledFeatures};
     if (!checkVulkan(vkCreateDevice(m_pDevice, &deviceInfo, nullptr, &m_device), "Create device")) {
         return false;
     }

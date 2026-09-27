@@ -3,7 +3,6 @@
 #include "../assets/Assets.hpp"
 
 #include <glm/glm.hpp>
-#include <entt/entity/entity.hpp>
 #include <variant>
 
 enum class PhysicsMotionType {
@@ -53,19 +52,5 @@ struct RigidBodyComponent {
     bool sensor{false};
     bool allowSleeping{true};
     bool continuousCollision{false};
-};
-
-struct CharacterControllerComponent {
-    float radius{0.4f};
-    float halfHeight{0.5f};
-    float moveSpeed{4.0f};
-    float sprintMultiplier{1.75f};
-    float jumpSpeed{5.5f};
-    float acceleration{30.0f};
-    float airControl{0.25f};
-    float lookSensitivity{0.0025f};
-    float yawRadians{0.0f};
-    float pitchRadians{0.0f};
-    bool grounded{false};
-    entt::entity camera{entt::null};
+    bool lockRotation{false};
 };

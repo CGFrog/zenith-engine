@@ -1,0 +1,332 @@
+# Repository guide
+
+This guide is a map of Zenith's checked-in files. It explains what each element
+owns, what depends on it, and where a change belongs. For the runtime sequence
+and subsystem contracts, see [Architecture](ARCHITECTURE.md). For commands and
+common changes, see [Development](DEVELOPMENT.md).
+
+## Top level
+
+| Path | Purpose |
+| --- | --- |
+| `CMakeLists.txt` | Declares the C++20 project, pins third-party dependencies, builds the engine, executable, shaders, assets, and tests, and supplies runtime directory definitions. |
+| `README.md` | Quick-start overview, controls, current feature summary, and links into these detailed guides. |
+| `AGENTS.md` | Root contributor policy and navigation. Scoped guides under `src/engine/`, `src/editor/`, `src/game/`, and `tests/` add local ownership rules. |
+| `.clang-format` | Formatting rules for C++ headers and sources. |
+| `.gitignore` | Excludes generated and local files such as the build tree. |
+| `.vscode/` | Optional editor configuration. It is not required by the build. |
+| `assets/` | Source runtime content copied into the build tree. |
+| `shaders/` | GLSL source compiled to SPIR-V during the build. |
+| `src/` | Application composition and reusable engine implementation. |
+| `tests/` | CPU-side subsystem and integration tests registered with CTest. |
+| `build/` | Generated configuration, dependencies, binaries, copied assets, and compiled shaders. Do not edit generated contents. |
+
+## Workspace layout
+
+```text
+src/
+|- engine/                 reusable runtime library
+|  |- application/         lifecycle contracts
+|  |- assets/              CPU asset import and storage
+|  |- audio/               decoding, streaming, and mixing
+|  |- graphics/            rendering and Vulkan implementation
+|  |- input/ physics/ scene/ window/
+|- editor/                 authoring application
+|  |- application/ document/ interaction/ settings/
+|- game/                   current demo client
+|  |- application/ player/ scene/
+`- main.cpp                game executable composition root
+tests/
+|- engine/                 reusable subsystem contracts
+|- editor/                 authoring behavior
+`- game/                   demo integration
+```
+
+Folder-crossing includes use paths rooted at `src/`. CMake source lists are
+explicit, so a file move must update `CMakeLists.txt` as well as include sites.
+
+## Build description
+
+`CMakeLists.txt` creates these targets:
+
+| Target | Kind | Responsibility |
+| --- | --- | --- |
+| `zenith_engine` | Static library | Reusable application lifecycle, scene, asset, audio, input, physics, graphics, and window systems. |
+| `zenith_demo` | Static library | Current game composition, scene factory, first-person controller, and gameplay input mapping. |
+| `zenith` | Executable | Thin composition root that initializes `Engine` and runs `DemoApplication`. |
+| `zenith_editor_app` | Static library | Editor lifecycle, documents, history, interaction, and settings. |
+| `zenith_editor` | Executable | Thin editor composition root. |
+| `zenith_shaders` | Custom target | Recursively finds recognized GLSL stages in `shaders/` and compiles each file with glslang for Vulkan 1.4. |
+| `zenith_assets` | Custom target | Copies `assets/` to `build/assets/` so runtime paths do not depend on the process working directory. |
+| `zenith_asset_tests` | Test executable | Asset importing and scene hierarchy behavior. |
+| `zenith_physics_tests` | Test executable | Rigid bodies, contacts, impulses, raycasts, mesh collision, and cleanup. |
+| `zenith_application_tests` | Test executable | Lifecycle ordering, deferred switching, failed-load cleanup, demo composition, controls, and reload behavior. |
+
+The build publishes `src/` as the engine include root and defines
+`ZENITH_SHADER_DIR` and `ZENITH_ASSET_DIR` with absolute build-tree paths.
+Consumers therefore include headers as, for example, `engine/scene/Scene.hpp`,
+while runtime code finds generated content through the definitions rather than
+the current directory.
+
+Third-party libraries are pinned with CMake `FetchContent`:
+
+| Dependency | Role |
+| --- | --- |
+| Vulkan Headers + Volk | Vulkan declarations and dynamic loader. |
+| Vulkan Memory Allocator (VMA) | GPU buffer and image memory allocation. |
+| SDL 3 | Window creation, Vulkan surface creation, events, keyboard, and mouse. |
+| GLM | Vectors, matrices, quaternions, and transforms. |
+| EnTT | Entity-component registry. |
+| Jolt Physics | Collision detection and rigid-body simulation behind Zenith's physics API. |
+| cgltf | `.gltf`/`.glb` parsing. |
+| stb_image | Image decoding to RGBA pixels. |
+| glslang | Build-time GLSL-to-SPIR-V compiler. |
+| shaderc + SPIR-V Tools | In-process shader compiler dependencies available to the engine target. |
+
+## Application and engine orchestration
+
+### `src/main.cpp`
+
+The composition root. It constructs `Engine` and `DemoApplication`, initializes
+the engine, runs the application, and shuts down in reverse dependency order.
+
+### `src/engine/Engine.hpp` and `Engine.cpp`
+
+`Engine` owns the reusable window, input, renderer, assets, scene, and physics
+instances, plus audio output and voice state. `run(Application&)` creates a
+testable `ApplicationSession`, drives
+variable and fixed scene callbacks, renders the active scene, and applies
+requested transitions after presentation.
+
+The engine loop polls input once per rendered frame, applies view input, runs
+zero or more fixed physics steps, interpolates visible transforms, renders, and
+presents. It also implements bounded smoke runs and rendering benchmarks via
+environment variables.
+
+## Window and input
+
+### `src/engine/window/Window.*`
+
+A small SDL window owner. `init` starts SDL video and creates a resizable Vulkan
+window at 1280x720. `shutdown` destroys the window and quits SDL. Vulkan uses
+surface capabilities and current pixel size when selecting its actual extent.
+
+### `src/engine/input/InputManager.*`
+
+Translates SDL-specific state into device-independent held/pressed keys,
+relative mouse movement, and capture state. Press edges are buffered until the
+first fixed update consumes them, so short inputs are not lost between physics
+ticks. It also reports quit and resize requests. Escape releases relative mouse
+mode; clicking the window captures it.
+
+## Audio
+
+### `src/engine/audio/AudioSystem.*` and `StbVorbis.cpp`
+
+Owns SDL output, clip decoding and caching, streamed Ogg decoding, voice
+lifetime, bus gain/muting, and scene spatialization. Public clip, stream, and
+voice handles are generational; ECS audio components remain declarative.
+`StbVorbis.cpp` contains the isolated third-party decoder implementation.
+
+## Scene and gameplay composition
+
+### `src/engine/scene/Scene.*`
+
+Wraps an EnTT registry and defines the core ECS components:
+
+| Component | Meaning |
+| --- | --- |
+| `NameComponent` | Human-readable entity label. |
+| `TransformComponent` | Local transform relative to a parent and derived world transform. |
+| `RelationshipComponent` | Parent entity plus an owned list of child entities. |
+| `ModelComponent` | Records the model instantiated at a root entity. |
+| `MeshRendererComponent` | Refers to CPU mesh data through a `MeshHandle`. |
+| `CameraComponent` | Perspective projection settings and primary-camera selection. |
+
+`createEntity` always installs name, transform, and relationship components.
+`setParent` updates both sides of a relationship and rejects self-parenting and
+cycles. `instantiateModel` expands imported nodes into entities while preserving
+their hierarchy. `destroyEntity` recursively destroys descendants.
+`updateWorldTransforms` walks roots and computes `world = parent.world * local`.
+
+### `src/engine/application/Application.*`
+
+Defines `Application`, `ApplicationScene`, contexts, deferred scene/quit
+requests, and `ApplicationSession`. The session guarantees load/update/fixed
+update/unload ordering and clears ECS/physics state between scenes while assets
+remain cached.
+
+### `src/game/application/`, `scene/`, and `player/`
+
+`DemoApplication` maps its typed scene enum to engine `SceneKey` values.
+`GameplayScene` loads the room, creates props and the player, and requests a
+fresh gameplay scene when R is pressed. `FirstPersonController` interprets WASD,
+Shift, Space, and mouse input and remains entirely outside `zenith_engine`.
+
+## Editor
+
+`src/editor/main.cpp` is the editor composition root. `application/` owns the
+editor lifecycle and session coordinator; `document/` owns scene file state and
+command history; `interaction/` owns camera, picking, gizmos, and component
+widgets; and `settings/` owns persisted editor preferences. The editor depends
+on the engine, while neither the engine nor demo depends on editor code.
+
+## Assets
+
+### `src/engine/assets/Assets.*`
+
+Defines renderer-independent CPU asset types and opaque typed handles:
+
+- `ModelAsset` is a flat list of named nodes with local transforms, parent
+  indices, and optional mesh handles.
+- `MeshAsset` owns vertices, indices, and material-bearing draw primitives.
+- `MaterialAsset` holds glTF metallic-roughness factors and texture handles.
+- `TextureAsset` stores decoded width, height, and RGBA8 pixels.
+
+`AssetManager` owns these values for its lifetime. It normalizes model paths,
+caches repeated model loads, and resolves handles without exposing its vectors.
+Handles contain an index and generation field; the current append-only manager
+uses generation 1 and does not yet unload or recycle slots.
+
+### `src/engine/assets/ModelImporter.*`
+
+Uses cgltf to parse `.gltf` and `.glb`, load buffers, validate the document, and
+convert supported nodes, meshes, primitives, materials, textures, and transforms
+into Zenith types. It handles indexed and non-indexed triangle geometry and
+generates normals or tangent space when absent. Non-triangle primitives are
+skipped. Parsing and validation failures return descriptive errors.
+
+### `src/engine/assets/ImageDecoder.*`
+
+Uses stb_image to decode an external file or an in-memory embedded image into
+four-channel RGBA8 pixels. It is deliberately independent of Vulkan; GPU upload
+belongs to the renderer.
+
+## Physics
+
+### `src/engine/physics/PhysicsComponents.hpp`
+
+Defines static, kinematic, and dynamic motion; collision layers; box, sphere,
+capsule, and triangle-mesh shapes; rigid-body tuning; and first-person character
+tuning/state. Primitive dimensions are multiplied by transform scale when the
+Jolt shape is created. Triangle meshes reference a `MeshAsset` and are limited
+to static bodies.
+
+### `src/engine/physics/PhysicsWorld.*`
+
+Owns Jolt through a private implementation. Each step discovers entities with
+transform, collider, and rigid-body components; creates missing bodies; removes
+orphaned bodies; moves kinematic bodies from ECS transforms; advances Jolt; and
+writes dynamic translation/rotation back while preserving scale. Interpolation
+blends previous and current dynamic poses for smooth rendering.
+
+It exposes forces, impulses, velocity, raycasts, and begin/persist/end contacts
+in terms of ECS entities. `refreshBody` rebuilds a body after collider or body
+settings change. Native Jolt accessors are deliberate advanced escape hatches.
+
+## Graphics
+
+Graphics consumes scene and asset data but does not know gameplay rules:
+
+```text
+Renderer
+|- VulkanContext
+|- Surface
+|- Swapchain (presentation images, depth image, presentation semaphores)
+|- FrameResources[3] (command pool/buffer, acquire semaphore, fence)
+`- MeshPass
+   |- GPU mesh/texture/material caches
+   |- shadow pass and main mesh pipeline
+   `- PostProcessPass (per-frame HDR targets and fullscreen pipeline)
+```
+
+### `src/engine/graphics/Renderer.*`
+
+Coordinates initialization, per-frame work, resize recovery, and shutdown. A
+frame waits for its reusable slot, acquires a swapchain image, records mesh and
+post-processing commands, submits them, and presents. Out-of-date/suboptimal
+surfaces trigger recreation; zero-sized surfaces are skipped until usable.
+
+### `src/engine/graphics/vulkan/VulkanContext.*`
+
+Owns the Vulkan instance, optional validation messenger, selected physical
+device, logical device, graphics/presentation queue, and VMA allocator. Device
+selection checks the required Vulkan features and presentation support.
+
+### `src/engine/graphics/surface/Surface.*`
+
+Owns the SDL-created `VkSurfaceKHR` and queries capabilities, formats,
+presentation modes, queue presentation support, and format support.
+
+### `src/engine/graphics/swapchain/Swapchain.*`
+
+Chooses extent, BGRA8 sRGB output, a supported depth format, and presentation
+mode. It owns the swapchain, image views, per-image render-complete semaphores,
+and a VMA-backed depth image/view. FIFO is the portable fallback.
+
+### `src/engine/graphics/resources/FrameResources.*`
+
+Owns one frame slot's command pool, command buffer, image-acquired semaphore,
+and completion fence. Three instances prevent reuse while the GPU is working.
+
+### `src/engine/graphics/shader/ShaderModule.*`
+
+A short-lived RAII wrapper that reads SPIR-V and creates a `VkShaderModule` for
+pipeline creation. Its destructor releases the module.
+
+### `src/engine/graphics/pipeline/GraphicsPipeline.*`
+
+Builds and owns the main mesh or depth-only shadow pipeline and layout using
+Vulkan dynamic rendering.
+
+### `src/engine/graphics/passes/MeshPass.*`
+
+Finds the primary camera, updates per-frame camera data, lazily uploads CPU
+assets to renderer-owned GPU caches, and creates material descriptors. It first
+renders a directional shadow map and then the scene into a floating-point HDR
+target using Cook-Torrance GGX lighting plus hemispherical sky/ground indirect
+lighting. Directional and environment scene components supply lighting and
+shadow settings. Fallback textures fill missing maps.
+
+### `src/engine/graphics/passes/PostProcessPass.*`
+
+Owns one RGBA16F scene target per frame slot and a fullscreen pipeline. It
+samples HDR color, applies threshold bloom, edge smoothing, and ACES tone
+mapping, then writes the presentation image.
+
+## Shaders
+
+| File | Stage and job |
+| --- | --- |
+| `shaders/mesh.vert` | Transforms mesh vertices and supplies world-space attributes. |
+| `shaders/mesh.frag` | Samples glTF materials, evaluates GGX lighting, shadows, occlusion, and emission. |
+| `shaders/shadow.vert` | Transforms geometry into directional-light depth space. |
+| `shaders/fullscreen.vert` | Generates a fullscreen triangle without a vertex buffer. |
+| `shaders/post.frag` | Combines HDR color into the tone-mapped output. |
+
+Recognized shader extensions automatically produce matching
+`build/shaders/<relative-path>.spv` files.
+
+## Runtime content
+
+| Path | Purpose |
+| --- | --- |
+| `assets/sample.gltf` | Small importer and static-mesh-collider fixture. |
+| `assets/basic_map.gltf` | Current room, materials, and prop geometry. |
+| `assets/audio/*` | Demo interaction and ambient audio plus provenance notes. |
+| `assets/textures/*.png` | Base-color, normal, and packed occlusion/roughness/metallic maps. |
+| `assets/textures/SOURCE.md` | Texture provenance and channel/convention notes. |
+
+The source directory is copied as a whole to `build/assets/` for runtime use.
+
+## Tests
+
+| Path | Coverage |
+| --- | --- |
+| `tests/engine/` | Audio, asset importing, scene documents/hierarchy, and physics contracts. |
+| `tests/editor/` | Settings, document state, command history, camera behavior, and component editing helpers. |
+| `tests/game/` | Application callback order, scene changes, cleanup, demo composition, controls, and reload behavior. |
+
+The executables return a nonzero status on failed expectations so CTest can
+report failures without another test framework. Test sources and registrations
+are explicit in `CMakeLists.txt`.

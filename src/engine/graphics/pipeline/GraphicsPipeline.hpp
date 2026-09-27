@@ -8,7 +8,14 @@ class GraphicsPipeline {
     GraphicsPipeline& operator=(const GraphicsPipeline&) = delete;
 
     bool initGraphicsPipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,
-                              VkDescriptorSetLayout cameraLayout, VkShaderModule vertex, VkShaderModule fragment);
+                              VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout materialLayout,
+                              VkShaderModule vertex, VkShaderModule fragment);
+    bool initShadowPipeline(VkDevice device, VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
+                            VkShaderModule vertex);
+    bool initOutlinePipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,
+                             VkDescriptorSetLayout cameraLayout, VkShaderModule vertex, VkShaderModule fragment);
+    bool initSelectionMaskPipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,
+                                   VkDescriptorSetLayout cameraLayout, VkShaderModule vertex, VkShaderModule fragment);
     void shutdown(VkDevice device);
 
     VkPipeline handle() const {

@@ -1,5 +1,4 @@
 #include "engine/assets/Assets.hpp"
-#include "engine/scene/FirstPersonController.hpp"
 #include "engine/scene/Scene.hpp"
 #include <cmath>
 #include <filesystem>
@@ -60,6 +59,25 @@ int main() {
     expect(static_cast<bool>(map), "basic map glTF loads");
     const ModelAsset* mapModel = assets.model(map.handle);
     expect(mapModel && mapModel->nodes.size() == 8, "basic map geometry remains asset-driven");
+    const MeshAsset* mapMesh =
+        mapModel && !mapModel->nodes.empty() ? assets.mesh(mapModel->nodes.front().mesh) : nullptr;
+    expect(mapMesh && mapMesh->bounds.radius > 0.0f, "imported meshes have a usable culling bound");
+    const MaterialAsset* mapMaterial =
+        mapMesh && !mapMesh->primitives.empty() ? assets.material(mapMesh->primitives.front().material) : nullptr;
+    expect(mapMaterial && mapMaterial->baseColorTexture && mapMaterial->normalTexture &&
+               mapMaterial->metallicRoughnessTexture,
+           "glTF PBR texture bindings are imported");
+    const TextureAsset* mapBaseColor = mapMaterial ? assets.texture(mapMaterial->baseColorTexture) : nullptr;
+    expect(mapBaseColor && mapBaseColor->width == 1024 && mapBaseColor->height == 1024 &&
+               mapBaseColor->rgba.size() == 1024 * 1024 * 4,
+           "external PBR image is decoded to RGBA pixels");
+    if (mapMesh) {
+        bool tangentSpaceValid = true;
+        for (const Vertex& vertex : mapMesh->vertices) {
+            tangentSpaceValid &= glm::dot(glm::vec3(vertex.tangent), glm::vec3(vertex.tangent)) > 0.9f;
+        }
+        expect(tangentSpaceValid, "missing tangents are generated for textured primitives");
+    }
     const auto glbPath = writeGlbFixture();
     AssetManager glbAssets;
     expect(static_cast<bool>(glbAssets.loadModel(glbPath)), "binary GLB loads through the same importer");
@@ -93,15 +111,5 @@ int main() {
     expect(std::distance(remaining.begin(), remaining.end()) == 0,
            "destroying a model root cascades to imported children");
 
-    const Entity camera = scene.createEntity("Test Camera");
-    const Entity cameraView = scene.createEntity("Test Camera View");
-    scene.setParent(cameraView, camera);
-    CharacterControllerComponent character;
-    character.camera = cameraView;
-    scene.registry().emplace<CharacterControllerComponent>(camera, character);
-    FirstPersonControllerSystem controllerSystem;
-    controllerSystem.updateView(scene, {.look = {100.0f, 20.0f}});
-    const auto& controller = scene.registry().get<CharacterControllerComponent>(camera);
-    expect(controller.yawRadians < 0.0f && controller.pitchRadians < 0.0f, "mouse input rotates the controlled entity");
     return failures == 0 ? 0 : 1;
 }

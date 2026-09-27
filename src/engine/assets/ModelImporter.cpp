@@ -2,11 +2,13 @@
 #include "ModelImporter.hpp"
 #include "ImageDecoder.hpp"
 
+#include <algorithm>
 #include <cgltf.h>
+#include <cmath>
+#include <cstdlib>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 #include <memory>
-#include <cstdlib>
 
 namespace {
 struct CgltfDeleter {
@@ -107,6 +109,25 @@ void generateTangents(MeshAsset& mesh, uint32_t firstVertex, uint32_t vertexCoun
     }
 }
 
+BoundingSphere calculateBounds(const std::vector<Vertex>& vertices) {
+    if (vertices.empty()) {
+        return {};
+    }
+    glm::vec3 minimum = vertices.front().position;
+    glm::vec3 maximum = minimum;
+    for (const Vertex& vertex : vertices) {
+        minimum = glm::min(minimum, vertex.position);
+        maximum = glm::max(maximum, vertex.position);
+    }
+    const glm::vec3 center = (minimum + maximum) * 0.5f;
+    float radiusSquared = 0.0f;
+    for (const Vertex& vertex : vertices) {
+        const glm::vec3 offset = vertex.position - center;
+        radiusSquared = std::max(radiusSquared, glm::dot(offset, offset));
+    }
+    return {.center = center, .radius = std::sqrt(radiusSquared)};
+}
+
 TextureHandle textureHandle(const cgltf_texture_view& view, const cgltf_data& data,
                             const std::vector<TextureHandle>& images) {
     if (!view.texture || !view.texture->image) {
@@ -143,15 +164,17 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
         const cgltf_image& image = data->images[i];
         ImageDecodeResult decoded;
         if (image.buffer_view && image.buffer_view->buffer && image.buffer_view->buffer->data) {
-            const auto* bytes = static_cast<const uint8_t*>(image.buffer_view->buffer->data) + image.buffer_view->offset;
-            decoded = decodeImageMemory(bytes, image.buffer_view->size, image.name ? image.name : "embedded glTF image");
+            const auto* bytes =
+                static_cast<const uint8_t*>(image.buffer_view->buffer->data) + image.buffer_view->offset;
+            decoded =
+                decodeImageMemory(bytes, image.buffer_view->size, image.name ? image.name : "embedded glTF image");
         } else if (image.uri && std::strncmp(image.uri, "data:", 5) != 0) {
             decoded = decodeImageFile(path.parent_path() / image.uri);
         } else if (image.uri) {
             const char* comma = std::strchr(image.uri, ',');
             void* bytes = nullptr;
-            if (comma && cgltf_load_buffer_base64(&options, std::strlen(comma + 1), comma + 1, &bytes) ==
-                             cgltf_result_success) {
+            if (comma &&
+                cgltf_load_buffer_base64(&options, std::strlen(comma + 1), comma + 1, &bytes) == cgltf_result_success) {
                 const size_t decodedSize = (std::strlen(comma + 1) / 4) * 3;
                 decoded = decodeImageMemory(bytes, decodedSize, image.name ? image.name : "data URI image");
                 std::free(bytes);
@@ -236,8 +259,7 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
                 if (sourceTangents && sourceTangents->type == cgltf_type_vec4 && vertexIndex < sourceTangents->count) {
                     float tangent[4]{};
                     cgltf_accessor_read_float(sourceTangents, vertexIndex, tangent, 4);
-                    mesh.vertices[firstVertex + vertexIndex].tangent =
-                        {tangent[0], tangent[1], tangent[2], tangent[3]};
+                    mesh.vertices[firstVertex + vertexIndex].tangent = {tangent[0], tangent[1], tangent[2], tangent[3]};
                 }
             }
 
@@ -274,7 +296,8 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
         }
 
         if (!mesh.primitives.empty()) {
-            meshes[meshIndex] = m_assets.addMesh(std::move(mesh));
+            mesh.bounds = calculateBounds(mesh.vertices);
+            meshes[meshIndex] = m_assets.addMesh(std::move(mesh), path, static_cast<uint32_t>(meshIndex));
         }
     }
 
@@ -307,5 +330,5 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
         return {.error = "Model contains no renderable triangle primitives: " + path.string()};
     }
 
-    return {.handle = m_assets.addModel(std::move(model))};
+    return {.handle = m_assets.addModel(std::move(model), path)};
 }

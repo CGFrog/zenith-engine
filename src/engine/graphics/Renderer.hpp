@@ -1,9 +1,13 @@
 #pragma once
 #include "../assets/Assets.hpp"
+#include "../input/InputManager.hpp"
 #include "../scene/Scene.hpp"
 #include "../window/Window.hpp"
+#include "Rendering.hpp"
 #include "passes/MeshPass.hpp"
+#include "passes/UiPass.hpp"
 #include "resources/FrameResources.hpp"
+#include "resources/ViewportTarget.hpp"
 #include "surface/Surface.hpp"
 #include "swapchain/Swapchain.hpp"
 #include "vulkan/VulkanContext.hpp"
@@ -11,8 +15,11 @@
 
 class Renderer {
   public:
-    bool init(const Window& window);
+    bool init(const Window& window, RenderRuntime& rendering);
     bool drawFrame(const Window& window, Scene& scene, const AssetManager& assets);
+    void processUiEvent(const SDL_Event& event);
+    void beginUiFrame();
+    InputCapture uiInputCapture() const;
 
     const char* presentModeName() const {
         return m_swapchain.presentModeName();
@@ -36,6 +43,7 @@ class Renderer {
     void destroySwapchainResources();
     FrameStatus prepareSurface(const Window& window);
     bool recreateSwapchain(const Window& window);
+    bool prepareViewport();
     FrameStatus acquireImage(const FrameResources& frame, uint32_t& imageIndex);
     bool recordFrame(const FrameResources& frame, uint32_t imageIndex, const Scene& scene, const AssetManager& assets);
     bool presentFrame(uint32_t imageIndex);
@@ -44,8 +52,13 @@ class Renderer {
     Surface m_surface;
     Swapchain m_swapchain;
     MeshPass m_meshPass;
+    UiPass m_uiPass;
+    ViewportTarget m_viewportTarget;
     static constexpr uint32_t framesInFlight = 3;
     std::array<FrameResources, framesInFlight> m_frames;
     uint32_t m_currentFrame{0};
+    uint32_t m_timingSampleCounter{0};
     bool m_resizeRequested{false};
+    bool m_viewportFailed{false};
+    RenderRuntime* m_rendering{nullptr};
 };

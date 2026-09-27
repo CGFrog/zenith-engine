@@ -7,8 +7,8 @@ void FirstPersonControllerSystem::updateView(Scene& scene, const InputState& inp
     auto controllers = scene.registry().view<CharacterControllerComponent>();
     for (Entity entity : controllers) {
         auto& controller = controllers.get<CharacterControllerComponent>(entity);
-        controller.yawRadians -= input.look.x * controller.lookSensitivity;
-        controller.pitchRadians = std::clamp(controller.pitchRadians - input.look.y * controller.lookSensitivity,
+        controller.yawRadians -= input.mouseDelta.x * controller.lookSensitivity;
+        controller.pitchRadians = std::clamp(controller.pitchRadians - input.mouseDelta.y * controller.lookSensitivity,
                                              glm::radians(-89.0f), glm::radians(89.0f));
 
         if (controller.camera == entt::null || !scene.registry().valid(controller.camera)) {
@@ -24,7 +24,7 @@ void FirstPersonControllerSystem::updateView(Scene& scene, const InputState& inp
 }
 
 void FirstPersonControllerSystem::fixedUpdate(Scene& scene, PhysicsWorld& physics, const InputState& input,
-                                               float deltaSeconds) const {
+                                              float deltaSeconds) const {
     auto controllers = scene.registry().view<CharacterControllerComponent, RigidBodyComponent>();
     for (Entity entity : controllers) {
         auto& controller = controllers.get<CharacterControllerComponent>(entity);
@@ -39,11 +39,14 @@ void FirstPersonControllerSystem::fixedUpdate(Scene& scene, PhysicsWorld& physic
 
         glm::vec3 velocity = physics.linearVelocity(entity);
         const glm::mat4 yaw = glm::rotate(glm::mat4(1.0f), controller.yawRadians, glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::vec3 direction = glm::vec3(yaw * glm::vec4(input.movement.x, 0.0f, -input.movement.z, 0.0f));
+        const float inputX = static_cast<float>(input.keyDown(Key::D)) - static_cast<float>(input.keyDown(Key::A));
+        const float inputZ = static_cast<float>(input.keyDown(Key::W)) - static_cast<float>(input.keyDown(Key::S));
+        glm::vec3 direction = glm::vec3(yaw * glm::vec4(inputX, 0.0f, -inputZ, 0.0f));
         if (glm::dot(direction, direction) > 1.0f) {
             direction = glm::normalize(direction);
         }
-        const float speed = controller.moveSpeed * (input.sprint ? controller.sprintMultiplier : 1.0f);
+        const bool sprint = input.keyDown(Key::LeftShift) || input.keyDown(Key::RightShift);
+        const float speed = controller.moveSpeed * (sprint ? controller.sprintMultiplier : 1.0f);
         const glm::vec2 desired(direction.x * speed, direction.z * speed);
         glm::vec2 horizontal(velocity.x, velocity.z);
         const float control = controller.grounded ? 1.0f : controller.airControl;
@@ -51,7 +54,7 @@ void FirstPersonControllerSystem::fixedUpdate(Scene& scene, PhysicsWorld& physic
         horizontal = glm::mix(horizontal, desired, blend);
         velocity.x = horizontal.x;
         velocity.z = horizontal.y;
-        if (input.jumpPressed && controller.grounded) {
+        if (input.keyPressed(Key::Space) && controller.grounded) {
             velocity.y = controller.jumpSpeed;
         }
         physics.setLinearVelocity(entity, velocity);

@@ -99,10 +99,31 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
+# Dear ImGui supplies the immediate-mode authoring widgets used by engine tools.
+# The docking branch is pinned because docking is a core level-editor workflow.
+FetchContent_Declare(
+    imgui
+    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.9b-docking.tar.gz
+    URL_HASH SHA256=466fdef9b18de15f0bb6e288e3d00ffa3d82200ec458ce5e4f724a161d9528a5
+)
+
+FetchContent_Declare(
+    imguizmo
+    URL https://github.com/CedricGuillemet/ImGuizmo/archive/refs/tags/1.10.tar.gz
+    URL_HASH SHA256=a467155ee60a262430478a06c6534ab56fe62b053b896308581f5aa7057f5094
+)
+
 FetchContent_Declare(
     cgltf
     GIT_REPOSITORY https://github.com/jkuhlmann/cgltf.git
     GIT_TAG v1.15
+    GIT_SHALLOW TRUE
+)
+
+FetchContent_Declare(
+    stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20
     GIT_SHALLOW TRUE
 )
 
@@ -113,6 +134,12 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/skypjack/entt.git
     GIT_TAG v3.13.2
     GIT_SHALLOW TRUE
+)
+
+FetchContent_Declare(
+    nlohmann_json
+    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+    URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa
 )
 
 # Jolt supplies the low-level collision detection and constraint solver. Zenith
@@ -157,11 +184,33 @@ FetchContent_MakeAvailable(
     volk
     glm
     SDL
+    imgui
+    imguizmo
     cgltf
+    stb
     EnTT
+    nlohmann_json
     JoltPhysics
     VulkanMemoryAllocator
 )
+
+add_library(imgui STATIC
+    "${imgui_SOURCE_DIR}/imgui.cpp"
+    "${imgui_SOURCE_DIR}/imgui_demo.cpp"
+    "${imgui_SOURCE_DIR}/imgui_draw.cpp"
+    "${imgui_SOURCE_DIR}/imgui_tables.cpp"
+    "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
+    "${imgui_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp"
+    "${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp"
+    "${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp"
+)
+target_include_directories(imgui PUBLIC
+    "${imgui_SOURCE_DIR}"
+    "${imgui_SOURCE_DIR}/backends"
+)
+target_compile_definitions(imgui PUBLIC IMGUI_IMPL_VULKAN_USE_VOLK VK_NO_PROTOTYPES)
+target_link_libraries(imgui PUBLIC Vulkan::Headers volk SDL3::SDL3)
+target_link_libraries(imguizmo PUBLIC imgui)
 
 # cgltf is a single-header library and does not provide its own CMake target.
 add_library(cgltf INTERFACE)
@@ -169,31 +218,74 @@ add_library(cgltf::cgltf ALIAS cgltf)
 target_include_directories(cgltf INTERFACE "${cgltf_SOURCE_DIR}")
 
 add_library(stb INTERFACE)
-target_include_directories(stb INTERFACE "${sdl_SOURCE_DIR}/src/video")
+target_include_directories(stb INTERFACE "${stb_SOURCE_DIR}")
 
 add_library(zenith_engine STATIC
+    src/engine/audio/AudioSystem.cpp
+    src/engine/audio/StbVorbis.cpp
     src/engine/Engine.cpp
+    src/engine/application/Application.cpp
     src/engine/assets/Assets.cpp
     src/engine/assets/ModelImporter.cpp
     src/engine/assets/ImageDecoder.cpp
     src/engine/graphics/Renderer.cpp
+    src/engine/graphics/RenderSubmission.cpp
     src/engine/graphics/passes/MeshPass.cpp
+    src/engine/graphics/passes/PostProcessPass.cpp
+    src/engine/graphics/passes/UiPass.cpp
     src/engine/graphics/pipeline/GraphicsPipeline.cpp
     src/engine/graphics/resources/FrameResources.cpp
+    src/engine/graphics/resources/UploadContext.cpp
+    src/engine/graphics/resources/ViewportTarget.cpp
     src/engine/graphics/shader/ShaderModule.cpp
     src/engine/graphics/surface/Surface.cpp
     src/engine/graphics/swapchain/Swapchain.cpp
     src/engine/graphics/vulkan/VulkanContext.cpp
     src/engine/input/InputManager.cpp
     src/engine/physics/PhysicsWorld.cpp
-    src/engine/scene/FirstPersonController.cpp
-    src/engine/scene/TemplateScene.cpp
     src/engine/scene/Scene.cpp
+    src/engine/scene/SceneDocument.cpp
     src/engine/window/Window.cpp
 )
 
+if(MSVC)
+    set_source_files_properties(src/engine/audio/StbVorbis.cpp PROPERTIES COMPILE_OPTIONS /W0)
+endif()
+
+add_library(zenith_demo STATIC
+    src/game/application/DemoApplication.cpp
+    src/game/player/FirstPersonController.cpp
+    src/game/scene/DemoScene.cpp
+    src/game/scene/GameplayScene.cpp
+)
+target_link_libraries(zenith_demo PUBLIC zenith_engine)
+
 add_executable(zenith src/main.cpp)
-target_link_libraries(zenith PRIVATE zenith_engine)
+target_link_libraries(zenith PRIVATE zenith_demo)
+
+add_library(zenith_editor_app STATIC
+    src/editor/application/EditorApplication.cpp
+    src/editor/application/EditorDiagnostics.cpp
+    src/editor/application/EditorPlayMode.cpp
+    src/editor/application/EditorShortcuts.cpp
+    src/editor/application/EditorSession.cpp
+    src/editor/document/CommandHistory.cpp
+    src/editor/document/EditorDocument.cpp
+    src/editor/document/EditorRecovery.cpp
+    src/editor/document/SceneFragment.cpp
+    src/editor/interaction/ComponentEditors.cpp
+    src/editor/interaction/EditorCamera.cpp
+    src/editor/project/AssetCatalog.cpp
+    src/editor/project/ProjectConfig.cpp
+    src/editor/project/ThumbnailCache.cpp
+    src/editor/settings/EditorSettings.cpp
+)
+target_link_libraries(zenith_editor_app PUBLIC zenith_engine)
+target_link_libraries(zenith_editor_app PUBLIC imguizmo::imguizmo)
+target_compile_definitions(zenith_editor_app PRIVATE GLM_ENABLE_EXPERIMENTAL)
+
+add_executable(zenith_editor src/editor/main.cpp)
+target_link_libraries(zenith_editor PRIVATE zenith_editor_app zenith_demo)
 
 # Compile each shader in shaders/ to a matching .spv file in the build tree.
 # glslang infers the shader stage from the source extension.
@@ -264,20 +356,37 @@ target_link_libraries(zenith_engine PUBLIC
     cgltf::cgltf
     stb
     EnTT::EnTT
+    nlohmann_json::nlohmann_json
     Jolt
     GPUOpen::VulkanMemoryAllocator
     shaderc
+    imgui
 )
 
 if(MSVC)
     target_compile_options(zenith_engine PRIVATE /W4 /permissive-)
+    target_compile_options(zenith_demo PRIVATE /W4 /permissive-)
+    target_compile_options(zenith_editor_app PRIVATE /W4 /permissive-)
 else()
     target_compile_options(zenith_engine PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(zenith_demo PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(zenith_editor_app PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(zenith_audio_tests tests/engine/AudioSystemTests.cpp)
+    target_compile_definitions(zenith_audio_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_audio_tests zenith_assets)
+    target_link_libraries(zenith_audio_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_audio_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_audio_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_audio COMMAND zenith_audio_tests)
+
     add_executable(zenith_asset_tests
-        tests/AssetSceneTests.cpp
+        tests/engine/AssetSceneTests.cpp
     )
     target_compile_definitions(zenith_asset_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
     add_dependencies(zenith_asset_tests zenith_assets)
@@ -289,14 +398,159 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_asset_scene COMMAND zenith_asset_tests)
 
-    add_executable(zenith_physics_tests tests/PhysicsTests.cpp)
+    add_executable(zenith_physics_tests tests/engine/PhysicsTests.cpp)
     target_compile_definitions(zenith_physics_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
     add_dependencies(zenith_physics_tests zenith_assets)
     target_link_libraries(zenith_physics_tests PRIVATE zenith_engine)
     if(MSVC)
         target_compile_options(zenith_physics_tests PRIVATE /W4 /permissive-)
     else()
-    target_compile_options(zenith_physics_tests PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(zenith_physics_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_physics COMMAND zenith_physics_tests)
+
+    add_executable(zenith_application_tests tests/game/ApplicationLifecycleTests.cpp)
+    target_compile_definitions(zenith_application_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_application_tests zenith_assets)
+    target_link_libraries(zenith_application_tests PRIVATE zenith_demo)
+    if(MSVC)
+        target_compile_options(zenith_application_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_application_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_application_lifecycle COMMAND zenith_application_tests)
+
+    add_executable(zenith_editor_settings_tests
+        tests/editor/EditorSettingsTests.cpp
+        src/editor/settings/EditorSettings.cpp
+    )
+    target_include_directories(zenith_editor_settings_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    if(MSVC)
+        target_compile_options(zenith_editor_settings_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_editor_settings_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_editor_settings COMMAND zenith_editor_settings_tests)
+
+    add_executable(zenith_scene_document_tests tests/engine/SceneDocumentTests.cpp)
+    target_compile_definitions(zenith_scene_document_tests PRIVATE
+        ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}"
+    )
+    add_dependencies(zenith_scene_document_tests zenith_assets)
+    target_link_libraries(zenith_scene_document_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_scene_document_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_scene_document_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_scene_document COMMAND zenith_scene_document_tests)
+
+    add_executable(zenith_editor_document_tests
+        tests/editor/EditorDocumentTests.cpp
+        src/editor/document/EditorDocument.cpp
+    )
+    target_include_directories(zenith_editor_document_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(zenith_editor_document_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_editor_document_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_editor_document_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_editor_document COMMAND zenith_editor_document_tests)
+
+    add_executable(zenith_scene_hierarchy_tests tests/engine/SceneHierarchyTests.cpp)
+    target_link_libraries(zenith_scene_hierarchy_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_scene_hierarchy_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_scene_hierarchy_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_scene_hierarchy COMMAND zenith_scene_hierarchy_tests)
+
+    add_executable(zenith_render_submission_tests tests/engine/RenderSubmissionTests.cpp)
+    target_link_libraries(zenith_render_submission_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_render_submission COMMAND zenith_render_submission_tests)
+
+    add_executable(zenith_render_regression_tests tests/engine/RenderRegressionTests.cpp)
+    add_test(NAME zenith_render_regression COMMAND zenith_render_regression_tests)
+
+    add_executable(zenith_render_packet_benchmark tests/engine/RenderPacketBenchmarkTests.cpp)
+    target_link_libraries(zenith_render_packet_benchmark PRIVATE zenith_engine)
+    add_test(NAME zenith_render_packet_benchmark COMMAND zenith_render_packet_benchmark)
+
+    add_executable(zenith_component_editor_tests tests/editor/ComponentEditorTests.cpp)
+    target_link_libraries(zenith_component_editor_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_component_editor_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_component_editor_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_component_editor COMMAND zenith_component_editor_tests)
+
+    add_executable(zenith_command_history_tests
+        tests/editor/CommandHistoryTests.cpp
+        src/editor/document/CommandHistory.cpp
+    )
+    target_include_directories(zenith_command_history_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(zenith_command_history_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_command_history_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_command_history_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_command_history COMMAND zenith_command_history_tests)
+
+    add_executable(zenith_editor_camera_tests tests/editor/EditorCameraTests.cpp)
+    target_compile_definitions(zenith_editor_camera_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_editor_camera_tests zenith_assets)
+    target_link_libraries(zenith_editor_camera_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_editor_camera_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_editor_camera_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_editor_camera COMMAND zenith_editor_camera_tests)
+
+    add_executable(zenith_project_asset_tests
+        tests/editor/ProjectAssetTests.cpp
+        src/editor/project/AssetCatalog.cpp
+        src/editor/project/ProjectConfig.cpp
+    )
+    target_include_directories(zenith_project_asset_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(zenith_project_asset_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_project_asset_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_project_asset_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_project_assets COMMAND zenith_project_asset_tests)
+
+    add_executable(zenith_editor_play_mode_tests
+        tests/editor/EditorPlayModeTests.cpp
+        src/editor/application/EditorPlayMode.cpp
+    )
+    target_include_directories(zenith_editor_play_mode_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(zenith_editor_play_mode_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_editor_play_mode_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_editor_play_mode_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_editor_play_mode COMMAND zenith_editor_play_mode_tests)
+
+    add_executable(zenith_editor_hardening_tests tests/editor/EditorHardeningTests.cpp)
+    target_link_libraries(zenith_editor_hardening_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_editor_hardening_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_editor_hardening_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_editor_hardening COMMAND zenith_editor_hardening_tests)
+
+    add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
+    set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES
+        ENVIRONMENT "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=12"
+        LABELS "vulkan;smoke"
+        TIMEOUT 45
+    )
 endif()

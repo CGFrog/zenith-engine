@@ -3,23 +3,48 @@
 #include "../shader/ShaderModule.hpp"
 #include "../vulkan/VulkanCheck.hpp"
 
+#include <SDL3/SDL_stdinc.h>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
 #include <cstring>
+#include <iostream>
 
 namespace {
+constexpr uint32_t shadowResolution = 1448;
+constexpr uint32_t maximumShadowCascades = 3;
+constexpr uint32_t maximumObjectsPerFrame = 16384;
+
 struct CameraData {
     glm::mat4 viewProjection{1.0f};
+    std::array<glm::mat4, maximumShadowCascades> lightViewProjections{};
+    glm::vec4 cameraPosition{0.0f, 0.0f, 0.0f, 1.0f};
+    glm::vec4 lightDirection{0.4f, 0.8f, 0.5f, 5.0f};
+    glm::vec4 lightColor{1.0f, 0.91f, 0.78f, 1.0f};
+    glm::vec4 environmentSky{0.20f, 0.24f, 0.34f, 0.6f};
+    glm::vec4 environmentGround{0.08f, 0.065f, 0.05f, 0.35f};
+    glm::vec4 shadowSettings{0.01f, 1.0f, 0.0f, 0.0f};
+    glm::vec4 cascadeSplits{1000.0f};
+    glm::vec4 renderingSettings{0.0f};
 };
 
 struct PushConstants {
     glm::mat4 model{1.0f};
     glm::vec4 baseColor{1.0f};
+    glm::vec4 material{1.0f, 1.0f, 1.0f, 1.0f};
+    glm::vec4 emissive{0.0f};
+};
+
+struct ObjectData {
+    glm::mat4 model{1.0f};
 };
 
 void imageBarrier(VkCommandBuffer commandBuffer, VkImage image, VkImageAspectFlags aspect, VkImageLayout oldLayout,
                   VkImageLayout newLayout, VkPipelineStageFlags2 srcStage, VkPipelineStageFlags2 dstStage,
-                  VkAccessFlags2 srcAccess, VkAccessFlags2 dstAccess) {
+                  VkAccessFlags2 srcAccess, VkAccessFlags2 dstAccess, uint32_t layerCount = 1) {
     VkImageMemoryBarrier2 barrier{
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
         .srcStageMask = srcStage,
@@ -32,30 +57,106 @@ void imageBarrier(VkCommandBuffer commandBuffer, VkImage image, VkImageAspectFla
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .image = image,
         .subresourceRange = {
-            .aspectMask = aspect, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1}};
+            .aspectMask = aspect, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = layerCount}};
     VkDependencyInfo dependency{
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier};
     vkCmdPipelineBarrier2(commandBuffer, &dependency);
-} // namespace
-} // namespace
-
-bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat depthFormat, uint32_t frameCount) {
-    m_device = context.device();
-    m_allocator = context.vmaAllocator();
-    m_queue = context.gfxQueue();
-    m_queueFamily = context.gfxQueueIndex();
-    return createDescriptors(frameCount) && createPipeline(colorFormat, depthFormat);
 }
 
-bool MeshPass::createDescriptors(uint32_t frameCount) {
-    VkDescriptorSetLayoutBinding binding{.binding = 0,
-                                         .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                                         .descriptorCount = 1,
-                                         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT};
+template <typename Component> Component resolvePrimary(const Scene& scene) {
+    const auto components = scene.registry().view<const Component>();
+    Entity selected = entt::null;
+    for (Entity entity : components) {
+        const Component& component = components.template get<const Component>(entity);
+        if (component.primary && (selected == entt::null || entt::to_integral(entity) < entt::to_integral(selected))) {
+            selected = entity;
+        }
+    }
+    return selected == entt::null ? Component{} : components.template get<const Component>(selected);
+}
+
+glm::vec3 normalizedLightDirection(const glm::vec3& direction) {
+    constexpr float minimumDirectionLength = 0.0001f;
+    if (glm::dot(direction, direction) < minimumDirectionLength * minimumDirectionLength) {
+        return glm::normalize(DirectionalLightComponent{}.direction);
+    }
+    return glm::normalize(direction);
+}
+
+struct Frustum {
+    std::array<glm::vec4, 6> planes;
+};
+
+Frustum makeFrustum(const glm::mat4& matrix) {
+    const glm::mat4 rows = glm::transpose(matrix);
+    Frustum frustum{
+        {rows[3] + rows[0], rows[3] - rows[0], rows[3] + rows[1], rows[3] - rows[1], rows[2], rows[3] - rows[2]}};
+    for (glm::vec4& plane : frustum.planes) {
+        const float length = glm::length(glm::vec3(plane));
+        if (length > 0.0f) {
+            plane /= length;
+        }
+    }
+    return frustum;
+}
+
+bool sphereVisible(const Frustum& frustum, const glm::vec3& center, float radius) {
+    for (const glm::vec4& plane : frustum.planes) {
+        if (glm::dot(glm::vec3(plane), center) + plane.w < -radius) {
+            return false;
+        }
+    }
+    return true;
+}
+
+uint64_t handleKey(MeshHandle handle) {
+    return (static_cast<uint64_t>(handle.generation) << 32) | handle.index;
+}
+
+uint64_t handleKey(MaterialHandle handle) {
+    return (static_cast<uint64_t>(handle.generation) << 32) | handle.index;
+}
+} // namespace
+
+bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat depthFormat, uint32_t frameCount,
+                    VkExtent2D extent, VkImageView depthView) {
+    m_device = context.device();
+    m_allocator = context.vmaAllocator();
+    m_packetCachingEnabled = SDL_getenv("ZENITH_DISABLE_RENDER_PACKET_CACHE") == nullptr;
+    if (!m_uploadContext.init(context) || !createDescriptors(context, frameCount)) {
+        return false;
+    }
+    TextureAsset white{.width = 1, .height = 1, .rgba = {255, 255, 255, 255}};
+    TextureAsset normal{.width = 1, .height = 1, .rgba = {128, 128, 255, 255}};
+    return uploadTexture(white, m_whiteTexture) && uploadTexture(normal, m_normalTexture) &&
+           createShadowResources(depthFormat) &&
+           m_postProcess.init(context, colorFormat, depthFormat, frameCount, extent, depthView) &&
+           createPipeline(PostProcessPass::sceneFormat, depthFormat);
+}
+
+bool MeshPass::resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView) {
+    m_depthInitialized = false;
+    return m_postProcess.resize(context, extent, depthView);
+}
+
+bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCount) {
+    const VkDescriptorSetLayoutBinding cameraBindings[]{
+        {.binding = 0,
+         .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT},
+        {.binding = 1,
+         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        {.binding = 2,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT}};
     VkDescriptorSetLayoutCreateInfo layoutInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 1,
-        .pBindings = &binding,
+        .bindingCount = static_cast<uint32_t>(std::size(cameraBindings)),
+        .pBindings = cameraBindings,
     };
 
     if (!checkVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_cameraLayout),
@@ -63,12 +164,31 @@ bool MeshPass::createDescriptors(uint32_t frameCount) {
         return false;
     }
 
-    VkDescriptorPoolSize poolSize{.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = frameCount};
+    std::array<VkDescriptorSetLayoutBinding, 5> materialBindings{};
+    for (uint32_t i = 0; i < materialBindings.size(); ++i) {
+        materialBindings[i] = {.binding = i,
+                               .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                               .descriptorCount = 1,
+                               .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT};
+    }
+    VkDescriptorSetLayoutCreateInfo materialLayoutInfo{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                                                       .bindingCount = static_cast<uint32_t>(materialBindings.size()),
+                                                       .pBindings = materialBindings.data()};
+    if (!checkVulkan(vkCreateDescriptorSetLayout(m_device, &materialLayoutInfo, nullptr, &m_materialLayout),
+                     "Create material descriptor layout")) {
+        return false;
+    }
+
+    constexpr uint32_t maxMaterials = 256;
+    const VkDescriptorPoolSize poolSizes[]{
+        {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = frameCount},
+        {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = frameCount},
+        {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = maxMaterials * 5 + frameCount}};
     VkDescriptorPoolCreateInfo poolInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets = frameCount,
-        .poolSizeCount = 1,
-        .pPoolSizes = &poolSize,
+        .maxSets = frameCount + maxMaterials,
+        .poolSizeCount = static_cast<uint32_t>(std::size(poolSizes)),
+        .pPoolSizes = poolSizes,
     };
 
     if (!checkVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool),
@@ -117,6 +237,40 @@ bool MeshPass::createDescriptors(uint32_t frameCount) {
                                    .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                                    .pBufferInfo = &descriptorBuffer};
         vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+
+        buffer.size = sizeof(ObjectData) * maximumObjectsPerFrame * (maximumShadowCascades + 1);
+        buffer.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        if (!checkVulkan(vmaCreateBuffer(m_allocator, &buffer, &allocation, &m_cameras[i].objects.buffer,
+                                         &m_cameras[i].objects.allocation, &info),
+                         "Create per-frame object buffer")) {
+            return false;
+        }
+        m_cameras[i].objectsMapped = info.pMappedData;
+        VkDescriptorBufferInfo objectDescriptor{
+            .buffer = m_cameras[i].objects.buffer, .offset = 0, .range = VK_WHOLE_SIZE};
+        write.dstBinding = 2;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.pBufferInfo = &objectDescriptor;
+        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+    }
+
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(context.pDevice(), &properties);
+    VkPhysicalDeviceFeatures features{};
+    vkGetPhysicalDeviceFeatures(context.pDevice(), &features);
+    VkSamplerCreateInfo sampler{
+        .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter = VK_FILTER_LINEAR,
+        .minFilter = VK_FILTER_LINEAR,
+        .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+        .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .anisotropyEnable = features.samplerAnisotropy,
+        .maxAnisotropy = features.samplerAnisotropy ? std::min(8.0f, properties.limits.maxSamplerAnisotropy) : 1.0f,
+        .maxLod = 16.0f};
+    if (!checkVulkan(vkCreateSampler(m_device, &sampler, nullptr, &m_sampler), "Create material sampler")) {
+        return false;
     }
 
     return true;
@@ -126,78 +280,233 @@ bool MeshPass::createPipeline(VkFormat colorFormat, VkFormat depthFormat) {
     const std::filesystem::path shaders{ZENITH_SHADER_DIR};
     ShaderModule vertex(m_device);
     ShaderModule fragment(m_device);
+    ShaderModule shadowVertex(m_device);
+    ShaderModule selectionMaskVertex(m_device);
+    ShaderModule selectionMaskFragment(m_device);
+    ShaderModule outlineVertex(m_device);
+    ShaderModule outlineFragment(m_device);
 
-    if (!vertex.load(shaders / "mesh.vert.spv") || !fragment.load(shaders / "mesh.frag.spv")) {
+    if (!vertex.load(shaders / "mesh.vert.spv") || !fragment.load(shaders / "mesh.frag.spv") ||
+        !shadowVertex.load(shaders / "shadow.vert.spv") || !outlineVertex.load(shaders / "outline.vert.spv") ||
+        !outlineFragment.load(shaders / "outline.frag.spv") ||
+        !selectionMaskVertex.load(shaders / "selection_mask.vert.spv") ||
+        !selectionMaskFragment.load(shaders / "selection_mask.frag.spv")) {
         return false;
     }
 
-    return m_pipeline.initGraphicsPipeline(m_device, colorFormat, depthFormat, m_cameraLayout, vertex.handle(),
-                                           fragment.handle());
+    return m_pipeline.initGraphicsPipeline(m_device, colorFormat, depthFormat, m_cameraLayout, m_materialLayout,
+                                           vertex.handle(), fragment.handle()) &&
+           m_shadowPipeline.initShadowPipeline(m_device, depthFormat, m_cameraLayout, shadowVertex.handle()) &&
+           m_selectionMaskPipeline.initSelectionMaskPipeline(m_device, colorFormat, depthFormat, m_cameraLayout,
+                                                             selectionMaskVertex.handle(),
+                                                             selectionMaskFragment.handle()) &&
+           m_outlinePipeline.initOutlinePipeline(m_device, colorFormat, depthFormat, m_cameraLayout,
+                                                 outlineVertex.handle(), outlineFragment.handle());
+}
+
+bool MeshPass::createShadowResources(VkFormat depthFormat) {
+    m_shadowFormat = depthFormat;
+    VkImageCreateInfo image{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                            .imageType = VK_IMAGE_TYPE_2D,
+                            .format = depthFormat,
+                            .extent = {.width = shadowResolution, .height = shadowResolution, .depth = 1},
+                            .mipLevels = 1,
+                            .arrayLayers = maximumShadowCascades,
+                            .samples = VK_SAMPLE_COUNT_1_BIT,
+                            .tiling = VK_IMAGE_TILING_OPTIMAL,
+                            .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+    VmaAllocationCreateInfo allocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    if (!checkVulkan(vmaCreateImage(m_allocator, &image, &allocation, &m_shadowTexture.image,
+                                    &m_shadowTexture.allocation, nullptr),
+                     "Create shadow map")) {
+        return false;
+    }
+    VkImageViewCreateInfo view{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                               .image = m_shadowTexture.image,
+                               .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+                               .format = depthFormat,
+                               .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+                                                    .baseMipLevel = 0,
+                                                    .levelCount = 1,
+                                                    .baseArrayLayer = 0,
+                                                    .layerCount = maximumShadowCascades}};
+    if (!checkVulkan(vkCreateImageView(m_device, &view, nullptr, &m_shadowTexture.view), "Create shadow map view")) {
+        return false;
+    }
+    for (uint32_t cascade = 0; cascade < maximumShadowCascades; ++cascade) {
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.subresourceRange.baseArrayLayer = cascade;
+        view.subresourceRange.layerCount = 1;
+        if (!checkVulkan(vkCreateImageView(m_device, &view, nullptr, &m_shadowLayerViews[cascade]),
+                         "Create shadow cascade view")) {
+            return false;
+        }
+    }
+    VkSamplerCreateInfo sampler{.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+                                .magFilter = VK_FILTER_LINEAR,
+                                .minFilter = VK_FILTER_LINEAR,
+                                .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                                .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+                                .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+                                .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+                                .compareEnable = VK_TRUE,
+                                .compareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
+                                .maxLod = 0.0f,
+                                .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE};
+    if (!checkVulkan(vkCreateSampler(m_device, &sampler, nullptr, &m_shadowSampler), "Create shadow sampler")) {
+        return false;
+    }
+    VkDescriptorImageInfo imageInfo{.sampler = m_shadowSampler,
+                                    .imageView = m_shadowTexture.view,
+                                    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
+    for (const CameraBuffer& camera : m_cameras) {
+        VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                   .dstSet = camera.descriptor,
+                                   .dstBinding = 1,
+                                   .descriptorCount = 1,
+                                   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                   .pImageInfo = &imageInfo};
+        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+    }
+    return true;
 }
 
 bool MeshPass::uploadBuffer(const void* data, VkDeviceSize size, VkBufferUsageFlags usage, GpuBuffer& output) {
-    GpuBuffer staging;
-    VkBufferCreateInfo stagingInfo{
-        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
-    VmaAllocationCreateInfo stagingAllocation{.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
-                                                       VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
-                                              .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
-    VmaAllocationInfo mapped{};
-    if (!checkVulkan(vmaCreateBuffer(m_allocator, &stagingInfo, &stagingAllocation, &staging.buffer,
-                                     &staging.allocation, &mapped),
-                     "Create staging buffer")) {
+    const VkBuffer staging = m_uploadContext.stage(data, size);
+    if (!staging) {
         return false;
     }
-
-    std::memcpy(mapped.pMappedData, data, static_cast<size_t>(size));
-    vmaFlushAllocation(m_allocator, staging.allocation, 0, size);
     VkBufferCreateInfo deviceInfo{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size, .usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
     VmaAllocationCreateInfo deviceAllocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
     if (!checkVulkan(
             vmaCreateBuffer(m_allocator, &deviceInfo, &deviceAllocation, &output.buffer, &output.allocation, nullptr),
             "Create GPU buffer")) {
-        vmaDestroyBuffer(m_allocator, staging.buffer, staging.allocation);
         return false;
     }
-    VkCommandPool pool = VK_NULL_HANDLE;
-    VkCommandPoolCreateInfo poolInfo{.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-                                     .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
-                                     .queueFamilyIndex = m_queueFamily};
-    if (!checkVulkan(vkCreateCommandPool(m_device, &poolInfo, nullptr, &pool), "Create upload command pool")) {
-        vmaDestroyBuffer(m_allocator, staging.buffer, staging.allocation);
-        return false;
-    }
-    VkCommandBuffer command = VK_NULL_HANDLE;
-    VkCommandBufferAllocateInfo allocate{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-                                         .commandPool = pool,
-                                         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-                                         .commandBufferCount = 1};
-    if (!checkVulkan(vkAllocateCommandBuffers(m_device, &allocate, &command), "Allocate upload command buffer")) {
-        vkDestroyCommandPool(m_device, pool, nullptr);
-        vmaDestroyBuffer(m_allocator, staging.buffer, staging.allocation);
-        return false;
-    }
-    VkCommandBufferBeginInfo begin{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-                                   .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
-    if (!checkVulkan(vkBeginCommandBuffer(command, &begin), "Begin mesh upload")) {
-        vkDestroyCommandPool(m_device, pool, nullptr);
-        vmaDestroyBuffer(m_allocator, staging.buffer, staging.allocation);
-        return false;
-    }
-    VkBufferCopy copy{.size = size};
-    vkCmdCopyBuffer(command, staging.buffer, output.buffer, 1, &copy);
-    if (!checkVulkan(vkEndCommandBuffer(command), "End mesh upload")) {
-        vkDestroyCommandPool(m_device, pool, nullptr);
-        vmaDestroyBuffer(m_allocator, staging.buffer, staging.allocation);
-        return false;
-    }
-    VkSubmitInfo submit{.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &command};
-    const bool submitted = checkVulkan(vkQueueSubmit(m_queue, 1, &submit, VK_NULL_HANDLE), "Submit mesh upload") &&
-                           checkVulkan(vkQueueWaitIdle(m_queue), "Wait for mesh upload");
-    vkDestroyCommandPool(m_device, pool, nullptr);
-    vmaDestroyBuffer(m_allocator, staging.buffer, staging.allocation);
+    const bool submitted = m_uploadContext.submit([&](VkCommandBuffer command) {
+        VkBufferCopy copy{.size = size};
+        vkCmdCopyBuffer(command, staging, output.buffer, 1, &copy);
+    });
     return submitted;
+}
+
+bool MeshPass::uploadTexture(const TextureAsset& texture, GpuTexture& output) {
+    if (texture.width == 0 || texture.height == 0 ||
+        texture.rgba.size() != static_cast<size_t>(texture.width) * texture.height * 4) {
+        return false;
+    }
+    const VkDeviceSize byteCount = texture.rgba.size();
+    const VkBuffer staging = m_uploadContext.stage(texture.rgba.data(), byteCount);
+    if (!staging) {
+        return false;
+    }
+
+    const uint32_t mipLevels =
+        1 + static_cast<uint32_t>(std::floor(std::log2(std::max(texture.width, texture.height))));
+    VkImageCreateInfo imageInfo{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                                .flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT,
+                                .imageType = VK_IMAGE_TYPE_2D,
+                                .format = VK_FORMAT_R8G8B8A8_UNORM,
+                                .extent = {.width = texture.width, .height = texture.height, .depth = 1},
+                                .mipLevels = mipLevels,
+                                .arrayLayers = 1,
+                                .samples = VK_SAMPLE_COUNT_1_BIT,
+                                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                         VK_IMAGE_USAGE_SAMPLED_BIT,
+                                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+    VmaAllocationCreateInfo imageAllocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    if (!checkVulkan(
+            vmaCreateImage(m_allocator, &imageInfo, &imageAllocation, &output.image, &output.allocation, nullptr),
+            "Create material texture")) {
+        return false;
+    }
+
+    const bool uploaded = m_uploadContext.submit([&](VkCommandBuffer command) {
+        const auto transitionMip = [&](uint32_t baseMip, uint32_t levelCount, VkImageLayout oldLayout,
+                                       VkImageLayout newLayout, VkPipelineStageFlags2 sourceStage,
+                                       VkPipelineStageFlags2 destinationStage, VkAccessFlags2 sourceAccess,
+                                       VkAccessFlags2 destinationAccess) {
+            VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                          .srcStageMask = sourceStage,
+                                          .srcAccessMask = sourceAccess,
+                                          .dstStageMask = destinationStage,
+                                          .dstAccessMask = destinationAccess,
+                                          .oldLayout = oldLayout,
+                                          .newLayout = newLayout,
+                                          .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                          .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                          .image = output.image,
+                                          .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                               .baseMipLevel = baseMip,
+                                                               .levelCount = levelCount,
+                                                               .baseArrayLayer = 0,
+                                                               .layerCount = 1}};
+            VkDependencyInfo dependency{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                        .imageMemoryBarrierCount = 1,
+                                        .pImageMemoryBarriers = &barrier};
+            vkCmdPipelineBarrier2(command, &dependency);
+        };
+        transitionMip(0, mipLevels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                      VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0,
+                      VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        VkBufferImageCopy copy{.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                    .mipLevel = 0,
+                                                    .baseArrayLayer = 0,
+                                                    .layerCount = 1},
+                               .imageExtent = {.width = texture.width, .height = texture.height, .depth = 1}};
+        vkCmdCopyBufferToImage(command, staging, output.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        int32_t sourceWidth = static_cast<int32_t>(texture.width);
+        int32_t sourceHeight = static_cast<int32_t>(texture.height);
+        for (uint32_t mip = 1; mip < mipLevels; ++mip) {
+            transitionMip(mip - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                          VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+            const int32_t destinationWidth = std::max(sourceWidth / 2, 1);
+            const int32_t destinationHeight = std::max(sourceHeight / 2, 1);
+            VkImageBlit blit{.srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                .mipLevel = mip - 1,
+                                                .baseArrayLayer = 0,
+                                                .layerCount = 1},
+                             .srcOffsets = {{0, 0, 0}, {sourceWidth, sourceHeight, 1}},
+                             .dstSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                .mipLevel = mip,
+                                                .baseArrayLayer = 0,
+                                                .layerCount = 1},
+                             .dstOffsets = {{0, 0, 0}, {destinationWidth, destinationHeight, 1}}};
+            vkCmdBlitImage(command, output.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, output.image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+            transitionMip(mip - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                          VK_ACCESS_2_TRANSFER_READ_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            sourceWidth = destinationWidth;
+            sourceHeight = destinationHeight;
+        }
+        transitionMip(mipLevels - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                      VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                      VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    });
+    if (!uploaded) {
+        return false;
+    }
+
+    VkImageViewCreateInfo view{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                               .image = output.image,
+                               .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                               .format = VK_FORMAT_R8G8B8A8_UNORM,
+                               .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                    .baseMipLevel = 0,
+                                                    .levelCount = mipLevels,
+                                                    .baseArrayLayer = 0,
+                                                    .layerCount = 1}};
+    if (!checkVulkan(vkCreateImageView(m_device, &view, nullptr, &output.view), "Create material texture view")) {
+        return false;
+    }
+    view.format = VK_FORMAT_R8G8B8A8_SRGB;
+    return checkVulkan(vkCreateImageView(m_device, &view, nullptr, &output.srgbView),
+                       "Create sRGB material texture view");
 }
 
 const MeshPass::GpuMesh* MeshPass::ensureMesh(MeshHandle handle, const AssetManager& assets) {
@@ -232,20 +541,84 @@ const MeshPass::GpuMesh* MeshPass::ensureMesh(MeshHandle handle, const AssetMana
     return &m_meshes.emplace(key, gpu).first->second;
 }
 
+const MeshPass::GpuTexture* MeshPass::ensureTexture(TextureHandle handle, const AssetManager& assets) {
+    const uint64_t key = (static_cast<uint64_t>(handle.generation) << 32) | handle.index;
+    if (const auto found = m_textures.find(key); found != m_textures.end()) {
+        return &found->second;
+    }
+    const TextureAsset* texture = assets.texture(handle);
+    if (!texture) {
+        return nullptr;
+    }
+    GpuTexture gpu;
+    if (!uploadTexture(*texture, gpu)) {
+        return nullptr;
+    }
+    return &m_textures.emplace(key, gpu).first->second;
+}
+
+const MeshPass::GpuMaterial* MeshPass::ensureMaterial(MaterialHandle handle, const AssetManager& assets) {
+    const uint64_t key = (static_cast<uint64_t>(handle.generation) << 32) | handle.index;
+    if (const auto found = m_materials.find(key); found != m_materials.end()) {
+        return &found->second;
+    }
+    const MaterialAsset* material = assets.material(handle);
+    if (!material) {
+        return nullptr;
+    }
+
+    VkDescriptorSet descriptor = VK_NULL_HANDLE;
+    VkDescriptorSetAllocateInfo allocate{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                                         .descriptorPool = m_descriptorPool,
+                                         .descriptorSetCount = 1,
+                                         .pSetLayouts = &m_materialLayout};
+    if (!checkVulkan(vkAllocateDescriptorSets(m_device, &allocate, &descriptor), "Allocate material descriptor")) {
+        return nullptr;
+    }
+    const auto viewFor = [&](TextureHandle texture, const GpuTexture& fallback, bool srgb) {
+        const GpuTexture* gpu = texture ? ensureTexture(texture, assets) : &fallback;
+        if (!gpu) {
+            gpu = &fallback;
+        }
+        return srgb && gpu->srgbView ? gpu->srgbView : gpu->view;
+    };
+    const std::array<VkImageView, 5> views{viewFor(material->baseColorTexture, m_whiteTexture, true),
+                                           viewFor(material->normalTexture, m_normalTexture, false),
+                                           viewFor(material->metallicRoughnessTexture, m_whiteTexture, false),
+                                           viewFor(material->occlusionTexture, m_whiteTexture, false),
+                                           viewFor(material->emissiveTexture, m_whiteTexture, true)};
+    std::array<VkDescriptorImageInfo, 5> imageInfos{};
+    std::array<VkWriteDescriptorSet, 5> writes{};
+    for (uint32_t i = 0; i < views.size(); ++i) {
+        imageInfos[i] = {
+            .sampler = m_sampler, .imageView = views[i], .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        writes[i] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                     .dstSet = descriptor,
+                     .dstBinding = i,
+                     .descriptorCount = 1,
+                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                     .pImageInfo = &imageInfos[i]};
+    }
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    return &m_materials.emplace(key, GpuMaterial{descriptor}).first->second;
+}
+
 void MeshPass::beginRendering(VkCommandBuffer commandBuffer, VkImage colorImage, VkImageView colorView,
                               VkImage depthImage, VkImageView depthView, VkExtent2D extent) const {
-    imageBarrier(commandBuffer, colorImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, 0, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-    imageBarrier(commandBuffer, depthImage, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT, 0, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    (void)colorImage;
+    imageBarrier(commandBuffer, depthImage, VK_IMAGE_ASPECT_DEPTH_BIT,
+                 m_depthInitialized ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                 m_depthInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+                 m_depthInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
     VkRenderingAttachmentInfo color{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                                     .imageView = colorView,
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
                                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                                    .clearValue = {.color = {.float32 = {0.015f, 0.02f, 0.04f, 1.0f}}}};
+                                    .clearValue = {.color = {.float32 = {0.015f, 0.02f, 0.04f, 0.0f}}}};
     VkRenderingAttachmentInfo depth{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                                     .imageView = depthView,
                                     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
@@ -261,9 +634,152 @@ void MeshPass::beginRendering(VkCommandBuffer commandBuffer, VkImage colorImage,
     vkCmdBeginRendering(commandBuffer, &rendering);
 }
 
+bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
+                                const std::vector<RenderObjectId>& outlinedObjects, std::vector<RenderItem>& items) {
+    const auto renderables = scene.registry().view<const TransformComponent, const MeshRendererComponent>();
+    for (Entity entity : renderables) {
+        const RenderObjectId objectId = static_cast<RenderObjectId>(entt::to_integral(entity));
+        const bool outlined = std::binary_search(outlinedObjects.begin(), outlinedObjects.end(), objectId);
+        const MeshHandle meshHandle = renderables.get<const MeshRendererComponent>(entity).mesh;
+        const MeshAsset* mesh = assets.mesh(meshHandle);
+        const GpuMesh* gpuMesh = ensureMesh(meshHandle, assets);
+        if (!mesh || !gpuMesh) {
+            return false;
+        }
+        const glm::mat4 world = renderables.get<const TransformComponent>(entity).world;
+        const glm::vec3 center = glm::vec3(world * glm::vec4(mesh->bounds.center, 1.0f));
+        const float scale = std::max(
+            {glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])), glm::length(glm::vec3(world[2]))});
+        for (const MeshPrimitive& primitive : mesh->primitives) {
+            const MaterialAsset* material = assets.material(primitive.material);
+            const GpuMaterial* gpuMaterial = ensureMaterial(primitive.material, assets);
+            if (!material || !gpuMaterial) {
+                return false;
+            }
+            items.push_back({.meshHandle = meshHandle,
+                             .materialHandle = primitive.material,
+                             .mesh = mesh,
+                             .primitive = &primitive,
+                             .material = material,
+                             .gpuMesh = gpuMesh,
+                             .gpuMaterial = gpuMaterial,
+                             .world = world,
+                             .boundsCenter = center,
+                             .boundsRadius = mesh->bounds.radius * scale,
+                             .outlined = outlined});
+        }
+    }
+    std::sort(items.begin(), items.end(), [](const RenderItem& first, const RenderItem& second) {
+        if (handleKey(first.materialHandle) != handleKey(second.materialHandle)) {
+            return handleKey(first.materialHandle) < handleKey(second.materialHandle);
+        }
+        if (handleKey(first.meshHandle) != handleKey(second.meshHandle)) {
+            return handleKey(first.meshHandle) < handleKey(second.meshHandle);
+        }
+        if (first.primitive->firstIndex != second.primitive->firstIndex) {
+            return first.primitive->firstIndex < second.primitive->firstIndex;
+        }
+        return first.outlined < second.outlined;
+    });
+    return true;
+}
+
+bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, const std::vector<RenderItem>& items,
+                            const DirectionalLightComponent& light,
+                            const std::array<glm::mat4, maximumShadowCascades>& lightViewProjections,
+                            uint32_t cascadeCount, RenderStats& stats) {
+    imageBarrier(commandBuffer, m_shadowTexture.image, VK_IMAGE_ASPECT_DEPTH_BIT,
+                 m_shadowInitialized ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                 m_shadowInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+                 m_shadowInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, maximumShadowCascades);
+    VkRenderingAttachmentInfo depth{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                                    .imageView = VK_NULL_HANDLE,
+                                    .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                                    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                    .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                    .clearValue = {.depthStencil = {.depth = 1.0f, .stencil = 0}}};
+    VkRenderingInfo rendering{
+        .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+        .renderArea = {.offset = {0, 0}, .extent = {.width = shadowResolution, .height = shadowResolution}},
+        .layerCount = 1,
+        .pDepthAttachment = &depth};
+    VkViewport viewport{.x = 0.0f,
+                        .y = 0.0f,
+                        .width = static_cast<float>(shadowResolution),
+                        .height = static_cast<float>(shadowResolution),
+                        .minDepth = 0.0f,
+                        .maxDepth = 1.0f};
+    VkRect2D scissor{.offset = {0, 0}, .extent = {.width = shadowResolution, .height = shadowResolution}};
+    for (uint32_t cascade = 0; cascade < cascadeCount; ++cascade) {
+        depth.imageView = m_shadowLayerViews[cascade];
+        vkCmdBeginRendering(commandBuffer, &rendering);
+        vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+        vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline.handle());
+        vkCmdSetDepthBias(commandBuffer, std::max(light.shadows.constantBias, 0.0f), 0.0f,
+                          std::max(light.shadows.slopeBias, 0.0f));
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline.layout(), 0, 1,
+                                &m_cameras[frameIndex].descriptor, 0, nullptr);
+        vkCmdPushConstants(commandBuffer, m_shadowPipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(cascade),
+                           &cascade);
+        const Frustum shadowFrustum = makeFrustum(lightViewProjections[cascade]);
+        m_shadowVisibleItems.clear();
+        m_shadowVisibleItems.reserve(items.size());
+        for (const RenderItem& item : items) {
+            if (light.shadows.enabled && sphereVisible(shadowFrustum, item.boundsCenter, item.boundsRadius)) {
+                m_shadowVisibleItems.push_back(&item);
+            }
+        }
+        const uint32_t objectBase = cascade * maximumObjectsPerFrame;
+        auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped);
+        for (size_t index = 0; index < m_shadowVisibleItems.size(); ++index) {
+            objectData[objectBase + index].model = m_shadowVisibleItems[index]->world;
+        }
+        const GpuMesh* boundMesh = nullptr;
+        for (size_t itemIndex = 0; itemIndex < m_shadowVisibleItems.size();) {
+            const RenderItem& item = *m_shadowVisibleItems[itemIndex];
+            size_t batchEnd = itemIndex + 1;
+            while (batchEnd < m_shadowVisibleItems.size()) {
+                const RenderItem& candidate = *m_shadowVisibleItems[batchEnd];
+                if (candidate.gpuMesh != item.gpuMesh ||
+                    candidate.primitive->firstIndex != item.primitive->firstIndex ||
+                    candidate.primitive->indexCount != item.primitive->indexCount) {
+                    break;
+                }
+                ++batchEnd;
+            }
+            if (boundMesh != item.gpuMesh) {
+                const VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
+                vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                boundMesh = item.gpuMesh;
+            }
+            const uint32_t instanceCount = static_cast<uint32_t>(batchEnd - itemIndex);
+            vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, instanceCount, item.primitive->firstIndex, 0,
+                             objectBase + static_cast<uint32_t>(itemIndex));
+            stats.shadowCasterCount += instanceCount;
+            ++stats.drawCalls;
+            stats.triangleCount += static_cast<uint64_t>(item.primitive->indexCount / 3) * instanceCount;
+            itemIndex = batchEnd;
+        }
+        vkCmdEndRendering(commandBuffer);
+    }
+    imageBarrier(commandBuffer, m_shadowTexture.image, VK_IMAGE_ASPECT_DEPTH_BIT,
+                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+                 VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 maximumShadowCascades);
+    m_shadowInitialized = true;
+    return true;
+}
+
 bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImageView colorView, VkImage depthImage,
                       VkImageView depthView, VkExtent2D extent, uint32_t frameIndex, const Scene& scene,
-                      const AssetManager& assets) {
+                      const AssetManager& assets, RenderRuntime& rendering, VkQueryPool timestampQueries,
+                      VkImageLayout colorOldLayout) {
     if (frameIndex >= m_cameras.size()) {
         return false;
     }
@@ -285,14 +801,134 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             break;
         }
     }
+    if (rendering.m_viewOverride) {
+        const RenderView& override = *rendering.m_viewOverride;
+        view = glm::lookAtRH(override.position, override.position + override.forward, override.up);
+        fov = override.verticalFovRadians;
+        nearPlane = override.nearPlane;
+        farPlane = override.farPlane;
+    }
     glm::mat4 projection = glm::perspectiveRH_ZO(
         fov, static_cast<float>(extent.width) / static_cast<float>(extent.height), nearPlane, farPlane);
     projection[1][1] *= -1.0f;
-    CameraData cameraData{projection * view};
+    const glm::vec3 cameraPosition = glm::vec3(glm::inverse(view)[3]);
+    const DirectionalLightComponent light = resolvePrimary<DirectionalLightComponent>(scene);
+    const EnvironmentLightComponent environment = resolvePrimary<EnvironmentLightComponent>(scene);
+    CameraData cameraData;
+    cameraData.viewProjection = projection * view;
+    const glm::vec3 lightDirection = normalizedLightDirection(light.direction);
+    const glm::vec3 cameraForward = -glm::normalize(glm::vec3(glm::inverse(view)[2]));
+    const float shadowDepthRange = std::max(light.shadows.depthRange, 0.2f);
+    uint32_t cascadeCount = 0;
+    switch (rendering.settings().shadows) {
+    case ShadowQuality::Off:
+        break;
+    case ShadowQuality::Single:
+        cascadeCount = 1;
+        break;
+    case ShadowQuality::CascadedBalanced:
+        cascadeCount = 2;
+        break;
+    case ShadowQuality::CascadedHigh:
+        cascadeCount = 3;
+        break;
+    }
+    const float maximumShadowDistance = std::min(farPlane, shadowDepthRange);
+    const glm::vec3 lightUp =
+        std::abs(lightDirection.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+    float cascadeNear = nearPlane;
+    const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+    for (uint32_t cascade = 0; cascade < std::max(cascadeCount, 1u); ++cascade) {
+        const float partition = static_cast<float>(cascade + 1) / static_cast<float>(std::max(cascadeCount, 1u));
+        const float logarithmic = nearPlane * std::pow(maximumShadowDistance / nearPlane, partition);
+        const float uniform = nearPlane + (maximumShadowDistance - nearPlane) * partition;
+        const float lambda = std::clamp(rendering.settings().cascadeSplitLambda, 0.0f, 1.0f);
+        const float cascadeFar = glm::mix(uniform, logarithmic, lambda);
+        cameraData.cascadeSplits[cascade] = cascadeFar;
+        const float halfHeight = std::tan(fov * 0.5f) * cascadeFar;
+        const float halfWidth = halfHeight * aspect;
+        float radius = std::sqrt(halfWidth * halfWidth + halfHeight * halfHeight +
+                                 (cascadeFar - cascadeNear) * (cascadeFar - cascadeNear) * 0.25f);
+        radius = std::ceil(radius * 16.0f) / 16.0f;
+        const glm::vec3 center = cameraPosition + cameraForward * ((cascadeNear + cascadeFar) * 0.5f);
+        const glm::mat4 lightView = glm::lookAtRH(center + lightDirection * shadowDepthRange * 0.5f, center, lightUp);
+        glm::mat4 lightProjection = glm::orthoRH_ZO(-radius, radius, -radius, radius, 0.1f, shadowDepthRange * 1.5f);
+        lightProjection[1][1] *= -1.0f;
+        glm::vec4 shadowOrigin = lightProjection * lightView * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        shadowOrigin *= static_cast<float>(shadowResolution) * 0.5f;
+        glm::vec4 roundingOffset =
+            (glm::round(shadowOrigin) - shadowOrigin) * (2.0f / static_cast<float>(shadowResolution));
+        roundingOffset.z = 0.0f;
+        roundingOffset.w = 0.0f;
+        lightProjection[3] += roundingOffset;
+        cameraData.lightViewProjections[cascade] = lightProjection * lightView;
+        cascadeNear = cascadeFar;
+    }
+    cameraData.cameraPosition = {cameraPosition, 1.0f};
+    cameraData.lightDirection = {lightDirection, std::max(light.intensity, 0.0f)};
+    cameraData.lightColor = {glm::max(light.color, glm::vec3(0.0f)), 1.0f};
+    cameraData.environmentSky = {glm::max(environment.skyColor, glm::vec3(0.0f)),
+                                 std::max(environment.diffuseIntensity, 0.0f)};
+    cameraData.environmentGround = {glm::max(environment.groundColor, glm::vec3(0.0f)),
+                                    std::max(environment.specularIntensity, 0.0f)};
+    const bool shadowsEnabled = light.shadows.enabled && rendering.settings().shadows != ShadowQuality::Off;
+    cameraData.shadowSettings = {std::max(light.shadows.normalBias, 0.0f), shadowsEnabled ? 1.0f : 0.0f,
+                                 static_cast<float>(cascadeCount),
+                                 std::clamp(rendering.settings().cascadeBlendFraction, 0.0f, 0.5f)};
+    cameraData.renderingSettings = {
+        rendering.settings().lighting == LightingQuality::PhysicallyBased ? 1.0f : 0.0f,
+        1.0f / static_cast<float>(extent.width),
+        1.0f / static_cast<float>(extent.height),
+        rendering.settings().visualizeShadowCascades ? 1.0f : 0.0f,
+    };
     std::memcpy(m_cameras[frameIndex].mapped, &cameraData, sizeof(cameraData));
     vmaFlushAllocation(m_allocator, m_cameras[frameIndex].buffer.allocation, 0, sizeof(cameraData));
 
-    beginRendering(commandBuffer, colorImage, colorView, depthImage, depthView, extent);
+    uint64_t packetRevision = scene.renderPacketRevision() ^ (assets.revision() * 0x9e3779b97f4a7c15ull);
+    for (RenderObjectId outlined : rendering.m_outlinedObjects) {
+        packetRevision ^=
+            static_cast<uint64_t>(outlined) + 0x9e3779b97f4a7c15ull + (packetRevision << 6) + (packetRevision >> 2);
+    }
+    const bool rebuildPackets = !m_packetCachingEnabled || packetRevision != m_renderPacketRevision;
+    const auto packetBuildStart = std::chrono::steady_clock::now();
+    if (rebuildPackets) {
+        m_renderItems.clear();
+        if (!buildRenderItems(scene, assets, rendering.m_outlinedObjects, m_renderItems)) {
+            return false;
+        }
+        m_renderPacketRevision = packetRevision;
+    }
+    const auto packetBuildEnd = std::chrono::steady_clock::now();
+    const double packetBuildMilliseconds =
+        std::chrono::duration<double, std::milli>(packetBuildEnd - packetBuildStart).count();
+    if (m_renderItems.size() > maximumObjectsPerFrame) {
+        std::cerr << "Renderable count exceeds the per-frame render capacity\n";
+        return false;
+    }
+    RenderStats& stats = rendering.m_stats;
+    const double gpuFrameMilliseconds = stats.gpuFrameMilliseconds;
+    const double gpuShadowMilliseconds = stats.gpuShadowMilliseconds;
+    const double gpuSceneMilliseconds = stats.gpuSceneMilliseconds;
+    const double gpuPostMilliseconds = stats.gpuPostMilliseconds;
+    stats = {};
+    stats.gpuFrameMilliseconds = gpuFrameMilliseconds;
+    stats.gpuShadowMilliseconds = gpuShadowMilliseconds;
+    stats.gpuSceneMilliseconds = gpuSceneMilliseconds;
+    stats.gpuPostMilliseconds = gpuPostMilliseconds;
+    stats.cpuRenderPacketMilliseconds = packetBuildMilliseconds;
+    stats.renderPacketsRebuilt = rebuildPackets;
+    stats.renderableCount = static_cast<uint32_t>(m_renderItems.size());
+    DirectionalLightComponent shadowLight = light;
+    shadowLight.shadows.enabled = shadowsEnabled;
+    if (!recordShadow(commandBuffer, frameIndex, m_renderItems, shadowLight, cameraData.lightViewProjections,
+                      cascadeCount, stats)) {
+        return false;
+    }
+    vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, timestampQueries, 1);
+    m_postProcess.prepareScene(commandBuffer, frameIndex);
+    beginRendering(commandBuffer, m_postProcess.sceneImage(frameIndex), m_postProcess.sceneView(frameIndex), depthImage,
+                   depthView, extent);
+    m_depthInitialized = true;
     VkViewport viewport{.x = 0,
                         .y = 0,
                         .width = static_cast<float>(extent.width),
@@ -302,49 +938,177 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     VkRect2D scissor{.offset = {0, 0}, .extent = extent};
     vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+    const Frustum cameraFrustum = makeFrustum(cameraData.viewProjection);
+    m_visibleItems.clear();
+    m_visibleItems.reserve(m_renderItems.size());
+    for (const RenderItem& item : m_renderItems) {
+        if (sphereVisible(cameraFrustum, item.boundsCenter, item.boundsRadius)) {
+            m_visibleItems.push_back(&item);
+        } else {
+            ++stats.culledCount;
+        }
+    }
+    if (m_visibleItems.size() > maximumObjectsPerFrame) {
+        vkCmdEndRendering(commandBuffer);
+        std::cerr << "Visible object count exceeds the per-frame render capacity\n";
+        return false;
+    }
+    constexpr uint32_t mainObjectBase = maximumShadowCascades * maximumObjectsPerFrame;
+    auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped) + mainObjectBase;
+    for (size_t index = 0; index < m_visibleItems.size(); ++index) {
+        objectData[index].model = m_visibleItems[index]->world;
+    }
+    vmaFlushAllocation(m_allocator, m_cameras[frameIndex].objects.allocation, 0, VK_WHOLE_SIZE);
+
+    if (!rendering.m_outlinedObjects.empty()) {
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_selectionMaskPipeline.handle());
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_selectionMaskPipeline.layout(), 0, 1,
+                                &m_cameras[frameIndex].descriptor, 0, nullptr);
+        const GpuMesh* outlinedMesh = nullptr;
+        for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
+            const RenderItem& item = *m_visibleItems[itemIndex];
+            if (!item.outlined) {
+                continue;
+            }
+            if (outlinedMesh != item.gpuMesh) {
+                const VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
+                vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                outlinedMesh = item.gpuMesh;
+            }
+            vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, 1, item.primitive->firstIndex, 0,
+                             mainObjectBase + static_cast<uint32_t>(itemIndex));
+            ++stats.drawCalls;
+        }
+    }
+
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline.handle());
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline.layout(), 0, 1,
                             &m_cameras[frameIndex].descriptor, 0, nullptr);
-    auto renderables = scene.registry().view<const TransformComponent, const MeshRendererComponent>();
-    for (Entity entity : renderables) {
-        const auto& renderer = renderables.get<const MeshRendererComponent>(entity);
-        const MeshAsset* mesh = assets.mesh(renderer.mesh);
-        const GpuMesh* gpu = ensureMesh(renderer.mesh, assets);
-        if (!mesh || !gpu) {
-            vkCmdEndRendering(commandBuffer);
-            return false;
+    const GpuMesh* boundMesh = nullptr;
+    const GpuMaterial* boundMaterial = nullptr;
+    for (size_t itemIndex = 0; itemIndex < m_visibleItems.size();) {
+        const RenderItem& item = *m_visibleItems[itemIndex];
+        size_t batchEnd = itemIndex + 1;
+        while (batchEnd < m_visibleItems.size()) {
+            const RenderItem& candidate = *m_visibleItems[batchEnd];
+            if (candidate.gpuMesh != item.gpuMesh || candidate.gpuMaterial != item.gpuMaterial ||
+                candidate.primitive->firstIndex != item.primitive->firstIndex ||
+                candidate.primitive->indexCount != item.primitive->indexCount) {
+                break;
+            }
+            ++batchEnd;
         }
+        if (boundMesh != item.gpuMesh) {
+            const VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
+            vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+            boundMesh = item.gpuMesh;
+        }
+        if (boundMaterial != item.gpuMaterial) {
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline.layout(), 1, 1,
+                                    &item.gpuMaterial->descriptor, 0, nullptr);
+            boundMaterial = item.gpuMaterial;
+        }
+        PushConstants push;
+        push.model = glm::mat4(1.0f);
+        push.baseColor = item.material->baseColor;
+        push.material = {item.material->metallic, item.material->roughness, item.material->normalScale,
+                         item.material->occlusionStrength};
+        push.emissive = {item.material->emissive * item.material->emissiveStrength, 0.0f};
+        vkCmdPushConstants(commandBuffer, m_pipeline.layout(),
+                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+        const uint32_t instanceCount = static_cast<uint32_t>(batchEnd - itemIndex);
+        vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, instanceCount, item.primitive->firstIndex, 0,
+                         mainObjectBase + static_cast<uint32_t>(itemIndex));
+        ++stats.drawCalls;
+        stats.visibleCount += instanceCount;
+        stats.triangleCount += static_cast<uint64_t>(item.primitive->indexCount / 3) * instanceCount;
+        itemIndex = batchEnd;
+    }
 
-        const VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(commandBuffer, 0, 1, &gpu->vertices.buffer, &offset);
-        vkCmdBindIndexBuffer(commandBuffer, gpu->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-        for (const MeshPrimitive& primitive : mesh->primitives) {
-            const MaterialAsset* material = assets.material(primitive.material);
-            PushConstants push{renderables.get<const TransformComponent>(entity).world,
-                               material ? material->baseColor : glm::vec4(1.0f)};
-            vkCmdPushConstants(commandBuffer, m_pipeline.layout(),
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
-            vkCmdDrawIndexed(commandBuffer, primitive.indexCount, 1, primitive.firstIndex, 0, 0);
+    if (!rendering.m_outlinedObjects.empty()) {
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlinePipeline.handle());
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlinePipeline.layout(), 0, 1,
+                                &m_cameras[frameIndex].descriptor, 0, nullptr);
+        const GpuMesh* outlinedMesh = nullptr;
+        for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
+            const RenderItem& item = *m_visibleItems[itemIndex];
+            if (!item.outlined) {
+                continue;
+            }
+            if (outlinedMesh != item.gpuMesh) {
+                const VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
+                vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                outlinedMesh = item.gpuMesh;
+            }
+            const glm::vec4 outlineSettings{item.mesh->bounds.center, 2.0f};
+            vkCmdPushConstants(commandBuffer, m_outlinePipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
+                               sizeof(outlineSettings), &outlineSettings);
+            vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, 1, item.primitive->firstIndex, 0,
+                             mainObjectBase + static_cast<uint32_t>(itemIndex));
+            ++stats.drawCalls;
         }
     }
 
     vkCmdEndRendering(commandBuffer);
-    imageBarrier(commandBuffer, colorImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                 VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                 VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0);
+    vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, timestampQueries, 2);
+    if (!m_postProcess.record(commandBuffer, frameIndex, colorImage, colorView, depthImage, extent,
+                              rendering.settings(), glm::inverse(cameraData.viewProjection), cameraPosition,
+                              rendering.m_gridOverlay, colorOldLayout)) {
+        return false;
+    }
+    vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, timestampQueries, 3);
     return true;
 }
 
 void MeshPass::shutdown(const VulkanContext& context) {
+    m_uploadContext.shutdown();
     m_pipeline.shutdown(context.device());
+    m_shadowPipeline.shutdown(context.device());
+    m_selectionMaskPipeline.shutdown(context.device());
+    m_outlinePipeline.shutdown(context.device());
+    m_postProcess.shutdown(context);
     for (auto& [_, mesh] : m_meshes) {
         vmaDestroyBuffer(context.vmaAllocator(), mesh.vertices.buffer, mesh.vertices.allocation);
         vmaDestroyBuffer(context.vmaAllocator(), mesh.indices.buffer, mesh.indices.allocation);
     }
     m_meshes.clear();
+    for (auto& [_, texture] : m_textures) {
+        vkDestroyImageView(context.device(), texture.srgbView, nullptr);
+        vkDestroyImageView(context.device(), texture.view, nullptr);
+        vmaDestroyImage(context.vmaAllocator(), texture.image, texture.allocation);
+    }
+    m_textures.clear();
+    const auto destroyTexture = [&](GpuTexture& texture) {
+        if (texture.srgbView) {
+            vkDestroyImageView(context.device(), texture.srgbView, nullptr);
+        }
+        if (texture.view) {
+            vkDestroyImageView(context.device(), texture.view, nullptr);
+        }
+        if (texture.image) {
+            vmaDestroyImage(context.vmaAllocator(), texture.image, texture.allocation);
+        }
+        texture = {};
+    };
+    destroyTexture(m_whiteTexture);
+    destroyTexture(m_normalTexture);
+    for (VkImageView& view : m_shadowLayerViews) {
+        if (view) {
+            vkDestroyImageView(context.device(), view, nullptr);
+            view = VK_NULL_HANDLE;
+        }
+    }
+    destroyTexture(m_shadowTexture);
+    m_materials.clear();
     for (auto& camera : m_cameras) {
         if (camera.buffer.buffer) {
             vmaDestroyBuffer(context.vmaAllocator(), camera.buffer.buffer, camera.buffer.allocation);
+        }
+        if (camera.objects.buffer) {
+            vmaDestroyBuffer(context.vmaAllocator(), camera.objects.buffer, camera.objects.allocation);
         }
     }
 
@@ -357,7 +1121,21 @@ void MeshPass::shutdown(const VulkanContext& context) {
     if (m_cameraLayout) {
         vkDestroyDescriptorSetLayout(context.device(), m_cameraLayout, nullptr);
     }
+    if (m_materialLayout) {
+        vkDestroyDescriptorSetLayout(context.device(), m_materialLayout, nullptr);
+    }
+    if (m_sampler) {
+        vkDestroySampler(context.device(), m_sampler, nullptr);
+    }
+    if (m_shadowSampler) {
+        vkDestroySampler(context.device(), m_shadowSampler, nullptr);
+    }
 
     m_descriptorPool = VK_NULL_HANDLE;
     m_cameraLayout = VK_NULL_HANDLE;
+    m_materialLayout = VK_NULL_HANDLE;
+    m_sampler = VK_NULL_HANDLE;
+    m_shadowSampler = VK_NULL_HANDLE;
+    m_shadowInitialized = false;
+    m_depthInitialized = false;
 }

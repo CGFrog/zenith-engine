@@ -1,5 +1,5 @@
 #include "engine/Engine.hpp"
-#include "engine/scene/TemplateScene.hpp"
+#include "game/application/DemoApplication.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -13,13 +13,8 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    if (const SceneResult result = createTemplateScene(engine); !result) {
-        std::cerr << result.error << '\n';
-        engine.shutdown();
-        return EXIT_FAILURE;
-    }
-
-    const bool success = engine.run();
+    DemoApplication application;
+    const bool success = engine.run(application);
     engine.shutdown();
 
     return success ? EXIT_SUCCESS : EXIT_FAILURE;

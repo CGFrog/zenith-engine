@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <glm/glm.hpp>
 #include <limits>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -64,10 +65,16 @@ struct MeshPrimitive {
     MaterialHandle material{};
 };
 
+struct BoundingSphere {
+    glm::vec3 center{0.0f};
+    float radius{0.0f};
+};
+
 struct MeshAsset {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     std::vector<MeshPrimitive> primitives;
+    BoundingSphere bounds;
 };
 
 struct ModelNode {
@@ -79,6 +86,15 @@ struct ModelNode {
 
 struct ModelAsset {
     std::vector<ModelNode> nodes;
+};
+
+struct ModelAssetSource {
+    std::filesystem::path path;
+};
+
+struct MeshAssetSource {
+    std::filesystem::path path;
+    uint32_t meshIndex{0};
 };
 
 template <typename Handle> struct AssetLoadResult {
@@ -93,21 +109,32 @@ template <typename Handle> struct AssetLoadResult {
 class AssetManager {
   public:
     AssetLoadResult<ModelHandle> loadModel(const std::filesystem::path& path);
+    // Imports a fresh immutable model graph and updates future lookups while
+    // retaining old handles for scenes and GPU frames that still use them.
+    AssetLoadResult<ModelHandle> reloadModel(const std::filesystem::path& path);
+    AssetLoadResult<MeshHandle> loadMesh(const std::filesystem::path& modelPath, uint32_t meshIndex);
     const ModelAsset* model(ModelHandle handle) const;
     const MeshAsset* mesh(MeshHandle handle) const;
     const MaterialAsset* material(MaterialHandle handle) const;
     const TextureAsset* texture(TextureHandle handle) const;
+    std::optional<ModelAssetSource> modelSource(ModelHandle handle) const;
+    std::optional<MeshAssetSource> meshSource(MeshHandle handle) const;
+    uint64_t revision() const;
 
   private:
     friend class ModelImporter;
-    ModelHandle addModel(ModelAsset asset);
-    MeshHandle addMesh(MeshAsset asset);
+    ModelHandle addModel(ModelAsset asset, std::filesystem::path sourcePath);
+    MeshHandle addMesh(MeshAsset asset, std::filesystem::path sourcePath, uint32_t meshIndex);
     MaterialHandle addMaterial(MaterialAsset asset);
     TextureHandle addTexture(TextureAsset asset);
+    AssetLoadResult<ModelHandle> importModel(const std::filesystem::path& path, const std::string& cacheKey);
 
     std::vector<ModelAsset> m_models;
+    std::vector<ModelAssetSource> m_modelSources;
     std::vector<MeshAsset> m_meshes;
+    std::vector<MeshAssetSource> m_meshSources;
     std::vector<MaterialAsset> m_materials;
     std::vector<TextureAsset> m_textures;
     std::unordered_map<std::string, ModelHandle> m_modelCache;
+    uint64_t m_revision{1};
 };

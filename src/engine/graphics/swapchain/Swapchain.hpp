@@ -44,6 +44,10 @@ class Swapchain {
         return m_swapchainImages;
     }
 
+    uint32_t imageCount() const {
+        return static_cast<uint32_t>(m_swapchainImages.size());
+    }
+
     const std::vector<VkImageView>& swapchainImageViews() const {
         return m_swapchainImageViews;
     }

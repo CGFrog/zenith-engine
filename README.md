@@ -3,14 +3,29 @@
 Zenith is an educational C++20 game-engine project intended to grow into a
 reusable foundation for future games.
 
+## Documentation
+
+- [`docs/REPOSITORY_GUIDE.md`](docs/REPOSITORY_GUIDE.md) explains every
+  top-level directory, source module, runtime asset, shader, and test target.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) describes subsystem ownership,
+  the ECS component model, startup, the frame loop, rendering, physics, and
+  asset data flow.
+- [`docs/EDITOR_TUTORIAL.md`](docs/EDITOR_TUTORIAL.md) is the minimal
+  build-to-save level-authoring workflow.
+- [`docs/RENDERER_VALIDATION.md`](docs/RENDERER_VALIDATION.md) defines the
+  performance, image-regression, and Vulkan smoke gates.
+- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) covers configuration, building,
+  testing, smoke tests, benchmarks, formatting, and common extension tasks.
+
 ## Build
 
 The project uses Vulkan 1.4, Volk, GLM, SDL 3, cgltf, EnTT, Vulkan Memory
-Allocator, and Khronos glslang. Dependencies are pinned and downloaded into the
-build tree by CMake `FetchContent`.
+Allocator, Khronos glslang, and stb_image. Dependencies are pinned and downloaded
+into the build tree by CMake `FetchContent`.
 
 Requirements are CMake 3.24 or newer, a C++20 compiler, Git, Python 3, and a
-Vulkan 1.4-capable GPU and driver.
+Vulkan 1.4-capable GPU and driver. SDL 3 also supplies default-device audio;
+the engine continues in null-output mode when no playback device is available.
 
 ```powershell
 cmake -S . -B build
@@ -30,13 +45,27 @@ does not depend on its working directory.
 The application loads `assets/basic_map.gltf`, adds static collision to the
 room, creates stacks of dynamic props, and spawns a physics-controlled player.
 Move with WASD, look with the mouse, jump with Space, and hold Shift to sprint.
+Press E to play the demo's original synthesized positional interaction tone.
+The demo also loops a quiet streamed Ogg background chord across scene reloads.
 The player collides with the room and can push the props. Escape releases the
-mouse; click the window to capture it again. The Khronos validation layer is
-enabled when installed; otherwise the application prints a notice and
-continues without it.
+mouse; click the window to capture it again. Press R to unload and recreate the
+gameplay scene. The Khronos validation layer is enabled when installed;
+otherwise the application prints a notice and continues without it.
 
 For an automated GPU smoke test, set `ZENITH_SMOKE_FRAMES` to a positive frame
 count. The engine exits cleanly after presenting that many frames.
+
+For a repeatable rendering benchmark, build `Release` and set
+`ZENITH_BENCHMARK_FRAMES` to the number of measured frames. The benchmark uses a
+fixed scene, pauses gameplay and physics, warms up for 1,000 frames, and prints
+CPU/GPU timings and draw statistics as JSON. Set `ZENITH_BENCHMARK_OBJECTS` to
+add a deterministic grid of repeated meshes for culling and batching tests:
+
+```powershell
+$env:ZENITH_BENCHMARK_FRAMES = 20000
+$env:ZENITH_BENCHMARK_OBJECTS = 2000
+.\build\Release\zenith.exe
+```
 
 ## Assets and scene components
 
@@ -47,12 +76,11 @@ Models expand into an EnTT hierarchy: the requested root receives
 `ModelComponent`, imported nodes receive `TransformComponent`, and drawable
 nodes receive `MeshRendererComponent`.
 
-The executable composes its map, player camera, and controller in `main.cpp`.
-`Engine` initializes and runs reusable systems without naming or loading any
-particular scene, and the renderer only consumes camera and mesh components.
-SDL event polling, keyboard/mouse mapping, and mouse capture are isolated in
-`InputManager`; the engine loop consumes a device-independent `InputState`, and
-the first-person controller translates that state into physics velocity.
+The `zenith_demo` application library owns the map, player camera, controller,
+and gameplay key mapping. `Engine` initializes reusable systems and hosts an
+`ApplicationSession` without naming any scene. SDL event polling and mouse
+capture stay in `InputManager`; demo code interprets its device-independent key
+and mouse snapshot.
 
 ## Physics
 
@@ -87,11 +115,26 @@ through `PhysicsWorldConfig::layers`. Most code should use Zenith's types, while
 advanced integrations can deliberately opt into `nativeSystem()` or
 `nativeBodyInterface()`.
 
-`createTemplateScene` is the reusable starting point for a game: it combines a
-glTF room with code-authored physics, player configuration, and props. Joints,
-vehicles, soft bodies, serialization, and debug drawing are intentionally left
-for later layers. Triangle meshes are static-only; use primitives for moving
-objects.
+`DemoApplication` is the current game client. Its `GameplayScene` combines a
+glTF room with code-authored physics, player configuration, and props. Scene
+changes are deferred to a frame boundary; unloading clears ECS and physics
+state while retaining cached assets and renderer resources. Joints, vehicles,
+soft bodies, serialization, and debug drawing are intentionally left for later
+layers. Triangle meshes are static-only; use primitives for moving objects.
+
+## Audio
+
+`AudioSystem` owns SDL device output, decoding, mixing, and voice lifetime. WAV
+and Ogg effects are cached by canonical path as immutable float PCM; Ogg music
+is decoded on a worker into a bounded ring buffer. Public APIs use generational
+clip, stream, and voice handles and expose fixed master, music, and SFX buses.
+
+`AudioListenerComponent` and `AudioEmitterComponent` are declarative ECS state.
+Callers keep runtime playback state out of components; the engine synchronizes
+world transforms after physics interpolation. Scene transitions stop scoped
+voices before clearing entities, while persistent music survives until stopped
+or engine shutdown. Spatial audio uses Zenith's +Y-up, -Z-forward, metre-based
+coordinates, inverse-distance attenuation, and equal-power stereo panning.
 
 ## Code style
 
@@ -113,15 +156,21 @@ if (loaded) {
 ```
 
 The current importer supports static opaque triangle primitives, indexed and
-non-indexed geometry, node transforms, positions, normals, embedded/external
-buffers, and base-color factors. Missing normals are generated. Textures, alpha
-modes, animation, skins, morph targets, and compressed mesh extensions are not
-yet rendered. Unsupported non-triangle primitives are skipped; malformed assets
-and models without renderable primitives return descriptive errors.
+non-indexed geometry, node transforms, positions, normals, texture coordinates,
+tangents, embedded/external buffers and images, and glTF metallic-roughness PBR
+materials. Base-color, normal, metallic-roughness, occlusion, and emissive maps
+are rendered. Missing normals and tangents are generated. Alpha modes,
+animation, skins, morph targets, and compressed mesh extensions are not yet
+rendered. Unsupported non-triangle primitives are skipped; malformed assets and
+models without renderable primitives return descriptive errors.
 
-The mesh pass uses dynamic rendering, synchronization2, staging uploads,
-per-frame camera buffers, push constants, VMA-backed vertex/index buffers, a
-depth attachment, and three frames in flight.
+The renderer uses dynamic rendering, synchronization2, staging uploads,
+mipmapped anisotropic textures, per-frame camera buffers, push constants,
+VMA-backed vertex/index buffers, and three frames in flight. The mesh pass uses
+Cook-Torrance GGX lighting, hemispherical environment lighting, and a stabilized
+2,048-pixel directional shadow map with PCF. Scene components configure the
+directional and environment lights. A single fused HDR post-process pass adds
+thresholded bloom, ACES tone mapping, and edge-adaptive anti-aliasing.
 
 ## Tests
 
@@ -129,7 +178,8 @@ depth attachment, and three frames in flight.
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
-The CPU-side tests cover model loading, path caching, generated normals,
+The CPU-side tests cover audio decoding, caching, mixing, buses, handle and
+voice lifetime, spatialization, model loading, path caching, generated normals,
 materials, component instantiation, hierarchy cleanup, rigid-body settling,
 contacts, impulses, raycasts, static mesh collision, and entity cleanup without
 requiring a GPU. For a visual smoke test, resize, minimize, and restore the

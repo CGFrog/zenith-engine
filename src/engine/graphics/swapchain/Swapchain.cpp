@@ -196,7 +196,7 @@ bool Swapchain::createDepthResources(const VulkanContext& context) {
                             .arrayLayers = 1,
                             .samples = VK_SAMPLE_COUNT_1_BIT,
                             .tiling = VK_IMAGE_TILING_OPTIMAL,
-                            .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                            .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
     VmaAllocationCreateInfo allocation{.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
                                        .usage = VMA_MEMORY_USAGE_AUTO};

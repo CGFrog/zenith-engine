@@ -1,29 +1,97 @@
 #include "Scene.hpp"
 
+#include "../audio/AudioSystem.hpp"
+
 #include <algorithm>
+#include <cmath>
+#include <glm/gtc/matrix_inverse.hpp>
+#include <limits>
 
 Entity Scene::createEntity(std::string name) {
-    const Entity entity = m_registry.create();
-    m_registry.emplace<NameComponent>(entity, std::move(name));
-    m_registry.emplace<TransformComponent>(entity);
-    m_registry.emplace<RelationshipComponent>(entity);
+    Entity entity = entt::null;
+    const SceneResult result = createEntityWithId({m_nextEntityId}, std::move(name), entity);
+    if (!result) {
+        return entt::null;
+    }
     return entity;
 }
 
+SceneResult Scene::createEntityWithId(SceneEntityId id, std::string name, Entity& entity) {
+    if (!id) {
+        return {.error = "Scene entity ID zero is reserved"};
+    }
+    if (findEntity(id) != entt::null) {
+        return {.error = "Duplicate scene entity ID " + std::to_string(id.value)};
+    }
+
+    const Entity createdEntity = m_registry.create();
+    m_registry.emplace<SceneEntityIdComponent>(createdEntity, id);
+    m_registry.emplace<NameComponent>(createdEntity, std::move(name));
+    m_registry.emplace<TransformComponent>(createdEntity);
+    m_registry.emplace<TransformCacheComponent>(createdEntity);
+    m_registry.emplace<RelationshipComponent>(createdEntity);
+    m_nextEntityId =
+        id.value == std::numeric_limits<uint64_t>::max() ? id.value : std::max(m_nextEntityId, id.value + 1);
+    entity = createdEntity;
+    ++m_renderPacketRevision;
+    return {.success = true};
+}
+
+SceneEntityId Scene::id(Entity entity) const {
+    const SceneEntityIdComponent* component = m_registry.try_get<SceneEntityIdComponent>(entity);
+    return component == nullptr ? SceneEntityId{} : component->id;
+}
+
+Entity Scene::findEntity(SceneEntityId id) const {
+    auto view = m_registry.view<const SceneEntityIdComponent>();
+    for (Entity entity : view) {
+        if (view.get<const SceneEntityIdComponent>(entity).id == id) {
+            return entity;
+        }
+    }
+    return entt::null;
+}
+
 void Scene::setParent(Entity child, Entity parent) {
-    if (!m_registry.valid(child) || child == parent) {
-        return;
+    reparent(child, parent);
+}
+
+SceneResult Scene::reparent(Entity child, Entity parent, ReparentMode mode) {
+    if (!m_registry.valid(child)) {
+        return {.error = "Cannot reparent an invalid child entity"};
+    }
+    if (parent != entt::null && !m_registry.valid(parent)) {
+        return {.error = "Cannot reparent to an invalid parent entity"};
+    }
+    if (child == parent) {
+        return {.error = "An entity cannot be its own parent"};
     }
 
     for (Entity ancestor = parent; ancestor != entt::null && m_registry.valid(ancestor);) {
         if (ancestor == child) {
-            return;
+            return {.error = "Reparenting would create a hierarchy cycle"};
         }
 
         ancestor = m_registry.get_or_emplace<RelationshipComponent>(ancestor).parent;
     }
 
     auto& relationship = m_registry.get_or_emplace<RelationshipComponent>(child);
+    if (relationship.parent == parent) {
+        return {.success = true};
+    }
+
+    glm::mat4 preservedWorld(1.0f);
+    glm::mat4 parentWorld(1.0f);
+    if (mode == ReparentMode::PreserveWorldTransform) {
+        updateWorldTransforms();
+        preservedWorld = m_registry.get<TransformComponent>(child).world;
+        if (parent != entt::null) {
+            parentWorld = m_registry.get<TransformComponent>(parent).world;
+            if (std::abs(glm::determinant(parentWorld)) < 1.0e-8f) {
+                return {.error = "Cannot preserve world transform under a singular parent transform"};
+            }
+        }
+    }
 
     if (relationship.parent != entt::null && m_registry.valid(relationship.parent)) {
         auto& siblings = m_registry.get<RelationshipComponent>(relationship.parent).children;
@@ -38,6 +106,25 @@ void Scene::setParent(Entity child, Entity parent) {
             children.push_back(child);
         }
     }
+
+    if (mode == ReparentMode::PreserveWorldTransform) {
+        m_registry.get<TransformComponent>(child).local = glm::inverse(parentWorld) * preservedWorld;
+    }
+    markTransformDirty(child);
+    updateWorldTransforms();
+    return {.success = true};
+}
+
+SceneResult Scene::duplicateSubtree(Entity source, Entity parent, Entity& duplicate) {
+    if (!m_registry.valid(source)) {
+        return {.error = "Cannot duplicate an invalid entity"};
+    }
+    if (parent != entt::null && !m_registry.valid(parent)) {
+        return {.error = "Cannot duplicate beneath an invalid parent"};
+    }
+    duplicate = cloneBranch(source, parent, true);
+    return duplicate == entt::null ? SceneResult{.error = "Could not duplicate entity subtree"}
+                                   : SceneResult{.success = true};
 }
 
 SceneResult Scene::instantiateModel(Entity root, ModelHandle handle, const AssetManager& assets) {
@@ -77,6 +164,7 @@ SceneResult Scene::instantiateModel(Entity root, ModelHandle handle, const Asset
 }
 
 MeshRendererComponent& Scene::attachMesh(Entity entity, MeshHandle mesh) {
+    ++m_renderPacketRevision;
     return m_registry.emplace_or_replace<MeshRendererComponent>(entity, mesh);
 }
 
@@ -93,27 +181,83 @@ void Scene::destroyEntity(Entity entity) {
 
     setParent(entity, entt::null);
     m_registry.destroy(entity);
+    ++m_renderPacketRevision;
 }
 
-void Scene::updateBranch(Entity entity, const glm::mat4& parentWorld) {
+void Scene::clear() {
+    m_registry.clear();
+    m_nextEntityId = 1;
+    ++m_renderPacketRevision;
+}
+
+void Scene::replaceWith(Scene&& scene) {
+    const uint64_t nextRevision = std::max(m_renderPacketRevision, scene.m_renderPacketRevision) + 1;
+    m_registry = std::move(scene.m_registry);
+    m_nextEntityId = scene.m_nextEntityId;
+    m_lastTransformUpdateStats = scene.m_lastTransformUpdateStats;
+    m_renderPacketRevision = nextRevision;
+    scene.m_nextEntityId = 1;
+}
+
+void Scene::swap(Scene& other) noexcept {
+    m_registry.swap(other.m_registry);
+    std::swap(m_nextEntityId, other.m_nextEntityId);
+    std::swap(m_lastTransformUpdateStats, other.m_lastTransformUpdateStats);
+    const uint64_t nextRevision = std::max(m_renderPacketRevision, other.m_renderPacketRevision) + 1;
+    m_renderPacketRevision = nextRevision;
+    other.m_renderPacketRevision = nextRevision + 1;
+}
+
+bool Scene::updateBranch(Entity entity, const glm::mat4& parentWorld, bool parentChanged) {
+    ++m_lastTransformUpdateStats.visited;
     auto& transform = m_registry.get_or_emplace<TransformComponent>(entity);
-    transform.world = parentWorld * transform.local;
+    auto& cache = m_registry.get_or_emplace<TransformCacheComponent>(entity);
+    const Entity parent = m_registry.get_or_emplace<RelationshipComponent>(entity).parent;
+    const bool localChanged = !cache.valid || cache.local != transform.local || cache.parent != parent;
+    const bool changed = parentChanged || cache.dirty || localChanged;
+    if (changed) {
+        transform.world = parentWorld * transform.local;
+        cache.local = transform.local;
+        cache.parent = parent;
+        cache.valid = true;
+        cache.dirty = false;
+        ++m_lastTransformUpdateStats.recomputed;
+    }
     const auto children = m_registry.get_or_emplace<RelationshipComponent>(entity).children;
 
     for (Entity child : children) {
         if (m_registry.valid(child)) {
-            updateBranch(child, transform.world);
+            updateBranch(child, transform.world, changed);
         }
     }
+    return changed;
 }
 
 void Scene::updateWorldTransforms() {
+    m_lastTransformUpdateStats = {};
     auto view = m_registry.view<TransformComponent, RelationshipComponent>();
     for (Entity entity : view) {
         if (view.get<RelationshipComponent>(entity).parent == entt::null) {
-            updateBranch(entity, glm::mat4(1.0f));
+            updateBranch(entity, glm::mat4(1.0f), false);
         }
     }
+    if (m_lastTransformUpdateStats.recomputed > 0) {
+        ++m_renderPacketRevision;
+    }
+}
+
+void Scene::markTransformDirty(Entity entity) {
+    if (m_registry.valid(entity)) {
+        m_registry.get_or_emplace<TransformCacheComponent>(entity).dirty = true;
+    }
+}
+
+const SceneTransformUpdateStats& Scene::lastTransformUpdateStats() const {
+    return m_lastTransformUpdateStats;
+}
+
+uint64_t Scene::renderPacketRevision() const {
+    return m_renderPacketRevision;
 }
 
 entt::registry& Scene::registry() {
@@ -122,4 +266,34 @@ entt::registry& Scene::registry() {
 
 const entt::registry& Scene::registry() const {
     return m_registry;
+}
+
+Entity Scene::cloneBranch(Entity source, Entity parent, bool appendCopySuffix) {
+    const auto& sourceName = m_registry.get<NameComponent>(source).name;
+    const Entity duplicate = createEntity(sourceName + (appendCopySuffix ? " Copy" : ""));
+    m_registry.get<TransformComponent>(duplicate).local = m_registry.get<TransformComponent>(source).local;
+
+    const auto copy = [this, source, duplicate]<typename Component>() {
+        if (const Component* component = m_registry.try_get<Component>(source)) {
+            m_registry.emplace<Component>(duplicate, *component);
+        }
+    };
+    copy.operator()<ModelComponent>();
+    copy.operator()<MeshRendererComponent>();
+    copy.operator()<CameraComponent>();
+    copy.operator()<DirectionalLightComponent>();
+    copy.operator()<EnvironmentLightComponent>();
+    copy.operator()<ColliderComponent>();
+    copy.operator()<RigidBodyComponent>();
+    copy.operator()<AudioListenerComponent>();
+    copy.operator()<AudioEmitterComponent>();
+
+    reparent(duplicate, parent);
+    const std::vector<Entity> children = m_registry.get<RelationshipComponent>(source).children;
+    for (Entity child : children) {
+        if (m_registry.valid(child)) {
+            cloneBranch(child, duplicate, false);
+        }
+    }
+    return duplicate;
 }

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "PhysicsComponents.hpp"
 #include "../scene/Scene.hpp"
+#include "PhysicsComponents.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -75,6 +75,7 @@ class PhysicsWorld {
     PhysicsWorld& operator=(const PhysicsWorld&) = delete;
 
     PhysicsResult init(const PhysicsWorldConfig& config = {});
+    void clear();
     void shutdown();
     PhysicsResult step(Scene& scene, const AssetManager& assets, float deltaSeconds);
     void interpolate(Scene& scene, float alpha) const;
@@ -92,6 +93,8 @@ class PhysicsWorld {
     JPH::BodyInterface* nativeBodyInterface();
 
   private:
+    PhysicsResult refreshBodyFromWorld(Entity entity, Scene& scene, const AssetManager& assets);
+
     class Impl;
     std::unique_ptr<Impl> m_impl;
 };

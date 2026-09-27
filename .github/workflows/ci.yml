@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  headless-editor-documents:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure
+        run: cmake -S . -B build -DBUILD_TESTING=ON
+      - name: Build headless editor tests
+        run: cmake --build build --config Debug --target zenith_editor_document_tests zenith_command_history_tests zenith_editor_play_mode_tests zenith_editor_hardening_tests --parallel 4
+      - name: Run headless editor tests
+        run: ctest --test-dir build -C Debug --output-on-failure -R "zenith_(editor_document|command_history|editor_play_mode|editor_hardening)"

@@ -1,0 +1,255 @@
+# Architecture
+
+Zenith is organized as a reusable engine with separate game and editor
+applications. Lower-level systems provide mechanisms; applications choose the
+current content, behavior, and authoring policy.
+
+## Dependency direction
+
+```text
+main.cpp ------> DemoApplication / GameplayScene --+
+                                                     |
+editor/main.cpp -> EditorApplication / EditorSession +
+                                                     v
+                                          application lifecycle API
+                                                     |
+                                                     v
+                                                   Engine
+                         |
+           +-------------+-------------+
+           v             v             v
+     Scene + input    Physics        Renderer
+           |             |             |
+           +-------> CPU assets <-------+
+                                       |
+                                       v
+                              SDL / Vulkan / VMA
+```
+
+Important boundaries:
+
+- Reusable engine subsystems never name a particular game project or asset.
+- Scene data is expressed as components, not renderer or physics internals.
+- Assets are parsed into CPU values; only the renderer owns Vulkan uploads.
+- Physics uses ECS entities and Zenith domain types at its public boundary.
+- Input converts SDL events into physical key/mouse state; the demo assigns
+  gameplay meaning.
+- Demo scenes may depend on engine services, but `zenith_engine` does not link
+  to `zenith_demo`.
+- Editor panels, selection, projects, commands, and document policy live in
+  `src/editor/`. The editor depends on `zenith_engine`; the engine and game do
+  not depend on editor code.
+- `EditorSession` owns editor-only UI and persistence state. Panel visibility
+  and docking layout are stored separately from runtime scene data, so changing
+  the workspace cannot mutate the scene.
+
+## Ownership and lifetime
+
+`main` owns `Engine` and `DemoApplication`. The engine owns subsystems by value.
+Initialization proceeds window, renderer, then physics. During `run`, an
+`ApplicationSession` owns the active `ApplicationScene`. Shutdown unloads that
+scene, stops the application, then releases physics, renderer, and window state.
+
+Within the renderer, ownership follows Vulkan dependencies: context and device
+outlive swapchain resources, passes, frame resources, and pipelines. CPU assets
+live in `AssetManager`; renderer caches hold their GPU copies. Scene entities
+refer to assets by handles rather than pointers, so vector growth cannot
+invalidate component references.
+
+Jolt bodies are owned by `PhysicsWorld`, keyed by EnTT entity. Destroying an ECS
+entity does not directly call Jolt; the next physics step notices it is absent
+from the component view and removes the corresponding body.
+
+## Startup sequence
+
+```text
+main
+  -> Engine::init
+       -> Window::init
+       -> Renderer::init
+            -> Vulkan instance and SDL surface
+            -> physical/logical device, queue, and VMA
+            -> swapchain, depth resources, frame resources, render passes
+       -> PhysicsWorld::init
+  -> Engine::run(DemoApplication)
+       -> Application::onStart
+       -> create initial ApplicationScene
+       -> ApplicationScene::load
+            -> import/cache model assets
+            -> instantiate ECS hierarchy
+            -> add collision, bodies, controller, and camera
+```
+
+Recoverable stages return `bool` or a result structure containing an error.
+`main` reports failure and still calls shutdown.
+
+## Frame sequence
+
+A normal rendered frame is split between variable-rate input/view work and
+fixed-rate simulation:
+
+```text
+Poll SDL events and build InputState
+  -> buffer pressed-key edges until a physics tick consumes them
+  -> ApplicationScene::update
+  -> accumulate elapsed time (clamped to 100 ms)
+  -> while accumulator >= fixed step and below maxSubSteps
+       ApplicationScene::fixedUpdate
+       physics step
+       consume buffered key presses
+  -> clamp excessive backlog
+  -> interpolate dynamic body transforms
+  -> update scene transforms and render
+  -> present
+  -> apply deferred scene switch or quit request
+```
+
+The default physics step is 1/60 second with at most four catch-up steps. The
+accumulator separates simulation stability from rendering rate. Jump input is
+latched so a short press is not lost on a render frame without a physics tick.
+Interpolation uses the remaining accumulator fraction between previous and
+current simulated poses. A transition unloads only after presentation, clears
+physics before ECS entities can be reused, and loads the next scene with asset
+and GPU caches intact.
+
+Benchmark mode skips input-driven gameplay and physics after polling events. It
+warms the renderer for 1,000 frames and measures only the requested following
+frames.
+
+## ECS model
+
+`Scene` is an EnTT registry plus hierarchy operations. Every created entity
+starts with identity local/world transforms and a relationship component. This
+invariant lets hierarchy and transform code operate without optional branches.
+
+Components are capabilities:
+
+- `MeshRendererComponent` makes an entity renderable.
+- `CameraComponent` makes it a camera candidate; `primary` selects the normal
+  view.
+- `DirectionalLightComponent` and `EnvironmentLightComponent` provide the
+  primary direct, shadow, and indirect-light settings used by the renderer.
+- `ColliderComponent` plus `RigidBodyComponent` and `TransformComponent` makes
+  an entity discoverable by physics.
+- Game-defined components can add behavior without becoming engine dependencies;
+  the demo's `CharacterControllerComponent` is one example.
+
+Imported models do not become monolithic render objects. The model root gets a
+`ModelComponent`; every imported node gets its own entity and transform; nodes
+with geometry get `MeshRendererComponent`. Individual nodes remain addressable
+by other systems while meshes and materials remain shared assets.
+
+## Transform contract
+
+Zenith uses GLM column-major matrices and composes a hierarchy as
+`parentWorld * local`. Positions occupy the translation column. Positive Y is
+up; first-person forward maps toward negative Z after yaw is applied.
+
+Physics decomposes world transforms into translation, rotation, and absolute
+scale. Scale is baked into collision shapes. Dynamic simulation writes
+translation and rotation back while preserving scale, converting the result to
+parent-local space when necessary. Kinematic bodies flow the other direction:
+ECS world poses are sent to Jolt each step.
+
+## Asset flow
+
+```text
+path passed to AssetManager::loadModel
+  -> canonicalized cache key
+  -> cgltf parse, buffers load, validation
+  -> images decoded to RGBA8 by ImageDecoder
+  -> materials, meshes, and model nodes appended to AssetManager
+  -> typed handles returned to scene components
+  -> MeshPass sees a handle on first use
+  -> data staged into VMA-backed GPU resources and cached
+```
+
+This split keeps file parsing usable in CPU-only tests and prevents asset code
+from inheriting GPU lifetime or synchronization concerns. Repeated loads of the
+same normalized model path return the cached handle. GPU resources are uploaded
+lazily only if a visible scene needs them.
+
+The importer supports static triangle geometry, node transforms, indexed and
+non-indexed primitives, common vertex attributes, embedded/external buffers and
+images, and glTF metallic-roughness materials. It does not render animation,
+skins, morph targets, alpha modes, or compressed-mesh extensions.
+
+## Physics flow
+
+At the beginning of a step, `PhysicsWorld` updates world transforms and scans
+for the three required physical components. Newly discovered entities become
+Jolt shapes and bodies. Missing entities/components remove old bodies.
+Kinematic poses are submitted, Jolt advances, and dynamic poses are copied back.
+
+Collision layers are data-driven through `PhysicsWorldConfig`. Each has a
+category bit, a mask of accepted categories, and a static/moving broad-phase
+classification. Two bodies collide only when both masks accept the other.
+
+Jolt may report contacts from worker threads. The listener collects them under
+a mutex, then the step resolves body IDs to ECS entities and exposes a stable
+per-step span. Read `contactEvents()` before the next step replaces it.
+
+Changing a collider or rigid-body creation setting does not mutate an existing
+Jolt body automatically. Call `refreshBody`; it removes and rebuilds the body
+from current components. Forces, impulses, and velocity operations require a
+body already discovered by a step or explicit refresh.
+
+## Render flow
+
+Each frame slot waits on its fence before reuse. The renderer then acquires a
+presentation image and records one command buffer:
+
+```text
+Shadow pass
+  scene meshes -> directional-light depth map
+
+Main mesh pass
+  scene meshes + camera + materials + scene lighting + shadow map
+  -> per-frame RGBA16F HDR target + shared scene depth
+
+Post-process pass
+  HDR target
+  -> bloom + edge smoothing + ACES tone mapping
+  -> swapchain image
+
+Transition to PRESENT -> submit -> present
+```
+
+The mesh pass maintains per-handle GPU caches. Camera buffers are per frame to
+avoid CPU/GPU write races. Material descriptors bind base color, normal,
+metallic-roughness, occlusion, and emissive textures; missing maps use defaults.
+The primary directional and environment light components provide direct-light,
+shadow, sky, and ground settings. Material occlusion attenuates only indirect
+environment lighting, leaving direct and emissive contributions unchanged.
+
+The renderer uses Vulkan dynamic rendering and synchronization2 barriers for
+explicit layout/access transitions. The swapchain owns presentation-dependent
+resources. Resize waits for a usable surface, idles the device, recreates the
+swapchain/depth resources, and resizes dependent render targets.
+
+### Editor viewport
+
+The editor requests a viewport size through `RenderRuntime`; it never receives
+Vulkan images, views, samplers, or descriptor sets. `Renderer` owns a
+per-frame offscreen color target plus its depth target and exposes only an
+opaque `UiTextureHandle`. Viewport resize recreates those targets and the
+size-dependent mesh/post-process targets without recreating the swapchain.
+Descriptor replacement happens before the next ImGui frame so queued UI draw
+data cannot retain a destroyed texture.
+
+Editor camera policy, selection, and gizmo state remain in `src/editor/`.
+`RenderView` is the narrow engine-facing camera override. Picking uses a
+bounded CPU ray test against transformed mesh bounding spheres; this avoids a
+GPU readback synchronization point. A deterministic test exercises the CPU
+path with 2,000 additional renderables and reports its elapsed time without a
+machine-dependent timing assertion. The renderer can replace it with an ID attachment later
+without changing scene identity or editor selection state if measurement shows
+that CPU picking no longer meets the interaction budget.
+
+## Error model
+
+Subsystems that can provide useful diagnostics return small result values:
+`SceneResult`, `AssetLoadResult`, and `PhysicsResult`. Low-level Vulkan helpers
+return `bool` after reporting the failed operation. Invalid asset handles
+resolve to `nullptr`; action-style physics calls return `false` when no managed
+body exists. Handle outcomes where the caller can add context or recover.

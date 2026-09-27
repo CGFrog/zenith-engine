@@ -1,4 +1,17 @@
-# CLAUDE.md
+# AGENTS.md
+
+## Start here
+
+- Read `docs/REPOSITORY_GUIDE.md` for the current workspace map and
+  `docs/ARCHITECTURE.md` before changing subsystem boundaries.
+- Read the nearest nested `AGENTS.md` before editing `src/engine/`,
+  `src/editor/`, `src/game/`, or `tests/`; those files add local guidance to
+  this root policy.
+- Treat `build/` as generated output. Search checked-in code with
+  `rg --files src tests` and update the explicit source lists in
+  `CMakeLists.txt` whenever files move.
+- Use include paths rooted at the published `src/` include directory when a
+  dependency crosses folders, for example `engine/scene/Scene.hpp`.
 
 ## Project intent
 
@@ -22,7 +35,7 @@ Choose the simplest design that preserves clean boundaries. Do not add abstracti
 
 - `src/engine/` is reusable engine code. It must not depend on a particular game, level, asset, control scheme, or executable.
 - `src/main.cpp` is the composition root. Keep startup, project selection, and top-level application wiring here or in a future application/game layer.
-- `src/engine/scene/TemplateScene.*` is example/gameplay composition. Treat it as a client of engine services; do not make lower-level systems depend on it.
+- `src/game/` contains the current demo and gameplay composition. Treat it as a client of engine services; do not make lower-level systems depend on it.
 - `assets/` and `shaders/` are runtime content. Engine systems may provide generic loading and rendering facilities, but must not hard-code knowledge of specific project assets.
 - `tests/` should exercise public behavior and important subsystem contracts. Prefer CPU-only tests where GPU access is not intrinsic to the behavior.
 
