@@ -139,6 +139,37 @@ SceneDocumentResult serializeEntity(const Scene& scene, Entity entity, const Ass
         }
         components["model"] = {{"path", relative}};
     }
+    if (const auto* node = registry.try_get<ModelNodeComponent>(entity)) {
+        const std::optional<ModelAssetSource> source = assets.modelSource(node->model);
+        if (!source) {
+            return {.error = "Cannot save a model-node component with an unknown runtime handle"};
+        }
+        std::string relative;
+        if (SceneDocumentResult result = projectRelativePath(source->path, options, relative); !result) {
+            return result;
+        }
+        components["model_node"] = {
+            {"path", relative}, {"instance_root", node->instanceRoot.value}, {"node", node->nodeIndex}};
+    }
+    if (const auto* animation = registry.try_get<AnimationComponent>(entity)) {
+        Json blendClip = animation->blendClipIndex ? Json(*animation->blendClipIndex) : Json(nullptr);
+        components["animation"] = {{"clip", animation->clipIndex},       {"time", animation->time},
+                                   {"speed", animation->playbackSpeed},  {"looping", animation->looping},
+                                   {"playing", animation->playing},      {"blend_clip", std::move(blendClip)},
+                                   {"blend_time", animation->blendTime}, {"blend_duration", animation->blendDuration}};
+    }
+    if (const auto* skin = registry.try_get<SkinComponent>(entity)) {
+        const std::optional<ModelAssetSource> source = assets.modelSource(skin->model);
+        if (!source) {
+            return {.error = "Cannot save a skin component with an unknown runtime handle"};
+        }
+        std::string relative;
+        if (SceneDocumentResult result = projectRelativePath(source->path, options, relative); !result) {
+            return result;
+        }
+        components["skin"] = {
+            {"path", relative}, {"instance_root", skin->instanceRoot.value}, {"skin", skin->skinIndex}};
+    }
     if (const auto* mesh = registry.try_get<MeshRendererComponent>(entity)) {
         Json reference;
         if (SceneDocumentResult result = meshReference(assets, mesh->mesh, options, reference); !result) {
@@ -242,6 +273,48 @@ SceneDocumentResult deserializeComponents(const Json& components, Entity entity,
             return {.error = loaded.error};
         }
         registry.emplace<ModelComponent>(entity, loaded.handle);
+    }
+    if (const auto found = components.find("model_node"); found != components.end()) {
+        std::filesystem::path path;
+        if (SceneDocumentResult result = resolveAssetPath(found->at("path").get<std::string>(), options, path);
+            !result) {
+            return result;
+        }
+        const AssetLoadResult<ModelHandle> loaded = assets.loadModel(path);
+        if (!loaded) {
+            return {.error = loaded.error};
+        }
+        registry.emplace<ModelNodeComponent>(entity, loaded.handle,
+                                             SceneEntityId{found->at("instance_root").get<uint64_t>()},
+                                             found->at("node").get<uint32_t>());
+    }
+    if (const auto found = components.find("animation"); found != components.end()) {
+        AnimationComponent animation;
+        animation.clipIndex = found->at("clip").get<uint32_t>();
+        animation.time = found->at("time").get<float>();
+        animation.playbackSpeed = found->at("speed").get<float>();
+        animation.looping = found->at("looping").get<bool>();
+        animation.playing = found->at("playing").get<bool>();
+        if (const auto blend = found->find("blend_clip"); blend != found->end() && !blend->is_null()) {
+            animation.blendClipIndex = blend->get<uint32_t>();
+        }
+        animation.blendTime = found->value("blend_time", 0.0f);
+        animation.blendDuration = found->value("blend_duration", 0.0f);
+        registry.emplace<AnimationComponent>(entity, animation);
+    }
+    if (const auto found = components.find("skin"); found != components.end()) {
+        std::filesystem::path path;
+        if (SceneDocumentResult result = resolveAssetPath(found->at("path").get<std::string>(), options, path);
+            !result) {
+            return result;
+        }
+        const AssetLoadResult<ModelHandle> loaded = assets.loadModel(path);
+        if (!loaded) {
+            return {.error = loaded.error};
+        }
+        registry.emplace<SkinComponent>(entity, loaded.handle,
+                                        SceneEntityId{found->at("instance_root").get<uint64_t>()},
+                                        found->at("skin").get<uint32_t>());
     }
     if (const auto found = components.find("mesh_renderer"); found != components.end()) {
         MeshHandle mesh;

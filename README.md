@@ -12,6 +12,8 @@ reusable foundation for future games.
   asset data flow.
 - [`docs/EDITOR_TUTORIAL.md`](docs/EDITOR_TUTORIAL.md) is the minimal
   build-to-save level-authoring workflow.
+- [`docs/tutorials/`](docs/tutorials/README.md) contains project guides,
+  including a complete first-person target-range game walkthrough.
 - [`docs/RENDERER_VALIDATION.md`](docs/RENDERER_VALIDATION.md) defines the
   performance, image-regression, and Vulkan smoke gates.
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) covers configuration, building,
@@ -42,10 +44,19 @@ does not depend on its working directory.
 .\build\Debug\zenith.exe
 ```
 
+The runtime opens on a controller-friendly title screen. Press Space, the
+south gamepad button, or activate **Play** to enter the room. Escape/Start opens
+the pause menu; keyboard, gamepad, and pointer navigation can resume play or
+change antialiasing, bloom, audio mute, look sensitivity, and inverted-Y input.
+Settings persist in `.zenith/game-settings.json` beside the launch working
+directory.
+
 The application loads `assets/basic_map.gltf`, adds static collision to the
 room, creates stacks of dynamic props, and spawns a physics-controlled player.
-Move with WASD, look with the mouse, jump with Space, and hold Shift to sprint.
-Press E to play the demo's original synthesized positional interaction tone.
+Move with WASD or the left stick, look with the mouse or right stick, jump with
+Space or the south gamepad button, and hold Shift or press the left stick to
+sprint. Press E or the west gamepad button to play the demo's original
+synthesized positional interaction tone.
 The demo also loops a quiet streamed Ogg background chord across scene reloads.
 The player collides with the room and can push the props. Escape releases the
 mouse; click the window to capture it again. Press R to unload and recreate the
@@ -77,10 +88,11 @@ Models expand into an EnTT hierarchy: the requested root receives
 nodes receive `MeshRendererComponent`.
 
 The `zenith_demo` application library owns the map, player camera, controller,
-and gameplay key mapping. `Engine` initializes reusable systems and hosts an
-`ApplicationSession` without naming any scene. SDL event polling and mouse
-capture stay in `InputManager`; demo code interprets its device-independent key
-and mouse snapshot.
+gameplay action mapping, menus, and settings policy. `Engine` initializes
+reusable systems and hosts an `ApplicationSession` without naming any scene.
+SDL event polling and mouse capture stay in `InputManager`; demo code consumes
+device-independent actions. Runtime menus and HUDs record engine game-UI
+commands and do not include ImGui or Vulkan headers.
 
 ## Physics
 

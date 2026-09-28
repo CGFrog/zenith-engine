@@ -37,7 +37,7 @@ bool Engine::run(Application& application) {
     benchmarkFrameTimes.reserve(static_cast<size_t>(benchmarkFrames));
     benchmarkGpuTimes.reserve(static_cast<size_t>(benchmarkFrames));
 
-    ApplicationSession applicationSession(application, m_scene, m_assets, m_physics, m_audio, m_rendering);
+    ApplicationSession applicationSession(application, m_scene, m_assets, m_physics, m_audio, m_rendering, m_gameUi);
     if (const SceneResult result = applicationSession.start(); !result) {
         std::cerr << "Application startup failed: " << result.error << '\n';
         return false;
@@ -70,6 +70,7 @@ bool Engine::run(Application& application) {
             deltaSeconds = std::min(static_cast<float>(now - previousTicks) / 1'000'000'000.0f, 0.1f);
             previousTicks = now;
             applicationSession.update(m_input.state(), deltaSeconds);
+            updateAnimations(m_scene, m_assets, deltaSeconds);
             if (applicationSession.fixedUpdatesEnabled()) {
                 m_physicsAccumulator += deltaSeconds;
             } else {
@@ -104,8 +105,14 @@ bool Engine::run(Application& application) {
         }
 
         m_scene.updateWorldTransforms();
-        m_renderer.beginUiFrame();
+        m_renderer.beginUiFrame(m_assets);
+        int uiWidth = 1;
+        int uiHeight = 1;
+        SDL_GetWindowSizeInPixels(m_window.handle(), &uiWidth, &uiHeight);
+        m_gameUi.beginFrame({static_cast<uint32_t>(std::max(uiWidth, 1)), static_cast<uint32_t>(std::max(uiHeight, 1))},
+                            m_input.state());
         applicationSession.drawUi();
+        m_renderer.drawGameUi(m_gameUi, m_assets);
         if (!m_renderer.drawFrame(m_window, m_scene, m_assets)) {
             runSucceeded = false;
             running = false;
@@ -181,6 +188,7 @@ void Engine::shutdown() {
     m_audio.shutdown();
     m_physics.shutdown();
     m_renderer.shutdown();
+    m_input.shutdown();
     m_window.shutdown();
 }
 

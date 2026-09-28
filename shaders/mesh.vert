@@ -12,28 +12,50 @@ layout(set = 0, binding = 0) uniform CameraData {
     vec4 cascadeSplits;
 } camera;
 
+struct RenderObject {
+    mat4 model;
+    uvec4 skin;
+};
+
 layout(std430, set = 0, binding = 2) readonly buffer ObjectData {
-    mat4 models[];
+    RenderObject values[];
 } objects;
+
+layout(std430, set = 0, binding = 3) readonly buffer SkinPalettes {
+    mat4 joints[];
+} skinPalettes;
 
 layout(push_constant) uniform DrawData {
     mat4 model;
     vec4 baseColor;
     vec4 material;
     vec4 emissive;
+    vec4 surface;
 } drawData;
 
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inTexCoord;
 layout(location = 3) in vec4 inTangent;
+layout(location = 4) in uvec4 inJoints;
+layout(location = 5) in vec4 inWeights;
 layout(location = 0) out vec3 worldPosition;
 layout(location = 1) out vec3 worldNormal;
 layout(location = 2) out vec2 texCoord;
 layout(location = 3) out vec4 worldTangent;
 
 void main() {
-    mat4 model = objects.models[gl_InstanceIndex];
+    RenderObject object = objects.values[gl_InstanceIndex];
+    mat4 skin = mat4(1.0);
+    float weightSum = dot(inWeights, vec4(1.0));
+    if (object.skin.y > 0 && weightSum > 0.0001) {
+        uvec4 joint = min(inJoints, uvec4(object.skin.y - 1));
+        skin = skinPalettes.joints[object.skin.x + joint.x] * inWeights.x +
+               skinPalettes.joints[object.skin.x + joint.y] * inWeights.y +
+               skinPalettes.joints[object.skin.x + joint.z] * inWeights.z +
+               skinPalettes.joints[object.skin.x + joint.w] * inWeights.w;
+    }
+    mat4 model = object.model * skin;
     vec4 world = model * vec4(inPosition, 1.0);
     // The cofactor matrix transforms normals correctly for affine transforms;
     // normalization removes the determinant scale without a per-vertex inverse.

@@ -29,5 +29,12 @@ int main() {
            "a non-material benchmark improvement must not select the prototype");
     expect(chooseRenderSubmissionPath(supported, {1.0, 0.80}) == RenderSubmissionPath::IndirectPrototype,
            "a measured material improvement may select the prototype");
+    const std::vector<RenderOrderKey> keys{{RenderSurfaceClass::Blended, 4.0f},
+                                           {RenderSurfaceClass::Opaque, 100.0f},
+                                           {RenderSurfaceClass::Blended, 25.0f},
+                                           {RenderSurfaceClass::Masked, 9.0f}};
+    const std::vector<size_t> order = stableRenderOrder(keys);
+    expect(order == std::vector<size_t>({1, 3, 2, 0}),
+           "opaque and masked surfaces precede back-to-front blended surfaces");
     return failures == 0 ? 0 : 1;
 }

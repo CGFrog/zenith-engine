@@ -6,8 +6,10 @@
 #include <backends/imgui_impl_vulkan.h>
 #include <imgui.h>
 
+#include <algorithm>
 #include <array>
 #include <iostream>
+#include <vector>
 
 namespace {
 void reportVulkanError(VkResult result) {
@@ -112,6 +114,96 @@ void UiPass::beginFrame() {
     m_frameActive = true;
 }
 
+void UiPass::syncFonts(const AssetManager& assets) {
+    if (!m_initialized || assets.fontCount() <= m_loadedFontCount) {
+        return;
+    }
+    ImGuiIO& io = ImGui::GetIO();
+    bool added = false;
+    for (size_t index = m_loadedFontCount; index < assets.fontCount(); ++index) {
+        const FontHandle handle{static_cast<uint32_t>(index), 1};
+        const FontAsset* asset = assets.font(handle);
+        if (!asset || asset->bytes.empty()) {
+            continue;
+        }
+        ImFontConfig config;
+        config.FontDataOwnedByAtlas = false;
+        ImFont* font = io.Fonts->AddFontFromMemoryTTF(const_cast<uint8_t*>(asset->bytes.data()),
+                                                      static_cast<int>(asset->bytes.size()), 36.0f, &config);
+        if (font) {
+            const uint64_t key = (static_cast<uint64_t>(handle.generation) << 32u) | handle.index;
+            m_fonts.emplace(key, font);
+            added = true;
+        }
+    }
+    m_loadedFontCount = assets.fontCount();
+    if (added) {
+        ImGui_ImplVulkan_CreateFontsTexture();
+    }
+}
+
+void UiPass::drawGameUi(const GameUiContext& gameUi, const std::function<uint64_t(TextureHandle)>& textureResolver) {
+    if (!m_frameActive) {
+        return;
+    }
+    std::vector<const UiCommand*> commands;
+    commands.reserve(gameUi.commands().size());
+    for (const UiCommand& command : gameUi.commands()) {
+        commands.push_back(&command);
+    }
+    std::stable_sort(commands.begin(), commands.end(),
+                     [](const UiCommand* left, const UiCommand* right) { return left->drawOrder < right->drawOrder; });
+
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    for (const UiCommand* command : commands) {
+        if (command->clip) {
+            const UiRect& clip = *command->clip;
+            drawList->PushClipRect({clip.position.x, clip.position.y},
+                                   {clip.position.x + clip.size.x, clip.position.y + clip.size.y}, true);
+        }
+        std::visit(
+            [&](const auto& payload) {
+                using Payload = std::decay_t<decltype(payload)>;
+                if constexpr (std::is_same_v<Payload, UiPanelCommand>) {
+                    const ImU32 color = ImGui::ColorConvertFloat4ToU32(
+                        {payload.style.color.r, payload.style.color.g, payload.style.color.b, payload.style.color.a});
+                    drawList->AddRectFilled(
+                        {payload.rect.position.x, payload.rect.position.y},
+                        {payload.rect.position.x + payload.rect.size.x, payload.rect.position.y + payload.rect.size.y},
+                        color, payload.style.cornerRadius);
+                } else if constexpr (std::is_same_v<Payload, UiTextCommand>) {
+                    ImFont* font = ImGui::GetFont();
+                    if (payload.font) {
+                        const uint64_t key =
+                            (static_cast<uint64_t>(payload.font.generation) << 32u) | payload.font.index;
+                        if (const auto found = m_fonts.find(key); found != m_fonts.end()) {
+                            font = static_cast<ImFont*>(found->second);
+                        }
+                    }
+                    const ImU32 color = ImGui::ColorConvertFloat4ToU32(
+                        {payload.color.r, payload.color.g, payload.color.b, payload.color.a});
+                    drawList->AddText(font, payload.size, {payload.position.x, payload.position.y}, color,
+                                      payload.text.c_str());
+                } else if constexpr (std::is_same_v<Payload, UiImageCommand>) {
+                    const uint64_t texture = textureResolver(payload.texture);
+                    if (texture != 0) {
+                        const ImU32 tint = ImGui::ColorConvertFloat4ToU32(
+                            {payload.tint.r, payload.tint.g, payload.tint.b, payload.tint.a});
+                        drawList->AddImage(static_cast<ImTextureID>(texture),
+                                           {payload.rect.position.x, payload.rect.position.y},
+                                           {payload.rect.position.x + payload.rect.size.x,
+                                            payload.rect.position.y + payload.rect.size.y},
+                                           {0.0f, 0.0f}, {1.0f, 1.0f}, tint);
+                    }
+                }
+            },
+            command->payload);
+        if (command->clip) {
+            drawList->PopClipRect();
+        }
+    }
+}
+
 void UiPass::cancelFrame() {
     if (m_frameActive) {
         ImGui::EndFrame();
@@ -178,4 +270,6 @@ void UiPass::shutdown() {
     m_descriptorPool = VK_NULL_HANDLE;
     m_device = VK_NULL_HANDLE;
     m_initialized = false;
+    m_loadedFontCount = 0;
+    m_fonts.clear();
 }

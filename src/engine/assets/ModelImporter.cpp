@@ -208,6 +208,11 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
         material.normalTexture = textureHandle(source.normal_texture, *data, images);
         material.occlusionTexture = textureHandle(source.occlusion_texture, *data, images);
         material.emissiveTexture = textureHandle(source.emissive_texture, *data, images);
+        material.alphaMode = source.alpha_mode == cgltf_alpha_mode_mask    ? MaterialAlphaMode::Mask
+                             : source.alpha_mode == cgltf_alpha_mode_blend ? MaterialAlphaMode::Blend
+                                                                           : MaterialAlphaMode::Opaque;
+        material.alphaCutoff = source.alpha_cutoff;
+        material.doubleSided = source.double_sided != 0;
 
         materials[i] = m_assets.addMaterial(material);
     }
@@ -229,6 +234,8 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
             const cgltf_accessor* normals = findAttribute(primitive, cgltf_attribute_type_normal);
             const cgltf_accessor* texCoords = findAttribute(primitive, cgltf_attribute_type_texcoord);
             const cgltf_accessor* sourceTangents = findAttribute(primitive, cgltf_attribute_type_tangent);
+            const cgltf_accessor* sourceJoints = findAttribute(primitive, cgltf_attribute_type_joints);
+            const cgltf_accessor* sourceWeights = findAttribute(primitive, cgltf_attribute_type_weights);
 
             if (!positions || positions->type != cgltf_type_vec3) {
                 std::cerr << "Skipping primitive without POSITION vec3 in " << path << '\n';
@@ -260,6 +267,19 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
                     float tangent[4]{};
                     cgltf_accessor_read_float(sourceTangents, vertexIndex, tangent, 4);
                     mesh.vertices[firstVertex + vertexIndex].tangent = {tangent[0], tangent[1], tangent[2], tangent[3]};
+                }
+                if (sourceJoints && sourceJoints->type == cgltf_type_vec4 && vertexIndex < sourceJoints->count) {
+                    cgltf_uint joints[4]{};
+                    cgltf_accessor_read_uint(sourceJoints, vertexIndex, joints, 4);
+                    mesh.vertices[firstVertex + vertexIndex].joints = {joints[0], joints[1], joints[2], joints[3]};
+                }
+                if (sourceWeights && sourceWeights->type == cgltf_type_vec4 && vertexIndex < sourceWeights->count) {
+                    float weights[4]{};
+                    cgltf_accessor_read_float(sourceWeights, vertexIndex, weights, 4);
+                    glm::vec4 normalized{weights[0], weights[1], weights[2], weights[3]};
+                    const float total = normalized.x + normalized.y + normalized.z + normalized.w;
+                    mesh.vertices[firstVertex + vertexIndex].weights =
+                        total > 0.0f ? normalized / total : glm::vec4(0.0f);
                 }
             }
 
@@ -311,6 +331,13 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
         float matrix[16]{};
         cgltf_node_transform_local(&source, matrix);
         node.localTransform = glm::make_mat4(matrix);
+        node.translation = source.has_translation
+                               ? glm::vec3(source.translation[0], source.translation[1], source.translation[2])
+                               : glm::vec3(0.0f);
+        node.rotation = source.has_rotation ? glm::normalize(glm::quat(source.rotation[3], source.rotation[0],
+                                                                       source.rotation[1], source.rotation[2]))
+                                            : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        node.scale = source.has_scale ? glm::vec3(source.scale[0], source.scale[1], source.scale[2]) : glm::vec3(1.0f);
 
         if (source.parent) {
             node.parent = static_cast<int32_t>(source.parent - data->nodes);
@@ -324,6 +351,90 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
                 renderable = true;
             }
         }
+        if (source.skin) {
+            node.skin = static_cast<int32_t>(source.skin - data->skins);
+        }
+    }
+
+    model.skins.resize(data->skins_count);
+    for (cgltf_size skinIndex = 0; skinIndex < data->skins_count; ++skinIndex) {
+        const cgltf_skin& source = data->skins[skinIndex];
+        SkinAsset& skin = model.skins[skinIndex];
+        skin.name = source.name ? source.name : "Skin";
+        skin.skeletonRoot = source.skeleton ? static_cast<int32_t>(source.skeleton - data->nodes) : -1;
+        skin.joints.reserve(source.joints_count);
+        skin.inverseBindMatrices.assign(source.joints_count, glm::mat4(1.0f));
+        for (cgltf_size jointIndex = 0; jointIndex < source.joints_count; ++jointIndex) {
+            skin.joints.push_back(static_cast<uint32_t>(source.joints[jointIndex] - data->nodes));
+            if (source.inverse_bind_matrices && jointIndex < source.inverse_bind_matrices->count) {
+                float inverseBind[16]{};
+                if (!cgltf_accessor_read_float(source.inverse_bind_matrices, jointIndex, inverseBind, 16)) {
+                    return {.error = "Cannot read inverse-bind matrix in " + path.string()};
+                }
+                skin.inverseBindMatrices[jointIndex] = glm::make_mat4(inverseBind);
+            }
+        }
+    }
+
+    model.animations.reserve(data->animations_count);
+    for (cgltf_size animationIndex = 0; animationIndex < data->animations_count; ++animationIndex) {
+        const cgltf_animation& sourceAnimation = data->animations[animationIndex];
+        AnimationClip clip;
+        clip.name = sourceAnimation.name ? sourceAnimation.name : "Animation " + std::to_string(animationIndex);
+        for (cgltf_size channelIndex = 0; channelIndex < sourceAnimation.channels_count; ++channelIndex) {
+            const cgltf_animation_channel& sourceChannel = sourceAnimation.channels[channelIndex];
+            if (!sourceChannel.target_node || !sourceChannel.sampler || !sourceChannel.sampler->input ||
+                !sourceChannel.sampler->output || sourceChannel.target_path == cgltf_animation_path_type_weights) {
+                continue;
+            }
+            AnimationChannel channel;
+            channel.targetNode = static_cast<uint32_t>(sourceChannel.target_node - data->nodes);
+            channel.path = sourceChannel.target_path == cgltf_animation_path_type_rotation ? AnimationPath::Rotation
+                           : sourceChannel.target_path == cgltf_animation_path_type_scale  ? AnimationPath::Scale
+                                                                                           : AnimationPath::Translation;
+            channel.interpolation = sourceChannel.sampler->interpolation == cgltf_interpolation_type_step
+                                        ? AnimationInterpolation::Step
+                                    : sourceChannel.sampler->interpolation == cgltf_interpolation_type_cubic_spline
+                                        ? AnimationInterpolation::CubicSpline
+                                        : AnimationInterpolation::Linear;
+            const cgltf_accessor& input = *sourceChannel.sampler->input;
+            const cgltf_accessor& output = *sourceChannel.sampler->output;
+            if (input.type != cgltf_type_scalar || input.count == 0) {
+                continue;
+            }
+            const cgltf_size components = channel.path == AnimationPath::Rotation ? 4 : 3;
+            channel.times.resize(input.count);
+            channel.values.resize(input.count);
+            if (channel.interpolation == AnimationInterpolation::CubicSpline) {
+                channel.inTangents.resize(input.count);
+                channel.outTangents.resize(input.count);
+            }
+            for (cgltf_size key = 0; key < input.count; ++key) {
+                cgltf_accessor_read_float(&input, key, &channel.times[key], 1);
+                clip.duration = std::max(clip.duration, channel.times[key]);
+                const cgltf_size valueIndex =
+                    channel.interpolation == AnimationInterpolation::CubicSpline ? key * 3 + 1 : key;
+                float value[4]{};
+                if (valueIndex >= output.count || !cgltf_accessor_read_float(&output, valueIndex, value, components)) {
+                    return {.error = "Invalid animation output in " + path.string()};
+                }
+                channel.values[key] = {value[0], value[1], value[2], components == 4 ? value[3] : 0.0f};
+                if (channel.interpolation == AnimationInterpolation::CubicSpline) {
+                    float inTangent[4]{};
+                    float outTangent[4]{};
+                    if (!cgltf_accessor_read_float(&output, key * 3, inTangent, components) ||
+                        !cgltf_accessor_read_float(&output, key * 3 + 2, outTangent, components)) {
+                        return {.error = "Invalid cubic animation tangents in " + path.string()};
+                    }
+                    channel.inTangents[key] = {inTangent[0], inTangent[1], inTangent[2],
+                                               components == 4 ? inTangent[3] : 0.0f};
+                    channel.outTangents[key] = {outTangent[0], outTangent[1], outTangent[2],
+                                                components == 4 ? outTangent[3] : 0.0f};
+                }
+            }
+            clip.channels.push_back(std::move(channel));
+        }
+        model.animations.push_back(std::move(clip));
     }
 
     if (!renderable) {

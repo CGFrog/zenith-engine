@@ -116,4 +116,35 @@ bool drawRigidBody(RigidBodyComponent& component) {
     changed |= ImGui::Checkbox("Lock rotation", &component.lockRotation);
     return changed;
 }
+
+bool drawAnimation(AnimationComponent& component, const ModelAsset* model) {
+    bool changed = false;
+    if (model == nullptr || model->animations.empty()) {
+        ImGui::TextDisabled("Model has no animation clips.");
+        return false;
+    }
+    component.clipIndex = std::min(component.clipIndex, static_cast<uint32_t>(model->animations.size() - 1));
+    const char* preview = model->animations[component.clipIndex].name.c_str();
+    if (ImGui::BeginCombo("Clip", preview)) {
+        for (uint32_t index = 0; index < model->animations.size(); ++index) {
+            const bool selected = index == component.clipIndex;
+            if (ImGui::Selectable(model->animations[index].name.c_str(), selected)) {
+                component.clipIndex = index;
+                component.time = 0.0f;
+                component.blendClipIndex.reset();
+                changed = true;
+            }
+            if (selected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    changed |= ImGui::Checkbox("Preview", &component.playing);
+    changed |= ImGui::Checkbox("Loop", &component.looping);
+    changed |= ImGui::DragFloat("Playback speed", &component.playbackSpeed, 0.05f, -8.0f, 8.0f);
+    const float duration = model->animations[component.clipIndex].duration;
+    changed |= ImGui::SliderFloat("Time", &component.time, 0.0f, std::max(duration, 0.001f), "%.3f s");
+    return changed;
+}
 } // namespace ComponentEditors

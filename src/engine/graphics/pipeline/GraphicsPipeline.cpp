@@ -11,11 +11,13 @@ constexpr const char* shaderEntryPoint = "main";
 struct FixedFunctionState {
     VkVertexInputBindingDescription vertexBinding{
         .binding = 0, .stride = sizeof(Vertex), .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
-    std::array<VkVertexInputAttributeDescription, 4> vertexAttributes{
+    std::array<VkVertexInputAttributeDescription, 6> vertexAttributes{
         {{.location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = offsetof(Vertex, position)},
          {.location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = offsetof(Vertex, normal)},
          {.location = 2, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = offsetof(Vertex, texCoord)},
-         {.location = 3, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = offsetof(Vertex, tangent)}}};
+         {.location = 3, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = offsetof(Vertex, tangent)},
+         {.location = 4, .binding = 0, .format = VK_FORMAT_R32G32B32A32_UINT, .offset = offsetof(Vertex, joints)},
+         {.location = 5, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = offsetof(Vertex, weights)}}};
     VkPipelineVertexInputStateCreateInfo vertexInput{.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
                                                      .vertexBindingDescriptionCount = 1,
                                                      .pVertexBindingDescriptions = &vertexBinding,
@@ -73,8 +75,9 @@ VkPipelineShaderStageCreateInfo shaderStage(VkShaderStageFlagBits stage, VkShade
 
 bool GraphicsPipeline::initGraphicsPipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,
                                             VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout materialLayout,
-                                            VkShaderModule vertex, VkShaderModule fragment) {
-    constexpr uint32_t pushConstantSize = sizeof(glm::mat4) + sizeof(glm::vec4) * 3;
+                                            VkShaderModule vertex, VkShaderModule fragment, bool doubleSided,
+                                            bool blending) {
+    constexpr uint32_t pushConstantSize = sizeof(glm::mat4) + sizeof(glm::vec4) * 4;
     VkPushConstantRange pushConstants{
         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, .offset = 0, .size = pushConstantSize};
     const VkDescriptorSetLayout setLayouts[]{cameraLayout, materialLayout};
@@ -93,6 +96,17 @@ bool GraphicsPipeline::initGraphicsPipeline(VkDevice device, VkFormat colorForma
                                             .pColorAttachmentFormats = &colorFormat,
                                             .depthAttachmentFormat = depthFormat};
     FixedFunctionState state{};
+    state.raster.cullMode = doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+    if (blending) {
+        state.depth.depthWriteEnable = VK_FALSE;
+        state.colorAttachment.blendEnable = VK_TRUE;
+        state.colorAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+        state.colorAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        state.colorAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+        state.colorAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        state.colorAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        state.colorAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    }
     state.colorAttachment.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
     VkGraphicsPipelineCreateInfo info = state.pipelineInfo();
@@ -116,33 +130,38 @@ void GraphicsPipeline::shutdown(VkDevice device) {
 }
 
 bool GraphicsPipeline::initShadowPipeline(VkDevice device, VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
-                                          VkShaderModule vertex) {
-    VkPushConstantRange pushConstants{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT, .offset = 0, .size = sizeof(uint32_t)};
+                                          VkDescriptorSetLayout materialLayout, VkShaderModule vertex,
+                                          VkShaderModule fragment) {
+    VkPushConstantRange pushConstants{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                      .offset = 0,
+                                      .size = sizeof(glm::vec4)};
+    const VkDescriptorSetLayout layouts[]{cameraLayout, materialLayout};
     VkPipelineLayoutCreateInfo layout{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-                                      .setLayoutCount = 1,
-                                      .pSetLayouts = &cameraLayout,
+                                      .setLayoutCount = static_cast<uint32_t>(std::size(layouts)),
+                                      .pSetLayouts = layouts,
                                       .pushConstantRangeCount = 1,
                                       .pPushConstantRanges = &pushConstants};
     if (!checkVulkan(vkCreatePipelineLayout(device, &layout, nullptr, &m_pipelineLayout),
                      "Create shadow pipeline layout")) {
         return false;
     }
-    const VkPipelineShaderStageCreateInfo stage = shaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertex);
+    const VkPipelineShaderStageCreateInfo stages[]{shaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertex),
+                                                   shaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, fragment)};
     VkPipelineRenderingCreateInfo rendering{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
                                             .depthAttachmentFormat = depthFormat};
     FixedFunctionState state{};
     state.raster.cullMode = VK_CULL_MODE_BACK_BIT;
     state.raster.depthBiasEnable = VK_TRUE;
     const VkDynamicState shadowDynamicStates[]{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
-                                               VK_DYNAMIC_STATE_DEPTH_BIAS};
+                                               VK_DYNAMIC_STATE_DEPTH_BIAS, VK_DYNAMIC_STATE_CULL_MODE};
     state.dynamic.dynamicStateCount = static_cast<uint32_t>(std::size(shadowDynamicStates));
     state.dynamic.pDynamicStates = shadowDynamicStates;
     state.blend.attachmentCount = 0;
     state.blend.pAttachments = nullptr;
     VkGraphicsPipelineCreateInfo info = state.pipelineInfo();
     info.pNext = &rendering;
-    info.stageCount = 1;
-    info.pStages = &stage;
+    info.stageCount = static_cast<uint32_t>(std::size(stages));
+    info.pStages = stages;
     info.layout = m_pipelineLayout;
     return checkVulkan(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &m_pipeline),
                        "Create shadow pipeline");

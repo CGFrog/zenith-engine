@@ -1,8 +1,9 @@
 # Zenith next steps
 
-This backlog is ordered to produce a usable level-design workflow without
-coupling editor policy to reusable engine systems. Complete each milestone's
-exit criteria before expanding its scope.
+This backlog is ordered to grow the completed level-design workflow into a
+shippable general-purpose 3D game pipeline without coupling editor or game
+policy to reusable engine systems. Complete each milestone's exit criteria
+before expanding its scope.
 
 ## Milestone 1: editor foundation
 
@@ -168,16 +169,135 @@ Exit criteria:
 - A new contributor can build the editor and author a simple level from the
   repository documentation.
 
-## Recommended first implementation slice
+## Milestone 10: runtime projects and authored scene flow
 
-Start with these tasks, in order:
+- [x] Move the reusable project manifest and parser from the editor into an
+      engine project subsystem while keeping editor workflow policy in
+      `src/editor/`.
+- [x] Introduce project manifest version 2 with a display name, asset root,
+      scene root, and project-relative startup scene.
+- [x] Continue reading version 1 projects and upgrade them when saved. Report a
+      descriptive runtime error when a project has no startup scene.
+- [x] Allow game executables to open a project with `--project`, load its
+      startup scene through `SceneDocument`, and transition between authored
+      scenes without hard-coded asset paths.
+- [x] Keep gameplay component creation and scene-selection policy in the game
+      layer.
+- [x] Test path containment, missing startup scenes, failed transitions,
+      version compatibility, and preservation of the active scene after a
+      failed load.
 
-1. Create the separate editor executable and docking shell.
-2. Add stable entity IDs and scene serialization tests.
-3. Implement hierarchy selection and transform inspection.
-4. Add command-based undo/redo for those operations.
-5. Add the offscreen viewport, picking, and transform gizmos.
-6. Finish with Save/Open and an end-to-end authored-scene test.
+Exit criteria:
 
-Do not begin the asset browser or play mode until this slice can create, edit,
-save, reload, and undo changes to a small scene reliably.
+- An editor-authored project can be launched by a game and play its configured
+  startup scene without recompilation.
+- Scene transitions use project-relative references, and a failed transition
+  leaves the current scene running.
+
+## Milestone 11: action input and gamepad support
+
+- [x] Preserve physical device state in `InputManager` and add reusable
+      `InputActionMap`, `InputBinding`, and `InputActionState` APIs above it.
+- [x] Support keyboard keys, mouse buttons and axes, SDL gamepad buttons,
+      sticks, and triggers.
+- [x] Expose pressed, released, held, one-dimensional, and two-dimensional
+      action values.
+- [x] Handle controller connection changes, dead zones, input capture, fixed
+      update edge buffering, and active-device changes deterministically.
+- [x] Store mappings in game or project configuration rather than assigning
+      gameplay meaning inside the engine.
+- [x] Convert the demo to Move, Look, Jump, Sprint, Interact, Pause, and Reload
+      actions.
+- [x] Add CPU tests for chords, dead zones, rebinding, hot-plugging, capture,
+      and fixed-step press retention.
+
+Exit criteria:
+
+- The demo is fully playable with keyboard and mouse or a standard gamepad.
+- Gameplay code consumes actions rather than physical keys and buttons.
+
+## Milestone 12: runtime game UI
+
+- [x] Add an engine-owned, resolution-independent game UI layer that is
+      separate from editor ImGui.
+- [x] Expose a `GameUiContext` through the application context with text,
+      image, panel, button, focus, anchoring, scaling, clipping, and draw-order
+      operations.
+- [x] Add font assets and use existing texture handles without exposing ImGui
+      or Vulkan types to game code.
+- [x] Render game UI after tone mapping and before presentation.
+- [x] Integrate pointer interaction and action-based keyboard and gamepad
+      navigation.
+- [x] Replace the demo's direct ImGui UI with a title screen, HUD, pause menu,
+      and audio, rendering, and input settings screens.
+- [x] Test layout, focus traversal, hit testing, scaling, action handling, and
+      settings persistence without a GPU. Add screenshot coverage for final
+      composition and color space.
+
+Exit criteria:
+
+- Game code can implement menus and HUDs without including ImGui or Vulkan
+  headers.
+- UI remains usable at 16:9, ultrawide, and high-DPI viewport sizes.
+
+## Milestone 13: animated and alpha glTF content
+
+- [ ] Extend CPU assets with joints, weights, skins, inverse-bind matrices,
+      animation clips, channels, and opaque, masked, and blended material
+      modes.
+- [ ] Support glTF step, linear, and cubic-spline animation sampling, looping,
+      playback speed, clip selection, and two-clip cross-fades.
+- [ ] Add serializable animation and skin scene components plus editor preview
+      controls.
+- [ ] Upload per-instance skin palettes without duplicating immutable mesh
+      assets.
+- [ ] Keep opaque and masked primitives on the optimized render path,
+      alpha-test masked shadows, and sort blended primitives back-to-front.
+- [ ] Respect glTF alpha cutoff and double-sided settings. Blended materials do
+      not cast shadows in this milestone.
+- [ ] Add importer and animation-evaluation tests plus bounded Vulkan captures
+      for skinning, masked edges, blending order, and editor preview.
+
+Exit criteria:
+
+- A standard animated glTF character can be imported, previewed, saved,
+  reloaded, and rendered correctly.
+- Common cutout and blended environment assets render with the expected order,
+  culling, and shadow behavior.
+
+## Milestone 14: Windows and Linux release packaging
+
+- [ ] Resolve shaders, project data, and assets through a relocatable,
+      executable-relative resource locator instead of build-directory paths.
+- [ ] Add CMake install rules and package targets that produce a Windows ZIP
+      and Linux `.tar.gz` archive.
+- [ ] Package the game executable, compiled shaders, selected project content,
+      required runtime files, licenses, and a versioned content manifest.
+- [ ] Reject missing, duplicate, escaping, and case-conflicting asset paths
+      before producing an artifact.
+- [ ] Add Windows and Linux CI jobs for configure, build, CPU tests, and Release
+      packaging. Run bounded Vulkan smoke tests where a suitable runner exists.
+- [ ] Verify each artifact from a clean extraction directory, including a path
+      containing spaces, without access to the source or build tree.
+- [ ] Document release creation, supported runtime dependencies, and artifact
+      contents.
+
+Exit criteria:
+
+- CI produces self-contained Windows and Linux archives that launch the
+  configured project after clean extraction.
+- Each archive passes the automated CPU suite and a bounded Vulkan smoke run on
+  supported release hardware.
+
+## Recommended next implementation slice
+
+Start with milestone 10 and keep the first slice limited to shared project
+manifest ownership, version 2 loading, startup-scene configuration, and a
+headless authored-scene launch test. Do not begin the action-input layer until
+the editor and game consume the same project contract without depending on one
+another.
+
+The first release remains a compiled C++ game. Scripting, binary plugins,
+asynchronous or additive scene streaming, asset eviction, morph targets,
+compressed meshes, advanced physics, networking, localization, installers,
+and macOS packaging remain later work.

@@ -17,6 +17,7 @@ namespace {
 constexpr uint32_t shadowResolution = 1448;
 constexpr uint32_t maximumShadowCascades = 3;
 constexpr uint32_t maximumObjectsPerFrame = 16384;
+constexpr uint32_t maximumSkinMatricesPerFrame = 65536;
 
 struct CameraData {
     glm::mat4 viewProjection{1.0f};
@@ -36,10 +37,12 @@ struct PushConstants {
     glm::vec4 baseColor{1.0f};
     glm::vec4 material{1.0f, 1.0f, 1.0f, 1.0f};
     glm::vec4 emissive{0.0f};
+    glm::vec4 surface{0.5f, 0.0f, 0.0f, 0.0f};
 };
 
 struct ObjectData {
     glm::mat4 model{1.0f};
+    glm::uvec4 skin{0};
 };
 
 void imageBarrier(VkCommandBuffer commandBuffer, VkImage image, VkImageAspectFlags aspect, VkImageLayout oldLayout,
@@ -152,6 +155,10 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         {.binding = 2,
          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT},
+        {.binding = 3,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1,
          .stageFlags = VK_SHADER_STAGE_VERTEX_BIT}};
     VkDescriptorSetLayoutCreateInfo layoutInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -182,7 +189,7 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
     constexpr uint32_t maxMaterials = 256;
     const VkDescriptorPoolSize poolSizes[]{
         {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = frameCount},
-        {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = frameCount},
+        {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = frameCount * 2},
         {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = maxMaterials * 5 + frameCount}};
     VkDescriptorPoolCreateInfo poolInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -238,6 +245,19 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
                                    .pBufferInfo = &descriptorBuffer};
         vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
 
+        buffer.size = sizeof(glm::mat4) * maximumSkinMatricesPerFrame;
+        if (!checkVulkan(vmaCreateBuffer(m_allocator, &buffer, &allocation, &m_cameras[i].skinPalettes.buffer,
+                                         &m_cameras[i].skinPalettes.allocation, &info),
+                         "Create per-frame skin palette buffer")) {
+            return false;
+        }
+        m_cameras[i].skinPalettesMapped = info.pMappedData;
+        VkDescriptorBufferInfo skinDescriptor{
+            .buffer = m_cameras[i].skinPalettes.buffer, .offset = 0, .range = VK_WHOLE_SIZE};
+        write.dstBinding = 3;
+        write.pBufferInfo = &skinDescriptor;
+        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+
         buffer.size = sizeof(ObjectData) * maximumObjectsPerFrame * (maximumShadowCascades + 1);
         buffer.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
         if (!checkVulkan(vmaCreateBuffer(m_allocator, &buffer, &allocation, &m_cameras[i].objects.buffer,
@@ -281,14 +301,15 @@ bool MeshPass::createPipeline(VkFormat colorFormat, VkFormat depthFormat) {
     ShaderModule vertex(m_device);
     ShaderModule fragment(m_device);
     ShaderModule shadowVertex(m_device);
+    ShaderModule shadowFragment(m_device);
     ShaderModule selectionMaskVertex(m_device);
     ShaderModule selectionMaskFragment(m_device);
     ShaderModule outlineVertex(m_device);
     ShaderModule outlineFragment(m_device);
 
     if (!vertex.load(shaders / "mesh.vert.spv") || !fragment.load(shaders / "mesh.frag.spv") ||
-        !shadowVertex.load(shaders / "shadow.vert.spv") || !outlineVertex.load(shaders / "outline.vert.spv") ||
-        !outlineFragment.load(shaders / "outline.frag.spv") ||
+        !shadowVertex.load(shaders / "shadow.vert.spv") || !shadowFragment.load(shaders / "shadow.frag.spv") ||
+        !outlineVertex.load(shaders / "outline.vert.spv") || !outlineFragment.load(shaders / "outline.frag.spv") ||
         !selectionMaskVertex.load(shaders / "selection_mask.vert.spv") ||
         !selectionMaskFragment.load(shaders / "selection_mask.frag.spv")) {
         return false;
@@ -296,7 +317,15 @@ bool MeshPass::createPipeline(VkFormat colorFormat, VkFormat depthFormat) {
 
     return m_pipeline.initGraphicsPipeline(m_device, colorFormat, depthFormat, m_cameraLayout, m_materialLayout,
                                            vertex.handle(), fragment.handle()) &&
-           m_shadowPipeline.initShadowPipeline(m_device, depthFormat, m_cameraLayout, shadowVertex.handle()) &&
+           m_doubleSidedPipeline.initGraphicsPipeline(m_device, colorFormat, depthFormat, m_cameraLayout,
+                                                      m_materialLayout, vertex.handle(), fragment.handle(), true) &&
+           m_blendPipeline.initGraphicsPipeline(m_device, colorFormat, depthFormat, m_cameraLayout, m_materialLayout,
+                                                vertex.handle(), fragment.handle(), false, true) &&
+           m_blendDoubleSidedPipeline.initGraphicsPipeline(m_device, colorFormat, depthFormat, m_cameraLayout,
+                                                           m_materialLayout, vertex.handle(), fragment.handle(), true,
+                                                           true) &&
+           m_shadowPipeline.initShadowPipeline(m_device, depthFormat, m_cameraLayout, m_materialLayout,
+                                               shadowVertex.handle(), shadowFragment.handle()) &&
            m_selectionMaskPipeline.initSelectionMaskPipeline(m_device, colorFormat, depthFormat, m_cameraLayout,
                                                              selectionMaskVertex.handle(),
                                                              selectionMaskFragment.handle()) &&
@@ -647,6 +676,7 @@ bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
             return false;
         }
         const glm::mat4 world = renderables.get<const TransformComponent>(entity).world;
+        const SkinComponent* skin = scene.registry().try_get<SkinComponent>(entity);
         const glm::vec3 center = glm::vec3(world * glm::vec4(mesh->bounds.center, 1.0f));
         const float scale = std::max(
             {glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])), glm::length(glm::vec3(world[2]))});
@@ -666,10 +696,17 @@ bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
                              .world = world,
                              .boundsCenter = center,
                              .boundsRadius = mesh->bounds.radius * scale,
-                             .outlined = outlined});
+                             .outlined = outlined,
+                             .jointPalette = skin ? skin->jointPalette : std::vector<glm::mat4>{}});
         }
     }
     std::sort(items.begin(), items.end(), [](const RenderItem& first, const RenderItem& second) {
+        if (first.material->alphaMode != second.material->alphaMode) {
+            return first.material->alphaMode < second.material->alphaMode;
+        }
+        if (first.material->doubleSided != second.material->doubleSided) {
+            return first.material->doubleSided < second.material->doubleSided;
+        }
         if (handleKey(first.materialHandle) != handleKey(second.materialHandle)) {
             return handleKey(first.materialHandle) < handleKey(second.materialHandle);
         }
@@ -723,13 +760,12 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
                           std::max(light.shadows.slopeBias, 0.0f));
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline.layout(), 0, 1,
                                 &m_cameras[frameIndex].descriptor, 0, nullptr);
-        vkCmdPushConstants(commandBuffer, m_shadowPipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(cascade),
-                           &cascade);
         const Frustum shadowFrustum = makeFrustum(lightViewProjections[cascade]);
         m_shadowVisibleItems.clear();
         m_shadowVisibleItems.reserve(items.size());
         for (const RenderItem& item : items) {
-            if (light.shadows.enabled && sphereVisible(shadowFrustum, item.boundsCenter, item.boundsRadius)) {
+            if (light.shadows.enabled && item.material->alphaMode != MaterialAlphaMode::Blend &&
+                sphereVisible(shadowFrustum, item.boundsCenter, item.boundsRadius)) {
                 m_shadowVisibleItems.push_back(&item);
             }
         }
@@ -737,20 +773,42 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
         auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped);
         for (size_t index = 0; index < m_shadowVisibleItems.size(); ++index) {
             objectData[objectBase + index].model = m_shadowVisibleItems[index]->world;
+            objectData[objectBase + index].skin = {
+                m_shadowVisibleItems[index]->skinPaletteOffset,
+                static_cast<uint32_t>(m_shadowVisibleItems[index]->jointPalette.size()), 0, 0};
         }
+        vmaFlushAllocation(m_allocator, m_cameras[frameIndex].objects.allocation, 0, VK_WHOLE_SIZE);
         const GpuMesh* boundMesh = nullptr;
+        const GpuMaterial* boundMaterial = nullptr;
+        std::optional<bool> boundDoubleSided;
         for (size_t itemIndex = 0; itemIndex < m_shadowVisibleItems.size();) {
             const RenderItem& item = *m_shadowVisibleItems[itemIndex];
             size_t batchEnd = itemIndex + 1;
             while (batchEnd < m_shadowVisibleItems.size()) {
                 const RenderItem& candidate = *m_shadowVisibleItems[batchEnd];
-                if (candidate.gpuMesh != item.gpuMesh ||
+                if (candidate.gpuMesh != item.gpuMesh || candidate.gpuMaterial != item.gpuMaterial ||
                     candidate.primitive->firstIndex != item.primitive->firstIndex ||
                     candidate.primitive->indexCount != item.primitive->indexCount) {
                     break;
                 }
                 ++batchEnd;
             }
+            if (boundMaterial != item.gpuMaterial) {
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline.layout(), 1, 1,
+                                        &item.gpuMaterial->descriptor, 0, nullptr);
+                boundMaterial = item.gpuMaterial;
+            }
+            if (!boundDoubleSided || *boundDoubleSided != item.material->doubleSided) {
+                vkCmdSetCullMode(commandBuffer,
+                                 item.material->doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
+                boundDoubleSided = item.material->doubleSided;
+            }
+            const glm::vec4 shadowPush{static_cast<float>(cascade),
+                                       item.material->alphaMode == MaterialAlphaMode::Mask ? 1.0f : 0.0f,
+                                       item.material->alphaCutoff, 0.0f};
+            vkCmdPushConstants(commandBuffer, m_shadowPipeline.layout(),
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(shadowPush),
+                               &shadowPush);
             if (boundMesh != item.gpuMesh) {
                 const VkDeviceSize offset = 0;
                 vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
@@ -920,6 +978,24 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.renderableCount = static_cast<uint32_t>(m_renderItems.size());
     DirectionalLightComponent shadowLight = light;
     shadowLight.shadows.enabled = shadowsEnabled;
+    auto* skinMatrices = static_cast<glm::mat4*>(m_cameras[frameIndex].skinPalettesMapped);
+    uint32_t skinMatrixCount = 1;
+    skinMatrices[0] = glm::mat4(1.0f);
+    for (RenderItem& item : m_renderItems) {
+        item.skinPaletteOffset = 0;
+        if (item.jointPalette.empty()) {
+            continue;
+        }
+        if (skinMatrixCount + item.jointPalette.size() > maximumSkinMatricesPerFrame) {
+            std::cerr << "Skin palettes exceed the per-frame render capacity\n";
+            return false;
+        }
+        item.skinPaletteOffset = skinMatrixCount;
+        std::copy(item.jointPalette.begin(), item.jointPalette.end(), skinMatrices + skinMatrixCount);
+        skinMatrixCount += static_cast<uint32_t>(item.jointPalette.size());
+    }
+    vmaFlushAllocation(m_allocator, m_cameras[frameIndex].skinPalettes.allocation, 0,
+                       sizeof(glm::mat4) * skinMatrixCount);
     if (!recordShadow(commandBuffer, frameIndex, m_renderItems, shadowLight, cameraData.lightViewProjections,
                       cascadeCount, stats)) {
         return false;
@@ -948,6 +1024,20 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             ++stats.culledCount;
         }
     }
+    std::stable_sort(m_visibleItems.begin(), m_visibleItems.end(),
+                     [&cameraPosition](const RenderItem* first, const RenderItem* second) {
+                         const bool firstBlended = first->material->alphaMode == MaterialAlphaMode::Blend;
+                         const bool secondBlended = second->material->alphaMode == MaterialAlphaMode::Blend;
+                         if (firstBlended != secondBlended) {
+                             return !firstBlended;
+                         }
+                         if (!firstBlended) {
+                             return false;
+                         }
+                         const glm::vec3 firstOffset = first->boundsCenter - cameraPosition;
+                         const glm::vec3 secondOffset = second->boundsCenter - cameraPosition;
+                         return glm::dot(firstOffset, firstOffset) > glm::dot(secondOffset, secondOffset);
+                     });
     if (m_visibleItems.size() > maximumObjectsPerFrame) {
         vkCmdEndRendering(commandBuffer);
         std::cerr << "Visible object count exceeds the per-frame render capacity\n";
@@ -957,6 +1047,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped) + mainObjectBase;
     for (size_t index = 0; index < m_visibleItems.size(); ++index) {
         objectData[index].model = m_visibleItems[index]->world;
+        objectData[index].skin = {m_visibleItems[index]->skinPaletteOffset,
+                                  static_cast<uint32_t>(m_visibleItems[index]->jointPalette.size()), 0, 0};
     }
     vmaFlushAllocation(m_allocator, m_cameras[frameIndex].objects.allocation, 0, VK_WHOLE_SIZE);
 
@@ -982,9 +1074,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         }
     }
 
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline.handle());
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline.layout(), 0, 1,
-                            &m_cameras[frameIndex].descriptor, 0, nullptr);
+    const GraphicsPipeline* boundPipeline = nullptr;
     const GpuMesh* boundMesh = nullptr;
     const GpuMaterial* boundMaterial = nullptr;
     for (size_t itemIndex = 0; itemIndex < m_visibleItems.size();) {
@@ -994,10 +1084,25 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             const RenderItem& candidate = *m_visibleItems[batchEnd];
             if (candidate.gpuMesh != item.gpuMesh || candidate.gpuMaterial != item.gpuMaterial ||
                 candidate.primitive->firstIndex != item.primitive->firstIndex ||
-                candidate.primitive->indexCount != item.primitive->indexCount) {
+                candidate.primitive->indexCount != item.primitive->indexCount ||
+                candidate.material->alphaMode != item.material->alphaMode ||
+                candidate.material->doubleSided != item.material->doubleSided) {
                 break;
             }
             ++batchEnd;
+        }
+        const GraphicsPipeline* pipeline = nullptr;
+        if (item.material->alphaMode == MaterialAlphaMode::Blend) {
+            pipeline = item.material->doubleSided ? &m_blendDoubleSidedPipeline : &m_blendPipeline;
+        } else {
+            pipeline = item.material->doubleSided ? &m_doubleSidedPipeline : &m_pipeline;
+        }
+        if (pipeline != boundPipeline) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->handle());
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout(), 0, 1,
+                                    &m_cameras[frameIndex].descriptor, 0, nullptr);
+            boundPipeline = pipeline;
+            boundMaterial = nullptr;
         }
         if (boundMesh != item.gpuMesh) {
             const VkDeviceSize offset = 0;
@@ -1006,7 +1111,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             boundMesh = item.gpuMesh;
         }
         if (boundMaterial != item.gpuMaterial) {
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline.layout(), 1, 1,
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipeline->layout(), 1, 1,
                                     &item.gpuMaterial->descriptor, 0, nullptr);
             boundMaterial = item.gpuMaterial;
         }
@@ -1016,7 +1121,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         push.material = {item.material->metallic, item.material->roughness, item.material->normalScale,
                          item.material->occlusionStrength};
         push.emissive = {item.material->emissive * item.material->emissiveStrength, 0.0f};
-        vkCmdPushConstants(commandBuffer, m_pipeline.layout(),
+        push.surface = {item.material->alphaCutoff, static_cast<float>(item.material->alphaMode), 0.0f, 0.0f};
+        vkCmdPushConstants(commandBuffer, boundPipeline->layout(),
                            VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
         const uint32_t instanceCount = static_cast<uint32_t>(batchEnd - itemIndex);
         vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, instanceCount, item.primitive->firstIndex, 0,
@@ -1063,9 +1169,22 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     return true;
 }
 
+bool MeshPass::uiTexture(TextureHandle handle, const AssetManager& assets, VkSampler& sampler, VkImageView& view) {
+    const GpuTexture* texture = ensureTexture(handle, assets);
+    if (!texture) {
+        return false;
+    }
+    sampler = m_sampler;
+    view = texture->srgbView ? texture->srgbView : texture->view;
+    return true;
+}
+
 void MeshPass::shutdown(const VulkanContext& context) {
     m_uploadContext.shutdown();
     m_pipeline.shutdown(context.device());
+    m_doubleSidedPipeline.shutdown(context.device());
+    m_blendPipeline.shutdown(context.device());
+    m_blendDoubleSidedPipeline.shutdown(context.device());
     m_shadowPipeline.shutdown(context.device());
     m_selectionMaskPipeline.shutdown(context.device());
     m_outlinePipeline.shutdown(context.device());
@@ -1109,6 +1228,9 @@ void MeshPass::shutdown(const VulkanContext& context) {
         }
         if (camera.objects.buffer) {
             vmaDestroyBuffer(context.vmaAllocator(), camera.objects.buffer, camera.objects.allocation);
+        }
+        if (camera.skinPalettes.buffer) {
+            vmaDestroyBuffer(context.vmaAllocator(), camera.skinPalettes.buffer, camera.skinPalettes.allocation);
         }
     }
 

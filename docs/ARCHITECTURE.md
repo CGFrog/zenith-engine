@@ -31,11 +31,17 @@ Important boundaries:
 - Reusable engine subsystems never name a particular game project or asset.
 - Scene data is expressed as components, not renderer or physics internals.
 - Assets are parsed into CPU values; only the renderer owns Vulkan uploads.
+- Runtime game UI is recorded through engine commands. ImGui and its Vulkan
+  backend remain private renderer/editor implementation details.
 - Physics uses ECS entities and Zenith domain types at its public boundary.
-- Input converts SDL events into physical key/mouse state; the demo assigns
-  gameplay meaning.
+- Input converts SDL events into physical keyboard, mouse, and gamepad state.
+  The reusable action layer combines bindings, while the demo owns action names
+  and gameplay meaning.
 - Demo scenes may depend on engine services, but `zenith_engine` does not link
   to `zenith_demo`.
+- Project manifest parsing and project-relative scene resolution belong to the
+  engine project subsystem. Startup-scene choice and gameplay composition stay
+  in the application or game layer.
 - Editor panels, selection, projects, commands, and document policy live in
   `src/editor/`. The editor depends on `zenith_engine`; the engine and game do
   not depend on editor code.
@@ -99,7 +105,8 @@ Poll SDL events and build InputState
        consume buffered key presses
   -> clamp excessive backlog
   -> interpolate dynamic body transforms
-  -> update scene transforms and render
+  -> update scene transforms and render the HDR scene
+  -> tone map, compose game UI, and present
   -> present
   -> apply deferred scene switch or quit request
 ```
@@ -108,9 +115,42 @@ The default physics step is 1/60 second with at most four catch-up steps. The
 accumulator separates simulation stability from rendering rate. Jump input is
 latched so a short press is not lost on a render frame without a physics tick.
 Interpolation uses the remaining accumulator fraction between previous and
-current simulated poses. A transition unloads only after presentation, clears
-physics before ECS entities can be reused, and loads the next scene with asset
-and GPU caches intact.
+current simulated poses. A transition stages the requested scene after
+presentation; only a successful load unloads the old scene and clears physics.
+A failed load preserves the running scene. Asset and GPU caches remain intact
+across successful transitions.
+
+## Project and authored-scene flow
+
+Both applications consume the engine-owned `ProjectConfig` contract. Manifest
+version 2 resolves asset and scene roots relative to the project file and keeps
+the startup scene contained by the scene root. Version 1 manifests remain
+readable but have no startup scene until saved with the new field.
+
+The game executable accepts `--project <project-file>`. `DemoApplication`
+selects the gameplay scene, while `GameplayScene` loads the configured authored
+scene before adding demo-specific entities and behavior. Other game scenes can
+load a scene-root-relative reference with `loadProjectScene`; the engine does
+not assign gameplay meaning to those references.
+
+## Runtime game-UI flow
+
+`Engine` owns one `GameUiContext` and exposes it to the active application
+scene through `ApplicationContext`. At the start of each frame the context
+captures the drawable pixel size and device-independent input snapshot. Game
+code then records panels, text, texture-handle images, and buttons without
+including ImGui or Vulkan headers.
+
+The design space is 1920x1080. Uniform scaling preserves proportions at 16:9,
+centers content with gutters on wider displays, and uses drawable pixels so
+high-DPI windows retain stable logical sizing. Anchors, clip rectangles, draw
+orders, pointer hit testing, and focused action navigation are resolved before
+the renderer consumes the command list.
+
+After the post-process pass writes the tone-mapped swapchain image, `UiPass`
+translates the game commands to its private ImGui draw list and composes them
+before presentation. Font bytes and texture handles cross the public boundary;
+backend font atlases and Vulkan descriptors do not.
 
 Benchmark mode skips input-driven gameplay and physics after polling events. It
 warms the renderer for 1,000 frames and measures only the requested following
@@ -211,6 +251,9 @@ Post-process pass
   HDR target
   -> bloom + edge smoothing + ACES tone mapping
   -> swapchain image
+
+Game UI pass
+  resolution-independent commands -> swapchain image
 
 Transition to PRESENT -> submit -> present
 ```

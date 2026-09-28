@@ -4,17 +4,40 @@
 
 #include <filesystem>
 
-SceneResult DemoApplication::onStart(ApplicationContext& context) {
-    const auto effect =
-        context.audio.loadClip(std::filesystem::path{ZENITH_ASSET_DIR} / "audio" / "interaction.wav", true);
-    if (!effect) {
-        return {.error = effect.error};
-    }
-    m_interactionSound = effect.handle;
+DemoApplication::DemoApplication(std::optional<ProjectConfig> project, std::filesystem::path settingsPath)
+    : m_inputActions(createDemoInputMap())
+    , m_settings(std::make_shared<GameSettings>())
+    , m_settingsPath(std::move(settingsPath))
+    , m_project(std::move(project)) {}
 
-    const auto music = context.audio.loadStream(std::filesystem::path{ZENITH_ASSET_DIR} / "audio" / "ambient.ogg");
+SceneResult DemoApplication::onStart(ApplicationContext& context) {
+    if (!m_settingsPath.empty() && std::filesystem::exists(m_settingsPath)) {
+        if (const GameSettingsResult result = loadGameSettings(m_settingsPath, *m_settings); !result) {
+            return {.error = result.error};
+        }
+    }
+    RenderSettings renderSettings = context.rendering.settings();
+    renderSettings.antialiasing = m_settings->antialiasing;
+    renderSettings.bloom = m_settings->bloom;
+    context.rendering.setSettings(renderSettings);
+    context.audio.setBusMuted(AudioBus::Master, m_settings->masterMuted);
+
+    const std::filesystem::path assetRoot = m_project ? m_project->assetRoot : std::filesystem::path{ZENITH_ASSET_DIR};
+    const auto effect = context.audio.loadClip(assetRoot / "audio" / "interaction.wav", true);
+    if (!effect) {
+        if (!m_project) {
+            return {.error = effect.error};
+        }
+    } else {
+        m_interactionSound = effect.handle;
+    }
+
+    const auto music = context.audio.loadStream(assetRoot / "audio" / "ambient.ogg");
     if (!music) {
-        return {.error = music.error};
+        if (!m_project) {
+            return {.error = music.error};
+        }
+        return {.success = true};
     }
     AudioPlaybackOptions musicOptions;
     musicOptions.bus = AudioBus::Music;
@@ -35,7 +58,8 @@ SceneKey DemoApplication::initialScene() const {
 
 std::unique_ptr<ApplicationScene> DemoApplication::createScene(SceneKey scene) {
     if (scene == demoSceneKey(DemoSceneId::Gameplay)) {
-        return std::make_unique<GameplayScene>(m_interactionSound);
+        return std::make_unique<GameplayScene>(m_interactionSound, m_inputActions, m_settings, m_settingsPath,
+                                               m_project);
     }
 
     return nullptr;

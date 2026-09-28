@@ -134,6 +134,41 @@ class FailingApplication final : public Application {
     RecordingState& m_state;
 };
 
+class FailingTransitionScene final : public ApplicationScene {
+  public:
+    explicit FailingTransitionScene(bool shouldFail)
+        : m_shouldFail(shouldFail) {}
+
+    SceneResult load(ApplicationContext& context) override {
+        context.scene.createEntity(m_shouldFail ? "Partial replacement" : "Preserved scene");
+        return m_shouldFail ? SceneResult{.error = "replacement failed"} : SceneResult{.success = true};
+    }
+
+    void update(ApplicationContext& context, const InputState& input, float) override {
+        if (!m_shouldFail && input.keyPressed(Key::R)) {
+            context.control.requestSceneChange({1});
+        }
+    }
+
+    void fixedUpdate(ApplicationContext&, const InputState&, float) override {}
+
+    void unload(ApplicationContext&) override {}
+
+  private:
+    bool m_shouldFail{false};
+};
+
+class FailingTransitionApplication final : public Application {
+  public:
+    SceneKey initialScene() const override {
+        return {0};
+    }
+
+    std::unique_ptr<ApplicationScene> createScene(SceneKey scene) override {
+        return std::make_unique<FailingTransitionScene>(scene.value == 1);
+    }
+};
+
 size_t entityCount(const Scene& scene) {
     const auto view = scene.registry().view<TransformComponent>();
     return static_cast<size_t>(std::distance(view.begin(), view.end()));
@@ -179,8 +214,8 @@ int main() {
         expect(switched && switched.keepRunning, "deferred scene transition succeeds");
         expect(entityCount(scene) == 1, "old scene state is cleared before the new scene loads");
         expect(state.events ==
-                   std::vector<std::string>({"start", "load0", "fixed0", "ui0", "update0", "unload0", "load1"}),
-               "switch unloads the old scene before loading the new scene");
+                   std::vector<std::string>({"start", "load0", "fixed0", "ui0", "update0", "load1", "unload0"}),
+               "switch stages the new scene before unloading the old scene");
 
         InputState quit;
         quit.setKeyPressed(Key::Q);
@@ -191,6 +226,27 @@ int main() {
         expect(state.events[state.events.size() - 2] == "unload1" && state.events.back() == "stop",
                "shutdown unloads the active scene before stopping the application");
         expect(entityCount(scene) == 0, "shutdown clears all ECS state");
+    }
+
+    {
+        FailingTransitionApplication application;
+        Scene scene;
+        AssetManager assets;
+        PhysicsWorld physics;
+        AudioSystem audio;
+        audio.init(AudioConfig{.outputEnabled = false});
+        ApplicationSession session(application, scene, assets, physics, audio);
+        expect(static_cast<bool>(session.start()), "transition test starts its initial scene");
+
+        const SceneEntityId preserved = scene.id(*scene.registry().view<NameComponent>().begin());
+        InputState reload;
+        reload.setKeyPressed(Key::R);
+        session.update(reload, 1.0f / 60.0f);
+        const ApplicationFrameResult result = session.finishFrame();
+        expect(!result && result.error == "replacement failed", "failed transitions return their load error");
+        expect(entityCount(scene) == 1 && scene.findEntity(preserved) != entt::null,
+               "failed transitions preserve the active scene");
+        session.shutdown();
     }
 
     {
@@ -229,6 +285,11 @@ int main() {
             expect(controllers.get<RigidBodyComponent>(*controllers.begin()).lockRotation,
                    "player rotation lock is expressed by generic physics configuration");
         }
+
+        InputState startGame;
+        startGame.setKeyPressed(Key::Space);
+        session.update(startGame, 1.0f / 60.0f);
+        session.drawUi();
 
         InputState look;
         look.mouseDelta = {100.0f, 20.0f};

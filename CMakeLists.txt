@@ -221,6 +221,7 @@ add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE "${stb_SOURCE_DIR}")
 
 add_library(zenith_engine STATIC
+    src/engine/animation/AnimationSystem.cpp
     src/engine/audio/AudioSystem.cpp
     src/engine/audio/StbVorbis.cpp
     src/engine/Engine.cpp
@@ -241,10 +242,13 @@ add_library(zenith_engine STATIC
     src/engine/graphics/surface/Surface.cpp
     src/engine/graphics/swapchain/Swapchain.cpp
     src/engine/graphics/vulkan/VulkanContext.cpp
+    src/engine/input/InputActions.cpp
     src/engine/input/InputManager.cpp
     src/engine/physics/PhysicsWorld.cpp
+    src/engine/project/ProjectConfig.cpp
     src/engine/scene/Scene.cpp
     src/engine/scene/SceneDocument.cpp
+    src/engine/ui/GameUi.cpp
     src/engine/window/Window.cpp
 )
 
@@ -254,6 +258,8 @@ endif()
 
 add_library(zenith_demo STATIC
     src/game/application/DemoApplication.cpp
+    src/game/application/GameSettings.cpp
+    src/game/input/DemoInput.cpp
     src/game/player/FirstPersonController.cpp
     src/game/scene/DemoScene.cpp
     src/game/scene/GameplayScene.cpp
@@ -276,7 +282,6 @@ add_library(zenith_editor_app STATIC
     src/editor/interaction/ComponentEditors.cpp
     src/editor/interaction/EditorCamera.cpp
     src/editor/project/AssetCatalog.cpp
-    src/editor/project/ProjectConfig.cpp
     src/editor/project/ThumbnailCache.cpp
     src/editor/settings/EditorSettings.cpp
 )
@@ -398,6 +403,15 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_asset_scene COMMAND zenith_asset_tests)
 
+    add_executable(zenith_animation_tests tests/engine/AnimationTests.cpp)
+    target_link_libraries(zenith_animation_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_animation_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_animation_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_animation COMMAND zenith_animation_tests)
+
     add_executable(zenith_physics_tests tests/engine/PhysicsTests.cpp)
     target_compile_definitions(zenith_physics_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
     add_dependencies(zenith_physics_tests zenith_assets)
@@ -419,6 +433,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_application_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_application_lifecycle COMMAND zenith_application_tests)
+
+    add_executable(zenith_game_settings_tests tests/game/GameSettingsTests.cpp)
+    target_link_libraries(zenith_game_settings_tests PRIVATE zenith_demo)
+    if(MSVC)
+        target_compile_options(zenith_game_settings_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_game_settings_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_game_settings COMMAND zenith_game_settings_tests)
 
     add_executable(zenith_editor_settings_tests
         tests/editor/EditorSettingsTests.cpp
@@ -444,6 +467,33 @@ if(BUILD_TESTING)
         target_compile_options(zenith_scene_document_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_scene_document COMMAND zenith_scene_document_tests)
+
+    add_executable(zenith_project_config_tests tests/engine/ProjectConfigTests.cpp)
+    target_link_libraries(zenith_project_config_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_project_config_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_project_config_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_project_config COMMAND zenith_project_config_tests)
+
+    add_executable(zenith_input_action_tests tests/engine/InputActionTests.cpp)
+    target_link_libraries(zenith_input_action_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_input_action_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_input_action_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_input_actions COMMAND zenith_input_action_tests)
+
+    add_executable(zenith_game_ui_tests tests/engine/GameUiTests.cpp)
+    target_link_libraries(zenith_game_ui_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_game_ui_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_game_ui_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_game_ui COMMAND zenith_game_ui_tests)
 
     add_executable(zenith_editor_document_tests
         tests/editor/EditorDocumentTests.cpp
@@ -514,7 +564,6 @@ if(BUILD_TESTING)
     add_executable(zenith_project_asset_tests
         tests/editor/ProjectAssetTests.cpp
         src/editor/project/AssetCatalog.cpp
-        src/editor/project/ProjectConfig.cpp
     )
     target_include_directories(zenith_project_asset_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(zenith_project_asset_tests PRIVATE zenith_engine)

@@ -1,6 +1,8 @@
 #include "Assets.hpp"
 #include "ModelImporter.hpp"
 
+#include <fstream>
+#include <iterator>
 #include <utility>
 
 namespace {
@@ -70,6 +72,27 @@ AssetLoadResult<MeshHandle> AssetManager::loadMesh(const std::filesystem::path& 
     return {.error = "Model does not contain mesh index " + std::to_string(meshIndex) + ": " + modelPath.string()};
 }
 
+AssetLoadResult<FontHandle> AssetManager::loadFont(const std::filesystem::path& path) {
+    const auto [normalized, key] = normalizedPath(path);
+    if (const auto found = m_fontCache.find(key); found != m_fontCache.end()) {
+        return {.handle = found->second};
+    }
+
+    std::ifstream input(normalized, std::ios::binary);
+    if (!input) {
+        return {.error = "Could not open font: " + normalized.string()};
+    }
+    FontAsset asset;
+    asset.bytes.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    if (asset.bytes.empty()) {
+        return {.error = "Font file is empty: " + normalized.string()};
+    }
+    const FontHandle handle{static_cast<uint32_t>(m_fonts.size()), 1};
+    m_fonts.push_back(std::move(asset));
+    m_fontCache.emplace(key, handle);
+    return {.handle = handle};
+}
+
 const ModelAsset* AssetManager::model(ModelHandle handle) const {
     return resolve(m_models, handle);
 }
@@ -84,6 +107,14 @@ const MaterialAsset* AssetManager::material(MaterialHandle handle) const {
 
 const TextureAsset* AssetManager::texture(TextureHandle handle) const {
     return resolve(m_textures, handle);
+}
+
+const FontAsset* AssetManager::font(FontHandle handle) const {
+    return resolve(m_fonts, handle);
+}
+
+size_t AssetManager::fontCount() const {
+    return m_fonts.size();
 }
 
 std::optional<ModelAssetSource> AssetManager::modelSource(ModelHandle handle) const {

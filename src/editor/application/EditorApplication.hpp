@@ -1,7 +1,7 @@
 #pragma once
 
-#include "editor/project/ProjectConfig.hpp"
 #include "engine/application/Application.hpp"
+#include "engine/project/ProjectConfig.hpp"
 
 #include <filesystem>
 #include <functional>

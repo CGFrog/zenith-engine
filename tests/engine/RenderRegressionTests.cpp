@@ -91,11 +91,36 @@ Image antialiasingCapture() {
     }
     return image;
 }
+
+Image gameUiCapture() {
+    Image image(width * height * 3);
+    const std::array<float, 3> sceneColor{0.18f, 0.24f, 0.32f};
+    const std::array<float, 4> panelColor{0.025f, 0.035f, 0.055f, 0.94f};
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            std::array<float, 3> color = sceneColor;
+            if (x >= 10 && x < 38 && y >= 5 && y < 27) {
+                for (size_t channel = 0; channel < color.size(); ++channel) {
+                    color[channel] = panelColor[channel] * panelColor[3] + color[channel] * (1.0f - panelColor[3]);
+                }
+            }
+            if ((x >= 23 && x <= 24 && y >= 12 && y <= 20) || (y >= 15 && y <= 16 && x >= 19 && x <= 28)) {
+                color = {1.0f, 1.0f, 1.0f};
+            }
+            const size_t pixel = static_cast<size_t>(y * width + x) * 3;
+            for (size_t channel = 0; channel < color.size(); ++channel) {
+                image[pixel + channel] = toByte(color[channel]);
+            }
+        }
+    }
+    return image;
+}
 } // namespace
 
 int main() {
     compare("color-space", colorSpaceCapture(), 11920415357468837699ull);
     compare("shadow", shadowCapture(), 9332500078490701299ull);
     compare("antialiasing", antialiasingCapture(), 4834795595963545455ull);
+    compare("game-ui", gameUiCapture(), 2202593522406481215ull);
     return failures == 0 ? 0 : 1;
 }

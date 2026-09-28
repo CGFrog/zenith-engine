@@ -49,6 +49,30 @@ struct ModelComponent {
     ModelHandle model{};
 };
 
+struct ModelNodeComponent {
+    ModelHandle model{};
+    SceneEntityId instanceRoot{};
+    uint32_t nodeIndex{0};
+};
+
+struct AnimationComponent {
+    uint32_t clipIndex{0};
+    float time{0.0f};
+    float playbackSpeed{1.0f};
+    bool looping{true};
+    bool playing{true};
+    std::optional<uint32_t> blendClipIndex;
+    float blendTime{0.0f};
+    float blendDuration{0.0f};
+};
+
+struct SkinComponent {
+    ModelHandle model{};
+    SceneEntityId instanceRoot{};
+    uint32_t skinIndex{0};
+    std::vector<glm::mat4> jointPalette;
+};
+
 struct MeshRendererComponent {
     MeshHandle mesh{};
 };

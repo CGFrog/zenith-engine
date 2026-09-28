@@ -41,8 +41,10 @@ benchmark improves by at least 10%. The prototype is not selected by default.
 ## Image stability
 
 `zenith_render_regression` compares deterministic color-space, cascade-shadow,
-and edge-antialiasing captures with sealed hashes. On failure it writes the
-candidate PPM images to the system temporary directory for inspection.
+edge-antialiasing, and final game-UI composition captures with sealed hashes.
+The UI capture covers the post-tone-map ordering and expected output color
+space. On failure it writes the candidate PPM images to the system temporary
+directory for inspection.
 
 The public anti-aliasing choices remain **Off** and **FXAA**. Temporal AA is
 deliberately not exposed: adding it requires motion vectors plus automated

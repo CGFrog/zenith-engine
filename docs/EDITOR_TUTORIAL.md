@@ -38,3 +38,7 @@ $env:ZENITH_EDITOR_SMOKE='1'; $env:ZENITH_SMOKE_FRAMES='12'; build\Debug\zenith_
 
 The second command is the bounded Vulkan smoke scenario for viewport resize
 and Edit/Play resource transitions.
+
+To turn an authored scene into a standalone game with movement, weapons,
+audio, and tests, continue with
+[Build a first-person game with Zenith](tutorials/fps-game/README.md).

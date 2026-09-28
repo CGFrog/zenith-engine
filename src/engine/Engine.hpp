@@ -1,5 +1,6 @@
 #pragma once
 
+#include "animation/AnimationSystem.hpp"
 #include "application/Application.hpp"
 #include "assets/Assets.hpp"
 #include "audio/AudioSystem.hpp"
@@ -7,6 +8,7 @@
 #include "input/InputManager.hpp"
 #include "physics/PhysicsWorld.hpp"
 #include "scene/Scene.hpp"
+#include "ui/GameUi.hpp"
 #include "window/Window.hpp"
 
 class Engine {
@@ -33,5 +35,6 @@ class Engine {
     Scene m_scene;
     PhysicsWorld m_physics;
     AudioSystem m_audio;
+    GameUiContext m_gameUi;
     float m_physicsAccumulator{0.0f};
 };

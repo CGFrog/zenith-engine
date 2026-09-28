@@ -2,6 +2,7 @@
 #include "../assets/Assets.hpp"
 #include "../input/InputManager.hpp"
 #include "../scene/Scene.hpp"
+#include "../ui/GameUi.hpp"
 #include "../window/Window.hpp"
 #include "Rendering.hpp"
 #include "passes/MeshPass.hpp"
@@ -12,13 +13,15 @@
 #include "swapchain/Swapchain.hpp"
 #include "vulkan/VulkanContext.hpp"
 #include <array>
+#include <unordered_map>
 
 class Renderer {
   public:
     bool init(const Window& window, RenderRuntime& rendering);
     bool drawFrame(const Window& window, Scene& scene, const AssetManager& assets);
     void processUiEvent(const SDL_Event& event);
-    void beginUiFrame();
+    void beginUiFrame(const AssetManager& assets);
+    void drawGameUi(const GameUiContext& gameUi, const AssetManager& assets);
     InputCapture uiInputCapture() const;
 
     const char* presentModeName() const {
@@ -61,4 +64,5 @@ class Renderer {
     bool m_resizeRequested{false};
     bool m_viewportFailed{false};
     RenderRuntime* m_rendering{nullptr};
+    std::unordered_map<uint64_t, uint64_t> m_gameUiTextures;
 };

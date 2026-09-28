@@ -983,6 +983,12 @@ void EditorSession::drawComponentControls(ApplicationContext& context, Entity en
     section.operator()<EnvironmentLightComponent>("Environment Light", ComponentEditors::drawEnvironmentLight);
     section.operator()<ColliderComponent>("Collider", ComponentEditors::drawCollider);
     section.operator()<RigidBodyComponent>("Rigid Body", ComponentEditors::drawRigidBody);
+    section.operator()<AnimationComponent>("Animation", [&context, entityId](AnimationComponent& animation) {
+        const Entity current = context.scene.findEntity(entityId);
+        const auto* modelComponent = context.scene.registry().try_get<ModelComponent>(current);
+        const ModelAsset* model = modelComponent ? context.assets.model(modelComponent->model) : nullptr;
+        return ComponentEditors::drawAnimation(animation, model);
+    });
 
     entity = context.scene.findEntity(entityId);
     entt::registry& registry = context.scene.registry();
@@ -1022,6 +1028,7 @@ void EditorSession::drawComponentControls(ApplicationContext& context, Entity en
         add.operator()<EnvironmentLightComponent>("Environment Light");
         add.operator()<ColliderComponent>("Collider");
         add.operator()<RigidBodyComponent>("Rigid Body");
+        add.operator()<AnimationComponent>("Animation");
         ImGui::EndPopup();
     }
 }

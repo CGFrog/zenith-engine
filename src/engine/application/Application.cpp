@@ -49,12 +49,18 @@ void ApplicationScene::requestQuit(ApplicationContext& context) {
 ApplicationSession::ApplicationSession(Application& application, Scene& scene, AssetManager& assets,
                                        PhysicsWorld& physics, AudioSystem& audio)
     : m_application(application)
-    , m_context{scene, assets, physics, audio, m_control, m_fallbackRendering} {}
+    , m_context{scene, assets, physics, audio, m_control, m_fallbackRendering, m_fallbackGameUi} {}
 
 ApplicationSession::ApplicationSession(Application& application, Scene& scene, AssetManager& assets,
                                        PhysicsWorld& physics, AudioSystem& audio, RenderRuntime& rendering)
     : m_application(application)
-    , m_context{scene, assets, physics, audio, m_control, rendering} {}
+    , m_context{scene, assets, physics, audio, m_control, rendering, m_fallbackGameUi} {}
+
+ApplicationSession::ApplicationSession(Application& application, Scene& scene, AssetManager& assets,
+                                       PhysicsWorld& physics, AudioSystem& audio, RenderRuntime& rendering,
+                                       GameUiContext& gameUi)
+    : m_application(application)
+    , m_context{scene, assets, physics, audio, m_control, rendering, gameUi} {}
 
 ApplicationSession::~ApplicationSession() {
     shutdown();
@@ -119,8 +125,7 @@ ApplicationFrameResult ApplicationSession::finishFrame() {
 
     const SceneKey requested = *m_control.m_requestedScene;
     m_control.clear();
-    deactivate();
-    if (SceneResult result = activate(requested); !result) {
+    if (SceneResult result = transition(requested); !result) {
         return {.error = std::move(result.error)};
     }
 
@@ -165,6 +170,31 @@ SceneResult ApplicationSession::activate(SceneKey scene) {
         return result;
     }
 
+    return {.success = true};
+}
+
+SceneResult ApplicationSession::transition(SceneKey scene) {
+    std::unique_ptr<ApplicationScene> candidate = m_application.createScene(scene);
+    if (!candidate) {
+        return {.error = "Application did not create the requested scene"};
+    }
+
+    Scene stagedScene;
+    ApplicationControl stagedControl;
+    ApplicationContext stagedContext{stagedScene,   m_context.assets,    m_context.physics, m_context.audio,
+                                     stagedControl, m_context.rendering, m_context.gameUi};
+    if (SceneResult result = candidate->load(stagedContext); !result) {
+        candidate->unload(stagedContext);
+        return result;
+    }
+
+    if (m_activeScene) {
+        m_activeScene->unload(m_context);
+    }
+    m_context.audio.stopSceneVoices();
+    m_context.physics.clear();
+    m_context.scene.replaceWith(std::move(stagedScene));
+    m_activeScene = std::move(candidate);
     return {.success = true};
 }
 

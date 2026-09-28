@@ -9,9 +9,10 @@ class GraphicsPipeline {
 
     bool initGraphicsPipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,
                               VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout materialLayout,
-                              VkShaderModule vertex, VkShaderModule fragment);
+                              VkShaderModule vertex, VkShaderModule fragment, bool doubleSided = false,
+                              bool blending = false);
     bool initShadowPipeline(VkDevice device, VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
-                            VkShaderModule vertex);
+                            VkDescriptorSetLayout materialLayout, VkShaderModule vertex, VkShaderModule fragment);
     bool initOutlinePipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,
                              VkDescriptorSetLayout cameraLayout, VkShaderModule vertex, VkShaderModule fragment);
     bool initSelectionMaskPipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,

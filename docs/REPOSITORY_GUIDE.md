@@ -30,7 +30,8 @@ src/
 |  |- assets/              CPU asset import and storage
 |  |- audio/               decoding, streaming, and mixing
 |  |- graphics/            rendering and Vulkan implementation
-|  |- input/ physics/ scene/ window/
+|  |- input/ physics/ scene/ ui/ window/
+|  `- project/             shared project manifests and scene paths
 |- editor/                 authoring application
 |  |- application/ document/ interaction/ settings/
 |- game/                   current demo client
@@ -41,6 +42,10 @@ tests/
 |- editor/                 authoring behavior
 `- game/                   demo integration
 ```
+
+Long-form project tutorials live under `docs/tutorials/`. The
+[first-person game tutorial](tutorials/fps-game/README.md) demonstrates how to
+compose the public engine APIs without moving game rules into reusable systems.
 
 Folder-crossing includes use paths rooted at `src/`. CMake source lists are
 explicit, so a file move must update `CMakeLists.txt` as well as include sites.
@@ -114,10 +119,35 @@ surface capabilities and current pixel size when selecting its actual extent.
 ### `src/engine/input/InputManager.*`
 
 Translates SDL-specific state into device-independent held/pressed keys,
-relative mouse movement, and capture state. Press edges are buffered until the
-first fixed update consumes them, so short inputs are not lost between physics
-ticks. It also reports quit and resize requests. Escape releases relative mouse
-mode; clicking the window captures it.
+mouse movement, gamepad buttons and axes, active-device, and capture state.
+Press and release edges are buffered until the first fixed update consumes
+them, so short inputs are not lost between physics ticks. Controller connection
+changes release held controls rather than leaving stuck state. It also reports
+quit and resize requests. Escape releases relative mouse mode; clicking the
+window captures it.
+
+### `src/engine/input/InputActions.*`
+
+Maps physical inputs to named button, one-dimensional, and two-dimensional
+actions. Bindings support keyboard chords, mouse deltas and wheels, gamepad
+dead zones, multiple contributing controls, and runtime rebinding. Gameplay
+owns action names and default bindings; the engine does not assign meaning to
+specific controls.
+
+## Runtime game UI
+
+### `src/engine/ui/GameUi.*`
+
+Provides a resolution-independent command API for runtime menus and HUDs.
+Applications receive a `GameUiContext` through `ApplicationContext` and emit
+panels, text, images, and buttons using a 1920x1080 design canvas. The context
+owns anchor resolution, uniform scaling, clipping, pointer hit testing, focus,
+and action-driven navigation. Game code exchanges only engine handles and
+domain types; the renderer privately translates commands to its ImGui Vulkan
+backend after tone mapping.
+
+Font files are cached as CPU assets through `AssetManager::loadFont`, while UI
+images reuse normal `TextureHandle` values and the renderer's texture cache.
 
 ## Audio
 
@@ -160,8 +190,24 @@ remain cached.
 
 `DemoApplication` maps its typed scene enum to engine `SceneKey` values.
 `GameplayScene` loads the room, creates props and the player, and requests a
-fresh gameplay scene when R is pressed. `FirstPersonController` interprets WASD,
-Shift, Space, and mouse input and remains entirely outside `zenith_engine`.
+fresh gameplay scene through the Reload action. It also composes the title
+screen, HUD, pause menu, and persisted audio, rendering, and input settings
+with the engine game-UI API. `FirstPersonController` interprets semantic
+movement and view input and remains entirely outside `zenith_engine`.
+
+## Projects
+
+### `src/engine/project/ProjectConfig.*`
+
+Defines the shared versioned project manifest used by both game and editor
+applications. Version 2 stores a display name, project-relative asset and scene
+roots, and a scene-root-relative startup scene. Version 1 remains readable and
+is upgraded on save. Scene references are validated against the scene root
+before `SceneDocument` loads them.
+
+The `zenith` executable accepts `--project <project-file>`. The demo application
+loads authored scene content through this engine contract, then adds its
+game-specific player and behavior in `src/game/`.
 
 ## Editor
 

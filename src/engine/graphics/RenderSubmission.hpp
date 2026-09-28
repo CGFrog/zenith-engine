@@ -11,6 +11,17 @@ enum class RenderSubmissionPath {
     IndirectPrototype
 };
 
+enum class RenderSurfaceClass : uint8_t {
+    Opaque,
+    Masked,
+    Blended,
+};
+
+struct RenderOrderKey {
+    RenderSurfaceClass surface{RenderSurfaceClass::Opaque};
+    float cameraDistanceSquared{0.0f};
+};
+
 struct RenderSubmissionBenchmark {
     double compatibleMilliseconds{0.0};
     double indirectMilliseconds{0.0};
@@ -37,3 +48,4 @@ RenderSubmissionPath chooseRenderSubmissionPath(const RenderCapabilities& capabi
                                                 double requiredImprovement = 0.10);
 std::vector<IndirectDrawCommand> buildIndirectPrototype(std::span<const RenderBatch> batches,
                                                         const RenderCapabilities& capabilities);
+std::vector<size_t> stableRenderOrder(std::span<const RenderOrderKey> keys);

@@ -28,6 +28,7 @@ layout(push_constant) uniform DrawData {
     vec4 baseColor;
     vec4 material;
     vec4 emissive;
+    vec4 surface;
 } drawData;
 
 layout(location = 0) in vec3 worldPosition;
@@ -111,6 +112,10 @@ float shadowVisibility(vec3 position, vec3 normal, vec3 lightDirection) {
 
 void main() {
     vec4 sampledBase = texture(baseColorMap, texCoord);
+    float alpha = sampledBase.a * drawData.baseColor.a;
+    if (drawData.surface.y > 0.5 && drawData.surface.y < 1.5 && alpha < drawData.surface.x) {
+        discard;
+    }
     vec3 albedo = sampledBase.rgb * drawData.baseColor.rgb;
     vec4 orm = texture(metallicRoughnessMap, texCoord);
     float metallic = clamp(orm.b * drawData.material.x, 0.0, 1.0);
@@ -161,5 +166,5 @@ void main() {
                                               vec3(0.35, 0.55, 1.0));
         color = mix(color, color * cascadeColors[shadowCascade(worldPosition)], 0.45);
     }
-    outColor = vec4(color, sampledBase.a * drawData.baseColor.a);
+    outColor = vec4(color, alpha);
 }

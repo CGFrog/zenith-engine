@@ -1,5 +1,8 @@
 #include "RenderSubmission.hpp"
 
+#include <algorithm>
+#include <numeric>
+
 RenderSubmissionPath chooseRenderSubmissionPath(const RenderCapabilities& capabilities,
                                                 const RenderSubmissionBenchmark& benchmark,
                                                 double requiredImprovement) {
@@ -26,4 +29,18 @@ std::vector<IndirectDrawCommand> buildIndirectPrototype(std::span<const RenderBa
             {batch.indexCount, batch.instanceCount, batch.firstIndex, batch.vertexOffset, batch.firstInstance});
     }
     return commands;
+}
+
+std::vector<size_t> stableRenderOrder(std::span<const RenderOrderKey> keys) {
+    std::vector<size_t> order(keys.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(), [keys](size_t first, size_t second) {
+        const bool firstBlended = keys[first].surface == RenderSurfaceClass::Blended;
+        const bool secondBlended = keys[second].surface == RenderSurfaceClass::Blended;
+        if (firstBlended != secondBlended) {
+            return !firstBlended;
+        }
+        return firstBlended && keys[first].cameraDistanceSquared > keys[second].cameraDistanceSquared;
+    });
+    return order;
 }

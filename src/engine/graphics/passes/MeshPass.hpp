@@ -20,6 +20,7 @@ class MeshPass {
                 VkImageView depthView, VkExtent2D extent, uint32_t frameIndex, const Scene& scene,
                 const AssetManager& assets, RenderRuntime& rendering, VkQueryPool timestampQueries,
                 VkImageLayout colorOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
+    bool uiTexture(TextureHandle handle, const AssetManager& assets, VkSampler& sampler, VkImageView& view);
     void shutdown(const VulkanContext& context);
 
   private:
@@ -50,6 +51,8 @@ class MeshPass {
         VkDescriptorSet descriptor{VK_NULL_HANDLE};
         GpuBuffer objects;
         void* objectsMapped{nullptr};
+        GpuBuffer skinPalettes;
+        void* skinPalettesMapped{nullptr};
     };
 
     struct RenderItem {
@@ -64,6 +67,8 @@ class MeshPass {
         glm::vec3 boundsCenter{0.0f};
         float boundsRadius{0.0f};
         bool outlined{false};
+        std::vector<glm::mat4> jointPalette;
+        uint32_t skinPaletteOffset{0};
     };
 
     bool createDescriptors(const VulkanContext& context, uint32_t frameCount);
@@ -107,6 +112,9 @@ class MeshPass {
     bool m_shadowInitialized{false};
     bool m_depthInitialized{false};
     GraphicsPipeline m_pipeline;
+    GraphicsPipeline m_doubleSidedPipeline;
+    GraphicsPipeline m_blendPipeline;
+    GraphicsPipeline m_blendDoubleSidedPipeline;
     GraphicsPipeline m_shadowPipeline;
     GraphicsPipeline m_selectionMaskPipeline;
     GraphicsPipeline m_outlinePipeline;

@@ -19,8 +19,17 @@ struct CharacterControllerComponent {
     Entity camera{entt::null};
 };
 
+struct FirstPersonControllerInput {
+    glm::vec2 move{0.0f};
+    glm::vec2 look{0.0f};
+    bool jumpPressed{false};
+    bool sprint{false};
+    bool gamepadLook{false};
+};
+
 class FirstPersonControllerSystem {
   public:
-    void updateView(Scene& scene, const InputState& input) const;
-    void fixedUpdate(Scene& scene, PhysicsWorld& physics, const InputState& input, float deltaSeconds) const;
+    void updateView(Scene& scene, const FirstPersonControllerInput& input, float deltaSeconds) const;
+    void fixedUpdate(Scene& scene, PhysicsWorld& physics, const FirstPersonControllerInput& input,
+                     float deltaSeconds) const;
 };

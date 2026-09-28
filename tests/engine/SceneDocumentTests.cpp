@@ -61,6 +61,20 @@ int main() {
         const Entity modelRoot = scene.createEntity("Model");
         expect(scene.instantiateModel(modelRoot, model.handle, assets).success,
                "model should instantiate for round trip");
+        AnimationComponent animation;
+        animation.clipIndex = 2;
+        animation.time = 0.75f;
+        animation.playbackSpeed = 1.5f;
+        animation.looping = false;
+        animation.playing = false;
+        animation.blendClipIndex = 3;
+        animation.blendTime = 0.2f;
+        animation.blendDuration = 0.5f;
+        scene.registry().emplace<AnimationComponent>(modelRoot, animation);
+        const auto& modelChildren = scene.registry().get<RelationshipComponent>(modelRoot).children;
+        if (!modelChildren.empty()) {
+            scene.registry().emplace<SkinComponent>(modelChildren.front(), model.handle, scene.id(modelRoot), 0u);
+        }
     }
 
     const std::string original = serialize(scene, assets, options);

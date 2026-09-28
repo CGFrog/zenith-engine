@@ -6,6 +6,7 @@
 #include "../input/InputManager.hpp"
 #include "../physics/PhysicsWorld.hpp"
 #include "../scene/Scene.hpp"
+#include "../ui/GameUi.hpp"
 
 #include <compare>
 #include <cstdint>
@@ -42,6 +43,7 @@ struct ApplicationContext {
     AudioSystem& audio;
     ApplicationControl& control;
     RenderRuntime& rendering;
+    GameUiContext& gameUi;
 };
 
 class ApplicationScene {
@@ -87,6 +89,8 @@ class ApplicationSession {
                        AudioSystem& audio);
     ApplicationSession(Application& application, Scene& scene, AssetManager& assets, PhysicsWorld& physics,
                        AudioSystem& audio, RenderRuntime& rendering);
+    ApplicationSession(Application& application, Scene& scene, AssetManager& assets, PhysicsWorld& physics,
+                       AudioSystem& audio, RenderRuntime& rendering, GameUiContext& gameUi);
     ~ApplicationSession();
 
     ApplicationSession(const ApplicationSession&) = delete;
@@ -105,11 +109,13 @@ class ApplicationSession {
 
   private:
     SceneResult activate(SceneKey scene);
+    SceneResult transition(SceneKey scene);
     void deactivate();
 
     Application& m_application;
     ApplicationControl m_control;
     RenderRuntime m_fallbackRendering;
+    GameUiContext m_fallbackGameUi;
     ApplicationContext m_context;
     std::unique_ptr<ApplicationScene> m_activeScene;
     bool m_started{false};

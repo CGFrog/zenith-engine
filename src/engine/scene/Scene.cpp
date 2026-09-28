@@ -123,8 +123,26 @@ SceneResult Scene::duplicateSubtree(Entity source, Entity parent, Entity& duplic
         return {.error = "Cannot duplicate beneath an invalid parent"};
     }
     duplicate = cloneBranch(source, parent, true);
-    return duplicate == entt::null ? SceneResult{.error = "Could not duplicate entity subtree"}
-                                   : SceneResult{.success = true};
+    if (duplicate == entt::null) {
+        return {.error = "Could not duplicate entity subtree"};
+    }
+    const SceneEntityId sourceRoot = id(source);
+    const SceneEntityId duplicateRoot = id(duplicate);
+    std::vector<Entity> pending{duplicate};
+    while (!pending.empty()) {
+        const Entity entity = pending.back();
+        pending.pop_back();
+        if (auto* node = m_registry.try_get<ModelNodeComponent>(entity); node && node->instanceRoot == sourceRoot) {
+            node->instanceRoot = duplicateRoot;
+        }
+        if (auto* skin = m_registry.try_get<SkinComponent>(entity); skin && skin->instanceRoot == sourceRoot) {
+            skin->instanceRoot = duplicateRoot;
+            skin->jointPalette.clear();
+        }
+        const auto& children = m_registry.get<RelationshipComponent>(entity).children;
+        pending.insert(pending.end(), children.begin(), children.end());
+    }
+    return {.success = true};
 }
 
 SceneResult Scene::instantiateModel(Entity root, ModelHandle handle, const AssetManager& assets) {
@@ -143,6 +161,7 @@ SceneResult Scene::instantiateModel(Entity root, ModelHandle handle, const Asset
     }
 
     m_registry.emplace_or_replace<ModelComponent>(root, handle);
+    const SceneEntityId rootId = id(root);
 
     std::vector<Entity> entities(model->nodes.size(), static_cast<Entity>(entt::null));
 
@@ -150,14 +169,22 @@ SceneResult Scene::instantiateModel(Entity root, ModelHandle handle, const Asset
         const ModelNode& node = model->nodes[i];
         entities[i] = createEntity(node.name);
         m_registry.get<TransformComponent>(entities[i]).local = node.localTransform;
+        m_registry.emplace<ModelNodeComponent>(entities[i], handle, rootId, static_cast<uint32_t>(i));
         if (node.mesh) {
             attachMesh(entities[i], node.mesh);
+        }
+        if (node.skin >= 0) {
+            m_registry.emplace<SkinComponent>(entities[i], handle, rootId, static_cast<uint32_t>(node.skin));
         }
     }
 
     for (size_t i = 0; i < model->nodes.size(); ++i) {
         const int32_t parentIndex = model->nodes[i].parent;
         setParent(entities[i], parentIndex >= 0 ? entities[static_cast<size_t>(parentIndex)] : root);
+    }
+
+    if (!model->animations.empty()) {
+        m_registry.emplace<AnimationComponent>(root);
     }
 
     return {.success = true};
@@ -279,6 +306,9 @@ Entity Scene::cloneBranch(Entity source, Entity parent, bool appendCopySuffix) {
         }
     };
     copy.operator()<ModelComponent>();
+    copy.operator()<ModelNodeComponent>();
+    copy.operator()<AnimationComponent>();
+    copy.operator()<SkinComponent>();
     copy.operator()<MeshRendererComponent>();
     copy.operator()<CameraComponent>();
     copy.operator()<DirectionalLightComponent>();

@@ -257,7 +257,7 @@ void Renderer::processUiEvent(const SDL_Event& event) {
     m_uiPass.processEvent(event);
 }
 
-void Renderer::beginUiFrame() {
+void Renderer::beginUiFrame(const AssetManager& assets) {
     if (!prepareViewport()) {
         m_viewportFailed = true;
     }
@@ -266,7 +266,27 @@ void Renderer::beginUiFrame() {
         m_rendering->m_viewportWidth = m_viewportTarget.extent().width;
         m_rendering->m_viewportHeight = m_viewportTarget.extent().height;
     }
+    m_uiPass.syncFonts(assets);
     m_uiPass.beginFrame();
+}
+
+void Renderer::drawGameUi(const GameUiContext& gameUi, const AssetManager& assets) {
+    m_uiPass.drawGameUi(gameUi, [this, &assets](TextureHandle handle) {
+        const uint64_t key = (static_cast<uint64_t>(handle.generation) << 32u) | handle.index;
+        if (const auto found = m_gameUiTextures.find(key); found != m_gameUiTextures.end()) {
+            return found->second;
+        }
+        VkSampler sampler = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        if (!m_meshPass.uiTexture(handle, assets, sampler, view)) {
+            return uint64_t{0};
+        }
+        const uint64_t texture = m_uiPass.addTexture(sampler, view);
+        if (texture != 0) {
+            m_gameUiTextures.emplace(key, texture);
+        }
+        return texture;
+    });
 }
 
 InputCapture Renderer::uiInputCapture() const {
@@ -288,6 +308,11 @@ void Renderer::shutdown() {
     const VkDevice device = m_context.device();
     if (device) {
         vkDeviceWaitIdle(device);
+        for (const auto& [key, texture] : m_gameUiTextures) {
+            static_cast<void>(key);
+            m_uiPass.removeTexture(texture);
+        }
+        m_gameUiTextures.clear();
         for (FrameResources& frame : m_frames) {
             frame.shutdown(device);
         }
