@@ -3,6 +3,10 @@
 Zenith is an educational C++20 game-engine project intended to grow into a
 reusable foundation for future games.
 
+# Notes from Ian
+
+At the start of this project the plan was that I would write every line of code myself, with no AI. As I slogged through the Vulkan boilerplate, I began to question why I was so determined to learn the syntax. Software engineering has fundamentally changed, so instead of clinging to my desire to return to a now distant past where syntax knowledge was a necessity for every software engineer, I have been using this project to try a different approach to learning. Instead of writing code by hand to learn the concepts, I write extensive prompts for the agents by hand instead. I am focusing on understanding the fundamental concepts of computer graphics rather than specific implementation details and I plan on recording what I am learning onto my website [cgfrog.org](https://cgfrog.org/). 
+
 ## Documentation
 
 - [`docs/REPOSITORY_GUIDE.md`](docs/REPOSITORY_GUIDE.md) explains every
