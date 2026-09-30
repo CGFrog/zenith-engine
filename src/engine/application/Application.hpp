@@ -118,5 +118,6 @@ class ApplicationSession {
     GameUiContext m_fallbackGameUi;
     ApplicationContext m_context;
     std::unique_ptr<ApplicationScene> m_activeScene;
+    AssetLeaseSet m_sceneAssets;
     bool m_started{false};
 };

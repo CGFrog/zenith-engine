@@ -242,20 +242,20 @@ Exit criteria:
 
 ## Milestone 13: animated and alpha glTF content
 
-- [ ] Extend CPU assets with joints, weights, skins, inverse-bind matrices,
+- [x] Extend CPU assets with joints, weights, skins, inverse-bind matrices,
       animation clips, channels, and opaque, masked, and blended material
       modes.
-- [ ] Support glTF step, linear, and cubic-spline animation sampling, looping,
+- [x] Support glTF step, linear, and cubic-spline animation sampling, looping,
       playback speed, clip selection, and two-clip cross-fades.
-- [ ] Add serializable animation and skin scene components plus editor preview
+- [x] Add serializable animation and skin scene components plus editor preview
       controls.
-- [ ] Upload per-instance skin palettes without duplicating immutable mesh
+- [x] Upload per-instance skin palettes without duplicating immutable mesh
       assets.
-- [ ] Keep opaque and masked primitives on the optimized render path,
+- [x] Keep opaque and masked primitives on the optimized render path,
       alpha-test masked shadows, and sort blended primitives back-to-front.
-- [ ] Respect glTF alpha cutoff and double-sided settings. Blended materials do
+- [x] Respect glTF alpha cutoff and double-sided settings. Blended materials do
       not cast shadows in this milestone.
-- [ ] Add importer and animation-evaluation tests plus bounded Vulkan captures
+- [x] Add importer and animation-evaluation tests plus bounded Vulkan captures
       for skinning, masked edges, blending order, and editor preview.
 
 Exit criteria:
@@ -267,19 +267,19 @@ Exit criteria:
 
 ## Milestone 14: Windows and Linux release packaging
 
-- [ ] Resolve shaders, project data, and assets through a relocatable,
+- [x] Resolve shaders, project data, and assets through a relocatable,
       executable-relative resource locator instead of build-directory paths.
-- [ ] Add CMake install rules and package targets that produce a Windows ZIP
+- [x] Add CMake install rules and package targets that produce a Windows ZIP
       and Linux `.tar.gz` archive.
-- [ ] Package the game executable, compiled shaders, selected project content,
+- [x] Package the game executable, compiled shaders, selected project content,
       required runtime files, licenses, and a versioned content manifest.
-- [ ] Reject missing, duplicate, escaping, and case-conflicting asset paths
+- [x] Reject missing, duplicate, escaping, and case-conflicting asset paths
       before producing an artifact.
-- [ ] Add Windows and Linux CI jobs for configure, build, CPU tests, and Release
+- [x] Add Windows and Linux CI jobs for configure, build, CPU tests, and Release
       packaging. Run bounded Vulkan smoke tests where a suitable runner exists.
-- [ ] Verify each artifact from a clean extraction directory, including a path
+- [x] Verify each artifact from a clean extraction directory, including a path
       containing spaces, without access to the source or build tree.
-- [ ] Document release creation, supported runtime dependencies, and artifact
+- [x] Document release creation, supported runtime dependencies, and artifact
       contents.
 
 Exit criteria:
@@ -289,15 +289,195 @@ Exit criteria:
 - Each archive passes the automated CPU suite and a bounded Vulkan smoke run on
   supported release hardware.
 
+## Milestone 15: asset lifetime and content integrity
+
+- [x] Replace append-only asset storage with explicit strong references or
+      leases at scene, editor-preview, audio-voice, and renderer boundaries.
+- [x] Recycle asset slots with generation increments so stale handles always
+      fail resolution instead of aliasing newly loaded content.
+- [x] Add an eviction policy with configurable memory budgets and deterministic
+      manual collection for tests and tools.
+- [x] Defer GPU and audio-resource destruction until every in-flight consumer
+      has finished, without device-wide or queue-wide idle waits.
+- [x] Preserve the current recoverable reload behavior while separating the
+      old generation from future lookups.
+- [x] Verify packaged content against `content-manifest.json` in a CPU-only
+      validation mode before initializing window, audio, or Vulkan services.
+- [x] Report asset ownership, generation, CPU/GPU byte estimates, and eviction
+      failures in editor diagnostics.
+- [x] Add deterministic tests for stale handles, shared ownership, reload,
+      eviction, budget pressure, and deferred destruction.
+
+Exit criteria:
+
+- Repeated scene and project transitions do not grow retained asset memory once
+  collection has completed.
+- Releasing or reloading an asset cannot invalidate a live scene or an
+  in-flight frame, and corrupted packaged content fails before engine startup.
+
+## Milestone 16: asynchronous loading and additive scenes
+
+- [x] Add a bounded engine job system with cancellation, completion queues,
+      explicit shutdown, and deterministic single-threaded test execution.
+- [x] Split scene loading into background-safe parsing and a main-thread commit
+      phase for ECS, physics, audio, and GPU-facing state.
+- [x] Expose progress, cancellation, and descriptive failures without allowing
+      a partial load to replace or mutate the active scene.
+- [x] Add additive scene instances with stable instance IDs, explicit ownership,
+      deterministic unload order, and cross-scene reference validation.
+- [x] Keep gameplay transition and loading-screen policy in the application
+      layer; engine APIs provide only loading and scene-instance mechanisms.
+- [x] Prioritize and cancel asset requests as additive scenes enter and leave
+      the streaming radius.
+- [x] Add CPU stress tests for cancellation races, shutdown during loading,
+      failed commits, repeated additive load/unload, and asset collection.
+- [x] Add a bounded Vulkan smoke scenario that streams content while frames are
+      in flight and confirms that presentation remains responsive.
+
+Exit criteria:
+
+- A large authored scene can load without blocking frame presentation for its
+  full parse duration.
+- Failed or cancelled loads leave all committed scene instances and their asset
+  ownership unchanged.
+
+## Milestone 17: prefabs and reusable scene composition
+
+- [x] Define a versioned prefab document using stable entity IDs and
+      project-relative asset or nested-prefab references.
+- [x] Support nested prefab instances with cycle detection, deterministic ID
+      remapping, and clearly defined local versus inherited hierarchy.
+- [x] Store property and component overrides separately from the immutable
+      prefab source rather than copying an opaque serialized scene fragment.
+- [x] Add editor operations to create, instantiate, unpack, apply, revert, and
+      inspect prefab overrides through undoable commands.
+- [x] Propagate source changes while preserving valid instance overrides and
+      report orphaned overrides as actionable diagnostics.
+- [x] Allow scenes and additive scene layers to share prefab definitions without
+      coupling runtime instantiation to editor state.
+- [x] Add round-trip, nesting, override, source-update, missing-source, cycle,
+      duplicate-ID, and undo/redo tests.
+
+Exit criteria:
+
+- A reusable authored object can be placed in several scenes, updated once,
+  and refreshed without losing intentional per-instance changes.
+- Prefab failures preserve both the open document and previously valid runtime
+  instances.
+
+## Milestone 18: scalable lighting and environment rendering
+
+- [x] Move user-facing renderer and post-process choices into serializable
+      project or scene configuration with capability validation and safe
+      fallbacks.
+- [x] Support multiple local point and spot lights through a measured clustered
+      or tiled light-selection path rather than per-object unbounded loops.
+- [x] Add image-based environment lighting with prefiltered specular data and a
+      reusable offline or cached preprocessing step.
+- [x] Add reflection probes with explicit influence volumes and deterministic
+      blending; keep probe baking policy in editor tooling.
+- [x] Introduce GPU timestamp scopes and per-pass CPU/GPU budgets in benchmark
+      output for shadow, opaque, blended, bloom, UI, and upload work.
+- [x] Keep the compatible instanced submission path and gate more advanced GPU
+      submission behind capability checks and measured benefit.
+- [x] Add deterministic reference captures for local lights, probes, HDR
+      environment color, transparency, and every exposed quality fallback.
+
+Exit criteria:
+
+- A representative indoor/outdoor scene can use many local lights and
+  environment reflections within documented frame and memory budgets.
+- Every saved quality option either produces its named behavior or reports and
+  selects an explicit supported fallback.
+
+## Milestone 19: production glTF and texture pipeline
+
+- [x] Import and evaluate glTF morph targets, including animation weight
+      channels, bounded active-target selection, and editor preview controls.
+- [x] Support Meshopt- and Draco-compressed mesh input through optional,
+      isolated decoder dependencies with clear missing-decoder diagnostics.
+- [x] Add KTX2/Basis Universal texture import and choose supported GPU formats
+      through renderer capabilities while retaining an uncompressed fallback.
+- [x] Add an offline content build step that produces deterministic derived
+      assets keyed by source content, import settings, tool version, and target
+      platform.
+- [x] Store derived data outside source asset folders and make invalidation,
+      inspection, and rebuilding available to the editor and package pipeline.
+- [x] Validate vertex, index, morph, texture, and decoded-size limits before
+      allocating memory for untrusted content.
+- [x] Add conformance fixtures, malformed-input tests, cache reproducibility
+      checks, and bounded Vulkan captures for every supported fallback path.
+
+Exit criteria:
+
+- Common production glTF characters and environments import without manual
+  decompression or texture conversion.
+- Identical source content and settings produce byte-identical derived assets,
+  and corrupted inputs fail within documented resource limits.
+
+## Milestone 20: gameplay scripting and extension boundary
+
+- [ ] Define a versioned gameplay-facing API over entity IDs, components,
+      actions, scene requests, audio, physics queries, and runtime UI without
+      exposing EnTT, SDL, Vulkan, Jolt, or editor types.
+- [ ] Select an embeddable scripting runtime only after measuring startup,
+      per-frame call, memory, debugging, and packaging costs against a written
+      acceptance budget.
+- [ ] Keep script modules project-owned and make engine registration explicit;
+      scripts must not discover mutable global services.
+- [ ] Serialize script component references and typed properties with
+      descriptive validation for missing modules, functions, and migrations.
+- [ ] Define deterministic create, enable, update, fixed-update, disable, and
+      destroy ordering across scene transitions and additive instances.
+- [ ] Add editor property inspection, compile/reload diagnostics, and opt-in
+      state-preserving hot reload without mutating the saved document silently.
+- [ ] Sandbox filesystem and process access by default and apply configurable
+      instruction, memory, and recursion limits.
+- [ ] Add lifecycle, error-isolation, hot-reload, serialization, determinism,
+      and packaged-project tests.
+
+Exit criteria:
+
+- A packaged project can implement a small gameplay loop without recompiling
+  the engine or accessing subsystem internals.
+- A failing or runaway script is stopped with a useful diagnostic while the
+  engine, editor document, and unrelated script instances remain valid.
+
+## Milestone 21: platform, accessibility, and release operations
+
+- [x] Add a localization catalog with stable message IDs, UTF-8 text shaping,
+      font fallback, plural rules, and runtime locale selection.
+- [x] Add remappable keyboard, mouse, and gamepad controls with multiple saved
+      profiles, conflict resolution, and accessible hold/toggle alternatives.
+- [x] Add subtitle/caption timing, scalable UI and text, high-contrast themes,
+      reduced-motion options, and color-independent gameplay indicators.
+- [x] Persist versioned user settings and save data through platform-appropriate
+      writable locations with atomic migration and recovery behavior.
+- [x] Produce signed installer-ready Windows artifacts, Linux desktop metadata,
+      and a macOS application bundle after the corresponding CI runner and
+      Vulkan portability path pass the same package verification contract.
+- [x] Add structured crash reports and privacy-preserving diagnostic bundles
+      that never upload or transmit data without explicit application policy.
+- [x] Generate release notes and provenance metadata from the exact source,
+      dependency, toolchain, and content-manifest revisions used by CI.
+- [x] Test locale switching, input-only navigation, settings migration, clean
+      user profiles, offline startup, and upgrade/rollback artifact behavior.
+
+Exit criteria:
+
+- A keyboard-only or gamepad-only user can install, configure, understand, and
+  play the packaged demo without editing files or relying on color alone.
+- A release can be reproduced and diagnosed from its archived provenance while
+  preserving user data across supported upgrades and rollbacks.
+
 ## Recommended next implementation slice
 
-Start with milestone 10 and keep the first slice limited to shared project
-manifest ownership, version 2 loading, startup-scene configuration, and a
-headless authored-scene launch test. Do not begin the action-input layer until
-the editor and game consume the same project contract without depending on one
-another.
+Milestone 20 is intentionally deferred. Its first slice should compare candidate
+scripting runtimes against a written startup, call, memory, debugging, sandbox,
+and packaging budget before adding a runtime dependency or serialized script
+component.
 
-The first release remains a compiled C++ game. Scripting, binary plugins,
-asynchronous or additive scene streaming, asset eviction, morph targets,
-compressed meshes, advanced physics, networking, localization, installers,
-and macOS packaging remain later work.
+Networking, multiplayer prediction, editor collaboration, advanced vehicles
+and soft-body physics, and a stable native binary-plugin ABI remain later work
+that should begin only when a concrete game supplies requirements and testable
+budgets.

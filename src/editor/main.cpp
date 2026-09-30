@@ -1,6 +1,8 @@
 #include "editor/application/EditorApplication.hpp"
 #include "engine/Engine.hpp"
+#include "engine/platform/PlatformServices.hpp"
 #include "engine/project/ProjectConfig.hpp"
+#include "engine/resources/ResourceLocator.hpp"
 #include "game/scene/DemoScene.hpp"
 
 #include <cstdlib>
@@ -8,6 +10,7 @@
 #include <iostream>
 
 int main(int argc, char** argv) {
+    initializeResourceLocator(argv[0]);
     Engine engine;
     if (!engine.init()) {
         std::cerr << "Zenith Editor initialization failed. SDL: " << SDL_GetError() << '\n';
@@ -16,7 +19,7 @@ int main(int argc, char** argv) {
     }
 
     ProjectConfig project{.displayName = "Zenith Demo",
-                          .assetRoot = ZENITH_ASSET_DIR,
+                          .assetRoot = assetRoot(),
                           .sceneRoot = std::filesystem::current_path() / "scenes"};
     bool projectLoaded = false;
     if (argc > 1) {
@@ -38,7 +41,7 @@ int main(int argc, char** argv) {
               }}
             : std::function<SceneResult(ApplicationContext&)>{
                   [](ApplicationContext& context) { return populateDemoScene(context.scene, context.assets); }};
-    EditorApplication application(std::filesystem::current_path() / ".zenith" / "editor", std::move(project),
+    EditorApplication application(userDataDirectory("Zenith", "Editor"), std::move(project),
                                   std::move(initialSceneLoader));
     const bool success = engine.run(application);
     engine.shutdown();

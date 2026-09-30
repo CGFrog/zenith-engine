@@ -175,9 +175,9 @@ void GameplayScene::drawPause(ApplicationContext& context) {
 
 void GameplayScene::drawSettings(ApplicationContext& context) {
     GameUiContext& ui = context.gameUi;
-    ui.panel({{-380.0f, -420.0f}, {760.0f, 840.0f}}, {.color = {0.025f, 0.035f, 0.055f, 0.96f}, .cornerRadius = 18.0f},
+    ui.panel({{-380.0f, -520.0f}, {760.0f, 1040.0f}}, {.color = {0.025f, 0.035f, 0.055f, 0.96f}, .cornerRadius = 18.0f},
              UiAnchor::Center);
-    ui.text({-105.0f, -355.0f}, "Settings", 44.0f, glm::vec4(1.0f), UiAnchor::Center);
+    ui.text({-105.0f, -465.0f}, "Settings", 44.0f, glm::vec4(1.0f), UiAnchor::Center);
     RenderSettings settings = context.rendering.settings();
     const std::string aaLabel =
         settings.antialiasing == AntialiasingMode::Off ? "Anti-aliasing: Off" : "Anti-aliasing: FXAA";
@@ -216,7 +216,21 @@ void GameplayScene::drawSettings(ApplicationContext& context) {
         m_settings->invertLookY = !m_settings->invertLookY;
         persistSettings();
     }
-    if (ui.button("settings.back", {{-250.0f, 300.0f}, {500.0f, 68.0f}}, "Back", UiAnchor::Center)) {
+    if (ui.button("settings.contrast", {{-250.0f, 300.0f}, {500.0f, 68.0f}},
+                  m_settings->accessibility.highContrast ? "High contrast: On" : "High contrast: Off",
+                  UiAnchor::Center)) {
+        m_settings->accessibility.highContrast = !m_settings->accessibility.highContrast;
+        ui.setAccessibility(m_settings->accessibility);
+        persistSettings();
+    }
+    if (ui.button("settings.motion", {{-250.0f, 388.0f}, {500.0f, 68.0f}},
+                  m_settings->accessibility.reducedMotion ? "Reduced motion: On" : "Reduced motion: Off",
+                  UiAnchor::Center)) {
+        m_settings->accessibility.reducedMotion = !m_settings->accessibility.reducedMotion;
+        ui.setAccessibility(m_settings->accessibility);
+        persistSettings();
+    }
+    if (ui.button("settings.back", {{-250.0f, 476.0f}, {500.0f, 68.0f}}, "Back", UiAnchor::Center)) {
         m_screen = m_settingsReturnScreen;
     }
 }

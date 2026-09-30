@@ -1,9 +1,11 @@
 #pragma once
 
 #include "engine/graphics/Rendering.hpp"
+#include "engine/ui/Accessibility.hpp"
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 struct GameSettings {
     AntialiasingMode antialiasing{AntialiasingMode::Fxaa};
@@ -11,6 +13,10 @@ struct GameSettings {
     bool masterMuted{false};
     float lookSensitivity{1.0f};
     bool invertLookY{false};
+    std::string locale{"en"};
+    AccessibilitySettings accessibility;
+    std::vector<std::string> inputProfiles{"Default"};
+    std::string activeInputProfile{"Default"};
 };
 
 struct GameSettingsResult {

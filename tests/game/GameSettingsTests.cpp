@@ -25,13 +25,25 @@ int main() {
                               .bloom = BloomQuality::Downsampled,
                               .masterMuted = true,
                               .lookSensitivity = 1.5f,
-                              .invertLookY = true};
+                              .invertLookY = true,
+                              .locale = "fr",
+                              .accessibility = {.uiScale = 1.5f,
+                                                .textScale = 1.75f,
+                                                .highContrast = true,
+                                                .reducedMotion = true,
+                                                .captionsEnabled = true,
+                                                .colorIndependentIndicators = true},
+                              .inputProfiles = {"Keyboard", "Gamepad"},
+                              .activeInputProfile = "Gamepad"};
     expect(static_cast<bool>(saveGameSettings(path, source)), "game settings should save atomically");
     GameSettings loaded;
     expect(static_cast<bool>(loadGameSettings(path, loaded)), "saved game settings should load");
     expect(loaded.antialiasing == source.antialiasing && loaded.bloom == source.bloom &&
                loaded.masterMuted == source.masterMuted && loaded.lookSensitivity == source.lookSensitivity &&
-               loaded.invertLookY == source.invertLookY,
+               loaded.invertLookY == source.invertLookY && loaded.locale == source.locale &&
+               loaded.accessibility.uiScale == source.accessibility.uiScale &&
+               loaded.accessibility.highContrast == source.accessibility.highContrast &&
+               loaded.activeInputProfile == source.activeInputProfile && loaded.inputProfiles.size() == 2,
            "render, audio, and input settings should round-trip");
 
     std::ofstream invalid(path, std::ios::trunc);
@@ -42,6 +54,14 @@ int main() {
     expect(!loadGameSettings(path, loaded), "out-of-range settings should be rejected");
     expect(loaded.lookSensitivity == preserved.lookSensitivity && loaded.masterMuted == preserved.masterMuted,
            "a failed settings load preserves the active configuration");
+
+    std::ofstream legacy(path, std::ios::trunc);
+    legacy
+        << R"({"version":1,"antialiasing":1,"bloom":0,"masterMuted":false,"lookSensitivity":1.0,"invertLookY":false})";
+    legacy.close();
+    GameSettings migrated;
+    expect(loadGameSettings(path, migrated) && migrated.locale == "en" && migrated.activeInputProfile == "Default",
+           "version 1 settings migrate atomically to accessibility-safe defaults");
 
     std::filesystem::remove_all(directory, error);
     return failures == 0 ? 0 : 1;

@@ -1,4 +1,7 @@
 #include "PostProcessPass.hpp"
+#include <chrono>
+
+#include "engine/resources/ResourceLocator.hpp"
 
 #include "../shader/ShaderModule.hpp"
 #include "../vulkan/VulkanCheck.hpp"
@@ -107,7 +110,7 @@ bool PostProcessPass::createDescriptors(uint32_t frameCount) {
 }
 
 bool PostProcessPass::createPipeline(VkFormat outputFormat) {
-    const std::filesystem::path shaders{ZENITH_SHADER_DIR};
+    const std::filesystem::path shaders = shaderRoot();
     ShaderModule vertex(m_device);
     ShaderModule fragment(m_device);
     if (!vertex.load(shaders / "fullscreen.vert.spv") || !fragment.load(shaders / "post.frag.spv")) {
@@ -264,7 +267,12 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
                              VkImageView outputView, VkImage depthImage, VkExtent2D extent,
                              const RenderSettings& settings, const glm::mat4& inverseViewProjection,
                              const glm::vec3& cameraPosition, const std::optional<GridOverlay>& gridOverlay,
+                             VkQueryPool timestampQueries, double& bloomCpuMilliseconds,
                              VkImageLayout outputOldLayout) {
+    const auto bloomStart = std::chrono::steady_clock::now();
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 6);
+    }
     Target& target = m_targets[frameIndex];
     if (settings.bloom != BloomQuality::Off && target.mipLevels > 1) {
         imageBarrier(commandBuffer, target.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -319,6 +327,13 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
     }
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 7);
+    }
+    bloomCpuMilliseconds =
+        settings.bloom == BloomQuality::Off
+            ? 0.0
+            : std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - bloomStart).count();
     target.initialized = true;
     imageBarrier(commandBuffer, depthImage, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
                  VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,

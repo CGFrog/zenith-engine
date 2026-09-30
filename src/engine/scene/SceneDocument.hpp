@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -22,6 +23,20 @@ struct SceneDocumentResult {
     }
 };
 
+class ParsedSceneDocument {
+  public:
+    ParsedSceneDocument() = default;
+
+    explicit operator bool() const {
+        return static_cast<bool>(m_impl);
+    }
+
+  private:
+    friend class SceneDocument;
+    struct Impl;
+    std::shared_ptr<const Impl> m_impl;
+};
+
 class SceneDocument {
   public:
     static constexpr uint32_t currentVersion = 1;
@@ -30,6 +45,9 @@ class SceneDocument {
                                          const SceneDocumentOptions& options, std::string& output);
     static SceneDocumentResult deserialize(std::string_view input, AssetManager& assets,
                                            const SceneDocumentOptions& options, Scene& destination);
+    static SceneDocumentResult parse(std::string_view input, ParsedSceneDocument& output);
+    static SceneDocumentResult commit(const ParsedSceneDocument& document, AssetManager& assets,
+                                      const SceneDocumentOptions& options, Scene& destination);
     static SceneDocumentResult save(const std::filesystem::path& path, const Scene& scene, const AssetManager& assets,
                                     const SceneDocumentOptions& options);
     static SceneDocumentResult load(const std::filesystem::path& path, AssetManager& assets,

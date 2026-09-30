@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <ranges>
 #include <utility>
 
@@ -28,7 +29,8 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_recovery(settingsDirectory / "recovery.zenith-scene")
     , m_assetCatalog(std::move(assetRoot), std::move(sceneRoot))
     , m_initialSceneLoader(std::move(initialSceneLoader))
-    , m_layoutPath((settingsDirectory / "layout.ini").string()) {
+    , m_layoutPath((settingsDirectory / "layout.ini").string())
+    , m_smokeScenePath(settingsDirectory / "streaming-smoke.zenith-scene") {
     const std::pair<const char*, const char*> bindings[]{
         {"New", "Ctrl+N"},  {"Open", "Ctrl+O"}, {"Save", "Ctrl+S"},  {"Save As", "Ctrl+Shift+S"}, {"Undo", "Ctrl+Z"},
         {"Redo", "Ctrl+Y"}, {"Copy", "Ctrl+C"}, {"Paste", "Ctrl+V"}, {"Duplicate", "Ctrl+D"},     {"Play", "F5"},
@@ -53,13 +55,39 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     ImGui::LoadIniSettingsFromDisk(io.IniFilename);
     m_initializeLayout = m_settings.layoutVersion() < currentLayoutVersion;
     if (m_initialSceneLoader) {
-        return m_initialSceneLoader(context);
+        if (SceneResult result = m_initialSceneLoader(context); !result) {
+            return result;
+        }
+    }
+    if (m_smokeScenario) {
+        Scene streamingFixture;
+        for (uint32_t index = 0; index < 5'000; ++index) {
+            streamingFixture.createEntity("Streamed entity " + std::to_string(index));
+        }
+        const auto models = context.scene.registry().view<const ModelComponent>();
+        if (!models.empty()) {
+            const ModelHandle model = models.get<const ModelComponent>(*models.begin()).model;
+            const Entity modelRoot = streamingFixture.createEntity("Streamed model");
+            if (SceneResult result = streamingFixture.instantiateModel(modelRoot, model, context.assets); !result) {
+                return {.error = "Could not prepare streaming smoke model: " + result.error};
+            }
+        }
+        if (SceneDocumentResult result =
+                SceneDocument::save(m_smokeScenePath, streamingFixture, context.assets, m_document.options());
+            !result) {
+            return {.error = "Could not prepare streaming smoke scene: " + result.error};
+        }
+        m_smokeJobs = std::make_unique<JobSystem>(JobSystemConfig{.workerCount = 1, .queueCapacity = 4});
+        m_smokeLayers = std::make_unique<AdditiveSceneManager>(*m_smokeJobs, context.assets, m_document.options());
     }
     return {.success = true};
 }
 
 void EditorSession::update(ApplicationContext& context, const InputState& input, float deltaSeconds) {
     if (m_smokeScenario) {
+        if (m_smokeLayers) {
+            m_smokeLayers->update();
+        }
         ++m_smokeFrame;
         if (m_smokeFrame == 1) {
             RenderSettings settings = context.rendering.settings();
@@ -77,7 +105,24 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
             stopPlayMode(context);
         } else if (m_smokeFrame == 5) {
             context.rendering.requestViewportSize(800, 450);
-        } else if (m_smokeFrame == 8) {
+            m_smokeStreamInstance = m_smokeLayers->requestLoad(m_smokeScenePath, 100);
+        }
+        if (m_smokeStreamInstance && !m_smokeStreamCompleted) {
+            const auto state = m_smokeLayers->state(*m_smokeStreamInstance);
+            if (state && state->status == AdditiveSceneStatus::Committed) {
+                m_smokeLayers->unload(*m_smokeStreamInstance);
+                context.assets.collectUnused(true);
+                m_smokeStreamCompleted = true;
+            } else if (state && (state->status == AdditiveSceneStatus::Failed ||
+                                 state->status == AdditiveSceneStatus::Cancelled)) {
+                reportDiagnostic("Streaming smoke failed: " + state->error);
+                context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+            }
+        }
+        if (m_smokeFrame == 500 && !m_smokeStreamCompleted) {
+            reportDiagnostic("Streaming smoke did not commit while frames were being presented");
+            context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+        } else if (m_smokeFrame >= 8 && m_smokeStreamCompleted) {
             context.control.requestQuit();
         }
     }
@@ -200,6 +245,18 @@ void EditorSession::initializeDefaultLayout(uint32_t dockspaceId) {
 }
 
 void EditorSession::unload(ApplicationContext& context) {
+    if (m_smokeLayers) {
+        m_smokeLayers->clear();
+        m_smokeLayers.reset();
+    }
+    if (m_smokeJobs) {
+        m_smokeJobs->shutdown(true);
+        m_smokeJobs.reset();
+    }
+    if (m_smokeScenario) {
+        std::error_code ignored;
+        std::filesystem::remove(m_smokeScenePath, ignored);
+    }
     stopPlayMode(context);
     context.rendering.setGridOverlay(std::nullopt);
     context.rendering.clearOutlinedObjects();
@@ -409,6 +466,105 @@ void EditorSession::drawPanels(ApplicationContext& context) {
                     ImGui::Separator();
                     ImGui::PopID();
                 }
+            }
+
+            ImGui::SeparatorText("Asset lifetime");
+            const AssetMemoryBudget budget = context.assets.memoryBudget();
+            ImGui::Text("CPU retained: %llu bytes", static_cast<unsigned long long>(context.assets.cpuBytes()));
+            if (budget.cpuBytes != std::numeric_limits<uint64_t>::max()) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("Budget: %llu bytes", static_cast<unsigned long long>(budget.cpuBytes));
+            }
+            if (ImGui::Button("Collect unused assets")) {
+                // The scene may have changed during this UI callback. This
+                // fresh lease set protects it while collection runs; renderer
+                // frame leases protect submitted GPU work independently.
+                const AssetLeaseSet liveAssets = context.assets.leaseSceneAssets(context.scene);
+                static_cast<void>(liveAssets);
+                m_lastAssetCollection = context.assets.collectUnused(true);
+                m_lastAudioCollection = context.audio.collectUnusedAssets(true);
+            }
+            if (m_lastAssetCollection) {
+                const AssetCollectionResult& collection = *m_lastAssetCollection;
+                ImGui::SameLine();
+                ImGui::Text("%u evicted, %llu bytes freed", collection.assetsEvicted,
+                            static_cast<unsigned long long>(collection.bytesFreed));
+                if (!collection.budgetSatisfied) {
+                    ImGui::TextWrapped(
+                        "Collection could not satisfy the asset memory budget. Inspect strong-reference counts "
+                        "below and release previews, scenes, voices, or in-flight work before retrying.");
+                }
+            }
+
+            const std::vector<AssetDiagnostic> assets = context.assets.diagnostics();
+            if (ImGui::BeginTable("Asset ownership", 6,
+                                  ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+                ImGui::TableSetupColumn("Kind");
+                ImGui::TableSetupColumn("Slot");
+                ImGui::TableSetupColumn("Generation");
+                ImGui::TableSetupColumn("Strong refs");
+                ImGui::TableSetupColumn("CPU bytes");
+                ImGui::TableSetupColumn("GPU estimate");
+                ImGui::TableHeadersRow();
+                for (const AssetDiagnostic& asset : assets) {
+                    const char* kind = asset.kind == AssetKind::Model      ? "Model"
+                                       : asset.kind == AssetKind::Mesh     ? "Mesh"
+                                       : asset.kind == AssetKind::Material ? "Material"
+                                       : asset.kind == AssetKind::Texture  ? "Texture"
+                                                                           : "Font";
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(kind);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%u", asset.index);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%u", asset.generation);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%u", asset.strongReferences);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%llu", static_cast<unsigned long long>(asset.cpuBytes));
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%llu", static_cast<unsigned long long>(asset.gpuBytes));
+                    if (!asset.source.empty() && ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", asset.source.c_str());
+                    }
+                }
+                ImGui::EndTable();
+            }
+
+            const std::vector<AudioAssetDiagnostic> audioAssets = context.audio.assetDiagnostics();
+            ImGui::Text("Decoded audio retained: %llu bytes",
+                        static_cast<unsigned long long>(context.audio.decodedAudioBytes()));
+            if (m_lastAudioCollection) {
+                ImGui::SameLine();
+                ImGui::Text("%u clips and %u streams evicted", m_lastAudioCollection->clipsEvicted,
+                            m_lastAudioCollection->streamsEvicted);
+            }
+            if (ImGui::BeginTable("Audio asset ownership", 5,
+                                  ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable)) {
+                ImGui::TableSetupColumn("Kind");
+                ImGui::TableSetupColumn("Slot");
+                ImGui::TableSetupColumn("Generation");
+                ImGui::TableSetupColumn("Active voices");
+                ImGui::TableSetupColumn("Decoded bytes");
+                ImGui::TableHeadersRow();
+                for (const AudioAssetDiagnostic& asset : audioAssets) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(asset.streaming ? "Stream" : "Clip");
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%u", asset.index);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%u", asset.generation);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%u", asset.strongReferences);
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%llu", static_cast<unsigned long long>(asset.decodedBytes));
+                    if (!asset.source.empty() && ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", asset.source.c_str());
+                    }
+                }
+                ImGui::EndTable();
             }
         }
         ImGui::End();
@@ -989,6 +1145,7 @@ void EditorSession::drawComponentControls(ApplicationContext& context, Entity en
         const ModelAsset* model = modelComponent ? context.assets.model(modelComponent->model) : nullptr;
         return ComponentEditors::drawAnimation(animation, model);
     });
+    section.operator()<MorphWeightsComponent>("Morph Weights", ComponentEditors::drawMorphWeights);
 
     entity = context.scene.findEntity(entityId);
     entt::registry& registry = context.scene.registry();
@@ -1029,6 +1186,7 @@ void EditorSession::drawComponentControls(ApplicationContext& context, Entity en
         add.operator()<ColliderComponent>("Collider");
         add.operator()<RigidBodyComponent>("Rigid Body");
         add.operator()<AnimationComponent>("Animation");
+        add.operator()<MorphWeightsComponent>("Morph Weights");
         ImGui::EndPopup();
     }
 }

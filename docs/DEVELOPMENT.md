@@ -98,15 +98,48 @@ Build Release and request a measured frame count:
 cmake --build build --config Release --parallel 4
 $env:ZENITH_BENCHMARK_FRAMES = 20000
 $env:ZENITH_BENCHMARK_OBJECTS = 2000 # optional deterministic render load
+$env:ZENITH_BENCHMARK_MODE = 'full'  # full (default) or render
+$env:ZENITH_BENCHMARK_WARMUP_FRAMES = 120
+$env:ZENITH_BENCHMARK_FRAME_BUDGET_MS = 8.333
 .\build\Release\zenith.exe
 Remove-Item Env:ZENITH_BENCHMARK_FRAMES
 Remove-Item Env:ZENITH_BENCHMARK_OBJECTS
+Remove-Item Env:ZENITH_BENCHMARK_MODE
+Remove-Item Env:ZENITH_BENCHMARK_WARMUP_FRAMES
+Remove-Item Env:ZENITH_BENCHMARK_FRAME_BUDGET_MS
 ```
 
-Benchmark mode uses the fixed scene, disables gameplay and physics, warms up
-for 1,000 frames, and prints JSON with median/p95 CPU and GPU frame time, draw
-statistics, median FPS, and presentation mode. Compare results with the same
-build type, object count, driver, GPU state, window size, and presentation mode.
+Benchmark mode uses the fixed indoor/outdoor scene, adds 96 deterministic local
+point/spot lights when `ZENITH_BENCHMARK_OBJECTS` is nonzero, and warms up before
+measurement. `full` advances gameplay, animation, physics, and audio with one
+fixed simulation interval per rendered frame; `render` freezes those systems to
+isolate render submission and GPU work.
+
+The schema-v2 JSON contains build revision/dirty state, compiler, platform, GPU,
+resolution, presentation mode, workload settings, memory totals, and sample
+summaries (`count`, `mean`, `median`, `p95`, `p99`, `max`, `budget`, and
+`over_budget`). CPU scopes include input, application update, animation, physics,
+transforms, UI construction, renderer, audio, frame-slot wait, image acquire, and
+present. GPU samples are tagged with their original submission IDs so delayed
+query results are neither attributed to the wrong CPU frame nor counted twice.
+The final in-flight submissions may not retire before exit, so GPU and CPU sample
+counts can differ. Set `ZENITH_BENCHMARK_SAMPLES=1` only when raw samples are
+needed for spike correlation.
+
+Two CPU-only/manual workload executables avoid display pacing when investigating
+specific systems:
+
+```powershell
+.\build\Release\zenith_render_packet_benchmark.exe
+.\build\Release\zenith_simulation_benchmark.exe
+```
+
+The packet benchmark reports rebuild/sort and cached-revision distributions after
+warmup. The simulation benchmark reports separate 256-body sleeping and active
+Jolt workloads, including sync phases, solver time, contacts, and active/sleeping
+body counts. Neither executable uses machine-dependent timing as a test pass/fail
+threshold. Compare reports only with the same build, scene/object count, driver,
+GPU and power state, window size, and presentation mode.
 
 ## Formatting and verification
 
@@ -183,14 +216,28 @@ The next physics step creates its body. After changing its components, call
 
 Place GLSL under `shaders/` with a recognized stage extension such as `.vert`,
 `.frag`, or `.comp`. Rebuild; CMake emits matching SPIR-V under
-`build/shaders/`. Code loads it through `ZENITH_SHADER_DIR`. A new pipeline also
-requires C++ pass/pipeline wiring and appropriate synchronization.
+`build/shaders/`. Code resolves it with `shaderRoot()` from
+`engine/resources/ResourceLocator.hpp`. A new pipeline also requires C++
+pass/pipeline wiring and appropriate synchronization.
 
 ### Add an asset
 
 Place content under `assets/` and rebuild `zenith_assets` (a normal build does
-this automatically). Use `ZENITH_ASSET_DIR` when composing the runtime path.
-Record third-party provenance and license information beside the asset.
+this automatically). Use `assetRoot()` when composing a runtime path. Record
+third-party provenance and license information beside the asset.
+
+For deterministic derived data, run:
+
+```powershell
+.\build\Debug\zenith_asset_build.exe assets\model.gltf .zenith\derived `
+  "quality=production" "zenith-ddc-1" "windows-x64"
+```
+
+The key includes source bytes, the exact settings string, tool version, and
+target platform. Never place derived files beside source assets. Importers must
+validate `AssetImportLimits` before allocating decoded buffers; optional
+Meshopt, Draco, or Basis paths use the decoder boundary and retain the named
+missing-decoder error.
 
 ### Add a system
 
@@ -200,19 +247,18 @@ Add it to `zenith_engine` in `CMakeLists.txt` and test observable public behavio
 
 ## Current limitations
 
-- Scene loading is synchronous and supports one active scene; additive and
-  asynchronous scene loading are not implemented.
-- Scene changes retain the asset cache; explicit asset unloading is not
-  implemented.
-- Asset handles have a generation field, but append-only storage does not yet
-  recycle slots.
-- glTF animation, skins, morph targets, alpha modes, and compressed meshes are
-  not rendered.
+- Scene loading is synchronous in the application session; the additive loader
+  separates background file reads and parsing from main-thread scene commits.
+- Asset handles identify recyclable generational slots. Live scenes, renderer
+  frames, editor operations, and audio voices retain leases; deterministic
+  collection reclaims unused generations according to configured budgets.
+- Morph targets use a bounded active-target path. Optional compressed-asset
+  decoders remain capability-gated and diagnose unavailable codecs.
 - Triangle-mesh colliders are static-only.
 - Physics joints, vehicles, soft bodies, serialization, and debug drawing are
   not wrapped.
-- Renderer and post-process settings are compiled into the implementation
-  rather than exposed as public configuration.
+- Platform packaging beyond the host OS is verified by its corresponding CI
+  runner rather than cross-built locally.
 
 Treat these as scope boundaries rather than reasons to bypass subsystem
 ownership. Extend the narrow public contract and add tests when implementing

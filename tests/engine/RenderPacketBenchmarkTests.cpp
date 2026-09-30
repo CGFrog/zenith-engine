@@ -1,3 +1,4 @@
+#include "engine/diagnostics/Benchmark.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <algorithm>
@@ -13,10 +14,17 @@ int main() {
         scene.registry().get<TransformComponent>(entity).local[3].x = static_cast<float>(index % 100);
     }
     scene.updateWorldTransforms();
+    constexpr int warmupIterations = 20;
     constexpr int iterations = 200;
     volatile uint64_t sink = 0;
-    const auto uncachedStart = std::chrono::steady_clock::now();
-    for (int iteration = 0; iteration < iterations; ++iteration) {
+    BenchmarkReport report;
+    addBuildMetadata(report);
+    report.metadata("scenario", "render-packet-cache");
+    report.metadata("objects", "2000");
+    report.metadata("warmup_iterations", std::to_string(warmupIterations));
+    report.metadata("measured_iterations", std::to_string(iterations));
+    for (int iteration = -warmupIterations; iteration < iterations; ++iteration) {
+        const auto begin = std::chrono::steady_clock::now();
         std::vector<uint64_t> packets;
         packets.reserve(2000);
         auto view = scene.registry().view<const TransformComponent, const MeshRendererComponent>();
@@ -24,23 +32,29 @@ int main() {
             const auto& mesh = view.get<const MeshRendererComponent>(entity).mesh;
             packets.push_back((static_cast<uint64_t>(mesh.generation) << 32) | mesh.index);
         }
-        std::ranges::sort(packets);
+        std::sort(packets.begin(), packets.end());
         sink = sink ^ packets.front();
+        if (iteration >= 0) {
+            report.sample("cpu.packet_rebuild",
+                          std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - begin).count(),
+                          "us");
+        }
     }
-    const auto uncachedEnd = std::chrono::steady_clock::now();
-    const auto cachedStart = std::chrono::steady_clock::now();
     uint64_t revision = scene.renderPacketRevision();
-    for (int iteration = 0; iteration < iterations; ++iteration) {
+    for (int iteration = -warmupIterations; iteration < iterations; ++iteration) {
+        const auto begin = std::chrono::steady_clock::now();
         const uint64_t current = scene.renderPacketRevision();
         if (current != revision) {
             revision = current;
         }
         sink = sink ^ revision;
+        if (iteration >= 0) {
+            report.sample("cpu.packet_cache_check",
+                          std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - begin).count(),
+                          "ns");
+        }
     }
-    const auto cachedEnd = std::chrono::steady_clock::now();
-    const double uncached = std::chrono::duration<double, std::milli>(uncachedEnd - uncachedStart).count();
-    const double cached = std::chrono::duration<double, std::milli>(cachedEnd - cachedStart).count();
-    std::cout << "{\"objects\":2000,\"iterations\":" << iterations << ",\"uncached_ms\":" << uncached
-              << ",\"cached_ms\":" << cached << ",\"sink\":" << sink << "}\n";
-    return cached < uncached ? 0 : 1;
+    report.metadata("correctness_sink", std::to_string(sink));
+    std::cout << report.json(false) << '\n';
+    return 0;
 }

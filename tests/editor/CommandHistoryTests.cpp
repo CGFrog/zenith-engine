@@ -1,4 +1,5 @@
 #include "editor/document/CommandHistory.hpp"
+#include "editor/document/PrefabAuthoring.hpp"
 
 #include "engine/assets/Assets.hpp"
 
@@ -21,11 +22,100 @@ std::string snapshot(const Scene& scene, const AssetManager& assets, const Scene
     expect(result.success, "scene snapshot should serialize");
     return output;
 }
+
+void testPrefabAuthoring(const std::filesystem::path& directory) {
+    SceneDocumentOptions options{.assetRoot = directory};
+    AssetManager assets;
+    Scene scene;
+    const Entity authoredRoot = scene.createEntity("Authored root");
+    scene.registry().emplace<PointLightComponent>(authoredRoot, glm::vec3(1.0f), 10.0f, 4.0f);
+    const Entity authoredChild = scene.createEntity("Authored child");
+    scene.setParent(authoredChild, authoredRoot);
+    EditorCommandContext context{scene, assets, options};
+    CommandHistory history(32);
+    PrefabAuthoring authoring(directory);
+
+    expect(authoring.create(history, context, authoredRoot, "reusable.prefab").success,
+           "prefab creation should execute through command history");
+    expect(std::filesystem::is_regular_file(directory / "reusable.prefab"), "create should write prefab source");
+    expect(history.undo(context).success && !std::filesystem::exists(directory / "reusable.prefab"),
+           "undo should remove a newly created prefab source");
+    expect(history.redo(context).success && std::filesystem::is_regular_file(directory / "reusable.prefab"),
+           "redo should restore the prefab source");
+
+    std::shared_ptr<PrefabAuthoringInstance> first;
+    std::shared_ptr<PrefabAuthoringInstance> second;
+    expect(authoring.instantiate(history, context, "reusable.prefab", {100}, first).success && first->linked,
+           "prefab instantiate should create a linked authoring instance");
+    expect(authoring.instantiate(history, context, "reusable.prefab", {200}, second).success && second->linked,
+           "one prefab source should instantiate more than once");
+    const size_t entitiesWithInstances = scene.registry().view<const SceneEntityIdComponent>().size();
+    expect(history.undo(context).success && !second->linked,
+           "undo should remove the latest prefab instance and its link state");
+    expect(history.redo(context).success && second->linked &&
+               scene.registry().view<const SceneEntityIdComponent>().size() == entitiesWithInstances,
+           "redo should restore an identical prefab instance");
+    const std::string beforeMissing = snapshot(scene, assets, options);
+    const size_t historyBeforeMissing = history.size();
+    std::shared_ptr<PrefabAuthoringInstance> missing;
+    expect(!authoring.instantiate(history, context, "missing.prefab", {201}, missing) &&
+               snapshot(scene, assets, options) == beforeMissing && history.size() == historyBeforeMissing,
+           "failed prefab commands should preserve the open document and history timeline");
+
+    expect(authoring.overrideProperty(history, context, first, {{1}, "name", R"("Applied name")"}).success &&
+               scene.registry().get<NameComponent>(scene.findEntity(first->root)).name == "Applied name",
+           "property override should be applied by an undoable command and stored separately from source");
+    expect(authoring.overrideProperty(history, context, second, {{1}, "name", R"("Second instance")"}).success,
+           "a second instance should retain an independent override");
+    PrefabOverrideInspection inspection;
+    expect(authoring.inspect(*first, inspection).success && inspection.active.size() == 1,
+           "override inspection should identify active overrides");
+    expect(authoring.apply(history, context, first).success, "apply should update the prefab source through history");
+    expect(scene.registry().get<NameComponent>(scene.findEntity(first->root)).name == "Applied name" &&
+               scene.registry().get<NameComponent>(scene.findEntity(second->root)).name == "Second instance" &&
+               first->overrides.empty() && second->overrides.size() == 1,
+           "apply should propagate source changes while preserving other instance overrides");
+    expect(history.undo(context).success && !first->overrides.empty() &&
+               scene.registry().get<NameComponent>(scene.findEntity(first->root)).name == "Applied name" &&
+               scene.registry().get<NameComponent>(scene.findEntity(second->root)).name == "Second instance",
+           "undo apply should restore source, instances, and override metadata");
+    expect(history.redo(context).success && first->overrides.empty() &&
+               scene.registry().get<NameComponent>(scene.findEntity(second->root)).name == "Second instance",
+           "redo apply should deterministically propagate again");
+
+    expect(authoring.overrideProperty(history, context, first, {{1}, "name", R"("Temporary")"}).success,
+           "instance override should remain undoable after apply");
+    expect(authoring.revert(history, context, first).success && first->overrides.empty(),
+           "revert should refresh from source and clear instance overrides");
+    expect(history.undo(context).success && first->overrides.size() == 1,
+           "undo revert should restore override metadata and scene state");
+
+    const std::string pointLightOverride = R"({"color":[0.25,0.5,1.0],"intensity":99.0,"range":12.0})";
+    expect(authoring.overrideProperty(history, context, first, {{1}, "component.pointLight", pointLightOverride})
+                   .success &&
+               scene.registry().get<PointLightComponent>(scene.findEntity(first->root)).intensity == 99.0f,
+           "component overrides should be separate, inspectable, and undoable");
+    expect(history.undo(context).success &&
+               scene.registry().get<PointLightComponent>(scene.findEntity(first->root)).intensity == 10.0f,
+           "undo component override should restore the inherited component");
+
+    expect(authoring.unpack(history, context, second).success && !second->linked,
+           "unpack should preserve entities while removing the source link");
+    const SceneEntityId unpackedRoot = second->root;
+    expect(scene.findEntity(unpackedRoot) != entt::null, "unpack should keep instantiated entities");
+    expect(history.undo(context).success && second->linked, "undo unpack should restore the prefab link");
+
+    expect(authoring.setOverride(*first, {{999}, "name", R"("Orphan")"}).success,
+           "orphaned override fixture should be accepted for diagnosis");
+    expect(authoring.inspect(*first, inspection).success && inspection.orphaned.size() == 1,
+           "inspection should report orphaned overrides separately");
+}
 } // namespace
 
 int main() {
     const std::filesystem::path directory = std::filesystem::temp_directory_path() / "zenith_command_history_tests";
     std::error_code error;
+    std::filesystem::remove_all(directory, error);
     std::filesystem::create_directories(directory, error);
     SceneDocumentOptions options{.assetRoot = directory};
     AssetManager assets;
@@ -82,6 +172,7 @@ int main() {
     history.crossBoundary(CommandHistoryBoundary::NewDocument);
     expect(history.size() == 0 && !history.canUndo() && !history.canRedo() && !history.dirty(),
            "New should start a clean history timeline");
+    testPrefabAuthoring(directory);
     std::filesystem::remove_all(directory, error);
     return failures == 0 ? 0 : 1;
 }

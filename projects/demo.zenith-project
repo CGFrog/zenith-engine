@@ -1,0 +1,29 @@
+{
+  "version": 3,
+  "displayName": "Zenith Demo",
+  "assetRoot": "../assets",
+  "sceneRoot": "scenes",
+  "startupScene": "demo.zenith-scene",
+  "renderSettings": {
+    "version": 1,
+    "antialiasing": 1,
+    "shadows": 1,
+    "lighting": 1,
+    "bloom": 0,
+    "environment": 0,
+    "localLights": 1,
+    "reflectionProbes": true,
+    "preferGpuDrivenSubmission": false,
+    "cascadeSplitLambda": 0.65,
+    "cascadeBlendFraction": 0.1,
+    "visualizeShadowCascades": false,
+    "budgets": {
+      "shadow": {"cpuMilliseconds": 1.0, "gpuMilliseconds": 2.0},
+      "opaque": {"cpuMilliseconds": 2.0, "gpuMilliseconds": 5.0},
+      "blended": {"cpuMilliseconds": 1.0, "gpuMilliseconds": 2.0},
+      "bloom": {"cpuMilliseconds": 0.5, "gpuMilliseconds": 1.5},
+      "ui": {"cpuMilliseconds": 0.5, "gpuMilliseconds": 1.0},
+      "upload": {"cpuMilliseconds": 2.0, "gpuMilliseconds": 2.0}
+    }
+  }
+}

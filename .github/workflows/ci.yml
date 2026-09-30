@@ -5,14 +5,52 @@ on:
   pull_request:
 
 jobs:
-  headless-editor-documents:
-    runs-on: windows-latest
+  build-test-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxkbcommon-dev libwayland-dev wayland-protocols libasound2-dev libpulse-dev libudev-dev
+      - name: Install macOS Vulkan portability runtime
+        if: runner.os == 'macOS'
+        run: brew install molten-vk
       - name: Configure
-        run: cmake -S . -B build -DBUILD_TESTING=ON
-      - name: Build headless editor tests
-        run: cmake --build build --config Debug --target zenith_editor_document_tests zenith_command_history_tests zenith_editor_play_mode_tests zenith_editor_hardening_tests --parallel 4
-      - name: Run headless editor tests
-        run: ctest --test-dir build -C Debug --output-on-failure -R "zenith_(editor_document|command_history|editor_play_mode|editor_hardening)"
+        run: cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DZENITH_WINDOWS_INSTALLER=${{ runner.os == 'Windows' }}
+      - name: Build
+        run: cmake --build build --config Release --parallel 4
+      - name: Run CPU tests
+        run: ctest --test-dir build -C Release --output-on-failure -LE vulkan
+      - name: Run bounded Vulkan smoke test
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: ctest --test-dir build -C Release --output-on-failure -L vulkan
+      - name: Package
+        run: cmake --build build --config Release --target package --parallel 4
+      - name: Verify clean extraction
+        if: runner.os != 'macOS'
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem build -File | Where-Object { $_.Extension -in '.zip', '.gz' } | Select-Object -First 1
+          if (-not $archive) { throw 'Package archive was not produced' }
+          cmake -DZENITH_ARCHIVE="$($archive.FullName)" -DZENITH_VERIFY_ROOT="$($PWD.Path)/clean extraction with spaces" -P cmake/VerifyExtractedPackage.cmake
+      - name: Verify macOS application bundle
+        if: runner.os == 'macOS'
+        run: |
+          cmake --install build --config Release --prefix "$PWD/clean bundle with spaces"
+          ZENITH_RESOURCE_ROOT="$PWD/clean bundle with spaces" "$PWD/clean bundle with spaces/Zenith.app/Contents/MacOS/Zenith" --verify-package --project "$PWD/clean bundle with spaces/demo.zenith-project"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zenith-${{ runner.os }}
+          path: |
+            build/*.zip
+            build/*.msi
+            build/*.tar.gz
+            build/*.deb
+            build/*.dmg

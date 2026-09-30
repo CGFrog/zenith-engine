@@ -170,6 +170,9 @@ SceneResult Scene::instantiateModel(Entity root, ModelHandle handle, const Asset
         entities[i] = createEntity(node.name);
         m_registry.get<TransformComponent>(entities[i]).local = node.localTransform;
         m_registry.emplace<ModelNodeComponent>(entities[i], handle, rootId, static_cast<uint32_t>(i));
+        if (!node.morphWeights.empty()) {
+            m_registry.emplace<MorphWeightsComponent>(entities[i], node.morphWeights);
+        }
         if (node.mesh) {
             attachMesh(entities[i], node.mesh);
         }
@@ -309,10 +312,14 @@ Entity Scene::cloneBranch(Entity source, Entity parent, bool appendCopySuffix) {
     copy.operator()<ModelNodeComponent>();
     copy.operator()<AnimationComponent>();
     copy.operator()<SkinComponent>();
+    copy.operator()<MorphWeightsComponent>();
     copy.operator()<MeshRendererComponent>();
     copy.operator()<CameraComponent>();
     copy.operator()<DirectionalLightComponent>();
     copy.operator()<EnvironmentLightComponent>();
+    copy.operator()<PointLightComponent>();
+    copy.operator()<SpotLightComponent>();
+    copy.operator()<ReflectionProbeComponent>();
     copy.operator()<ColliderComponent>();
     copy.operator()<RigidBodyComponent>();
     copy.operator()<AudioListenerComponent>();

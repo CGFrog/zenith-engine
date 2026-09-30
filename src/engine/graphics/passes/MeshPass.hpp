@@ -2,6 +2,7 @@
 
 #include "../../assets/Assets.hpp"
 #include "../../scene/Scene.hpp"
+#include "../EnvironmentLighting.hpp"
 #include "../Rendering.hpp"
 #include "../pipeline/GraphicsPipeline.hpp"
 #include "../resources/UploadContext.hpp"
@@ -77,6 +78,7 @@ class MeshPass {
     const GpuMesh* ensureMesh(MeshHandle handle, const AssetManager& assets);
     const GpuTexture* ensureTexture(TextureHandle handle, const AssetManager& assets);
     const GpuMaterial* ensureMaterial(MaterialHandle handle, const AssetManager& assets);
+    void pruneUnusedAssets(const AssetManager& assets);
     bool createPipeline(VkFormat colorFormat, VkFormat depthFormat);
     bool createShadowResources(VkFormat depthFormat);
     bool buildRenderItems(const Scene& scene, const AssetManager& assets,
@@ -119,4 +121,7 @@ class MeshPass {
     GraphicsPipeline m_selectionMaskPipeline;
     GraphicsPipeline m_outlinePipeline;
     PostProcessPass m_postProcess;
+    EnvironmentLightingCache m_environmentCache;
+    double m_uploadMilliseconds{0.0};
+    double m_uploadGpuMilliseconds{0.0};
 };

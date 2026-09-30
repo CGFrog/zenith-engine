@@ -1,8 +1,11 @@
 #include "DemoApplication.hpp"
 
+#include "engine/graphics/RenderConfiguration.hpp"
+#include "engine/resources/ResourceLocator.hpp"
 #include "game/scene/GameplayScene.hpp"
 
 #include <filesystem>
+#include <iostream>
 
 DemoApplication::DemoApplication(std::optional<ProjectConfig> project, std::filesystem::path settingsPath)
     : m_inputActions(createDemoInputMap())
@@ -16,14 +19,19 @@ SceneResult DemoApplication::onStart(ApplicationContext& context) {
             return {.error = result.error};
         }
     }
-    RenderSettings renderSettings = context.rendering.settings();
+    RenderSettings renderSettings = m_project ? m_project->renderSettings : context.rendering.settings();
     renderSettings.antialiasing = m_settings->antialiasing;
     renderSettings.bloom = m_settings->bloom;
-    context.rendering.setSettings(renderSettings);
+    ValidatedRenderSettings validated = validateRenderSettings(renderSettings, context.rendering.capabilities());
+    for (const std::string& fallback : validated.fallbacks) {
+        std::cerr << "Render setting fallback: " << fallback << '\n';
+    }
+    context.rendering.setSettings(validated.settings);
     context.audio.setBusMuted(AudioBus::Master, m_settings->masterMuted);
+    context.gameUi.setAccessibility(m_settings->accessibility);
 
-    const std::filesystem::path assetRoot = m_project ? m_project->assetRoot : std::filesystem::path{ZENITH_ASSET_DIR};
-    const auto effect = context.audio.loadClip(assetRoot / "audio" / "interaction.wav", true);
+    const std::filesystem::path assets = m_project ? m_project->assetRoot : ::assetRoot();
+    const auto effect = context.audio.loadClip(assets / "audio" / "interaction.wav", true);
     if (!effect) {
         if (!m_project) {
             return {.error = effect.error};
@@ -32,7 +40,7 @@ SceneResult DemoApplication::onStart(ApplicationContext& context) {
         m_interactionSound = effect.handle;
     }
 
-    const auto music = context.audio.loadStream(assetRoot / "audio" / "ambient.ogg");
+    const auto music = context.audio.loadStream(assets / "audio" / "ambient.ogg");
     if (!music) {
         if (!m_project) {
             return {.error = music.error};

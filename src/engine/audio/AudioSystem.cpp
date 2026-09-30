@@ -12,6 +12,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -160,6 +161,7 @@ struct AudioSystem::Impl {
         uint32_t channels{0};
         uint32_t sampleRate{0};
         uint32_t generation{1};
+        bool occupied{true};
     };
 
     struct Stream {
@@ -167,6 +169,7 @@ struct AudioSystem::Impl {
         uint32_t channels{0};
         uint32_t sampleRate{0};
         uint32_t generation{1};
+        bool occupied{true};
     };
 
     struct Voice {
@@ -234,11 +237,13 @@ struct AudioSystem::Impl {
     std::atomic<bool> streamEof{false};
 
     bool valid(AudioClipHandle handle) const {
-        return handle && handle.index < clips.size() && clips[handle.index].generation == handle.generation;
+        return handle && handle.index < clips.size() && clips[handle.index].occupied &&
+               clips[handle.index].generation == handle.generation;
     }
 
     bool valid(AudioStreamHandle handle) const {
-        return handle && handle.index < streams.size() && streams[handle.index].generation == handle.generation;
+        return handle && handle.index < streams.size() && streams[handle.index].occupied &&
+               streams[handle.index].generation == handle.generation;
     }
 
     bool valid(AudioVoiceHandle handle) const {
@@ -335,7 +340,10 @@ AudioLoadResult<AudioClipHandle> AudioSystem::loadClip(const std::filesystem::pa
     {
         std::scoped_lock lock(m_impl->mutex);
         if (const auto found = m_impl->clipCache.find(key); found != m_impl->clipCache.end()) {
-            return {.success = true, .handle = found->second};
+            if (m_impl->valid(found->second)) {
+                return {.success = true, .handle = found->second};
+            }
+            m_impl->clipCache.erase(found);
         }
     }
     DecodedAudio decoded = decode(resolved);
@@ -351,9 +359,16 @@ AudioLoadResult<AudioClipHandle> AudioSystem::loadClip(const std::filesystem::pa
         decoded.channels = 1;
     }
     std::scoped_lock lock(m_impl->mutex);
-    const uint32_t index = static_cast<uint32_t>(m_impl->clips.size());
-    m_impl->clips.push_back({resolved, std::move(decoded.samples), decoded.channels, decoded.sampleRate});
-    const AudioClipHandle handle{index, m_impl->clips.back().generation};
+    auto slot =
+        std::find_if(m_impl->clips.begin(), m_impl->clips.end(), [](const Impl::Clip& clip) { return !clip.occupied; });
+    if (slot == m_impl->clips.end()) {
+        m_impl->clips.emplace_back();
+        slot = std::prev(m_impl->clips.end());
+    }
+    const uint32_t generation = slot->generation;
+    *slot = {resolved, std::move(decoded.samples), decoded.channels, decoded.sampleRate, generation, true};
+    const uint32_t index = static_cast<uint32_t>(std::distance(m_impl->clips.begin(), slot));
+    const AudioClipHandle handle{index, generation};
     m_impl->clipCache.emplace(key, handle);
     return {.success = true, .handle = handle};
 }
@@ -370,9 +385,16 @@ AudioLoadResult<AudioClipHandle> AudioSystem::createClip(std::span<const float> 
         return {.error = "Audio clip PCM contains a non-finite sample"};
     }
     std::scoped_lock lock(m_impl->mutex);
-    const uint32_t index = static_cast<uint32_t>(m_impl->clips.size());
-    m_impl->clips.push_back({{}, std::vector<float>(samples.begin(), samples.end()), channels, sampleRate});
-    return {.success = true, .handle = {index, m_impl->clips.back().generation}};
+    auto slot =
+        std::find_if(m_impl->clips.begin(), m_impl->clips.end(), [](const Impl::Clip& clip) { return !clip.occupied; });
+    if (slot == m_impl->clips.end()) {
+        m_impl->clips.emplace_back();
+        slot = std::prev(m_impl->clips.end());
+    }
+    const uint32_t generation = slot->generation;
+    *slot = {{}, std::vector<float>(samples.begin(), samples.end()), channels, sampleRate, generation, true};
+    const uint32_t index = static_cast<uint32_t>(std::distance(m_impl->clips.begin(), slot));
+    return {.success = true, .handle = {index, generation}};
 }
 
 AudioLoadResult<AudioStreamHandle> AudioSystem::loadStream(const std::filesystem::path& path) {
@@ -383,7 +405,10 @@ AudioLoadResult<AudioStreamHandle> AudioSystem::loadStream(const std::filesystem
     const std::string key = resolved.generic_string();
     std::scoped_lock lock(m_impl->mutex);
     if (const auto found = m_impl->streamCache.find(key); found != m_impl->streamCache.end()) {
-        return {.success = true, .handle = found->second};
+        if (m_impl->valid(found->second)) {
+            return {.success = true, .handle = found->second};
+        }
+        m_impl->streamCache.erase(found);
     }
     int error = 0;
     stb_vorbis* decoder = stb_vorbis_open_filename(resolved.string().c_str(), &error, nullptr);
@@ -395,9 +420,16 @@ AudioLoadResult<AudioStreamHandle> AudioSystem::loadStream(const std::filesystem
     if (info.channels != 1 && info.channels != 2) {
         return {.error = "Unsupported Ogg stream channel layout: " + resolved.string()};
     }
-    const uint32_t index = static_cast<uint32_t>(m_impl->streams.size());
-    m_impl->streams.push_back({resolved, static_cast<uint32_t>(info.channels), info.sample_rate});
-    const AudioStreamHandle handle{index, m_impl->streams.back().generation};
+    auto slot = std::find_if(m_impl->streams.begin(), m_impl->streams.end(),
+                             [](const Impl::Stream& stream) { return !stream.occupied; });
+    if (slot == m_impl->streams.end()) {
+        m_impl->streams.emplace_back();
+        slot = std::prev(m_impl->streams.end());
+    }
+    const uint32_t generation = slot->generation;
+    *slot = {resolved, static_cast<uint32_t>(info.channels), info.sample_rate, generation, true};
+    const uint32_t index = static_cast<uint32_t>(std::distance(m_impl->streams.begin(), slot));
+    const AudioStreamHandle handle{index, generation};
     m_impl->streamCache.emplace(key, handle);
     return {.success = true, .handle = handle};
 }
@@ -730,6 +762,118 @@ void AudioSystem::update(float deltaSeconds) {
         mix(m_impl->callbackScratch.data(), frames);
         remaining -= frames;
     }
+}
+
+AudioAssetCollectionResult AudioSystem::collectUnusedAssets(bool force) {
+    std::scoped_lock lock(m_impl->mutex);
+    AudioAssetCollectionResult result;
+    for (const Impl::Clip& clip : m_impl->clips) {
+        if (clip.occupied) {
+            result.bytesRetained += clip.samples.size() * sizeof(float);
+        }
+    }
+
+    std::vector<bool> liveClips(m_impl->clips.size(), false);
+    std::vector<bool> liveStreams(m_impl->streams.size(), false);
+    for (const Impl::Voice& voice : m_impl->voices) {
+        if (!voice.active) {
+            continue;
+        }
+        if (voice.streaming) {
+            if (voice.assetIndex < liveStreams.size()) {
+                liveStreams[voice.assetIndex] = true;
+            }
+        } else if (voice.assetIndex < liveClips.size()) {
+            liveClips[voice.assetIndex] = true;
+        }
+    }
+
+    for (uint32_t index = 0; index < m_impl->clips.size(); ++index) {
+        Impl::Clip& clip = m_impl->clips[index];
+        if (!clip.occupied || liveClips[index] ||
+            (!force && result.bytesRetained <= m_impl->config.decodedAudioBudgetBytes)) {
+            continue;
+        }
+        const uint64_t bytes = clip.samples.size() * sizeof(float);
+        const uint32_t generation = clip.generation;
+        std::erase_if(m_impl->clipCache, [index, generation](const auto& entry) {
+            return entry.second.index == index && entry.second.generation == generation;
+        });
+        clip = {};
+        clip.occupied = false;
+        clip.generation = generation + 1;
+        if (clip.generation == 0) {
+            clip.generation = 1;
+        }
+        result.bytesRetained -= bytes;
+        result.bytesFreed += bytes;
+        ++result.clipsEvicted;
+    }
+
+    if (force) {
+        for (uint32_t index = 0; index < m_impl->streams.size(); ++index) {
+            Impl::Stream& stream = m_impl->streams[index];
+            if (!stream.occupied || liveStreams[index]) {
+                continue;
+            }
+            const uint32_t generation = stream.generation;
+            std::erase_if(m_impl->streamCache, [index, generation](const auto& entry) {
+                return entry.second.index == index && entry.second.generation == generation;
+            });
+            stream = {};
+            stream.occupied = false;
+            stream.generation = generation + 1;
+            if (stream.generation == 0) {
+                stream.generation = 1;
+            }
+            ++result.streamsEvicted;
+        }
+    }
+    result.budgetSatisfied = result.bytesRetained <= m_impl->config.decodedAudioBudgetBytes;
+    return result;
+}
+
+uint64_t AudioSystem::decodedAudioBytes() const {
+    std::scoped_lock lock(m_impl->mutex);
+    uint64_t bytes = 0;
+    for (const Impl::Clip& clip : m_impl->clips) {
+        if (clip.occupied) {
+            bytes += clip.samples.size() * sizeof(float);
+        }
+    }
+    return bytes;
+}
+
+std::vector<AudioAssetDiagnostic> AudioSystem::assetDiagnostics() const {
+    std::scoped_lock lock(m_impl->mutex);
+    std::vector<uint32_t> clipReferences(m_impl->clips.size(), 0);
+    std::vector<uint32_t> streamReferences(m_impl->streams.size(), 0);
+    for (const Impl::Voice& voice : m_impl->voices) {
+        if (!voice.active) {
+            continue;
+        }
+        if (voice.streaming && voice.assetIndex < streamReferences.size()) {
+            ++streamReferences[voice.assetIndex];
+        } else if (!voice.streaming && voice.assetIndex < clipReferences.size()) {
+            ++clipReferences[voice.assetIndex];
+        }
+    }
+    std::vector<AudioAssetDiagnostic> result;
+    for (uint32_t index = 0; index < m_impl->clips.size(); ++index) {
+        const Impl::Clip& clip = m_impl->clips[index];
+        if (clip.occupied) {
+            result.push_back({false, index, clip.generation, clipReferences[index], clip.samples.size() * sizeof(float),
+                              clip.path.generic_string()});
+        }
+    }
+    for (uint32_t index = 0; index < m_impl->streams.size(); ++index) {
+        const Impl::Stream& stream = m_impl->streams[index];
+        if (stream.occupied) {
+            result.push_back(
+                {true, index, stream.generation, streamReferences[index], 0, stream.path.generic_string()});
+        }
+    }
+    return result;
 }
 
 bool AudioSystem::hasOutputDevice() const {

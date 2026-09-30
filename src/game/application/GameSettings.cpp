@@ -1,10 +1,11 @@
 #include "GameSettings.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <nlohmann/json.hpp>
 
 namespace {
-constexpr int currentVersion = 1;
+constexpr int currentVersion = 2;
 }
 
 GameSettingsResult loadGameSettings(const std::filesystem::path& path, GameSettings& settings) {
@@ -15,7 +16,8 @@ GameSettingsResult loadGameSettings(const std::filesystem::path& path, GameSetti
     nlohmann::json document;
     try {
         input >> document;
-        if (!document.is_object() || document.value("version", 0) != currentVersion) {
+        const int version = document.value("version", 0);
+        if (!document.is_object() || version < 1 || version > currentVersion) {
             return {.error = "Unsupported game settings version: " + path.string()};
         }
         GameSettings loaded;
@@ -24,10 +26,26 @@ GameSettingsResult loadGameSettings(const std::filesystem::path& path, GameSetti
         loaded.masterMuted = document.at("masterMuted").get<bool>();
         loaded.lookSensitivity = document.at("lookSensitivity").get<float>();
         loaded.invertLookY = document.at("invertLookY").get<bool>();
+        if (version >= 2) {
+            loaded.locale = document.value("locale", "en");
+            const auto& accessibility = document.at("accessibility");
+            loaded.accessibility.uiScale = accessibility.value("uiScale", 1.0f);
+            loaded.accessibility.textScale = accessibility.value("textScale", 1.0f);
+            loaded.accessibility.highContrast = accessibility.value("highContrast", false);
+            loaded.accessibility.reducedMotion = accessibility.value("reducedMotion", false);
+            loaded.accessibility.captionsEnabled = accessibility.value("captionsEnabled", true);
+            loaded.accessibility.colorIndependentIndicators = accessibility.value("colorIndependentIndicators", true);
+            loaded.inputProfiles = document.value("inputProfiles", std::vector<std::string>{"Default"});
+            loaded.activeInputProfile = document.value("activeInputProfile", "Default");
+        }
         if (antialiasing < static_cast<int>(AntialiasingMode::Off) ||
             antialiasing > static_cast<int>(AntialiasingMode::Fxaa) || bloom < static_cast<int>(BloomQuality::Off) ||
             bloom > static_cast<int>(BloomQuality::Downsampled) || loaded.lookSensitivity < 0.25f ||
-            loaded.lookSensitivity > 4.0f) {
+            loaded.lookSensitivity > 4.0f || loaded.accessibility.uiScale < 0.75f ||
+            loaded.accessibility.uiScale > 2.5f || loaded.accessibility.textScale < 0.75f ||
+            loaded.accessibility.textScale > 3.0f || loaded.locale.empty() || loaded.inputProfiles.empty() ||
+            std::find(loaded.inputProfiles.begin(), loaded.inputProfiles.end(), loaded.activeInputProfile) ==
+                loaded.inputProfiles.end()) {
             return {.error = "Game settings contain an out-of-range value: " + path.string()};
         }
         loaded.antialiasing = static_cast<AntialiasingMode>(antialiasing);
@@ -50,12 +68,23 @@ GameSettingsResult saveGameSettings(const std::filesystem::path& path, const Gam
     if (!output) {
         return {.error = "Could not write game settings: " + temporary.string()};
     }
-    const nlohmann::json document = {{"version", currentVersion},
-                                     {"antialiasing", static_cast<int>(settings.antialiasing)},
-                                     {"bloom", static_cast<int>(settings.bloom)},
-                                     {"masterMuted", settings.masterMuted},
-                                     {"lookSensitivity", settings.lookSensitivity},
-                                     {"invertLookY", settings.invertLookY}};
+    const nlohmann::json document = {
+        {"version", currentVersion},
+        {"antialiasing", static_cast<int>(settings.antialiasing)},
+        {"bloom", static_cast<int>(settings.bloom)},
+        {"masterMuted", settings.masterMuted},
+        {"lookSensitivity", settings.lookSensitivity},
+        {"invertLookY", settings.invertLookY},
+        {"locale", settings.locale},
+        {"accessibility",
+         {{"uiScale", settings.accessibility.uiScale},
+          {"textScale", settings.accessibility.textScale},
+          {"highContrast", settings.accessibility.highContrast},
+          {"reducedMotion", settings.accessibility.reducedMotion},
+          {"captionsEnabled", settings.accessibility.captionsEnabled},
+          {"colorIndependentIndicators", settings.accessibility.colorIndependentIndicators}}},
+        {"inputProfiles", settings.inputProfiles},
+        {"activeInputProfile", settings.activeInputProfile}};
     output << document.dump(2) << '\n';
     output.close();
     if (!output) {

@@ -13,6 +13,12 @@ layout(set = 0, binding = 0) uniform CameraData {
     vec4 shadowSettings;
     vec4 cascadeSplits;
     vec4 renderingSettings;
+    vec4 environmentSpecular[6];
+    vec4 localLightPositionRange[64];
+    vec4 localLightDirectionType[64];
+    vec4 localLightColorIntensity[64];
+    vec4 localLightCone[64];
+    uvec4 localLightCount;
 } camera;
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
@@ -69,13 +75,23 @@ float sampleShadowCascade(vec3 position, vec3 normal, vec3 lightDirection, int c
         return 1.0;
     }
     vec2 texel = 1.0 / vec2(textureSize(shadowMap, 0));
+    const vec2 poissonDisk[16] = vec2[16](
+        vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
+        vec2(-0.09418410, -0.92938870), vec2(0.34495938, 0.29387760),
+        vec2(-0.91588581, 0.45771432), vec2(-0.81544232, -0.87912464),
+        vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379),
+        vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
+        vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
+        vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
+        vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790));
+    float angle = fract(sin(dot(position.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.28318530718;
+    mat2 rotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
     float visibility = 0.0;
-    for (int y = -1; y <= 1; ++y) {
-        for (int x = -1; x <= 1; ++x) {
-            visibility += texture(shadowMap, vec4(uv + texel * vec2(x, y), float(cascade), projected.z));
-        }
+    for (int sampleIndex = 0; sampleIndex < 16; ++sampleIndex) {
+        vec2 offset = rotation * poissonDisk[sampleIndex] * texel * 1.75;
+        visibility += texture(shadowMap, vec4(uv + offset, float(cascade), projected.z));
     }
-    return visibility / 9.0;
+    return visibility / 16.0;
 }
 
 int shadowCascade(vec3 position) {
@@ -106,6 +122,10 @@ float shadowVisibility(vec3 position, vec3 normal, vec3 lightDirection) {
         if (blend > 0.0) {
             visibility = mix(visibility, sampleShadowCascade(position, normal, lightDirection, cascade + 1), blend);
         }
+    } else if (cascadeCount > 1) {
+        float lastSplit = camera.cascadeSplits[cascadeCount - 1];
+        float fadeWidth = max(lastSplit * 0.1, 0.001);
+        visibility = mix(visibility, 1.0, smoothstep(lastSplit - fadeWidth, lastSplit, cameraDistance));
     }
     return visibility;
 }
@@ -146,14 +166,45 @@ void main() {
     vec3 physicallyBasedDirect = (diffuse + specular) * camera.lightColor.rgb * camera.lightDirection.w * nDotL;
     vec3 fastDirect = albedo * camera.lightColor.rgb * camera.lightDirection.w * nDotL;
     vec3 direct = mix(fastDirect, physicallyBasedDirect, camera.renderingSettings.x) * shadow;
+    for (uint lightIndex = 0; lightIndex < camera.localLightCount.x; ++lightIndex) {
+        vec3 toLight = camera.localLightPositionRange[lightIndex].xyz - worldPosition;
+        float distanceToLight = length(toLight);
+        float range = camera.localLightPositionRange[lightIndex].w;
+        if (distanceToLight >= range || distanceToLight <= 0.0001) {
+            continue;
+        }
+        vec3 localDirection = toLight / distanceToLight;
+        float attenuation = pow(max(1.0 - distanceToLight / range, 0.0), 2.0) /
+                            max(distanceToLight * distanceToLight, 0.01);
+        if (camera.localLightDirectionType[lightIndex].w > 0.5) {
+            float coneCosine = dot(-localDirection, normalize(camera.localLightDirectionType[lightIndex].xyz));
+            attenuation *= smoothstep(camera.localLightCone[lightIndex].y,
+                                      camera.localLightCone[lightIndex].x, coneCosine);
+        }
+        float localNDotL = max(dot(normal, localDirection), 0.0);
+        vec3 localHalf = normalize(viewDirection + localDirection);
+        vec3 localFresnel = fresnelSchlick(max(dot(localHalf, viewDirection), 0.0), reflectance);
+        float localDistribution = distributionGGX(normal, localHalf, roughness);
+        float localGeometry = geometrySchlickGGX(nDotV, roughness) * geometrySchlickGGX(localNDotL, roughness);
+        vec3 localSpecular = localDistribution * localGeometry * localFresnel /
+                             max(4.0 * nDotV * localNDotL, 0.0001);
+        vec3 localDiffuse = (vec3(1.0) - localFresnel) * (1.0 - metallic) * albedo / PI;
+        vec3 localRadiance = camera.localLightColorIntensity[lightIndex].rgb *
+                             camera.localLightColorIntensity[lightIndex].w * attenuation;
+        direct += mix(albedo * localRadiance * localNDotL,
+                      (localDiffuse + localSpecular) * localRadiance * localNDotL,
+                      camera.renderingSettings.x);
+    }
     float hemisphereWeight = normal.y * 0.5 + 0.5;
     vec3 diffuseEnvironment = mix(camera.environmentGround.rgb, camera.environmentSky.rgb, hemisphereWeight);
     vec3 indirectFresnel = fresnelSchlickRoughness(nDotV, reflectance, roughness);
     vec3 indirectDiffuse = (vec3(1.0) - indirectFresnel) * (1.0 - metallic) * albedo * diffuseEnvironment *
                            camera.environmentSky.w;
-    vec3 reflectionDirection = reflect(-viewDirection, normal);
-    float reflectionWeight = reflectionDirection.y * 0.5 + 0.5;
-    vec3 specularEnvironment = mix(camera.environmentGround.rgb, camera.environmentSky.rgb, reflectionWeight);
+    float specularLevel = roughness * 5.0;
+    int specularLow = int(floor(specularLevel));
+    int specularHigh = min(specularLow + 1, 5);
+    vec3 specularEnvironment = mix(camera.environmentSpecular[specularLow].rgb,
+                                   camera.environmentSpecular[specularHigh].rgb, fract(specularLevel));
     vec3 indirectSpecular = indirectFresnel * specularEnvironment * camera.environmentGround.w *
                             mix(1.0, 0.35, roughness);
     vec3 physicallyBasedIndirect = indirectDiffuse + indirectSpecular;

@@ -115,13 +115,16 @@ void UiPass::beginFrame() {
 }
 
 void UiPass::syncFonts(const AssetManager& assets) {
-    if (!m_initialized || assets.fontCount() <= m_loadedFontCount) {
+    if (!m_initialized) {
         return;
     }
     ImGuiIO& io = ImGui::GetIO();
     bool added = false;
-    for (size_t index = m_loadedFontCount; index < assets.fontCount(); ++index) {
-        const FontHandle handle{static_cast<uint32_t>(index), 1};
+    for (FontHandle handle : assets.fontHandles()) {
+        const uint64_t key = (static_cast<uint64_t>(handle.generation) << 32u) | handle.index;
+        if (m_fonts.contains(key)) {
+            continue;
+        }
         const FontAsset* asset = assets.font(handle);
         if (!asset || asset->bytes.empty()) {
             continue;
@@ -131,12 +134,10 @@ void UiPass::syncFonts(const AssetManager& assets) {
         ImFont* font = io.Fonts->AddFontFromMemoryTTF(const_cast<uint8_t*>(asset->bytes.data()),
                                                       static_cast<int>(asset->bytes.size()), 36.0f, &config);
         if (font) {
-            const uint64_t key = (static_cast<uint64_t>(handle.generation) << 32u) | handle.index;
             m_fonts.emplace(key, font);
             added = true;
         }
     }
-    m_loadedFontCount = assets.fontCount();
     if (added) {
         ImGui_ImplVulkan_CreateFontsTexture();
     }
@@ -270,6 +271,5 @@ void UiPass::shutdown() {
     m_descriptorPool = VK_NULL_HANDLE;
     m_device = VK_NULL_HANDLE;
     m_initialized = false;
-    m_loadedFontCount = 0;
     m_fonts.clear();
 }

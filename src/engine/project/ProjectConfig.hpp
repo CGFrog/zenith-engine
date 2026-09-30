@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/graphics/Rendering.hpp"
+
 #include <filesystem>
 #include <string>
 
@@ -7,13 +9,14 @@ class AssetManager;
 class Scene;
 
 struct ProjectConfig {
-    static constexpr int currentVersion = 2;
+    static constexpr int currentVersion = 3;
 
     std::filesystem::path projectFile;
     std::string displayName;
     std::filesystem::path assetRoot;
     std::filesystem::path sceneRoot;
     std::filesystem::path startupScene;
+    RenderSettings renderSettings;
 };
 
 struct ProjectConfigResult {

@@ -1,4 +1,5 @@
 #include "engine/project/ProjectConfig.hpp"
+#include "engine/resources/ResourceLocator.hpp"
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
@@ -35,12 +36,18 @@ int main() {
                          .assetRoot = directory / "content",
                          .sceneRoot = directory / "scenes",
                          .startupScene = directory / "scenes" / "room.zenith-scene"};
+    source.renderSettings.environment = EnvironmentQuality::ImageBasedHigh;
+    source.renderSettings.localLights = LocalLightingQuality::Tiled64;
+    source.renderSettings.budgets.shadow = {1.0, 0.5};
     expect(saveProjectConfig(projectPath, source).success, "project configuration should save");
 
     ProjectConfig loaded;
     expect(loadProjectConfig(projectPath, loaded).success, "project configuration should load");
     expect(loaded.displayName == source.displayName && loaded.assetRoot == source.assetRoot &&
-               loaded.sceneRoot == source.sceneRoot && loaded.startupScene == source.startupScene,
+               loaded.sceneRoot == source.sceneRoot && loaded.startupScene == source.startupScene &&
+               loaded.renderSettings.environment == source.renderSettings.environment &&
+               loaded.renderSettings.localLights == source.renderSettings.localLights &&
+               loaded.renderSettings.budgets.shadow.gpuMilliseconds == 0.5,
            "project fields should round-trip as paths relative to the project file");
 
     std::filesystem::path resolvedScene;
@@ -82,6 +89,15 @@ int main() {
     expect(unchangedScene.registry().valid(unchangedEntity),
            "a missing startup scene does not mutate the destination scene");
 
+    const std::filesystem::path versionTwoPath = directory / "version-two.zenith-project";
+    writeFile(
+        versionTwoPath,
+        R"({"version":2,"displayName":"Version two","assetRoot":"content","sceneRoot":"scenes","startupScene":"room.zenith-scene"})");
+    ProjectConfig versionTwo;
+    expect(loadProjectConfig(versionTwoPath, versionTwo).success &&
+               versionTwo.renderSettings.environment == EnvironmentQuality::Hemisphere,
+           "version 2 projects remain readable with explicit default render settings");
+
     const std::filesystem::path escapingPath = directory / "escaping.zenith-project";
     writeFile(
         escapingPath,
@@ -95,6 +111,17 @@ int main() {
     ProjectConfig preserved = loaded;
     expect(!loadProjectConfig(projectPath, preserved), "malformed project configuration should fail");
     expect(preserved.assetRoot == loaded.assetRoot, "failed project load should preserve the active configuration");
+
+    const std::filesystem::path packagedRoot = directory / "package with spaces";
+    std::filesystem::create_directories(packagedRoot / "assets", error);
+    std::filesystem::create_directories(packagedRoot / "shaders", error);
+    initializeResourceLocator(packagedRoot / "bin" / "zenith");
+    expect(resourceRoot() == std::filesystem::weakly_canonical(packagedRoot),
+           "resource discovery finds the parent of a multi-config executable directory");
+    initializeResourceLocator(packagedRoot / "zenith");
+    expect(assetRoot() == std::filesystem::weakly_canonical(packagedRoot) / "assets" &&
+               shaderRoot() == std::filesystem::weakly_canonical(packagedRoot) / "shaders",
+           "packaged resources resolve beside the executable without using the working directory");
 
     std::filesystem::remove_all(directory, error);
     return failures == 0 ? 0 : 1;

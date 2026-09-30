@@ -2,10 +2,16 @@
 #include <volk.h>
 
 struct GpuFrameTimings {
+    bool valid{false};
+    uint64_t frame{0};
     double frameMilliseconds{0.0};
     double shadowMilliseconds{0.0};
+    double opaqueMilliseconds{0.0};
+    double blendedMilliseconds{0.0};
     double sceneMilliseconds{0.0};
     double postMilliseconds{0.0};
+    double bloomMilliseconds{0.0};
+    double uiMilliseconds{0.0};
 };
 
 // Owns the resources reused for one frame of CPU work.
@@ -16,7 +22,7 @@ class FrameResources {
     FrameResources(const FrameResources&) = delete;
     FrameResources& operator=(const FrameResources&) = delete;
 
-    bool init(VkDevice device, uint32_t queueFamily, float timestampPeriod);
+    bool init(VkDevice device, uint32_t queueFamily, float timestampPeriod, uint32_t timestampValidBits);
     void shutdown(VkDevice device);
 
     bool waitUntilAvailable(VkDevice device) const;
@@ -25,6 +31,12 @@ class FrameResources {
     bool submit(VkDevice device, VkQueue queue, VkSemaphore renderComplete) const;
     bool collectTimings(VkDevice device, GpuFrameTimings& timings);
     void writeTimestamp(uint32_t query, VkPipelineStageFlags2 stage) const;
+
+    void markSubmitted(uint64_t frame, bool bloomEnabled) {
+        m_sampleFrame = frame;
+        m_bloomEnabled = bloomEnabled;
+        m_timestampsPending = m_timestampQueries != VK_NULL_HANDLE;
+    }
 
     VkQueryPool timestampQueries() const {
         return m_timestampQueries;
@@ -50,4 +62,7 @@ class FrameResources {
     VkQueryPool m_timestampQueries{VK_NULL_HANDLE};
     float m_timestampPeriod{0.0f};
     bool m_timestampsPending{false};
+    bool m_bloomEnabled{false};
+    uint32_t m_timestampValidBits{0};
+    uint64_t m_sampleFrame{0};
 };

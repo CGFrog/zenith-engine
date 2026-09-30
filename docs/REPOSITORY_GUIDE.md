@@ -3,7 +3,9 @@
 This guide is a map of Zenith's checked-in files. It explains what each element
 owns, what depends on it, and where a change belongs. For the runtime sequence
 and subsystem contracts, see [Architecture](ARCHITECTURE.md). For commands and
-common changes, see [Development](DEVELOPMENT.md).
+common changes, see [Development](DEVELOPMENT.md). The remaining optimization
+objectives and their measurement gates are in
+[Performance roadmap](PERFORMANCE_ROADMAP.md).
 
 ## Top level
 
@@ -30,7 +32,7 @@ src/
 |  |- assets/              CPU asset import and storage
 |  |- audio/               decoding, streaming, and mixing
 |  |- graphics/            rendering and Vulkan implementation
-|  |- input/ physics/ scene/ ui/ window/
+|  |- input/ jobs/ physics/ resources/ scene/ ui/ window/
 |  `- project/             shared project manifests and scene paths
 |- editor/                 authoring application
 |  |- application/ document/ interaction/ settings/
@@ -67,11 +69,10 @@ explicit, so a file move must update `CMakeLists.txt` as well as include sites.
 | `zenith_physics_tests` | Test executable | Rigid bodies, contacts, impulses, raycasts, mesh collision, and cleanup. |
 | `zenith_application_tests` | Test executable | Lifecycle ordering, deferred switching, failed-load cleanup, demo composition, controls, and reload behavior. |
 
-The build publishes `src/` as the engine include root and defines
-`ZENITH_SHADER_DIR` and `ZENITH_ASSET_DIR` with absolute build-tree paths.
-Consumers therefore include headers as, for example, `engine/scene/Scene.hpp`,
-while runtime code finds generated content through the definitions rather than
-the current directory.
+The build publishes `src/` as the engine include root. Consumers include
+headers as, for example, `engine/scene/Scene.hpp`. Runtime code uses the
+executable-relative resource locator, which supports both multi-config build
+trees and cleanly extracted release archives without embedding build paths.
 
 Third-party libraries are pinned with CMake `FetchContent`:
 
@@ -149,6 +150,12 @@ backend after tone mapping.
 Font files are cached as CPU assets through `AssetManager::loadFont`, while UI
 images reuse normal `TextureHandle` values and the renderer's texture cache.
 
+`Localization.*` owns stable message IDs, locale/plural selection, and UTF-8
+fallback shaping. `Accessibility.*` owns timed caption tracks and
+color-independent indicator semantics. `InputProfiles.*` stores named,
+remappable keyboard, mouse, and gamepad profiles with explicit conflict and
+hold/toggle policies.
+
 ## Audio
 
 ### `src/engine/audio/AudioSystem.*` and `StbVorbis.cpp`
@@ -179,12 +186,31 @@ cycles. `instantiateModel` expands imported nodes into entities while preserving
 their hierarchy. `destroyEntity` recursively destroys descendants.
 `updateWorldTransforms` walks roots and computes `world = parent.world * local`.
 
+### `src/engine/scene/Prefab.*`
+
+Defines versioned reusable entity documents with stable local IDs,
+project-relative model and nested-prefab references, explicit component
+payloads, and separate instance overrides. Nested expansion uses deterministic
+instance-derived IDs, rejects source and hierarchy cycles, and validates the
+complete graph before mutating a destination scene. `PrefabSystem` is runtime
+code, so primary and additive scenes can share definitions without editor
+state.
+
 ### `src/engine/application/Application.*`
 
 Defines `Application`, `ApplicationScene`, contexts, deferred scene/quit
 requests, and `ApplicationSession`. The session guarantees load/update/fixed
 update/unload ordering and clears ECS/physics state between scenes while assets
 remain cached.
+
+### `src/engine/jobs/JobSystem.*` and `scene/AdditiveSceneManager.*`
+
+`JobSystem` runs bounded prioritized work with cancellation and filtered
+completion queues. `SceneDocument` separates background-safe parsing from
+main-thread ECS and asset commits. `AdditiveSceneManager` composes those pieces
+into stable scene instances with per-instance asset leases, desired-set
+streaming, deterministic unload, and validated cross-instance entity
+references.
 
 ### `src/game/application/`, `scene/`, and `player/`
 
@@ -200,10 +226,11 @@ movement and view input and remains entirely outside `zenith_engine`.
 ### `src/engine/project/ProjectConfig.*`
 
 Defines the shared versioned project manifest used by both game and editor
-applications. Version 2 stores a display name, project-relative asset and scene
-roots, and a scene-root-relative startup scene. Version 1 remains readable and
-is upgraded on save. Scene references are validated against the scene root
-before `SceneDocument` loads them.
+applications. Version 3 stores a display name, project-relative asset and scene
+roots, a scene-root-relative startup scene, and validated renderer quality and
+per-pass budget settings. Versions 1 and 2 remain readable and are upgraded on
+save. Scene references are validated against the scene root before
+`SceneDocument` loads them.
 
 The `zenith` executable accepts `--project <project-file>`. The demo application
 loads authored scene content through this engine contract, then adds its
@@ -229,10 +256,13 @@ Defines renderer-independent CPU asset types and opaque typed handles:
 - `MaterialAsset` holds glTF metallic-roughness factors and texture handles.
 - `TextureAsset` stores decoded width, height, and RGBA8 pixels.
 
-`AssetManager` owns these values for its lifetime. It normalizes model paths,
-caches repeated model loads, and resolves handles without exposing its vectors.
-Handles contain an index and generation field; the current append-only manager
-uses generation 1 and does not yet unload or recycle slots.
+`AssetManager` owns these values in recyclable generational slots. It normalizes
+model paths, caches repeated loads, and resolves handles without exposing its
+vectors. Scene sessions, editor operations, audio voices, and renderer frame
+slots retain explicit leases. Deterministic collection reclaims unreferenced
+assets under configurable CPU and decoded-audio budgets; recycled slots advance
+their generation so stale handles cannot alias new content. Renderer frame
+leases defer GPU cache pruning until submitted work has retired.
 
 ### `src/engine/assets/ModelImporter.*`
 
@@ -240,13 +270,28 @@ Uses cgltf to parse `.gltf` and `.glb`, load buffers, validate the document, and
 convert supported nodes, meshes, primitives, materials, textures, and transforms
 into Zenith types. It handles indexed and non-indexed triangle geometry and
 generates normals or tangent space when absent. Non-triangle primitives are
-skipped. Parsing and validation failures return descriptive errors.
+skipped. Morph deltas and animation weight channels are retained, while
+compressed paths report the missing optional decoder by name. Parsing,
+resource-limit, and validation failures return descriptive errors.
 
 ### `src/engine/assets/ImageDecoder.*`
 
-Uses stb_image to decode an external file or an in-memory embedded image into
-four-channel RGBA8 pixels. It is deliberately independent of Vulkan; GPU upload
-belongs to the renderer.
+Uses stb_image to decode conventional external or embedded images and validates
+KTX2 containers. RGBA8 KTX2 has a CPU fallback; Basis data reports the optional
+transcoder requirement. GPU format policy and upload remain renderer-owned.
+
+### `src/engine/assets/ProductionAssetPipeline.*`
+
+Defines untrusted-content limits, isolated Meshopt/Draco decoder registration,
+KTX2 target-format choice, and deterministic derived assets keyed by source,
+settings, tool version, and target. Editor inspection and the
+`zenith_asset_build` command share this implementation.
+
+### `src/engine/platform/PlatformServices.*`
+
+Resolves platform writable locations, performs atomic user-data writes and
+backup recovery, writes local-only structured diagnostics, and serializes exact
+release provenance.
 
 ## Physics
 
@@ -333,6 +378,11 @@ renders a directional shadow map and then the scene into a floating-point HDR
 target using Cook-Torrance GGX lighting plus hemispherical sky/ground indirect
 lighting. Directional and environment scene components supply lighting and
 shadow settings. Fallback textures fill missing maps.
+
+Local point and spot lights are selected through deterministic 16-pixel tile
+coverage with a saved 32- or 64-light bound. Environment textures use cached
+roughness-prefiltered data, while reflection probes contribute through explicit
+influence boxes, blend distances, and priorities.
 
 ### `src/engine/graphics/passes/PostProcessPass.*`
 

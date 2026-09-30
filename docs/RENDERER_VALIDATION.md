@@ -5,7 +5,7 @@ Milestone 8 keeps renderer changes measurable and capability-gated.
 ## Performance
 
 `zenith_render_packet_benchmark` constructs a deterministic 2,000-object scene
-and reports JSON timings for the previous rebuild-and-sort work versus cached
+and reports warmed median/p95/p99/max JSON timings for rebuild-and-sort work versus cached
 packet revision checks. `RenderStats::cpuRenderPacketMilliseconds` also exposes
 the live rebuild cost and whether packets were rebuilt. For whole-frame checks,
 run the same executable, machine, driver, present mode, and scene twice:
@@ -18,7 +18,7 @@ Remove-Item Env:ZENITH_DISABLE_RENDER_PACKET_CACHE
 build\Release\zenith.exe # candidate
 ```
 
-Record median and p95 CPU/GPU values from the JSON output. A candidate fails
+Record median, p95, and p99 CPU/GPU values and sample counts from the JSON output. A candidate fails
 the milestone gate if default-quality median or p95 regresses by more than 5%
 outside run-to-run noise.
 

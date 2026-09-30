@@ -1,11 +1,13 @@
 #pragma once
 
+#include <atomic>
 #include <compare>
 #include <cstdint>
 #include <filesystem>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -33,6 +35,59 @@ using MeshHandle = AssetHandle<MeshTag>;
 using MaterialHandle = AssetHandle<MaterialTag>;
 using TextureHandle = AssetHandle<TextureTag>;
 using FontHandle = AssetHandle<FontTag>;
+
+enum class AssetKind : uint8_t {
+    Model,
+    Mesh,
+    Material,
+    Texture,
+    Font,
+};
+
+struct AssetMemoryBudget {
+    uint64_t cpuBytes{std::numeric_limits<uint64_t>::max()};
+};
+
+struct AssetCollectionResult {
+    uint32_t assetsEvicted{0};
+    uint64_t bytesFreed{0};
+    uint64_t bytesRetained{0};
+    bool budgetSatisfied{true};
+};
+
+struct AssetDiagnostic {
+    AssetKind kind{AssetKind::Model};
+    uint32_t index{0};
+    uint32_t generation{0};
+    uint32_t strongReferences{0};
+    uint64_t cpuBytes{0};
+    uint64_t gpuBytes{0};
+    std::string source;
+};
+
+template <typename Handle> class AssetLease {
+  public:
+    AssetLease() = default;
+
+    // Constructed by AssetManager; public to keep the small type-erased lease
+    // token independent of individual asset slot implementations.
+    AssetLease(Handle handle, std::shared_ptr<void> token)
+        : m_handle(handle)
+        , m_token(std::move(token)) {}
+
+    Handle handle() const {
+        return m_handle;
+    }
+
+    explicit operator bool() const {
+        return static_cast<bool>(m_handle) && static_cast<bool>(m_token);
+    }
+
+  private:
+    friend class AssetManager;
+    Handle m_handle{};
+    std::shared_ptr<void> m_token;
+};
 
 struct Vertex {
     glm::vec3 position{};
@@ -83,6 +138,13 @@ struct MeshPrimitive {
     MaterialHandle material{};
 };
 
+struct MorphTarget {
+    std::string name;
+    std::vector<glm::vec3> positionDeltas;
+    std::vector<glm::vec3> normalDeltas;
+    std::vector<glm::vec3> tangentDeltas;
+};
+
 struct BoundingSphere {
     glm::vec3 center{0.0f};
     float radius{0.0f};
@@ -92,6 +154,7 @@ struct MeshAsset {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     std::vector<MeshPrimitive> primitives;
+    std::vector<MorphTarget> morphTargets;
     BoundingSphere bounds;
 };
 
@@ -104,6 +167,7 @@ struct ModelNode {
     glm::vec3 translation{0.0f};
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 scale{1.0f};
+    std::vector<float> morphWeights;
 };
 
 struct SkinAsset {
@@ -123,6 +187,7 @@ enum class AnimationPath : uint8_t {
     Translation,
     Rotation,
     Scale,
+    Weights,
 };
 
 struct AnimationChannel {
@@ -133,6 +198,9 @@ struct AnimationChannel {
     std::vector<glm::vec4> values;
     std::vector<glm::vec4> inTangents;
     std::vector<glm::vec4> outTangents;
+    std::vector<std::vector<float>> weightValues;
+    std::vector<std::vector<float>> weightInTangents;
+    std::vector<std::vector<float>> weightOutTangents;
 };
 
 struct AnimationClip {
@@ -151,9 +219,33 @@ struct ModelAssetSource {
     std::filesystem::path path;
 };
 
+struct AssetLeaseSet {
+    std::vector<AssetLease<ModelHandle>> models;
+    std::vector<AssetLease<MeshHandle>> meshes;
+    std::vector<AssetLease<TextureHandle>> textures;
+    std::vector<AssetLease<FontHandle>> fonts;
+
+    bool empty() const {
+        return models.empty() && meshes.empty() && textures.empty() && fonts.empty();
+    }
+
+    void clear() {
+        models.clear();
+        meshes.clear();
+        textures.clear();
+        fonts.clear();
+    }
+};
+
+class Scene;
+
 struct MeshAssetSource {
     std::filesystem::path path;
     uint32_t meshIndex{0};
+};
+
+struct TextureAssetSource {
+    std::filesystem::path path;
 };
 
 template <typename Handle> struct AssetLoadResult {
@@ -173,15 +265,29 @@ class AssetManager {
     AssetLoadResult<ModelHandle> reloadModel(const std::filesystem::path& path);
     AssetLoadResult<MeshHandle> loadMesh(const std::filesystem::path& modelPath, uint32_t meshIndex);
     AssetLoadResult<FontHandle> loadFont(const std::filesystem::path& path);
+    AssetLoadResult<TextureHandle> loadTexture(const std::filesystem::path& path);
     const ModelAsset* model(ModelHandle handle) const;
     const MeshAsset* mesh(MeshHandle handle) const;
     const MaterialAsset* material(MaterialHandle handle) const;
     const TextureAsset* texture(TextureHandle handle) const;
     const FontAsset* font(FontHandle handle) const;
     size_t fontCount() const;
+    std::vector<FontHandle> fontHandles() const;
     std::optional<ModelAssetSource> modelSource(ModelHandle handle) const;
     std::optional<MeshAssetSource> meshSource(MeshHandle handle) const;
+    std::optional<TextureAssetSource> textureSource(TextureHandle handle) const;
     uint64_t revision() const;
+    AssetLease<ModelHandle> lease(ModelHandle handle) const;
+    AssetLease<MeshHandle> lease(MeshHandle handle) const;
+    AssetLease<MaterialHandle> lease(MaterialHandle handle) const;
+    AssetLease<TextureHandle> lease(TextureHandle handle) const;
+    AssetLease<FontHandle> lease(FontHandle handle) const;
+    AssetLeaseSet leaseSceneAssets(const Scene& scene) const;
+    void setMemoryBudget(AssetMemoryBudget budget);
+    AssetMemoryBudget memoryBudget() const;
+    AssetCollectionResult collectUnused(bool force = false);
+    std::vector<AssetDiagnostic> diagnostics() const;
+    uint64_t cpuBytes() const;
 
   private:
     friend class ModelImporter;
@@ -191,14 +297,32 @@ class AssetManager {
     TextureHandle addTexture(TextureAsset asset);
     AssetLoadResult<ModelHandle> importModel(const std::filesystem::path& path, const std::string& cacheKey);
 
+    struct SlotMetadata {
+        uint32_t generation{1};
+        bool occupied{true};
+        uint64_t cpuBytes{0};
+        uint64_t gpuBytes{0};
+        uint64_t lastUse{0};
+        std::shared_ptr<std::atomic_uint32_t> references{std::make_shared<std::atomic_uint32_t>(0)};
+    };
+
     std::vector<ModelAsset> m_models;
     std::vector<ModelAssetSource> m_modelSources;
     std::vector<MeshAsset> m_meshes;
     std::vector<MeshAssetSource> m_meshSources;
     std::vector<MaterialAsset> m_materials;
     std::vector<TextureAsset> m_textures;
+    std::vector<TextureAssetSource> m_textureSources;
     std::vector<FontAsset> m_fonts;
+    std::vector<SlotMetadata> m_modelMetadata;
+    std::vector<SlotMetadata> m_meshMetadata;
+    std::vector<SlotMetadata> m_materialMetadata;
+    std::vector<SlotMetadata> m_textureMetadata;
+    std::vector<SlotMetadata> m_fontMetadata;
     std::unordered_map<std::string, ModelHandle> m_modelCache;
     std::unordered_map<std::string, FontHandle> m_fontCache;
+    std::unordered_map<std::string, TextureHandle> m_textureCache;
     uint64_t m_revision{1};
+    uint64_t m_useSerial{1};
+    AssetMemoryBudget m_budget;
 };

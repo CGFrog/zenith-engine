@@ -33,7 +33,8 @@ glm::vec2 anchorPoint(UiAnchor anchor, glm::vec2 size) {
 void GameUiContext::beginFrame(glm::uvec2 viewportSize, const InputState& input) {
     m_viewportSize = glm::max(viewportSize, glm::uvec2(1));
     m_scale = std::min(static_cast<float>(m_viewportSize.x) / designSize.x,
-                       static_cast<float>(m_viewportSize.y) / designSize.y);
+                       static_cast<float>(m_viewportSize.y) / designSize.y) *
+              m_accessibility.uiScale;
     m_designOrigin = (glm::vec2(m_viewportSize) - designSize * m_scale) * 0.5f;
     m_pointerPosition = input.mousePosition;
     m_pointerPressed = input.mouseButtonPressed(MouseButton::Left);
@@ -41,6 +42,14 @@ void GameUiContext::beginFrame(glm::uvec2 viewportSize, const InputState& input)
     m_previousFocusableIds = std::move(m_focusableIds);
     m_focusableIds.clear();
     m_commands.clear();
+}
+
+void GameUiContext::setAccessibility(AccessibilitySettings settings) {
+    m_accessibility = settings;
+}
+
+const AccessibilitySettings& GameUiContext::accessibility() const {
+    return m_accessibility;
 }
 
 void GameUiContext::setNavigation(UiNavigationInput navigation) {
@@ -75,7 +84,8 @@ void GameUiContext::text(glm::vec2 position, std::string value, float size, glm:
     }
     m_commands.push_back({.drawOrder = drawOrder,
                           .clip = clip,
-                          .payload = UiTextCommand{resolved, std::move(value), font, size * m_scale, color}});
+                          .payload = UiTextCommand{resolved, std::move(value), font,
+                                                   size * m_scale * m_accessibility.textScale, color}});
 }
 
 void GameUiContext::image(UiRect rect, TextureHandle texture, glm::vec4 tint, UiAnchor anchor, int32_t drawOrder,
@@ -98,7 +108,10 @@ bool GameUiContext::button(std::string id, UiRect rect, std::string label, UiAnc
         m_focusedId = id;
     }
     const bool focused = m_focusedId == id;
-    const glm::vec4 color = focused ? glm::vec4(0.18f, 0.42f, 0.72f, 0.96f) : glm::vec4(0.12f, 0.14f, 0.18f, 0.92f);
+    const glm::vec4 color =
+        m_accessibility.highContrast
+            ? (focused ? glm::vec4(1.0f, 0.8f, 0.0f, 1.0f) : glm::vec4(0.0f, 0.0f, 0.0f, 1.0f))
+            : (focused ? glm::vec4(0.18f, 0.42f, 0.72f, 0.96f) : glm::vec4(0.12f, 0.14f, 0.18f, 0.92f));
     m_commands.push_back({.drawOrder = drawOrder,
                           .payload = UiPanelCommand{resolved, {.color = color, .cornerRadius = 8.0f * m_scale}}});
     m_commands.push_back({.drawOrder = drawOrder + 1,
@@ -106,7 +119,7 @@ bool GameUiContext::button(std::string id, UiRect rect, std::string label, UiAnc
                               {resolved.position.x + 18.0f * m_scale, resolved.position.y + resolved.size.y * 0.28f},
                               std::move(label),
                               {},
-                              24.0f * m_scale,
+                              24.0f * m_scale * m_accessibility.textScale,
                               glm::vec4(1.0f)}});
     return (hovered && m_pointerPressed) || (focused && m_activateFocused);
 }

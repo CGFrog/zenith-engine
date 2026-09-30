@@ -31,7 +31,7 @@ application-lifetime assets outside individual scene reloads:
 
 ```cpp
 const auto shot = context.audio.loadClip(
-    std::filesystem::path{ZENITH_ASSET_DIR} / "audio" / "shot.wav", false);
+    assetRoot() / "audio" / "shot.wav", false);
 if (!shot) {
     return {.error = shot.error};
 }

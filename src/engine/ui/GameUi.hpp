@@ -2,6 +2,7 @@
 
 #include "engine/assets/Assets.hpp"
 #include "engine/input/InputManager.hpp"
+#include "engine/ui/Accessibility.hpp"
 
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -70,6 +71,8 @@ struct UiCommand {
 class GameUiContext {
   public:
     void beginFrame(glm::uvec2 viewportSize, const InputState& input);
+    void setAccessibility(AccessibilitySettings settings);
+    const AccessibilitySettings& accessibility() const;
     void setNavigation(UiNavigationInput navigation);
     void panel(UiRect rect, UiStyle style, UiAnchor anchor = UiAnchor::TopLeft, int32_t drawOrder = 0,
                std::optional<UiRect> clip = std::nullopt);
@@ -100,4 +103,5 @@ class GameUiContext {
     std::vector<std::string> m_previousFocusableIds;
     std::vector<std::string> m_focusableIds;
     std::vector<UiCommand> m_commands;
+    AccessibilitySettings m_accessibility;
 };

@@ -25,7 +25,6 @@ class Engine {
 
   private:
     static uint64_t readFrameLimit();
-    static uint64_t readBenchmarkFrameCount();
 
     Window m_window;
     InputManager m_input;

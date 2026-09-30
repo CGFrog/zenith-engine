@@ -59,8 +59,11 @@ scene, stops the application, then releases physics, renderer, and window state.
 Within the renderer, ownership follows Vulkan dependencies: context and device
 outlive swapchain resources, passes, frame resources, and pipelines. CPU assets
 live in `AssetManager`; renderer caches hold their GPU copies. Scene entities
-refer to assets by handles rather than pointers, so vector growth cannot
-invalidate component references.
+refer to assets by generational handles rather than pointers, so storage growth
+or slot recycling cannot invalidate component references silently. Scene,
+editor, audio-voice, and renderer-frame leases keep reachable generations alive;
+collection reclaims only unreferenced generations after in-flight consumers
+retire.
 
 Jolt bodies are owned by `PhysicsWorld`, keyed by EnTT entity. Destroying an ECS
 entity does not directly call Jolt; the next physics step notices it is absent
@@ -123,15 +126,45 @@ across successful transitions.
 ## Project and authored-scene flow
 
 Both applications consume the engine-owned `ProjectConfig` contract. Manifest
-version 2 resolves asset and scene roots relative to the project file and keeps
-the startup scene contained by the scene root. Version 1 manifests remain
-readable but have no startup scene until saved with the new field.
+version 3 resolves asset and scene roots relative to the project file, keeps the
+startup scene contained by the scene root, and persists renderer quality and
+per-pass CPU/GPU budget choices. Versions 1 and 2 remain readable; version 1
+has no startup scene until it is saved in the current format.
 
 The game executable accepts `--project <project-file>`. `DemoApplication`
 selects the gameplay scene, while `GameplayScene` loads the configured authored
 scene before adding demo-specific entities and behavior. Other game scenes can
 load a scene-root-relative reference with `loadProjectScene`; the engine does
 not assign gameplay meaning to those references.
+
+## Asynchronous and additive scene flow
+
+`JobSystem` provides bounded, prioritized background work with cancellation,
+filtered completion delivery, deterministic single-thread pumping for tests,
+and explicit shutdown. Background jobs may read and parse authored scene files,
+but they do not mutate ECS registries or acquire scene-owned resources.
+
+`SceneDocument::parse` produces an immutable validated scene description.
+`SceneDocument::commit` performs the main-thread ECS and asset operations, so a
+failed commit cannot publish a partially loaded additive scene.
+
+`AdditiveSceneManager` assigns stable instance identifiers, owns an asset lease
+set per committed instance, and unloads each instance deterministically. The
+application supplies the desired streaming set and priorities; the manager
+reprioritizes, cancels, loads, or unloads work to match it. Cross-instance
+entity references pair an instance identifier with an authored stable entity
+identifier and are resolved only while both remain valid.
+
+`PrefabSystem` is independent of editor state and can instantiate the same
+versioned definition into a primary scene or any committed additive instance.
+A nested instance with an explicit parent inherits that local hierarchy; a
+nested instance without one is attached to the parent supplied for its owning
+instance. Instance-derived stable IDs make repeated expansion deterministic.
+The editor's `PrefabAuthoring` service records create, instantiate, override,
+unpack, apply, and revert operations in `CommandHistory`. Applying a source
+change refreshes all linked instances while reapplying their independent valid
+overrides; orphaned overrides remain visible through inspection diagnostics.
+Source and scene snapshots make failed operations transactional.
 
 ## Runtime game-UI flow
 
@@ -152,9 +185,11 @@ translates the game commands to its private ImGui draw list and composes them
 before presentation. Font bytes and texture handles cross the public boundary;
 backend font atlases and Vulkan descriptors do not.
 
-Benchmark mode skips input-driven gameplay and physics after polling events. It
-warms the renderer for 1,000 frames and measures only the requested following
-frames.
+Benchmark mode supports a fixed-step full-runtime workload and a render-only
+workload that freezes gameplay, animation, physics, and audio. It warms up
+before recording schema-versioned CPU/GPU distributions; delayed GPU results
+retain their original submission identity. The implementation roadmap and
+measurement contract live in `PERFORMANCE_ROADMAP.md`.
 
 ## ECS model
 
@@ -198,7 +233,7 @@ path passed to AssetManager::loadModel
   -> canonicalized cache key
   -> cgltf parse, buffers load, validation
   -> images decoded to RGBA8 by ImageDecoder
-  -> materials, meshes, and model nodes appended to AssetManager
+  -> materials, meshes, and model nodes committed to generational asset slots
   -> typed handles returned to scene components
   -> MeshPass sees a handle on first use
   -> data staged into VMA-backed GPU resources and cached
@@ -209,10 +244,43 @@ from inheriting GPU lifetime or synchronization concerns. Repeated loads of the
 same normalized model path return the cached handle. GPU resources are uploaded
 lazily only if a visible scene needs them.
 
-The importer supports static triangle geometry, node transforms, indexed and
+Reload imports a fresh immutable generation transactionally. Failure restores
+the prior slots and cache entry; success redirects future lookups while leases
+keep the previous generation valid. Collection obeys CPU and decoded-audio
+budgets, and renderer frame leases delay mesh, texture, descriptor, and audio
+resource reclamation without device-wide or queue-wide idle waits.
+
+Release and development paths share one contract. The composition root
+initializes `ResourceLocator` from the executable path; engine and game code
+then request the asset or shader root. A packaged executable finds sibling
+resource directories, while a multi-config development executable may use its
+parent build directory. No absolute source or build path is compiled into the
+runtime.
+
+The importer supports triangle geometry, node transforms, indexed and
 non-indexed primitives, common vertex attributes, embedded/external buffers and
-images, and glTF metallic-roughness materials. It does not render animation,
-skins, morph targets, alpha modes, or compressed-mesh extensions.
+images, glTF metallic-roughness materials, skins, skeletal and morph-weight
+animation, and opaque, masked, or blended alpha modes. Morph deltas remain CPU
+asset data and active weights are selected deterministically with an eight-target
+render bound. Meshopt and Draco cross an isolated decoder interface; builds
+without the corresponding optional decoder return a named diagnostic.
+
+`ProductionAssetPipeline` validates source, decoded, vertex, index, morph, and
+texture limits before allocations. It validates KTX2, chooses BC7, ASTC, ETC2,
+or RGBA8 from renderer capabilities, and provides the RGBA8 CPU fallback.
+`DerivedAssetCache` keys deterministic output by source bytes, import settings,
+tool version, and target platform under the project's `.zenith/derived`
+directory. The editor inspector and `zenith_asset_build` use that same contract.
+
+Localization, accessibility, and platform services stay below game policy.
+Stable message IDs select runtime locales and plural forms; UTF-8 shaping emits
+fallback-font glyph runs. Game UI applies text/UI scaling and high-contrast
+styles, captions use timed message IDs, and indicators always include a shape
+and label. Versioned control profiles preserve remaps and hold/toggle choices.
+Atomic user data retains a recovery copy in the platform writable directory.
+Crash bundles are local JSON artifacts with no upload mechanism, while package
+provenance records the exact source, dependency, toolchain, platform, and
+content-manifest revisions.
 
 ## Physics flow
 
@@ -288,6 +356,22 @@ path with 2,000 additional renderables and reports its elapsed time without a
 machine-dependent timing assertion. The renderer can replace it with an ID attachment later
 without changing scene identity or editor selection state if measurement shows
 that CPU picking no longer meets the interaction budget.
+
+### Scalable lighting and environment data
+
+Project manifest version 3 serializes every renderer quality choice plus
+per-pass CPU/GPU budgets. Startup validates requested settings against device
+capabilities and reports each explicit fallback. The compatible instanced draw
+path remains the default; GPU-driven submission cannot be selected unless a
+measured supported implementation is exposed by the renderer.
+
+Point and spot lights are gathered by stable entity ID and reduced through a
+bounded tiled selection. Image-based lighting consumes deterministic cached
+diffuse and roughness-prefiltered specular data. Reflection probes use authored
+box volumes, blend distances, and priorities; deterministic probe preprocessing
+and bake-file policy live in editor tooling. Benchmark JSON contains timestamp
+scopes and configured budgets for shadow, opaque, blended, bloom/post, UI, and
+upload work, plus CPU and estimated GPU asset memory.
 
 ## Error model
 

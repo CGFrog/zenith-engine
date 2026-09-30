@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Zenith Demo
+Comment=Zenith game engine demo
+Exec=zenith --project demo.zenith-project
+Terminal=false
+Categories=Game;

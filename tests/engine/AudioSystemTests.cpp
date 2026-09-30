@@ -185,6 +185,30 @@ int main() {
     // This must join safely even while the decoder is actively refilling.
     boundedStream.shutdown();
 
+    AudioSystem lifetime;
+    expect(static_cast<bool>(lifetime.init(AudioConfig{.maxVoices = 1, .outputEnabled = false})),
+           "audio lifetime test initializes");
+    const std::array<float, 4> lifetimeSamples{0.25f, -0.25f, 0.5f, -0.5f};
+    const auto oldClip = lifetime.createClip(lifetimeSamples, 1, 48'000);
+    const auto liveVoice = lifetime.play(oldClip.handle, {.loop = true});
+    const auto retained = lifetime.collectUnusedAssets(true);
+    const auto liveDiagnostics = lifetime.assetDiagnostics();
+    expect(retained.clipsEvicted == 0 && lifetime.decodedAudioBytes() == lifetimeSamples.size() * sizeof(float),
+           "active voices strongly retain decoded clips during collection");
+    expect(liveDiagnostics.size() == 1 && liveDiagnostics.front().generation == oldClip.handle.generation &&
+               liveDiagnostics.front().strongReferences == 1,
+           "audio diagnostics report generations and active voice ownership");
+    lifetime.stop(liveVoice.handle);
+    const auto released = lifetime.collectUnusedAssets(true);
+    expect(released.clipsEvicted == 1 && released.bytesFreed == lifetimeSamples.size() * sizeof(float) &&
+               lifetime.decodedAudioBytes() == 0,
+           "stopped voice assets are collected deterministically");
+    expect(!lifetime.play(oldClip.handle), "collected audio handles become stale");
+    const auto newClip = lifetime.createClip(lifetimeSamples, 1, 48'000);
+    expect(newClip.handle.index == oldClip.handle.index && newClip.handle.generation != oldClip.handle.generation,
+           "audio slots are recycled with a new generation");
+    lifetime.shutdown();
+
     AudioSystem invalid;
     expect(!invalid.init(AudioConfig{.outputChannels = 1}), "non-stereo output configuration is rejected");
     std::error_code ignored;

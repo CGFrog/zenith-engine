@@ -67,6 +67,17 @@ struct PhysicsResult {
     }
 };
 
+struct PhysicsStats {
+    double transformMilliseconds{0.0};
+    double synchronizeInMilliseconds{0.0};
+    double simulationMilliseconds{0.0};
+    double synchronizeOutMilliseconds{0.0};
+    uint32_t bodies{0};
+    uint32_t activeBodies{0};
+    uint32_t sleepingBodies{0};
+    uint32_t contactEvents{0};
+};
+
 class PhysicsWorld {
   public:
     PhysicsWorld();
@@ -89,6 +100,11 @@ class PhysicsWorld {
 
     std::span<const ContactEvent> contactEvents() const;
     const PhysicsWorldConfig& config() const;
+
+    const PhysicsStats& stats() const {
+        return m_stats;
+    }
+
     JPH::PhysicsSystem* nativeSystem();
     JPH::BodyInterface* nativeBodyInterface();
 
@@ -97,4 +113,5 @@ class PhysicsWorld {
 
     class Impl;
     std::unique_ptr<Impl> m_impl;
+    PhysicsStats m_stats;
 };

@@ -1,5 +1,6 @@
 #include "ProjectConfig.hpp"
 
+#include "engine/graphics/RenderConfiguration.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
 #include <fstream>
@@ -87,7 +88,7 @@ ProjectConfigResult loadProjectConfig(const std::filesystem::path& path, Project
     }
 
     const int version = document.value("version", 0);
-    if (version != 1 && version != ProjectConfig::currentVersion) {
+    if (version < 1 || version > ProjectConfig::currentVersion) {
         return {.error = "Unsupported project version in: " + path.string()};
     }
 
@@ -121,6 +122,16 @@ ProjectConfigResult loadProjectConfig(const std::filesystem::path& path, Project
                 !result) {
                 return result;
             }
+        }
+    }
+    if (version >= 3) {
+        const auto renderSettings = document.find("renderSettings");
+        if (renderSettings == document.end()) {
+            return {.error = "Project field 'renderSettings' is required"};
+        }
+        if (RenderConfigurationResult result = deserializeRenderSettings(renderSettings->dump(), loaded.renderSettings);
+            !result) {
+            return {.error = "Invalid project render settings: " + result.error};
         }
     }
 
@@ -165,11 +176,15 @@ ProjectConfigResult saveProjectConfig(const std::filesystem::path& path, const P
     if (!output) {
         return {.error = "Could not write project file: " + projectPath.string()};
     }
-    const Json document = {{"version", ProjectConfig::currentVersion},
-                           {"displayName", config.displayName},
-                           {"assetRoot", assetRoot.generic_string()},
-                           {"sceneRoot", sceneRoot.generic_string()},
-                           {"startupScene", startupScene.generic_string()}};
+    std::string serializedRenderSettings;
+    if (RenderConfigurationResult result = serializeRenderSettings(config.renderSettings, serializedRenderSettings);
+        !result) {
+        return {.error = result.error};
+    }
+    const Json document = {
+        {"version", ProjectConfig::currentVersion},      {"displayName", config.displayName},
+        {"assetRoot", assetRoot.generic_string()},       {"sceneRoot", sceneRoot.generic_string()},
+        {"startupScene", startupScene.generic_string()}, {"renderSettings", Json::parse(serializedRenderSettings)}};
     output << document.dump(2) << '\n';
     if (!output) {
         return {.error = "Could not finish writing project file: " + projectPath.string()};

@@ -73,6 +73,10 @@ struct SkinComponent {
     std::vector<glm::mat4> jointPalette;
 };
 
+struct MorphWeightsComponent {
+    std::vector<float> weights;
+};
+
 struct MeshRendererComponent {
     MeshHandle mesh{};
 };
@@ -114,6 +118,33 @@ struct EnvironmentLightComponent {
     float diffuseIntensity{0.6f};
     float specularIntensity{0.35f};
     bool primary{true};
+    // Optional project-relative HDR environment source. Import/preprocessing is
+    // cached independently from scene ownership.
+    std::string environmentAsset;
+    TextureHandle environmentMap{};
+};
+
+struct PointLightComponent {
+    glm::vec3 color{1.0f};
+    float intensity{10.0f};
+    float range{8.0f};
+};
+
+struct SpotLightComponent {
+    glm::vec3 direction{0.0f, -1.0f, 0.0f};
+    glm::vec3 color{1.0f};
+    float intensity{15.0f};
+    float range{10.0f};
+    float innerConeRadians{glm::radians(20.0f)};
+    float outerConeRadians{glm::radians(30.0f)};
+};
+
+struct ReflectionProbeComponent {
+    glm::vec3 halfExtents{5.0f};
+    float blendDistance{1.0f};
+    int32_t priority{0};
+    std::string environmentAsset;
+    TextureHandle environmentMap{};
 };
 
 struct SceneResult {

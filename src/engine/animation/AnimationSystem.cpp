@@ -60,13 +60,51 @@ glm::vec4 sample(const AnimationChannel& channel, float time) {
     }
     return glm::mix(channel.values[previous], channel.values[next], factor);
 }
+
+std::vector<float> sampleWeights(const AnimationChannel& channel, float time) {
+    if (channel.times.empty() || channel.weightValues.empty()) {
+        return {};
+    }
+    if (channel.times.size() == 1 || time <= channel.times.front()) {
+        return channel.weightValues.front();
+    }
+    if (time >= channel.times.back()) {
+        return channel.weightValues.back();
+    }
+    const size_t next =
+        static_cast<size_t>(std::upper_bound(channel.times.begin(), channel.times.end(), time) - channel.times.begin());
+    const size_t previous = next - 1;
+    if (channel.interpolation == AnimationInterpolation::Step) {
+        return channel.weightValues[previous];
+    }
+    const float interval = channel.times[next] - channel.times[previous];
+    const float factor = interval > 0.0f ? (time - channel.times[previous]) / interval : 0.0f;
+    const size_t count = std::min(channel.weightValues[previous].size(), channel.weightValues[next].size());
+    std::vector<float> result(count);
+    for (size_t index = 0; index < count; ++index) {
+        if (channel.interpolation == AnimationInterpolation::CubicSpline &&
+            previous < channel.weightOutTangents.size() && next < channel.weightInTangents.size() &&
+            index < channel.weightOutTangents[previous].size() && index < channel.weightInTangents[next].size()) {
+            const float factor2 = factor * factor;
+            const float factor3 = factor2 * factor;
+            result[index] =
+                (2.0f * factor3 - 3.0f * factor2 + 1.0f) * channel.weightValues[previous][index] +
+                (factor3 - 2.0f * factor2 + factor) * interval * channel.weightOutTangents[previous][index] +
+                (-2.0f * factor3 + 3.0f * factor2) * channel.weightValues[next][index] +
+                (factor3 - factor2) * interval * channel.weightInTangents[next][index];
+        } else {
+            result[index] = glm::mix(channel.weightValues[previous][index], channel.weightValues[next][index], factor);
+        }
+    }
+    return result;
+}
 } // namespace
 
 AnimationPose evaluateAnimationClip(const ModelAsset& model, uint32_t clipIndex, float time, bool looping) {
     AnimationPose pose;
     pose.reserve(model.nodes.size());
     for (const ModelNode& node : model.nodes) {
-        pose.push_back({node.translation, node.rotation, node.scale});
+        pose.push_back({node.translation, node.rotation, node.scale, node.morphWeights});
     }
     if (clipIndex >= model.animations.size()) {
         return pose;
@@ -77,8 +115,12 @@ AnimationPose evaluateAnimationClip(const ModelAsset& model, uint32_t clipIndex,
         if (channel.targetNode >= pose.size()) {
             continue;
         }
-        const glm::vec4 value = sample(channel, sampledTime);
         AnimationNodePose& node = pose[channel.targetNode];
+        if (channel.path == AnimationPath::Weights) {
+            node.morphWeights = sampleWeights(channel, sampledTime);
+            continue;
+        }
+        const glm::vec4 value = sample(channel, sampledTime);
         if (channel.path == AnimationPath::Translation) {
             node.translation = glm::vec3(value);
         } else if (channel.path == AnimationPath::Rotation) {
@@ -98,8 +140,33 @@ AnimationPose blendAnimationPoses(const AnimationPose& first, const AnimationPos
         result[index].translation = glm::mix(result[index].translation, second[index].translation, factor);
         result[index].rotation = glm::normalize(glm::slerp(result[index].rotation, second[index].rotation, factor));
         result[index].scale = glm::mix(result[index].scale, second[index].scale, factor);
+        const size_t morphCount = std::min(result[index].morphWeights.size(), second[index].morphWeights.size());
+        for (size_t morphIndex = 0; morphIndex < morphCount; ++morphIndex) {
+            result[index].morphWeights[morphIndex] =
+                glm::mix(result[index].morphWeights[morphIndex], second[index].morphWeights[morphIndex], factor);
+        }
     }
     return result;
+}
+
+std::vector<ActiveMorphTarget> selectActiveMorphTargets(const std::vector<float>& weights, uint32_t limit) {
+    std::vector<ActiveMorphTarget> active;
+    active.reserve(std::min<size_t>(weights.size(), limit));
+    for (uint32_t index = 0; index < weights.size(); ++index) {
+        if (std::abs(weights[index]) > 1.0e-6f) {
+            active.push_back({index, weights[index]});
+        }
+    }
+    std::stable_sort(active.begin(), active.end(), [](const ActiveMorphTarget& first, const ActiveMorphTarget& second) {
+        return std::abs(first.weight) > std::abs(second.weight);
+    });
+    if (active.size() > limit) {
+        active.resize(limit);
+    }
+    std::sort(active.begin(), active.end(), [](const ActiveMorphTarget& first, const ActiveMorphTarget& second) {
+        return first.index < second.index;
+    });
+    return active;
 }
 
 glm::mat4 animationPoseMatrix(const AnimationNodePose& pose) {
@@ -160,6 +227,9 @@ void updateAnimations(Scene& scene, const AssetManager& assets, float deltaSecon
             const ModelNodeComponent& node = nodes.get<const ModelNodeComponent>(entity);
             if (node.model == modelHandle && node.instanceRoot == rootId && node.nodeIndex < pose.size()) {
                 nodes.get<TransformComponent>(entity).local = animationPoseMatrix(pose[node.nodeIndex]);
+                if (!pose[node.nodeIndex].morphWeights.empty()) {
+                    registry.emplace_or_replace<MorphWeightsComponent>(entity, pose[node.nodeIndex].morphWeights);
+                }
                 scene.markTransformDirty(entity);
             }
         }

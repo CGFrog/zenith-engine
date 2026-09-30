@@ -158,6 +158,9 @@ SceneDocumentResult serializeEntity(const Scene& scene, Entity entity, const Ass
                                    {"playing", animation->playing},      {"blend_clip", std::move(blendClip)},
                                    {"blend_time", animation->blendTime}, {"blend_duration", animation->blendDuration}};
     }
+    if (const auto* morph = registry.try_get<MorphWeightsComponent>(entity)) {
+        components["morph_weights"] = {{"weights", morph->weights}};
+    }
     if (const auto* skin = registry.try_get<SkinComponent>(entity)) {
         const std::optional<ModelAssetSource> source = assets.modelSource(skin->model);
         if (!source) {
@@ -198,11 +201,47 @@ SceneDocumentResult serializeEntity(const Scene& scene, Entity entity, const Ass
                                              {"normal_bias", light->shadows.normalBias}}}};
     }
     if (const auto* light = registry.try_get<EnvironmentLightComponent>(entity)) {
+        std::string environmentAsset = light->environmentAsset;
+        if (light->environmentMap) {
+            const auto source = assets.textureSource(light->environmentMap);
+            if (!source) {
+                return {.error = "Cannot save an environment light with an unknown texture handle"};
+            }
+            if (SceneDocumentResult result = projectRelativePath(source->path, options, environmentAsset); !result) {
+                return result;
+            }
+        }
         components["environment_light"] = {{"sky_color", vector3(light->skyColor)},
                                            {"ground_color", vector3(light->groundColor)},
                                            {"diffuse_intensity", light->diffuseIntensity},
                                            {"specular_intensity", light->specularIntensity},
-                                           {"primary", light->primary}};
+                                           {"primary", light->primary},
+                                           {"environment_asset", environmentAsset}};
+    }
+    if (const auto* light = registry.try_get<PointLightComponent>(entity)) {
+        components["point_light"] = {
+            {"color", vector3(light->color)}, {"intensity", light->intensity}, {"range", light->range}};
+    }
+    if (const auto* light = registry.try_get<SpotLightComponent>(entity)) {
+        components["spot_light"] = {{"direction", vector3(light->direction)}, {"color", vector3(light->color)},
+                                    {"intensity", light->intensity},          {"range", light->range},
+                                    {"inner_cone", light->innerConeRadians},  {"outer_cone", light->outerConeRadians}};
+    }
+    if (const auto* probe = registry.try_get<ReflectionProbeComponent>(entity)) {
+        std::string environmentAsset = probe->environmentAsset;
+        if (probe->environmentMap) {
+            const auto source = assets.textureSource(probe->environmentMap);
+            if (!source) {
+                return {.error = "Cannot save a reflection probe with an unknown texture handle"};
+            }
+            if (SceneDocumentResult result = projectRelativePath(source->path, options, environmentAsset); !result) {
+                return result;
+            }
+        }
+        components["reflection_probe"] = {{"half_extents", vector3(probe->halfExtents)},
+                                          {"blend_distance", probe->blendDistance},
+                                          {"priority", probe->priority},
+                                          {"environment_asset", environmentAsset}};
     }
     if (const auto* collider = registry.try_get<ColliderComponent>(entity)) {
         Json value;
@@ -302,6 +341,13 @@ SceneDocumentResult deserializeComponents(const Json& components, Entity entity,
         animation.blendDuration = found->value("blend_duration", 0.0f);
         registry.emplace<AnimationComponent>(entity, animation);
     }
+    if (const auto found = components.find("morph_weights"); found != components.end()) {
+        std::vector<float> weights = found->at("weights").get<std::vector<float>>();
+        if (weights.size() > 64) {
+            return {.error = "Morph-weight component exceeds the 64-target safety limit"};
+        }
+        registry.emplace<MorphWeightsComponent>(entity, std::move(weights));
+    }
     if (const auto found = components.find("skin"); found != components.end()) {
         std::filesystem::path path;
         if (SceneDocumentResult result = resolveAssetPath(found->at("path").get<std::string>(), options, path);
@@ -354,7 +400,71 @@ SceneDocumentResult deserializeComponents(const Json& components, Entity entity,
         light.diffuseIntensity = found->at("diffuse_intensity").get<float>();
         light.specularIntensity = found->at("specular_intensity").get<float>();
         light.primary = found->at("primary").get<bool>();
+        light.environmentAsset = found->value("environment_asset", std::string{});
+        if (!light.environmentAsset.empty()) {
+            std::filesystem::path environmentPath;
+            if (SceneDocumentResult result = resolveAssetPath(light.environmentAsset, options, environmentPath);
+                !result) {
+                return result;
+            }
+            const AssetLoadResult<TextureHandle> loaded = assets.loadTexture(environmentPath);
+            if (!loaded) {
+                return {.error = loaded.error};
+            }
+            light.environmentMap = loaded.handle;
+        }
         registry.emplace<EnvironmentLightComponent>(entity, light);
+    }
+    if (const auto found = components.find("point_light"); found != components.end()) {
+        PointLightComponent light;
+        if (!readVector3(found->at("color"), light.color)) {
+            return {.error = "Point light color must contain three numbers"};
+        }
+        light.intensity = found->at("intensity").get<float>();
+        light.range = found->at("range").get<float>();
+        if (light.range <= 0.0f) {
+            return {.error = "Point light range must be positive"};
+        }
+        registry.emplace<PointLightComponent>(entity, light);
+    }
+    if (const auto found = components.find("spot_light"); found != components.end()) {
+        SpotLightComponent light;
+        if (!readVector3(found->at("direction"), light.direction) || !readVector3(found->at("color"), light.color)) {
+            return {.error = "Spot light vectors must each contain three numbers"};
+        }
+        light.intensity = found->at("intensity").get<float>();
+        light.range = found->at("range").get<float>();
+        light.innerConeRadians = found->at("inner_cone").get<float>();
+        light.outerConeRadians = found->at("outer_cone").get<float>();
+        if (light.range <= 0.0f || light.innerConeRadians < 0.0f || light.outerConeRadians < light.innerConeRadians) {
+            return {.error = "Spot light range and cone angles are invalid"};
+        }
+        registry.emplace<SpotLightComponent>(entity, light);
+    }
+    if (const auto found = components.find("reflection_probe"); found != components.end()) {
+        ReflectionProbeComponent probe;
+        if (!readVector3(found->at("half_extents"), probe.halfExtents)) {
+            return {.error = "Reflection probe half extents must contain three numbers"};
+        }
+        probe.blendDistance = found->at("blend_distance").get<float>();
+        probe.priority = found->at("priority").get<int32_t>();
+        probe.environmentAsset = found->value("environment_asset", std::string{});
+        if (!probe.environmentAsset.empty()) {
+            std::filesystem::path environmentPath;
+            if (SceneDocumentResult result = resolveAssetPath(probe.environmentAsset, options, environmentPath);
+                !result) {
+                return result;
+            }
+            const AssetLoadResult<TextureHandle> loaded = assets.loadTexture(environmentPath);
+            if (!loaded) {
+                return {.error = loaded.error};
+            }
+            probe.environmentMap = loaded.handle;
+        }
+        if (glm::any(glm::lessThanEqual(probe.halfExtents, glm::vec3(0.0f))) || probe.blendDistance < 0.0f) {
+            return {.error = "Reflection probe volume is invalid"};
+        }
+        registry.emplace<ReflectionProbeComponent>(entity, probe);
     }
     if (const auto found = components.find("collider"); found != components.end()) {
         ColliderComponent collider;
@@ -422,6 +532,10 @@ SceneDocumentResult replaceFile(const std::filesystem::path& temporary, const st
 }
 } // namespace
 
+struct ParsedSceneDocument::Impl {
+    Json document;
+};
+
 SceneDocumentResult SceneDocument::serialize(const Scene& scene, const AssetManager& assets,
                                              const SceneDocumentOptions& options, std::string& output) {
     Json document = {{"version", currentVersion}, {"entities", Json::array()}};
@@ -443,8 +557,16 @@ SceneDocumentResult SceneDocument::serialize(const Scene& scene, const AssetMana
 
 SceneDocumentResult SceneDocument::deserialize(std::string_view input, AssetManager& assets,
                                                const SceneDocumentOptions& options, Scene& destination) {
+    ParsedSceneDocument parsed;
+    if (SceneDocumentResult result = parse(input, parsed); !result) {
+        return result;
+    }
+    return commit(parsed, assets, options, destination);
+}
+
+SceneDocumentResult SceneDocument::parse(std::string_view input, ParsedSceneDocument& output) {
     try {
-        const Json document = Json::parse(input);
+        Json document = Json::parse(input);
         if (!document.is_object() || !document.contains("version") || !document.contains("entities") ||
             !document["entities"].is_array()) {
             return {.error = "Scene document must contain version and entities fields"};
@@ -453,6 +575,55 @@ SceneDocumentResult SceneDocument::deserialize(std::string_view input, AssetMana
         if (version != currentVersion) {
             return {.error = "Unsupported scene document version " + std::to_string(version)};
         }
+
+        std::unordered_set<uint64_t> ids;
+        std::unordered_map<uint64_t, uint64_t> parents;
+        for (const Json& serialized : document["entities"]) {
+            const uint64_t id = serialized.at("id").get<uint64_t>();
+            if (id == 0) {
+                return {.error = "Scene contains invalid entity ID 0"};
+            }
+            if (!ids.insert(id).second) {
+                return {.error = "Duplicate scene entity ID " + std::to_string(id)};
+            }
+            if (!serialized.at("parent").is_null()) {
+                parents.emplace(id, serialized.at("parent").get<uint64_t>());
+            }
+        }
+        for (const auto& [child, parent] : parents) {
+            if (!ids.contains(parent)) {
+                return {.error =
+                            "Entity " + std::to_string(child) + " references missing parent " + std::to_string(parent)};
+            }
+            std::unordered_set<uint64_t> visited{child};
+            uint64_t ancestor = parent;
+            while (ancestor != 0) {
+                if (!visited.insert(ancestor).second) {
+                    return {.error = "Scene hierarchy contains a cycle at entity " + std::to_string(ancestor)};
+                }
+                const auto found = parents.find(ancestor);
+                ancestor = found == parents.end() ? 0 : found->second;
+            }
+        }
+
+        auto parsed = std::make_shared<ParsedSceneDocument::Impl>();
+        parsed->document = std::move(document);
+        output.m_impl = std::move(parsed);
+        return {.success = true};
+    } catch (const nlohmann::json::exception& error) {
+        return {.error = "Invalid scene document: " + std::string(error.what())};
+    } catch (const std::exception& error) {
+        return {.error = "Could not parse scene document: " + std::string(error.what())};
+    }
+}
+
+SceneDocumentResult SceneDocument::commit(const ParsedSceneDocument& parsed, AssetManager& assets,
+                                          const SceneDocumentOptions& options, Scene& destination) {
+    if (!parsed.m_impl) {
+        return {.error = "Cannot commit an empty parsed scene document"};
+    }
+    try {
+        const Json& document = parsed.m_impl->document;
 
         Scene loaded;
         std::unordered_map<uint64_t, Entity> entities;
@@ -475,22 +646,6 @@ SceneDocumentResult SceneDocument::deserialize(std::string_view input, AssetMana
         }
 
         for (const auto& [child, parent] : parents) {
-            if (!entities.contains(parent)) {
-                return {.error =
-                            "Entity " + std::to_string(child) + " references missing parent " + std::to_string(parent)};
-            }
-            std::unordered_set<uint64_t> visited{child};
-            uint64_t ancestor = parent;
-            while (ancestor != 0) {
-                if (!visited.insert(ancestor).second) {
-                    return {.error = "Scene hierarchy contains a cycle at entity " + std::to_string(ancestor)};
-                }
-                const auto found = parents.find(ancestor);
-                ancestor = found == parents.end() ? 0 : found->second;
-            }
-        }
-
-        for (const auto& [child, parent] : parents) {
             loaded.setParent(entities.at(child), entities.at(parent));
         }
         for (const Json& serialized : document["entities"]) {
@@ -505,7 +660,7 @@ SceneDocumentResult SceneDocument::deserialize(std::string_view input, AssetMana
         destination.replaceWith(std::move(loaded));
         return {.success = true};
     } catch (const nlohmann::json::exception& error) {
-        return {.error = "Invalid scene document: " + std::string(error.what())};
+        return {.error = "Invalid parsed scene document: " + std::string(error.what())};
     } catch (const std::exception& error) {
         return {.error = "Could not load scene document: " + std::string(error.what())};
     }

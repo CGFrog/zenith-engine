@@ -21,4 +21,5 @@ bool drawEnvironmentLight(EnvironmentLightComponent& component);
 bool drawCollider(ColliderComponent& component);
 bool drawRigidBody(RigidBodyComponent& component);
 bool drawAnimation(AnimationComponent& component, const ModelAsset* model);
+bool drawMorphWeights(MorphWeightsComponent& component);
 } // namespace ComponentEditors

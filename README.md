@@ -16,8 +16,12 @@ reusable foundation for future games.
   including a complete first-person target-range game walkthrough.
 - [`docs/RENDERER_VALIDATION.md`](docs/RENDERER_VALIDATION.md) defines the
   performance, image-regression, and Vulkan smoke gates.
+- [`docs/PERFORMANCE_ROADMAP.md`](docs/PERFORMANCE_ROADMAP.md) tracks the
+  remaining measured CPU, GPU, graphics, physics, and streaming objectives.
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) covers configuration, building,
   testing, smoke tests, benchmarks, formatting, and common extension tasks.
+- [`docs/RELEASING.md`](docs/RELEASING.md) covers Windows, Linux, and macOS
+  artifacts, package contents, provenance, and clean-extraction verification.
 
 ## Build
 
@@ -48,8 +52,10 @@ The runtime opens on a controller-friendly title screen. Press Space, the
 south gamepad button, or activate **Play** to enter the room. Escape/Start opens
 the pause menu; keyboard, gamepad, and pointer navigation can resume play or
 change antialiasing, bloom, audio mute, look sensitivity, and inverted-Y input.
-Settings persist in `.zenith/game-settings.json` beside the launch working
-directory.
+Settings persist atomically in the platform user-data directory. The settings
+screen also exposes high-contrast and reduced-motion modes; the underlying
+accessibility profile includes scalable UI/text, captions, locale, and
+color-independent indicator choices.
 
 The application loads `assets/basic_map.gltf`, adds static collision to the
 room, creates stacks of dynamic props, and spawns a physics-controlled player.
@@ -67,16 +73,25 @@ For an automated GPU smoke test, set `ZENITH_SMOKE_FRAMES` to a positive frame
 count. The engine exits cleanly after presenting that many frames.
 
 For a repeatable rendering benchmark, build `Release` and set
-`ZENITH_BENCHMARK_FRAMES` to the number of measured frames. The benchmark uses a
-fixed scene, pauses gameplay and physics, warms up for 1,000 frames, and prints
-CPU/GPU timings and draw statistics as JSON. Set `ZENITH_BENCHMARK_OBJECTS` to
-add a deterministic grid of repeated meshes for culling and batching tests:
+`ZENITH_BENCHMARK_FRAMES` to the number of measured frames. Full-runtime mode is
+the default and advances gameplay, animation, physics, audio, and rendering with
+a fixed simulation delta. Set `ZENITH_BENCHMARK_MODE=render` to freeze simulation
+and isolate rendering. The harness warms up for 120 frames, then prints one JSON
+report with median, p95, p99, maximum, and budget misses for each CPU/GPU scope.
+Set `ZENITH_BENCHMARK_OBJECTS` to add a deterministic grid of repeated meshes:
 
 ```powershell
 $env:ZENITH_BENCHMARK_FRAMES = 20000
 $env:ZENITH_BENCHMARK_OBJECTS = 2000
 .\build\Release\zenith.exe
 ```
+
+`ZENITH_BENCHMARK_WARMUP_FRAMES`, `ZENITH_BENCHMARK_FRAME_BUDGET_MS`, and
+`ZENITH_BENCHMARK_SAMPLES=1` control warmup, the whole-frame budget, and optional
+raw sample output. The manual `zenith_render_packet_benchmark` and
+`zenith_simulation_benchmark` executables cover CPU packet caching and sleeping
+versus active rigid-body workloads without making unstable timing thresholds part
+of the test suite.
 
 ## Assets and scene components
 
@@ -86,6 +101,12 @@ renderer-owned GPU cache, so many entities can share a single mesh upload.
 Models expand into an EnTT hierarchy: the requested root receives
 `ModelComponent`, imported nodes receive `TransformComponent`, and drawable
 nodes receive `MeshRendererComponent`.
+
+Morph targets and animation weight channels import with a deterministic active
+target bound. KTX2 RGBA8 content has a CPU fallback, while optional compressed
+mesh and Basis decoders report their exact missing capability. Deterministic
+derived data is stored outside source folders and can be built with
+`zenith_asset_build` or inspected and invalidated by editor tooling.
 
 The `zenith_demo` application library owns the map, player camera, controller,
 gameplay action mapping, menus, and settings policy. `Engine` initializes
@@ -134,6 +155,12 @@ state while retaining cached assets and renderer resources. Joints, vehicles,
 soft bodies, serialization, and debug drawing are intentionally left for later
 layers. Triangle meshes are static-only; use primitives for moving objects.
 
+Versioned prefab documents provide stable IDs, nested composition, separate
+property/component overrides, transactional refresh, and project-relative
+asset references. The editor authoring service makes create, instantiate,
+override, unpack, apply, and revert operations undoable; the runtime prefab
+system is also usable in additive scene instances.
+
 ## Audio
 
 `AudioSystem` owns SDL device output, decoding, mixing, and voice lifetime. WAV
@@ -167,21 +194,23 @@ if (loaded) {
 }
 ```
 
-The current importer supports static opaque triangle primitives, indexed and
-non-indexed geometry, node transforms, positions, normals, texture coordinates,
-tangents, embedded/external buffers and images, and glTF metallic-roughness PBR
-materials. Base-color, normal, metallic-roughness, occlusion, and emissive maps
-are rendered. Missing normals and tangents are generated. Alpha modes,
-animation, skins, morph targets, and compressed mesh extensions are not yet
-rendered. Unsupported non-triangle primitives are skipped; malformed assets and
-models without renderable primitives return descriptive errors.
+The importer supports triangle primitives, indexed and non-indexed geometry,
+node transforms, skin weights, animation clips, embedded/external buffers and
+images, and glTF metallic-roughness PBR materials. Opaque, masked, blended, and
+double-sided materials are rendered; masked surfaces also cast cutout shadows.
+Missing normals and tangents are generated. Morph targets and compressed mesh
+extensions are not yet rendered. Unsupported non-triangle primitives are
+skipped; malformed assets and models without renderable primitives return
+descriptive errors.
 
 The renderer uses dynamic rendering, synchronization2, staging uploads,
 mipmapped anisotropic textures, per-frame camera buffers, push constants,
 VMA-backed vertex/index buffers, and three frames in flight. The mesh pass uses
-Cook-Torrance GGX lighting, hemispherical environment lighting, and a stabilized
-2,048-pixel directional shadow map with PCF. Scene components configure the
-directional and environment lights. A single fused HDR post-process pass adds
+Cook-Torrance GGX lighting, bounded tiled point/spot lighting, cached
+roughness-prefiltered environments, deterministic reflection-probe blending,
+and a stabilized 2,048-pixel directional shadow map with PCF. Project settings
+select validated quality fallbacks and per-pass CPU/GPU budgets. A single fused
+HDR post-process pass adds
 thresholded bloom, ACES tone mapping, and edge-adaptive anti-aliasing.
 
 ## Tests

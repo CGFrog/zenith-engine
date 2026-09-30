@@ -15,8 +15,8 @@ class PostProcessPass {
     bool record(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkImage outputImage, VkImageView outputView,
                 VkImage depthImage, VkExtent2D extent, const RenderSettings& settings,
                 const glm::mat4& inverseViewProjection, const glm::vec3& cameraPosition,
-                const std::optional<GridOverlay>& gridOverlay,
-                VkImageLayout outputOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
+                const std::optional<GridOverlay>& gridOverlay, VkQueryPool timestampQueries,
+                double& bloomCpuMilliseconds, VkImageLayout outputOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
     void shutdown(const VulkanContext& context);
 
     VkImage sceneImage(uint32_t frameIndex) const;

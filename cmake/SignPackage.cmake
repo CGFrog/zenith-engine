@@ -1,0 +1,25 @@
+if(NOT WIN32)
+    return()
+endif()
+
+set(signing_thumbprint "$ENV{ZENITH_SIGNING_CERT_SHA1}")
+set(require_signing "$ENV{ZENITH_REQUIRE_SIGNING}")
+if(signing_thumbprint STREQUAL "")
+    if(require_signing STREQUAL "1")
+        message(FATAL_ERROR "ZENITH_REQUIRE_SIGNING=1 but ZENITH_SIGNING_CERT_SHA1 is not configured")
+    endif()
+    message(STATUS "Package signing skipped; release policy did not provide a certificate thumbprint")
+    return()
+endif()
+
+find_program(sign_tool signtool REQUIRED)
+foreach(package_file IN LISTS CPACK_PACKAGE_FILES)
+    if(package_file MATCHES "[.](msi|exe)$")
+        execute_process(COMMAND "${sign_tool}" sign /sha1 "${signing_thumbprint}" /fd SHA256
+            /tr http://timestamp.digicert.com /td SHA256 "${package_file}"
+            RESULT_VARIABLE sign_result)
+        if(NOT sign_result EQUAL 0)
+            message(FATAL_ERROR "Authenticode signing failed for ${package_file}")
+        endif()
+    endif()
+endforeach()

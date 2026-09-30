@@ -2,6 +2,8 @@
 #include "vulkan/VulkanCheck.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <vector>
 
 namespace {
 constexpr uint32_t surfaceRetryDelayMs = 16;
@@ -47,6 +49,9 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering) {
         return false;
     }
     rendering.m_capabilities = detectRenderCapabilities(m_context.pDevice());
+    rendering.m_capabilities.imageBasedLighting = true;
+    rendering.m_capabilities.reflectionProbes = true;
+    rendering.m_capabilities.maximumLocalLightsPerTile = 64;
     if (!createSwapchainResources(window)) {
         return false;
     }
@@ -62,10 +67,18 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering) {
         return false;
     }
     m_currentFrame = 0;
+    m_submittedFrames = 0;
     VkPhysicalDeviceProperties properties{};
     vkGetPhysicalDeviceProperties(m_context.pDevice(), &properties);
+    m_gpuName = properties.deviceName;
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(m_context.pDevice(), &queueFamilyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(m_context.pDevice(), &queueFamilyCount, queueFamilies.data());
+    const uint32_t timestampValidBits = queueFamilies[m_context.gfxQueueIndex()].timestampValidBits;
     for (FrameResources& frame : m_frames) {
-        if (!frame.init(m_context.device(), m_context.gfxQueueIndex(), properties.limits.timestampPeriod)) {
+        if (!frame.init(m_context.device(), m_context.gfxQueueIndex(), properties.limits.timestampPeriod,
+                        timestampValidBits)) {
             return false;
         }
     }
@@ -113,24 +126,34 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
         return false;
     }
     FrameResources& frame = m_frames[m_currentFrame];
+    const auto frameWaitBegin = std::chrono::steady_clock::now();
     if (!frame.waitUntilAvailable(m_context.device())) {
         m_uiPass.cancelFrame();
         return false;
     }
-    if ((m_timingSampleCounter++ % 16) == 0) {
-        GpuFrameTimings gpuTimings;
-        if (!frame.collectTimings(m_context.device(), gpuTimings)) {
-            m_uiPass.cancelFrame();
-            return false;
-        }
-        m_rendering->m_stats.gpuFrameMilliseconds = gpuTimings.frameMilliseconds;
-        m_rendering->m_stats.gpuShadowMilliseconds = gpuTimings.shadowMilliseconds;
-        m_rendering->m_stats.gpuSceneMilliseconds = gpuTimings.sceneMilliseconds;
-        m_rendering->m_stats.gpuPostMilliseconds = gpuTimings.postMilliseconds;
+    const double frameWaitMilliseconds =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameWaitBegin).count();
+    GpuFrameTimings gpuTimings;
+    if (!frame.collectTimings(m_context.device(), gpuTimings)) {
+        m_uiPass.cancelFrame();
+        return false;
     }
-
+    pruneUnusedUiTextures(assets);
+    // Replacing this slot's leases is safe after its fence signals; assets used
+    // by the previous submission can now be collected without a queue idle.
+    m_frameAssets[m_currentFrame] = assets.leaseSceneAssets(scene);
+    m_frameAssets[m_currentFrame].fonts.insert(m_frameAssets[m_currentFrame].fonts.end(),
+                                               m_pendingUiAssets.fonts.begin(), m_pendingUiAssets.fonts.end());
+    m_frameAssets[m_currentFrame].meshes.insert(m_frameAssets[m_currentFrame].meshes.end(),
+                                                m_pendingUiAssets.meshes.begin(), m_pendingUiAssets.meshes.end());
+    m_frameAssets[m_currentFrame].textures.insert(m_frameAssets[m_currentFrame].textures.end(),
+                                                  m_pendingUiAssets.textures.begin(), m_pendingUiAssets.textures.end());
+    m_pendingUiAssets.clear();
     uint32_t imageIndex = 0;
+    const auto acquireBegin = std::chrono::steady_clock::now();
     const FrameStatus acquireStatus = acquireImage(frame, imageIndex);
+    const double acquireMilliseconds =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - acquireBegin).count();
     if (acquireStatus != FrameStatus::Ready) {
         m_uiPass.cancelFrame();
         return acquireStatus == FrameStatus::Skipped;
@@ -142,9 +165,36 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     if (!frame.submit(m_context.device(), m_context.gfxQueue(), m_swapchain.renderComplete(imageIndex))) {
         return false;
     }
+    const uint64_t submittedFrame = ++m_submittedFrames;
+    frame.markSubmitted(submittedFrame, m_rendering->m_settings.bloom != BloomQuality::Off);
+    const auto presentBegin = std::chrono::steady_clock::now();
     const bool presented = presentFrame(imageIndex);
+    const double presentMilliseconds =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - presentBegin).count();
+    RenderStats& stats = m_rendering->m_stats;
+    stats.submittedFrame = submittedFrame;
+    stats.frameSubmitted = true;
+    stats.cpuFrameWaitMilliseconds = frameWaitMilliseconds;
+    stats.cpuAcquireMilliseconds = acquireMilliseconds;
+    stats.cpuPresentMilliseconds = presentMilliseconds;
+    stats.gpuTimingsValid = gpuTimings.valid;
+    stats.gpuSampleFrame = gpuTimings.frame;
+    stats.gpuFrameMilliseconds = gpuTimings.frameMilliseconds;
+    stats.gpuShadowMilliseconds = gpuTimings.shadowMilliseconds;
+    stats.gpuOpaqueMilliseconds = gpuTimings.opaqueMilliseconds;
+    stats.gpuBlendedMilliseconds = gpuTimings.blendedMilliseconds;
+    stats.gpuSceneMilliseconds = gpuTimings.sceneMilliseconds;
+    stats.gpuBloomMilliseconds = gpuTimings.bloomMilliseconds;
+    stats.gpuPostMilliseconds = gpuTimings.postMilliseconds;
+    stats.gpuUiMilliseconds = gpuTimings.uiMilliseconds;
     m_currentFrame = (m_currentFrame + 1) % framesInFlight;
     return presented;
+}
+
+uint64_t Renderer::gpuAllocationBytes() const {
+    VmaTotalStatistics statistics{};
+    vmaCalculateStatistics(m_context.vmaAllocator(), &statistics);
+    return statistics.total.statistics.allocationBytes;
 }
 
 Renderer::FrameStatus Renderer::prepareSurface(const Window& window) {
@@ -246,10 +296,13 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
         m_viewportTarget.transitionForSampling(frame.commandBuffer(), m_currentFrame);
         prepareColorAttachment(frame.commandBuffer(), image);
     }
+    const auto uiCpuBegin = std::chrono::steady_clock::now();
     if (!m_uiPass.record(frame.commandBuffer(), image, view, m_swapchain.extent(), useViewport)) {
         return false;
     }
-    frame.writeTimestamp(4, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    m_rendering->m_stats.cpuUiMilliseconds =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - uiCpuBegin).count();
+    frame.writeTimestamp(5, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     return frame.endRecording();
 }
 
@@ -271,9 +324,25 @@ void Renderer::beginUiFrame(const AssetManager& assets) {
 }
 
 void Renderer::drawGameUi(const GameUiContext& gameUi, const AssetManager& assets) {
+    for (const UiCommand& command : gameUi.commands()) {
+        if (const auto* text = std::get_if<UiTextCommand>(&command.payload)) {
+            if (AssetLease<FontHandle> font = assets.lease(text->font)) {
+                m_pendingUiAssets.fonts.push_back(std::move(font));
+            }
+        } else if (const auto* image = std::get_if<UiImageCommand>(&command.payload)) {
+            if (AssetLease<TextureHandle> texture = assets.lease(image->texture)) {
+                m_pendingUiAssets.textures.push_back(std::move(texture));
+            }
+        }
+    }
     m_uiPass.drawGameUi(gameUi, [this, &assets](TextureHandle handle) {
         const uint64_t key = (static_cast<uint64_t>(handle.generation) << 32u) | handle.index;
         if (const auto found = m_gameUiTextures.find(key); found != m_gameUiTextures.end()) {
+            if (assets.texture(handle) == nullptr) {
+                m_uiPass.removeTexture(found->second);
+                m_gameUiTextures.erase(found);
+                return uint64_t{0};
+            }
             return found->second;
         }
         VkSampler sampler = VK_NULL_HANDLE;
@@ -287,6 +356,19 @@ void Renderer::drawGameUi(const GameUiContext& gameUi, const AssetManager& asset
         }
         return texture;
     });
+}
+
+void Renderer::pruneUnusedUiTextures(const AssetManager& assets) {
+    for (auto iterator = m_gameUiTextures.begin(); iterator != m_gameUiTextures.end();) {
+        const TextureHandle handle{static_cast<uint32_t>(iterator->first),
+                                   static_cast<uint32_t>(iterator->first >> 32u)};
+        if (assets.texture(handle) != nullptr) {
+            ++iterator;
+            continue;
+        }
+        m_uiPass.removeTexture(iterator->second);
+        iterator = m_gameUiTextures.erase(iterator);
+    }
 }
 
 InputCapture Renderer::uiInputCapture() const {

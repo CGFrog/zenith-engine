@@ -13,6 +13,7 @@
 #include "swapchain/Swapchain.hpp"
 #include "vulkan/VulkanContext.hpp"
 #include <array>
+#include <string>
 #include <unordered_map>
 
 class Renderer {
@@ -26,6 +27,16 @@ class Renderer {
 
     const char* presentModeName() const {
         return m_swapchain.presentModeName();
+    }
+
+    const std::string& gpuName() const {
+        return m_gpuName;
+    }
+
+    uint64_t gpuAllocationBytes() const;
+
+    VkExtent2D outputExtent() const {
+        return m_swapchain.extent();
     }
 
     void requestResize() {
@@ -50,6 +61,7 @@ class Renderer {
     FrameStatus acquireImage(const FrameResources& frame, uint32_t& imageIndex);
     bool recordFrame(const FrameResources& frame, uint32_t imageIndex, const Scene& scene, const AssetManager& assets);
     bool presentFrame(uint32_t imageIndex);
+    void pruneUnusedUiTextures(const AssetManager& assets);
 
     VulkanContext m_context;
     Surface m_surface;
@@ -59,10 +71,13 @@ class Renderer {
     ViewportTarget m_viewportTarget;
     static constexpr uint32_t framesInFlight = 3;
     std::array<FrameResources, framesInFlight> m_frames;
+    std::array<AssetLeaseSet, framesInFlight> m_frameAssets;
+    AssetLeaseSet m_pendingUiAssets;
     uint32_t m_currentFrame{0};
-    uint32_t m_timingSampleCounter{0};
+    uint64_t m_submittedFrames{0};
     bool m_resizeRequested{false};
     bool m_viewportFailed{false};
     RenderRuntime* m_rendering{nullptr};
+    std::string m_gpuName;
     std::unordered_map<uint64_t, uint64_t> m_gameUiTextures;
 };

@@ -22,6 +22,7 @@
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
@@ -434,11 +435,18 @@ PhysicsResult PhysicsWorld::refreshBodyFromWorld(Entity entity, Scene& scene, co
 }
 
 PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float deltaSeconds) {
+    m_stats = {};
+    const auto start = std::chrono::steady_clock::now();
+    const auto milliseconds = [](auto from, auto to) {
+        return std::chrono::duration<double, std::milli>(to - from).count();
+    };
     if (!m_impl->initialized) {
         return {.error = "Physics world is not initialized"};
     }
     scene.updateWorldTransforms();
 
+    const auto transformsDone = std::chrono::steady_clock::now();
+    m_stats.transformMilliseconds = milliseconds(start, transformsDone);
     auto view = scene.registry().view<TransformComponent, ColliderComponent, RigidBodyComponent>();
     for (Entity entity : view) {
         if (!m_impl->bodies.contains(entity)) {
@@ -478,15 +486,25 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
         std::scoped_lock lock(m_impl->contactMutex);
         m_impl->pendingContacts.clear();
     }
+    const auto syncDone = std::chrono::steady_clock::now();
+    m_stats.synchronizeInMilliseconds = milliseconds(transformsDone, syncDone);
     const JPH::EPhysicsUpdateError updateError =
         m_impl->system->Update(deltaSeconds, 1, m_impl->tempAllocator.get(), m_impl->jobs.get());
+    const auto simulationDone = std::chrono::steady_clock::now();
+    m_stats.simulationMilliseconds = milliseconds(syncDone, simulationDone);
     if (updateError != JPH::EPhysicsUpdateError::None) {
         return {.error = "Jolt reported an error while updating the simulation"};
     }
 
     for (auto& [entity, state] : m_impl->bodies) {
+        ++m_stats.bodies;
         if (state.motionType != PhysicsMotionType::Dynamic || !scene.registry().valid(entity)) {
             continue;
+        }
+        if (interface.IsActive(state.id)) {
+            ++m_stats.activeBodies;
+        } else {
+            ++m_stats.sleepingBodies;
         }
         JPH::RVec3 position;
         JPH::Quat rotation;
@@ -515,6 +533,8 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
             m_impl->contactEvents.push_back({pending.type, first->second, second->second, pending.normal});
         }
     }
+    m_stats.contactEvents = static_cast<uint32_t>(m_impl->contactEvents.size());
+    m_stats.synchronizeOutMilliseconds = milliseconds(simulationDone, std::chrono::steady_clock::now());
     return {.success = true};
 }
 

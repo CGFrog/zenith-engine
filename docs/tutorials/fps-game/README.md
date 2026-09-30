@@ -59,8 +59,7 @@ demo stays available for comparison.
 
 ## Current scope
 
-Zenith currently renders static glTF triangle geometry and does not yet render
-skins, skeletal animation, morph targets, or alpha modes. Build the first game
-around static environments, primitive physics, and code-driven gameplay.
-Animated arms, enemies, and weapon models are follow-up engine work, not
-prerequisites for this playable target range.
+Zenith renders static and skinned glTF triangle geometry, skeletal animation,
+and opaque, masked, or blended materials. Morph targets and compressed meshes
+remain outside this tutorial's scope. The tutorial uses static environments,
+primitive physics, and code-driven gameplay so its core remains approachable.

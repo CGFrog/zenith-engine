@@ -1,4 +1,7 @@
 #include "MeshPass.hpp"
+#include "../Lighting.hpp"
+
+#include "engine/resources/ResourceLocator.hpp"
 
 #include "../shader/ShaderModule.hpp"
 #include "../vulkan/VulkanCheck.hpp"
@@ -30,6 +33,12 @@ struct CameraData {
     glm::vec4 shadowSettings{0.01f, 1.0f, 0.0f, 0.0f};
     glm::vec4 cascadeSplits{1000.0f};
     glm::vec4 renderingSettings{0.0f};
+    std::array<glm::vec4, 6> environmentSpecular{};
+    std::array<glm::vec4, 64> localLightPositionRange{};
+    std::array<glm::vec4, 64> localLightDirectionType{};
+    std::array<glm::vec4, 64> localLightColorIntensity{};
+    std::array<glm::vec4, 64> localLightCone{};
+    glm::uvec4 localLightCount{0};
 };
 
 struct PushConstants {
@@ -118,6 +127,10 @@ uint64_t handleKey(MeshHandle handle) {
 
 uint64_t handleKey(MaterialHandle handle) {
     return (static_cast<uint64_t>(handle.generation) << 32) | handle.index;
+}
+
+template <typename Handle> Handle handleFromKey(uint64_t key) {
+    return {static_cast<uint32_t>(key), static_cast<uint32_t>(key >> 32)};
 }
 } // namespace
 
@@ -297,7 +310,7 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
 }
 
 bool MeshPass::createPipeline(VkFormat colorFormat, VkFormat depthFormat) {
-    const std::filesystem::path shaders{ZENITH_SHADER_DIR};
+    const std::filesystem::path shaders = shaderRoot();
     ShaderModule vertex(m_device);
     ShaderModule fragment(m_device);
     ShaderModule shadowVertex(m_device);
@@ -402,6 +415,7 @@ bool MeshPass::createShadowResources(VkFormat depthFormat) {
 }
 
 bool MeshPass::uploadBuffer(const void* data, VkDeviceSize size, VkBufferUsageFlags usage, GpuBuffer& output) {
+    const auto uploadBegin = std::chrono::steady_clock::now();
     const VkBuffer staging = m_uploadContext.stage(data, size);
     if (!staging) {
         return false;
@@ -418,10 +432,16 @@ bool MeshPass::uploadBuffer(const void* data, VkDeviceSize size, VkBufferUsageFl
         VkBufferCopy copy{.size = size};
         vkCmdCopyBuffer(command, staging, output.buffer, 1, &copy);
     });
+    if (submitted) {
+        m_uploadGpuMilliseconds += m_uploadContext.lastGpuMilliseconds();
+    }
+    m_uploadMilliseconds +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - uploadBegin).count();
     return submitted;
 }
 
 bool MeshPass::uploadTexture(const TextureAsset& texture, GpuTexture& output) {
+    const auto uploadBegin = std::chrono::steady_clock::now();
     if (texture.width == 0 || texture.height == 0 ||
         texture.rgba.size() != static_cast<size_t>(texture.width) * texture.height * 4) {
         return false;
@@ -517,6 +537,9 @@ bool MeshPass::uploadTexture(const TextureAsset& texture, GpuTexture& output) {
                       VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                       VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
     });
+    if (uploaded) {
+        m_uploadGpuMilliseconds += m_uploadContext.lastGpuMilliseconds();
+    }
     if (!uploaded) {
         return false;
     }
@@ -534,8 +557,11 @@ bool MeshPass::uploadTexture(const TextureAsset& texture, GpuTexture& output) {
         return false;
     }
     view.format = VK_FORMAT_R8G8B8A8_SRGB;
-    return checkVulkan(vkCreateImageView(m_device, &view, nullptr, &output.srgbView),
-                       "Create sRGB material texture view");
+    const bool created =
+        checkVulkan(vkCreateImageView(m_device, &view, nullptr, &output.srgbView), "Create sRGB material texture view");
+    m_uploadMilliseconds +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - uploadBegin).count();
+    return created;
 }
 
 const MeshPass::GpuMesh* MeshPass::ensureMesh(MeshHandle handle, const AssetManager& assets) {
@@ -799,8 +825,7 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
                 boundMaterial = item.gpuMaterial;
             }
             if (!boundDoubleSided || *boundDoubleSided != item.material->doubleSided) {
-                vkCmdSetCullMode(commandBuffer,
-                                 item.material->doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
+                vkCmdSetCullMode(commandBuffer, item.material->doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
                 boundDoubleSided = item.material->doubleSided;
             }
             const glm::vec4 shadowPush{static_cast<float>(cascade),
@@ -842,6 +867,10 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         return false;
     }
 
+    rendering.m_stats = {};
+
+    pruneUnusedAssets(assets);
+
     glm::mat4 view{1.0f};
     float fov = glm::radians(60.0f);
     float nearPlane = 0.1f;
@@ -871,7 +900,53 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     projection[1][1] *= -1.0f;
     const glm::vec3 cameraPosition = glm::vec3(glm::inverse(view)[3]);
     const DirectionalLightComponent light = resolvePrimary<DirectionalLightComponent>(scene);
-    const EnvironmentLightComponent environment = resolvePrimary<EnvironmentLightComponent>(scene);
+    EnvironmentLightComponent environment = resolvePrimary<EnvironmentLightComponent>(scene);
+    std::array<glm::vec3, 6> environmentSpecular;
+    environmentSpecular.fill((environment.skyColor + environment.groundColor) * 0.5f);
+    const uint32_t environmentRoughnessLevels =
+        rendering.settings().environment == EnvironmentQuality::ImageBasedHigh ? 6u : 3u;
+    if (rendering.settings().environment != EnvironmentQuality::Hemisphere && environment.environmentMap) {
+        if (const TextureAsset* texture = assets.texture(environment.environmentMap)) {
+            const PrefilteredEnvironment& filtered =
+                m_environmentCache.preprocess(*texture, environmentRoughnessLevels);
+            environment.skyColor = filtered.diffuseSky;
+            environment.groundColor = filtered.diffuseGround;
+            for (size_t level = 0; level < environmentSpecular.size(); ++level) {
+                environmentSpecular[level] =
+                    filtered.specularRoughnessLevels[std::min(level, filtered.specularRoughnessLevels.size() - 1)];
+            }
+        }
+    }
+    if (rendering.settings().reflectionProbes) {
+        const std::vector<ProbeBlend> probes = blendReflectionProbes(scene, cameraPosition);
+        glm::vec3 probeSky(0.0f);
+        glm::vec3 probeGround(0.0f);
+        std::array<glm::vec3, 6> probeSpecular{};
+        float probeWeight = 0.0f;
+        for (const ProbeBlend& blend : probes) {
+            const auto& probe = scene.registry().get<ReflectionProbeComponent>(blend.entity);
+            if (const TextureAsset* texture = assets.texture(probe.environmentMap)) {
+                const PrefilteredEnvironment& filtered =
+                    m_environmentCache.preprocess(*texture, environmentRoughnessLevels);
+                probeSky += filtered.diffuseSky * blend.weight;
+                probeGround += filtered.diffuseGround * blend.weight;
+                for (size_t level = 0; level < probeSpecular.size(); ++level) {
+                    probeSpecular[level] +=
+                        filtered.specularRoughnessLevels[std::min(level, filtered.specularRoughnessLevels.size() - 1)] *
+                        blend.weight;
+                }
+                probeWeight += blend.weight;
+            }
+        }
+        if (probeWeight > 0.0f) {
+            environment.skyColor = glm::mix(environment.skyColor, probeSky / probeWeight, probeWeight);
+            environment.groundColor = glm::mix(environment.groundColor, probeGround / probeWeight, probeWeight);
+            for (size_t level = 0; level < environmentSpecular.size(); ++level) {
+                environmentSpecular[level] =
+                    glm::mix(environmentSpecular[level], probeSpecular[level] / probeWeight, probeWeight);
+            }
+        }
+    }
     CameraData cameraData;
     cameraData.viewProjection = projection * view;
     const glm::vec3 lightDirection = normalizedLightDirection(light.direction);
@@ -891,24 +966,29 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         cascadeCount = 3;
         break;
     }
-    const float maximumShadowDistance = std::min(farPlane, shadowDepthRange);
+    const float maximumShadowDistance = std::max(std::min(farPlane, shadowDepthRange), nearPlane + 0.01f);
     const glm::vec3 lightUp =
         std::abs(lightDirection.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
     float cascadeNear = nearPlane;
     const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
     for (uint32_t cascade = 0; cascade < std::max(cascadeCount, 1u); ++cascade) {
-        const float partition = static_cast<float>(cascade + 1) / static_cast<float>(std::max(cascadeCount, 1u));
-        const float logarithmic = nearPlane * std::pow(maximumShadowDistance / nearPlane, partition);
-        const float uniform = nearPlane + (maximumShadowDistance - nearPlane) * partition;
-        const float lambda = std::clamp(rendering.settings().cascadeSplitLambda, 0.0f, 1.0f);
-        const float cascadeFar = glm::mix(uniform, logarithmic, lambda);
+        float cascadeFar = maximumShadowDistance;
+        float radius = std::max(light.shadows.halfExtent, 0.1f);
+        glm::vec3 center = cameraPosition + cameraForward * std::max(light.shadows.focusDistance, 0.0f);
+        if (cascadeCount > 1) {
+            const float partition = static_cast<float>(cascade + 1) / static_cast<float>(cascadeCount);
+            const float logarithmic = nearPlane * std::pow(maximumShadowDistance / nearPlane, partition);
+            const float uniform = nearPlane + (maximumShadowDistance - nearPlane) * partition;
+            const float lambda = std::clamp(rendering.settings().cascadeSplitLambda, 0.0f, 1.0f);
+            cascadeFar = glm::mix(uniform, logarithmic, lambda);
+            const float halfHeight = std::tan(fov * 0.5f) * cascadeFar;
+            const float halfWidth = halfHeight * aspect;
+            radius = std::sqrt(halfWidth * halfWidth + halfHeight * halfHeight +
+                               (cascadeFar - cascadeNear) * (cascadeFar - cascadeNear) * 0.25f);
+            radius = std::ceil(radius * 16.0f) / 16.0f;
+            center = cameraPosition + cameraForward * ((cascadeNear + cascadeFar) * 0.5f);
+        }
         cameraData.cascadeSplits[cascade] = cascadeFar;
-        const float halfHeight = std::tan(fov * 0.5f) * cascadeFar;
-        const float halfWidth = halfHeight * aspect;
-        float radius = std::sqrt(halfWidth * halfWidth + halfHeight * halfHeight +
-                                 (cascadeFar - cascadeNear) * (cascadeFar - cascadeNear) * 0.25f);
-        radius = std::ceil(radius * 16.0f) / 16.0f;
-        const glm::vec3 center = cameraPosition + cameraForward * ((cascadeNear + cascadeFar) * 0.5f);
         const glm::mat4 lightView = glm::lookAtRH(center + lightDirection * shadowDepthRange * 0.5f, center, lightUp);
         glm::mat4 lightProjection = glm::orthoRH_ZO(-radius, radius, -radius, radius, 0.1f, shadowDepthRange * 1.5f);
         lightProjection[1][1] *= -1.0f;
@@ -939,6 +1019,27 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         1.0f / static_cast<float>(extent.height),
         rendering.settings().visualizeShadowCascades ? 1.0f : 0.0f,
     };
+    for (size_t level = 0; level < environmentSpecular.size(); ++level) {
+        cameraData.environmentSpecular[level] = {glm::max(environmentSpecular[level], glm::vec3(0.0f)), 1.0f};
+    }
+    std::vector<LocalLight> localLights = gatherLocalLights(scene);
+    const uint32_t perTile = rendering.settings().localLights == LocalLightingQuality::Tiled64 ? 64u : 32u;
+    const LightTileGrid lightGrid =
+        rendering.settings().localLights == LocalLightingQuality::Disabled
+            ? LightTileGrid{}
+            : selectTiledLights(localLights, cameraData.viewProjection, extent.width, extent.height, 16, perTile);
+    const std::vector<uint32_t> selectedLights = selectTiledLightSet(lightGrid, localLights, perTile);
+    const uint32_t localLightCount = static_cast<uint32_t>(selectedLights.size());
+    for (uint32_t index = 0; index < localLightCount; ++index) {
+        const LocalLight& local = localLights[selectedLights[index]];
+        cameraData.localLightPositionRange[index] = {local.position, local.range};
+        cameraData.localLightDirectionType[index] = {local.direction, local.type == LocalLightType::Spot ? 1.0f : 0.0f};
+        cameraData.localLightColorIntensity[index] = {local.color, local.intensity};
+        cameraData.localLightCone[index] = {local.innerConeCosine, local.outerConeCosine, 0.0f, 0.0f};
+    }
+    cameraData.localLightCount.x = localLightCount;
+    rendering.m_stats.localLightCount = static_cast<uint32_t>(localLights.size());
+    rendering.m_stats.discardedLightAssignments = lightGrid.discardedAssignments;
     std::memcpy(m_cameras[frameIndex].mapped, &cameraData, sizeof(cameraData));
     vmaFlushAllocation(m_allocator, m_cameras[frameIndex].buffer.allocation, 0, sizeof(cameraData));
 
@@ -964,16 +1065,13 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         return false;
     }
     RenderStats& stats = rendering.m_stats;
-    const double gpuFrameMilliseconds = stats.gpuFrameMilliseconds;
-    const double gpuShadowMilliseconds = stats.gpuShadowMilliseconds;
-    const double gpuSceneMilliseconds = stats.gpuSceneMilliseconds;
-    const double gpuPostMilliseconds = stats.gpuPostMilliseconds;
-    stats = {};
-    stats.gpuFrameMilliseconds = gpuFrameMilliseconds;
-    stats.gpuShadowMilliseconds = gpuShadowMilliseconds;
-    stats.gpuSceneMilliseconds = gpuSceneMilliseconds;
-    stats.gpuPostMilliseconds = gpuPostMilliseconds;
     stats.cpuRenderPacketMilliseconds = packetBuildMilliseconds;
+    stats.cpuUploadMilliseconds = m_uploadMilliseconds;
+    stats.gpuUploadMilliseconds = m_uploadGpuMilliseconds;
+    stats.uploadBytes = m_uploadContext.takeStagedBytes();
+    stats.uploadTimingsValid = stats.uploadBytes != 0 && m_uploadContext.timingsSupported();
+    m_uploadMilliseconds = 0.0;
+    m_uploadGpuMilliseconds = 0.0;
     stats.renderPacketsRebuilt = rebuildPackets;
     stats.renderableCount = static_cast<uint32_t>(m_renderItems.size());
     DirectionalLightComponent shadowLight = light;
@@ -996,11 +1094,16 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     }
     vmaFlushAllocation(m_allocator, m_cameras[frameIndex].skinPalettes.allocation, 0,
                        sizeof(glm::mat4) * skinMatrixCount);
+    const auto shadowCpuBegin = std::chrono::steady_clock::now();
     if (!recordShadow(commandBuffer, frameIndex, m_renderItems, shadowLight, cameraData.lightViewProjections,
                       cascadeCount, stats)) {
         return false;
     }
-    vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, timestampQueries, 1);
+    stats.cpuShadowMilliseconds =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - shadowCpuBegin).count();
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 1);
+    }
     m_postProcess.prepareScene(commandBuffer, frameIndex);
     beginRendering(commandBuffer, m_postProcess.sceneImage(frameIndex), m_postProcess.sceneView(frameIndex), depthImage,
                    depthView, extent);
@@ -1077,8 +1180,20 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const GraphicsPipeline* boundPipeline = nullptr;
     const GpuMesh* boundMesh = nullptr;
     const GpuMaterial* boundMaterial = nullptr;
+    const auto opaqueCpuBegin = std::chrono::steady_clock::now();
+    auto blendedCpuBegin = opaqueCpuBegin;
+    bool opaqueTimestampWritten = false;
     for (size_t itemIndex = 0; itemIndex < m_visibleItems.size();) {
         const RenderItem& item = *m_visibleItems[itemIndex];
+        if (!opaqueTimestampWritten && item.material->alphaMode == MaterialAlphaMode::Blend) {
+            if (timestampQueries) {
+                vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 2);
+            }
+            blendedCpuBegin = std::chrono::steady_clock::now();
+            stats.cpuOpaqueMilliseconds =
+                std::chrono::duration<double, std::milli>(blendedCpuBegin - opaqueCpuBegin).count();
+            opaqueTimestampWritten = true;
+        }
         size_t batchEnd = itemIndex + 1;
         while (batchEnd < m_visibleItems.size()) {
             const RenderItem& candidate = *m_visibleItems[batchEnd];
@@ -1132,6 +1247,16 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         stats.triangleCount += static_cast<uint64_t>(item.primitive->indexCount / 3) * instanceCount;
         itemIndex = batchEnd;
     }
+    if (!opaqueTimestampWritten) {
+        if (timestampQueries) {
+            vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 2);
+        }
+        stats.cpuOpaqueMilliseconds =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - opaqueCpuBegin).count();
+    } else {
+        stats.cpuBlendedMilliseconds =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - blendedCpuBegin).count();
+    }
 
     if (!rendering.m_outlinedObjects.empty()) {
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlinePipeline.handle());
@@ -1159,14 +1284,57 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     }
 
     vkCmdEndRendering(commandBuffer);
-    vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, timestampQueries, 2);
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 3);
+    }
+    const auto bloomCpuBegin = std::chrono::steady_clock::now();
     if (!m_postProcess.record(commandBuffer, frameIndex, colorImage, colorView, depthImage, extent,
                               rendering.settings(), glm::inverse(cameraData.viewProjection), cameraPosition,
-                              rendering.m_gridOverlay, colorOldLayout)) {
+                              rendering.m_gridOverlay, timestampQueries, stats.cpuBloomMilliseconds, colorOldLayout)) {
         return false;
     }
-    vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, timestampQueries, 3);
+    stats.cpuPostMilliseconds =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - bloomCpuBegin).count() -
+        stats.cpuBloomMilliseconds;
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 4);
+    }
     return true;
+}
+
+void MeshPass::pruneUnusedAssets(const AssetManager& assets) {
+    std::erase_if(m_meshes, [&](const auto& entry) {
+        if (assets.mesh(handleFromKey<MeshHandle>(entry.first)) != nullptr) {
+            return false;
+        }
+        const GpuMesh& mesh = entry.second;
+        if (mesh.vertices.buffer) {
+            vmaDestroyBuffer(m_allocator, mesh.vertices.buffer, mesh.vertices.allocation);
+        }
+        if (mesh.indices.buffer) {
+            vmaDestroyBuffer(m_allocator, mesh.indices.buffer, mesh.indices.allocation);
+        }
+        return true;
+    });
+    std::erase_if(m_textures, [&](const auto& entry) {
+        if (assets.texture(handleFromKey<TextureHandle>(entry.first)) != nullptr) {
+            return false;
+        }
+        const GpuTexture& texture = entry.second;
+        if (texture.srgbView) {
+            vkDestroyImageView(m_device, texture.srgbView, nullptr);
+        }
+        if (texture.view) {
+            vkDestroyImageView(m_device, texture.view, nullptr);
+        }
+        if (texture.image) {
+            vmaDestroyImage(m_allocator, texture.image, texture.allocation);
+        }
+        return true;
+    });
+    std::erase_if(m_materials, [&](const auto& entry) {
+        return assets.material(handleFromKey<MaterialHandle>(entry.first)) == nullptr;
+    });
 }
 
 bool MeshPass::uiTexture(TextureHandle handle, const AssetManager& assets, VkSampler& sampler, VkImageView& view) {

@@ -2,6 +2,20 @@ cmake_minimum_required(VERSION 3.24)
 
 project(zenith VERSION 0.1.0 LANGUAGES C CXX)
 
+execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE ZENITH_SOURCE_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(ZENITH_SOURCE_REVISION STREQUAL "")
+    set(ZENITH_SOURCE_REVISION "unknown")
+endif()
+execute_process(COMMAND git status --porcelain WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE ZENITH_WORKTREE_STATUS OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(ZENITH_WORKTREE_STATUS STREQUAL "")
+    set(ZENITH_SOURCE_DIRTY "false")
+else()
+    set(ZENITH_SOURCE_DIRTY "true")
+endif()
+file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt" ZENITH_DEPENDENCY_REVISION)
+
 include(CTest)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -221,6 +235,7 @@ add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE "${stb_SOURCE_DIR}")
 
 add_library(zenith_engine STATIC
+    src/engine/diagnostics/Benchmark.cpp
     src/engine/animation/AnimationSystem.cpp
     src/engine/audio/AudioSystem.cpp
     src/engine/audio/StbVorbis.cpp
@@ -229,7 +244,11 @@ add_library(zenith_engine STATIC
     src/engine/assets/Assets.cpp
     src/engine/assets/ModelImporter.cpp
     src/engine/assets/ImageDecoder.cpp
+    src/engine/assets/ProductionAssetPipeline.cpp
     src/engine/graphics/Renderer.cpp
+    src/engine/graphics/Lighting.cpp
+    src/engine/graphics/EnvironmentLighting.cpp
+    src/engine/graphics/RenderConfiguration.cpp
     src/engine/graphics/RenderSubmission.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
@@ -244,11 +263,20 @@ add_library(zenith_engine STATIC
     src/engine/graphics/vulkan/VulkanContext.cpp
     src/engine/input/InputActions.cpp
     src/engine/input/InputManager.cpp
+    src/engine/input/InputProfiles.cpp
+    src/engine/jobs/JobSystem.cpp
     src/engine/physics/PhysicsWorld.cpp
+    src/engine/platform/PlatformServices.cpp
     src/engine/project/ProjectConfig.cpp
+    src/engine/resources/ResourceLocator.cpp
+    src/engine/resources/ContentManifest.cpp
     src/engine/scene/Scene.cpp
     src/engine/scene/SceneDocument.cpp
+    src/engine/scene/AdditiveSceneManager.cpp
+    src/engine/scene/Prefab.cpp
     src/engine/ui/GameUi.cpp
+    src/engine/ui/Accessibility.cpp
+    src/engine/ui/Localization.cpp
     src/engine/window/Window.cpp
 )
 
@@ -268,6 +296,13 @@ target_link_libraries(zenith_demo PUBLIC zenith_engine)
 
 add_executable(zenith src/main.cpp)
 target_link_libraries(zenith PRIVATE zenith_demo)
+if(APPLE)
+    set_target_properties(zenith PROPERTIES MACOSX_BUNDLE TRUE
+        OUTPUT_NAME "Zenith"
+        MACOSX_BUNDLE_BUNDLE_NAME "Zenith"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "org.zenith.demo"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}")
+endif()
 
 add_library(zenith_editor_app STATIC
     src/editor/application/EditorApplication.cpp
@@ -278,10 +313,13 @@ add_library(zenith_editor_app STATIC
     src/editor/document/CommandHistory.cpp
     src/editor/document/EditorDocument.cpp
     src/editor/document/EditorRecovery.cpp
+    src/editor/document/PrefabAuthoring.cpp
     src/editor/document/SceneFragment.cpp
     src/editor/interaction/ComponentEditors.cpp
     src/editor/interaction/EditorCamera.cpp
     src/editor/project/AssetCatalog.cpp
+    src/editor/project/DerivedAssetInspector.cpp
+    src/editor/project/ReflectionProbeBaker.cpp
     src/editor/project/ThumbnailCache.cpp
     src/editor/settings/EditorSettings.cpp
 )
@@ -291,6 +329,9 @@ target_compile_definitions(zenith_editor_app PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
 add_executable(zenith_editor src/editor/main.cpp)
 target_link_libraries(zenith_editor PRIVATE zenith_editor_app zenith_demo)
+
+add_executable(zenith_asset_build src/asset_build_main.cpp)
+target_link_libraries(zenith_asset_build PRIVATE zenith_engine)
 
 # Compile each shader in shaders/ to a matching .spv file in the build tree.
 # glslang infers the shader stage from the source extension.
@@ -349,9 +390,13 @@ target_include_directories(zenith_engine PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
-target_compile_definitions(zenith_engine PUBLIC VK_NO_PROTOTYPES
-    ZENITH_SHADER_DIR="${ZENITH_SHADER_BINARY_DIR}"
-    ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+target_compile_definitions(zenith_engine PUBLIC VK_NO_PROTOTYPES PRIVATE
+    ZENITH_BENCHMARK_REVISION="${ZENITH_SOURCE_REVISION}"
+    ZENITH_BENCHMARK_DIRTY="${ZENITH_SOURCE_DIRTY}"
+    ZENITH_BENCHMARK_BUILD="$<CONFIG>"
+    ZENITH_BENCHMARK_COMPILER="${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}"
+    ZENITH_BENCHMARK_PLATFORM="${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}"
+)
 
 target_link_libraries(zenith_engine PUBLIC
     Vulkan::Headers
@@ -369,7 +414,7 @@ target_link_libraries(zenith_engine PUBLIC
 )
 
 if(MSVC)
-    target_compile_options(zenith_engine PRIVATE /W4 /permissive-)
+    target_compile_options(zenith_engine PRIVATE /W4 /permissive- /FS)
     target_compile_options(zenith_demo PRIVATE /W4 /permissive-)
     target_compile_options(zenith_editor_app PRIVATE /W4 /permissive-)
 else()
@@ -378,7 +423,96 @@ else()
     target_compile_options(zenith_editor_app PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# Relocatable release archives. Runtime code resolves these directories from
+# the executable, so installed artifacts do not retain source/build paths.
+install(TARGETS zenith zenith_asset_build
+    RUNTIME_DEPENDENCIES
+        PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-"
+        POST_EXCLUDE_REGEXES ".*[Ss]ystem32/.*" ".*/lib(c|m|pthread|dl|rt)\\.so.*"
+    RUNTIME DESTINATION .
+    BUNDLE DESTINATION .
+)
+install(DIRECTORY "${ZENITH_ASSET_SOURCE_DIR}/" DESTINATION assets)
+install(DIRECTORY "${ZENITH_SHADER_BINARY_DIR}/" DESTINATION shaders FILES_MATCHING PATTERN "*.spv")
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/projects/demo.zenith-project" DESTINATION .)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/projects/scenes/demo.zenith-scene" DESTINATION scenes)
+if(UNIX AND NOT APPLE)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/zenith.desktop" DESTINATION share/applications)
+endif()
+install(FILES "${sdl_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME SDL.txt)
+install(FILES "${volk_SOURCE_DIR}/LICENSE.md" DESTINATION licenses RENAME volk.md)
+install(FILES "${glm_SOURCE_DIR}/copying.txt" DESTINATION licenses RENAME glm.txt)
+install(FILES "${joltphysics_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME Jolt.txt)
+install(FILES "${imgui_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME Dear-ImGui.txt)
+install(FILES "${cgltf_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME cgltf.txt)
+install(FILES "${stb_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME stb.txt)
+install(FILES "${entt_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME EnTT.txt)
+install(FILES "${vulkanmemoryallocator_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses
+    RENAME Vulkan-Memory-Allocator.txt)
+install(FILES "${shaderc_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME shaderc.txt)
+install(FILES "${vulkanheaders_SOURCE_DIR}/LICENSE.md" DESTINATION licenses RENAME Vulkan-Headers.md)
+install(FILES "${glslang_SOURCE_DIR}/LICENSE.txt" DESTINATION licenses RENAME glslang.txt)
+install(FILES "${spirv-headers_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME SPIRV-Headers.txt)
+install(FILES "${spirv-tools_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME SPIRV-Tools.txt)
+install(FILES "${nlohmann_json_SOURCE_DIR}/LICENSE.MIT" DESTINATION licenses RENAME nlohmann-json.txt)
+install(FILES "${imguizmo_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME ImGuizmo.txt)
+install(CODE "
+    set(ZENITH_PACKAGE_ROOT \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}\")
+    set(ZENITH_PACKAGE_VERSION \"${PROJECT_VERSION}\")
+    set(ZENITH_SOURCE_REVISION \"${ZENITH_SOURCE_REVISION}\")
+    set(ZENITH_DEPENDENCY_REVISION \"${ZENITH_DEPENDENCY_REVISION}\")
+    set(ZENITH_TOOLCHAIN \"${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}\")
+    set(ZENITH_TARGET_PLATFORM \"${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}\")
+    include(\"${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidatePackage.cmake\")
+")
+
+set(CPACK_PACKAGE_NAME "Zenith")
+set(CPACK_PACKAGE_VENDOR "Zenith")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_FILE_NAME "Zenith-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
+set(CPACK_POST_BUILD_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SignPackage.cmake")
+if(WIN32)
+    option(ZENITH_WINDOWS_INSTALLER "Build a WiX MSI alongside the portable ZIP" OFF)
+    if(ZENITH_WINDOWS_INSTALLER)
+        set(CPACK_GENERATOR "ZIP;WIX")
+        set(CPACK_WIX_UPGRADE_GUID "B37C201B-67EB-4F8C-9CC1-1CC87254C11A")
+    else()
+        set(CPACK_GENERATOR "ZIP")
+    endif()
+elseif(APPLE)
+    set(CPACK_GENERATOR "DragNDrop")
+else()
+    set(CPACK_GENERATOR "TGZ;DEB")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Zenith")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "games")
+endif()
+include(CPack)
+
 if(BUILD_TESTING)
+    add_executable(zenith_milestone_19_21_tests tests/engine/Milestone19And21Tests.cpp)
+    target_compile_definitions(zenith_milestone_19_21_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_milestone_19_21_tests zenith_assets)
+    target_link_libraries(zenith_milestone_19_21_tests PRIVATE zenith_engine zenith_demo zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_milestone_19_21_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_milestone_19_21_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_milestones_19_21 COMMAND zenith_milestone_19_21_tests)
+
+    add_executable(zenith_production_milestone_tests tests/engine/ProductionMilestonesTests.cpp)
+    target_link_libraries(zenith_production_milestone_tests PRIVATE zenith_engine)
+    target_compile_definitions(zenith_production_milestone_tests PRIVATE
+        ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_production_milestone_tests zenith_assets)
+    if(MSVC)
+        target_compile_options(zenith_production_milestone_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_production_milestone_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_production_milestones COMMAND zenith_production_milestone_tests)
+
     add_executable(zenith_audio_tests tests/engine/AudioSystemTests.cpp)
     target_compile_definitions(zenith_audio_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
     add_dependencies(zenith_audio_tests zenith_assets)
@@ -526,7 +660,13 @@ if(BUILD_TESTING)
 
     add_executable(zenith_render_packet_benchmark tests/engine/RenderPacketBenchmarkTests.cpp)
     target_link_libraries(zenith_render_packet_benchmark PRIVATE zenith_engine)
-    add_test(NAME zenith_render_packet_benchmark COMMAND zenith_render_packet_benchmark)
+
+    add_executable(zenith_simulation_benchmark tests/engine/SimulationBenchmark.cpp)
+    target_link_libraries(zenith_simulation_benchmark PRIVATE zenith_engine)
+
+    add_executable(zenith_benchmark_tests tests/engine/BenchmarkTests.cpp)
+    target_link_libraries(zenith_benchmark_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_benchmark COMMAND zenith_benchmark_tests)
 
     add_executable(zenith_component_editor_tests tests/editor/ComponentEditorTests.cpp)
     target_link_libraries(zenith_component_editor_tests PRIVATE zenith_editor_app)
@@ -540,6 +680,7 @@ if(BUILD_TESTING)
     add_executable(zenith_command_history_tests
         tests/editor/CommandHistoryTests.cpp
         src/editor/document/CommandHistory.cpp
+        src/editor/document/PrefabAuthoring.cpp
     )
     target_include_directories(zenith_command_history_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(zenith_command_history_tests PRIVATE zenith_engine)
@@ -564,6 +705,7 @@ if(BUILD_TESTING)
     add_executable(zenith_project_asset_tests
         tests/editor/ProjectAssetTests.cpp
         src/editor/project/AssetCatalog.cpp
+        src/editor/project/ReflectionProbeBaker.cpp
     )
     target_include_directories(zenith_project_asset_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(zenith_project_asset_tests PRIVATE zenith_engine)
@@ -598,7 +740,7 @@ if(BUILD_TESTING)
 
     add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
     set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES
-        ENVIRONMENT "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=12"
+        ENVIRONMENT "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600"
         LABELS "vulkan;smoke"
         TIMEOUT 45
     )

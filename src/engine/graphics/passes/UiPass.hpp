@@ -31,6 +31,5 @@ class UiPass {
     VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
     bool m_initialized{false};
     bool m_frameActive{false};
-    size_t m_loadedFontCount{0};
     std::unordered_map<uint64_t, void*> m_fonts;
 };

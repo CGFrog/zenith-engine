@@ -73,7 +73,7 @@ class TrainingScene final : public ApplicationScene {
 
 ```cpp
 SceneResult TrainingScene::load(ApplicationContext& context) {
-    const std::filesystem::path assetRoot{ZENITH_ASSET_DIR};
+    const std::filesystem::path assetRoot = ::assetRoot();
     const SceneDocumentOptions options{.assetRoot = assetRoot};
     const auto result = SceneDocument::load(assetRoot / "scenes" / "training.zenith-scene",
                                             context.assets, options, context.scene);

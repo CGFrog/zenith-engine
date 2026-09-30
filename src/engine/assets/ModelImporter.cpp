@@ -46,6 +46,20 @@ const cgltf_accessor* findAttribute(const cgltf_primitive& primitive, cgltf_attr
     return nullptr;
 }
 
+const cgltf_accessor* findAttribute(const cgltf_morph_target& target, cgltf_attribute_type type) {
+    for (cgltf_size i = 0; i < target.attributes_count; ++i) {
+        if (target.attributes[i].type == type && target.attributes[i].index == 0) {
+            return target.attributes[i].data;
+        }
+    }
+    return nullptr;
+}
+
+constexpr cgltf_size maximumVertices = 4'000'000;
+constexpr cgltf_size maximumIndices = 12'000'000;
+constexpr cgltf_size maximumMorphTargets = 64;
+constexpr cgltf_size maximumTextureBytes = 512ull * 1024ull * 1024ull;
+
 void generateNormals(MeshAsset& mesh, uint32_t firstVertex, uint32_t vertexCount, uint32_t firstIndex) {
     for (uint32_t i = 0; i < vertexCount; ++i) {
         mesh.vertices[firstVertex + i].normal = glm::vec3(0.0f);
@@ -147,6 +161,19 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
     }
 
     std::unique_ptr<cgltf_data, CgltfDeleter> data(raw);
+    for (cgltf_size viewIndex = 0; viewIndex < data->buffer_views_count; ++viewIndex) {
+        if (data->buffer_views[viewIndex].has_meshopt_compression) {
+            return {.error = "Meshopt-compressed glTF requires the optional Meshopt decoder: " + path.string()};
+        }
+    }
+    for (cgltf_size meshIndex = 0; meshIndex < data->meshes_count; ++meshIndex) {
+        for (cgltf_size primitiveIndex = 0; primitiveIndex < data->meshes[meshIndex].primitives_count;
+             ++primitiveIndex) {
+            if (data->meshes[meshIndex].primitives[primitiveIndex].has_draco_mesh_compression) {
+                return {.error = "Draco-compressed glTF requires the optional Draco decoder: " + path.string()};
+            }
+        }
+    }
     result = cgltf_load_buffers(&options, data.get(), path.string().c_str());
 
     if (result != cgltf_result_success) {
@@ -164,6 +191,9 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
         const cgltf_image& image = data->images[i];
         ImageDecodeResult decoded;
         if (image.buffer_view && image.buffer_view->buffer && image.buffer_view->buffer->data) {
+            if (image.buffer_view->size > maximumTextureBytes) {
+                return {.error = "Embedded texture exceeds the 512 MiB decoded-input limit: " + path.string()};
+            }
             const auto* bytes =
                 static_cast<const uint8_t*>(image.buffer_view->buffer->data) + image.buffer_view->offset;
             decoded =
@@ -241,6 +271,9 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
                 std::cerr << "Skipping primitive without POSITION vec3 in " << path << '\n';
                 continue;
             }
+            if (positions->count > maximumVertices || primitive.targets_count > maximumMorphTargets) {
+                return {.error = "glTF primitive exceeds vertex or morph-target safety limits: " + path.string()};
+            }
 
             const uint32_t firstVertex = static_cast<uint32_t>(mesh.vertices.size());
             const uint32_t vertexCount = static_cast<uint32_t>(positions->count);
@@ -284,6 +317,9 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
             }
 
             const cgltf_size count = primitive.indices ? primitive.indices->count : positions->count;
+            if (count > maximumIndices) {
+                return {.error = "glTF primitive exceeds the index safety limit: " + path.string()};
+            }
 
             for (cgltf_size i = 0; i < count; ++i) {
                 const cgltf_size localIndex = primitive.indices ? cgltf_accessor_read_index(primitive.indices, i) : i;
@@ -300,6 +336,38 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
             }
             if (texCoords && !sourceTangents) {
                 generateTangents(mesh, firstVertex, vertexCount, firstIndex);
+            }
+
+            if (mesh.morphTargets.size() < primitive.targets_count) {
+                mesh.morphTargets.resize(primitive.targets_count);
+            }
+            for (cgltf_size targetIndex = 0; targetIndex < primitive.targets_count; ++targetIndex) {
+                MorphTarget& target = mesh.morphTargets[targetIndex];
+                target.name = targetIndex < sourceMesh.target_names_count && sourceMesh.target_names[targetIndex]
+                                  ? sourceMesh.target_names[targetIndex]
+                                  : "Morph " + std::to_string(targetIndex);
+                target.positionDeltas.resize(mesh.vertices.size());
+                target.normalDeltas.resize(mesh.vertices.size());
+                target.tangentDeltas.resize(mesh.vertices.size());
+                const cgltf_morph_target& sourceTarget = primitive.targets[targetIndex];
+                const cgltf_accessor* positionDeltas = findAttribute(sourceTarget, cgltf_attribute_type_position);
+                const cgltf_accessor* normalDeltas = findAttribute(sourceTarget, cgltf_attribute_type_normal);
+                const cgltf_accessor* tangentDeltas = findAttribute(sourceTarget, cgltf_attribute_type_tangent);
+                for (cgltf_size vertexIndex = 0; vertexIndex < positions->count; ++vertexIndex) {
+                    float value[3]{};
+                    if (positionDeltas && vertexIndex < positionDeltas->count) {
+                        cgltf_accessor_read_float(positionDeltas, vertexIndex, value, 3);
+                        target.positionDeltas[firstVertex + vertexIndex] = {value[0], value[1], value[2]};
+                    }
+                    if (normalDeltas && vertexIndex < normalDeltas->count) {
+                        cgltf_accessor_read_float(normalDeltas, vertexIndex, value, 3);
+                        target.normalDeltas[firstVertex + vertexIndex] = {value[0], value[1], value[2]};
+                    }
+                    if (tangentDeltas && vertexIndex < tangentDeltas->count) {
+                        cgltf_accessor_read_float(tangentDeltas, vertexIndex, value, 3);
+                        target.tangentDeltas[firstVertex + vertexIndex] = {value[0], value[1], value[2]};
+                    }
+                }
             }
 
             MaterialHandle material = defaultMaterial;
@@ -349,6 +417,12 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
             if (meshIndex < meshes.size() && meshes[meshIndex]) {
                 node.mesh = meshes[meshIndex];
                 renderable = true;
+                const cgltf_float* weights = source.weights_count > 0 ? source.weights : source.mesh->weights;
+                const cgltf_size weightCount =
+                    source.weights_count > 0 ? source.weights_count : source.mesh->weights_count;
+                if (weightCount > 0 && weights != nullptr) {
+                    node.morphWeights.assign(weights, weights + weightCount);
+                }
             }
         }
         if (source.skin) {
@@ -384,14 +458,16 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
         for (cgltf_size channelIndex = 0; channelIndex < sourceAnimation.channels_count; ++channelIndex) {
             const cgltf_animation_channel& sourceChannel = sourceAnimation.channels[channelIndex];
             if (!sourceChannel.target_node || !sourceChannel.sampler || !sourceChannel.sampler->input ||
-                !sourceChannel.sampler->output || sourceChannel.target_path == cgltf_animation_path_type_weights) {
+                !sourceChannel.sampler->output) {
                 continue;
             }
             AnimationChannel channel;
             channel.targetNode = static_cast<uint32_t>(sourceChannel.target_node - data->nodes);
             channel.path = sourceChannel.target_path == cgltf_animation_path_type_rotation ? AnimationPath::Rotation
                            : sourceChannel.target_path == cgltf_animation_path_type_scale  ? AnimationPath::Scale
-                                                                                           : AnimationPath::Translation;
+                           : sourceChannel.target_path == cgltf_animation_path_type_weights
+                               ? AnimationPath::Weights
+                               : AnimationPath::Translation;
             channel.interpolation = sourceChannel.sampler->interpolation == cgltf_interpolation_type_step
                                         ? AnimationInterpolation::Step
                                     : sourceChannel.sampler->interpolation == cgltf_interpolation_type_cubic_spline
@@ -402,34 +478,69 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
             if (input.type != cgltf_type_scalar || input.count == 0) {
                 continue;
             }
-            const cgltf_size components = channel.path == AnimationPath::Rotation ? 4 : 3;
+            const cgltf_size components =
+                channel.path == AnimationPath::Weights
+                    ? (sourceChannel.target_node->mesh && sourceChannel.target_node->mesh->primitives_count > 0
+                           ? sourceChannel.target_node->mesh->primitives[0].targets_count
+                           : 0)
+                : channel.path == AnimationPath::Rotation ? 4
+                                                          : 3;
+            if (components == 0 || components > maximumMorphTargets) {
+                return {.error = "Animation weight channel exceeds morph-target safety limits: " + path.string()};
+            }
             channel.times.resize(input.count);
-            channel.values.resize(input.count);
-            if (channel.interpolation == AnimationInterpolation::CubicSpline) {
-                channel.inTangents.resize(input.count);
-                channel.outTangents.resize(input.count);
+            if (channel.path == AnimationPath::Weights) {
+                channel.weightValues.assign(input.count, std::vector<float>(components));
+                if (channel.interpolation == AnimationInterpolation::CubicSpline) {
+                    channel.weightInTangents.assign(input.count, std::vector<float>(components));
+                    channel.weightOutTangents.assign(input.count, std::vector<float>(components));
+                }
+            } else {
+                channel.values.resize(input.count);
+                if (channel.interpolation == AnimationInterpolation::CubicSpline) {
+                    channel.inTangents.resize(input.count);
+                    channel.outTangents.resize(input.count);
+                }
             }
             for (cgltf_size key = 0; key < input.count; ++key) {
                 cgltf_accessor_read_float(&input, key, &channel.times[key], 1);
                 clip.duration = std::max(clip.duration, channel.times[key]);
                 const cgltf_size valueIndex =
                     channel.interpolation == AnimationInterpolation::CubicSpline ? key * 3 + 1 : key;
-                float value[4]{};
-                if (valueIndex >= output.count || !cgltf_accessor_read_float(&output, valueIndex, value, components)) {
+                std::vector<float> value(components);
+                const cgltf_size flatValueIndex =
+                    channel.path == AnimationPath::Weights ? valueIndex * components : valueIndex;
+                if (flatValueIndex >= output.count ||
+                    (channel.path == AnimationPath::Weights
+                         ? !cgltf_accessor_read_float(&output, flatValueIndex, value.data(), components)
+                         : !cgltf_accessor_read_float(&output, valueIndex, value.data(), components))) {
                     return {.error = "Invalid animation output in " + path.string()};
                 }
-                channel.values[key] = {value[0], value[1], value[2], components == 4 ? value[3] : 0.0f};
+                if (channel.path == AnimationPath::Weights) {
+                    channel.weightValues[key] = value;
+                } else {
+                    channel.values[key] = {value[0], value[1], value[2], components == 4 ? value[3] : 0.0f};
+                }
                 if (channel.interpolation == AnimationInterpolation::CubicSpline) {
-                    float inTangent[4]{};
-                    float outTangent[4]{};
-                    if (!cgltf_accessor_read_float(&output, key * 3, inTangent, components) ||
-                        !cgltf_accessor_read_float(&output, key * 3 + 2, outTangent, components)) {
+                    std::vector<float> inTangent(components);
+                    std::vector<float> outTangent(components);
+                    const cgltf_size tangentBase =
+                        channel.path == AnimationPath::Weights ? key * 3 * components : key * 3;
+                    if (!cgltf_accessor_read_float(&output, tangentBase, inTangent.data(), components) ||
+                        !cgltf_accessor_read_float(
+                            &output, tangentBase + (channel.path == AnimationPath::Weights ? 2 * components : 2),
+                            outTangent.data(), components)) {
                         return {.error = "Invalid cubic animation tangents in " + path.string()};
                     }
-                    channel.inTangents[key] = {inTangent[0], inTangent[1], inTangent[2],
-                                               components == 4 ? inTangent[3] : 0.0f};
-                    channel.outTangents[key] = {outTangent[0], outTangent[1], outTangent[2],
-                                                components == 4 ? outTangent[3] : 0.0f};
+                    if (channel.path == AnimationPath::Weights) {
+                        channel.weightInTangents[key] = std::move(inTangent);
+                        channel.weightOutTangents[key] = std::move(outTangent);
+                    } else {
+                        channel.inTangents[key] = {inTangent[0], inTangent[1], inTangent[2],
+                                                   components == 4 ? inTangent[3] : 0.0f};
+                        channel.outTangents[key] = {outTangent[0], outTangent[1], outTangent[2],
+                                                    components == 4 ? outTangent[3] : 0.0f};
+                    }
                 }
             }
             clip.channels.push_back(std::move(channel));

@@ -90,12 +90,14 @@ SceneResult ApplicationSession::start() {
 void ApplicationSession::update(const InputState& input, float deltaSeconds) {
     if (m_activeScene) {
         m_activeScene->update(m_context, input, deltaSeconds);
+        m_sceneAssets = m_context.assets.leaseSceneAssets(m_context.scene);
     }
 }
 
 void ApplicationSession::fixedUpdate(const InputState& input, float deltaSeconds) {
     if (m_activeScene) {
         m_activeScene->fixedUpdate(m_context, input, deltaSeconds);
+        m_sceneAssets = m_context.assets.leaseSceneAssets(m_context.scene);
     }
 }
 
@@ -110,6 +112,7 @@ bool ApplicationSession::beginFixedUpdate() {
 void ApplicationSession::drawUi() {
     if (m_activeScene) {
         m_activeScene->drawUi(m_context);
+        m_sceneAssets = m_context.assets.leaseSceneAssets(m_context.scene);
     }
 }
 
@@ -170,6 +173,8 @@ SceneResult ApplicationSession::activate(SceneKey scene) {
         return result;
     }
 
+    m_sceneAssets = m_context.assets.leaseSceneAssets(m_context.scene);
+
     return {.success = true};
 }
 
@@ -194,6 +199,7 @@ SceneResult ApplicationSession::transition(SceneKey scene) {
     m_context.audio.stopSceneVoices();
     m_context.physics.clear();
     m_context.scene.replaceWith(std::move(stagedScene));
+    m_sceneAssets = m_context.assets.leaseSceneAssets(m_context.scene);
     m_activeScene = std::move(candidate);
     return {.success = true};
 }
@@ -207,4 +213,5 @@ void ApplicationSession::deactivate() {
     m_context.audio.stopSceneVoices();
     m_context.physics.clear();
     m_context.scene.clear();
+    m_sceneAssets.clear();
 }

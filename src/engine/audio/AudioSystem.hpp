@@ -5,9 +5,11 @@
 #include <cstdint>
 #include <filesystem>
 #include <glm/glm.hpp>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
+#include <vector>
 
 class Scene;
 
@@ -42,7 +44,25 @@ struct AudioConfig {
     uint32_t bufferFrames{512};
     uint32_t streamingBufferFrames{48'000};
     uint32_t maxVoices{64};
+    uint64_t decodedAudioBudgetBytes{std::numeric_limits<uint64_t>::max()};
     bool outputEnabled{true};
+};
+
+struct AudioAssetCollectionResult {
+    uint32_t clipsEvicted{0};
+    uint32_t streamsEvicted{0};
+    uint64_t bytesFreed{0};
+    uint64_t bytesRetained{0};
+    bool budgetSatisfied{true};
+};
+
+struct AudioAssetDiagnostic {
+    bool streaming{false};
+    uint32_t index{0};
+    uint32_t generation{0};
+    uint32_t strongReferences{0};
+    uint64_t decodedBytes{0};
+    std::string source;
 };
 
 struct AudioResult {
@@ -125,6 +145,9 @@ class AudioSystem {
     // Advances playback state in null-output mode; device-backed playback is
     // advanced exclusively by the audio callback.
     void update(float deltaSeconds);
+    AudioAssetCollectionResult collectUnusedAssets(bool force = false);
+    uint64_t decodedAudioBytes() const;
+    std::vector<AudioAssetDiagnostic> assetDiagnostics() const;
     bool hasOutputDevice() const;
     const AudioConfig& config() const;
     void mix(float* interleavedStereo, size_t frameCount);

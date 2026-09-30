@@ -73,23 +73,21 @@ scene. Follow
 
 ## Runtime files
 
-The executable needs its copied assets and compiled shaders:
+The executable needs its copied assets and compiled shaders. The project-level
+CPack rules assemble these automatically:
 
 ```text
-build/Release/
+archive root/
 |- zenith_fps_game.exe
-`- required runtime DLLs, if any
-build/assets/
-`- models, scenes, textures, and audio
-build/shaders/
-`- compiled .spv files
+|- assets/     models, scenes, textures, and audio
+|- shaders/    compiled .spv files
+|- licenses/
+`- content-manifest.json
 ```
 
-The current build embeds absolute build-tree paths through
-`ZENITH_ASSET_DIR` and `ZENITH_SHADER_DIR`; it is suitable for local development
-but is not yet a relocatable installer. Treat deployment path configuration and
-asset packaging as a separate release milestone rather than hard-coding new
-paths inside engine subsystems.
+Resolve content with the engine `ResourceLocator`, never a source/build path.
+See [Release packaging](../../RELEASING.md) for archive generation and the
+clean-extraction verification command.
 
 ## Where to go next
 

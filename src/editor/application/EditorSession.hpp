@@ -11,6 +11,8 @@
 #include "editor/project/ThumbnailCache.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "engine/application/Application.hpp"
+#include "engine/jobs/JobSystem.hpp"
+#include "engine/scene/AdditiveSceneManager.hpp"
 
 #include <array>
 #include <cstdint>
@@ -147,4 +149,11 @@ class EditorSession final : public ApplicationScene {
     bool m_assetCatalogInitialized{false};
     bool m_smokeScenario{false};
     uint32_t m_smokeFrame{0};
+    std::optional<AssetCollectionResult> m_lastAssetCollection;
+    std::optional<AudioAssetCollectionResult> m_lastAudioCollection;
+    std::filesystem::path m_smokeScenePath;
+    std::unique_ptr<JobSystem> m_smokeJobs;
+    std::unique_ptr<AdditiveSceneManager> m_smokeLayers;
+    std::optional<SceneInstanceId> m_smokeStreamInstance;
+    bool m_smokeStreamCompleted{false};
 };

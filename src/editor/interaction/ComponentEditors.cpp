@@ -147,4 +147,16 @@ bool drawAnimation(AnimationComponent& component, const ModelAsset* model) {
     changed |= ImGui::SliderFloat("Time", &component.time, 0.0f, std::max(duration, 0.001f), "%.3f s");
     return changed;
 }
+
+bool drawMorphWeights(MorphWeightsComponent& component) {
+    bool changed = false;
+    for (size_t index = 0; index < component.weights.size(); ++index) {
+        const std::string label = "Target " + std::to_string(index);
+        changed |= ImGui::SliderFloat(label.c_str(), &component.weights[index], -1.0f, 1.0f);
+    }
+    if (component.weights.empty()) {
+        ImGui::TextDisabled("Model node has no morph targets.");
+    }
+    return changed;
+}
 } // namespace ComponentEditors

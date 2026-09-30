@@ -39,14 +39,46 @@ enum class BloomQuality : uint8_t {
     Downsampled,
 };
 
+enum class EnvironmentQuality : uint8_t {
+    Hemisphere,
+    ImageBasedLow,
+    ImageBasedHigh,
+};
+
+enum class LocalLightingQuality : uint8_t {
+    Disabled,
+    Tiled32,
+    Tiled64,
+};
+
+struct RenderPassBudget {
+    double cpuMilliseconds{0.0};
+    double gpuMilliseconds{0.0};
+};
+
+struct RenderPassBudgets {
+    RenderPassBudget shadow;
+    RenderPassBudget opaque;
+    RenderPassBudget blended;
+    RenderPassBudget bloom;
+    RenderPassBudget ui;
+    RenderPassBudget upload;
+};
+
 struct RenderSettings {
     AntialiasingMode antialiasing{AntialiasingMode::Fxaa};
     ShadowQuality shadows{ShadowQuality::Single};
     LightingQuality lighting{LightingQuality::PhysicallyBased};
     BloomQuality bloom{BloomQuality::Off};
+    EnvironmentQuality environment{EnvironmentQuality::Hemisphere};
+    LocalLightingQuality localLights{LocalLightingQuality::Tiled32};
+    bool reflectionProbes{true};
+    bool preferGpuDrivenSubmission{false};
     float cascadeSplitLambda{0.65f};
     float cascadeBlendFraction{0.10f};
     bool visualizeShadowCascades{false};
+    // Zero disables enforcement for that processor/pass pair.
+    RenderPassBudgets budgets;
 };
 
 struct RenderCapabilities {
@@ -54,9 +86,23 @@ struct RenderCapabilities {
     bool multiDrawIndirect{false};
     bool indirectDrawCount{false};
     bool gpuDrivenPath{false};
+    bool imageBasedLighting{false};
+    bool reflectionProbes{false};
+    uint32_t maximumLocalLightsPerTile{32};
 };
 
 struct RenderStats {
+    // CPU fields describe this submission; GPU fields identify a retired one.
+    uint64_t submittedFrame{0};
+    uint64_t gpuSampleFrame{0};
+    bool frameSubmitted{false};
+    bool gpuTimingsValid{false};
+    bool uploadTimingsValid{false};
+    double cpuFrameWaitMilliseconds{0.0};
+    double cpuAcquireMilliseconds{0.0};
+    double cpuPresentMilliseconds{0.0};
+    double cpuPostMilliseconds{0.0};
+    uint64_t uploadBytes{0};
     uint32_t renderableCount{0};
     uint32_t visibleCount{0};
     uint32_t culledCount{0};
@@ -65,8 +111,21 @@ struct RenderStats {
     uint64_t triangleCount{0};
     double gpuFrameMilliseconds{0.0};
     double gpuShadowMilliseconds{0.0};
+    double gpuOpaqueMilliseconds{0.0};
+    double gpuBlendedMilliseconds{0.0};
     double gpuSceneMilliseconds{0.0};
     double gpuPostMilliseconds{0.0};
+    double gpuBloomMilliseconds{0.0};
+    double gpuUiMilliseconds{0.0};
+    double gpuUploadMilliseconds{0.0};
+    double cpuShadowMilliseconds{0.0};
+    double cpuOpaqueMilliseconds{0.0};
+    double cpuBlendedMilliseconds{0.0};
+    double cpuBloomMilliseconds{0.0};
+    double cpuUiMilliseconds{0.0};
+    double cpuUploadMilliseconds{0.0};
+    uint32_t localLightCount{0};
+    uint32_t discardedLightAssignments{0};
     double cpuRenderPacketMilliseconds{0.0};
     bool renderPacketsRebuilt{false};
 };
