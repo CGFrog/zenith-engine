@@ -8,14 +8,31 @@
 namespace {
 constexpr uint32_t surfaceRetryDelayMs = 16;
 
-void prepareColorAttachment(VkCommandBuffer commandBuffer, VkImage image) {
+void applyDiagnosticOverrides(RenderRuntime& rendering) {
+    RenderSettings settings = rendering.settings();
+    if (SDL_getenv("ZENITH_FORCE_TAA") != nullptr) {
+        settings.antialiasing = AntialiasingMode::Taa;
+    }
+    if (SDL_getenv("ZENITH_FORCE_HIGH_QUALITY") != nullptr) {
+        settings.antialiasing = AntialiasingMode::Taa;
+        settings.ambientOcclusion = AmbientOcclusionQuality::FullResolution;
+        settings.reflections = ReflectionQuality::ScreenSpaceFullResolution;
+    }
+    if (SDL_getenv("ZENITH_FORCE_DYNAMIC_RESOLUTION") != nullptr) {
+        settings.dynamicResolution.enabled = true;
+        settings.dynamicResolution.targetGpuMilliseconds = 0.01f;
+    }
+    rendering.setSettings(settings);
+}
+
+void applyGraphBarrier(VkCommandBuffer commandBuffer, VkImage image, const RenderGraphBarrier& planned) {
     VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                  .srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-                                  .srcAccessMask = 0,
-                                  .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                  .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                                  .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-                                  .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                  .srcStageMask = planned.sourceStages,
+                                  .srcAccessMask = planned.sourceAccess,
+                                  .dstStageMask = planned.destinationStages,
+                                  .dstAccessMask = planned.destinationAccess,
+                                  .oldLayout = static_cast<VkImageLayout>(planned.oldLayout),
+                                  .newLayout = static_cast<VkImageLayout>(planned.newLayout),
                                   .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                                   .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
                                   .image = image,
@@ -41,11 +58,27 @@ RenderCapabilities detectRenderCapabilities(VkPhysicalDevice device) {
             .indirectDrawCount = vulkan12.drawIndirectCount == VK_TRUE,
             .gpuDrivenPath = false};
 }
+
+uint64_t renderGraphSignature(VkExtent2D extent, bool viewport, const RenderSettings& settings) {
+    uint64_t value = (static_cast<uint64_t>(extent.width) << 32u) | extent.height;
+    value ^= static_cast<uint64_t>(viewport) << 63u;
+    value ^= static_cast<uint64_t>(settings.bloom) << 4u;
+    value ^= static_cast<uint64_t>(settings.antialiasing) << 8u;
+    value ^= static_cast<uint64_t>(settings.ambientOcclusion) << 12u;
+    value ^= static_cast<uint64_t>(settings.reflections) << 16u;
+    return value;
+}
 } // namespace
 
 bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExecutor& frameTasks) {
     m_rendering = &rendering;
     m_frameTasks = &frameTasks;
+    m_pipelineCreationMilliseconds = 0.0;
+    m_pipelineFirstUseMilliseconds = 0.0;
+    m_prewarmedPipelineCount = 0;
+    m_pipelineCacheWarm = false;
+    m_pipelineFirstUsePending = true;
+    applyDiagnosticOverrides(rendering);
     if (!initContext(window)) {
         return false;
     }
@@ -53,6 +86,8 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
     rendering.m_capabilities.imageBasedLighting = true;
     rendering.m_capabilities.reflectionProbes = true;
     rendering.m_capabilities.maximumLocalLightsPerTile = 64;
+    rendering.m_capabilities.dedicatedTransferQueue = m_context.hasDedicatedTransferQueue();
+    rendering.m_capabilities.timelineTransfers = m_context.timelineSemaphoreSupported();
     if (!createSwapchainResources(window)) {
         return false;
     }
@@ -63,10 +98,15 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
                                m_swapchain.extent())) {
         return false;
     }
+    m_pipelineCacheWarm = m_context.pipelineCacheWarm();
+    const auto pipelineCreationBegin = std::chrono::steady_clock::now();
     if (!m_meshPass.init(m_context, m_swapchain.format(), m_swapchain.depthFormat(), framesInFlight,
                          m_viewportTarget.extent(), m_viewportTarget.depthView())) {
         return false;
     }
+    m_pipelineCreationMilliseconds =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pipelineCreationBegin).count();
+    m_prewarmedPipelineCount = m_meshPass.prewarmedPipelineCount();
     rendering.m_capabilities.gpuDrivenPath = m_meshPass.gpuDrivenSupported();
     m_currentFrame = 0;
     m_submittedFrames = 0;
@@ -118,6 +158,7 @@ void Renderer::destroySwapchainResources() {
 }
 
 bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager& assets) {
+    applyDiagnosticOverrides(*m_rendering);
     const FrameStatus surfaceStatus = prepareSurface(window);
     if (surfaceStatus != FrameStatus::Ready) {
         m_uiPass.cancelFrame();
@@ -160,15 +201,28 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
         m_uiPass.cancelFrame();
         return acquireStatus == FrameStatus::Skipped;
     }
+    const auto recordBegin = std::chrono::steady_clock::now();
     if (!recordFrame(frame, imageIndex, scene, assets)) {
         m_uiPass.cancelFrame();
         return false;
     }
-    if (!frame.submit(m_context.device(), m_context.gfxQueue(), m_swapchain.renderComplete(imageIndex))) {
+    const double recordMilliseconds =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - recordBegin).count();
+    if (m_pipelineFirstUsePending) {
+        m_pipelineFirstUseMilliseconds = recordMilliseconds;
+        m_pipelineFirstUsePending = false;
+    }
+    if (!frame.submit(m_context.device(), m_context.gfxQueue(), m_swapchain.renderComplete(imageIndex),
+                      m_meshPass.uploadTimelineSemaphore(), m_meshPass.requiredUploadTimelineValue(),
+                      m_meshPass.textureUploadTimelineSemaphore(), m_meshPass.requiredTextureUploadTimelineValue())) {
         return false;
     }
     const uint64_t submittedFrame = ++m_submittedFrames;
-    frame.markSubmitted(submittedFrame, m_rendering->m_settings.bloom != BloomQuality::Off);
+    frame.markSubmitted(submittedFrame, m_rendering->m_settings.bloom != BloomQuality::Off,
+                        m_rendering->m_settings.antialiasing == AntialiasingMode::Taa,
+                        m_rendering->m_settings.ambientOcclusion != AmbientOcclusionQuality::Off,
+                        m_rendering->m_settings.reflections != ReflectionQuality::ProbesOnly,
+                        m_rendering->m_stats.uploadBytes != 0);
     const auto presentBegin = std::chrono::steady_clock::now();
     const bool presented = presentFrame(imageIndex);
     const double presentMilliseconds =
@@ -190,6 +244,24 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuPostMilliseconds = gpuTimings.postMilliseconds;
     stats.gpuUiMilliseconds = gpuTimings.uiMilliseconds;
     stats.gpuCullingMilliseconds = gpuTimings.cullingMilliseconds;
+    stats.gpuTemporalMilliseconds = gpuTimings.temporalMilliseconds;
+    stats.gpuAmbientOcclusionMilliseconds = gpuTimings.ambientOcclusionMilliseconds;
+    stats.gpuReflectionsMilliseconds = gpuTimings.reflectionsMilliseconds;
+    stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
+    const StreamingStats& streaming = assets.streaming().stats();
+    stats.streamingDecodedBytes = streaming.decodedBytes;
+    stats.streamingUploadedBytes = streaming.uploadedBytes;
+    stats.streamingDecodeBacklogBytes = streaming.decodeBacklogBytes;
+    stats.streamingUploadBacklogBytes = streaming.uploadBacklogBytes;
+    stats.streamingCpuPeakBytes = streaming.peakCpuResidentBytes;
+    stats.streamingGpuPeakBytes = streaming.peakGpuResidentBytes;
+    stats.streamingResidencyMisses = streaming.residencyMisses;
+    stats.streamingHardBudgetFailures = streaming.hardBudgetFailures;
+    stats.pipelineCacheWarm = m_pipelineCacheWarm;
+    stats.pipelineCreationEvents = m_prewarmedPipelineCount;
+    stats.pipelineCreationMilliseconds = m_pipelineCreationMilliseconds;
+    stats.pipelineFirstUseEvents = m_prewarmedPipelineCount;
+    stats.pipelineFirstUseMilliseconds = m_pipelineFirstUseMilliseconds;
     m_currentFrame = (m_currentFrame + 1) % framesInFlight;
     return presented;
 }
@@ -288,6 +360,9 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
     const VkImage colorImage = useViewport ? m_viewportTarget.image(m_currentFrame) : image;
     const VkImageView colorView = useViewport ? m_viewportTarget.view(m_currentFrame) : view;
     const VkExtent2D extent = useViewport ? m_viewportTarget.extent() : m_swapchain.extent();
+    if (!updateRenderGraphPlan(extent, useViewport)) {
+        return false;
+    }
     const VkImageLayout oldLayout =
         useViewport ? m_viewportTarget.oldLayout(m_currentFrame) : VK_IMAGE_LAYOUT_UNDEFINED;
     if (!m_meshPass.record(frame.commandBuffer(), colorImage, colorView, m_viewportTarget.depthImage(),
@@ -295,9 +370,25 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
                            *m_frameTasks, frame.timestampQueries(), oldLayout)) {
         return false;
     }
+    RenderStats& graphStats = m_rendering->m_stats;
+    graphStats.renderGraphBarrierCount = m_renderGraphStatistics.barrierCount;
+    graphStats.renderGraphQueueTransfers = m_renderGraphStatistics.queueTransferCount;
+    graphStats.transientRequestedBytes = m_renderGraphStatistics.requestedTransientBytes;
+    graphStats.transientCommittedBytes = m_renderGraphStatistics.committedTransientBytes;
+    graphStats.transientAliasedBytes = m_renderGraphStatistics.aliasedTransientBytes;
+    graphStats.transientPeakBytes = m_renderGraphStatistics.peakTransientBytes;
     if (useViewport) {
-        m_viewportTarget.transitionForSampling(frame.commandBuffer(), m_currentFrame);
-        prepareColorAttachment(frame.commandBuffer(), image);
+        if (!m_viewportToUiBarrier || !m_swapchainToUiBarrier) {
+            return false;
+        }
+        applyGraphBarrier(frame.commandBuffer(), colorImage, *m_viewportToUiBarrier);
+        m_viewportTarget.markWritten(m_currentFrame);
+        applyGraphBarrier(frame.commandBuffer(), image, *m_swapchainToUiBarrier);
+    } else {
+        if (!m_swapchainToUiBarrier) {
+            return false;
+        }
+        applyGraphBarrier(frame.commandBuffer(), image, *m_swapchainToUiBarrier);
     }
     const auto uiCpuBegin = std::chrono::steady_clock::now();
     if (!m_uiPass.record(frame.commandBuffer(), image, view, m_swapchain.extent(), useViewport)) {
@@ -307,6 +398,167 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - uiCpuBegin).count();
     frame.writeTimestamp(5, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     return frame.endRecording();
+}
+
+bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
+    const uint64_t signature = renderGraphSignature(extent, useViewport, m_rendering->settings());
+    if (signature != m_renderGraphSignature) {
+        RenderGraph graph;
+        const uint64_t pixels = static_cast<uint64_t>(extent.width) * extent.height;
+        const auto image = [&](uint32_t format, uint64_t usage, uint64_t bytes) {
+            return RenderGraphImageDescription{.format = format,
+                                               .width = extent.width,
+                                               .height = extent.height,
+                                               .usage = usage,
+                                               .requestedBytes = bytes,
+                                               .alignment = 256};
+        };
+        const auto swapchain =
+            graph.importImage("swapchain", image(m_swapchain.format(), 1, 0), VK_IMAGE_LAYOUT_UNDEFINED);
+        const auto output = useViewport ? graph.importImage("editor viewport", image(m_swapchain.format(), 3, 0),
+                                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                                        : swapchain;
+        const auto depth =
+            graph.importImage("scene depth", image(m_swapchain.depthFormat(), 5, 0), VK_IMAGE_LAYOUT_UNDEFINED);
+        const auto shadow = graph.importImage("shadow atlas", image(VK_FORMAT_D32_SFLOAT, 5, 0),
+                                              VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+        const auto history = graph.importImage("temporal history", image(PostProcessPass::sceneFormat, 5, 0),
+                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        const auto probeCache = graph.importImage("reflection probe cache", image(PostProcessPass::sceneFormat, 5, 0),
+                                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        const RenderGraphQueue uploadQueue = m_rendering->capabilities().dedicatedTransferQueue
+                                                 ? RenderGraphQueue::Transfer
+                                                 : RenderGraphQueue::Graphics;
+        const auto meshAssets =
+            graph.importBuffer("mesh asset buffers", {.size = 0, .usage = 1, .alignment = 256}, uploadQueue);
+        const auto textureAssets = graph.importImage("texture asset images", image(VK_FORMAT_R8G8B8A8_UNORM, 5, 0),
+                                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, uploadQueue);
+        const auto hdr = graph.createTransientImage(
+            "HDR scene", image(PostProcessPass::sceneFormat, 7, pixels * sizeof(uint16_t) * 4));
+        const auto motion = graph.createTransientImage(
+            "motion and reactive mask", image(PostProcessPass::motionFormat, 5, pixels * sizeof(uint16_t) * 4));
+        const auto ambientOcclusion =
+            graph.createTransientImage("ambient occlusion", image(PostProcessPass::ambientOcclusionFormat, 5, pixels));
+        const auto reflections = graph.createTransientImage(
+            "screen-space reflections", image(PostProcessPass::sceneFormat, 5, pixels * sizeof(uint16_t) * 4));
+        const RenderGraphAccess uploadAccesses[]{
+            {meshAssets, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+             VK_IMAGE_LAYOUT_UNDEFINED},
+            {textureAssets, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+             VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}};
+        graph.addPass("asset uploads", uploadQueue, uploadAccesses);
+        const RenderGraphAccess shadowAccesses[]{
+            {shadow, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL},
+            {meshAssets, RenderGraphAccessMode::Read,
+             VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
+             VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
+        graph.addPass("directional shadows", RenderGraphQueue::Graphics, shadowAccesses);
+        const RenderGraphAccess opaqueAccesses[]{
+            {shadow, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+            {hdr, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+            {motion, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+            {depth, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL},
+            {meshAssets, RenderGraphAccessMode::Read,
+             VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
+             VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED},
+            {textureAssets, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {probeCache, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        graph.addPass("opaque and blended scene", RenderGraphQueue::Graphics, opaqueAccesses);
+        if (m_rendering->settings().bloom != BloomQuality::Off) {
+            const RenderGraphAccess bloomAccesses[]{
+                {hdr, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                 VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL}};
+            graph.addPass("bloom downsample", RenderGraphQueue::Graphics, bloomAccesses);
+        }
+        const RenderGraphAccess ambientOcclusionAccesses[]{
+            {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+            {ambientOcclusion, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+        graph.addPass("ambient occlusion", RenderGraphQueue::Graphics, ambientOcclusionAccesses);
+        const RenderGraphAccess reflectionAccesses[]{
+            {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+            {reflections, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+        graph.addPass("screen-space reflections", RenderGraphQueue::Graphics, reflectionAccesses);
+        const RenderGraphAccess postAccesses[]{
+            {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+            {history, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {ambientOcclusion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {reflections, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            {output, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+        graph.addPass("temporal resolve and tone map", RenderGraphQueue::Graphics, postAccesses);
+        RenderGraphPassHandle uiPass;
+        if (useViewport) {
+            const RenderGraphAccess uiAccesses[]{
+                {output, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {swapchain, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+            uiPass = graph.addPass("editor UI", RenderGraphQueue::Graphics, uiAccesses);
+        } else {
+            const RenderGraphAccess uiAccesses[]{
+                {swapchain, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+            uiPass = graph.addPass("runtime UI", RenderGraphQueue::Graphics, uiAccesses);
+        }
+        const RenderGraphCompileResult compiled = graph.compile();
+        if (!compiled) {
+            std::cerr << "Could not compile render graph: " << compiled.error << '\n';
+            return false;
+        }
+#ifndef NDEBUG
+        const RenderGraphCompileResult conservative = graph.compile(true);
+        if (!conservative || conservative.graph.executionOrder != compiled.graph.executionOrder ||
+            conservative.graph.statistics.barrierCount < compiled.graph.statistics.barrierCount) {
+            std::cerr << "Render graph conservative synchronization validation failed\n";
+            return false;
+        }
+#endif
+        m_renderGraphStatistics = compiled.graph.statistics;
+        m_viewportToUiBarrier.reset();
+        m_swapchainToUiBarrier.reset();
+        for (const RenderGraphBarrier& barrier : compiled.graph.barriers) {
+            if (barrier.destinationPass != uiPass) {
+                continue;
+            }
+            if (useViewport && barrier.resource == output) {
+                m_viewportToUiBarrier = barrier;
+            }
+            if (barrier.resource == swapchain) {
+                m_swapchainToUiBarrier = barrier;
+            }
+        }
+        m_renderGraphSignature = signature;
+    }
+    RenderStats& stats = m_rendering->m_stats;
+    stats.renderGraphBarrierCount = m_renderGraphStatistics.barrierCount;
+    stats.renderGraphQueueTransfers = m_renderGraphStatistics.queueTransferCount;
+    stats.transientRequestedBytes = m_renderGraphStatistics.requestedTransientBytes;
+    stats.transientCommittedBytes = m_renderGraphStatistics.committedTransientBytes;
+    stats.transientAliasedBytes = m_renderGraphStatistics.aliasedTransientBytes;
+    stats.transientPeakBytes = m_renderGraphStatistics.peakTransientBytes;
+    return true;
 }
 
 void Renderer::processUiEvent(const SDL_Event& event) {

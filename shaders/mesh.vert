@@ -2,6 +2,7 @@
 
 layout(set = 0, binding = 0) uniform CameraData {
     mat4 viewProjection;
+    mat4 previousViewProjection;
     mat4 lightViewProjections[3];
     vec4 cameraPosition;
     vec4 lightDirection;
@@ -14,6 +15,7 @@ layout(set = 0, binding = 0) uniform CameraData {
 
 struct RenderObject {
     mat4 model;
+    mat4 previousModel;
     uvec4 skin;
 };
 
@@ -43,6 +45,8 @@ layout(location = 0) out vec3 worldPosition;
 layout(location = 1) out vec3 worldNormal;
 layout(location = 2) out vec2 texCoord;
 layout(location = 3) out vec4 worldTangent;
+layout(location = 4) out vec4 currentClipPosition;
+layout(location = 5) out vec4 previousClipPosition;
 
 void main() {
     RenderObject object = objects.values[gl_InstanceIndex];
@@ -66,5 +70,7 @@ void main() {
     worldNormal = normalize(normalMatrix * inNormal);
     worldTangent = vec4(normalize(linearModel * inTangent.xyz), inTangent.w);
     texCoord = inTexCoord;
-    gl_Position = camera.viewProjection * world;
+    currentClipPosition = camera.viewProjection * world;
+    previousClipPosition = camera.previousViewProjection * object.previousModel * skin * vec4(inPosition, 1.0);
+    gl_Position = currentClipPosition;
 }

@@ -179,11 +179,12 @@ void GameplayScene::drawSettings(ApplicationContext& context) {
              UiAnchor::Center);
     ui.text({-105.0f, -465.0f}, "Settings", 44.0f, glm::vec4(1.0f), UiAnchor::Center);
     RenderSettings settings = context.rendering.settings();
-    const std::string aaLabel =
-        settings.antialiasing == AntialiasingMode::Off ? "Anti-aliasing: Off" : "Anti-aliasing: FXAA";
+    const std::string aaLabel = settings.antialiasing == AntialiasingMode::Off    ? "Anti-aliasing: Off"
+                                : settings.antialiasing == AntialiasingMode::Fxaa ? "Anti-aliasing: FXAA"
+                                                                                  : "Anti-aliasing: TAA";
     if (ui.button("settings.aa", {{-250.0f, -140.0f}, {500.0f, 68.0f}}, aaLabel, UiAnchor::Center)) {
-        settings.antialiasing =
-            settings.antialiasing == AntialiasingMode::Off ? AntialiasingMode::Fxaa : AntialiasingMode::Off;
+        settings.antialiasing = static_cast<AntialiasingMode>((static_cast<uint32_t>(settings.antialiasing) + 1) %
+                                                              (static_cast<uint32_t>(AntialiasingMode::Taa) + 1));
         context.rendering.setSettings(settings);
         m_settings->antialiasing = settings.antialiasing;
         persistSettings();

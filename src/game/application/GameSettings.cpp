@@ -39,7 +39,7 @@ GameSettingsResult loadGameSettings(const std::filesystem::path& path, GameSetti
             loaded.activeInputProfile = document.value("activeInputProfile", "Default");
         }
         if (antialiasing < static_cast<int>(AntialiasingMode::Off) ||
-            antialiasing > static_cast<int>(AntialiasingMode::Fxaa) || bloom < static_cast<int>(BloomQuality::Off) ||
+            antialiasing > static_cast<int>(AntialiasingMode::Taa) || bloom < static_cast<int>(BloomQuality::Off) ||
             bloom > static_cast<int>(BloomQuality::Downsampled) || loaded.lookSensitivity < 0.25f ||
             loaded.lookSensitivity > 4.0f || loaded.accessibility.uiScale < 0.75f ||
             loaded.accessibility.uiScale > 2.5f || loaded.accessibility.textScale < 0.75f ||

@@ -4,6 +4,7 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 struct ObjectRecord {
     mat4 model;
+    mat4 previousModel;
     vec4 bounds;
     uvec4 draw;
     uvec4 skin;
@@ -11,6 +12,7 @@ struct ObjectRecord {
 
 struct RenderObject {
     mat4 model;
+    mat4 previousModel;
     uvec4 skin;
 };
 
@@ -48,19 +50,54 @@ bool frustumVisible(vec4 clipCenter, float clipRadius) {
            clipCenter.z >= -clipRadius && clipCenter.z <= w + clipRadius;
 }
 
-bool historyOccluded(ObjectRecord object, vec4 clipCenter, float clipRadius) {
-    if (settings.counts.z == 0u || (object.draw.y & 1u) != 0u || clipCenter.w <= 0.0) {
+vec4 matrixRow(mat4 matrix, int row) {
+    return vec4(matrix[0][row], matrix[1][row], matrix[2][row], matrix[3][row]);
+}
+
+// Tests the bounding sphere against last frame's depth pyramid. Every clip
+// component is affine in world position, so over the sphere it lies within
+// center +/- radius * |row.xyz|. Dividing those ranges by both extremes of w
+// yields a screen rectangle and nearest depth that bound the whole sphere.
+bool historyOccluded(ObjectRecord object) {
+    if (settings.counts.z == 0u || (object.draw.y & 1u) != 0u) {
         return false;
     }
-    vec3 ndc = clipCenter.xyz / clipCenter.w;
-    vec2 uv = ndc.xy * 0.5 + 0.5;
-    float projectedRadius = clipRadius / max(abs(clipCenter.w), 0.0001);
-    vec2 pixelRadius = projectedRadius * vec2(textureSize(depthPyramid, 0));
-    float diameter = max(max(pixelRadius.x, pixelRadius.y) * 2.0, 1.0);
-    float mip = clamp(ceil(log2(diameter)), 0.0, float(settings.counts.y - 1u));
-    float historyDepth = textureLod(depthPyramid, uv, mip).r;
-    float nearestDepth = ndc.z - projectedRadius;
-    return nearestDepth > historyDepth + 0.001;
+    mat4 viewProjection = settings.viewProjection;
+    vec4 center = viewProjection * vec4(object.bounds.xyz, 1.0);
+    float radius = object.bounds.w;
+    vec4 extent = radius * vec4(length(matrixRow(viewProjection, 0).xyz), length(matrixRow(viewProjection, 1).xyz),
+                                length(matrixRow(viewProjection, 2).xyz), length(matrixRow(viewProjection, 3).xyz));
+    float nearestW = center.w - extent.w;
+    float farthestW = center.w + extent.w;
+    if (nearestW <= 0.0001) {
+        return false; // The sphere reaches the camera plane.
+    }
+    vec3 lower = (center.xyz - extent.xyz) / nearestW;
+    vec3 upper = (center.xyz + extent.xyz) / nearestW;
+    lower = min(lower, (center.xyz - extent.xyz) / farthestW);
+    upper = max(upper, (center.xyz + extent.xyz) / farthestW);
+
+    // Reversed Z: the nearest point has the largest depth.
+    float nearestDepth = upper.z;
+    ivec2 baseSize = textureSize(depthPyramid, 0);
+    vec2 uvLower = clamp(lower.xy * 0.5 + 0.5, 0.0, 1.0);
+    vec2 uvUpper = clamp(upper.xy * 0.5 + 0.5, 0.0, 1.0);
+    ivec2 pixelLower = min(ivec2(uvLower * vec2(baseSize)), baseSize - 1);
+    ivec2 pixelUpper = min(ivec2(uvUpper * vec2(baseSize)), baseSize - 1);
+
+    // Pick the level where the rectangle spans at most two texels per axis.
+    // Level texels cover base pixels p with min(p >> level, size - 1) == texel.
+    ivec2 span = pixelUpper - pixelLower;
+    int level = int(ceil(log2(float(max(max(span.x, span.y), 1)))));
+    level = clamp(level, 0, int(settings.counts.y) - 1);
+    ivec2 levelSize = textureSize(depthPyramid, level);
+    ivec2 texelLower = min(pixelLower >> level, levelSize - 1);
+    ivec2 texelUpper = min(pixelUpper >> level, levelSize - 1);
+    float farthestOccluder = min(min(texelFetch(depthPyramid, texelLower, level).r,
+                                     texelFetch(depthPyramid, ivec2(texelUpper.x, texelLower.y), level).r),
+                                 min(texelFetch(depthPyramid, ivec2(texelLower.x, texelUpper.y), level).r,
+                                     texelFetch(depthPyramid, texelUpper, level).r));
+    return nearestDepth < farthestOccluder;
 }
 
 void main() {
@@ -74,12 +111,13 @@ void main() {
     float clipRadius = max(length((settings.viewProjection * vec4(radius, 0.0, 0.0, 0.0)).xyz),
                            max(length((settings.viewProjection * vec4(0.0, radius, 0.0, 0.0)).xyz),
                                length((settings.viewProjection * vec4(0.0, 0.0, radius, 0.0)).xyz)));
-    if (!frustumVisible(clipCenter, clipRadius) || historyOccluded(object, clipCenter, clipRadius)) {
+    if (!frustumVisible(clipCenter, clipRadius) || historyOccluded(object)) {
         return;
     }
     uint batchIndex = object.draw.x;
     uint instanceOffset = atomicAdd(commands.values[batchIndex].instanceCount, 1u);
     uint outputIndex = commands.values[batchIndex].firstInstance + instanceOffset;
     visibleObjects.values[outputIndex].model = object.model;
+    visibleObjects.values[outputIndex].previousModel = object.previousModel;
     visibleObjects.values[outputIndex].skin = object.skin;
 }

@@ -2,8 +2,13 @@
 
 const float PI = 3.14159265359;
 
+// Quality variants baked in by MeshPass::meshPipelines so disabled paths compile out.
+layout(constant_id = 0) const bool PHYSICALLY_BASED_LIGHTING = true;
+layout(constant_id = 1) const int SHADOW_CASCADE_COUNT = 3;
+
 layout(set = 0, binding = 0) uniform CameraData {
     mat4 viewProjection;
+    mat4 previousViewProjection;
     mat4 lightViewProjections[3];
     vec4 cameraPosition;
     vec4 lightDirection;
@@ -41,7 +46,10 @@ layout(location = 0) in vec3 worldPosition;
 layout(location = 1) in vec3 worldNormal;
 layout(location = 2) in vec2 texCoord;
 layout(location = 3) in vec4 worldTangent;
+layout(location = 4) in vec4 currentClipPosition;
+layout(location = 5) in vec4 previousClipPosition;
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outMotionReactive;
 
 float distributionGGX(vec3 normal, vec3 halfVector, float roughness) {
     float alpha = roughness * roughness;
@@ -86,34 +94,35 @@ float sampleShadowCascade(vec3 position, vec3 normal, vec3 lightDirection, int c
         vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790));
     float angle = fract(sin(dot(position.xz, vec2(12.9898, 78.233))) * 43758.5453) * 6.28318530718;
     mat2 rotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
+    const int sampleCount = SHADOW_CASCADE_COUNT > 2 ? 16 : SHADOW_CASCADE_COUNT > 1 ? 8 : 4;
     float visibility = 0.0;
-    for (int sampleIndex = 0; sampleIndex < 16; ++sampleIndex) {
+    for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex) {
         vec2 offset = rotation * poissonDisk[sampleIndex] * texel * 1.75;
         visibility += texture(shadowMap, vec4(uv + offset, float(cascade), projected.z));
     }
-    return visibility / 16.0;
+    return visibility / float(sampleCount);
 }
 
 int shadowCascade(vec3 position) {
     float cameraDistance = length(position - camera.cameraPosition.xyz);
     int cascade = 0;
-    if (camera.shadowSettings.z > 1.5 && cameraDistance > camera.cascadeSplits.x) {
+    if (SHADOW_CASCADE_COUNT > 1 && cameraDistance > camera.cascadeSplits.x) {
         cascade = 1;
     }
-    if (camera.shadowSettings.z > 2.5 && cameraDistance > camera.cascadeSplits.y) {
+    if (SHADOW_CASCADE_COUNT > 2 && cameraDistance > camera.cascadeSplits.y) {
         cascade = 2;
     }
     return cascade;
 }
 
 float shadowVisibility(vec3 position, vec3 normal, vec3 lightDirection) {
-    if (camera.shadowSettings.y < 0.5) {
+    if (SHADOW_CASCADE_COUNT == 0 || camera.shadowSettings.y < 0.5) {
         return 1.0;
     }
     float cameraDistance = length(position - camera.cameraPosition.xyz);
     int cascade = shadowCascade(position);
     float visibility = sampleShadowCascade(position, normal, lightDirection, cascade);
-    int cascadeCount = int(camera.shadowSettings.z + 0.5);
+    const int cascadeCount = SHADOW_CASCADE_COUNT;
     if (cascade + 1 < cascadeCount) {
         float splitNear = cascade == 0 ? 0.0 : camera.cascadeSplits[cascade - 1];
         float splitFar = camera.cascadeSplits[cascade];
@@ -128,6 +137,22 @@ float shadowVisibility(vec3 position, vec3 normal, vec3 lightDirection) {
         visibility = mix(visibility, 1.0, smoothstep(lastSplit - fadeWidth, lastSplit, cameraDistance));
     }
     return visibility;
+}
+
+// Reflected fraction of one light's irradiance, excluding radiance and the cosine
+// term. The fast variant is unnormalized Lambert, matching its tuned brightness.
+vec3 directResponse(vec3 normal, vec3 viewDirection, vec3 lightDirection, float nDotV, float nDotL, vec3 albedo,
+                    float metallic, float roughness, vec3 reflectance, float viewGeometry) {
+    if (!PHYSICALLY_BASED_LIGHTING) {
+        return albedo;
+    }
+    vec3 halfVector = normalize(viewDirection + lightDirection);
+    vec3 fresnel = fresnelSchlick(max(dot(halfVector, viewDirection), 0.0), reflectance);
+    float distribution = distributionGGX(normal, halfVector, roughness);
+    float geometry = viewGeometry * geometrySchlickGGX(nDotL, roughness);
+    vec3 specular = distribution * geometry * fresnel / max(4.0 * nDotV * nDotL, 0.0001);
+    vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic) * albedo / PI;
+    return diffuse + specular;
 }
 
 void main() {
@@ -153,19 +178,16 @@ void main() {
 
     vec3 viewDirection = normalize(camera.cameraPosition.xyz - worldPosition);
     vec3 lightDirection = normalize(camera.lightDirection.xyz);
-    vec3 halfVector = normalize(viewDirection + lightDirection);
     float nDotV = max(dot(normal, viewDirection), 0.0);
     float nDotL = max(dot(normal, lightDirection), 0.0);
     vec3 reflectance = mix(vec3(0.04), albedo, metallic);
-    vec3 fresnel = fresnelSchlick(max(dot(halfVector, viewDirection), 0.0), reflectance);
-    float distribution = distributionGGX(normal, halfVector, roughness);
-    float geometry = geometrySchlickGGX(nDotV, roughness) * geometrySchlickGGX(nDotL, roughness);
-    vec3 specular = distribution * geometry * fresnel / max(4.0 * nDotV * nDotL, 0.0001);
-    vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic) * albedo / PI;
+    // The view half of the Smith geometry term is shared by every light.
+    float viewGeometry = geometrySchlickGGX(nDotV, roughness);
     float shadow = shadowVisibility(worldPosition, geometricNormal, lightDirection);
-    vec3 physicallyBasedDirect = (diffuse + specular) * camera.lightColor.rgb * camera.lightDirection.w * nDotL;
-    vec3 fastDirect = albedo * camera.lightColor.rgb * camera.lightDirection.w * nDotL;
-    vec3 direct = mix(fastDirect, physicallyBasedDirect, camera.renderingSettings.x) * shadow;
+    vec3 sunRadiance = camera.lightColor.rgb * camera.lightDirection.w;
+    vec3 direct = directResponse(normal, viewDirection, lightDirection, nDotV, nDotL, albedo, metallic, roughness,
+                                 reflectance, viewGeometry) *
+                  sunRadiance * nDotL * shadow;
     for (uint lightIndex = 0; lightIndex < camera.localLightCount.x; ++lightIndex) {
         vec3 toLight = camera.localLightPositionRange[lightIndex].xyz - worldPosition;
         float distanceToLight = length(toLight);
@@ -182,40 +204,43 @@ void main() {
                                       camera.localLightCone[lightIndex].x, coneCosine);
         }
         float localNDotL = max(dot(normal, localDirection), 0.0);
-        vec3 localHalf = normalize(viewDirection + localDirection);
-        vec3 localFresnel = fresnelSchlick(max(dot(localHalf, viewDirection), 0.0), reflectance);
-        float localDistribution = distributionGGX(normal, localHalf, roughness);
-        float localGeometry = geometrySchlickGGX(nDotV, roughness) * geometrySchlickGGX(localNDotL, roughness);
-        vec3 localSpecular = localDistribution * localGeometry * localFresnel /
-                             max(4.0 * nDotV * localNDotL, 0.0001);
-        vec3 localDiffuse = (vec3(1.0) - localFresnel) * (1.0 - metallic) * albedo / PI;
         vec3 localRadiance = camera.localLightColorIntensity[lightIndex].rgb *
                              camera.localLightColorIntensity[lightIndex].w * attenuation;
-        direct += mix(albedo * localRadiance * localNDotL,
-                      (localDiffuse + localSpecular) * localRadiance * localNDotL,
-                      camera.renderingSettings.x);
+        direct += directResponse(normal, viewDirection, localDirection, nDotV, localNDotL, albedo, metallic,
+                                 roughness, reflectance, viewGeometry) *
+                  localRadiance * localNDotL;
     }
     float hemisphereWeight = normal.y * 0.5 + 0.5;
     vec3 diffuseEnvironment = mix(camera.environmentGround.rgb, camera.environmentSky.rgb, hemisphereWeight);
-    vec3 indirectFresnel = fresnelSchlickRoughness(nDotV, reflectance, roughness);
-    vec3 indirectDiffuse = (vec3(1.0) - indirectFresnel) * (1.0 - metallic) * albedo * diffuseEnvironment *
-                           camera.environmentSky.w;
-    float specularLevel = roughness * 5.0;
-    int specularLow = int(floor(specularLevel));
-    int specularHigh = min(specularLow + 1, 5);
-    vec3 specularEnvironment = mix(camera.environmentSpecular[specularLow].rgb,
-                                   camera.environmentSpecular[specularHigh].rgb, fract(specularLevel));
-    vec3 indirectSpecular = indirectFresnel * specularEnvironment * camera.environmentGround.w *
-                            mix(1.0, 0.35, roughness);
-    vec3 physicallyBasedIndirect = indirectDiffuse + indirectSpecular;
-    vec3 fastIndirect = albedo * diffuseEnvironment * camera.environmentSky.w;
-    vec3 indirect = mix(fastIndirect, physicallyBasedIndirect, camera.renderingSettings.x) * occlusion;
+    vec3 indirect = albedo * diffuseEnvironment * camera.environmentSky.w;
+    if (PHYSICALLY_BASED_LIGHTING) {
+        vec3 indirectFresnel = fresnelSchlickRoughness(nDotV, reflectance, roughness);
+        vec3 indirectDiffuse = (vec3(1.0) - indirectFresnel) * (1.0 - metallic) * indirect;
+        float specularLevel = roughness * 5.0;
+        int specularLow = int(floor(specularLevel));
+        int specularHigh = min(specularLow + 1, 5);
+        vec3 specularEnvironment = mix(camera.environmentSpecular[specularLow].rgb,
+                                       camera.environmentSpecular[specularHigh].rgb, fract(specularLevel));
+        vec3 indirectSpecular = indirectFresnel * specularEnvironment * camera.environmentGround.w *
+                                mix(1.0, 0.35, roughness);
+        indirect = indirectDiffuse + indirectSpecular;
+    }
+    indirect *= occlusion;
     vec3 emissive = texture(emissiveMap, texCoord).rgb * drawData.emissive.rgb;
     vec3 color = direct + indirect + emissive;
-    if (camera.renderingSettings.w > 0.5 && camera.shadowSettings.z > 1.5) {
+    if (SHADOW_CASCADE_COUNT > 1 && camera.renderingSettings.w > 0.5) {
         const vec3 cascadeColors[3] = vec3[3](vec3(1.0, 0.35, 0.35), vec3(0.35, 1.0, 0.35),
                                               vec3(0.35, 0.55, 1.0));
         color = mix(color, color * cascadeColors[shadowCascade(worldPosition)], 0.45);
     }
     outColor = vec4(color, alpha);
+    vec2 currentUv = currentClipPosition.xy / max(abs(currentClipPosition.w), 0.00001) * 0.5 + 0.5;
+    vec2 previousUv = previousClipPosition.xy / max(abs(previousClipPosition.w), 0.00001) * 0.5 + 0.5;
+    float reactive = max(drawData.surface.y > 1.5 ? alpha : 0.0,
+                         smoothstep(1.0, 4.0, dot(emissive, vec3(0.2126, 0.7152, 0.0722))));
+    // Surfaces revealed by camera motion are detected in post.frag against the
+    // previous frame's depth (stored in .w); only off-screen history is known here.
+    bool previousOffscreen = previousClipPosition.w <= 0.0 || any(lessThan(previousUv, vec2(0.0))) ||
+                             any(greaterThan(previousUv, vec2(1.0)));
+    outMotionReactive = vec4(currentUv - previousUv, previousOffscreen ? 1.0 : reactive, gl_FragCoord.z);
 }

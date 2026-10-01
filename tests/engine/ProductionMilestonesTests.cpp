@@ -589,14 +589,37 @@ void testLightingAndConfiguration() {
            "64-light quality remains bounded and deterministically retains the strongest visible lights");
     const auto probes = blendReflectionProbes(scene, glm::vec3(0.0f));
     expect(probes.size() == 2 && probes.front().entity == probeB, "probe priority and blending are deterministic");
+    const LocalShadowRequest shadowRequests[]{
+        {.stableId = 20, .type = LocalLightType::Point, .resolution = 128, .priority = 1.0f},
+        {.stableId = 10, .type = LocalLightType::Spot, .resolution = 256, .priority = 2.0f},
+        {.stableId = 30, .type = LocalLightType::Spot, .resolution = 512, .priority = 0.5f}};
+    const LocalShadowAtlas shadowAtlas = allocateLocalShadowAtlas(shadowRequests, 512, 512);
+    expect(shadowAtlas.tiles.size() == 7 && shadowAtlas.tiles.front().stableId == 10 && shadowAtlas.rejectedLights == 1,
+           "local-shadow atlas allocation is deterministic, face-aware, and rejects over-budget lights");
+    expect(std::ranges::all_of(
+               shadowAtlas.tiles,
+               [](const LocalShadowTile& tile) { return tile.x + tile.size <= 512 && tile.y + tile.size <= 512; }),
+           "local-shadow atlas tiles remain within the configured memory extent");
 
     RenderSettings requested;
     requested.environment = EnvironmentQuality::ImageBasedHigh;
     requested.localLights = LocalLightingQuality::Tiled64;
     requested.preferGpuDrivenSubmission = true;
     requested.visualizeShadowCascades = true;
+    requested.antialiasing = AntialiasingMode::Taa;
+    requested.ambientOcclusion = AmbientOcclusionQuality::HalfResolution;
+    requested.reflections = ReflectionQuality::ScreenSpaceFullResolution;
+    requested.dynamicResolution = {.enabled = true,
+                                   .minimumScale = 0.7f,
+                                   .maximumScale = 0.95f,
+                                   .targetGpuMilliseconds = 13.0f,
+                                   .adjustmentRate = 0.02f,
+                                   .quantization = 32};
     requested.budgets.shadow = {1.25, 0.75};
     requested.budgets.upload = {0.5, 0.25};
+    requested.budgets.temporalResolve = {0.0, 0.4};
+    requested.budgets.ambientOcclusion = {0.0, 0.6};
+    requested.budgets.reflections = {0.0, 0.8};
     const ValidatedRenderSettings validated = validateRenderSettings(requested, {});
     expect(validated.settings.environment == EnvironmentQuality::Hemisphere &&
                validated.settings.localLights == LocalLightingQuality::Tiled32 &&
@@ -606,7 +629,14 @@ void testLightingAndConfiguration() {
     RenderSettings decoded;
     expect(serializeRenderSettings(requested, encoded) && deserializeRenderSettings(encoded, decoded) &&
                decoded.environment == requested.environment && decoded.budgets.shadow.cpuMilliseconds == 1.25 &&
-               decoded.budgets.upload.gpuMilliseconds == 0.25 && decoded.visualizeShadowCascades,
+               decoded.budgets.upload.gpuMilliseconds == 0.25 && decoded.visualizeShadowCascades &&
+               decoded.antialiasing == AntialiasingMode::Taa &&
+               decoded.ambientOcclusion == AmbientOcclusionQuality::HalfResolution &&
+               decoded.reflections == ReflectionQuality::ScreenSpaceFullResolution &&
+               decoded.dynamicResolution.enabled && decoded.dynamicResolution.quantization == 32 &&
+               decoded.budgets.temporalResolve.gpuMilliseconds == 0.4 &&
+               decoded.budgets.ambientOcclusion.gpuMilliseconds == 0.6 &&
+               decoded.budgets.reflections.gpuMilliseconds == 0.8,
            "render quality settings and per-pass CPU/GPU budgets round trip");
 
     TextureAsset environment;

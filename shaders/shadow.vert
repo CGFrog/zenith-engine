@@ -2,6 +2,7 @@
 
 layout(set = 0, binding = 0) uniform CameraData {
     mat4 viewProjection;
+    mat4 previousViewProjection;
     mat4 lightViewProjections[3];
     vec4 cameraPosition;
     vec4 lightDirection;
@@ -19,6 +20,7 @@ layout(push_constant) uniform ShadowDrawData {
 
 struct RenderObject {
     mat4 model;
+    mat4 previousModel;
     uvec4 skin;
 };
 

@@ -155,6 +155,15 @@ reprioritizes, cancels, loads, or unloads work to match it. Cross-instance
 entity references pair an instance identifier with an authored stable entity
 identifier and are resolved only while both remain valid.
 
+`DerivedAssetResidencyManager` is the renderer-independent streaming policy
+for derived data. CPU and GPU generations move explicitly through requested,
+decoding, upload-pending, resident, eviction-pending, and retired states.
+Visibility, distance, gameplay importance, and deadlines produce a stable
+priority order, while separate byte and job limits bound decode and upload work
+per frame. Texture mip ranges and mesh chunks are individual upload units.
+Cancellation invalidates the generation immediately, so a late completion
+cannot publish content after its owning scene has left the streaming set.
+
 `PrefabSystem` is independent of editor state and can instantiate the same
 versioned definition into a primary scene or any committed additive instance.
 A nested instance with an explicit parent inherits that local hierarchy; a
@@ -313,11 +322,11 @@ Shadow pass
 
 Main mesh pass
   scene meshes + camera + materials + scene lighting + shadow map
-  -> per-frame RGBA16F HDR target + shared scene depth
+  -> per-frame RGBA16F HDR target + motion/reactive target + shared scene depth
 
 Post-process pass
-  HDR target
-  -> bloom + edge smoothing + ACES tone mapping
+  HDR target + depth + temporal history
+  -> scalable SSAO/SSR + TAA or FXAA + bloom + ACES tone mapping
   -> swapchain image
 
 Game UI pass
@@ -334,9 +343,28 @@ shadow, sky, and ground settings. Material occlusion attenuates only indirect
 environment lighting, leaving direct and emissive contributions unchanged.
 
 The renderer uses Vulkan dynamic rendering and synchronization2 barriers for
-explicit layout/access transitions. The swapchain owns presentation-dependent
-resources. Resize waits for a usable surface, idles the device, recreates the
-swapchain/depth resources, and resizes dependent render targets.
+explicit layout/access transitions. A declarative render graph validates pass
+ordering, hazards, queue ownership, and compatible transient lifetimes; its
+compiled UI-boundary barriers are used directly during recording. Renderer
+uploads use a three-slot staging ring, a dedicated transfer queue, and timeline
+retirement when available. A full ring reports backpressure and defers the
+asset instead of waiting; waits are scoped to the consuming pipeline stages.
+Startup prewarms the fixed pipeline set through a device-compatible Vulkan
+pipeline cache persisted with an atomic user-data write. Benchmark telemetry
+separates pipeline creation from first use. The swapchain owns
+presentation-dependent resources. Resize waits for a usable surface, idles the
+device, recreates the swapchain/depth resources, and resizes dependent render
+targets, invalidating temporal history.
+
+Temporal reconstruction owns jitter, motion/reactive data, camera-cut and
+resolution-change invalidation, and neighborhood-clipped history. Dynamic
+resolution is driven by smoothed retired GPU time and adjusts slowly in
+quantized steps; native resolution remains the deterministic default.
+
+Mesh-shader and hardware-ray-tracing capability bits are informational only.
+Neither path is exposed as a quality setting until the persistent GPU scene is
+stable and repeated measurements justify a separate implementation and memory
+budget; conventional rasterization therefore remains the explicit path.
 
 ### Editor viewport
 

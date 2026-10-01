@@ -12,24 +12,31 @@ layout(push_constant) uniform Settings {
     int copyDepth;
 } settings;
 
+// Each texel stores the farthest depth it covers. Scene depth is reversed Z
+// (near = 1, far = 0), so the farthest occluder is the minimum.
 void main() {
     ivec2 outputCoordinate = ivec2(gl_GlobalInvocationID.xy);
     if (any(greaterThanEqual(outputCoordinate, settings.outputSize))) {
         return;
     }
-    float maximumDepth;
+    float farthestDepth;
     if (settings.copyDepth != 0) {
-        maximumDepth = texelFetch(sourceDepth, outputCoordinate, 0).r;
+        farthestDepth = texelFetch(sourceDepth, outputCoordinate, 0).r;
     } else {
+        // Levels halve with truncation, so on an odd source axis the last output
+        // texel must also cover the leftover third source texel to stay conservative.
         ivec2 sourceSize = textureSize(sourcePyramid, settings.sourceMip);
-        ivec2 sourceCoordinate = outputCoordinate * 2;
-        maximumDepth = 0.0;
-        for (int y = 0; y < 2; ++y) {
-            for (int x = 0; x < 2; ++x) {
-                ivec2 coordinate = min(sourceCoordinate + ivec2(x, y), sourceSize - 1);
-                maximumDepth = max(maximumDepth, texelFetch(sourcePyramid, coordinate, settings.sourceMip).r);
+        ivec2 sourceBegin = outputCoordinate * 2;
+        ivec2 sourceEnd = sourceBegin + 2;
+        bvec2 lastOutput = equal(outputCoordinate, settings.outputSize - 1);
+        sourceEnd = mix(sourceEnd, sourceSize, lastOutput);
+        sourceEnd = min(sourceEnd, sourceSize);
+        farthestDepth = 1.0;
+        for (int y = sourceBegin.y; y < sourceEnd.y; ++y) {
+            for (int x = sourceBegin.x; x < sourceEnd.x; ++x) {
+                farthestDepth = min(farthestDepth, texelFetch(sourcePyramid, ivec2(x, y), settings.sourceMip).r);
             }
         }
     }
-    imageStore(outputMip, outputCoordinate, vec4(maximumDepth));
+    imageStore(outputMip, outputCoordinate, vec4(farthestDepth));
 }

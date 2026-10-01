@@ -1,8 +1,10 @@
 #define VMA_IMPLEMENTATION
 #include "VulkanContext.hpp"
 #include "VulkanCheck.hpp"
+#include "engine/platform/PlatformServices.hpp"
 #include <SDL3/SDL_vulkan.h>
 #include <cstring>
+#include <fstream>
 
 namespace {
 constexpr const char* validationLayer = "VK_LAYER_KHRONOS_validation";
@@ -92,6 +94,39 @@ uint32_t findGraphicsQueueFamily(VkPhysicalDevice device, const Surface& surface
     }
     return invalidQueueFamily;
 }
+
+uint32_t findTransferQueueFamily(VkPhysicalDevice device, uint32_t graphicsFamily) {
+    uint32_t count = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &count, nullptr);
+    std::vector<VkQueueFamilyProperties> families(count);
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &count, families.data());
+    for (uint32_t index = 0; index < count; ++index) {
+        const bool transfer = (families[index].queueFlags & VK_QUEUE_TRANSFER_BIT) != 0;
+        const bool graphics = (families[index].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0;
+        if (transfer && !graphics) {
+            return index;
+        }
+    }
+    return graphicsFamily;
+}
+
+std::vector<uint8_t> readPipelineCache(const std::filesystem::path& path) {
+    constexpr std::streamsize maximumPipelineCacheBytes = 64 * 1024 * 1024;
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input) {
+        return {};
+    }
+    const std::streamsize size = input.tellg();
+    if (size <= 0 || size > maximumPipelineCacheBytes) {
+        return {};
+    }
+    std::vector<uint8_t> bytes(static_cast<size_t>(size));
+    input.seekg(0);
+    if (!input.read(reinterpret_cast<char*>(bytes.data()), size)) {
+        return {};
+    }
+    return bytes;
+}
 } // namespace
 
 bool VulkanContext::initInstance() {
@@ -168,6 +203,7 @@ bool VulkanContext::initPhysicalDevice(const Surface& surface) {
 
 bool VulkanContext::initGfxQueue(const Surface& surface) {
     m_gfxQueueFamIdx = findGraphicsQueueFamily(m_pDevice, surface);
+    m_transferQueueFamIdx = findTransferQueueFamily(m_pDevice, m_gfxQueueFamIdx);
     return m_gfxQueueFamIdx != invalidQueueFamily;
 }
 
@@ -175,10 +211,16 @@ bool VulkanContext::initDevice() {
     if (m_gfxQueueFamIdx == invalidQueueFamily) {
         return false;
     }
-    VkDeviceQueueCreateInfo queue{.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-                                  .queueFamilyIndex = m_gfxQueueFamIdx,
-                                  .queueCount = 1,
-                                  .pQueuePriorities = &graphicsQueuePriority};
+    std::vector<VkDeviceQueueCreateInfo> queues{{.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                                                 .queueFamilyIndex = m_gfxQueueFamIdx,
+                                                 .queueCount = 1,
+                                                 .pQueuePriorities = &graphicsQueuePriority}};
+    if (m_transferQueueFamIdx != m_gfxQueueFamIdx) {
+        queues.push_back({.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                          .queueFamilyIndex = m_transferQueueFamIdx,
+                          .queueCount = 1,
+                          .pQueuePriorities = &graphicsQueuePriority});
+    }
     VkPhysicalDeviceVulkan12Features supported12{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     VkPhysicalDeviceFeatures2 supported{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &supported12};
     vkGetPhysicalDeviceFeatures2(m_pDevice, &supported);
@@ -190,7 +232,9 @@ bool VulkanContext::initDevice() {
         .descriptorBindingPartiallyBound = supported12.descriptorBindingPartiallyBound,
         .descriptorBindingVariableDescriptorCount = supported12.descriptorBindingVariableDescriptorCount,
         .runtimeDescriptorArray = supported12.runtimeDescriptorArray,
+        .timelineSemaphore = supported12.timelineSemaphore,
     };
+    m_timelineSemaphoreSupported = supported12.timelineSemaphore == VK_TRUE;
     VkPhysicalDeviceVulkan13Features vulkan13{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
                                               .pNext = &vulkan12,
                                               .synchronization2 = VK_TRUE,
@@ -200,8 +244,8 @@ bool VulkanContext::initDevice() {
     const char* swapchainExtension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     VkDeviceCreateInfo deviceInfo{.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
                                   .pNext = &vulkan13,
-                                  .queueCreateInfoCount = 1,
-                                  .pQueueCreateInfos = &queue,
+                                  .queueCreateInfoCount = static_cast<uint32_t>(queues.size()),
+                                  .pQueueCreateInfos = queues.data(),
                                   .enabledExtensionCount = 1,
                                   .ppEnabledExtensionNames = &swapchainExtension,
                                   .pEnabledFeatures = &enabledFeatures};
@@ -210,7 +254,24 @@ bool VulkanContext::initDevice() {
     }
     volkLoadDevice(m_device);
     vkGetDeviceQueue(m_device, m_gfxQueueFamIdx, graphicsQueueIndex, &m_gfxQueue);
-    return m_gfxQueue != VK_NULL_HANDLE;
+    vkGetDeviceQueue(m_device, m_transferQueueFamIdx, graphicsQueueIndex, &m_transferQueue);
+    if (m_gfxQueue == VK_NULL_HANDLE || m_transferQueue == VK_NULL_HANDLE) {
+        return false;
+    }
+    m_pipelineCachePath = userDataDirectory("Zenith", "Zenith") / "pipeline-cache.bin";
+    const std::vector<uint8_t> cacheBytes = readPipelineCache(m_pipelineCachePath);
+    VkPipelineCacheCreateInfo cacheInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+                                        .initialDataSize = cacheBytes.size(),
+                                        .pInitialData = cacheBytes.empty() ? nullptr : cacheBytes.data()};
+    VkResult cacheResult = vkCreatePipelineCache(m_device, &cacheInfo, nullptr, &m_pipelineCache);
+    m_pipelineCacheWarm = cacheResult == VK_SUCCESS && !cacheBytes.empty();
+    if (cacheResult != VK_SUCCESS && !cacheBytes.empty()) {
+        cacheInfo.initialDataSize = 0;
+        cacheInfo.pInitialData = nullptr;
+        cacheResult = vkCreatePipelineCache(m_device, &cacheInfo, nullptr, &m_pipelineCache);
+        m_pipelineCacheWarm = false;
+    }
+    return checkVulkan(cacheResult, "Create pipeline cache");
 }
 
 bool VulkanContext::initVMA() {
@@ -231,11 +292,30 @@ void VulkanContext::closeDevice() {
         vmaDestroyAllocator(m_vmaAllocator);
     }
     m_vmaAllocator = VK_NULL_HANDLE;
+    if (m_device && m_pipelineCache) {
+        size_t cacheSize = 0;
+        if (vkGetPipelineCacheData(m_device, m_pipelineCache, &cacheSize, nullptr) == VK_SUCCESS && cacheSize > 0) {
+            std::vector<uint8_t> cacheBytes(cacheSize);
+            if (vkGetPipelineCacheData(m_device, m_pipelineCache, &cacheSize, cacheBytes.data()) == VK_SUCCESS) {
+                cacheBytes.resize(cacheSize);
+                const PlatformResult saved = atomicWriteUserData(m_pipelineCachePath, cacheBytes);
+                if (!saved) {
+                    std::cerr << "Cannot persist pipeline cache: " << saved.error << '\n';
+                }
+            }
+        }
+        vkDestroyPipelineCache(m_device, m_pipelineCache, nullptr);
+    }
+    m_pipelineCache = VK_NULL_HANDLE;
+    m_pipelineCacheWarm = false;
+    m_pipelineCachePath.clear();
     if (m_device) {
         vkDestroyDevice(m_device, nullptr);
     }
     m_device = VK_NULL_HANDLE;
     m_gfxQueue = VK_NULL_HANDLE;
+    m_transferQueue = VK_NULL_HANDLE;
+    m_timelineSemaphoreSupported = false;
 }
 
 void VulkanContext::closeInstance() {

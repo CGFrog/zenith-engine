@@ -63,8 +63,9 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("cpu.post", s.cpuPostMilliseconds);
     sample("cpu.ui", s.cpuUiMilliseconds, "ms", budgets.ui.cpuMilliseconds);
     sample("cpu.upload", s.cpuUploadMilliseconds, "ms", budgets.upload.cpuMilliseconds);
-    // Upload submissions complete synchronously today, so these belong to the
-    // current CPU frame, unlike the delayed graphics-command-buffer samples.
+    sample("cpu.temporal_resolve", s.cpuPostMilliseconds, "ms", budgets.temporalResolve.cpuMilliseconds);
+    // Upload timings are retired from the bounded staging ring, unlike the
+    // delayed graphics-command-buffer samples.
     if (s.uploadTimingsValid) {
         sample("gpu.upload", s.gpuUploadMilliseconds, "ms", budgets.upload.gpuMilliseconds);
     }
@@ -73,6 +74,8 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("cpu.present", s.cpuPresentMilliseconds);
     sample("draw_calls", s.drawCalls, "count");
     sample("triangles", static_cast<double>(s.triangleCount), "count");
+    sample("shadow.cascades_rendered", s.shadowCascadesRendered, "count");
+    sample("shadow.cascades_cached", s.shadowCascadesCached, "count");
     sample("visible", s.visibleCount, "count");
     sample("culled", s.culledCount, "count");
     sample("packet_rebuild", s.renderPacketsRebuilt ? 1.0 : 0.0, "count");
@@ -90,6 +93,34 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("lights", s.localLightCount, "count");
     sample("discarded_light_assignments", s.discardedLightAssignments, "count");
     sample("upload_bytes", static_cast<double>(s.uploadBytes), "bytes");
+    sample("upload.backpressure_events", s.uploadBackpressureEvents, "count");
+    sample("render_graph.barriers", s.renderGraphBarrierCount, "count");
+    sample("render_graph.queue_transfers", s.renderGraphQueueTransfers, "count");
+    sample("render_graph.transient_requested", static_cast<double>(s.transientRequestedBytes), "bytes");
+    sample("render_graph.transient_committed", static_cast<double>(s.transientCommittedBytes), "bytes");
+    sample("render_graph.transient_aliased", static_cast<double>(s.transientAliasedBytes), "bytes");
+    sample("render_graph.transient_peak", static_cast<double>(s.transientPeakBytes), "bytes");
+    sample("render.internal_width", s.internalRenderWidth, "pixels");
+    sample("render.internal_height", s.internalRenderHeight, "pixels");
+    sample("render.internal_scale", s.internalResolutionScale, "ratio");
+    sample("render.temporal_history_bytes", static_cast<double>(s.temporalHistoryBytes), "bytes");
+    sample("render.motion_vector_bytes", static_cast<double>(s.motionVectorBytes), "bytes");
+    sample("render.ambient_occlusion_bytes", static_cast<double>(s.ambientOcclusionBytes), "bytes");
+    sample("render.reflection_bytes", static_cast<double>(s.reflectionBytes), "bytes");
+    sample("render.shadow_cache_bytes", static_cast<double>(s.shadowCacheBytes), "bytes");
+    sample("streaming.decoded_bytes", static_cast<double>(s.streamingDecodedBytes), "bytes");
+    sample("streaming.uploaded_bytes", static_cast<double>(s.streamingUploadedBytes), "bytes");
+    sample("streaming.decode_backlog_bytes", static_cast<double>(s.streamingDecodeBacklogBytes), "bytes");
+    sample("streaming.upload_backlog_bytes", static_cast<double>(s.streamingUploadBacklogBytes), "bytes");
+    sample("streaming.cpu_peak_bytes", static_cast<double>(s.streamingCpuPeakBytes), "bytes");
+    sample("streaming.gpu_peak_bytes", static_cast<double>(s.streamingGpuPeakBytes), "bytes");
+    sample("streaming.residency_misses", s.streamingResidencyMisses, "count");
+    sample("streaming.hard_budget_failures", s.streamingHardBudgetFailures, "count");
+    sample("pipeline.cache_warm", s.pipelineCacheWarm ? 1.0 : 0.0, "count");
+    sample("pipeline.creation_events", s.pipelineCreationEvents, "count");
+    sample("pipeline.creation_time", s.pipelineCreationMilliseconds);
+    sample("pipeline.first_use_events", s.pipelineFirstUseEvents, "count");
+    sample("pipeline.first_use_time", s.pipelineFirstUseMilliseconds);
 }
 
 void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& budgets, uint64_t firstFrame,
@@ -104,6 +135,10 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
     sample("gpu.opaque", s.gpuOpaqueMilliseconds, "ms", budgets.opaque.gpuMilliseconds);
     sample("gpu.blended", s.gpuBlendedMilliseconds, "ms", budgets.blended.gpuMilliseconds);
     sample("gpu.bloom_downsample", s.gpuBloomMilliseconds, "ms", budgets.bloom.gpuMilliseconds);
+    sample("gpu.temporal_resolve", s.gpuTemporalMilliseconds, "ms", budgets.temporalResolve.gpuMilliseconds);
+    sample("gpu.ambient_occlusion", s.gpuAmbientOcclusionMilliseconds, "ms", budgets.ambientOcclusion.gpuMilliseconds);
+    sample("gpu.reflections", s.gpuReflectionsMilliseconds, "ms", budgets.reflections.gpuMilliseconds);
+    sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
     sample("gpu.ui", s.gpuUiMilliseconds, "ms", budgets.ui.gpuMilliseconds);
 }

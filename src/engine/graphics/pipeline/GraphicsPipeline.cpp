@@ -1,5 +1,6 @@
 #include "GraphicsPipeline.hpp"
 #include "../../assets/Assets.hpp"
+#include "../DepthConvention.hpp"
 #include "../vulkan/VulkanCheck.hpp"
 #include <array>
 #include <iterator>
@@ -65,18 +66,21 @@ struct FixedFunctionState {
     }
 };
 
-VkPipelineShaderStageCreateInfo shaderStage(VkShaderStageFlagBits stage, VkShaderModule module) {
+VkPipelineShaderStageCreateInfo shaderStage(VkShaderStageFlagBits stage, VkShaderModule module,
+                                            const VkSpecializationInfo* specialization = nullptr) {
     return {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = stage,
             .module = module,
-            .pName = shaderEntryPoint};
+            .pName = shaderEntryPoint,
+            .pSpecializationInfo = specialization};
 }
 } // namespace
 
-bool GraphicsPipeline::initGraphicsPipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,
-                                            VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout materialLayout,
-                                            VkShaderModule vertex, VkShaderModule fragment, bool doubleSided,
-                                            bool blending) {
+bool GraphicsPipeline::initGraphicsPipeline(VkDevice device, VkFormat colorFormat, VkFormat auxiliaryColorFormat,
+                                            VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
+                                            VkDescriptorSetLayout materialLayout, VkShaderModule vertex,
+                                            VkShaderModule fragment, VkPipelineCache pipelineCache, bool doubleSided,
+                                            bool blending, const VkSpecializationInfo* fragmentSpecialization) {
     constexpr uint32_t pushConstantSize = sizeof(glm::mat4) + sizeof(glm::vec4) * 4;
     VkPushConstantRange pushConstants{
         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, .offset = 0, .size = pushConstantSize};
@@ -89,14 +93,17 @@ bool GraphicsPipeline::initGraphicsPipeline(VkDevice device, VkFormat colorForma
     if (!checkVulkan(vkCreatePipelineLayout(device, &layout, nullptr, &m_pipelineLayout), "Create pipeline layout")) {
         return false;
     }
-    const VkPipelineShaderStageCreateInfo stages[]{shaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertex),
-                                                   shaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, fragment)};
+    const VkPipelineShaderStageCreateInfo stages[]{
+        shaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertex),
+        shaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, fragment, fragmentSpecialization)};
+    const VkFormat colorFormats[]{colorFormat, auxiliaryColorFormat};
     VkPipelineRenderingCreateInfo rendering{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-                                            .colorAttachmentCount = 1,
-                                            .pColorAttachmentFormats = &colorFormat,
+                                            .colorAttachmentCount = 2,
+                                            .pColorAttachmentFormats = colorFormats,
                                             .depthAttachmentFormat = depthFormat};
     FixedFunctionState state{};
     state.raster.cullMode = doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+    state.depth.depthCompareOp = scene_depth::compareOp;
     if (blending) {
         state.depth.depthWriteEnable = VK_FALSE;
         state.colorAttachment.blendEnable = VK_TRUE;
@@ -109,12 +116,18 @@ bool GraphicsPipeline::initGraphicsPipeline(VkDevice device, VkFormat colorForma
     }
     state.colorAttachment.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+    const VkPipelineColorBlendAttachmentState colorAttachments[]{
+        state.colorAttachment,
+        {.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+                           VK_COLOR_COMPONENT_A_BIT}};
+    state.blend.attachmentCount = 2;
+    state.blend.pAttachments = colorAttachments;
     VkGraphicsPipelineCreateInfo info = state.pipelineInfo();
     info.pNext = &rendering;
     info.stageCount = static_cast<uint32_t>(std::size(stages));
     info.pStages = stages;
     info.layout = m_pipelineLayout;
-    return checkVulkan(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &m_pipeline),
+    return checkVulkan(vkCreateGraphicsPipelines(device, pipelineCache, 1, &info, nullptr, &m_pipeline),
                        "Create graphics pipeline");
 }
 
@@ -131,7 +144,7 @@ void GraphicsPipeline::shutdown(VkDevice device) {
 
 bool GraphicsPipeline::initShadowPipeline(VkDevice device, VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
                                           VkDescriptorSetLayout materialLayout, VkShaderModule vertex,
-                                          VkShaderModule fragment) {
+                                          VkShaderModule fragment, VkPipelineCache pipelineCache) {
     VkPushConstantRange pushConstants{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                       .offset = 0,
                                       .size = sizeof(glm::vec4)};
@@ -163,13 +176,14 @@ bool GraphicsPipeline::initShadowPipeline(VkDevice device, VkFormat depthFormat,
     info.stageCount = static_cast<uint32_t>(std::size(stages));
     info.pStages = stages;
     info.layout = m_pipelineLayout;
-    return checkVulkan(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &m_pipeline),
+    return checkVulkan(vkCreateGraphicsPipelines(device, pipelineCache, 1, &info, nullptr, &m_pipeline),
                        "Create shadow pipeline");
 }
 
-bool GraphicsPipeline::initOutlinePipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,
-                                           VkDescriptorSetLayout cameraLayout, VkShaderModule vertex,
-                                           VkShaderModule fragment) {
+bool GraphicsPipeline::initOutlinePipeline(VkDevice device, VkFormat colorFormat, VkFormat auxiliaryColorFormat,
+                                           VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
+                                           VkShaderModule vertex, VkShaderModule fragment,
+                                           VkPipelineCache pipelineCache) {
     VkPushConstantRange pushConstants{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT, .offset = 0, .size = sizeof(glm::vec4)};
     VkPipelineLayoutCreateInfo layout{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
                                       .setLayoutCount = 1,
@@ -183,13 +197,14 @@ bool GraphicsPipeline::initOutlinePipeline(VkDevice device, VkFormat colorFormat
 
     const VkPipelineShaderStageCreateInfo stages[]{shaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertex),
                                                    shaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, fragment)};
+    const VkFormat colorFormats[]{colorFormat, auxiliaryColorFormat};
     VkPipelineRenderingCreateInfo rendering{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-                                            .colorAttachmentCount = 1,
-                                            .pColorAttachmentFormats = &colorFormat,
+                                            .colorAttachmentCount = 2,
+                                            .pColorAttachmentFormats = colorFormats,
                                             .depthAttachmentFormat = depthFormat};
     FixedFunctionState state{};
     state.depth.depthWriteEnable = VK_FALSE;
-    state.depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    state.depth.depthCompareOp = scene_depth::compareOrEqualOp;
     state.colorAttachment.blendEnable = VK_TRUE;
     state.colorAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_DST_ALPHA;
     state.colorAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_DST_ALPHA;
@@ -199,18 +214,22 @@ bool GraphicsPipeline::initOutlinePipeline(VkDevice device, VkFormat colorFormat
     state.colorAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
     state.colorAttachment.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+    const VkPipelineColorBlendAttachmentState colorAttachments[]{state.colorAttachment, {}};
+    state.blend.attachmentCount = 2;
+    state.blend.pAttachments = colorAttachments;
     VkGraphicsPipelineCreateInfo info = state.pipelineInfo();
     info.pNext = &rendering;
     info.stageCount = static_cast<uint32_t>(std::size(stages));
     info.pStages = stages;
     info.layout = m_pipelineLayout;
-    return checkVulkan(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &m_pipeline),
+    return checkVulkan(vkCreateGraphicsPipelines(device, pipelineCache, 1, &info, nullptr, &m_pipeline),
                        "Create outline pipeline");
 }
 
-bool GraphicsPipeline::initSelectionMaskPipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,
-                                                 VkDescriptorSetLayout cameraLayout, VkShaderModule vertex,
-                                                 VkShaderModule fragment) {
+bool GraphicsPipeline::initSelectionMaskPipeline(VkDevice device, VkFormat colorFormat, VkFormat auxiliaryColorFormat,
+                                                 VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
+                                                 VkShaderModule vertex, VkShaderModule fragment,
+                                                 VkPipelineCache pipelineCache) {
     VkPipelineLayoutCreateInfo layout{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1, .pSetLayouts = &cameraLayout};
     if (!checkVulkan(vkCreatePipelineLayout(device, &layout, nullptr, &m_pipelineLayout),
@@ -220,19 +239,23 @@ bool GraphicsPipeline::initSelectionMaskPipeline(VkDevice device, VkFormat color
 
     const VkPipelineShaderStageCreateInfo stages[]{shaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertex),
                                                    shaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, fragment)};
+    const VkFormat colorFormats[]{colorFormat, auxiliaryColorFormat};
     VkPipelineRenderingCreateInfo rendering{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-                                            .colorAttachmentCount = 1,
-                                            .pColorAttachmentFormats = &colorFormat,
+                                            .colorAttachmentCount = 2,
+                                            .pColorAttachmentFormats = colorFormats,
                                             .depthAttachmentFormat = depthFormat};
     FixedFunctionState state{};
     state.depth.depthTestEnable = VK_FALSE;
     state.depth.depthWriteEnable = VK_FALSE;
     state.colorAttachment.colorWriteMask = VK_COLOR_COMPONENT_A_BIT;
+    const VkPipelineColorBlendAttachmentState colorAttachments[]{state.colorAttachment, {}};
+    state.blend.attachmentCount = 2;
+    state.blend.pAttachments = colorAttachments;
     VkGraphicsPipelineCreateInfo info = state.pipelineInfo();
     info.pNext = &rendering;
     info.stageCount = static_cast<uint32_t>(std::size(stages));
     info.pStages = stages;
     info.layout = m_pipelineLayout;
-    return checkVulkan(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &m_pipeline),
+    return checkVulkan(vkCreateGraphicsPipelines(device, pipelineCache, 1, &info, nullptr, &m_pipeline),
                        "Create selection-mask pipeline");
 }

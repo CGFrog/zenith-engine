@@ -7,16 +7,20 @@ class GraphicsPipeline {
     GraphicsPipeline(const GraphicsPipeline&) = delete;
     GraphicsPipeline& operator=(const GraphicsPipeline&) = delete;
 
-    bool initGraphicsPipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,
-                              VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout materialLayout,
-                              VkShaderModule vertex, VkShaderModule fragment, bool doubleSided = false,
-                              bool blending = false);
+    bool initGraphicsPipeline(VkDevice device, VkFormat colorFormat, VkFormat auxiliaryColorFormat,
+                              VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
+                              VkDescriptorSetLayout materialLayout, VkShaderModule vertex, VkShaderModule fragment,
+                              VkPipelineCache pipelineCache, bool doubleSided = false, bool blending = false,
+                              const VkSpecializationInfo* fragmentSpecialization = nullptr);
     bool initShadowPipeline(VkDevice device, VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
-                            VkDescriptorSetLayout materialLayout, VkShaderModule vertex, VkShaderModule fragment);
-    bool initOutlinePipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,
-                             VkDescriptorSetLayout cameraLayout, VkShaderModule vertex, VkShaderModule fragment);
-    bool initSelectionMaskPipeline(VkDevice device, VkFormat colorFormat, VkFormat depthFormat,
-                                   VkDescriptorSetLayout cameraLayout, VkShaderModule vertex, VkShaderModule fragment);
+                            VkDescriptorSetLayout materialLayout, VkShaderModule vertex, VkShaderModule fragment,
+                            VkPipelineCache pipelineCache);
+    bool initOutlinePipeline(VkDevice device, VkFormat colorFormat, VkFormat auxiliaryColorFormat, VkFormat depthFormat,
+                             VkDescriptorSetLayout cameraLayout, VkShaderModule vertex, VkShaderModule fragment,
+                             VkPipelineCache pipelineCache);
+    bool initSelectionMaskPipeline(VkDevice device, VkFormat colorFormat, VkFormat auxiliaryColorFormat,
+                                   VkFormat depthFormat, VkDescriptorSetLayout cameraLayout, VkShaderModule vertex,
+                                   VkShaderModule fragment, VkPipelineCache pipelineCache);
     void shutdown(VkDevice device);
 
     VkPipeline handle() const {

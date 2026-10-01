@@ -46,5 +46,30 @@ struct ProbeBlend {
     float weight{0.0f};
 };
 
+struct LocalShadowRequest {
+    uint64_t stableId{0};
+    LocalLightType type{LocalLightType::Spot};
+    uint32_t resolution{256};
+    float priority{0.0f};
+};
+
+struct LocalShadowTile {
+    uint64_t stableId{0};
+    uint32_t face{0};
+    uint32_t x{0};
+    uint32_t y{0};
+    uint32_t size{0};
+};
+
+struct LocalShadowAtlas {
+    uint32_t width{0};
+    uint32_t height{0};
+    std::vector<LocalShadowTile> tiles;
+    uint32_t rejectedLights{0};
+};
+
+LocalShadowAtlas allocateLocalShadowAtlas(std::span<const LocalShadowRequest> requests, uint32_t width,
+                                          uint32_t height);
+
 std::vector<ProbeBlend> blendReflectionProbes(const Scene& scene, const glm::vec3& worldPosition,
                                               size_t maximumProbes = 4);

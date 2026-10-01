@@ -20,6 +20,19 @@ struct UiTextureHandle {
 enum class AntialiasingMode : uint8_t {
     Off,
     Fxaa,
+    Taa,
+};
+
+enum class AmbientOcclusionQuality : uint8_t {
+    Off,
+    HalfResolution,
+    FullResolution,
+};
+
+enum class ReflectionQuality : uint8_t {
+    ProbesOnly,
+    ScreenSpaceHalfResolution,
+    ScreenSpaceFullResolution,
 };
 
 enum class ShadowQuality : uint8_t {
@@ -63,6 +76,18 @@ struct RenderPassBudgets {
     RenderPassBudget bloom;
     RenderPassBudget ui;
     RenderPassBudget upload;
+    RenderPassBudget temporalResolve;
+    RenderPassBudget ambientOcclusion;
+    RenderPassBudget reflections;
+};
+
+struct DynamicResolutionSettings {
+    bool enabled{false};
+    float minimumScale{0.67f};
+    float maximumScale{1.0f};
+    float targetGpuMilliseconds{14.0f};
+    float adjustmentRate{0.025f};
+    uint32_t quantization{16};
 };
 
 struct RenderSettings {
@@ -77,6 +102,9 @@ struct RenderSettings {
     float cascadeSplitLambda{0.65f};
     float cascadeBlendFraction{0.10f};
     bool visualizeShadowCascades{false};
+    DynamicResolutionSettings dynamicResolution;
+    AmbientOcclusionQuality ambientOcclusion{AmbientOcclusionQuality::Off};
+    ReflectionQuality reflections{ReflectionQuality::ProbesOnly};
     // Zero disables enforcement for that processor/pass pair.
     RenderPassBudgets budgets;
 };
@@ -88,6 +116,13 @@ struct RenderCapabilities {
     bool gpuDrivenPath{false};
     bool imageBasedLighting{false};
     bool reflectionProbes{false};
+    bool temporalAntialiasing{true};
+    bool screenSpaceAmbientOcclusion{true};
+    bool screenSpaceReflections{true};
+    bool meshShaders{false};
+    bool rayTracing{false};
+    bool dedicatedTransferQueue{false};
+    bool timelineTransfers{false};
     uint32_t maximumLocalLightsPerTile{32};
 };
 
@@ -103,10 +138,13 @@ struct RenderStats {
     double cpuPresentMilliseconds{0.0};
     double cpuPostMilliseconds{0.0};
     uint64_t uploadBytes{0};
+    uint32_t uploadBackpressureEvents{0};
     uint32_t renderableCount{0};
     uint32_t visibleCount{0};
     uint32_t culledCount{0};
     uint32_t shadowCasterCount{0};
+    uint32_t shadowCascadesRendered{0};
+    uint32_t shadowCascadesCached{0};
     uint32_t drawCalls{0};
     uint64_t triangleCount{0};
     double gpuFrameMilliseconds{0.0};
@@ -118,6 +156,7 @@ struct RenderStats {
     double gpuBloomMilliseconds{0.0};
     double gpuUiMilliseconds{0.0};
     double gpuUploadMilliseconds{0.0};
+    double gpuUploadWaitMilliseconds{0.0};
     double cpuShadowMilliseconds{0.0};
     double cpuOpaqueMilliseconds{0.0};
     double cpuBlendedMilliseconds{0.0};
@@ -139,6 +178,38 @@ struct RenderStats {
     double taskWorkerUtilization{0.0};
     double taskMainThreadAssistMilliseconds{0.0};
     double taskGraphLatencyMilliseconds{0.0};
+    uint32_t renderGraphBarrierCount{0};
+    uint32_t renderGraphQueueTransfers{0};
+    uint64_t transientRequestedBytes{0};
+    uint64_t transientCommittedBytes{0};
+    uint64_t transientAliasedBytes{0};
+    uint64_t transientPeakBytes{0};
+    uint32_t internalRenderWidth{0};
+    uint32_t internalRenderHeight{0};
+    float internalResolutionScale{1.0f};
+    bool temporalHistoryValid{false};
+    bool temporalHistoryInvalidated{false};
+    double gpuTemporalMilliseconds{0.0};
+    double gpuAmbientOcclusionMilliseconds{0.0};
+    double gpuReflectionsMilliseconds{0.0};
+    uint64_t temporalHistoryBytes{0};
+    uint64_t motionVectorBytes{0};
+    uint64_t ambientOcclusionBytes{0};
+    uint64_t reflectionBytes{0};
+    uint64_t shadowCacheBytes{0};
+    uint64_t streamingDecodedBytes{0};
+    uint64_t streamingUploadedBytes{0};
+    uint64_t streamingDecodeBacklogBytes{0};
+    uint64_t streamingUploadBacklogBytes{0};
+    uint64_t streamingCpuPeakBytes{0};
+    uint64_t streamingGpuPeakBytes{0};
+    uint32_t streamingResidencyMisses{0};
+    uint32_t streamingHardBudgetFailures{0};
+    bool pipelineCacheWarm{false};
+    uint32_t pipelineCreationEvents{0};
+    double pipelineCreationMilliseconds{0.0};
+    uint32_t pipelineFirstUseEvents{0};
+    double pipelineFirstUseMilliseconds{0.0};
 };
 
 struct RenderView {

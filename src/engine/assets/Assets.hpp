@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AssetStreaming.hpp"
+
 #include <atomic>
 #include <compare>
 #include <cstdint>
@@ -289,6 +291,14 @@ class AssetManager {
     std::vector<AssetDiagnostic> diagnostics() const;
     uint64_t cpuBytes() const;
 
+    DerivedAssetResidencyManager& streaming() {
+        return m_streaming;
+    }
+
+    const DerivedAssetResidencyManager& streaming() const {
+        return m_streaming;
+    }
+
   private:
     friend class ModelImporter;
     ModelHandle addModel(ModelAsset asset, std::filesystem::path sourcePath);
@@ -325,4 +335,5 @@ class AssetManager {
     uint64_t m_revision{1};
     uint64_t m_useSerial{1};
     AssetMemoryBudget m_budget;
+    DerivedAssetResidencyManager m_streaming;
 };

@@ -10,7 +10,7 @@ class ComputePipeline {
     ComputePipeline& operator=(const ComputePipeline&) = delete;
 
     bool init(VkDevice device, VkDescriptorSetLayout descriptorLayout, VkShaderModule shader,
-              uint32_t pushConstantSize = 0);
+              VkPipelineCache pipelineCache, uint32_t pushConstantSize = 0);
     void shutdown(VkDevice device);
 
     VkPipeline handle() const {

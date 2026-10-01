@@ -1,7 +1,55 @@
 #include "Lighting.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+
+LocalShadowAtlas allocateLocalShadowAtlas(std::span<const LocalShadowRequest> requests, uint32_t width,
+                                          uint32_t height) {
+    LocalShadowAtlas atlas{.width = width, .height = height};
+    std::vector<LocalShadowRequest> ordered(requests.begin(), requests.end());
+    std::ranges::sort(ordered, [](const LocalShadowRequest& left, const LocalShadowRequest& right) {
+        if (left.priority != right.priority) {
+            return left.priority > right.priority;
+        }
+        return left.stableId < right.stableId;
+    });
+    uint32_t cursorX = 0;
+    uint32_t cursorY = 0;
+    uint32_t rowHeight = 0;
+    for (const LocalShadowRequest& request : ordered) {
+        const uint32_t requested = std::clamp(request.resolution, 64u, 1024u);
+        const uint32_t size = std::bit_floor(requested);
+        const uint32_t faces = request.type == LocalLightType::Point ? 6u : 1u;
+        const uint32_t firstTile = static_cast<uint32_t>(atlas.tiles.size());
+        uint32_t savedX = cursorX;
+        uint32_t savedY = cursorY;
+        uint32_t savedRowHeight = rowHeight;
+        bool allocated = true;
+        for (uint32_t face = 0; face < faces; ++face) {
+            if (cursorX + size > width) {
+                cursorX = 0;
+                cursorY += rowHeight;
+                rowHeight = 0;
+            }
+            if (cursorY + size > height) {
+                allocated = false;
+                break;
+            }
+            atlas.tiles.push_back({request.stableId, face, cursorX, cursorY, size});
+            cursorX += size;
+            rowHeight = std::max(rowHeight, size);
+        }
+        if (!allocated) {
+            atlas.tiles.resize(firstTile);
+            cursorX = savedX;
+            cursorY = savedY;
+            rowHeight = savedRowHeight;
+            ++atlas.rejectedLights;
+        }
+    }
+    return atlas;
+}
 
 std::span<const uint32_t> LightTileGrid::tile(uint32_t x, uint32_t y) const {
     if (x >= columns || y >= rows || offsets.empty()) {

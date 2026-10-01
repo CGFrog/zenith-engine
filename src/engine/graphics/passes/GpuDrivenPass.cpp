@@ -46,8 +46,10 @@ bool GpuDrivenPass::init(const VulkanContext& context, uint32_t frameCount, VkEx
         shutdown(context);
         return false;
     }
-    if (!m_depthPipeline.init(m_device, m_depthLayout, depth.handle(), sizeof(DepthSettings)) ||
-        !m_visibilityPipeline.init(m_device, m_visibilityLayout, visibility.handle(), sizeof(VisibilitySettings))) {
+    if (!m_depthPipeline.init(m_device, m_depthLayout, depth.handle(), context.pipelineCache(),
+                              sizeof(DepthSettings)) ||
+        !m_visibilityPipeline.init(m_device, m_visibilityLayout, visibility.handle(), context.pipelineCache(),
+                                   sizeof(VisibilitySettings))) {
         shutdown(context);
         return false;
     }

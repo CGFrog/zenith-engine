@@ -6,6 +6,7 @@
 #include "../ui/GameUi.hpp"
 #include "../window/Window.hpp"
 #include "Rendering.hpp"
+#include "graph/RenderGraph.hpp"
 #include "passes/MeshPass.hpp"
 #include "passes/UiPass.hpp"
 #include "resources/FrameResources.hpp"
@@ -14,6 +15,7 @@
 #include "swapchain/Swapchain.hpp"
 #include "vulkan/VulkanContext.hpp"
 #include <array>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -63,6 +65,7 @@ class Renderer {
     bool recordFrame(const FrameResources& frame, uint32_t imageIndex, const Scene& scene, const AssetManager& assets);
     bool presentFrame(uint32_t imageIndex);
     void pruneUnusedUiTextures(const AssetManager& assets);
+    bool updateRenderGraphPlan(VkExtent2D extent, bool useViewport);
 
     VulkanContext m_context;
     Surface m_surface;
@@ -82,4 +85,13 @@ class Renderer {
     FrameTaskExecutor* m_frameTasks{nullptr};
     std::string m_gpuName;
     std::unordered_map<uint64_t, uint64_t> m_gameUiTextures;
+    uint64_t m_renderGraphSignature{0};
+    RenderGraphStatistics m_renderGraphStatistics;
+    std::optional<RenderGraphBarrier> m_viewportToUiBarrier;
+    std::optional<RenderGraphBarrier> m_swapchainToUiBarrier;
+    double m_pipelineCreationMilliseconds{0.0};
+    double m_pipelineFirstUseMilliseconds{0.0};
+    uint32_t m_prewarmedPipelineCount{0};
+    bool m_pipelineCacheWarm{false};
+    bool m_pipelineFirstUsePending{true};
 };

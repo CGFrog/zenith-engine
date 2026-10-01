@@ -8,7 +8,7 @@ constexpr uint64_t frameFenceTimeout = std::numeric_limits<uint64_t>::max();
 }
 
 namespace {
-constexpr uint32_t timestampQueryCount = 10;
+constexpr uint32_t timestampQueryCount = 17;
 }
 
 bool FrameResources::init(VkDevice device, uint32_t queueFamily, float timestampPeriod, uint32_t timestampValidBits) {
@@ -81,10 +81,24 @@ bool FrameResources::endRecording() const {
     return checkVulkan(vkEndCommandBuffer(m_commandBuffer), "End command buffer");
 }
 
-bool FrameResources::submit(VkDevice device, VkQueue queue, VkSemaphore renderComplete) const {
-    VkSemaphoreSubmitInfo wait{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
-    wait.semaphore = m_imageAcquired;
-    wait.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+bool FrameResources::submit(VkDevice device, VkQueue queue, VkSemaphore renderComplete, VkSemaphore uploadTimeline,
+                            uint64_t uploadValue, VkSemaphore secondUploadTimeline, uint64_t secondUploadValue) const {
+    VkSemaphoreSubmitInfo waits[3]{{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                                    .semaphore = m_imageAcquired,
+                                    .stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT}};
+    uint32_t waitCount = 1;
+    const auto appendTimelineWait = [&](VkSemaphore semaphore, uint64_t value, VkPipelineStageFlags2 stages) {
+        if (semaphore && value > 0) {
+            waits[waitCount++] = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                                  .semaphore = semaphore,
+                                  .value = value,
+                                  .stageMask = stages};
+        }
+    };
+    appendTimelineWait(uploadTimeline, uploadValue,
+                       VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT |
+                           VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT);
+    appendTimelineWait(secondUploadTimeline, secondUploadValue, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT);
 
     VkSemaphoreSubmitInfo signal{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
     signal.semaphore = renderComplete;
@@ -93,8 +107,8 @@ bool FrameResources::submit(VkDevice device, VkQueue queue, VkSemaphore renderCo
     VkCommandBufferSubmitInfo command{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
     command.commandBuffer = m_commandBuffer;
     VkSubmitInfo2 submit{.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
-    submit.waitSemaphoreInfoCount = 1;
-    submit.pWaitSemaphoreInfos = &wait;
+    submit.waitSemaphoreInfoCount = waitCount;
+    submit.pWaitSemaphoreInfos = waits;
     submit.commandBufferInfoCount = 1;
     submit.pCommandBufferInfos = &command;
     submit.signalSemaphoreInfoCount = 1;
@@ -135,9 +149,13 @@ bool FrameResources::collectTimings(VkDevice device, GpuFrameTimings& timings) {
     timings.blendedMilliseconds = elapsed(2, 3);
     timings.sceneMilliseconds = elapsed(1, 3);
     timings.bloomMilliseconds = m_bloomEnabled ? elapsed(6, 7) : 0.0;
-    timings.postMilliseconds = elapsed(7, 4);
+    timings.postMilliseconds = elapsed(14, 15);
     timings.uiMilliseconds = elapsed(4, 5);
     timings.cullingMilliseconds = elapsed(8, 9);
+    timings.temporalMilliseconds = m_temporalEnabled ? elapsed(14, 15) : 0.0;
+    timings.ambientOcclusionMilliseconds = m_ambientOcclusionEnabled ? elapsed(10, 11) : 0.0;
+    timings.reflectionsMilliseconds = m_reflectionsEnabled ? elapsed(12, 13) : 0.0;
+    timings.uploadWaitMilliseconds = m_uploadWaitEnabled ? elapsed(0, 16) : 0.0;
     return true;
 }
 
@@ -162,6 +180,10 @@ void FrameResources::shutdown(VkDevice device) {
     m_timestampQueries = VK_NULL_HANDLE;
     m_timestampsPending = false;
     m_bloomEnabled = false;
+    m_temporalEnabled = false;
+    m_ambientOcclusionEnabled = false;
+    m_reflectionsEnabled = false;
+    m_uploadWaitEnabled = false;
     m_timestampValidBits = 0;
     m_sampleFrame = 0;
 }

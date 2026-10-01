@@ -7,8 +7,11 @@
 #include <span>
 #include <vector>
 
+// Mirrors ObjectRecord in shaders/gpu_visibility.comp (std430).
 struct GpuDrivenObjectRecord {
     glm::mat4 model{1.0f};
+    // Last frame's transform; per-object motion vectors require it.
+    glm::mat4 previousModel{1.0f};
     glm::vec4 bounds{0.0f};
     glm::uvec4 draw{0u};
     glm::uvec4 skin{0u};

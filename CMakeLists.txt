@@ -245,11 +245,14 @@ add_library(zenith_engine STATIC
     src/engine/assets/ModelImporter.cpp
     src/engine/assets/ImageDecoder.cpp
     src/engine/assets/ProductionAssetPipeline.cpp
+    src/engine/assets/AssetStreaming.cpp
     src/engine/graphics/Renderer.cpp
     src/engine/graphics/Lighting.cpp
     src/engine/graphics/EnvironmentLighting.cpp
     src/engine/graphics/RenderConfiguration.cpp
     src/engine/graphics/RenderSubmission.cpp
+    src/engine/graphics/TemporalQuality.cpp
+    src/engine/graphics/graph/RenderGraph.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
@@ -661,6 +664,18 @@ if(BUILD_TESTING)
     add_executable(zenith_frame_task_graph_tests tests/engine/FrameTaskGraphTests.cpp)
     target_link_libraries(zenith_frame_task_graph_tests PRIVATE zenith_engine)
     add_test(NAME zenith_frame_task_graph COMMAND zenith_frame_task_graph_tests)
+
+    add_executable(zenith_render_graph_tests tests/engine/RenderGraphTests.cpp)
+    target_link_libraries(zenith_render_graph_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_render_graph COMMAND zenith_render_graph_tests)
+
+    add_executable(zenith_temporal_quality_tests tests/engine/TemporalQualityTests.cpp)
+    target_link_libraries(zenith_temporal_quality_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_temporal_quality COMMAND zenith_temporal_quality_tests)
+
+    add_executable(zenith_asset_streaming_tests tests/engine/AssetStreamingTests.cpp)
+    target_link_libraries(zenith_asset_streaming_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_asset_streaming COMMAND zenith_asset_streaming_tests)
 
     add_executable(zenith_render_regression_tests tests/engine/RenderRegressionTests.cpp)
     add_test(NAME zenith_render_regression COMMAND zenith_render_regression_tests)

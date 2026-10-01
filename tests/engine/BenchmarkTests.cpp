@@ -39,6 +39,15 @@ int main() {
         stats.gpuSampleFrame = 42;
         stats.gpuFrameMilliseconds = 1.25;
         stats.gpuShadowMilliseconds = 0.75;
+        stats.uploadBackpressureEvents = 2;
+        stats.streamingDecodedBytes = 512;
+        stats.streamingGpuPeakBytes = 1024;
+        stats.pipelineCacheWarm = true;
+        stats.pipelineCreationEvents = 12;
+        stats.pipelineCreationMilliseconds = 3.5;
+        stats.pipelineFirstUseEvents = 12;
+        stats.pipelineFirstUseMilliseconds = 0.25;
+        report.renderCpu(stats, budgets);
         report.renderGpu(stats, budgets, 40, 50);
         report.renderGpu(stats, budgets, 40, 50);
         const nlohmann::json output = nlohmann::json::parse(report.json(true));
@@ -46,6 +55,15 @@ int main() {
         require(output["metrics"]["gpu.frame"]["count"] == 1, "retired GPU frame was sampled twice");
         require(output["metrics"]["gpu.shadow"]["over_budget"] == 1, "GPU budget miss was not recorded");
         require(output["gpu_sample_frames"].size() == 1, "GPU sample identity was not retained");
+        require(output["metrics"]["upload.backpressure_events"]["max"] == 2,
+                "upload-ring backpressure was not recorded");
+        require(output["metrics"]["streaming.decoded_bytes"]["max"] == 512 &&
+                    output["metrics"]["streaming.gpu_peak_bytes"]["max"] == 1024,
+                "streaming byte and memory telemetry was not recorded");
+        require(output["metrics"]["pipeline.cache_warm"]["max"] == 1 &&
+                    output["metrics"]["pipeline.creation_events"]["max"] == 12 &&
+                    output["metrics"]["pipeline.first_use_time"]["max"] == 0.25,
+                "pipeline cache and hitch diagnostics were not recorded");
     } catch (const std::exception& error) {
         std::cerr << "Benchmark test failed: " << error.what() << '\n';
         return 1;

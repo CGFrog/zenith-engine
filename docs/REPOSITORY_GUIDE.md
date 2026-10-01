@@ -264,6 +264,16 @@ assets under configurable CPU and decoded-audio budgets; recycled slots advance
 their generation so stale handles cannot alias new content. Renderer frame
 leases defer GPU cache pruning until submitted work has retired.
 
+### `src/engine/assets/AssetStreaming.*`
+
+Owns deterministic derived-asset residency policy without importing Vulkan.
+It tracks independent CPU/GPU generations, ranks requests by visibility,
+distance, gameplay importance, and deadline, and emits bounded decode and
+upload work lists. Texture mip ranges and mesh chunks are independent segments.
+Ordered pressure handling discards temporary caches, removes optional distant
+mips, retires unused generations after a completion serial, then reports a hard
+budget failure if live content still cannot fit.
+
 ### `src/engine/assets/ModelImporter.*`
 
 Uses cgltf to parse `.gltf` and `.glb`, load buffers, validate the document, and
@@ -325,10 +335,11 @@ Renderer
 |- Surface
 |- Swapchain (presentation images, depth image, presentation semaphores)
 |- FrameResources[3] (command pool/buffer, acquire semaphore, fence)
+|- RenderGraph (pass hazards, synchronization plan, transient lifetimes)
 `- MeshPass
    |- GPU mesh/texture/material caches
    |- shadow pass and main mesh pipeline
-   `- PostProcessPass (per-frame HDR targets and fullscreen pipeline)
+   `- PostProcessPass (HDR/history, motion, SSAO/SSR, and fullscreen pipelines)
 ```
 
 ### `src/engine/graphics/Renderer.*`
@@ -341,8 +352,10 @@ surfaces trigger recreation; zero-sized surfaces are skipped until usable.
 ### `src/engine/graphics/vulkan/VulkanContext.*`
 
 Owns the Vulkan instance, optional validation messenger, selected physical
-device, logical device, graphics/presentation queue, and VMA allocator. Device
-selection checks the required Vulkan features and presentation support.
+device, logical device, graphics/presentation queue, VMA allocator, and Vulkan
+pipeline cache. Device selection checks the required Vulkan features and
+presentation support. Compatible cache bytes are loaded from the platform user
+data directory and atomically persisted before device destruction.
 
 ### `src/engine/graphics/surface/Surface.*`
 
@@ -358,7 +371,24 @@ and a VMA-backed depth image/view. FIFO is the portable fallback.
 ### `src/engine/graphics/resources/FrameResources.*`
 
 Owns one frame slot's command pool, command buffer, image-acquired semaphore,
-and completion fence. Three instances prevent reuse while the GPU is working.
+completion fence, and timestamp queries. Three instances prevent reuse while
+the GPU is working. Timeline waits are attached only to stages that consume
+uploaded buffers or textures.
+
+### `src/engine/graphics/resources/UploadContext.*`
+
+Owns a bounded three-slot staging ring. Timeline-capable queues are polled for
+retirement without blocking; if every slot is still in flight, staging reports
+backpressure so the caller can defer work. Fence retirement is the correctness
+fallback on devices without timeline semaphores. Timestamp and byte counters
+remain attributable to retired uploads.
+
+### `src/engine/graphics/graph/RenderGraph.*`
+
+Compiles imported and transient resource declarations into a stable pass order,
+synchronization2 hazard plan, queue transfers, and compatible lifetime aliases.
+Its statistics report requested, committed, aliased, and peak transient bytes;
+debug builds compare the result with conservative synchronization.
 
 ### `src/engine/graphics/shader/ShaderModule.*`
 
@@ -386,9 +416,11 @@ influence boxes, blend distances, and priorities.
 
 ### `src/engine/graphics/passes/PostProcessPass.*`
 
-Owns one RGBA16F scene target per frame slot and a fullscreen pipeline. It
-samples HDR color, applies threshold bloom, edge smoothing, and ACES tone
-mapping, then writes the presentation image.
+Owns one RGBA16F history target, motion/reactive target, SSAO target, and SSR
+target per frame slot. Separate GPU-scoped SSAO and SSR passes feed the final
+fullscreen pass, which performs neighborhood-clipped TAA (or FXAA), bloom,
+editor-grid composition, and ACES tone mapping. Half-resolution effect tiers
+render into bounded sub-extents; SSR misses preserve probe and IBL lighting.
 
 ## Shaders
 
@@ -399,6 +431,8 @@ mapping, then writes the presentation image.
 | `shaders/shadow.vert` | Transforms geometry into directional-light depth space. |
 | `shaders/fullscreen.vert` | Generates a fullscreen triangle without a vertex buffer. |
 | `shaders/post.frag` | Combines HDR color into the tone-mapped output. |
+| `shaders/ssao.frag` | Estimates scalable screen-space ambient occlusion. |
+| `shaders/ssr.frag` | Traces scalable screen-space reflections with an explicit miss. |
 
 Recognized shader extensions automatically produce matching
 `build/shaders/<relative-path>.spv` files.
