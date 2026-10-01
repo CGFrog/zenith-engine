@@ -2,6 +2,7 @@
 #include "../DepthConvention.hpp"
 #include "../Lighting.hpp"
 
+#include "engine/assets/CompressedTexture.hpp"
 #include "engine/assets/PackedVertexStreams.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 
@@ -172,6 +173,7 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     m_device = context.device();
     m_pipelineCache = context.pipelineCache();
     m_allocator = context.vmaAllocator();
+    m_blockCompressionSupported = context.blockCompressionSupported();
     m_packetCachingEnabled = SDL_getenv("ZENITH_DISABLE_RENDER_PACKET_CACHE") == nullptr;
     m_renderItems.reserve(maximumObjectsPerFrame);
     m_visibleItems.reserve(maximumObjectsPerFrame);
@@ -747,6 +749,9 @@ void MeshPass::destroyGeometryPage(const GeometryPage& page) {
 }
 
 bool MeshPass::uploadTexture(const TextureAsset& texture, GpuTexture& output) {
+    if (texture.blockCompressed()) {
+        return uploadBlockCompressedTexture(texture, output);
+    }
     const auto uploadBegin = std::chrono::steady_clock::now();
     if (texture.width == 0 || texture.height == 0 ||
         texture.rgba.size() != static_cast<size_t>(texture.width) * texture.height * 4) {
@@ -882,6 +887,131 @@ bool MeshPass::uploadTexture(const TextureAsset& texture, GpuTexture& output) {
     return created;
 }
 
+// Cooked textures carry their full mip chain, so every level is copied as-is.
+// BC7 gets UNORM and sRGB views; BC5 has no sRGB variant and gets one view.
+bool MeshPass::uploadBlockCompressedTexture(const TextureAsset& texture, GpuTexture& output) {
+    const auto uploadBegin = std::chrono::steady_clock::now();
+    if (!m_blockCompressionSupported) {
+        std::cerr << "Block-compressed texture skipped: the device cannot sample BC formats\n";
+        return false;
+    }
+    if (const AssetPipelineResult valid = validateBlockCompressedTexture(texture); !valid) {
+        std::cerr << "Block-compressed texture rejected: " << valid.error << '\n';
+        return false;
+    }
+    const bool bc7 = texture.format == TextureFormat::Bc7;
+    const uint32_t mipLevels = static_cast<uint32_t>(texture.mips.size());
+    VkImageCreateInfo imageInfo{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                                .flags = bc7 ? VkImageCreateFlags{VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT} : 0u,
+                                .imageType = VK_IMAGE_TYPE_2D,
+                                .format = bc7 ? VK_FORMAT_BC7_UNORM_BLOCK : VK_FORMAT_BC5_UNORM_BLOCK,
+                                .extent = {.width = texture.width, .height = texture.height, .depth = 1},
+                                .mipLevels = mipLevels,
+                                .arrayLayers = 1,
+                                .samples = VK_SAMPLE_COUNT_1_BIT,
+                                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+    const std::span<const uint32_t> queueFamilies = m_textureUploadContext.sharingQueueFamilies();
+    if (queueFamilies.size() > 1) {
+        imageInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        imageInfo.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilies.size());
+        imageInfo.pQueueFamilyIndices = queueFamilies.data();
+    }
+    VmaAllocationCreateInfo imageAllocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    if (!checkVulkan(
+            vmaCreateImage(m_allocator, &imageInfo, &imageAllocation, &output.image, &output.allocation, nullptr),
+            "Create block-compressed material texture")) {
+        output = {};
+        return false;
+    }
+    // Nothing references the image until this returns, so failures release it directly.
+    const auto fail = [&] {
+        destroyTexture(output);
+        output = {};
+        return false;
+    };
+    // Stage only after the image exists: a staged slot must be submitted.
+    const VkBuffer staging = m_textureUploadContext.stage(texture.compressed.data(), texture.compressed.size());
+    if (!staging) {
+        return fail();
+    }
+
+    std::vector<VkBufferImageCopy> copies;
+    copies.reserve(mipLevels);
+    for (uint32_t level = 0; level < mipLevels; ++level) {
+        const TextureMipLevel& mip = texture.mips[level];
+        copies.push_back({.bufferOffset = mip.offset,
+                          .imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                               .mipLevel = level,
+                                               .baseArrayLayer = 0,
+                                               .layerCount = 1},
+                          .imageExtent = {.width = mip.width, .height = mip.height, .depth = 1}});
+    }
+    const VkImageSubresourceRange allLevels{.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                            .baseMipLevel = 0,
+                                            .levelCount = mipLevels,
+                                            .baseArrayLayer = 0,
+                                            .layerCount = 1};
+    const bool dedicatedQueue = m_textureUploadContext.usesDedicatedQueue();
+    const bool uploaded = m_textureUploadContext.submit([&](VkCommandBuffer command) {
+        const auto transition = [&](VkImageLayout oldLayout, VkImageLayout newLayout, VkPipelineStageFlags2 sourceStage,
+                                    VkPipelineStageFlags2 destinationStage, VkAccessFlags2 sourceAccess,
+                                    VkAccessFlags2 destinationAccess) {
+            const VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                                .srcStageMask = sourceStage,
+                                                .srcAccessMask = sourceAccess,
+                                                .dstStageMask = destinationStage,
+                                                .dstAccessMask = destinationAccess,
+                                                .oldLayout = oldLayout,
+                                                .newLayout = newLayout,
+                                                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                                .image = output.image,
+                                                .subresourceRange = allLevels};
+            const VkDependencyInfo dependency{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                              .imageMemoryBarrierCount = 1,
+                                              .pImageMemoryBarriers = &barrier};
+            vkCmdPipelineBarrier2(command, &dependency);
+        };
+        transition(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                   VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        vkCmdCopyBufferToImage(command, staging, output.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               static_cast<uint32_t>(copies.size()), copies.data());
+        // Matches the RGBA8 path: graphics-queue consumers wait on the upload
+        // timeline semaphore when the copy ran on a dedicated transfer queue.
+        transition(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                   VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                   dedicatedQueue ? VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                   VK_ACCESS_2_TRANSFER_WRITE_BIT, dedicatedQueue ? 0 : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    });
+    if (!uploaded) {
+        return fail();
+    }
+    m_uploadGpuMilliseconds += m_textureUploadContext.lastGpuMilliseconds();
+
+    // The copy may still be in flight from here on, so view failures keep the
+    // image alive rather than destroying it under the transfer queue.
+    VkImageViewCreateInfo view{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                               .image = output.image,
+                               .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                               .format = imageInfo.format,
+                               .subresourceRange = allLevels};
+    if (!checkVulkan(vkCreateImageView(m_device, &view, nullptr, &output.view),
+                     "Create block-compressed texture view")) {
+        return false;
+    }
+    bool created = true;
+    if (bc7) {
+        view.format = VK_FORMAT_BC7_SRGB_BLOCK;
+        created = checkVulkan(vkCreateImageView(m_device, &view, nullptr, &output.srgbView),
+                              "Create sRGB block-compressed texture view");
+    }
+    m_uploadMilliseconds +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - uploadBegin).count();
+    return created;
+}
+
 const MeshPass::GpuMesh* MeshPass::ensureMesh(MeshHandle handle, const AssetManager& assets) {
     const uint64_t key = handleKey(handle);
     if (const auto found = m_meshes.find(key); found != m_meshes.end()) {
@@ -959,6 +1089,12 @@ const MeshPass::GpuTexture* MeshPass::ensureTexture(TextureHandle handle, const 
 
 bool MeshPass::assignTextureSlots(GpuTexture& texture) {
     const auto linear = m_textureTable->acquire(texture.view);
+    if (linear && !texture.srgbView) {
+        // Formats without an sRGB variant (BC5) sample linearly in every slot.
+        texture.linearSlot = *linear;
+        texture.srgbSlot = *linear;
+        return true;
+    }
     const auto srgb = linear ? m_textureTable->acquire(texture.srgbView) : std::nullopt;
     if (!linear || !srgb) {
         if (linear) {
@@ -976,7 +1112,9 @@ void MeshPass::retireTexture(const GpuTexture& texture) {
     // The slot is rewritten in every frame set before that set is bound again;
     // the views die only after all frames that could still bind them retire.
     m_textureTable->release(texture.linearSlot);
-    m_textureTable->release(texture.srgbSlot);
+    if (texture.srgbSlot != texture.linearSlot) {
+        m_textureTable->release(texture.srgbSlot);
+    }
     m_releaseQueue.defer(m_frameSerial, [this, texture] { destroyTexture(texture); });
 }
 

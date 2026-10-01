@@ -234,7 +234,19 @@ For deterministic derived data, run:
 ```
 
 The key includes source bytes, the exact settings string, tool version, and
-target platform. Never place derived files beside source assets. Importers must
+target platform.
+
+Block-compressed textures use the same cache. The build already cooks every
+`assets/*.gltf` into `build/derived`; to cook other content run:
+
+```powershell
+.\build\Debug\zenith_asset_build.exe cook-model-textures assets\model.gltf build\derived
+.\build\Debug\zenith_asset_build.exe cook-texture assets\textures\foo.png build\derived normal
+```
+
+Delete `build/derived` to exercise the RGBA8 fallback path.
+
+Never place derived files beside source assets. Importers must
 validate `AssetImportLimits` before allocating decoded buffers; optional
 Meshopt, Draco, or Basis paths use the decoder boundary and retain the named
 missing-decoder error.

@@ -71,6 +71,8 @@ struct TextureFormatCapabilities {
     bool bc7{false};
     bool astc4x4{false};
     bool etc2{false};
+    // Two-channel BC5, used for tangent-space normal maps.
+    bool bc5{false};
 };
 
 DerivedTextureFormat selectKtx2TargetFormat(const TextureFormatCapabilities& capabilities);
