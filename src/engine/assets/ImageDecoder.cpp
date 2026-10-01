@@ -5,7 +5,11 @@
 
 #include <stb_image.h>
 
+#include <glm/gtc/packing.hpp>
+
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <fstream>
 #include <limits>
 
@@ -21,6 +25,31 @@ ImageDecodeResult makeResult(stbi_uc* pixels, int width, int height, std::string
     texture.rgba.assign(pixels, pixels + static_cast<size_t>(width) * static_cast<size_t>(height) * 4);
     stbi_image_free(pixels);
     return {.texture = std::move(texture)};
+}
+
+// Radiance HDR sources stay linear for image-based lighting. Half floats keep
+// their range while halving resident memory; values beyond it saturate.
+ImageDecodeResult makeHdrResult(float* pixels, int width, int height, std::string_view label) {
+    if (!pixels || width <= 0 || height <= 0) {
+        return {.error = "Cannot decode HDR image " + std::string(label) + ": " + stbi_failure_reason()};
+    }
+    constexpr float halfFloatMaximum = 65504.0f;
+    TextureAsset texture;
+    texture.width = static_cast<uint32_t>(width);
+    texture.height = static_cast<uint32_t>(height);
+    const size_t componentCount = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+    texture.rgbaHalf.resize(componentCount);
+    for (size_t index = 0; index < componentCount; ++index) {
+        const float value = pixels[index];
+        texture.rgbaHalf[index] =
+            glm::packHalf1x16(std::isfinite(value) ? std::clamp(value, 0.0f, halfFloatMaximum) : 0.0f);
+    }
+    stbi_image_free(pixels);
+    return {.texture = std::move(texture)};
+}
+
+uint64_t decodedByteCount(int width, int height, bool highDynamicRange) {
+    return uint64_t(width) * uint64_t(height) * (highDynamicRange ? 4 * sizeof(uint16_t) : 4);
 }
 
 uint32_t read32(const uint8_t* bytes) {
@@ -83,11 +112,17 @@ ImageDecodeResult decodeImageFile(const std::filesystem::path& path) {
     if (!stbi_info(path.string().c_str(), &width, &height, &channels)) {
         return {.error = "Cannot inspect image " + path.string() + ": " + stbi_failure_reason()};
     }
-    if (const AssetPipelineResult limits = validateAssetLimits({.decodedBytes = uint64_t(width) * uint64_t(height) * 4,
-                                                                .textureWidth = static_cast<uint32_t>(width),
-                                                                .textureHeight = static_cast<uint32_t>(height)});
+    const bool highDynamicRange = stbi_is_hdr(path.string().c_str()) != 0;
+    if (const AssetPipelineResult limits =
+            validateAssetLimits({.decodedBytes = decodedByteCount(width, height, highDynamicRange),
+                                 .textureWidth = static_cast<uint32_t>(width),
+                                 .textureHeight = static_cast<uint32_t>(height)});
         !limits) {
         return {.error = "Cannot decode image " + path.string() + ": " + limits.error};
+    }
+    if (highDynamicRange) {
+        float* pixels = stbi_loadf(path.string().c_str(), &width, &height, &channels, STBI_rgb_alpha);
+        return makeHdrResult(pixels, width, height, path.string());
     }
     stbi_uc* pixels = stbi_load(path.string().c_str(), &width, &height, &channels, STBI_rgb_alpha);
     return makeResult(pixels, width, height, path.string());
@@ -108,12 +143,20 @@ ImageDecodeResult decodeImageMemory(const void* bytes, size_t size, std::string_
                                &channels)) {
         return {.error = "Cannot inspect image " + std::string(label) + ": " + stbi_failure_reason()};
     }
-    if (const AssetPipelineResult limits = validateAssetLimits({.sourceBytes = size,
-                                                                .decodedBytes = uint64_t(width) * uint64_t(height) * 4,
-                                                                .textureWidth = static_cast<uint32_t>(width),
-                                                                .textureHeight = static_cast<uint32_t>(height)});
+    const bool highDynamicRange =
+        stbi_is_hdr_from_memory(static_cast<const stbi_uc*>(bytes), static_cast<int>(size)) != 0;
+    if (const AssetPipelineResult limits =
+            validateAssetLimits({.sourceBytes = size,
+                                 .decodedBytes = decodedByteCount(width, height, highDynamicRange),
+                                 .textureWidth = static_cast<uint32_t>(width),
+                                 .textureHeight = static_cast<uint32_t>(height)});
         !limits) {
         return {.error = "Cannot decode image " + std::string(label) + ": " + limits.error};
+    }
+    if (highDynamicRange) {
+        float* pixels = stbi_loadf_from_memory(static_cast<const stbi_uc*>(bytes), static_cast<int>(size), &width,
+                                               &height, &channels, STBI_rgb_alpha);
+        return makeHdrResult(pixels, width, height, label);
     }
     stbi_uc* pixels = stbi_load_from_memory(static_cast<const stbi_uc*>(bytes), static_cast<int>(size), &width, &height,
                                             &channels, STBI_rgb_alpha);

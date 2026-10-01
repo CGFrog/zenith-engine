@@ -1,0 +1,96 @@
+#version 450
+
+// GGX-prefiltered specular radiance for one mip of the specular cube, using the
+// split-sum approximation (N = V = R). Samples read a source mip matched to each
+// sample's solid angle, which removes the fireflies of point-sampled HDR maps.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform samplerCube source;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2DArray target;
+
+layout(push_constant) uniform Settings {
+    vec4 filterSettings; // x: perceptual roughness, y: source face size, z: source mip count
+    uvec4 sizes;         // x: target face size, y: sample count
+} settings;
+
+const float PI = 3.14159265359;
+
+vec3 cubeFaceDirection(uint face, vec2 uv) {
+    vec2 c = uv * 2.0 - 1.0;
+    vec3 direction;
+    if (face == 0u) {
+        direction = vec3(1.0, -c.y, -c.x);
+    } else if (face == 1u) {
+        direction = vec3(-1.0, -c.y, c.x);
+    } else if (face == 2u) {
+        direction = vec3(c.x, 1.0, c.y);
+    } else if (face == 3u) {
+        direction = vec3(c.x, -1.0, -c.y);
+    } else if (face == 4u) {
+        direction = vec3(c.x, -c.y, 1.0);
+    } else {
+        direction = vec3(-c.x, -c.y, -1.0);
+    }
+    return normalize(direction);
+}
+
+float radicalInverse(uint bits) {
+    return float(bitfieldReverse(bits)) * 2.3283064365386963e-10;
+}
+
+// GGX half vector in tangent space (+Z is the normal) for low-discrepancy sample i.
+vec3 importanceSampleGgx(uint index, uint count, float roughness) {
+    float alpha = roughness * roughness;
+    float phi = 2.0 * PI * float(index) / float(count);
+    float xi = radicalInverse(index);
+    float cosTheta = sqrt((1.0 - xi) / (1.0 + (alpha * alpha - 1.0) * xi));
+    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
+    return vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+}
+
+float distributionGgx(float nDotH, float roughness) {
+    float alpha = roughness * roughness;
+    float alpha2 = alpha * alpha;
+    float denominator = nDotH * nDotH * (alpha2 - 1.0) + 1.0;
+    return alpha2 / max(PI * denominator * denominator, 1e-6);
+}
+
+void main() {
+    uint size = settings.sizes.x;
+    uvec3 texel = gl_GlobalInvocationID;
+    if (texel.x >= size || texel.y >= size) {
+        return;
+    }
+    vec3 normal = cubeFaceDirection(texel.z, (vec2(texel.xy) + 0.5) / float(size));
+    float roughness = settings.filterSettings.x;
+    float sourceSize = settings.filterSettings.y;
+    float maximumSourceLod = settings.filterSettings.z - 1.0;
+    if (roughness <= 0.0) {
+        float lod = clamp(log2(sourceSize / float(size)), 0.0, maximumSourceLod);
+        imageStore(target, ivec3(texel), vec4(textureLod(source, normal, lod).rgb, 1.0));
+        return;
+    }
+    vec3 up = abs(normal.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    vec3 tangent = normalize(cross(up, normal));
+    vec3 bitangent = cross(normal, tangent);
+    uint sampleCount = settings.sizes.y;
+    float texelSolidAngle = 4.0 * PI / (6.0 * sourceSize * sourceSize);
+    vec3 radiance = vec3(0.0);
+    float totalWeight = 0.0;
+    for (uint sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex) {
+        vec3 halfTangent = importanceSampleGgx(sampleIndex, sampleCount, roughness);
+        vec3 halfVector = normalize(tangent * halfTangent.x + bitangent * halfTangent.y + normal * halfTangent.z);
+        vec3 light = 2.0 * dot(normal, halfVector) * halfVector - normal;
+        float nDotL = dot(normal, light);
+        if (nDotL <= 0.0) {
+            continue;
+        }
+        // With N = V the sample pdf reduces to D / 4.
+        float pdf = distributionGgx(halfTangent.z, roughness) * 0.25;
+        float sampleSolidAngle = 1.0 / (float(sampleCount) * pdf + 1e-6);
+        float lod = clamp(0.5 * log2(sampleSolidAngle / texelSolidAngle) + 1.0, 0.0, maximumSourceLod);
+        radiance += textureLod(source, light, lod).rgb * nDotL;
+        totalWeight += nDotL;
+    }
+    imageStore(target, ivec3(texel), vec4(radiance / max(totalWeight, 1e-6), 1.0));
+}

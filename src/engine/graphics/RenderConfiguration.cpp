@@ -113,6 +113,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"tonemap", settings.tonemap},
                            {"exposure", exposureDocument(settings.exposure)},
                            {"environment", settings.environment},
+                           {"environmentBackground", settings.environmentBackground},
                            {"localLights", settings.localLights},
                            {"maximumLocalLights", settings.maximumLocalLights},
                            {"reflectionProbes", settings.reflectionProbes},
@@ -160,6 +161,7 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
             !readLocalLighting(document, loaded.localLights)) {
             return {.error = "Render settings contain an unknown quality value"};
         }
+        loaded.environmentBackground = document.value("environmentBackground", true);
         if (const auto maximumLights = document.find("maximumLocalLights"); maximumLights != document.end()) {
             if (!maximumLights->is_number_unsigned() || maximumLights->get<uint64_t>() == 0 ||
                 maximumLights->get<uint64_t>() > std::numeric_limits<uint32_t>::max()) {

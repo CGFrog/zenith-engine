@@ -1,0 +1,52 @@
+#version 450
+
+// Resamples an equirectangular radiance map into mip 0 of an environment cube.
+// Conventions mirror environment_lighting:: in EnvironmentLighting.cpp.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D equirectangular;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2DArray cube;
+
+layout(push_constant) uniform Settings {
+    vec4 parameters; // x: source mip level matching the cube's texel density
+    uvec4 sizes;     // x: cube face size
+} settings;
+
+const float PI = 3.14159265359;
+const float HALF_MAXIMUM = 65000.0;
+
+vec3 cubeFaceDirection(uint face, vec2 uv) {
+    vec2 c = uv * 2.0 - 1.0;
+    vec3 direction;
+    if (face == 0u) {
+        direction = vec3(1.0, -c.y, -c.x);
+    } else if (face == 1u) {
+        direction = vec3(-1.0, -c.y, c.x);
+    } else if (face == 2u) {
+        direction = vec3(c.x, 1.0, c.y);
+    } else if (face == 3u) {
+        direction = vec3(c.x, -1.0, -c.y);
+    } else if (face == 4u) {
+        direction = vec3(c.x, -c.y, 1.0);
+    } else {
+        direction = vec3(-c.x, -c.y, -1.0);
+    }
+    return normalize(direction);
+}
+
+void main() {
+    uint size = settings.sizes.x;
+    uvec3 texel = gl_GlobalInvocationID;
+    if (texel.x >= size || texel.y >= size) {
+        return;
+    }
+    vec3 direction = cubeFaceDirection(texel.z, (vec2(texel.xy) + 0.5) / float(size));
+    vec2 coordinate = vec2(atan(direction.z, direction.x) / (2.0 * PI) + 0.5, acos(clamp(direction.y, -1.0, 1.0)) / PI);
+    vec3 radiance = textureLod(equirectangular, coordinate, settings.parameters.x).rgb;
+    // Keep invalid or out-of-range source texels from poisoning every filtered mip.
+    radiance = clamp(radiance, vec3(0.0), vec3(HALF_MAXIMUM));
+    if (any(isnan(radiance))) {
+        radiance = vec3(0.0);
+    }
+    imageStore(cube, ivec3(texel), vec4(radiance, 1.0));
+}

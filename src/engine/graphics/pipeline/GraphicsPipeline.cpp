@@ -327,3 +327,81 @@ bool GraphicsPipeline::initSelectionMaskPipeline(VkDevice device, VkFormat color
     return checkVulkan(vkCreateGraphicsPipelines(device, pipelineCache, 1, &info, nullptr, &m_pipeline),
                        "Create selection-mask pipeline");
 }
+
+bool GraphicsPipeline::initSkyboxPipeline(VkDevice device, VkFormat colorFormat, VkFormat auxiliaryColorFormat,
+                                          VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
+                                          VkDescriptorSetLayout environmentLayout, VkShaderModule vertex,
+                                          VkShaderModule fragment, VkPipelineCache pipelineCache,
+                                          uint32_t fragmentPushConstantSize) {
+    const VkPushConstantRange pushConstants{
+        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT, .offset = 0, .size = fragmentPushConstantSize};
+    const VkDescriptorSetLayout setLayouts[]{cameraLayout, environmentLayout};
+    VkPipelineLayoutCreateInfo layout{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+                                      .setLayoutCount = static_cast<uint32_t>(std::size(setLayouts)),
+                                      .pSetLayouts = setLayouts,
+                                      .pushConstantRangeCount = 1,
+                                      .pPushConstantRanges = &pushConstants};
+    if (!checkVulkan(vkCreatePipelineLayout(device, &layout, nullptr, &m_pipelineLayout),
+                     "Create skybox pipeline layout")) {
+        return false;
+    }
+    const VkPipelineShaderStageCreateInfo stages[]{shaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertex),
+                                                   shaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, fragment)};
+    const VkFormat colorFormats[]{colorFormat, auxiliaryColorFormat};
+    VkPipelineRenderingCreateInfo rendering{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+                                            .colorAttachmentCount = 2,
+                                            .pColorAttachmentFormats = colorFormats,
+                                            .depthAttachmentFormat = depthFormat};
+    // The vertex shader generates a full-screen triangle from gl_VertexIndex, so
+    // the mesh vertex streams and their dynamic strides do not apply.
+    const VkPipelineVertexInputStateCreateInfo vertexInput{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    const VkPipelineInputAssemblyStateCreateInfo assembly{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
+    const VkPipelineViewportStateCreateInfo viewport{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, .viewportCount = 1, .scissorCount = 1};
+    const VkPipelineRasterizationStateCreateInfo raster{.sType =
+                                                            VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+                                                        .polygonMode = VK_POLYGON_MODE_FILL,
+                                                        .cullMode = VK_CULL_MODE_NONE,
+                                                        .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+                                                        .lineWidth = rasterLineWidth};
+    const VkPipelineMultisampleStateCreateInfo multisample{.sType =
+                                                               VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+                                                           .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT};
+    // Only pixels still at the cleared far-plane depth receive the background.
+    const VkPipelineDepthStencilStateCreateInfo depth{.sType =
+                                                          VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+                                                      .depthTestEnable = VK_TRUE,
+                                                      .depthWriteEnable = VK_FALSE,
+                                                      .depthCompareOp = scene_depth::compareOrEqualOp};
+    // Scene alpha carries the editor selection mask, so the color target keeps it.
+    const VkPipelineColorBlendAttachmentState colorAttachments[]{
+        {.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT},
+        {.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+                           VK_COLOR_COMPONENT_A_BIT}};
+    const VkPipelineColorBlendStateCreateInfo blend{.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+                                                    .attachmentCount =
+                                                        static_cast<uint32_t>(std::size(colorAttachments)),
+                                                    .pAttachments = colorAttachments};
+    const VkDynamicState dynamicStates[]{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    const VkPipelineDynamicStateCreateInfo dynamic{.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+                                                   .dynamicStateCount = static_cast<uint32_t>(std::size(dynamicStates)),
+                                                   .pDynamicStates = dynamicStates};
+    const VkGraphicsPipelineCreateInfo info{.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+                                            .pNext = &rendering,
+                                            .stageCount = static_cast<uint32_t>(std::size(stages)),
+                                            .pStages = stages,
+                                            .pVertexInputState = &vertexInput,
+                                            .pInputAssemblyState = &assembly,
+                                            .pViewportState = &viewport,
+                                            .pRasterizationState = &raster,
+                                            .pMultisampleState = &multisample,
+                                            .pDepthStencilState = &depth,
+                                            .pColorBlendState = &blend,
+                                            .pDynamicState = &dynamic,
+                                            .layout = m_pipelineLayout};
+    return checkVulkan(vkCreateGraphicsPipelines(device, pipelineCache, 1, &info, nullptr, &m_pipeline),
+                       "Create skybox pipeline");
+}

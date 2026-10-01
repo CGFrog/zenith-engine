@@ -107,7 +107,11 @@ ClusterLightLists assignLightsToClusters(const ClusterGrid& grid, std::span<cons
 
 struct ProbeBlend {
     Entity entity{entt::null};
+    // Share of this probe among the returned probes; the weights sum to one.
     float weight{0.0f};
+    // Unnormalized influence at the query point: 1 inside the box, falling to 0
+    // across the blend distance.
+    float influence{0.0f};
 };
 
 struct LocalShadowRequest {

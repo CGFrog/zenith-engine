@@ -1,0 +1,103 @@
+#version 450
+
+// Projects an environment cube onto order-2 spherical harmonics, convolved with
+// the clamped cosine and divided by pi. Mirrors environment_lighting::projectIrradiance;
+// shaders/mesh.frag evaluates the result. One workgroup covers the whole cube.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform samplerCube source;
+layout(std430, set = 0, binding = 2) writeonly buffer Irradiance {
+    vec4 coefficients[9];
+} irradiance;
+
+layout(push_constant) uniform Settings {
+    vec4 filterSettings; // x: source mip level sampled at the projection grid
+    uvec4 sizes;         // x: projection grid face size
+} settings;
+
+const float PI = 3.14159265359;
+const uint THREAD_COUNT = 64u;
+
+shared vec3 partialSums[THREAD_COUNT][9];
+shared float partialWeights[THREAD_COUNT];
+
+vec3 cubeFaceDirection(uint face, vec2 uv) {
+    vec2 c = uv * 2.0 - 1.0;
+    vec3 direction;
+    if (face == 0u) {
+        direction = vec3(1.0, -c.y, -c.x);
+    } else if (face == 1u) {
+        direction = vec3(-1.0, -c.y, c.x);
+    } else if (face == 2u) {
+        direction = vec3(c.x, 1.0, c.y);
+    } else if (face == 3u) {
+        direction = vec3(c.x, -1.0, -c.y);
+    } else if (face == 4u) {
+        direction = vec3(c.x, -c.y, 1.0);
+    } else {
+        direction = vec3(-c.x, -c.y, -1.0);
+    }
+    return normalize(direction);
+}
+
+float cubeAreaElement(float x, float y) {
+    return atan(x * y, sqrt(x * x + y * y + 1.0));
+}
+
+void main() {
+    uint thread = gl_LocalInvocationIndex;
+    uint gridSize = settings.sizes.x;
+    uint texelCount = gridSize * gridSize * 6u;
+    float texelSize = 2.0 / float(gridSize);
+    vec3 sums[9];
+    for (int index = 0; index < 9; ++index) {
+        sums[index] = vec3(0.0);
+    }
+    float weightSum = 0.0;
+    for (uint texel = thread; texel < texelCount; texel += THREAD_COUNT) {
+        uint face = texel / (gridSize * gridSize);
+        uint faceTexel = texel - face * gridSize * gridSize;
+        uvec2 coordinate = uvec2(faceTexel % gridSize, faceTexel / gridSize);
+        vec2 corner = vec2(coordinate) * texelSize - 1.0;
+        vec2 farCorner = corner + texelSize;
+        float weight = cubeAreaElement(corner.x, corner.y) - cubeAreaElement(corner.x, farCorner.y) -
+                       cubeAreaElement(farCorner.x, corner.y) + cubeAreaElement(farCorner.x, farCorner.y);
+        vec3 direction = cubeFaceDirection(face, (vec2(coordinate) + 0.5) / float(gridSize));
+        vec3 radiance = textureLod(source, direction, settings.filterSettings.x).rgb * weight;
+        float x = direction.x;
+        float y = direction.y;
+        float z = direction.z;
+        sums[0] += radiance * 0.282095;
+        sums[1] += radiance * (0.488603 * y);
+        sums[2] += radiance * (0.488603 * z);
+        sums[3] += radiance * (0.488603 * x);
+        sums[4] += radiance * (1.092548 * x * y);
+        sums[5] += radiance * (1.092548 * y * z);
+        sums[6] += radiance * (0.315392 * (3.0 * z * z - 1.0));
+        sums[7] += radiance * (1.092548 * x * z);
+        sums[8] += radiance * (0.546274 * (x * x - y * y));
+        weightSum += weight;
+    }
+    for (int index = 0; index < 9; ++index) {
+        partialSums[thread][index] = sums[index];
+    }
+    partialWeights[thread] = weightSum;
+    barrier();
+    for (uint stride = THREAD_COUNT / 2u; stride > 0u; stride /= 2u) {
+        if (thread < stride) {
+            for (int index = 0; index < 9; ++index) {
+                partialSums[thread][index] += partialSums[thread + stride][index];
+            }
+            partialWeights[thread] += partialWeights[thread + stride];
+        }
+        barrier();
+    }
+    if (thread == 0u) {
+        // Solid angles sum to 4 pi; band factors are A_l / pi for the clamped cosine.
+        float normalization = partialWeights[0] > 0.0 ? 4.0 * PI / partialWeights[0] : 0.0;
+        const float bandFactors[9] = float[9](1.0, 2.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0, 0.25, 0.25, 0.25, 0.25, 0.25);
+        for (int index = 0; index < 9; ++index) {
+            irradiance.coefficients[index] = vec4(partialSums[0][index] * normalization * bandFactors[index], 0.0);
+        }
+    }
+}

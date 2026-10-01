@@ -33,6 +33,12 @@ class GraphicsPipeline {
     bool initSelectionMaskPipeline(VkDevice device, VkFormat colorFormat, VkFormat auxiliaryColorFormat,
                                    VkFormat depthFormat, VkDescriptorSetLayout cameraLayout, VkShaderModule vertex,
                                    VkShaderModule fragment, VkPipelineCache pipelineCache);
+    // Full-screen background at the far plane: no vertex input, depth tested
+    // against the cleared value without writing, scene alpha left untouched.
+    bool initSkyboxPipeline(VkDevice device, VkFormat colorFormat, VkFormat auxiliaryColorFormat, VkFormat depthFormat,
+                            VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout environmentLayout,
+                            VkShaderModule vertex, VkShaderModule fragment, VkPipelineCache pipelineCache,
+                            uint32_t fragmentPushConstantSize);
     void shutdown(VkDevice device);
 
     VkPipeline handle() const {

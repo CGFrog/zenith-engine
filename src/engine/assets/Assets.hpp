@@ -134,6 +134,10 @@ struct TextureAsset {
     // RGBA8 base level, present only when format is Rgba8. The renderer
     // generates the remaining mip levels for this format.
     std::vector<uint8_t> rgba;
+    // Linear-light RGBA texels of a high-dynamic-range source such as a Radiance
+    // .hdr environment map, as IEEE half-float bits. When present, rgba and
+    // compressed are empty and the format stays Rgba8.
+    std::vector<uint16_t> rgbaHalf;
     TextureFormat format{TextureFormat::Rgba8};
     TextureUsage usage{TextureUsage::Color};
     // Complete block-compressed mip chain (level 0 first, packed back to back),

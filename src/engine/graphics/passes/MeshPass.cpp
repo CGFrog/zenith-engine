@@ -68,6 +68,9 @@ struct CameraData {
     glm::vec4 clusterTileScale{0.0f};
     // Columns, rows, depth slices, uploaded local-light count.
     glm::uvec4 clusterGrid{0u};
+    // x: image-based lighting enabled, y: reflection-probe blend weight,
+    // z: prefiltered specular mip holding roughness 1, w: unused.
+    glm::vec4 environmentParams{0.0f};
     // Temporal resolve: NDC jitter of the current (xy) and previous (zw)
     // projections, removed from motion vectors in mesh.frag. Keep last.
     glm::vec4 temporalJitter{0.0f};
@@ -177,6 +180,45 @@ uint64_t handleKey(GpuSceneHandle handle) {
 template <typename Handle> Handle handleFromKey(uint64_t key) {
     return {static_cast<uint32_t>(key), static_cast<uint32_t>(key >> 32)};
 }
+
+EnvironmentSource environmentSource(TextureHandle map, const AssetManager& assets,
+                                    const EnvironmentLightComponent& environment) {
+    const TextureAsset* asset = map ? assets.texture(map) : nullptr;
+    return {.map = asset ? map : TextureHandle{},
+            .mapAsset = asset,
+            .skyColor = environment.skyColor,
+            .groundColor = environment.groundColor};
+}
+
+// Image-based lighting uses the primary environment plus the dominant reflection
+// probe at the camera; hemisphere lighting keeps only the analytic sky bound.
+EnvironmentFrameRequest environmentRequest(const Scene& scene, const AssetManager& assets,
+                                           const EnvironmentLightComponent& environment, const RenderSettings& settings,
+                                           const glm::vec3& cameraPosition) {
+    EnvironmentFrameRequest request{.quality = settings.environment};
+    if (settings.environment == EnvironmentQuality::Hemisphere) {
+        // Never sampled; fixed colors keep color edits from rebuilding the maps.
+        const EnvironmentLightComponent defaults;
+        request.primary = {.skyColor = defaults.skyColor, .groundColor = defaults.groundColor};
+        return request;
+    }
+    request.primary = environmentSource(environment.environmentMap, assets, environment);
+    if (!settings.reflectionProbes) {
+        return request;
+    }
+    // Probes arrive ordered by priority, then weight. Only the first with a loaded
+    // map is bound; it fades over the environment across its blend distance.
+    for (const ProbeBlend& blend : blendReflectionProbes(scene, cameraPosition)) {
+        const auto& probe = scene.registry().get<ReflectionProbeComponent>(blend.entity);
+        const EnvironmentSource source = environmentSource(probe.environmentMap, assets, environment);
+        if (source.mapAsset) {
+            request.probe = source;
+            request.probeWeight = blend.influence;
+            break;
+        }
+    }
+    return request;
+}
 } // namespace
 
 bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat depthFormat, uint32_t frameCount,
@@ -211,7 +253,9 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
         !uploadTexture(normal, m_normalTexture) || !createBindlessDescriptors(context, frameCount) ||
         !createShadowResources(depthFormat) ||
         !m_postProcess.init(context, colorFormat, depthFormat, frameCount, extent, depthView) ||
-        !createPipeline(PostProcessPass::sceneFormat, depthFormat)) {
+        !createPipeline(PostProcessPass::sceneFormat, depthFormat) ||
+        !m_environmentPass.init(context, m_cameraLayout, PostProcessPass::sceneFormat, PostProcessPass::motionFormat,
+                                depthFormat, frameCount)) {
         return false;
     }
     VkPhysicalDeviceVulkan12Features features12{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
@@ -316,6 +360,19 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          .descriptorCount = 1,
          .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        // Image-based lighting, written by EnvironmentPass.
+        {.binding = EnvironmentPass::specularBinding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         .descriptorCount = EnvironmentPass::environmentSlots,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        {.binding = EnvironmentPass::irradianceBinding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = EnvironmentPass::environmentSlots,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        {.binding = EnvironmentPass::brdfBinding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
         // Clustered local lighting: lights, per-cluster ranges, light indices.
         {.binding = 9,
          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -348,8 +405,10 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
     // instances from the culling output instead of the host object buffer.
     const VkDescriptorPoolSize poolSizes[]{
         {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = frameCount * 2},
-        {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = frameCount * 14},
-        {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = frameCount * 2}};
+        {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = frameCount * 2 * (7 + EnvironmentPass::environmentSlots)},
+        {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         .descriptorCount = frameCount * 2 * (2 + EnvironmentPass::environmentSlots)}};
     VkDescriptorPoolCreateInfo poolInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = frameCount * 2,
@@ -1668,53 +1727,11 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         projection = applyProjectionJitter(projection, temporal.jitterNdc);
     }
     const DirectionalLightComponent light = resolvePrimary<DirectionalLightComponent>(scene);
-    EnvironmentLightComponent environment = resolvePrimary<EnvironmentLightComponent>(scene);
+    const EnvironmentLightComponent environment = resolvePrimary<EnvironmentLightComponent>(scene);
+    // Hemisphere lighting reads these flat colors; image-based lighting reads
+    // the maps EnvironmentPass binds.
     std::array<glm::vec3, 6> environmentSpecular;
     environmentSpecular.fill((environment.skyColor + environment.groundColor) * 0.5f);
-    const uint32_t environmentRoughnessLevels =
-        rendering.settings().environment == EnvironmentQuality::ImageBasedHigh ? 6u : 3u;
-    if (rendering.settings().environment != EnvironmentQuality::Hemisphere && environment.environmentMap) {
-        if (const TextureAsset* texture = assets.texture(environment.environmentMap)) {
-            const PrefilteredEnvironment& filtered =
-                m_environmentCache.preprocess(*texture, environmentRoughnessLevels);
-            environment.skyColor = filtered.diffuseSky;
-            environment.groundColor = filtered.diffuseGround;
-            for (size_t level = 0; level < environmentSpecular.size(); ++level) {
-                environmentSpecular[level] =
-                    filtered.specularRoughnessLevels[std::min(level, filtered.specularRoughnessLevels.size() - 1)];
-            }
-        }
-    }
-    if (rendering.settings().reflectionProbes) {
-        const std::vector<ProbeBlend> probes = blendReflectionProbes(scene, cameraPosition);
-        glm::vec3 probeSky(0.0f);
-        glm::vec3 probeGround(0.0f);
-        std::array<glm::vec3, 6> probeSpecular{};
-        float probeWeight = 0.0f;
-        for (const ProbeBlend& blend : probes) {
-            const auto& probe = scene.registry().get<ReflectionProbeComponent>(blend.entity);
-            if (const TextureAsset* texture = assets.texture(probe.environmentMap)) {
-                const PrefilteredEnvironment& filtered =
-                    m_environmentCache.preprocess(*texture, environmentRoughnessLevels);
-                probeSky += filtered.diffuseSky * blend.weight;
-                probeGround += filtered.diffuseGround * blend.weight;
-                for (size_t level = 0; level < probeSpecular.size(); ++level) {
-                    probeSpecular[level] +=
-                        filtered.specularRoughnessLevels[std::min(level, filtered.specularRoughnessLevels.size() - 1)] *
-                        blend.weight;
-                }
-                probeWeight += blend.weight;
-            }
-        }
-        if (probeWeight > 0.0f) {
-            environment.skyColor = glm::mix(environment.skyColor, probeSky / probeWeight, probeWeight);
-            environment.groundColor = glm::mix(environment.groundColor, probeGround / probeWeight, probeWeight);
-            for (size_t level = 0; level < environmentSpecular.size(); ++level) {
-                environmentSpecular[level] =
-                    glm::mix(environmentSpecular[level], probeSpecular[level] / probeWeight, probeWeight);
-            }
-        }
-    }
     const glm::vec3 lightDirection = normalizedLightDirection(light.direction);
     CameraData cameraData;
     cameraData.viewProjection = projection * view;
@@ -1797,6 +1814,19 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     for (size_t level = 0; level < environmentSpecular.size(); ++level) {
         cameraData.environmentSpecular[level] = {glm::max(environmentSpecular[level], glm::vec3(0.0f)), 1.0f};
     }
+    // Environment maps are bound before any pass uses this frame's camera sets.
+    const bool imageBasedLighting = rendering.settings().environment != EnvironmentQuality::Hemisphere;
+    const CameraBuffer& frameCamera = m_cameras[frameIndex];
+    const std::array<VkDescriptorSet, 2> environmentSets{frameCamera.descriptor, frameCamera.gpuDrivenDescriptor};
+    const std::optional<EnvironmentFrameState> environmentState =
+        m_environmentPass.prepare(commandBuffer, frameIndex, m_frameSerial,
+                                  environmentRequest(scene, assets, environment, rendering.settings(), cameraPosition),
+                                  std::span(environmentSets.data(), frameCamera.gpuDrivenDescriptor ? 2u : 1u));
+    if (!environmentState) {
+        return false;
+    }
+    cameraData.environmentParams = {imageBasedLighting ? 1.0f : 0.0f, environmentState->probeWeight,
+                                    environmentState->specularMaximumLod, 0.0f};
     const uint32_t localLightLimit =
         rendering.settings().localLights == LocalLightingQuality::Disabled
             ? 0u
@@ -2064,7 +2094,16 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         stats.indirectCommandCount = static_cast<uint32_t>(m_visibility.commands.size());
     }
     recordSelectionMask(draw);
-    recordShadedItems(draw, gpuDrivenActive ? ShadedItems::BlendedOnly : ShadedItems::All);
+    if (!gpuDrivenActive) {
+        recordShadedItems(draw, ShadedItems::OpaqueOnly);
+    }
+    // The background fills what opaque geometry left at far depth, before
+    // blended surfaces composite over it.
+    if (imageBasedLighting && rendering.settings().environmentBackground) {
+        m_environmentPass.recordSkybox(commandBuffer, frameIndex, frameCamera.descriptor, environment.specularIntensity,
+                                       cameraData.temporalJitter);
+    }
+    recordShadedItems(draw, ShadedItems::BlendedOnly);
     recordOutlines(draw);
 
     vkCmdEndRendering(commandBuffer);
@@ -2315,6 +2354,7 @@ void MeshPass::recordSelectionMask(const DrawContext& draw) {
 void MeshPass::recordShadedItems(const DrawContext& draw, ShadedItems selection) {
     const VkDescriptorSet sets[]{m_cameras[draw.frameIndex].descriptor, m_cameras[draw.frameIndex].bindlessDescriptor};
     const bool blendedOnly = selection == ShadedItems::BlendedOnly;
+    const bool opaqueOnly = selection == ShadedItems::OpaqueOnly;
     const GraphicsPipeline* boundPipeline = nullptr;
     std::optional<uint32_t> boundPage;
     const auto opaqueCpuBegin = std::chrono::steady_clock::now();
@@ -2325,7 +2365,7 @@ void MeshPass::recordShadedItems(const DrawContext& draw, ShadedItems selection)
     for (size_t itemIndex = 0; itemIndex < m_visibleItems.size();) {
         const RenderItem& item = *m_visibleItems[itemIndex];
         const bool blended = item.material->alphaMode == MaterialAlphaMode::Blend;
-        if (blendedOnly && !blended) {
+        if ((blendedOnly && !blended) || (opaqueOnly && blended)) {
             ++itemIndex;
             continue;
         }
@@ -2463,6 +2503,7 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_shadowPipeline.shutdown(context.device());
     m_selectionMaskPipeline.shutdown(context.device());
     m_outlinePipeline.shutdown(context.device());
+    m_environmentPass.shutdown();
     m_postProcess.shutdown(context);
     m_meshes.clear();
     m_unpackableMeshes.clear();

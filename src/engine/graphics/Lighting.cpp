@@ -280,7 +280,8 @@ std::vector<ProbeBlend> blendReflectionProbes(const Scene& scene, const glm::vec
     }
     std::vector<ProbeBlend> result;
     for (const Candidate& candidate : candidates) {
-        result.push_back({candidate.blend.entity, total > 0.0f ? candidate.blend.weight / total : 0.0f});
+        result.push_back(
+            {candidate.blend.entity, total > 0.0f ? candidate.blend.weight / total : 0.0f, candidate.blend.weight});
     }
     return result;
 }

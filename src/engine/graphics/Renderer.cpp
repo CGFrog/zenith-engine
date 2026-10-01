@@ -17,6 +17,7 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
         settings.antialiasing = AntialiasingMode::Taa;
         settings.ambientOcclusion = AmbientOcclusionQuality::FullResolution;
         settings.reflections = ReflectionQuality::ScreenSpaceFullResolution;
+        settings.environment = EnvironmentQuality::ImageBasedHigh;
     }
     if (SDL_getenv("ZENITH_FORCE_DYNAMIC_RESOLUTION") != nullptr) {
         settings.dynamicResolution.enabled = true;

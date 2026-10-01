@@ -24,12 +24,23 @@ layout(set = 0, binding = 0) uniform CameraData {
     vec4 clusterDepth;     // xy: slice log scale, bias; zw: view depth = z / (depth + w)
     vec4 clusterTileScale; // xy: cluster columns, rows per pixel
     uvec4 clusterGrid;     // columns, rows, depth slices, local light count
+    vec4 environmentParams; // x: image-based lighting, y: probe weight, z: specular mip of roughness 1
     // Temporal resolve: NDC jitter applied to the current (xy) and previous (zw)
     // projections, removed from motion vectors. Keep last in the block.
     vec4 temporalJitter;
 } camera;
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
+
+// Image-based lighting from EnvironmentPass. Slot 0 is the scene environment and
+// slot 1 the dominant reflection probe, mixed by camera.environmentParams.y.
+layout(set = 0, binding = 5) uniform samplerCube prefilteredEnvironment[2];
+// Order-2 spherical harmonics of irradiance / pi (see environment_lighting::projectIrradiance).
+layout(std430, set = 0, binding = 6) readonly buffer EnvironmentIrradiance {
+    vec4 coefficients[9];
+} environmentIrradiance[2];
+// Split-sum BRDF scale and bias, indexed by (n.v, roughness).
+layout(set = 0, binding = 7) uniform sampler2D environmentBrdf;
 
 // Mirrors MaterialRecord in MeshPass.cpp (std430).
 struct MaterialRecord {
@@ -197,6 +208,78 @@ uint fragmentCluster() {
     return tile.x + camera.clusterGrid.x * (tile.y + camera.clusterGrid.y * depthSlice);
 }
 
+vec3 evaluateIrradiance(vec4 coefficients[9], vec3 normal) {
+    vec3 result = coefficients[0].rgb * 0.282095 + coefficients[1].rgb * (0.488603 * normal.y) +
+                  coefficients[2].rgb * (0.488603 * normal.z) + coefficients[3].rgb * (0.488603 * normal.x) +
+                  coefficients[4].rgb * (1.092548 * normal.x * normal.y) +
+                  coefficients[5].rgb * (1.092548 * normal.y * normal.z) +
+                  coefficients[6].rgb * (0.315392 * (3.0 * normal.z * normal.z - 1.0)) +
+                  coefficients[7].rgb * (1.092548 * normal.x * normal.z) +
+                  coefficients[8].rgb * (0.546274 * (normal.x * normal.x - normal.y * normal.y));
+    return max(result, vec3(0.0));
+}
+
+// Lambertian outgoing radiance of a white surface lit by the environment.
+vec3 environmentIrradianceAt(vec3 normal) {
+    vec3 irradiance = evaluateIrradiance(environmentIrradiance[0].coefficients, normal);
+    float probeWeight = camera.environmentParams.y;
+    if (probeWeight > 0.0) {
+        irradiance = mix(irradiance, evaluateIrradiance(environmentIrradiance[1].coefficients, normal), probeWeight);
+    }
+    return irradiance;
+}
+
+vec3 prefilteredRadiance(vec3 direction, float roughness) {
+    float lod = roughness * camera.environmentParams.z;
+    vec3 radiance = textureLod(prefilteredEnvironment[0], direction, lod).rgb;
+    float probeWeight = camera.environmentParams.y;
+    if (probeWeight > 0.0) {
+        radiance = mix(radiance, textureLod(prefilteredEnvironment[1], direction, lod).rgb, probeWeight);
+    }
+    return radiance;
+}
+
+// Flat sky/ground approximation used when image-based lighting is disabled.
+vec3 hemisphereLighting(vec3 normal, float nDotV, vec3 albedo, float metallic, float roughness, vec3 reflectance) {
+    float hemisphereWeight = normal.y * 0.5 + 0.5;
+    vec3 diffuseEnvironment = mix(camera.environmentGround.rgb, camera.environmentSky.rgb, hemisphereWeight);
+    vec3 indirect = albedo * diffuseEnvironment * camera.environmentSky.w;
+    if (PHYSICALLY_BASED_LIGHTING) {
+        vec3 indirectFresnel = fresnelSchlickRoughness(nDotV, reflectance, roughness);
+        vec3 indirectDiffuse = (vec3(1.0) - indirectFresnel) * (1.0 - metallic) * indirect;
+        float specularLevel = roughness * 5.0;
+        int specularLow = int(floor(specularLevel));
+        int specularHigh = min(specularLow + 1, 5);
+        vec3 specularEnvironment = mix(camera.environmentSpecular[specularLow].rgb,
+                                       camera.environmentSpecular[specularHigh].rgb, fract(specularLevel));
+        vec3 indirectSpecular = indirectFresnel * specularEnvironment * camera.environmentGround.w *
+                                mix(1.0, 0.35, roughness);
+        indirect = indirectDiffuse + indirectSpecular;
+    }
+    return indirect;
+}
+
+// Split-sum image-based lighting with material ambient occlusion applied to the
+// diffuse term and converted to specular occlusion for reflections.
+vec3 imageBasedLighting(vec3 normal, vec3 geometricNormal, vec3 viewDirection, float nDotV, vec3 albedo,
+                        float metallic, float roughness, vec3 reflectance, float occlusion) {
+    vec3 diffuse = albedo * environmentIrradianceAt(normal) * camera.environmentSky.w;
+    if (!PHYSICALLY_BASED_LIGHTING) {
+        return diffuse * occlusion;
+    }
+    vec3 diffuseWeight = (vec3(1.0) - fresnelSchlickRoughness(nDotV, reflectance, roughness)) * (1.0 - metallic);
+    vec3 reflected = reflect(-viewDirection, normal);
+    vec2 brdf = textureLod(environmentBrdf, vec2(nDotV, roughness), 0.0).rg;
+    // Lagarde's specular occlusion, plus a horizon fade for reflections that a
+    // normal map bends below the geometric surface.
+    float specularOcclusion =
+        clamp(pow(nDotV + occlusion, exp2(-16.0 * roughness - 1.0)) - 1.0 + occlusion, 0.0, 1.0);
+    float horizon = min(1.0 + dot(reflected, geometricNormal), 1.0);
+    vec3 specular = prefilteredRadiance(reflected, roughness) * (reflectance * brdf.x + brdf.y) *
+                    camera.environmentGround.w * specularOcclusion * horizon * horizon;
+    return diffuseWeight * diffuse * occlusion + specular;
+}
+
 void main() {
     MaterialRecord material = materials.values[materialIndex];
     vec4 sampledBase = sampleMaterialTexture(material.textures.x, texCoord);
@@ -255,22 +338,13 @@ void main() {
                                  roughness, reflectance, viewGeometry) *
                   localRadiance * localNDotL;
     }
-    float hemisphereWeight = normal.y * 0.5 + 0.5;
-    vec3 diffuseEnvironment = mix(camera.environmentGround.rgb, camera.environmentSky.rgb, hemisphereWeight);
-    vec3 indirect = albedo * diffuseEnvironment * camera.environmentSky.w;
-    if (PHYSICALLY_BASED_LIGHTING) {
-        vec3 indirectFresnel = fresnelSchlickRoughness(nDotV, reflectance, roughness);
-        vec3 indirectDiffuse = (vec3(1.0) - indirectFresnel) * (1.0 - metallic) * indirect;
-        float specularLevel = roughness * 5.0;
-        int specularLow = int(floor(specularLevel));
-        int specularHigh = min(specularLow + 1, 5);
-        vec3 specularEnvironment = mix(camera.environmentSpecular[specularLow].rgb,
-                                       camera.environmentSpecular[specularHigh].rgb, fract(specularLevel));
-        vec3 indirectSpecular = indirectFresnel * specularEnvironment * camera.environmentGround.w *
-                                mix(1.0, 0.35, roughness);
-        indirect = indirectDiffuse + indirectSpecular;
+    vec3 indirect;
+    if (camera.environmentParams.x > 0.5) {
+        indirect = imageBasedLighting(normal, geometricNormal, viewDirection, nDotV, albedo, metallic, roughness,
+                                      reflectance, occlusion);
+    } else {
+        indirect = hemisphereLighting(normal, nDotV, albedo, metallic, roughness, reflectance) * occlusion;
     }
-    indirect *= occlusion;
     vec3 emissive = sampleMaterialTexture(material.extraTextures.x, texCoord).rgb * material.emissive.rgb;
     vec3 color = direct + indirect + emissive;
     if (SHADOW_CASCADE_COUNT > 1 && camera.renderingSettings.w > 0.5) {

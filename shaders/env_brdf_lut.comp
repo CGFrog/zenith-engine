@@ -1,0 +1,60 @@
+#version 450
+
+// Split-sum environment BRDF table: x = n.v, y = perceptual roughness, sampled at
+// texel centers. Stores (scale, bias) so specular = prefiltered * (F0 * scale + bias).
+// Mirrors environment_lighting::integrateEnvironmentBrdf.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2DArray table;
+
+layout(push_constant) uniform Settings {
+    vec4 unused;
+    uvec4 sizes; // x: table size, y: sample count
+} settings;
+
+const float PI = 3.14159265359;
+
+float radicalInverse(uint bits) {
+    return float(bitfieldReverse(bits)) * 2.3283064365386963e-10;
+}
+
+vec3 importanceSampleGgx(uint index, uint count, float roughness) {
+    float alpha = roughness * roughness;
+    float phi = 2.0 * PI * float(index) / float(count);
+    float xi = radicalInverse(index);
+    float cosTheta = sqrt((1.0 - xi) / (1.0 + (alpha * alpha - 1.0) * xi));
+    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
+    return vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+}
+
+float smithGeometryIbl(float nDotV, float nDotL, float roughness) {
+    float k = roughness * roughness * 0.5;
+    return nDotV / (nDotV * (1.0 - k) + k) * (nDotL / (nDotL * (1.0 - k) + k));
+}
+
+void main() {
+    uint size = settings.sizes.x;
+    uvec2 texel = gl_GlobalInvocationID.xy;
+    if (texel.x >= size || texel.y >= size) {
+        return;
+    }
+    float nDotV = max((float(texel.x) + 0.5) / float(size), 1e-4);
+    float roughness = (float(texel.y) + 0.5) / float(size);
+    vec3 view = vec3(sqrt(1.0 - nDotV * nDotV), 0.0, nDotV);
+    uint sampleCount = settings.sizes.y;
+    vec2 result = vec2(0.0);
+    for (uint sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex) {
+        vec3 halfVector = importanceSampleGgx(sampleIndex, sampleCount, roughness);
+        vec3 light = 2.0 * dot(view, halfVector) * halfVector - view;
+        float nDotL = max(light.z, 0.0);
+        if (nDotL <= 0.0) {
+            continue;
+        }
+        float nDotH = max(halfVector.z, 0.0);
+        float vDotH = max(dot(view, halfVector), 0.0);
+        float visibility = smithGeometryIbl(nDotV, nDotL, roughness) * vDotH / max(nDotH * nDotV, 1e-6);
+        float fresnel = pow(1.0 - vDotH, 5.0);
+        result += vec2((1.0 - fresnel) * visibility, fresnel * visibility);
+    }
+    imageStore(table, ivec3(texel, 0), vec4(result / float(sampleCount), 0.0, 1.0));
+}

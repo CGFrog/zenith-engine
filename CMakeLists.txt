@@ -294,6 +294,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
     src/engine/graphics/passes/ClusteredLightingPass.cpp
+    src/engine/graphics/passes/EnvironmentPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
     src/engine/graphics/passes/TemporalResolvePass.cpp
     src/engine/graphics/passes/BloomExposurePass.cpp
@@ -771,6 +772,10 @@ if(BUILD_TESTING)
     add_executable(zenith_tone_mapping_tests tests/engine/ToneMappingTests.cpp)
     target_link_libraries(zenith_tone_mapping_tests PRIVATE zenith_engine)
     add_test(NAME zenith_tone_mapping COMMAND zenith_tone_mapping_tests)
+
+    add_executable(zenith_environment_lighting_tests tests/engine/EnvironmentLightingTests.cpp)
+    target_link_libraries(zenith_environment_lighting_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_environment_lighting COMMAND zenith_environment_lighting_tests)
 
     add_executable(zenith_asset_streaming_tests tests/engine/AssetStreamingTests.cpp)
     target_link_libraries(zenith_asset_streaming_tests PRIVATE zenith_engine)

@@ -448,9 +448,17 @@ Point and spot lights are gathered by stable entity ID, capped at the configured
 storage buffer. A compute pass assigns them to a 16x9x24 cluster grid
 (exponential, reversed-Z-aware depth slices over the internal render extent)
 before the scene pass, and mesh.frag loops only its cluster's list. Older
-settings that chose 32- or 64-light tiles load as clustered. Image-based lighting consumes deterministic cached
-diffuse and roughness-prefiltered specular data. Reflection probes use authored
-box volumes, blend distances, and priorities; deterministic probe preprocessing
+settings that chose 32- or 64-light tiles load as clustered. Image-based
+lighting uses the split-sum approximation: when an environment source first
+appears, `EnvironmentPass` records GPU precomputation of a radiance cube, a
+GGX-prefiltered specular cube, and spherical-harmonic irradiance into the frame,
+caches the result by source, and retires evicted data through the frame-serial
+release queue. Scenes without an environment map use an analytic sky built from
+the environment colors, so lighting and the skybox stay consistent; the lowest
+quality keeps hemispherical sky/ground lighting and the flat clear color.
+Reflection probes use authored box volumes, blend distances, and priorities;
+the dominant probe at the camera is blended over the environment. Deterministic
+CPU probe preprocessing
 and bake-file policy live in editor tooling. Benchmark JSON contains timestamp
 scopes and configured budgets for shadow, opaque, blended, bloom/post, UI, and
 upload work, plus CPU and estimated GPU asset memory.

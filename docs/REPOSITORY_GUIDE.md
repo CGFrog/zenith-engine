@@ -312,8 +312,9 @@ detail only.
 
 Uses stb_image to decode conventional external or embedded images and validates
 KTX2 containers. RGBA8 KTX2 has a CPU fallback and BC5/BC7 KTX2 loads its
-stored mip chain; Basis data reports the optional transcoder requirement. GPU
-format policy and upload remain renderer-owned.
+stored mip chain; Basis data reports the optional transcoder requirement.
+Radiance `.hdr` images decode to linear float texels (`TextureAsset::rgbaFloat`)
+for image-based lighting. GPU format policy and upload remain renderer-owned.
 
 ### `src/engine/assets/CompressedTexture.*`
 
@@ -459,6 +460,21 @@ Owns the per-frame local-light buffer and the cluster light lists. Each frame
 exponential view-depth slices before the scene pass; `Lighting.*` holds the
 CPU mirror of the cluster math used by tests.
 
+### `src/engine/graphics/passes/EnvironmentPass.*`
+
+Split-sum image-based lighting. Per environment source (an equirectangular
+map, or the analytic sky when none is loaded) it precomputes on the GPU, once
+and cached: an RGBA16F radiance cube with mips, a GGX-prefiltered specular cube,
+and order-2 spherical-harmonic irradiance; a BRDF table is built once. It binds
+these into camera-set bindings 5-7 for the primary environment and the dominant
+reflection probe, and draws the skybox behind opaque geometry.
+
+### `src/engine/graphics/EnvironmentLighting.*`
+
+CPU reference for the IBL conventions (cube faces, equirectangular mapping,
+analytic sky, SH projection, split-sum BRDF) that the `env_*.comp` shaders
+mirror, plus the content-hashed CPU environment averaging used by editor tools.
+
 ### `src/engine/graphics/graph/RenderGraph.*`
 
 Compiles imported and transient resource declarations into a stable pass order,
@@ -482,15 +498,16 @@ Finds the primary camera, updates per-frame camera data, lazily uploads CPU
 assets to renderer-owned GPU caches, and publishes bindless material records and
 texture slots. It first
 renders a directional shadow map and then the scene into a floating-point HDR
-target using Cook-Torrance GGX lighting plus hemispherical sky/ground indirect
-lighting. Directional and environment scene components supply lighting and
+target using Cook-Torrance GGX lighting plus split-sum image-based (or, at the
+lowest environment quality, hemispherical sky/ground) indirect lighting. Directional and environment scene components supply lighting and
 shadow settings. Fallback textures fill missing maps.
 
 Local point and spot lights use clustered forward shading: up to the configured
 light limit (nearest first) is uploaded each frame, and mesh.frag shades only
-the lights listed for its view cluster. Environment textures use cached
-roughness-prefiltered data, while reflection probes contribute through explicit
-influence boxes, blend distances, and priorities.
+the lights listed for its view cluster. Environment textures are prefiltered on
+the GPU by `EnvironmentPass`, while reflection probes contribute through
+explicit influence boxes, blend distances, and priorities; the dominant probe at
+the camera is blended over the primary environment.
 
 ### `src/engine/graphics/passes/PostProcessPass.*`
 
@@ -548,6 +565,12 @@ mirror is in `TemporalQuality.*`.
 | `shaders/gpu_visibility.comp` | Runs early/late two-phase frustum and occlusion culling. |
 | `shaders/compact_draws.comp` | Packs non-empty batches into indirect-count draw commands. |
 | `shaders/taa_resolve.comp` | Temporal anti-aliasing and upsampling into output-resolution history. |
+| `shaders/env_equirect_to_cube.comp` | Resamples an equirectangular radiance map into an environment cube. |
+| `shaders/env_procedural_sky.comp` | Writes the analytic sky cube used when no environment map is loaded. |
+| `shaders/env_prefilter_specular.comp` | GGX-prefilters one specular cube mip with mip-filtered importance sampling. |
+| `shaders/env_irradiance_sh.comp` | Projects an environment cube onto order-2 irradiance spherical harmonics. |
+| `shaders/env_brdf_lut.comp` | Integrates the split-sum environment BRDF table. |
+| `shaders/skybox.vert` / `skybox.frag` | Draws the environment at the far plane with camera-only motion vectors. |
 
 Recognized shader extensions automatically produce matching
 `build/shaders/<relative-path>.spv` files.

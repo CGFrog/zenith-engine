@@ -21,14 +21,19 @@ const T* resolve(const std::vector<T>& assets, const std::vector<Metadata>& meta
 }
 
 uint64_t byteSize(const TextureAsset& asset) {
-    return sizeof(TextureAsset) + asset.rgba.size() + asset.compressed.size() +
-           asset.mips.size() * sizeof(TextureMipLevel);
+    return sizeof(TextureAsset) + asset.rgba.size() + asset.rgbaHalf.size() * sizeof(uint16_t) +
+           asset.compressed.size() + asset.mips.size() * sizeof(TextureMipLevel);
 }
 
 uint64_t gpuByteSize(const TextureAsset& asset) {
     if (asset.blockCompressed()) {
         // Cooked textures upload their stored mip chain unchanged.
         return asset.compressed.size();
+    }
+    if (!asset.rgbaHalf.empty()) {
+        // High-dynamic-range environment sources live on the GPU only while
+        // EnvironmentPass converts them into lighting cubes.
+        return 0;
     }
     uint64_t bytes = 0;
     uint32_t width = asset.width;

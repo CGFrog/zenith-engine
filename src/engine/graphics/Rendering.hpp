@@ -133,6 +133,8 @@ struct RenderSettings {
     TonemapOperator tonemap{TonemapOperator::AgX};
     ExposureSettings exposure;
     EnvironmentQuality environment{EnvironmentQuality::Hemisphere};
+    // Draws the image-based environment behind geometry instead of a flat clear.
+    bool environmentBackground{true};
     LocalLightingQuality localLights{LocalLightingQuality::Clustered};
     // Lights uploaded per frame; the nearest are kept when a scene has more.
     uint32_t maximumLocalLights{1024};

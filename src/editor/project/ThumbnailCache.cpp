@@ -2,13 +2,31 @@
 
 #include "engine/assets/ImageDecoder.hpp"
 
+#include <glm/gtc/packing.hpp>
+
 #include <algorithm>
+#include <cmath>
 
 namespace {
 constexpr uint32_t maximumThumbnailExtent = 96;
 
 std::string key(const std::filesystem::path& path) {
     return path.lexically_normal().generic_string();
+}
+
+// One display texel. High-dynamic-range sources are compressed with Reinhard
+// and gamma-encoded so radiance above one still previews.
+void copyPreviewTexel(const TextureAsset& source, size_t sourceOffset, uint8_t* destination) {
+    if (source.rgbaHalf.empty()) {
+        std::copy_n(source.rgba.data() + sourceOffset, 4, destination);
+        return;
+    }
+    for (size_t channel = 0; channel < 3; ++channel) {
+        const float radiance = std::max(glm::unpackHalf1x16(source.rgbaHalf[sourceOffset + channel]), 0.0f);
+        const float display = std::pow(radiance / (1.0f + radiance), 1.0f / 2.2f);
+        destination[channel] = static_cast<uint8_t>(std::lround(std::clamp(display, 0.0f, 1.0f) * 255.0f));
+    }
+    destination[3] = 255;
 }
 
 CachedThumbnail downsample(TextureAsset source) {
@@ -24,7 +42,7 @@ CachedThumbnail downsample(TextureAsset source) {
             const uint32_t sourceX = std::min(source.width - 1, x * source.width / width);
             const size_t sourceOffset = (static_cast<size_t>(sourceY) * source.width + sourceX) * 4;
             const size_t destinationOffset = (static_cast<size_t>(y) * width + x) * 4;
-            std::copy_n(source.rgba.data() + sourceOffset, 4, thumbnail.rgba.data() + destinationOffset);
+            copyPreviewTexel(source, sourceOffset, thumbnail.rgba.data() + destinationOffset);
         }
     }
     return thumbnail;

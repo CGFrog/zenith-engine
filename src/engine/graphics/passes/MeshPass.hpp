@@ -3,7 +3,6 @@
 #include "../../assets/Assets.hpp"
 #include "../../jobs/FrameTaskGraph.hpp"
 #include "../../scene/Scene.hpp"
-#include "../EnvironmentLighting.hpp"
 #include "../MeshLodSelection.hpp"
 #include "../RenderSubmission.hpp"
 #include "../Rendering.hpp"
@@ -14,6 +13,7 @@
 #include "../resources/UploadContext.hpp"
 #include "../vulkan/VulkanContext.hpp"
 #include "ClusteredLightingPass.hpp"
+#include "EnvironmentPass.hpp"
 #include "GpuDrivenPass.hpp"
 #include "PostProcessPass.hpp"
 #include "engine/resources/DeferredReleaseQueue.hpp"
@@ -161,7 +161,7 @@ class MeshPass {
     };
 
     enum class ShadedItems {
-        All,
+        OpaqueOnly,
         BlendedOnly,
     };
 
@@ -323,7 +323,7 @@ class MeshPass {
     glm::vec2 m_previousJitterNdc{0.0f};
     bool m_cameraHistoryValid{false};
     TemporalQualityController m_temporalQuality;
-    EnvironmentLightingCache m_environmentCache;
+    EnvironmentPass m_environmentPass;
     double m_uploadMilliseconds{0.0};
     double m_uploadGpuMilliseconds{0.0};
     uint64_t m_taskGeneration{0};

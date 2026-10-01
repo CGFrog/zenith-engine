@@ -1,0 +1,51 @@
+#version 450
+
+// Writes the analytic sky into mip 0 of an environment cube when a scene has no
+// environment map. Mirrors environment_lighting::proceduralSkyRadiance.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image2DArray cube;
+
+layout(push_constant) uniform Settings {
+    vec4 skyColor;
+    vec4 groundColor;
+    uvec4 sizes; // x: cube face size
+} settings;
+
+vec3 cubeFaceDirection(uint face, vec2 uv) {
+    vec2 c = uv * 2.0 - 1.0;
+    vec3 direction;
+    if (face == 0u) {
+        direction = vec3(1.0, -c.y, -c.x);
+    } else if (face == 1u) {
+        direction = vec3(-1.0, -c.y, c.x);
+    } else if (face == 2u) {
+        direction = vec3(c.x, 1.0, c.y);
+    } else if (face == 3u) {
+        direction = vec3(c.x, -1.0, -c.y);
+    } else if (face == 4u) {
+        direction = vec3(c.x, -c.y, 1.0);
+    } else {
+        direction = vec3(-c.x, -c.y, -1.0);
+    }
+    return normalize(direction);
+}
+
+vec3 proceduralSkyRadiance(vec3 direction, vec3 skyColor, vec3 groundColor) {
+    vec3 horizon = mix(skyColor, groundColor, 0.35) + skyColor * 0.25;
+    if (direction.y >= 0.0) {
+        return mix(horizon, skyColor, smoothstep(0.0, 0.45, direction.y));
+    }
+    return mix(horizon, groundColor, smoothstep(0.0, 0.12, -direction.y));
+}
+
+void main() {
+    uint size = settings.sizes.x;
+    uvec3 texel = gl_GlobalInvocationID;
+    if (texel.x >= size || texel.y >= size) {
+        return;
+    }
+    vec3 direction = cubeFaceDirection(texel.z, (vec2(texel.xy) + 0.5) / float(size));
+    vec3 radiance = proceduralSkyRadiance(direction, settings.skyColor.rgb, settings.groundColor.rgb);
+    imageStore(cube, ivec3(texel), vec4(max(radiance, vec3(0.0)), 1.0));
+}
