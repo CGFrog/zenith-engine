@@ -1,0 +1,41 @@
+#version 450
+
+// Builds a 256-bin log2-luminance histogram of the valid region of an HDR
+// image. Mirrors luminanceHistogramBin in engine/graphics/ToneMapping.cpp.
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0) uniform sampler2D hdrScene;
+layout(std430, set = 0, binding = 1) buffer LuminanceHistogram {
+    uint bins[256];
+} histogram;
+
+layout(push_constant) uniform HistogramSettings {
+    uvec2 validExtent;
+    float minimumLogLuminance;
+    float inverseLogLuminanceRange;
+} settings;
+
+shared uint localBins[256];
+
+uint histogramBin(float luminance) {
+    float logLuminance = log2(max(luminance, 1e-10));
+    float normalized = clamp((logLuminance - settings.minimumLogLuminance) * settings.inverseLogLuminanceRange,
+                             0.0, 1.0);
+    return min(uint(normalized * 256.0), 255u);
+}
+
+void main() {
+    localBins[gl_LocalInvocationIndex] = 0u;
+    barrier();
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (all(lessThan(pixel, settings.validExtent))) {
+        vec3 color = texelFetch(hdrScene, ivec2(pixel), 0).rgb;
+        atomicAdd(localBins[histogramBin(dot(color, vec3(0.2126, 0.7152, 0.0722)))], 1u);
+    }
+    barrier();
+    uint count = localBins[gl_LocalInvocationIndex];
+    if (count != 0u) {
+        atomicAdd(histogram.bins[gl_LocalInvocationIndex], count);
+    }
+}

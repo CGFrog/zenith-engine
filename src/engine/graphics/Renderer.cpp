@@ -66,6 +66,7 @@ uint64_t renderGraphSignature(VkExtent2D extent, bool viewport, const RenderSett
     value ^= static_cast<uint64_t>(settings.antialiasing) << 8u;
     value ^= static_cast<uint64_t>(settings.ambientOcclusion) << 12u;
     value ^= static_cast<uint64_t>(settings.reflections) << 16u;
+    value ^= static_cast<uint64_t>(settings.exposure.mode) << 20u;
     return value;
 }
 } // namespace
@@ -247,6 +248,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuTemporalMilliseconds = gpuTimings.temporalMilliseconds;
     stats.gpuAmbientOcclusionMilliseconds = gpuTimings.ambientOcclusionMilliseconds;
     stats.gpuReflectionsMilliseconds = gpuTimings.reflectionsMilliseconds;
+    stats.gpuExposureMilliseconds = gpuTimings.exposureMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;
@@ -471,11 +473,16 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             {probeCache, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
         graph.addPass("opaque and blended scene", RenderGraphQueue::Graphics, opaqueAccesses);
+        // Exposure and bloom only sample the HDR scene; their own buffers and the
+        // bloom chain persist across frames and are synchronized by their pass.
+        const RenderGraphAccess hdrComputeRead[]{
+            {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        if (m_rendering->settings().exposure.mode == ExposureMode::Auto) {
+            graph.addPass("luminance histogram", RenderGraphQueue::Graphics, hdrComputeRead);
+        }
         if (m_rendering->settings().bloom != BloomQuality::Off) {
-            const RenderGraphAccess bloomAccesses[]{
-                {hdr, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                 VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL}};
-            graph.addPass("bloom downsample", RenderGraphQueue::Graphics, bloomAccesses);
+            graph.addPass("bloom chain", RenderGraphQueue::Graphics, hdrComputeRead);
         }
         const RenderGraphAccess ambientOcclusionAccesses[]{
             {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,

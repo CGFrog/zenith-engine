@@ -47,9 +47,38 @@ enum class LightingQuality : uint8_t {
     PhysicallyBased,
 };
 
+// Downsampled is the compute bloom chain (13-tap downsample, tent upsample).
 enum class BloomQuality : uint8_t {
     Off,
     Downsampled,
+};
+
+enum class TonemapOperator : uint8_t {
+    Aces,
+    AgX,
+    AgXPunchy,
+};
+
+enum class ExposureMode : uint8_t {
+    Auto,
+    Manual,
+};
+
+// Luminance values are in log2 units (EV) of linear scene luminance. Exposure is
+// a multiplier on scene radiance: Manual uses 2^(manualEv + compensationEv); Auto
+// maps the histogram's percentile-averaged luminance to middle grey and then
+// applies compensationEv. Adaptation speeds are rates per second in log2 space;
+// "up" applies while exposure rises (the scene got darker).
+struct ExposureSettings {
+    ExposureMode mode{ExposureMode::Auto};
+    float compensationEv{0.0f};
+    float manualEv{0.0f};
+    float minimumLogLuminance{-10.0f};
+    float maximumLogLuminance{6.0f};
+    float adaptationSpeedUp{1.5f};
+    float adaptationSpeedDown{3.0f};
+    float lowPercentile{0.5f};
+    float highPercentile{0.95f};
 };
 
 enum class EnvironmentQuality : uint8_t {
@@ -79,6 +108,7 @@ struct RenderPassBudgets {
     RenderPassBudget temporalResolve;
     RenderPassBudget ambientOcclusion;
     RenderPassBudget reflections;
+    RenderPassBudget exposure;
 };
 
 struct DynamicResolutionSettings {
@@ -95,6 +125,12 @@ struct RenderSettings {
     ShadowQuality shadows{ShadowQuality::Single};
     LightingQuality lighting{LightingQuality::PhysicallyBased};
     BloomQuality bloom{BloomQuality::Off};
+    // Energy-conserving mix weight of the bloom chain over the scene.
+    float bloomIntensity{0.04f};
+    // Upsample tent radius in source-mip texels.
+    float bloomFilterRadius{1.0f};
+    TonemapOperator tonemap{TonemapOperator::AgX};
+    ExposureSettings exposure;
     EnvironmentQuality environment{EnvironmentQuality::Hemisphere};
     LocalLightingQuality localLights{LocalLightingQuality::Tiled32};
     bool reflectionProbes{true};
@@ -192,6 +228,7 @@ struct RenderStats {
     double gpuTemporalMilliseconds{0.0};
     double gpuAmbientOcclusionMilliseconds{0.0};
     double gpuReflectionsMilliseconds{0.0};
+    double gpuExposureMilliseconds{0.0};
     uint64_t temporalHistoryBytes{0};
     uint64_t motionVectorBytes{0};
     uint64_t ambientOcclusionBytes{0};

@@ -348,6 +348,7 @@ Renderer
    |- GPU mesh/texture/material caches
    |- shadow pass and main mesh pipeline
    `- PostProcessPass (HDR/history, motion, SSAO/SSR, and fullscreen pipelines)
+      `- BloomExposurePass (luminance histogram, exposure, bloom chain)
 ```
 
 ### `src/engine/graphics/Renderer.*`
@@ -447,9 +448,24 @@ influence boxes, blend distances, and priorities.
 
 Owns one RGBA16F history target, motion/reactive target, SSAO target, and SSR
 target per frame slot. Separate GPU-scoped SSAO and SSR passes feed the final
-fullscreen pass, which performs neighborhood-clipped TAA (or FXAA), bloom,
-editor-grid composition, and ACES tone mapping. Half-resolution effect tiers
-render into bounded sub-extents; SSR misses preserve probe and IBL lighting.
+fullscreen pass, which performs neighborhood-clipped TAA (or FXAA),
+editor-grid composition, exposure, the bloom mix, and tone mapping (AgX by
+default, AgX punchy or legacy ACES). Half-resolution effect tiers render into
+bounded sub-extents; SSR misses preserve probe and IBL lighting.
+
+### `src/engine/graphics/passes/BloomExposurePass.*`
+
+Compute passes over a generic HDR input (view, image extent, valid extent):
+a 256-bin log-luminance histogram and single-workgroup adaptation into one
+persistent exposure buffer per view, plus a six-level bloom chain (13-tap
+downsample with a Karis average on the first level, tent upsample). The chain
+and exposure buffer persist across frame slots and use push descriptors.
+
+### `src/engine/graphics/ToneMapping.*`
+
+CPU reference for the AgX/ACES display transform, histogram binning,
+percentile averaging, and frame-rate independent exposure adaptation. The
+shaders mirror it by hand; `tests/engine/ToneMappingTests.cpp` covers it.
 
 ## Shaders
 
@@ -459,7 +475,11 @@ render into bounded sub-extents; SSR misses preserve probe and IBL lighting.
 | `shaders/mesh.frag` | Samples glTF materials, evaluates GGX lighting, shadows, occlusion, and emission. |
 | `shaders/shadow.vert` | Transforms geometry into directional-light depth space. |
 | `shaders/fullscreen.vert` | Generates a fullscreen triangle without a vertex buffer. |
-| `shaders/post.frag` | Combines HDR color into the tone-mapped output. |
+| `shaders/post.frag` | Combines HDR color into the exposed, bloomed, tone-mapped output. |
+| `shaders/luminance_histogram.comp` | Bins the valid HDR region into a 256-bin log2-luminance histogram. |
+| `shaders/exposure_adapt.comp` | Percentile-averages the histogram and adapts the persistent exposure. |
+| `shaders/bloom_downsample.comp` | 13-tap bloom downsample; Karis average on the first level. |
+| `shaders/bloom_upsample.comp` | 3x3 tent bloom upsample accumulated into the next larger level. |
 | `shaders/ssao.frag` | Estimates scalable screen-space ambient occlusion. |
 | `shaders/ssr.frag` | Traces scalable screen-space reflections with an explicit miss. |
 | `shaders/depth_pyramid.comp` | Reduces scene depth into a conservative min-depth (reversed-Z) pyramid. |

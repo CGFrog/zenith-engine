@@ -2,7 +2,10 @@
 
 #include "../Rendering.hpp"
 #include "../vulkan/VulkanContext.hpp"
+#include "BloomExposurePass.hpp"
+#include <chrono>
 #include <filesystem>
+#include <optional>
 #include <vector>
 
 class PostProcessPass {
@@ -34,9 +37,7 @@ class PostProcessPass {
         VkImageView view{VK_NULL_HANDLE};
         VmaAllocation allocation{VK_NULL_HANDLE};
         VkDescriptorSet descriptor{VK_NULL_HANDLE};
-        uint32_t mipLevels{1};
         bool initialized{false};
-        bool mipsInitialized{false};
         VkImage motionImage{VK_NULL_HANDLE};
         VkImageView motionView{VK_NULL_HANDLE};
         VmaAllocation motionAllocation{VK_NULL_HANDLE};
@@ -55,6 +56,10 @@ class PostProcessPass {
     bool createEffectPipeline(const std::filesystem::path& fragmentPath, VkFormat outputFormat, VkPipeline& pipeline);
     bool createTargets(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
     void destroyTargets(const VulkanContext& context);
+    void recordBloomAndExposure(VkCommandBuffer commandBuffer, const Target& target, VkExtent2D internalExtent,
+                                const RenderSettings& settings, VkQueryPool timestampQueries,
+                                double& bloomCpuMilliseconds);
+    float exposureDeltaSeconds();
 
     VkDevice m_device{VK_NULL_HANDLE};
     VkPipelineCache m_pipelineCache{VK_NULL_HANDLE};
@@ -69,4 +74,6 @@ class PostProcessPass {
     VkSampler m_depthSampler{VK_NULL_HANDLE};
     VkExtent2D m_extent{};
     std::vector<Target> m_targets;
+    BloomExposurePass m_bloomExposure;
+    std::optional<std::chrono::steady_clock::time_point> m_previousExposureTime;
 };
