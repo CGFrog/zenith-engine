@@ -570,23 +570,11 @@ void testLightingAndConfiguration() {
     scene.registry().emplace<ReflectionProbeComponent>(probeB, glm::vec3(5.0f), 1.0f, 1, "b.hdr");
     scene.updateWorldTransforms();
     const auto lights = gatherLocalLights(scene);
-    const LightTileGrid grid = selectTiledLights(lights, glm::mat4(1.0f), 64, 64, 16, 2);
-    const auto selected = selectTiledLightSet(grid, lights, 2);
-    expect(lights.size() == 5 && grid.maximumLightsPerTile == 2 && grid.discardedAssignments > 0,
-           "tiled selection enforces a measured bounded light list");
-    expect(selected.size() == 2 && selected[0] != selected[1],
-           "renderer-facing light selection consumes the deterministic tiled result");
-    std::vector<LocalLight> manyLights(96);
-    for (uint32_t index = 0; index < manyLights.size(); ++index) {
-        manyLights[index].position = {0.0f, 0.0f, 0.0f};
-        manyLights[index].range = 2.0f;
-        manyLights[index].intensity = static_cast<float>(index + 1);
-        manyLights[index].stableId = index + 1;
-    }
-    const LightTileGrid highQualityGrid = selectTiledLights(manyLights, glm::mat4(1.0f), 64, 64, 16, 64);
-    const auto highQualitySelection = selectTiledLightSet(highQualityGrid, manyLights, 64);
-    expect(highQualitySelection.size() == 64 && highQualitySelection.front() == 95,
-           "64-light quality remains bounded and deterministically retains the strongest visible lights");
+    const auto selected = selectLocalLights(lights, glm::vec3(-2.0f, 0.0f, -4.0f), 2);
+    expect(lights.size() == 5 && std::ranges::is_sorted(lights, {}, &LocalLight::stableId),
+           "gathered local lights are complete and in stable-id order");
+    expect(selected.size() == 2 && selected[0].stableId < selected[1].stableId,
+           "renderer-facing light selection is bounded and deterministic");
     const auto probes = blendReflectionProbes(scene, glm::vec3(0.0f));
     expect(probes.size() == 2 && probes.front().entity == probeB, "probe priority and blending are deterministic");
     const LocalShadowRequest shadowRequests[]{
@@ -603,7 +591,8 @@ void testLightingAndConfiguration() {
 
     RenderSettings requested;
     requested.environment = EnvironmentQuality::ImageBasedHigh;
-    requested.localLights = LocalLightingQuality::Tiled64;
+    requested.localLights = LocalLightingQuality::Clustered;
+    requested.maximumLocalLights = 4096;
     requested.preferGpuDrivenSubmission = true;
     requested.visualizeShadowCascades = true;
     requested.antialiasing = AntialiasingMode::Taa;
@@ -622,7 +611,8 @@ void testLightingAndConfiguration() {
     requested.budgets.reflections = {0.0, 0.8};
     const ValidatedRenderSettings validated = validateRenderSettings(requested, {});
     expect(validated.settings.environment == EnvironmentQuality::Hemisphere &&
-               validated.settings.localLights == LocalLightingQuality::Tiled32 &&
+               validated.settings.localLights == LocalLightingQuality::Clustered &&
+               validated.settings.maximumLocalLights == RenderCapabilities{}.maximumLocalLights &&
                !validated.settings.preferGpuDrivenSubmission && !validated.fallbacks.empty(),
            "unsupported quality choices select explicit fallbacks");
     std::string encoded;

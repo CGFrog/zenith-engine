@@ -58,10 +58,11 @@ enum class EnvironmentQuality : uint8_t {
     ImageBasedHigh,
 };
 
+// Serialized by value. Older documents stored 1 and 2 for the retired 32- and
+// 64-light tiled modes; both load as Clustered.
 enum class LocalLightingQuality : uint8_t {
     Disabled,
-    Tiled32,
-    Tiled64,
+    Clustered,
 };
 
 struct RenderPassBudget {
@@ -96,7 +97,9 @@ struct RenderSettings {
     LightingQuality lighting{LightingQuality::PhysicallyBased};
     BloomQuality bloom{BloomQuality::Off};
     EnvironmentQuality environment{EnvironmentQuality::Hemisphere};
-    LocalLightingQuality localLights{LocalLightingQuality::Tiled32};
+    LocalLightingQuality localLights{LocalLightingQuality::Clustered};
+    // Lights uploaded per frame; the nearest are kept when a scene has more.
+    uint32_t maximumLocalLights{1024};
     bool reflectionProbes{true};
     bool preferGpuDrivenSubmission{false};
     float cascadeSplitLambda{0.65f};
@@ -123,7 +126,8 @@ struct RenderCapabilities {
     bool rayTracing{false};
     bool dedicatedTransferQueue{false};
     bool timelineTransfers{false};
-    uint32_t maximumLocalLightsPerTile{32};
+    // Zero means clustered local lighting is unavailable.
+    uint32_t maximumLocalLights{1024};
 };
 
 struct RenderStats {
@@ -163,8 +167,12 @@ struct RenderStats {
     double cpuBloomMilliseconds{0.0};
     double cpuUiMilliseconds{0.0};
     double cpuUploadMilliseconds{0.0};
+    // Lights uploaded for clustered shading this submission.
     uint32_t localLightCount{0};
+    // Cluster statistics from the retired frame (GPU-assigned): assignments
+    // beyond the per-cluster capacity, and the most lights touching a cluster.
     uint32_t discardedLightAssignments{0};
+    uint32_t maximumLightsPerCluster{0};
     double cpuRenderPacketMilliseconds{0.0};
     bool renderPacketsRebuilt{false};
     uint32_t scannedRenderables{0};

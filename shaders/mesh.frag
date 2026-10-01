@@ -20,11 +20,10 @@ layout(set = 0, binding = 0) uniform CameraData {
     vec4 cascadeSplits;
     vec4 renderingSettings;
     vec4 environmentSpecular[6];
-    vec4 localLightPositionRange[64];
-    vec4 localLightDirectionType[64];
-    vec4 localLightColorIntensity[64];
-    vec4 localLightCone[64];
-    uvec4 localLightCount;
+    // Clustered local lighting; mirrors CameraData in MeshPass.cpp.
+    vec4 clusterDepth;     // xy: slice log scale, bias; zw: view depth = z / (depth + w)
+    vec4 clusterTileScale; // xy: cluster columns, rows per pixel
+    uvec4 clusterGrid;     // columns, rows, depth slices, local light count
 } camera;
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
@@ -42,6 +41,27 @@ struct MaterialRecord {
 layout(std430, set = 0, binding = 4) readonly buffer Materials {
     MaterialRecord values[];
 } materials;
+
+// Mirrors GpuLocalLight in ClusteredLightingPass.hpp (std430).
+struct LocalLight {
+    vec4 positionRange;  // world position, range
+    vec4 colorIntensity; // linear color, intensity
+    vec4 directionType;  // world direction, type (0 point, 1 spot)
+    vec4 spotCone;       // inner and outer cone cosines
+};
+
+layout(std430, set = 0, binding = 9) readonly buffer LocalLights {
+    LocalLight values[];
+} localLights;
+
+// Written by light_clusters.comp: per cluster, x = first list entry, y = count.
+layout(std430, set = 0, binding = 10) readonly buffer ClusterRanges {
+    uvec2 values[];
+} clusterRanges;
+
+layout(std430, set = 0, binding = 11) readonly buffer ClusterLightIndices {
+    uint values[];
+} clusterLightIndices;
 
 // Bindless material textures; slots come from MaterialRecord.
 layout(set = 1, binding = 0) uniform sampler materialSampler;
@@ -165,6 +185,15 @@ vec3 directResponse(vec3 normal, vec3 viewDirection, vec3 lightDirection, float 
     return diffuse + specular;
 }
 
+// Cluster of the current fragment; mirrors ClusterGrid::clusterIndexAt.
+uint fragmentCluster() {
+    uvec2 tile = min(uvec2(gl_FragCoord.xy * camera.clusterTileScale.xy), camera.clusterGrid.xy - 1u);
+    float viewDepth = camera.clusterDepth.z / (gl_FragCoord.z + camera.clusterDepth.w);
+    float slice = log(viewDepth) * camera.clusterDepth.x + camera.clusterDepth.y;
+    uint depthSlice = min(uint(max(slice, 0.0)), camera.clusterGrid.z - 1u);
+    return tile.x + camera.clusterGrid.x * (tile.y + camera.clusterGrid.y * depthSlice);
+}
+
 void main() {
     MaterialRecord material = materials.values[materialIndex];
     vec4 sampledBase = sampleMaterialTexture(material.textures.x, texCoord);
@@ -199,24 +228,24 @@ void main() {
     vec3 direct = directResponse(normal, viewDirection, lightDirection, nDotV, nDotL, albedo, metallic, roughness,
                                  reflectance, viewGeometry) *
                   sunRadiance * nDotL * shadow;
-    for (uint lightIndex = 0; lightIndex < camera.localLightCount.x; ++lightIndex) {
-        vec3 toLight = camera.localLightPositionRange[lightIndex].xyz - worldPosition;
+    uvec2 clusterLights = camera.clusterGrid.w > 0u ? clusterRanges.values[fragmentCluster()] : uvec2(0u);
+    for (uint entry = 0; entry < clusterLights.y; ++entry) {
+        LocalLight light = localLights.values[clusterLightIndices.values[clusterLights.x + entry]];
+        vec3 toLight = light.positionRange.xyz - worldPosition;
         float distanceToLight = length(toLight);
-        float range = camera.localLightPositionRange[lightIndex].w;
+        float range = light.positionRange.w;
         if (distanceToLight >= range || distanceToLight <= 0.0001) {
             continue;
         }
         vec3 localDirection = toLight / distanceToLight;
         float attenuation = pow(max(1.0 - distanceToLight / range, 0.0), 2.0) /
                             max(distanceToLight * distanceToLight, 0.01);
-        if (camera.localLightDirectionType[lightIndex].w > 0.5) {
-            float coneCosine = dot(-localDirection, normalize(camera.localLightDirectionType[lightIndex].xyz));
-            attenuation *= smoothstep(camera.localLightCone[lightIndex].y,
-                                      camera.localLightCone[lightIndex].x, coneCosine);
+        if (light.directionType.w > 0.5) {
+            float coneCosine = dot(-localDirection, normalize(light.directionType.xyz));
+            attenuation *= smoothstep(light.spotCone.y, light.spotCone.x, coneCosine);
         }
         float localNDotL = max(dot(normal, localDirection), 0.0);
-        vec3 localRadiance = camera.localLightColorIntensity[lightIndex].rgb *
-                             camera.localLightColorIntensity[lightIndex].w * attenuation;
+        vec3 localRadiance = light.colorIntensity.rgb * light.colorIntensity.w * attenuation;
         direct += directResponse(normal, viewDirection, localDirection, nDotV, localNDotL, albedo, metallic,
                                  roughness, reflectance, viewGeometry) *
                   localRadiance * localNDotL;

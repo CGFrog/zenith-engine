@@ -4,12 +4,15 @@
 
 #include "engine/assets/Assets.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iterator>
 #include <string>
 
-SceneResult populateDemoScene(Scene& scene, AssetManager& assets, uint32_t benchmarkObjectCount) {
+SceneResult populateDemoScene(Scene& scene, AssetManager& assets, uint32_t benchmarkObjectCount,
+                              uint32_t benchmarkLightCount) {
     const auto map = assets.loadModel(assetRoot() / "basic_map.gltf");
     if (!map) {
         return {.error = map.error};
@@ -69,26 +72,25 @@ SceneResult populateDemoScene(Scene& scene, AssetManager& assets, uint32_t bench
             glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z)) * glm::scale(glm::mat4(1.0f), glm::vec3(0.35f));
     }
 
-    if (benchmarkObjectCount > 0) {
-        constexpr uint32_t benchmarkLightCount = 96;
-        for (uint32_t index = 0; index < benchmarkLightCount; ++index) {
-            const Entity light = scene.createEntity("Benchmark local light " + std::to_string(index + 1));
-            const float x = (static_cast<float>(index % 12) - 5.5f) * 3.0f;
-            const float z = -3.0f - static_cast<float>(index / 12) * 3.0f;
-            scene.registry().get<TransformComponent>(light).local =
-                glm::translate(glm::mat4(1.0f), glm::vec3(x, 2.5f, z));
-            const glm::vec3 color = index % 3 == 0   ? glm::vec3(1.0f, 0.25f, 0.12f)
-                                    : index % 3 == 1 ? glm::vec3(0.15f, 0.8f, 0.3f)
-                                                     : glm::vec3(0.18f, 0.35f, 1.0f);
-            if (index % 4 == 0) {
-                SpotLightComponent spot;
-                spot.color = color;
-                spot.intensity = 30.0f;
-                spot.range = 8.0f;
-                scene.registry().emplace<SpotLightComponent>(light, spot);
-            } else {
-                scene.registry().emplace<PointLightComponent>(light, color, 20.0f, 7.0f);
-            }
+    // Twelve columns, widening to a square grid for large light counts.
+    const uint32_t lightColumns =
+        std::max(12u, static_cast<uint32_t>(std::ceil(std::sqrt(static_cast<float>(benchmarkLightCount)))));
+    for (uint32_t index = 0; index < benchmarkLightCount; ++index) {
+        const Entity light = scene.createEntity("Benchmark local light " + std::to_string(index + 1));
+        const float x = (static_cast<float>(index % lightColumns) - (lightColumns - 1) * 0.5f) * 3.0f;
+        const float z = -3.0f - static_cast<float>(index / lightColumns) * 3.0f;
+        scene.registry().get<TransformComponent>(light).local = glm::translate(glm::mat4(1.0f), glm::vec3(x, 2.5f, z));
+        const glm::vec3 color = index % 3 == 0   ? glm::vec3(1.0f, 0.25f, 0.12f)
+                                : index % 3 == 1 ? glm::vec3(0.15f, 0.8f, 0.3f)
+                                                 : glm::vec3(0.18f, 0.35f, 1.0f);
+        if (index % 4 == 0) {
+            SpotLightComponent spot;
+            spot.color = color;
+            spot.intensity = 30.0f;
+            spot.range = 8.0f;
+            scene.registry().emplace<SpotLightComponent>(light, spot);
+        } else {
+            scene.registry().emplace<PointLightComponent>(light, color, 20.0f, 7.0f);
         }
     }
 

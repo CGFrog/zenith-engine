@@ -2,6 +2,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <limits>
+
 namespace {
 using Json = nlohmann::json;
 
@@ -35,6 +37,18 @@ bool readBudget(const Json& document, const char* name, RenderPassBudget& output
 bool readOptionalBudget(const Json& document, const char* name, RenderPassBudget& output) {
     return !document.contains(name) || readBudget(document, name, output);
 }
+
+// Accepts the retired tiled modes (1: 32 lights, 2: 64 lights) as Clustered;
+// the light cap then comes from maximumLocalLights or its default.
+bool readLocalLighting(const Json& document, LocalLightingQuality& value) {
+    constexpr uint32_t legacyTiled64 = 2;
+    const auto found = document.find("localLights");
+    if (found == document.end() || !found->is_number_unsigned() || found->get<uint32_t>() > legacyTiled64) {
+        return false;
+    }
+    value = found->get<uint32_t>() == 0 ? LocalLightingQuality::Disabled : LocalLightingQuality::Clustered;
+    return true;
+}
 } // namespace
 
 RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings, std::string& output) {
@@ -45,6 +59,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"bloom", settings.bloom},
                            {"environment", settings.environment},
                            {"localLights", settings.localLights},
+                           {"maximumLocalLights", settings.maximumLocalLights},
                            {"reflectionProbes", settings.reflectionProbes},
                            {"preferGpuDrivenSubmission", settings.preferGpuDrivenSubmission},
                            {"cascadeSplitLambda", settings.cascadeSplitLambda},
@@ -85,8 +100,15 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
             !readEnum(document, "lighting", LightingQuality::PhysicallyBased, loaded.lighting) ||
             !readEnum(document, "bloom", BloomQuality::Downsampled, loaded.bloom) ||
             !readEnum(document, "environment", EnvironmentQuality::ImageBasedHigh, loaded.environment) ||
-            !readEnum(document, "localLights", LocalLightingQuality::Tiled64, loaded.localLights)) {
+            !readLocalLighting(document, loaded.localLights)) {
             return {.error = "Render settings contain an unknown quality value"};
+        }
+        if (const auto maximumLights = document.find("maximumLocalLights"); maximumLights != document.end()) {
+            if (!maximumLights->is_number_unsigned() || maximumLights->get<uint64_t>() == 0 ||
+                maximumLights->get<uint64_t>() > std::numeric_limits<uint32_t>::max()) {
+                return {.error = "Render settings contain an invalid local-light limit"};
+            }
+            loaded.maximumLocalLights = maximumLights->get<uint32_t>();
         }
         loaded.reflectionProbes = document.value("reflectionProbes", true);
         loaded.preferGpuDrivenSubmission = document.value("preferGpuDrivenSubmission", false);
@@ -152,13 +174,12 @@ ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
         result.settings.reflectionProbes = false;
         result.fallbacks.emplace_back("Reflection probes are unsupported and were disabled");
     }
-    const uint32_t requestedLights = result.settings.localLights == LocalLightingQuality::Tiled64 ? 64u : 32u;
-    if (result.settings.localLights != LocalLightingQuality::Disabled && capabilities.maximumLocalLightsPerTile == 0) {
+    if (result.settings.localLights != LocalLightingQuality::Disabled && capabilities.maximumLocalLights == 0) {
         result.settings.localLights = LocalLightingQuality::Disabled;
         result.fallbacks.emplace_back("Local lighting is unsupported and was disabled");
-    } else if (requestedLights > capabilities.maximumLocalLightsPerTile) {
-        result.settings.localLights = LocalLightingQuality::Tiled32;
-        result.fallbacks.emplace_back("64-light tiles are unsupported; using 32-light tiles");
+    } else if (result.settings.maximumLocalLights > capabilities.maximumLocalLights) {
+        result.settings.maximumLocalLights = capabilities.maximumLocalLights;
+        result.fallbacks.emplace_back("The local-light limit exceeds the renderer's capacity and was reduced");
     }
     if (result.settings.preferGpuDrivenSubmission && !capabilities.gpuDrivenPath) {
         result.settings.preferGpuDrivenSubmission = false;

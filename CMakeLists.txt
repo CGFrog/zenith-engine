@@ -255,6 +255,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/graph/RenderGraph.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
+    src/engine/graphics/passes/ClusteredLightingPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
     src/engine/graphics/passes/UiPass.cpp
     src/engine/graphics/pipeline/GraphicsPipeline.cpp
@@ -666,6 +667,10 @@ if(BUILD_TESTING)
     add_executable(zenith_gpu_resource_table_tests tests/engine/GpuResourceTableTests.cpp)
     target_link_libraries(zenith_gpu_resource_table_tests PRIVATE zenith_engine)
     add_test(NAME zenith_gpu_resource_table COMMAND zenith_gpu_resource_table_tests)
+
+    add_executable(zenith_clustered_lighting_tests tests/engine/ClusteredLightingTests.cpp)
+    target_link_libraries(zenith_clustered_lighting_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_clustered_lighting COMMAND zenith_clustered_lighting_tests)
 
     add_executable(zenith_frame_task_graph_tests tests/engine/FrameTaskGraphTests.cpp)
     target_link_libraries(zenith_frame_task_graph_tests PRIVATE zenith_engine)
