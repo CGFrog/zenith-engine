@@ -8,8 +8,9 @@ constexpr uint64_t frameFenceTimeout = std::numeric_limits<uint64_t>::max();
 }
 
 namespace {
-constexpr uint32_t timestampQueryCount = 17;
-}
+// Pairs are listed in collectTimings; 17 -> 18 brackets exposure.
+constexpr uint32_t timestampQueryCount = 19;
+} // namespace
 
 bool FrameResources::init(VkDevice device, uint32_t queueFamily, float timestampPeriod, uint32_t timestampValidBits) {
     m_timestampPeriod = timestampPeriod;
@@ -156,6 +157,7 @@ bool FrameResources::collectTimings(VkDevice device, GpuFrameTimings& timings) {
     timings.ambientOcclusionMilliseconds = m_ambientOcclusionEnabled ? elapsed(10, 11) : 0.0;
     timings.reflectionsMilliseconds = m_reflectionsEnabled ? elapsed(12, 13) : 0.0;
     timings.uploadWaitMilliseconds = m_uploadWaitEnabled ? elapsed(0, 16) : 0.0;
+    timings.exposureMilliseconds = elapsed(17, 18);
     return true;
 }
 

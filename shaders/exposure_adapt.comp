@@ -1,0 +1,118 @@
+#version 450
+
+// Turns the luminance histogram into the persistent exposure value read by
+// post.frag. Mirrors histogramAverageLogLuminance, autoExposureTarget,
+// manualExposure and adaptExposure in engine/graphics/ToneMapping.cpp.
+
+layout(local_size_x = 256) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer LuminanceHistogram {
+    uint bins[256];
+} histogram;
+
+// Persists across frames: exposure carries the previous adapted value.
+layout(std430, set = 0, binding = 1) buffer ExposureState {
+    float exposure;
+    float averageLogLuminance;
+    float targetExposure;
+    float padding;
+} state;
+
+const uint flagAutomatic = 1u;
+const uint flagReset = 2u;
+const float middleGrey = 0.18;
+
+layout(push_constant) uniform ExposureSettings {
+    float minimumLogLuminance;
+    float maximumLogLuminance;
+    float lowPercentile;
+    float highPercentile;
+    float compensationEv;
+    float manualEv;
+    float adaptationSpeedUp;
+    float adaptationSpeedDown;
+    float deltaSeconds;
+    uint flags;
+} settings;
+
+shared uint counts[256];
+
+float binCenter(uint bin) {
+    return settings.minimumLogLuminance +
+           (float(bin) + 0.5) / 256.0 * (settings.maximumLogLuminance - settings.minimumLogLuminance);
+}
+
+// Returns false when the histogram is empty.
+bool averageLogLuminance(out float average) {
+    float total = 0.0;
+    for (uint bin = 0u; bin < 256u; ++bin) {
+        total += float(counts[bin]);
+    }
+    average = 0.0;
+    if (total <= 0.0) {
+        return false;
+    }
+    float low = settings.lowPercentile * total;
+    float high = settings.highPercentile * total;
+    float cumulative = 0.0;
+    float weighted = 0.0;
+    float weight = 0.0;
+    for (uint bin = 0u; bin < 256u; ++bin) {
+        float before = cumulative;
+        cumulative += float(counts[bin]);
+        float inside = clamp(cumulative, low, high) - clamp(before, low, high);
+        weighted += inside * binCenter(bin);
+        weight += inside;
+    }
+    if (weight > 0.0) {
+        average = weighted / weight;
+        return true;
+    }
+    cumulative = 0.0;
+    for (uint bin = 0u; bin < 256u; ++bin) {
+        cumulative += float(counts[bin]);
+        if (cumulative >= low) {
+            average = binCenter(bin);
+            return true;
+        }
+    }
+    return false;
+}
+
+void main() {
+    counts[gl_LocalInvocationIndex] = histogram.bins[gl_LocalInvocationIndex];
+    barrier();
+    if (gl_LocalInvocationIndex != 0u) {
+        return;
+    }
+    bool reset = (settings.flags & flagReset) != 0u;
+    float previous = state.exposure;
+    if (reset || !(previous > 0.0) || isinf(previous) || isnan(previous)) {
+        previous = 0.0;
+    }
+    if ((settings.flags & flagAutomatic) == 0u) {
+        float manual = exp2(settings.manualEv + settings.compensationEv);
+        state.exposure = manual;
+        state.targetExposure = manual;
+        state.averageLogLuminance = 0.0;
+        return;
+    }
+    float average;
+    if (!averageLogLuminance(average)) {
+        state.exposure = previous > 0.0 ? previous : exp2(settings.compensationEv);
+        state.targetExposure = state.exposure;
+        return;
+    }
+    float target = middleGrey / exp2(average) * exp2(settings.compensationEv);
+    float adapted = target;
+    if (previous > 0.0) {
+        float previousLog = log2(previous);
+        float targetLog = log2(target);
+        float speed = targetLog > previousLog ? settings.adaptationSpeedUp : settings.adaptationSpeedDown;
+        float remaining = exp(-max(settings.deltaSeconds, 0.0) * speed);
+        adapted = exp2(targetLog + (previousLog - targetLog) * remaining);
+    }
+    state.exposure = adapted;
+    state.averageLogLuminance = average;
+    state.targetExposure = target;
+}

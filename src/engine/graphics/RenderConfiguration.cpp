@@ -1,5 +1,6 @@
 #include "RenderConfiguration.hpp"
 
+#include <cmath>
 #include <nlohmann/json.hpp>
 
 namespace {
@@ -35,6 +36,54 @@ bool readBudget(const Json& document, const char* name, RenderPassBudget& output
 bool readOptionalBudget(const Json& document, const char* name, RenderPassBudget& output) {
     return !document.contains(name) || readBudget(document, name, output);
 }
+
+Json exposureDocument(const ExposureSettings& exposure) {
+    return {{"mode", exposure.mode},
+            {"compensationEv", exposure.compensationEv},
+            {"manualEv", exposure.manualEv},
+            {"minimumLogLuminance", exposure.minimumLogLuminance},
+            {"maximumLogLuminance", exposure.maximumLogLuminance},
+            {"adaptationSpeedUp", exposure.adaptationSpeedUp},
+            {"adaptationSpeedDown", exposure.adaptationSpeedDown},
+            {"lowPercentile", exposure.lowPercentile},
+            {"highPercentile", exposure.highPercentile}};
+}
+
+// Missing fields keep their defaults so older version-1 documents still load.
+bool readExposure(const Json& document, ExposureSettings& output) {
+    const auto found = document.find("exposure");
+    if (found == document.end()) {
+        return true;
+    }
+    if (!found->is_object() ||
+        (found->contains("mode") && !readEnum(*found, "mode", ExposureMode::Manual, output.mode))) {
+        return false;
+    }
+    const ExposureSettings defaults;
+    output.compensationEv = found->value("compensationEv", defaults.compensationEv);
+    output.manualEv = found->value("manualEv", defaults.manualEv);
+    output.minimumLogLuminance = found->value("minimumLogLuminance", defaults.minimumLogLuminance);
+    output.maximumLogLuminance = found->value("maximumLogLuminance", defaults.maximumLogLuminance);
+    output.adaptationSpeedUp = found->value("adaptationSpeedUp", defaults.adaptationSpeedUp);
+    output.adaptationSpeedDown = found->value("adaptationSpeedDown", defaults.adaptationSpeedDown);
+    output.lowPercentile = found->value("lowPercentile", defaults.lowPercentile);
+    output.highPercentile = found->value("highPercentile", defaults.highPercentile);
+    return true;
+}
+
+bool validExposure(const ExposureSettings& exposure) {
+    return std::isfinite(exposure.compensationEv) && std::abs(exposure.compensationEv) <= 16.0f &&
+           std::isfinite(exposure.manualEv) && std::abs(exposure.manualEv) <= 32.0f &&
+           exposure.minimumLogLuminance >= -32.0f && exposure.maximumLogLuminance <= 32.0f &&
+           exposure.maximumLogLuminance - exposure.minimumLogLuminance >= 1.0f && exposure.adaptationSpeedUp > 0.0f &&
+           exposure.adaptationSpeedDown > 0.0f && exposure.lowPercentile >= 0.0f && exposure.highPercentile <= 1.0f &&
+           exposure.lowPercentile < exposure.highPercentile;
+}
+
+bool validBloom(const RenderSettings& settings) {
+    return settings.bloomIntensity >= 0.0f && settings.bloomIntensity <= 1.0f && settings.bloomFilterRadius > 0.0f &&
+           settings.bloomFilterRadius <= 4.0f;
+}
 } // namespace
 
 RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings, std::string& output) {
@@ -43,6 +92,10 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"shadows", settings.shadows},
                            {"lighting", settings.lighting},
                            {"bloom", settings.bloom},
+                           {"bloomIntensity", settings.bloomIntensity},
+                           {"bloomFilterRadius", settings.bloomFilterRadius},
+                           {"tonemap", settings.tonemap},
+                           {"exposure", exposureDocument(settings.exposure)},
                            {"environment", settings.environment},
                            {"localLights", settings.localLights},
                            {"reflectionProbes", settings.reflectionProbes},
@@ -68,7 +121,8 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"upload", budget(settings.budgets.upload)},
                              {"temporalResolve", budget(settings.budgets.temporalResolve)},
                              {"ambientOcclusion", budget(settings.budgets.ambientOcclusion)},
-                             {"reflections", budget(settings.budgets.reflections)}}}};
+                             {"reflections", budget(settings.budgets.reflections)},
+                             {"exposure", budget(settings.budgets.exposure)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -93,6 +147,18 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
         loaded.cascadeSplitLambda = document.value("cascadeSplitLambda", 0.65f);
         loaded.cascadeBlendFraction = document.value("cascadeBlendFraction", 0.10f);
         loaded.visualizeShadowCascades = document.value("visualizeShadowCascades", false);
+        loaded.bloomIntensity = document.value("bloomIntensity", loaded.bloomIntensity);
+        loaded.bloomFilterRadius = document.value("bloomFilterRadius", loaded.bloomFilterRadius);
+        if (document.contains("tonemap") &&
+            !readEnum(document, "tonemap", TonemapOperator::AgXPunchy, loaded.tonemap)) {
+            return {.error = "Render settings contain an unknown tone-mapping operator"};
+        }
+        if (!readExposure(document, loaded.exposure)) {
+            return {.error = "Render settings contain invalid exposure settings"};
+        }
+        if (!validExposure(loaded.exposure) || !validBloom(loaded)) {
+            return {.error = "Render settings contain out-of-range exposure or bloom parameters"};
+        }
         if (const auto dynamicResolution = document.find("dynamicResolution"); dynamicResolution != document.end()) {
             if (!dynamicResolution->is_object()) {
                 return {.error = "Render settings contain invalid dynamic-resolution settings"};
@@ -121,7 +187,8 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readBudget(*budgets, "upload", loaded.budgets.upload) ||
                 !readOptionalBudget(*budgets, "temporalResolve", loaded.budgets.temporalResolve) ||
                 !readOptionalBudget(*budgets, "ambientOcclusion", loaded.budgets.ambientOcclusion) ||
-                !readOptionalBudget(*budgets, "reflections", loaded.budgets.reflections)) {
+                !readOptionalBudget(*budgets, "reflections", loaded.budgets.reflections) ||
+                !readOptionalBudget(*budgets, "exposure", loaded.budgets.exposure)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }

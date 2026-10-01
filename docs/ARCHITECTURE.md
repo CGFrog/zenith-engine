@@ -326,7 +326,9 @@ Main mesh pass
 
 Post-process pass
   HDR target + depth + temporal history
-  -> scalable SSAO/SSR + TAA or FXAA + bloom + ACES tone mapping
+  -> compute: luminance histogram -> adapted exposure buffer (persistent)
+  -> compute: bloom downsample/upsample chain (when enabled)
+  -> scalable SSAO/SSR + TAA or FXAA + exposure + bloom mix + AgX tone mapping
   -> swapchain image
 
 Game UI pass

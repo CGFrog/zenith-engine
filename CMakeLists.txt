@@ -252,10 +252,12 @@ add_library(zenith_engine STATIC
     src/engine/graphics/RenderConfiguration.cpp
     src/engine/graphics/RenderSubmission.cpp
     src/engine/graphics/TemporalQuality.cpp
+    src/engine/graphics/ToneMapping.cpp
     src/engine/graphics/graph/RenderGraph.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
+    src/engine/graphics/passes/BloomExposurePass.cpp
     src/engine/graphics/passes/UiPass.cpp
     src/engine/graphics/pipeline/GraphicsPipeline.cpp
     src/engine/graphics/pipeline/ComputePipeline.cpp
@@ -678,6 +680,10 @@ if(BUILD_TESTING)
     add_executable(zenith_temporal_quality_tests tests/engine/TemporalQualityTests.cpp)
     target_link_libraries(zenith_temporal_quality_tests PRIVATE zenith_engine)
     add_test(NAME zenith_temporal_quality COMMAND zenith_temporal_quality_tests)
+
+    add_executable(zenith_tone_mapping_tests tests/engine/ToneMappingTests.cpp)
+    target_link_libraries(zenith_tone_mapping_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_tone_mapping COMMAND zenith_tone_mapping_tests)
 
     add_executable(zenith_asset_streaming_tests tests/engine/AssetStreamingTests.cpp)
     target_link_libraries(zenith_asset_streaming_tests PRIVATE zenith_engine)
