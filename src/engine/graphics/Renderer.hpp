@@ -38,6 +38,13 @@ class Renderer {
 
     uint64_t gpuAllocationBytes() const;
 
+    // Compressed formats the device samples; asset import uses this to pick
+    // cooked textures over RGBA8 source images.
+    TextureFormatCapabilities textureFormatCapabilities() const {
+        const bool bc = m_context.blockCompressionSupported();
+        return {.bc7 = bc, .bc5 = bc};
+    }
+
     VkExtent2D outputExtent() const {
         return m_swapchain.extent();
     }

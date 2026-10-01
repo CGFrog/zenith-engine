@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AssetStreaming.hpp"
+#include "ProductionAssetPipeline.hpp"
 
 #include <atomic>
 #include <compare>
@@ -100,10 +101,47 @@ struct Vertex {
     glm::vec4 weights{0.0f};
 };
 
+// Pixel storage of a TextureAsset. Block-compressed formats use 4x4 texel
+// blocks of 16 bytes; color space is chosen per material slot at sampling time.
+enum class TextureFormat : uint8_t {
+    Rgba8,
+    Bc7,
+    Bc5,
+};
+
+// What a texture's channels mean, derived from the material slots that
+// reference it. Color is sRGB-encoded; Normal stores a tangent-space XY pair
+// (Z is reconstructed in shaders); Data holds linear values such as ORM.
+enum class TextureUsage : uint8_t {
+    Color,
+    Normal,
+    Data,
+};
+
+struct TextureMipLevel {
+    uint32_t width{0};
+    uint32_t height{0};
+    // Byte range of the level inside TextureAsset::compressed.
+    uint64_t offset{0};
+    uint64_t size{0};
+};
+
 struct TextureAsset {
     uint32_t width{0};
     uint32_t height{0};
+    // RGBA8 base level, present only when format is Rgba8. The renderer
+    // generates the remaining mip levels for this format.
     std::vector<uint8_t> rgba;
+    TextureFormat format{TextureFormat::Rgba8};
+    TextureUsage usage{TextureUsage::Color};
+    // Complete block-compressed mip chain (level 0 first, packed back to back),
+    // present only for block-compressed formats.
+    std::vector<uint8_t> compressed;
+    std::vector<TextureMipLevel> mips;
+
+    bool blockCompressed() const {
+        return format != TextureFormat::Rgba8;
+    }
 };
 
 struct FontAsset {
@@ -291,6 +329,21 @@ class AssetManager {
     std::vector<AssetDiagnostic> diagnostics() const;
     uint64_t cpuBytes() const;
 
+    // Model imports replace external source images with cooked
+    // block-compressed textures from this derived-data root when the renderer
+    // can sample the cooked format (see CompressedTexture.hpp). An empty root
+    // or unsupported format keeps the decoded RGBA8 source image.
+    void setCookedTextureRoot(std::filesystem::path root);
+    void setTextureFormatCapabilities(TextureFormatCapabilities capabilities);
+
+    const std::filesystem::path& cookedTextureRoot() const {
+        return m_cookedTextureRoot;
+    }
+
+    const TextureFormatCapabilities& textureFormatCapabilities() const {
+        return m_textureCapabilities;
+    }
+
     DerivedAssetResidencyManager& streaming() {
         return m_streaming;
     }
@@ -336,4 +389,6 @@ class AssetManager {
     uint64_t m_useSerial{1};
     AssetMemoryBudget m_budget;
     DerivedAssetResidencyManager m_streaming;
+    std::filesystem::path m_cookedTextureRoot;
+    TextureFormatCapabilities m_textureCapabilities;
 };

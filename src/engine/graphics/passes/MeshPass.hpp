@@ -144,6 +144,7 @@ class MeshPass {
     bool uploadToBuffer(const void* data, VkDeviceSize size, VkBuffer destination, VkDeviceSize destinationOffset);
     bool ensureGeometryPage(uint32_t page);
     bool uploadTexture(const TextureAsset& texture, GpuTexture& output);
+    bool uploadBlockCompressedTexture(const TextureAsset& texture, GpuTexture& output);
     bool assignTextureSlots(GpuTexture& texture);
     void retireTexture(const GpuTexture& texture);
     void destroyTexture(const GpuTexture& texture);
@@ -213,6 +214,7 @@ class MeshPass {
     VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
     VkDescriptorPool m_bindlessPool{VK_NULL_HANDLE};
     VkSampler m_sampler{VK_NULL_HANDLE};
+    bool m_blockCompressionSupported{false};
     std::vector<CameraBuffer> m_cameras;
     std::unique_ptr<BindlessTextureTable> m_textureTable;
     uint32_t m_whiteSlot{0};

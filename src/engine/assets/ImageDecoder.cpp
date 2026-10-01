@@ -1,5 +1,6 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "ImageDecoder.hpp"
+#include "CompressedTexture.hpp"
 #include "ProductionAssetPipeline.hpp"
 
 #include <stb_image.h>
@@ -43,9 +44,13 @@ ImageDecodeResult decodeKtx2(std::span<const uint8_t> bytes, std::string_view la
         return {.error = "Cannot decode Basis Universal KTX2 " + std::string(label) +
                          ": optional Basis transcoder is not installed"};
     }
+    if (isBlockCompressedKtx2Format(vkFormat)) {
+        BlockCompressedDecodeResult decoded = readBlockCompressedKtx2(bytes, label);
+        return {.texture = std::move(decoded.texture), .error = std::move(decoded.error)};
+    }
     if (vkFormat != 37 && vkFormat != 43) {
         return {.error = "Cannot decode KTX2 " + std::string(label) +
-                         ": only RGBA8 UNORM/SRGB has a CPU fallback on this build"};
+                         ": only RGBA8 UNORM/SRGB and BC5/BC7 are supported on this build"};
     }
     if (levels == 0 || bytes.size() < 104) {
         return {.error = "Cannot decode KTX2: missing level index"};

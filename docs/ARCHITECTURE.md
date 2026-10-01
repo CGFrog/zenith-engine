@@ -281,6 +281,18 @@ or RGBA8 from renderer capabilities, and provides the RGBA8 CPU fallback.
 tool version, and target platform under the project's `.zenith/derived`
 directory. The editor inspector and `zenith_asset_build` use that same contract.
 
+Textures are cooked offline. `zenith_asset_build cook-model-textures` derives
+each external image's usage from its material slots (normal, color, or data),
+builds a full mip chain, and stores BC5 (normals) or BC7 (color as sRGB, data
+as linear) KTX2 in a derived cache keyed by the source bytes and cook settings.
+The build cooks the shipped models into `build/derived`, and executables point
+`AssetManager::setCookedTextureRoot` at `<resource root>/derived`. `Engine`
+publishes the device's BC capability to the asset manager; when a format is
+unsupported, or no current cooked entry exists, import decodes the RGBA8 source
+and the renderer generates mips as before. Cooked textures upload every stored
+level directly. BC7 images get UNORM and sRGB views; BC5 has a single linear
+view, and shaders reconstruct normal Z from X and Y for every normal map.
+
 Localization, accessibility, and platform services stay below game policy.
 Stable message IDs select runtime locales and plural forms; UTF-8 shaping emits
 fallback-font glyph runs. Game UI applies text/UI scaling and high-contrast

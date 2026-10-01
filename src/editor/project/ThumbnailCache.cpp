@@ -75,7 +75,11 @@ void ThumbnailCache::work(std::stop_token stopToken) {
 
         ImageDecodeResult decoded = decodeImageFile(path);
         CachedThumbnail thumbnail;
-        if (decoded) {
+        if (decoded && decoded.texture.blockCompressed()) {
+            // Thumbnails sample RGBA8 texels; block-compressed KTX2 has none on the CPU.
+            thumbnail.state = ThumbnailState::Failed;
+            thumbnail.error = "Block-compressed textures have no thumbnail preview";
+        } else if (decoded) {
             thumbnail = downsample(std::move(decoded.texture));
         } else {
             thumbnail.state = ThumbnailState::Failed;

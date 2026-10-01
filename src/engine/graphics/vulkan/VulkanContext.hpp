@@ -50,6 +50,11 @@ class VulkanContext {
         return m_timelineSemaphoreSupported;
     }
 
+    // True when BC1-BC7 images can be sampled (textureCompressionBC enabled).
+    bool blockCompressionSupported() const {
+        return m_blockCompressionSupported;
+    }
+
     uint32_t gfxQueueIndex() const {
         return m_gfxQueueFamIdx;
     }
@@ -79,6 +84,7 @@ class VulkanContext {
     uint32_t m_transferQueueFamIdx{UINT32_MAX};
     VkQueue m_transferQueue{VK_NULL_HANDLE};
     bool m_timelineSemaphoreSupported{false};
+    bool m_blockCompressionSupported{false};
     VmaAllocator m_vmaAllocator{VK_NULL_HANDLE};
     VkPipelineCache m_pipelineCache{VK_NULL_HANDLE};
     std::filesystem::path m_pipelineCachePath;

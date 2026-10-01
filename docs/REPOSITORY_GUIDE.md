@@ -65,6 +65,8 @@ explicit, so a file move must update `CMakeLists.txt` as well as include sites.
 | `zenith_editor` | Executable | Thin editor composition root. |
 | `zenith_shaders` | Custom target | Recursively finds recognized GLSL stages in `shaders/` and compiles each file with glslang for Vulkan 1.4. |
 | `zenith_assets` | Custom target | Copies `assets/` to `build/assets/` so runtime paths do not depend on the process working directory. |
+| `zenith_cooked_textures` | Custom target | Runs `zenith_asset_build cook-model-textures` on every `assets/*.gltf`, writing BC7/BC5 KTX2 entries to `build/derived/`. |
+| `zenith_bc7enc` | Static library | The bc7enc_rdo BC7/BC5 block encoders and decoders, linked privately into the engine for texture cooking. |
 | `zenith_asset_tests` | Test executable | Asset importing and scene hierarchy behavior. |
 | `zenith_physics_tests` | Test executable | Rigid bodies, contacts, impulses, raycasts, mesh collision, and cleanup. |
 | `zenith_application_tests` | Test executable | Lifecycle ordering, deferred switching, failed-load cleanup, demo composition, controls, and reload behavior. |
@@ -86,6 +88,7 @@ Third-party libraries are pinned with CMake `FetchContent`:
 | Jolt Physics | Collision detection and rigid-body simulation behind Zenith's physics API. |
 | cgltf | `.gltf`/`.glb` parsing. |
 | stb_image | Image decoding to RGBA pixels. |
+| bc7enc_rdo | Offline BC7 (bc7enc) and BC5 (rgbcx) block compression for cooked textures. |
 | glslang | Build-time GLSL-to-SPIR-V compiler. |
 | shaderc + SPIR-V Tools | In-process shader compiler dependencies available to the engine target. |
 
@@ -254,7 +257,9 @@ Defines renderer-independent CPU asset types and opaque typed handles:
   indices, and optional mesh handles.
 - `MeshAsset` owns vertices, indices, and material-bearing draw primitives.
 - `MaterialAsset` holds glTF metallic-roughness factors and texture handles.
-- `TextureAsset` stores decoded width, height, and RGBA8 pixels.
+- `TextureAsset` stores width, height, a `TextureUsage` (color, normal, or
+  data) derived from referencing material slots, and either an RGBA8 base level
+  or a complete BC7/BC5 mip chain.
 
 `AssetManager` owns these values in recyclable generational slots. It normalizes
 model paths, caches repeated loads, and resolves handles without exposing its
@@ -287,15 +292,32 @@ resource-limit, and validation failures return descriptive errors.
 ### `src/engine/assets/ImageDecoder.*`
 
 Uses stb_image to decode conventional external or embedded images and validates
-KTX2 containers. RGBA8 KTX2 has a CPU fallback; Basis data reports the optional
-transcoder requirement. GPU format policy and upload remain renderer-owned.
+KTX2 containers. RGBA8 KTX2 has a CPU fallback and BC5/BC7 KTX2 loads its
+stored mip chain; Basis data reports the optional transcoder requirement. GPU
+format policy and upload remain renderer-owned.
+
+### `src/engine/assets/CompressedTexture.*`
+
+Block-compressed texture layout (mip extents and sizes), the BC5/BC7 KTX2
+writer and reader, and the cooked-texture convention: a cooked entry is a
+`DerivedAssetCache` file keyed by the source image bytes and
+`cookedTextureRequest()` settings. `loadCookedTexture()` returns nothing for a
+missing entry so importers fall back to the source image.
+
+### `src/engine/assets/TextureCooker.*`
+
+Offline cooking used by `zenith_asset_build` and tests. Builds a full mip chain
+(sRGB-correct for color, renormalized for normals) and encodes BC7 for color and
+data or BC5 for normal maps, plus a CPU block decoder for validation.
 
 ### `src/engine/assets/ProductionAssetPipeline.*`
 
 Defines untrusted-content limits, isolated Meshopt/Draco decoder registration,
 KTX2 target-format choice, and deterministic derived assets keyed by source,
 settings, tool version, and target. Editor inspection and the
-`zenith_asset_build` command share this implementation.
+`zenith_asset_build` command share this implementation; the command also cooks
+single textures (`cook-texture`) or a model's external textures
+(`cook-model-textures`).
 
 ### `src/engine/platform/PlatformServices.*`
 
