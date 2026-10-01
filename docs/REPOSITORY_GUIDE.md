@@ -85,6 +85,7 @@ Third-party libraries are pinned with CMake `FetchContent`:
 | EnTT | Entity-component registry. |
 | Jolt Physics | Collision detection and rigid-body simulation behind Zenith's physics API. |
 | cgltf | `.gltf`/`.glb` parsing. |
+| meshoptimizer | Import-time vertex/index ordering and LOD simplification. |
 | stb_image | Image decoding to RGBA pixels. |
 | glslang | Build-time GLSL-to-SPIR-V compiler. |
 | shaderc + SPIR-V Tools | In-process shader compiler dependencies available to the engine target. |
@@ -282,7 +283,17 @@ into Zenith types. It handles indexed and non-indexed triangle geometry and
 generates normals or tangent space when absent. Non-triangle primitives are
 skipped. Morph deltas and animation weight channels are retained, while
 compressed paths report the missing optional decoder by name. Parsing,
-resource-limit, and validation failures return descriptive errors.
+resource-limit, and validation failures return descriptive errors. Each
+imported mesh then passes through `MeshOptimization`.
+
+### `src/engine/assets/MeshOptimization.*`
+
+Uses meshoptimizer at import time: vertex-cache and overdraw triangle ordering,
+vertex-fetch reordering that moves every per-vertex stream (including morph
+deltas) together, and up to three simplified LOD index ranges per primitive.
+LODs reuse the full-detail vertices, keep primitive borders locked, and record
+an object-space geometric error. Skinned and morphed primitives keep full
+detail only.
 
 ### `src/engine/assets/ImageDecoder.*`
 
@@ -398,8 +409,15 @@ no Vulkan buffers; the mesh pass creates one buffer pair per reported page.
 ### `src/engine/graphics/passes/GpuDrivenPass.*`
 
 Two-phase GPU frustum and occlusion culling, the min-depth pyramid, and
-draw compaction into indirect-count commands. The caller owns render passes
-and the scene-depth transitions around the pyramid build.
+draw compaction into indirect-count commands. The cull shader also picks each
+object's LOD batch. The caller owns render passes and the scene-depth
+transitions around the pyramid build.
+
+### `src/engine/graphics/MeshLodSelection.*`
+
+The CPU definition of LOD selection: the coarsest level whose geometric error,
+projected from the nearest point of the bounding sphere, stays within
+`RenderSettings::lodErrorThresholdPixels`. `gpu_visibility.comp` mirrors it.
 
 ### `src/engine/graphics/graph/RenderGraph.*`
 

@@ -1,6 +1,7 @@
 #define CGLTF_IMPLEMENTATION
 #include "ModelImporter.hpp"
 #include "ImageDecoder.hpp"
+#include "MeshOptimization.hpp"
 
 #include <algorithm>
 #include <cgltf.h>
@@ -384,6 +385,7 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
         }
 
         if (!mesh.primitives.empty()) {
+            optimizeMesh(mesh);
             mesh.bounds = calculateBounds(mesh.vertices);
             meshes[meshIndex] = m_assets.addMesh(std::move(mesh), path, static_cast<uint32_t>(meshIndex));
         }

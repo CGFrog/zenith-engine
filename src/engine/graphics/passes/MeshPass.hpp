@@ -4,6 +4,7 @@
 #include "../../jobs/FrameTaskGraph.hpp"
 #include "../../scene/Scene.hpp"
 #include "../EnvironmentLighting.hpp"
+#include "../MeshLodSelection.hpp"
 #include "../RenderSubmission.hpp"
 #include "../Rendering.hpp"
 #include "../TemporalQuality.hpp"
@@ -115,6 +116,8 @@ class MeshPass {
         MaterialHandle materialHandle;
         const MeshAsset* mesh{nullptr};
         const MeshPrimitive* primitive{nullptr};
+        // Index range chosen for this frame's camera; shadow cascades reuse it.
+        MeshLod lod{};
         const MaterialAsset* material{nullptr};
         const GpuMesh* gpuMesh{nullptr};
         const GpuMaterial* gpuMaterial{nullptr};
@@ -192,7 +195,8 @@ class MeshPass {
     void beginRendering(VkCommandBuffer commandBuffer, VkImageView colorView, VkImageView motionView,
                         VkImage depthImage, VkImageView depthView, VkExtent2D extent,
                         SceneAttachments attachments) const;
-    bool prepareGpuDrivenFrame(uint32_t frameIndex);
+    void selectRenderItemLods(const MeshLodView& view);
+    bool prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lodView);
     void recordGpuDrivenGroups(const DrawContext& draw, GpuCullPhase phase);
     void prepareDepthForPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const;
     void restoreDepthAfterPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const;
@@ -263,6 +267,15 @@ class MeshPass {
     bool m_gpuDrivenSupported{false};
     std::vector<const RenderItem*> m_gpuDrivenCandidates;
     std::vector<IndirectDrawKey> m_gpuDrivenKeys;
+
+    // Each candidate contributes one key per LOD level, contiguously.
+    struct GpuDrivenKeySource {
+        uint32_t candidate{0};
+        uint32_t level{0};
+    };
+
+    std::vector<GpuDrivenKeySource> m_gpuDrivenKeySources;
+    std::vector<uint32_t> m_gpuDrivenKeyBatches;
     IndirectDrawPlan m_drawPlan;
     std::vector<GpuDrivenObjectRecord> m_gpuDrivenObjects;
     std::vector<GpuDrivenBatch> m_gpuDrivenBatches;

@@ -242,6 +242,7 @@ path passed to AssetManager::loadModel
   -> canonicalized cache key
   -> cgltf parse, buffers load, validation
   -> images decoded to RGBA8 by ImageDecoder
+  -> meshes reordered and simplified into LODs by MeshOptimization
   -> materials, meshes, and model nodes committed to generational asset slots
   -> typed handles returned to scene components
   -> MeshPass sees a handle on first use
@@ -350,6 +351,17 @@ then tests every object, records its visibility for the next frame, and draws
 the newly visible remainder. A compaction pass packs non-empty draws so each
 pipeline and geometry page is one `vkCmdDrawIndexedIndirectCount`. Blended
 surfaces and editor outlines stay on CPU submission within the same frame.
+
+Imported primitives carry up to four LOD index ranges over shared vertices,
+each with an object-space geometric error. Both submission paths pick the
+coarsest level whose error, scaled by the object's largest axis scale and
+projected from the nearest point of its bounding sphere at internal render
+resolution, is at most `RenderSettings::lodErrorThresholdPixels` (zero keeps
+full detail). The CPU path selects per render item, and shadows reuse the
+camera's choice. The GPU path gives each level its own batch, chains a
+primitive's levels through the batch records, and selects in the cull shader
+with the same formula; every object reserves an instance slot in each of its
+level batches.
 The primary directional and environment light components provide direct-light,
 shadow, sky, and ground settings. Material occlusion attenuates only indirect
 environment lighting, leaving direct and emissive contributions unchanged.

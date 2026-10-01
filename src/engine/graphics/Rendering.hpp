@@ -99,6 +99,9 @@ struct RenderSettings {
     LocalLightingQuality localLights{LocalLightingQuality::Tiled32};
     bool reflectionProbes{true};
     bool preferGpuDrivenSubmission{false};
+    // Largest projected geometric error, in pixels at internal render
+    // resolution, a simplified mesh LOD may show. Zero always draws full detail.
+    float lodErrorThresholdPixels{1.0f};
     float cascadeSplitLambda{0.65f};
     float cascadeBlendFraction{0.10f};
     bool visualizeShadowCascades{false};
