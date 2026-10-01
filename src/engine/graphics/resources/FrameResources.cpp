@@ -8,7 +8,7 @@ constexpr uint64_t frameFenceTimeout = std::numeric_limits<uint64_t>::max();
 }
 
 namespace {
-constexpr uint32_t timestampQueryCount = 8;
+constexpr uint32_t timestampQueryCount = 10;
 }
 
 bool FrameResources::init(VkDevice device, uint32_t queueFamily, float timestampPeriod, uint32_t timestampValidBits) {
@@ -137,6 +137,7 @@ bool FrameResources::collectTimings(VkDevice device, GpuFrameTimings& timings) {
     timings.bloomMilliseconds = m_bloomEnabled ? elapsed(6, 7) : 0.0;
     timings.postMilliseconds = elapsed(7, 4);
     timings.uiMilliseconds = elapsed(4, 5);
+    timings.cullingMilliseconds = elapsed(8, 9);
     return true;
 }
 

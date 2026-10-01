@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/assets/Assets.hpp"
+#include "engine/jobs/FrameTaskGraph.hpp"
 
 #include <vector>
 
@@ -28,5 +29,18 @@ AnimationPose blendAnimationPoses(const AnimationPose& first, const AnimationPos
 glm::mat4 animationPoseMatrix(const AnimationNodePose& pose);
 bool beginAnimationCrossFade(AnimationComponent& animation, uint32_t targetClip, float duration);
 void updateAnimations(Scene& scene, const AssetManager& assets, float deltaSeconds);
+
+struct AnimationTaskResult {
+    bool success{false};
+    std::string error;
+    FrameTaskGraphStats stats;
+
+    explicit operator bool() const {
+        return success;
+    }
+};
+
+AnimationTaskResult updateAnimations(Scene& scene, const AssetManager& assets, float deltaSeconds,
+                                     FrameTaskExecutor& executor, uint64_t frameGeneration);
 std::vector<ActiveMorphTarget> selectActiveMorphTargets(const std::vector<float>& weights,
                                                         uint32_t limit = maximumActiveMorphTargets);

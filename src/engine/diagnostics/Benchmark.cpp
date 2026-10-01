@@ -76,6 +76,16 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("visible", s.visibleCount, "count");
     sample("culled", s.culledCount, "count");
     sample("packet_rebuild", s.renderPacketsRebuilt ? 1.0 : 0.0, "count");
+    sample("renderables_scanned", s.scannedRenderables, "count");
+    sample("object_records_updated", s.updatedObjectRecords, "count");
+    sample("main_thread_allocations", s.mainThreadAllocations, "count");
+    sample("indirect_commands", s.indirectCommandCount, "count");
+    sample("gpu.culling", s.gpuCullingMilliseconds);
+    sample("tasks.queue_depth", s.taskQueueDepth, "count");
+    sample("tasks.stolen_jobs", s.taskStolenJobs, "count");
+    sample("tasks.worker_utilization", s.taskWorkerUtilization, "ratio");
+    sample("tasks.main_thread_assist", s.taskMainThreadAssistMilliseconds);
+    sample("tasks.graph_latency", s.taskGraphLatencyMilliseconds);
     sample("lights", s.localLightCount, "count");
     sample("discarded_light_assignments", s.discardedLightAssignments, "count");
     sample("upload_bytes", static_cast<double>(s.uploadBytes), "bytes");
@@ -106,6 +116,9 @@ void BenchmarkReport::physics(const PhysicsStats& s) {
     sample("physics.active", s.activeBodies, "count");
     sample("physics.sleeping", s.sleepingBodies, "count");
     sample("physics.contact_events", s.contactEvents, "count");
+    sample("physics.lifecycle_operations", s.lifecycleOperations, "count");
+    sample("physics.audited_entities", s.auditedEntities, "count");
+    sample("physics.transforms_read_back", s.transformsReadBack, "count");
 }
 
 std::string BenchmarkReport::json(bool includeSamples) const {

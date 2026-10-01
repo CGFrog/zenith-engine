@@ -2,13 +2,18 @@
 
 #include "Rendering.hpp"
 
+#include <compare>
 #include <cstdint>
+#include <functional>
+#include <glm/glm.hpp>
+#include <optional>
 #include <span>
+#include <unordered_map>
 #include <vector>
 
 enum class RenderSubmissionPath {
     CompatibleInstanced,
-    IndirectPrototype
+    GpuDriven
 };
 
 enum class RenderSurfaceClass : uint8_t {
@@ -41,6 +46,86 @@ struct IndirectDrawCommand {
     uint32_t firstIndex{0};
     int32_t vertexOffset{0};
     uint32_t firstInstance{0};
+};
+
+struct GpuSceneHandle {
+    uint32_t index{0};
+    uint32_t generation{0};
+
+    explicit operator bool() const {
+        return generation != 0;
+    }
+
+    auto operator<=>(const GpuSceneHandle&) const = default;
+};
+
+struct GpuSceneObject {
+    uint64_t recordId{0};
+    RenderObjectId objectId{0};
+    uint64_t meshKey{0};
+    uint64_t materialKey{0};
+    glm::mat4 world{1.0f};
+    glm::vec3 localBoundsCenter{0.0f};
+    float localBoundsRadius{0.0f};
+    uint32_t indexCount{0};
+    uint32_t firstIndex{0};
+    int32_t vertexOffset{0};
+};
+
+enum class GpuSceneDeltaType : uint8_t {
+    Create,
+    Update,
+    Destroy,
+};
+
+struct GpuSceneDelta {
+    GpuSceneDeltaType type{GpuSceneDeltaType::Create};
+    GpuSceneHandle handle;
+    std::optional<GpuSceneObject> object;
+};
+
+struct GpuVisibilityInput {
+    glm::mat4 viewProjection{1.0f};
+    bool depthHistoryValid{false};
+    bool cameraCut{false};
+    std::function<bool(const glm::vec3&, float)> occluded;
+};
+
+struct GpuVisibilityResult {
+    std::vector<GpuSceneHandle> visibleInstances;
+    std::vector<IndirectDrawCommand> commands;
+    uint32_t frustumCulled{0};
+    uint32_t occlusionCulled{0};
+    bool occlusionBypassed{false};
+};
+
+class PersistentGpuScene {
+  public:
+    GpuSceneHandle upsert(const GpuSceneObject& object);
+    bool update(GpuSceneHandle handle, const GpuSceneObject& object);
+    bool remove(GpuSceneHandle handle);
+    const GpuSceneObject* resolve(GpuSceneHandle handle) const;
+    std::span<const GpuSceneDelta> pendingDeltas() const;
+    void retireDeltas();
+    GpuVisibilityResult buildVisibility(const GpuVisibilityInput& input);
+    void buildVisibility(const GpuVisibilityInput& input, GpuVisibilityResult& result);
+    size_t size() const;
+
+  private:
+    struct Slot {
+        uint32_t generation{1};
+        bool occupied{false};
+        bool newlySpawned{false};
+        GpuSceneObject object;
+        glm::vec3 worldBoundsCenter{0.0f};
+        float worldBoundsRadius{0.0f};
+    };
+
+    std::vector<Slot> m_slots;
+    std::vector<uint32_t> m_freeSlots;
+    std::unordered_map<uint64_t, GpuSceneHandle> m_objects;
+    std::vector<GpuSceneDelta> m_deltas;
+    std::vector<uint32_t> m_visibleSlotScratch;
 };
 
 RenderSubmissionPath chooseRenderSubmissionPath(const RenderCapabilities& capabilities,

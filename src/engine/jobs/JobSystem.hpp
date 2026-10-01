@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <thread>
@@ -33,6 +34,8 @@ class JobContext {
     struct State;
     bool cancellationRequested() const;
     void setProgress(float progress);
+    size_t workerIndex() const;
+    bool mainThread() const;
 
   private:
     friend class JobSystem;
@@ -80,6 +83,7 @@ class JobSystem {
     bool pumpOne();
     std::vector<CompletedJob> takeCompleted();
     std::vector<CompletedJob> takeCompleted(std::span<const uint64_t> jobIds);
+    std::optional<CompletedJob> waitCompleted(std::span<const uint64_t> jobIds);
     void shutdown(bool cancelPending = true);
     size_t pendingCount() const;
 
@@ -92,12 +96,13 @@ class JobSystem {
     };
 
     bool takeNext(QueuedJob& job);
-    void execute(QueuedJob job);
-    void workerLoop();
+    void execute(QueuedJob job, size_t workerIndex, bool mainThread);
+    void workerLoop(size_t workerIndex);
 
     JobSystemConfig m_config;
     mutable std::mutex m_mutex;
     std::condition_variable m_available;
+    std::condition_variable m_completedAvailable;
     std::deque<QueuedJob> m_queue;
     std::vector<CompletedJob> m_completed;
     std::vector<std::thread> m_workers;

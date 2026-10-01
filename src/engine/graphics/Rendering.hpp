@@ -128,6 +128,16 @@ struct RenderStats {
     uint32_t discardedLightAssignments{0};
     double cpuRenderPacketMilliseconds{0.0};
     bool renderPacketsRebuilt{false};
+    uint32_t scannedRenderables{0};
+    uint32_t updatedObjectRecords{0};
+    uint32_t mainThreadAllocations{0};
+    uint32_t indirectCommandCount{0};
+    double gpuCullingMilliseconds{0.0};
+    uint32_t taskQueueDepth{0};
+    uint32_t taskStolenJobs{0};
+    double taskWorkerUtilization{0.0};
+    double taskMainThreadAssistMilliseconds{0.0};
+    double taskGraphLatencyMilliseconds{0.0};
 };
 
 struct RenderView {

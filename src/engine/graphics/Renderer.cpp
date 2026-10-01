@@ -43,8 +43,9 @@ RenderCapabilities detectRenderCapabilities(VkPhysicalDevice device) {
 }
 } // namespace
 
-bool Renderer::init(const Window& window, RenderRuntime& rendering) {
+bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExecutor& frameTasks) {
     m_rendering = &rendering;
+    m_frameTasks = &frameTasks;
     if (!initContext(window)) {
         return false;
     }
@@ -66,6 +67,7 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering) {
                          m_viewportTarget.extent(), m_viewportTarget.depthView())) {
         return false;
     }
+    rendering.m_capabilities.gpuDrivenPath = m_meshPass.gpuDrivenSupported();
     m_currentFrame = 0;
     m_submittedFrames = 0;
     VkPhysicalDeviceProperties properties{};
@@ -187,6 +189,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuBloomMilliseconds = gpuTimings.bloomMilliseconds;
     stats.gpuPostMilliseconds = gpuTimings.postMilliseconds;
     stats.gpuUiMilliseconds = gpuTimings.uiMilliseconds;
+    stats.gpuCullingMilliseconds = gpuTimings.cullingMilliseconds;
     m_currentFrame = (m_currentFrame + 1) % framesInFlight;
     return presented;
 }
@@ -289,7 +292,7 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
         useViewport ? m_viewportTarget.oldLayout(m_currentFrame) : VK_IMAGE_LAYOUT_UNDEFINED;
     if (!m_meshPass.record(frame.commandBuffer(), colorImage, colorView, m_viewportTarget.depthImage(),
                            m_viewportTarget.depthView(), extent, m_currentFrame, scene, assets, *m_rendering,
-                           frame.timestampQueries(), oldLayout)) {
+                           *m_frameTasks, frame.timestampQueries(), oldLayout)) {
         return false;
     }
     if (useViewport) {

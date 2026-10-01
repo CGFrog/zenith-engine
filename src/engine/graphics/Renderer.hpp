@@ -1,6 +1,7 @@
 #pragma once
 #include "../assets/Assets.hpp"
 #include "../input/InputManager.hpp"
+#include "../jobs/FrameTaskGraph.hpp"
 #include "../scene/Scene.hpp"
 #include "../ui/GameUi.hpp"
 #include "../window/Window.hpp"
@@ -18,7 +19,7 @@
 
 class Renderer {
   public:
-    bool init(const Window& window, RenderRuntime& rendering);
+    bool init(const Window& window, RenderRuntime& rendering, FrameTaskExecutor& frameTasks);
     bool drawFrame(const Window& window, Scene& scene, const AssetManager& assets);
     void processUiEvent(const SDL_Event& event);
     void beginUiFrame(const AssetManager& assets);
@@ -78,6 +79,7 @@ class Renderer {
     bool m_resizeRequested{false};
     bool m_viewportFailed{false};
     RenderRuntime* m_rendering{nullptr};
+    FrameTaskExecutor* m_frameTasks{nullptr};
     std::string m_gpuName;
     std::unordered_map<uint64_t, uint64_t> m_gameUiTextures;
 };

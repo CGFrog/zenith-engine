@@ -129,6 +129,10 @@ uint64_t handleKey(MaterialHandle handle) {
     return (static_cast<uint64_t>(handle.generation) << 32) | handle.index;
 }
 
+uint64_t handleKey(GpuSceneHandle handle) {
+    return (static_cast<uint64_t>(handle.generation) << 32) | handle.index;
+}
+
 template <typename Handle> Handle handleFromKey(uint64_t key) {
     return {static_cast<uint32_t>(key), static_cast<uint32_t>(key >> 32)};
 }
@@ -139,20 +143,38 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     m_device = context.device();
     m_allocator = context.vmaAllocator();
     m_packetCachingEnabled = SDL_getenv("ZENITH_DISABLE_RENDER_PACKET_CACHE") == nullptr;
+    m_renderItems.reserve(maximumObjectsPerFrame);
+    m_visibleItems.reserve(maximumObjectsPerFrame);
+    m_shadowVisibleItems.reserve(maximumObjectsPerFrame);
+    m_objectItems.reserve(maximumObjectsPerFrame);
+    m_gpuRecords.reserve(maximumObjectsPerFrame);
+    m_gpuHandleItems.reserve(maximumObjectsPerFrame);
+    m_visibility.visibleInstances.reserve(maximumObjectsPerFrame);
+    m_visibility.commands.reserve(maximumObjectsPerFrame);
+    m_gpuDrivenObjects.reserve(maximumObjectsPerFrame);
+    m_gpuDrivenBatches.reserve(maximumObjectsPerFrame);
+    m_gpuDrivenBatchItems.reserve(maximumObjectsPerFrame);
     if (!m_uploadContext.init(context) || !createDescriptors(context, frameCount)) {
         return false;
     }
     TextureAsset white{.width = 1, .height = 1, .rgba = {255, 255, 255, 255}};
     TextureAsset normal{.width = 1, .height = 1, .rgba = {128, 128, 255, 255}};
-    return uploadTexture(white, m_whiteTexture) && uploadTexture(normal, m_normalTexture) &&
-           createShadowResources(depthFormat) &&
-           m_postProcess.init(context, colorFormat, depthFormat, frameCount, extent, depthView) &&
-           createPipeline(PostProcessPass::sceneFormat, depthFormat);
+    if (!uploadTexture(white, m_whiteTexture) || !uploadTexture(normal, m_normalTexture) ||
+        !createShadowResources(depthFormat) ||
+        !m_postProcess.init(context, colorFormat, depthFormat, frameCount, extent, depthView) ||
+        !createPipeline(PostProcessPass::sceneFormat, depthFormat)) {
+        return false;
+    }
+    m_gpuDrivenSupported =
+        m_gpuDrivenPass.init(context, frameCount, extent, depthView, maximumObjectsPerFrame, maximumObjectsPerFrame);
+    return true;
 }
 
 bool MeshPass::resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView) {
     m_depthInitialized = false;
-    return m_postProcess.resize(context, extent, depthView);
+    m_cameraHistoryValid = false;
+    return m_postProcess.resize(context, extent, depthView) &&
+           (!m_gpuDrivenSupported || m_gpuDrivenPass.resize(context, extent, depthView));
 }
 
 bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCount) {
@@ -713,6 +735,7 @@ bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
                 return false;
             }
             items.push_back({.meshHandle = meshHandle,
+                             .entity = entity,
                              .materialHandle = primitive.material,
                              .mesh = mesh,
                              .primitive = &primitive,
@@ -744,7 +767,78 @@ bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
         }
         return first.outlined < second.outlined;
     });
+    m_objectItems.clear();
+    std::unordered_map<uint64_t, GpuSceneHandle> nextGpuRecords;
+    nextGpuRecords.reserve(items.size());
+    m_gpuHandleItems.clear();
+    for (size_t index = 0; index < items.size(); ++index) {
+        RenderItem& item = items[index];
+        const RenderObjectId objectId = static_cast<RenderObjectId>(entt::to_integral(item.entity));
+        m_objectItems[objectId].push_back(index);
+        item.recordId = static_cast<uint64_t>(objectId) * 0x9e3779b97f4a7c15ull;
+        item.recordId ^=
+            handleKey(item.meshHandle) + 0x9e3779b97f4a7c15ull + (item.recordId << 6) + (item.recordId >> 2);
+        item.recordId ^=
+            handleKey(item.materialHandle) + item.primitive->firstIndex + (item.recordId << 6) + (item.recordId >> 2);
+        const GpuSceneObject gpuObject{.recordId = item.recordId,
+                                       .objectId = objectId,
+                                       .meshKey = handleKey(item.meshHandle),
+                                       .materialKey = handleKey(item.materialHandle),
+                                       .world = item.world,
+                                       .localBoundsCenter = item.mesh->bounds.center,
+                                       .localBoundsRadius = item.mesh->bounds.radius,
+                                       .indexCount = item.primitive->indexCount,
+                                       .firstIndex = item.primitive->firstIndex};
+        item.newlySpawned = !m_gpuRecords.contains(item.recordId);
+        item.gpuSceneHandle = m_gpuScene.upsert(gpuObject);
+        nextGpuRecords.emplace(item.recordId, item.gpuSceneHandle);
+        m_gpuHandleItems.emplace(handleKey(item.gpuSceneHandle), index);
+    }
+    for (const auto& [recordId, handle] : m_gpuRecords) {
+        if (!nextGpuRecords.contains(recordId)) {
+            m_gpuScene.remove(handle);
+        }
+    }
+    m_gpuRecords.swap(nextGpuRecords);
     return true;
+}
+
+uint32_t MeshPass::updateRenderItems(const Scene& scene, std::span<const Entity> changedEntities) {
+    uint32_t updated = 0;
+    for (Entity entity : changedEntities) {
+        if (!scene.registry().valid(entity)) {
+            continue;
+        }
+        const RenderObjectId objectId = static_cast<RenderObjectId>(entt::to_integral(entity));
+        const auto found = m_objectItems.find(objectId);
+        const TransformComponent* transform = scene.registry().try_get<TransformComponent>(entity);
+        if (found == m_objectItems.end() || transform == nullptr) {
+            continue;
+        }
+        const SkinComponent* skin = scene.registry().try_get<SkinComponent>(entity);
+        for (size_t itemIndex : found->second) {
+            RenderItem& item = m_renderItems[itemIndex];
+            item.world = transform->world;
+            item.boundsCenter = glm::vec3(item.world * glm::vec4(item.mesh->bounds.center, 1.0f));
+            const float scale = std::max({glm::length(glm::vec3(item.world[0])), glm::length(glm::vec3(item.world[1])),
+                                          glm::length(glm::vec3(item.world[2]))});
+            item.boundsRadius = item.mesh->bounds.radius * scale;
+            if (skin) {
+                item.jointPalette = skin->jointPalette;
+            }
+            m_gpuScene.update(item.gpuSceneHandle, {.recordId = item.recordId,
+                                                    .objectId = objectId,
+                                                    .meshKey = handleKey(item.meshHandle),
+                                                    .materialKey = handleKey(item.materialHandle),
+                                                    .world = item.world,
+                                                    .localBoundsCenter = item.mesh->bounds.center,
+                                                    .localBoundsRadius = item.mesh->bounds.radius,
+                                                    .indexCount = item.primitive->indexCount,
+                                                    .firstIndex = item.primitive->firstIndex});
+            ++updated;
+        }
+    }
+    return updated;
 }
 
 bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, const std::vector<RenderItem>& items,
@@ -861,8 +955,8 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
 
 bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImageView colorView, VkImage depthImage,
                       VkImageView depthView, VkExtent2D extent, uint32_t frameIndex, const Scene& scene,
-                      const AssetManager& assets, RenderRuntime& rendering, VkQueryPool timestampQueries,
-                      VkImageLayout colorOldLayout) {
+                      const AssetManager& assets, RenderRuntime& rendering, FrameTaskExecutor& frameTasks,
+                      VkQueryPool timestampQueries, VkImageLayout colorOldLayout) {
     if (frameIndex >= m_cameras.size()) {
         return false;
     }
@@ -1024,11 +1118,83 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     }
     std::vector<LocalLight> localLights = gatherLocalLights(scene);
     const uint32_t perTile = rendering.settings().localLights == LocalLightingQuality::Tiled64 ? 64u : 32u;
-    const LightTileGrid lightGrid =
-        rendering.settings().localLights == LocalLightingQuality::Disabled
-            ? LightTileGrid{}
-            : selectTiledLights(localLights, cameraData.viewProjection, extent.width, extent.height, 16, perTile);
-    const std::vector<uint32_t> selectedLights = selectTiledLightSet(lightGrid, localLights, perTile);
+    LightTileGrid lightGrid;
+    std::vector<uint32_t> selectedLights;
+
+    uint64_t outlineRevision = 0;
+    for (RenderObjectId outlined : rendering.m_outlinedObjects) {
+        outlineRevision ^=
+            static_cast<uint64_t>(outlined) + 0x9e3779b97f4a7c15ull + (outlineRevision << 6) + (outlineRevision >> 2);
+    }
+    const SceneRevisions& revisions = scene.revisions();
+    const bool rebuildPackets = !m_packetCachingEnabled || revisions.renderable != m_sceneRevisions.renderable ||
+                                revisions.material != m_sceneRevisions.material ||
+                                assets.revision() != m_assetRevision || outlineRevision != m_outlineRevision;
+    const auto packetBuildStart = std::chrono::steady_clock::now();
+    uint32_t scannedRenderables = 0;
+    uint32_t updatedObjectRecords = 0;
+    uint32_t allocationCount = 0;
+    if (rebuildPackets) {
+        m_renderItems.clear();
+        const size_t previousCapacity = m_renderItems.capacity();
+        if (!buildRenderItems(scene, assets, rendering.m_outlinedObjects, m_renderItems)) {
+            return false;
+        }
+        scannedRenderables = static_cast<uint32_t>(scene.registry().view<const MeshRendererComponent>().size());
+        updatedObjectRecords = static_cast<uint32_t>(m_renderItems.size());
+        allocationCount = m_renderItems.capacity() != previousCapacity ? 1u : 0u;
+    } else if (revisions.transform != m_sceneRevisions.transform || revisions.skin != m_sceneRevisions.skin) {
+        updatedObjectRecords = updateRenderItems(scene, scene.changedTransforms());
+        if (revisions.skin != m_sceneRevisions.skin) {
+            const auto skins = scene.registry().view<const SkinComponent>();
+            for (Entity entity : skins) {
+                updatedObjectRecords += updateRenderItems(scene, std::span<const Entity>(&entity, 1));
+            }
+        }
+    }
+    m_sceneRevisions = revisions;
+    m_assetRevision = assets.revision();
+    m_outlineRevision = outlineRevision;
+    const auto packetBuildEnd = std::chrono::steady_clock::now();
+    const double packetBuildMilliseconds =
+        std::chrono::duration<double, std::milli>(packetBuildEnd - packetBuildStart).count();
+    if (m_renderItems.size() > maximumObjectsPerFrame) {
+        std::cerr << "Renderable count exceeds the per-frame render capacity\n";
+        return false;
+    }
+    const bool containsBlendedObjects =
+        std::ranges::any_of(m_renderItems, [](const RenderItem& item) {
+            return item.material->alphaMode == MaterialAlphaMode::Blend;
+        });
+    const bool gpuDrivenRequested =
+        rendering.settings().preferGpuDrivenSubmission || SDL_getenv("ZENITH_FORCE_GPU_DRIVEN") != nullptr;
+    const bool gpuDrivenActive = m_gpuDrivenSupported && gpuDrivenRequested &&
+                                 rendering.capabilities().gpuDrivenPath &&
+                                 rendering.capabilities().descriptorIndexing &&
+                                 rendering.capabilities().multiDrawIndirect && !containsBlendedObjects &&
+                                 rendering.m_outlinedObjects.empty();
+    const FrameResourceUse lightResources[]{{"scene.lights", FrameResourceAccess::Read},
+                                            {"frame.light_grid", FrameResourceAccess::Write}};
+    const FrameResourceUse visibilityResources[]{{"renderer.persistent_scene", FrameResourceAccess::Read},
+                                                 {"frame.visibility", FrameResourceAccess::Write}};
+    FrameTaskGraph taskGraph(++m_taskGeneration);
+    taskGraph.add("light-grid", lightResources, [&](const FrameTaskContext&) {
+        lightGrid =
+            rendering.settings().localLights == LocalLightingQuality::Disabled
+                ? LightTileGrid{}
+                : selectTiledLights(localLights, cameraData.viewProjection, extent.width, extent.height, 16, perTile);
+        selectedLights = selectTiledLightSet(lightGrid, localLights, perTile);
+    });
+    taskGraph.add("render-visibility", visibilityResources, [&](const FrameTaskContext&) {
+        m_gpuScene.buildVisibility({.viewProjection = cameraData.viewProjection, .depthHistoryValid = false},
+                                   m_visibility);
+    });
+    const FrameTaskResult taskResult = frameTasks.execute(taskGraph);
+    if (!taskResult) {
+        std::cerr << "Frame task graph failed: " << taskResult.error << '\n';
+        return false;
+    }
+    m_gpuScene.retireDeltas();
     const uint32_t localLightCount = static_cast<uint32_t>(selectedLights.size());
     for (uint32_t index = 0; index < localLightCount; ++index) {
         const LocalLight& local = localLights[selectedLights[index]];
@@ -1038,32 +1204,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         cameraData.localLightCone[index] = {local.innerConeCosine, local.outerConeCosine, 0.0f, 0.0f};
     }
     cameraData.localLightCount.x = localLightCount;
-    rendering.m_stats.localLightCount = static_cast<uint32_t>(localLights.size());
-    rendering.m_stats.discardedLightAssignments = lightGrid.discardedAssignments;
     std::memcpy(m_cameras[frameIndex].mapped, &cameraData, sizeof(cameraData));
     vmaFlushAllocation(m_allocator, m_cameras[frameIndex].buffer.allocation, 0, sizeof(cameraData));
-
-    uint64_t packetRevision = scene.renderPacketRevision() ^ (assets.revision() * 0x9e3779b97f4a7c15ull);
-    for (RenderObjectId outlined : rendering.m_outlinedObjects) {
-        packetRevision ^=
-            static_cast<uint64_t>(outlined) + 0x9e3779b97f4a7c15ull + (packetRevision << 6) + (packetRevision >> 2);
-    }
-    const bool rebuildPackets = !m_packetCachingEnabled || packetRevision != m_renderPacketRevision;
-    const auto packetBuildStart = std::chrono::steady_clock::now();
-    if (rebuildPackets) {
-        m_renderItems.clear();
-        if (!buildRenderItems(scene, assets, rendering.m_outlinedObjects, m_renderItems)) {
-            return false;
-        }
-        m_renderPacketRevision = packetRevision;
-    }
-    const auto packetBuildEnd = std::chrono::steady_clock::now();
-    const double packetBuildMilliseconds =
-        std::chrono::duration<double, std::milli>(packetBuildEnd - packetBuildStart).count();
-    if (m_renderItems.size() > maximumObjectsPerFrame) {
-        std::cerr << "Renderable count exceeds the per-frame render capacity\n";
-        return false;
-    }
     RenderStats& stats = rendering.m_stats;
     stats.cpuRenderPacketMilliseconds = packetBuildMilliseconds;
     stats.cpuUploadMilliseconds = m_uploadMilliseconds;
@@ -1073,6 +1215,16 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     m_uploadMilliseconds = 0.0;
     m_uploadGpuMilliseconds = 0.0;
     stats.renderPacketsRebuilt = rebuildPackets;
+    stats.scannedRenderables = scannedRenderables;
+    stats.updatedObjectRecords = updatedObjectRecords;
+    stats.mainThreadAllocations = allocationCount;
+    stats.localLightCount = static_cast<uint32_t>(localLights.size());
+    stats.discardedLightAssignments = lightGrid.discardedAssignments;
+    stats.taskQueueDepth = taskResult.stats.maximumQueueDepth;
+    stats.taskStolenJobs = taskResult.stats.stolenJobs;
+    stats.taskWorkerUtilization = taskResult.stats.workerUtilization;
+    stats.taskMainThreadAssistMilliseconds = taskResult.stats.mainThreadAssistMilliseconds;
+    stats.taskGraphLatencyMilliseconds = taskResult.stats.latencyMilliseconds;
     stats.renderableCount = static_cast<uint32_t>(m_renderItems.size());
     DirectionalLightComponent shadowLight = light;
     shadowLight.shadows.enabled = shadowsEnabled;
@@ -1101,6 +1253,59 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     }
     stats.cpuShadowMilliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - shadowCpuBegin).count();
+    constexpr uint32_t mainObjectBase = maximumShadowCascades * maximumObjectsPerFrame;
+    const bool cameraCut = !m_cameraHistoryValid || glm::distance(cameraPosition, m_previousCameraPosition) > 10.0f ||
+                           glm::dot(cameraForward, m_previousCameraForward) < 0.5f;
+    if (gpuDrivenActive) {
+        m_gpuDrivenObjects.clear();
+        m_gpuDrivenBatches.clear();
+        m_gpuDrivenBatchItems.clear();
+        for (size_t begin = 0; begin < m_renderItems.size();) {
+            const RenderItem& first = m_renderItems[begin];
+            size_t end = begin + 1;
+            while (end < m_renderItems.size()) {
+                const RenderItem& candidate = m_renderItems[end];
+                if (candidate.gpuMesh != first.gpuMesh || candidate.gpuMaterial != first.gpuMaterial ||
+                    candidate.primitive->firstIndex != first.primitive->firstIndex ||
+                    candidate.primitive->indexCount != first.primitive->indexCount ||
+                    candidate.material->doubleSided != first.material->doubleSided) {
+                    break;
+                }
+                ++end;
+            }
+            const uint32_t batchIndex = static_cast<uint32_t>(m_gpuDrivenBatches.size());
+            const uint32_t firstInstance = static_cast<uint32_t>(m_gpuDrivenObjects.size());
+            m_gpuDrivenBatches.push_back({.indexCount = first.primitive->indexCount,
+                                          .firstIndex = first.primitive->firstIndex,
+                                          .vertexOffset = 0,
+                                          .firstInstance = firstInstance});
+            m_gpuDrivenBatchItems.push_back(&first);
+            for (size_t index = begin; index < end; ++index) {
+                RenderItem& item = m_renderItems[index];
+                m_gpuDrivenObjects.push_back({.model = item.world,
+                                              .bounds = {item.boundsCenter, item.boundsRadius},
+                                              .draw = {batchIndex, item.newlySpawned ? 1u : 0u, 0u, 0u},
+                                              .skin = {item.skinPaletteOffset,
+                                                       static_cast<uint32_t>(item.jointPalette.size()), 0u, 0u}});
+            }
+            begin = end;
+        }
+        if (!m_gpuDrivenPass.prepare(frameIndex, m_gpuDrivenObjects, m_gpuDrivenBatches) ||
+            !m_gpuDrivenPass.record(commandBuffer, frameIndex, m_cameras[frameIndex].objects.buffer,
+                                    sizeof(ObjectData) * mainObjectBase, cameraData.viewProjection,
+                                    m_depthInitialized, cameraCut, timestampQueries)) {
+            return false;
+        }
+        for (RenderItem& item : m_renderItems) {
+            item.newlySpawned = false;
+        }
+    } else if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, timestampQueries, 8);
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, timestampQueries, 9);
+    }
+    m_previousCameraPosition = cameraPosition;
+    m_previousCameraForward = cameraForward;
+    m_cameraHistoryValid = true;
     if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 1);
     }
@@ -1117,14 +1322,61 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     VkRect2D scissor{.offset = {0, 0}, .extent = extent};
     vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-    const Frustum cameraFrustum = makeFrustum(cameraData.viewProjection);
+    if (gpuDrivenActive) {
+        const auto opaqueCpuBegin = std::chrono::steady_clock::now();
+        const GraphicsPipeline* boundPipeline = nullptr;
+        const GpuMesh* boundMesh = nullptr;
+        const GpuMaterial* boundMaterial = nullptr;
+        for (size_t batchIndex = 0; batchIndex < m_gpuDrivenBatches.size(); ++batchIndex) {
+            const RenderItem& item = *m_gpuDrivenBatchItems[batchIndex];
+            const GraphicsPipeline* pipeline = item.material->doubleSided ? &m_doubleSidedPipeline : &m_pipeline;
+            if (pipeline != boundPipeline) {
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->handle());
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout(), 0, 1,
+                                        &m_cameras[frameIndex].descriptor, 0, nullptr);
+                boundPipeline = pipeline;
+                boundMaterial = nullptr;
+            }
+            if (boundMesh != item.gpuMesh) {
+                const VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
+                vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                boundMesh = item.gpuMesh;
+            }
+            if (boundMaterial != item.gpuMaterial) {
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipeline->layout(), 1,
+                                        1, &item.gpuMaterial->descriptor, 0, nullptr);
+                boundMaterial = item.gpuMaterial;
+            }
+            PushConstants push;
+            push.model = glm::mat4(1.0f);
+            push.baseColor = item.material->baseColor;
+            push.material = {item.material->metallic, item.material->roughness, item.material->normalScale,
+                             item.material->occlusionStrength};
+            push.emissive = {item.material->emissive * item.material->emissiveStrength, 0.0f};
+            push.surface = {item.material->alphaCutoff, static_cast<float>(item.material->alphaMode), 0.0f, 0.0f};
+            vkCmdPushConstants(commandBuffer, boundPipeline->layout(),
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+            vkCmdDrawIndexedIndirect(commandBuffer, m_gpuDrivenPass.indirectBuffer(frameIndex),
+                                     batchIndex * sizeof(VkDrawIndexedIndirectCommand), 1,
+                                     sizeof(VkDrawIndexedIndirectCommand));
+            ++stats.drawCalls;
+        }
+        stats.visibleCount = static_cast<uint32_t>(m_visibility.visibleInstances.size());
+        stats.culledCount = m_visibility.frustumCulled;
+        stats.indirectCommandCount = static_cast<uint32_t>(m_gpuDrivenBatches.size());
+        stats.cpuOpaqueMilliseconds =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - opaqueCpuBegin).count();
+        if (timestampQueries) {
+            vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 2);
+        }
+    } else {
     m_visibleItems.clear();
-    m_visibleItems.reserve(m_renderItems.size());
-    for (const RenderItem& item : m_renderItems) {
-        if (sphereVisible(cameraFrustum, item.boundsCenter, item.boundsRadius)) {
-            m_visibleItems.push_back(&item);
-        } else {
-            ++stats.culledCount;
+    stats.culledCount += m_visibility.frustumCulled + m_visibility.occlusionCulled;
+    stats.indirectCommandCount = static_cast<uint32_t>(m_visibility.commands.size());
+    for (GpuSceneHandle handle : m_visibility.visibleInstances) {
+        if (const auto found = m_gpuHandleItems.find(handleKey(handle)); found != m_gpuHandleItems.end()) {
+            m_visibleItems.push_back(&m_renderItems[found->second]);
         }
     }
     std::stable_sort(m_visibleItems.begin(), m_visibleItems.end(),
@@ -1146,7 +1398,6 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         std::cerr << "Visible object count exceeds the per-frame render capacity\n";
         return false;
     }
-    constexpr uint32_t mainObjectBase = maximumShadowCascades * maximumObjectsPerFrame;
     auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped) + mainObjectBase;
     for (size_t index = 0; index < m_visibleItems.size(); ++index) {
         objectData[index].model = m_visibleItems[index]->world;
@@ -1282,6 +1533,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             ++stats.drawCalls;
         }
     }
+    }
 
     vkCmdEndRendering(commandBuffer);
     if (timestampQueries) {
@@ -1348,6 +1600,10 @@ bool MeshPass::uiTexture(TextureHandle handle, const AssetManager& assets, VkSam
 }
 
 void MeshPass::shutdown(const VulkanContext& context) {
+    if (m_gpuDrivenSupported) {
+        m_gpuDrivenPass.shutdown(context);
+    }
+    m_gpuDrivenSupported = false;
     m_uploadContext.shutdown();
     m_pipeline.shutdown(context.device());
     m_doubleSidedPipeline.shutdown(context.device());

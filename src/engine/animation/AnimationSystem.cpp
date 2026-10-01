@@ -189,9 +189,57 @@ bool beginAnimationCrossFade(AnimationComponent& animation, uint32_t targetClip,
     return true;
 }
 
-void updateAnimations(Scene& scene, const AssetManager& assets, float deltaSeconds) {
+namespace {
+struct AnimationEvaluation {
+    Entity root{entt::null};
+    ModelHandle modelHandle;
+    SceneEntityId rootId;
+    const ModelAsset* model{nullptr};
+    uint32_t clipIndex{0};
+    float time{0.0f};
+    bool looping{true};
+    std::optional<uint32_t> blendClipIndex;
+    float blendTime{0.0f};
+    float blendDuration{0.0f};
+    AnimationPose pose;
+};
+
+void evaluateAnimation(AnimationEvaluation& evaluation) {
+    evaluation.pose =
+        evaluateAnimationClip(*evaluation.model, evaluation.clipIndex, evaluation.time, evaluation.looping);
+    if (evaluation.blendClipIndex && *evaluation.blendClipIndex < evaluation.model->animations.size()) {
+        const AnimationPose target = evaluateAnimationClip(*evaluation.model, *evaluation.blendClipIndex,
+                                                           evaluation.blendTime, evaluation.looping);
+        const float weight = evaluation.blendDuration > 0.0f ? evaluation.blendTime / evaluation.blendDuration : 1.0f;
+        evaluation.pose = blendAnimationPoses(evaluation.pose, target, weight);
+    }
+}
+
+void applyAnimationEvaluations(Scene& scene, std::span<const AnimationEvaluation> evaluations) {
     entt::registry& registry = scene.registry();
+    for (const AnimationEvaluation& evaluation : evaluations) {
+        const auto nodes = registry.view<TransformComponent, const ModelNodeComponent>();
+        for (Entity entity : nodes) {
+            const ModelNodeComponent& node = nodes.get<const ModelNodeComponent>(entity);
+            if (node.model == evaluation.modelHandle && node.instanceRoot == evaluation.rootId &&
+                node.nodeIndex < evaluation.pose.size()) {
+                nodes.get<TransformComponent>(entity).local = animationPoseMatrix(evaluation.pose[node.nodeIndex]);
+                if (!evaluation.pose[node.nodeIndex].morphWeights.empty()) {
+                    registry.emplace_or_replace<MorphWeightsComponent>(entity,
+                                                                       evaluation.pose[node.nodeIndex].morphWeights);
+                }
+                scene.markTransformDirty(entity);
+            }
+        }
+    }
+}
+
+std::vector<AnimationEvaluation> gatherAnimationEvaluations(Scene& scene, const AssetManager& assets,
+                                                            float deltaSeconds) {
+    entt::registry& registry = scene.registry();
+    std::vector<AnimationEvaluation> evaluations;
     const auto animations = registry.view<AnimationComponent, const ModelComponent, const SceneEntityIdComponent>();
+    evaluations.reserve(registry.storage<AnimationComponent>().size());
     for (Entity root : animations) {
         AnimationComponent& animation = animations.get<AnimationComponent>(root);
         const ModelHandle modelHandle = animations.get<const ModelComponent>(root).model;
@@ -206,34 +254,30 @@ void updateAnimations(Scene& scene, const AssetManager& assets, float deltaSecon
                 animation.blendTime += deltaSeconds * std::abs(animation.playbackSpeed);
             }
         }
-        AnimationPose pose = evaluateAnimationClip(*model, animation.clipIndex, animation.time, animation.looping);
-        if (animation.blendClipIndex && *animation.blendClipIndex < model->animations.size()) {
-            const AnimationPose target =
-                evaluateAnimationClip(*model, *animation.blendClipIndex, animation.blendTime, animation.looping);
-            const float weight = animation.blendDuration > 0.0f ? animation.blendTime / animation.blendDuration : 1.0f;
-            pose = blendAnimationPoses(pose, target, weight);
-            if (weight >= 1.0f) {
-                animation.clipIndex = *animation.blendClipIndex;
-                animation.time = animation.blendTime;
-                animation.blendClipIndex.reset();
-                animation.blendTime = 0.0f;
-                animation.blendDuration = 0.0f;
-            }
-        }
-
-        const SceneEntityId rootId = animations.get<const SceneEntityIdComponent>(root).id;
-        const auto nodes = registry.view<TransformComponent, const ModelNodeComponent>();
-        for (Entity entity : nodes) {
-            const ModelNodeComponent& node = nodes.get<const ModelNodeComponent>(entity);
-            if (node.model == modelHandle && node.instanceRoot == rootId && node.nodeIndex < pose.size()) {
-                nodes.get<TransformComponent>(entity).local = animationPoseMatrix(pose[node.nodeIndex]);
-                if (!pose[node.nodeIndex].morphWeights.empty()) {
-                    registry.emplace_or_replace<MorphWeightsComponent>(entity, pose[node.nodeIndex].morphWeights);
-                }
-                scene.markTransformDirty(entity);
-            }
+        evaluations.push_back({.root = root,
+                               .modelHandle = modelHandle,
+                               .rootId = animations.get<const SceneEntityIdComponent>(root).id,
+                               .model = model,
+                               .clipIndex = animation.clipIndex,
+                               .time = animation.time,
+                               .looping = animation.looping,
+                               .blendClipIndex = animation.blendClipIndex,
+                               .blendTime = animation.blendTime,
+                               .blendDuration = animation.blendDuration});
+        if (animation.blendClipIndex && animation.blendDuration > 0.0f &&
+            animation.blendTime / animation.blendDuration >= 1.0f) {
+            animation.clipIndex = *animation.blendClipIndex;
+            animation.time = animation.blendTime;
+            animation.blendClipIndex.reset();
+            animation.blendTime = 0.0f;
+            animation.blendDuration = 0.0f;
         }
     }
+    return evaluations;
+}
+
+void updateSkinPalettes(Scene& scene, const AssetManager& assets) {
+    entt::registry& registry = scene.registry();
 
     scene.updateWorldTransforms();
     const auto skins = registry.view<SkinComponent, const TransformComponent>();
@@ -261,5 +305,39 @@ void updateAnimations(Scene& scene, const AssetManager& assets, float deltaSecon
                     inverseMeshWorld * found->second * skin.inverseBindMatrices[jointIndex];
             }
         }
+        scene.markSkinDirty(entity);
     }
+}
+} // namespace
+
+void updateAnimations(Scene& scene, const AssetManager& assets, float deltaSeconds) {
+    std::vector<AnimationEvaluation> evaluations = gatherAnimationEvaluations(scene, assets, deltaSeconds);
+    for (AnimationEvaluation& evaluation : evaluations) {
+        evaluateAnimation(evaluation);
+    }
+    applyAnimationEvaluations(scene, evaluations);
+    updateSkinPalettes(scene, assets);
+}
+
+AnimationTaskResult updateAnimations(Scene& scene, const AssetManager& assets, float deltaSeconds,
+                                     FrameTaskExecutor& executor, uint64_t frameGeneration) {
+    std::vector<AnimationEvaluation> evaluations = gatherAnimationEvaluations(scene, assets, deltaSeconds);
+    FrameTaskGraph graph(frameGeneration, {.minimumGrainSize = 1});
+    const FrameResourceUse resources[]{{"scene.animation_snapshot", FrameResourceAccess::Read},
+                                       {"frame.animation_poses", FrameResourceAccess::Write}};
+    graph.add(
+        "animation-evaluation", resources,
+        [&](const FrameTaskContext& context) {
+            for (size_t index = context.rangeBegin; index < context.rangeEnd; ++index) {
+                evaluateAnimation(evaluations[index]);
+            }
+        },
+        evaluations.size());
+    FrameTaskResult result = executor.execute(graph);
+    if (!result) {
+        return {.error = result.error, .stats = result.stats};
+    }
+    applyAnimationEvaluations(scene, evaluations);
+    updateSkinPalettes(scene, assets);
+    return {.success = true, .stats = result.stats};
 }

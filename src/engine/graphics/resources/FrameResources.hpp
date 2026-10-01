@@ -12,6 +12,7 @@ struct GpuFrameTimings {
     double postMilliseconds{0.0};
     double bloomMilliseconds{0.0};
     double uiMilliseconds{0.0};
+    double cullingMilliseconds{0.0};
 };
 
 // Owns the resources reused for one frame of CPU work.

@@ -7,6 +7,7 @@
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,27 @@ struct TransformComponent {
 struct SceneTransformUpdateStats {
     uint32_t visited{0};
     uint32_t recomputed{0};
+};
+
+struct SceneRevisions {
+    uint64_t transform{1};
+    uint64_t renderable{1};
+    uint64_t light{1};
+    uint64_t camera{1};
+    uint64_t skin{1};
+    uint64_t material{1};
+
+    auto operator<=>(const SceneRevisions&) const = default;
+};
+
+enum class PhysicsLifecycleOperation : uint8_t {
+    Upsert,
+    Destroy,
+};
+
+struct PhysicsLifecycleEvent {
+    Entity entity{entt::null};
+    PhysicsLifecycleOperation operation{PhysicsLifecycleOperation::Upsert};
 };
 
 struct RelationshipComponent {
@@ -163,6 +185,7 @@ enum class ReparentMode {
 
 class Scene {
   public:
+    Scene();
     Entity createEntity(std::string name = {});
     SceneResult createEntityWithId(SceneEntityId id, std::string name, Entity& entity);
     SceneEntityId id(Entity entity) const;
@@ -178,7 +201,17 @@ class Scene {
     void swap(Scene& other) noexcept;
     void updateWorldTransforms();
     void markTransformDirty(Entity entity);
+    void markRenderableDirty(Entity entity);
+    void markLightDirty(Entity entity);
+    void markCameraDirty(Entity entity);
+    void markSkinDirty(Entity entity);
+    void markMaterialDirty(Entity entity);
+    void markPhysicsDirty(Entity entity);
     const SceneTransformUpdateStats& lastTransformUpdateStats() const;
+    const SceneRevisions& revisions() const;
+    std::span<const Entity> changedTransforms() const;
+    std::span<const PhysicsLifecycleEvent> physicsLifecycleEvents() const;
+    void retirePhysicsLifecycleEvents();
     uint64_t renderPacketRevision() const;
 
     entt::registry& registry();
@@ -199,5 +232,9 @@ class Scene {
     entt::registry m_registry;
     uint64_t m_nextEntityId{1};
     SceneTransformUpdateStats m_lastTransformUpdateStats;
+    SceneRevisions m_revisions;
+    std::vector<Entity> m_changedTransforms;
+    bool m_collectingTransformChanges{false};
+    std::vector<PhysicsLifecycleEvent> m_physicsLifecycleEvents;
     uint64_t m_renderPacketRevision{1};
 };

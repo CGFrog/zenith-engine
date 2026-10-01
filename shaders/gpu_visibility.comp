@@ -1,0 +1,85 @@
+#version 450
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+struct ObjectRecord {
+    mat4 model;
+    vec4 bounds;
+    uvec4 draw;
+    uvec4 skin;
+};
+
+struct RenderObject {
+    mat4 model;
+    uvec4 skin;
+};
+
+struct IndirectCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer ObjectRecords {
+    ObjectRecord values[];
+} records;
+
+layout(std430, set = 0, binding = 1) writeonly buffer VisibleObjects {
+    RenderObject values[];
+} visibleObjects;
+
+layout(std430, set = 0, binding = 2) buffer IndirectCommands {
+    IndirectCommand values[];
+} commands;
+
+layout(set = 0, binding = 3) uniform sampler2D depthPyramid;
+
+layout(push_constant) uniform Settings {
+    mat4 viewProjection;
+    uvec4 counts;
+} settings;
+
+bool frustumVisible(vec4 clipCenter, float clipRadius) {
+    float w = clipCenter.w;
+    return clipCenter.x >= -w - clipRadius && clipCenter.x <= w + clipRadius &&
+           clipCenter.y >= -w - clipRadius && clipCenter.y <= w + clipRadius &&
+           clipCenter.z >= -clipRadius && clipCenter.z <= w + clipRadius;
+}
+
+bool historyOccluded(ObjectRecord object, vec4 clipCenter, float clipRadius) {
+    if (settings.counts.z == 0u || (object.draw.y & 1u) != 0u || clipCenter.w <= 0.0) {
+        return false;
+    }
+    vec3 ndc = clipCenter.xyz / clipCenter.w;
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+    float projectedRadius = clipRadius / max(abs(clipCenter.w), 0.0001);
+    vec2 pixelRadius = projectedRadius * vec2(textureSize(depthPyramid, 0));
+    float diameter = max(max(pixelRadius.x, pixelRadius.y) * 2.0, 1.0);
+    float mip = clamp(ceil(log2(diameter)), 0.0, float(settings.counts.y - 1u));
+    float historyDepth = textureLod(depthPyramid, uv, mip).r;
+    float nearestDepth = ndc.z - projectedRadius;
+    return nearestDepth > historyDepth + 0.001;
+}
+
+void main() {
+    uint objectIndex = gl_GlobalInvocationID.x;
+    if (objectIndex >= settings.counts.x) {
+        return;
+    }
+    ObjectRecord object = records.values[objectIndex];
+    vec4 clipCenter = settings.viewProjection * vec4(object.bounds.xyz, 1.0);
+    float radius = object.bounds.w;
+    float clipRadius = max(length((settings.viewProjection * vec4(radius, 0.0, 0.0, 0.0)).xyz),
+                           max(length((settings.viewProjection * vec4(0.0, radius, 0.0, 0.0)).xyz),
+                               length((settings.viewProjection * vec4(0.0, 0.0, radius, 0.0)).xyz)));
+    if (!frustumVisible(clipCenter, clipRadius) || historyOccluded(object, clipCenter, clipRadius)) {
+        return;
+    }
+    uint batchIndex = object.draw.x;
+    uint instanceOffset = atomicAdd(commands.values[batchIndex].instanceCount, 1u);
+    uint outputIndex = commands.values[batchIndex].firstInstance + instanceOffset;
+    visibleObjects.values[outputIndex].model = object.model;
+    visibleObjects.values[outputIndex].skin = object.skin;
+}

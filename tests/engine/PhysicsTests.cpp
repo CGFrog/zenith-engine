@@ -74,9 +74,22 @@ int main() {
                "raycast hits a static triangle mesh");
     }
 
+    const Entity lateBody = scene.createEntity("Late static body");
+    scene.registry().emplace<ColliderComponent>(lateBody, BoxCollider{glm::vec3(0.25f)});
+    scene.registry().emplace<RigidBodyComponent>(lateBody);
+    scene.markPhysicsDirty(lateBody);
+    expect(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
+           "queued body creation succeeds without a reconciliation scan");
+    expect(physics.stats().lifecycleOperations == 1 && physics.stats().auditedEntities == 0,
+           "steady physics synchronization scales with lifecycle changes rather than total entities");
+    expect(physics.stats().transformsReadBack <= physics.stats().activeBodies,
+           "physics reads transforms back only for active dynamic bodies");
+
     scene.destroyEntity(box);
     expect(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
            "destroyed entity is removed from physics");
+    expect(physics.stats().lifecycleOperations == 1 && physics.stats().auditedEntities == 0,
+           "queued destruction avoids a full ECS reconciliation scan");
     physics.clear();
     PhysicsRayHit clearedHit;
     expect(!physics.raycast({0.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, clearedHit),

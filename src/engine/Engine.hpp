@@ -6,6 +6,7 @@
 #include "audio/AudioSystem.hpp"
 #include "graphics/Renderer.hpp"
 #include "input/InputManager.hpp"
+#include "jobs/FrameTaskGraph.hpp"
 #include "physics/PhysicsWorld.hpp"
 #include "scene/Scene.hpp"
 #include "ui/GameUi.hpp"
@@ -13,6 +14,7 @@
 
 class Engine {
   public:
+    Engine();
     bool init(const PhysicsWorldConfig& physicsConfig = {}, const AudioConfig& audioConfig = {});
     bool run(Application& application);
     void shutdown();
@@ -28,6 +30,7 @@ class Engine {
 
     Window m_window;
     InputManager m_input;
+    FrameTaskExecutor m_frameTasks;
     Renderer m_renderer;
     RenderRuntime m_rendering;
     AssetManager m_assets;

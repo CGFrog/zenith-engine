@@ -59,14 +59,23 @@ BenchmarkConfiguration benchmarkConfiguration() {
 double elapsedMilliseconds(std::chrono::steady_clock::time_point begin) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
 }
+
+FrameTaskGraphConfig frameTaskConfiguration() {
+    return {.workerCount = static_cast<size_t>(environmentUnsigned("ZENITH_FRAME_WORKERS", 0)),
+            .minimumGrainSize = static_cast<size_t>(environmentUnsigned("ZENITH_FRAME_GRAIN", 128)),
+            .deterministic = environmentUnsigned("ZENITH_FRAME_DETERMINISTIC", 0) != 0};
+}
 } // namespace
+
+Engine::Engine()
+    : m_frameTasks(frameTaskConfiguration()) {}
 
 bool Engine::init(const PhysicsWorldConfig& physicsConfig, const AudioConfig& audioConfig) {
     if (!m_window.init()) {
         return false;
     }
 
-    if (!m_renderer.init(m_window, m_rendering)) {
+    if (!m_renderer.init(m_window, m_rendering, m_frameTasks)) {
         return false;
     }
     if (const PhysicsResult result = m_physics.init(physicsConfig); !result) {
@@ -102,6 +111,7 @@ bool Engine::run(Application& application) {
     uint64_t previousTicks = SDL_GetTicksNS();
     uint64_t fpsStartTicks = previousTicks;
     uint64_t fpsFrames = 0;
+    uint64_t taskGeneration = 0;
     double maxFps = 0.0;
     while (running) {
         const auto frameBegin = std::chrono::steady_clock::now();
@@ -124,6 +134,7 @@ bool Engine::run(Application& application) {
         double updateMilliseconds = 0.0;
         double animationMilliseconds = 0.0;
         double physicsMilliseconds = 0.0;
+        FrameTaskGraphStats animationTaskStats;
         if (benchmark.mode != BenchmarkMode::RenderOnly) {
             if (benchmark.mode == BenchmarkMode::FullRuntime) {
                 deltaSeconds = m_physics.config().fixedTimeStep;
@@ -137,7 +148,15 @@ bool Engine::run(Application& application) {
             applicationSession.update(m_input.state(), deltaSeconds);
             updateMilliseconds = elapsedMilliseconds(updateBegin);
             const auto animationBegin = std::chrono::steady_clock::now();
-            updateAnimations(m_scene, m_assets, deltaSeconds);
+            const AnimationTaskResult animationResult =
+                updateAnimations(m_scene, m_assets, deltaSeconds, m_frameTasks, ++taskGeneration);
+            if (!animationResult) {
+                std::cerr << "Animation task graph failed: " << animationResult.error << '\n';
+                runSucceeded = false;
+                running = false;
+                break;
+            }
+            animationTaskStats = animationResult.stats;
             animationMilliseconds = elapsedMilliseconds(animationBegin);
             if (applicationSession.fixedUpdatesEnabled()) {
                 m_physicsAccumulator += deltaSeconds;
@@ -213,6 +232,11 @@ bool Engine::run(Application& application) {
             benchmarkReport.sample("cpu.input", inputMilliseconds);
             benchmarkReport.sample("cpu.application_update", updateMilliseconds);
             benchmarkReport.sample("cpu.animation", animationMilliseconds);
+            benchmarkReport.sample("animation_tasks.queue_depth", animationTaskStats.maximumQueueDepth, "count");
+            benchmarkReport.sample("animation_tasks.worker_utilization", animationTaskStats.workerUtilization, "ratio");
+            benchmarkReport.sample("animation_tasks.main_thread_assist",
+                                   animationTaskStats.mainThreadAssistMilliseconds);
+            benchmarkReport.sample("animation_tasks.graph_latency", animationTaskStats.latencyMilliseconds);
             benchmarkReport.sample("cpu.physics_total", physicsMilliseconds);
             benchmarkReport.sample("cpu.transforms", transformsMilliseconds);
             benchmarkReport.sample("cpu.ui_build", uiBuildMilliseconds);
@@ -269,6 +293,7 @@ bool Engine::run(Application& application) {
         benchmarkReport.metadata("benchmark_objects",
                                  SDL_getenv("ZENITH_BENCHMARK_OBJECTS") ? SDL_getenv("ZENITH_BENCHMARK_OBJECTS") : "0");
         benchmarkReport.metadata("gpu", m_renderer.gpuName());
+        benchmarkReport.metadata("frame_workers", std::to_string(m_frameTasks.workerCount()));
         benchmarkReport.metadata("resolution", std::to_string(extent.width) + "x" + std::to_string(extent.height));
         benchmarkReport.metadata("present_mode", m_renderer.presentModeName());
         benchmarkReport.metadata("cpu_asset_bytes", std::to_string(m_assets.cpuBytes()));

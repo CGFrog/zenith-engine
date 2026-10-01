@@ -7,6 +7,11 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <limits>
 
+Scene::Scene() {
+    m_changedTransforms.reserve(256);
+    m_physicsLifecycleEvents.reserve(256);
+}
+
 Entity Scene::createEntity(std::string name) {
     Entity entity = entt::null;
     const SceneResult result = createEntityWithId({m_nextEntityId}, std::move(name), entity);
@@ -33,6 +38,7 @@ SceneResult Scene::createEntityWithId(SceneEntityId id, std::string name, Entity
     m_nextEntityId =
         id.value == std::numeric_limits<uint64_t>::max() ? id.value : std::max(m_nextEntityId, id.value + 1);
     entity = createdEntity;
+    ++m_revisions.transform;
     ++m_renderPacketRevision;
     return {.success = true};
 }
@@ -194,6 +200,7 @@ SceneResult Scene::instantiateModel(Entity root, ModelHandle handle, const Asset
 }
 
 MeshRendererComponent& Scene::attachMesh(Entity entity, MeshHandle mesh) {
+    ++m_revisions.renderable;
     ++m_renderPacketRevision;
     return m_registry.emplace_or_replace<MeshRendererComponent>(entity, mesh);
 }
@@ -209,22 +216,52 @@ void Scene::destroyEntity(Entity entity) {
         destroyEntity(child);
     }
 
+    if (m_registry.any_of<ColliderComponent, RigidBodyComponent>(entity)) {
+        m_physicsLifecycleEvents.push_back({entity, PhysicsLifecycleOperation::Destroy});
+    }
+    const bool renderable = m_registry.any_of<MeshRendererComponent>(entity);
+    const bool light = m_registry.any_of<DirectionalLightComponent, EnvironmentLightComponent, PointLightComponent,
+                                         SpotLightComponent, ReflectionProbeComponent>(entity);
+    const bool camera = m_registry.any_of<CameraComponent>(entity);
+    const bool skin = m_registry.any_of<SkinComponent, MorphWeightsComponent>(entity);
     setParent(entity, entt::null);
     m_registry.destroy(entity);
+    m_revisions.transform++;
+    m_revisions.renderable += renderable ? 1 : 0;
+    m_revisions.light += light ? 1 : 0;
+    m_revisions.camera += camera ? 1 : 0;
+    m_revisions.skin += skin ? 1 : 0;
     ++m_renderPacketRevision;
 }
 
 void Scene::clear() {
     m_registry.clear();
     m_nextEntityId = 1;
+    m_changedTransforms.clear();
+    m_physicsLifecycleEvents.clear();
+    ++m_revisions.transform;
+    ++m_revisions.renderable;
+    ++m_revisions.light;
+    ++m_revisions.camera;
+    ++m_revisions.skin;
+    ++m_revisions.material;
     ++m_renderPacketRevision;
 }
 
 void Scene::replaceWith(Scene&& scene) {
     const uint64_t nextRevision = std::max(m_renderPacketRevision, scene.m_renderPacketRevision) + 1;
+    const SceneRevisions nextRevisions{.transform = std::max(m_revisions.transform, scene.m_revisions.transform) + 1,
+                                       .renderable = std::max(m_revisions.renderable, scene.m_revisions.renderable) + 1,
+                                       .light = std::max(m_revisions.light, scene.m_revisions.light) + 1,
+                                       .camera = std::max(m_revisions.camera, scene.m_revisions.camera) + 1,
+                                       .skin = std::max(m_revisions.skin, scene.m_revisions.skin) + 1,
+                                       .material = std::max(m_revisions.material, scene.m_revisions.material) + 1};
     m_registry = std::move(scene.m_registry);
     m_nextEntityId = scene.m_nextEntityId;
     m_lastTransformUpdateStats = scene.m_lastTransformUpdateStats;
+    m_revisions = nextRevisions;
+    m_changedTransforms = std::move(scene.m_changedTransforms);
+    m_physicsLifecycleEvents = std::move(scene.m_physicsLifecycleEvents);
     m_renderPacketRevision = nextRevision;
     scene.m_nextEntityId = 1;
 }
@@ -233,6 +270,21 @@ void Scene::swap(Scene& other) noexcept {
     m_registry.swap(other.m_registry);
     std::swap(m_nextEntityId, other.m_nextEntityId);
     std::swap(m_lastTransformUpdateStats, other.m_lastTransformUpdateStats);
+    const SceneRevisions nextRevisions{.transform = std::max(m_revisions.transform, other.m_revisions.transform) + 1,
+                                       .renderable = std::max(m_revisions.renderable, other.m_revisions.renderable) + 1,
+                                       .light = std::max(m_revisions.light, other.m_revisions.light) + 1,
+                                       .camera = std::max(m_revisions.camera, other.m_revisions.camera) + 1,
+                                       .skin = std::max(m_revisions.skin, other.m_revisions.skin) + 1,
+                                       .material = std::max(m_revisions.material, other.m_revisions.material) + 1};
+    m_revisions = nextRevisions;
+    other.m_revisions = {.transform = nextRevisions.transform + 1,
+                         .renderable = nextRevisions.renderable + 1,
+                         .light = nextRevisions.light + 1,
+                         .camera = nextRevisions.camera + 1,
+                         .skin = nextRevisions.skin + 1,
+                         .material = nextRevisions.material + 1};
+    std::swap(m_changedTransforms, other.m_changedTransforms);
+    std::swap(m_physicsLifecycleEvents, other.m_physicsLifecycleEvents);
     const uint64_t nextRevision = std::max(m_renderPacketRevision, other.m_renderPacketRevision) + 1;
     m_renderPacketRevision = nextRevision;
     other.m_renderPacketRevision = nextRevision + 1;
@@ -246,12 +298,17 @@ bool Scene::updateBranch(Entity entity, const glm::mat4& parentWorld, bool paren
     const bool localChanged = !cache.valid || cache.local != transform.local || cache.parent != parent;
     const bool changed = parentChanged || cache.dirty || localChanged;
     if (changed) {
+        if (!m_collectingTransformChanges) {
+            m_changedTransforms.clear();
+            m_collectingTransformChanges = true;
+        }
         transform.world = parentWorld * transform.local;
         cache.local = transform.local;
         cache.parent = parent;
         cache.valid = true;
         cache.dirty = false;
         ++m_lastTransformUpdateStats.recomputed;
+        m_changedTransforms.push_back(entity);
     }
     const auto children = m_registry.get_or_emplace<RelationshipComponent>(entity).children;
 
@@ -265,6 +322,7 @@ bool Scene::updateBranch(Entity entity, const glm::mat4& parentWorld, bool paren
 
 void Scene::updateWorldTransforms() {
     m_lastTransformUpdateStats = {};
+    m_collectingTransformChanges = false;
     auto view = m_registry.view<TransformComponent, RelationshipComponent>();
     for (Entity entity : view) {
         if (view.get<RelationshipComponent>(entity).parent == entt::null) {
@@ -272,6 +330,7 @@ void Scene::updateWorldTransforms() {
         }
     }
     if (m_lastTransformUpdateStats.recomputed > 0) {
+        ++m_revisions.transform;
         ++m_renderPacketRevision;
     }
 }
@@ -282,8 +341,63 @@ void Scene::markTransformDirty(Entity entity) {
     }
 }
 
+void Scene::markRenderableDirty(Entity entity) {
+    if (m_registry.valid(entity)) {
+        ++m_revisions.renderable;
+        ++m_renderPacketRevision;
+    }
+}
+
+void Scene::markLightDirty(Entity entity) {
+    if (m_registry.valid(entity)) {
+        ++m_revisions.light;
+    }
+}
+
+void Scene::markCameraDirty(Entity entity) {
+    if (m_registry.valid(entity)) {
+        ++m_revisions.camera;
+    }
+}
+
+void Scene::markSkinDirty(Entity entity) {
+    if (m_registry.valid(entity)) {
+        ++m_revisions.skin;
+        ++m_renderPacketRevision;
+    }
+}
+
+void Scene::markMaterialDirty(Entity entity) {
+    if (m_registry.valid(entity)) {
+        ++m_revisions.material;
+        ++m_renderPacketRevision;
+    }
+}
+
+void Scene::markPhysicsDirty(Entity entity) {
+    if (m_registry.valid(entity)) {
+        m_physicsLifecycleEvents.push_back({entity, PhysicsLifecycleOperation::Upsert});
+    }
+}
+
 const SceneTransformUpdateStats& Scene::lastTransformUpdateStats() const {
     return m_lastTransformUpdateStats;
+}
+
+const SceneRevisions& Scene::revisions() const {
+    return m_revisions;
+}
+
+std::span<const Entity> Scene::changedTransforms() const {
+    return m_changedTransforms;
+}
+
+std::span<const PhysicsLifecycleEvent> Scene::physicsLifecycleEvents() const {
+    return m_physicsLifecycleEvents;
+}
+
+void Scene::retirePhysicsLifecycleEvents() {
+    m_physicsLifecycleEvents.clear();
 }
 
 uint64_t Scene::renderPacketRevision() const {

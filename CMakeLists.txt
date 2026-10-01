@@ -251,9 +251,11 @@ add_library(zenith_engine STATIC
     src/engine/graphics/RenderConfiguration.cpp
     src/engine/graphics/RenderSubmission.cpp
     src/engine/graphics/passes/MeshPass.cpp
+    src/engine/graphics/passes/GpuDrivenPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
     src/engine/graphics/passes/UiPass.cpp
     src/engine/graphics/pipeline/GraphicsPipeline.cpp
+    src/engine/graphics/pipeline/ComputePipeline.cpp
     src/engine/graphics/resources/FrameResources.cpp
     src/engine/graphics/resources/UploadContext.cpp
     src/engine/graphics/resources/ViewportTarget.cpp
@@ -265,6 +267,7 @@ add_library(zenith_engine STATIC
     src/engine/input/InputManager.cpp
     src/engine/input/InputProfiles.cpp
     src/engine/jobs/JobSystem.cpp
+    src/engine/jobs/FrameTaskGraph.cpp
     src/engine/physics/PhysicsWorld.cpp
     src/engine/platform/PlatformServices.cpp
     src/engine/project/ProjectConfig.cpp
@@ -654,6 +657,10 @@ if(BUILD_TESTING)
     add_executable(zenith_render_submission_tests tests/engine/RenderSubmissionTests.cpp)
     target_link_libraries(zenith_render_submission_tests PRIVATE zenith_engine)
     add_test(NAME zenith_render_submission COMMAND zenith_render_submission_tests)
+
+    add_executable(zenith_frame_task_graph_tests tests/engine/FrameTaskGraphTests.cpp)
+    target_link_libraries(zenith_frame_task_graph_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_frame_task_graph COMMAND zenith_frame_task_graph_tests)
 
     add_executable(zenith_render_regression_tests tests/engine/RenderRegressionTests.cpp)
     add_test(NAME zenith_render_regression COMMAND zenith_render_regression_tests)

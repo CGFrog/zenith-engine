@@ -82,6 +82,7 @@ class PhysicsWorld::Impl {
         glm::vec3 currentPosition{0.0f};
         glm::quat previousRotation{1.0f, 0.0f, 0.0f, 0.0f};
         glm::quat currentRotation{1.0f, 0.0f, 0.0f, 0.0f};
+        bool activeLastStep{false};
     };
 
     class BroadPhaseLayers final : public JPH::BroadPhaseLayerInterface {
@@ -207,6 +208,8 @@ class PhysicsWorld::Impl {
     std::vector<PendingContact> pendingContacts;
     std::vector<ContactEvent> contactEvents;
     std::mutex contactMutex;
+    const Scene* observedScene{nullptr};
+    uint32_t stepsUntilAudit{0};
 };
 
 PhysicsWorld::PhysicsWorld()
@@ -239,6 +242,10 @@ PhysicsResult PhysicsWorld::init(const PhysicsWorldConfig& config) {
                          m_impl->broadPhaseLayers, m_impl->broadPhaseFilter, m_impl->pairFilter);
     m_impl->system->SetGravity(toJolt(config.gravity));
     m_impl->system->SetContactListener(&m_impl->contacts);
+    m_impl->bodies.reserve(config.maxBodies);
+    m_impl->bodyEntities.reserve(config.maxBodies);
+    m_impl->pendingContacts.reserve(config.maxContactConstraints);
+    m_impl->contactEvents.reserve(config.maxContactConstraints);
     m_impl->initialized = true;
     return {.success = true};
 }
@@ -268,6 +275,8 @@ void PhysicsWorld::clear() {
         m_impl->bodyEntities.clear();
         m_impl->pendingContacts.clear();
         m_impl->contactEvents.clear();
+        m_impl->observedScene = nullptr;
+        m_impl->stepsUntilAudit = 0;
         return;
     }
 
@@ -283,6 +292,8 @@ void PhysicsWorld::clear() {
         m_impl->pendingContacts.clear();
     }
     m_impl->contactEvents.clear();
+    m_impl->observedScene = nullptr;
+    m_impl->stepsUntilAudit = 0;
 }
 
 namespace {
@@ -447,26 +458,68 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
 
     const auto transformsDone = std::chrono::steady_clock::now();
     m_stats.transformMilliseconds = milliseconds(start, transformsDone);
-    auto view = scene.registry().view<TransformComponent, ColliderComponent, RigidBodyComponent>();
-    for (Entity entity : view) {
-        if (!m_impl->bodies.contains(entity)) {
-            if (PhysicsResult result = refreshBodyFromWorld(entity, scene, assets); !result) {
-                return result;
+    JPH::BodyInterface& interface = m_impl->system->GetBodyInterface();
+    const auto removeBody = [&](Entity entity) {
+        const auto existing = m_impl->bodies.find(entity);
+        if (existing != m_impl->bodies.end()) {
+            interface.RemoveBody(existing->second.id);
+            interface.DestroyBody(existing->second.id);
+            m_impl->bodyEntities.erase(bodyKey(existing->second.id));
+            m_impl->bodies.erase(existing);
+        }
+    };
+
+    const bool newScene = m_impl->observedScene != &scene;
+    if (newScene) {
+        m_impl->observedScene = &scene;
+        m_impl->stepsUntilAudit = 0;
+    }
+    const std::span<const PhysicsLifecycleEvent> lifecycleEvents = scene.physicsLifecycleEvents();
+    for (size_t index = 0; index < lifecycleEvents.size(); ++index) {
+        const PhysicsLifecycleEvent& event = lifecycleEvents[index];
+        bool superseded = false;
+        for (size_t later = index + 1; later < lifecycleEvents.size(); ++later) {
+            if (lifecycleEvents[later].entity == event.entity) {
+                superseded = true;
+                break;
             }
         }
-    }
-
-    JPH::BodyInterface& interface = m_impl->system->GetBodyInterface();
-    for (auto it = m_impl->bodies.begin(); it != m_impl->bodies.end();) {
-        if (!scene.registry().valid(it->first) ||
-            !scene.registry().all_of<TransformComponent, ColliderComponent, RigidBodyComponent>(it->first)) {
-            interface.RemoveBody(it->second.id);
-            interface.DestroyBody(it->second.id);
-            m_impl->bodyEntities.erase(bodyKey(it->second.id));
-            it = m_impl->bodies.erase(it);
-        } else {
-            ++it;
+        if (superseded) {
+            continue;
         }
+        ++m_stats.lifecycleOperations;
+        if (event.operation == PhysicsLifecycleOperation::Destroy || !scene.registry().valid(event.entity) ||
+            !scene.registry().all_of<TransformComponent, ColliderComponent, RigidBodyComponent>(event.entity)) {
+            removeBody(event.entity);
+        } else if (PhysicsResult refresh = refreshBodyFromWorld(event.entity, scene, assets); !refresh) {
+            return refresh;
+        }
+    }
+    scene.retirePhysicsLifecycleEvents();
+
+    const bool audit = newScene || (m_impl->config.debugAuditInterval != 0 && m_impl->stepsUntilAudit == 0);
+    if (audit) {
+        auto view = scene.registry().view<TransformComponent, ColliderComponent, RigidBodyComponent>();
+        for (Entity entity : view) {
+            ++m_stats.auditedEntities;
+            if (!m_impl->bodies.contains(entity)) {
+                if (PhysicsResult refresh = refreshBodyFromWorld(entity, scene, assets); !refresh) {
+                    return refresh;
+                }
+            }
+        }
+        for (auto iterator = m_impl->bodies.begin(); iterator != m_impl->bodies.end();) {
+            const Entity entity = iterator->first;
+            ++iterator;
+            if (!scene.registry().valid(entity) ||
+                !scene.registry().all_of<TransformComponent, ColliderComponent, RigidBodyComponent>(entity)) {
+                removeBody(entity);
+            }
+        }
+        m_impl->stepsUntilAudit = m_impl->config.debugAuditInterval;
+    }
+    if (m_impl->stepsUntilAudit > 0) {
+        --m_impl->stepsUntilAudit;
     }
 
     for (const auto& [entity, state] : m_impl->bodies) {
@@ -503,8 +556,11 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
         }
         if (interface.IsActive(state.id)) {
             ++m_stats.activeBodies;
+            state.activeLastStep = true;
         } else {
             ++m_stats.sleepingBodies;
+            state.activeLastStep = false;
+            continue;
         }
         JPH::RVec3 position;
         JPH::Quat rotation;
@@ -514,6 +570,7 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
         state.currentPosition = {static_cast<float>(position.GetX()), static_cast<float>(position.GetY()),
                                  static_cast<float>(position.GetZ())};
         state.currentRotation = fromJolt(rotation);
+        ++m_stats.transformsReadBack;
         glm::mat4 world = composeTransform(state.currentPosition, state.currentRotation, state.scale);
         auto& transform = scene.registry().get<TransformComponent>(entity);
         const auto& relationship = scene.registry().get<RelationshipComponent>(entity);
@@ -542,7 +599,8 @@ void PhysicsWorld::interpolate(Scene& scene, float alpha) const {
     const float amount = std::clamp(alpha, 0.0f, 1.0f);
     scene.updateWorldTransforms();
     for (const auto& [entity, state] : m_impl->bodies) {
-        if (state.motionType != PhysicsMotionType::Dynamic || !scene.registry().valid(entity)) {
+        if (state.motionType != PhysicsMotionType::Dynamic || !state.activeLastStep ||
+            !scene.registry().valid(entity)) {
             continue;
         }
         const glm::vec3 position = glm::mix(state.previousPosition, state.currentPosition, amount);

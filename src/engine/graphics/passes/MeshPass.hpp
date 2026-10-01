@@ -1,13 +1,16 @@
 #pragma once
 
 #include "../../assets/Assets.hpp"
+#include "../../jobs/FrameTaskGraph.hpp"
 #include "../../scene/Scene.hpp"
 #include "../EnvironmentLighting.hpp"
+#include "../RenderSubmission.hpp"
 #include "../Rendering.hpp"
 #include "../pipeline/GraphicsPipeline.hpp"
 #include "../resources/UploadContext.hpp"
 #include "../vulkan/VulkanContext.hpp"
 #include "PostProcessPass.hpp"
+#include "GpuDrivenPass.hpp"
 #include <array>
 #include <unordered_map>
 #include <vector>
@@ -19,9 +22,12 @@ class MeshPass {
     bool resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
     bool record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImageView colorView, VkImage depthImage,
                 VkImageView depthView, VkExtent2D extent, uint32_t frameIndex, const Scene& scene,
-                const AssetManager& assets, RenderRuntime& rendering, VkQueryPool timestampQueries,
-                VkImageLayout colorOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
+                const AssetManager& assets, RenderRuntime& rendering, FrameTaskExecutor& frameTasks,
+                VkQueryPool timestampQueries, VkImageLayout colorOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
     bool uiTexture(TextureHandle handle, const AssetManager& assets, VkSampler& sampler, VkImageView& view);
+    bool gpuDrivenSupported() const {
+        return m_gpuDrivenSupported;
+    }
     void shutdown(const VulkanContext& context);
 
   private:
@@ -58,6 +64,9 @@ class MeshPass {
 
     struct RenderItem {
         MeshHandle meshHandle;
+        Entity entity{entt::null};
+        uint64_t recordId{0};
+        GpuSceneHandle gpuSceneHandle;
         MaterialHandle materialHandle;
         const MeshAsset* mesh{nullptr};
         const MeshPrimitive* primitive{nullptr};
@@ -68,6 +77,7 @@ class MeshPass {
         glm::vec3 boundsCenter{0.0f};
         float boundsRadius{0.0f};
         bool outlined{false};
+        bool newlySpawned{true};
         std::vector<glm::mat4> jointPalette;
         uint32_t skinPaletteOffset{0};
     };
@@ -83,6 +93,7 @@ class MeshPass {
     bool createShadowResources(VkFormat depthFormat);
     bool buildRenderItems(const Scene& scene, const AssetManager& assets,
                           const std::vector<RenderObjectId>& outlinedObjects, std::vector<RenderItem>& items);
+    uint32_t updateRenderItems(const Scene& scene, std::span<const Entity> changedEntities);
     bool recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, const std::vector<RenderItem>& items,
                       const DirectionalLightComponent& light, const std::array<glm::mat4, 3>& lightViewProjections,
                       uint32_t cascadeCount, RenderStats& stats);
@@ -101,7 +112,14 @@ class MeshPass {
     std::unordered_map<uint64_t, GpuTexture> m_textures;
     std::unordered_map<uint64_t, GpuMaterial> m_materials;
     std::vector<RenderItem> m_renderItems;
-    uint64_t m_renderPacketRevision{0};
+    std::unordered_map<RenderObjectId, std::vector<size_t>> m_objectItems;
+    std::unordered_map<uint64_t, GpuSceneHandle> m_gpuRecords;
+    std::unordered_map<uint64_t, size_t> m_gpuHandleItems;
+    PersistentGpuScene m_gpuScene;
+    GpuVisibilityResult m_visibility;
+    SceneRevisions m_sceneRevisions{};
+    uint64_t m_assetRevision{0};
+    uint64_t m_outlineRevision{0};
     bool m_packetCachingEnabled{true};
     std::vector<const RenderItem*> m_visibleItems;
     std::vector<const RenderItem*> m_shadowVisibleItems;
@@ -121,7 +139,16 @@ class MeshPass {
     GraphicsPipeline m_selectionMaskPipeline;
     GraphicsPipeline m_outlinePipeline;
     PostProcessPass m_postProcess;
+    GpuDrivenPass m_gpuDrivenPass;
+    bool m_gpuDrivenSupported{false};
+    std::vector<GpuDrivenObjectRecord> m_gpuDrivenObjects;
+    std::vector<GpuDrivenBatch> m_gpuDrivenBatches;
+    std::vector<const RenderItem*> m_gpuDrivenBatchItems;
+    glm::vec3 m_previousCameraPosition{0.0f};
+    glm::vec3 m_previousCameraForward{0.0f, 0.0f, -1.0f};
+    bool m_cameraHistoryValid{false};
     EnvironmentLightingCache m_environmentCache;
     double m_uploadMilliseconds{0.0};
     double m_uploadGpuMilliseconds{0.0};
+    uint64_t m_taskGeneration{0};
 };

@@ -1,0 +1,35 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D sourceDepth;
+layout(set = 0, binding = 1) uniform sampler2D sourcePyramid;
+layout(r32f, set = 0, binding = 2) uniform writeonly image2D outputMip;
+
+layout(push_constant) uniform Settings {
+    ivec2 outputSize;
+    int sourceMip;
+    int copyDepth;
+} settings;
+
+void main() {
+    ivec2 outputCoordinate = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(outputCoordinate, settings.outputSize))) {
+        return;
+    }
+    float maximumDepth;
+    if (settings.copyDepth != 0) {
+        maximumDepth = texelFetch(sourceDepth, outputCoordinate, 0).r;
+    } else {
+        ivec2 sourceSize = textureSize(sourcePyramid, settings.sourceMip);
+        ivec2 sourceCoordinate = outputCoordinate * 2;
+        maximumDepth = 0.0;
+        for (int y = 0; y < 2; ++y) {
+            for (int x = 0; x < 2; ++x) {
+                ivec2 coordinate = min(sourceCoordinate + ivec2(x, y), sourceSize - 1);
+                maximumDepth = max(maximumDepth, texelFetch(sourcePyramid, coordinate, settings.sourceMip).r);
+            }
+        }
+    }
+    imageStore(outputMip, outputCoordinate, vec4(maximumDepth));
+}

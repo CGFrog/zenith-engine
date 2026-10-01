@@ -31,6 +31,9 @@ struct PhysicsWorldConfig {
     uint32_t maxContactConstraints{10240};
     uint32_t workerThreads{0};
     size_t temporaryAllocatorBytes{10 * 1024 * 1024};
+    // Zero disables the reconciliation audit. It is intentionally frequent in
+    // debug builds and may be raised for large benchmark scenes.
+    uint32_t debugAuditInterval{300};
     std::vector<PhysicsLayerDefinition> layers{
         {PhysicsLayer::Static, 1u << 0u, (1u << 1u) | (1u << 2u), false},
         {PhysicsLayer::Dynamic, 1u << 1u, 0xffffffffu, true},
@@ -76,6 +79,9 @@ struct PhysicsStats {
     uint32_t activeBodies{0};
     uint32_t sleepingBodies{0};
     uint32_t contactEvents{0};
+    uint32_t lifecycleOperations{0};
+    uint32_t auditedEntities{0};
+    uint32_t transformsReadBack{0};
 };
 
 class PhysicsWorld {
