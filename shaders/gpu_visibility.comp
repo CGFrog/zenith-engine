@@ -1,13 +1,34 @@
 #version 450
 
+// Two-phase occlusion culling. The early phase emits objects that were visible
+// last frame (frustum test only); they are drawn and the depth pyramid is built
+// from that depth. The late phase tests every object against this frame's
+// pyramid, records the result for the next frame, and emits only the objects
+// the early phase did not draw.
+
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
+const uint earlyPhase = 0u;
+
+// Mirrors GpuDrivenObjectRecord in GpuDrivenPass.hpp.
 struct ObjectRecord {
     mat4 model;
     mat4 previousModel;
     vec4 bounds;
-    uvec4 draw;
-    uvec4 skin;
+    uvec4 draw; // x: batch index, y: persistent visibility slot
+    uvec4 skin; // x: palette offset, y: joint count, z: material index
+};
+
+// Mirrors GpuDrivenBatch in GpuDrivenPass.hpp.
+struct BatchRecord {
+    uint indexCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+    uint group;
+    uint groupFirstBatch;
+    uint reserved0;
+    uint reserved1;
 };
 
 struct RenderObject {
@@ -16,31 +37,40 @@ struct RenderObject {
     uvec4 skin;
 };
 
-struct IndirectCommand {
-    uint indexCount;
-    uint instanceCount;
-    uint firstIndex;
-    int vertexOffset;
-    uint firstInstance;
-};
-
 layout(std430, set = 0, binding = 0) readonly buffer ObjectRecords {
     ObjectRecord values[];
 } records;
 
+// Two regions of maximumObjects instances: early, then late.
 layout(std430, set = 0, binding = 1) writeonly buffer VisibleObjects {
     RenderObject values[];
 } visibleObjects;
 
-layout(std430, set = 0, binding = 2) buffer IndirectCommands {
-    IndirectCommand values[];
-} commands;
+// Two regions of maximumBatches counters: early, then late.
+layout(std430, set = 0, binding = 2) buffer InstanceCounts {
+    uint values[];
+} instanceCounts;
 
 layout(set = 0, binding = 3) uniform sampler2D depthPyramid;
 
+// Persistent across frames: 1 when the slot's object passed the late test.
+layout(std430, set = 0, binding = 4) buffer Visibility {
+    uint values[];
+} visibility;
+
+// x: early instances emitted, y: late instances emitted.
+layout(std430, set = 0, binding = 5) buffer Statistics {
+    uint values[];
+} statistics;
+
+layout(std430, set = 0, binding = 6) readonly buffer Batches {
+    BatchRecord values[];
+} batches;
+
 layout(push_constant) uniform Settings {
     mat4 viewProjection;
-    uvec4 counts;
+    uvec4 counts;   // x: objects, y: pyramid levels, z: phase, w: maximum objects
+    uvec4 extents;  // x: maximum batches, y: render width, z: render height, w: visibility slots
 } settings;
 
 bool frustumVisible(vec4 clipCenter, float clipRadius) {
@@ -54,14 +84,11 @@ vec4 matrixRow(mat4 matrix, int row) {
     return vec4(matrix[0][row], matrix[1][row], matrix[2][row], matrix[3][row]);
 }
 
-// Tests the bounding sphere against last frame's depth pyramid. Every clip
+// Tests the bounding sphere against this frame's depth pyramid. Every clip
 // component is affine in world position, so over the sphere it lies within
 // center +/- radius * |row.xyz|. Dividing those ranges by both extremes of w
 // yields a screen rectangle and nearest depth that bound the whole sphere.
-bool historyOccluded(ObjectRecord object) {
-    if (settings.counts.z == 0u || (object.draw.y & 1u) != 0u) {
-        return false;
-    }
+bool occluded(ObjectRecord object) {
     mat4 viewProjection = settings.viewProjection;
     vec4 center = viewProjection * vec4(object.bounds.xyz, 1.0);
     float radius = object.bounds.w;
@@ -79,11 +106,13 @@ bool historyOccluded(ObjectRecord object) {
 
     // Reversed Z: the nearest point has the largest depth.
     float nearestDepth = upper.z;
-    ivec2 baseSize = textureSize(depthPyramid, 0);
+    // Dynamic resolution renders into the top-left of the depth image; pixels
+    // beyond it only make the pyramid's minimum farther, which stays safe.
+    ivec2 renderSize = ivec2(settings.extents.yz);
     vec2 uvLower = clamp(lower.xy * 0.5 + 0.5, 0.0, 1.0);
     vec2 uvUpper = clamp(upper.xy * 0.5 + 0.5, 0.0, 1.0);
-    ivec2 pixelLower = min(ivec2(uvLower * vec2(baseSize)), baseSize - 1);
-    ivec2 pixelUpper = min(ivec2(uvUpper * vec2(baseSize)), baseSize - 1);
+    ivec2 pixelLower = min(ivec2(uvLower * vec2(renderSize)), renderSize - 1);
+    ivec2 pixelUpper = min(ivec2(uvUpper * vec2(renderSize)), renderSize - 1);
 
     // Pick the level where the rectangle spans at most two texels per axis.
     // Level texels cover base pixels p with min(p >> level, size - 1) == texel.
@@ -100,6 +129,16 @@ bool historyOccluded(ObjectRecord object) {
     return nearestDepth < farthestOccluder;
 }
 
+void emit(ObjectRecord object, uint phase) {
+    uint batchIndex = object.draw.x;
+    uint slot = atomicAdd(instanceCounts.values[phase * settings.extents.x + batchIndex], 1u);
+    uint outputIndex = phase * settings.counts.w + batches.values[batchIndex].firstInstance + slot;
+    visibleObjects.values[outputIndex].model = object.model;
+    visibleObjects.values[outputIndex].previousModel = object.previousModel;
+    visibleObjects.values[outputIndex].skin = object.skin;
+    atomicAdd(statistics.values[phase], 1u);
+}
+
 void main() {
     uint objectIndex = gl_GlobalInvocationID.x;
     if (objectIndex >= settings.counts.x) {
@@ -111,13 +150,24 @@ void main() {
     float clipRadius = max(length((settings.viewProjection * vec4(radius, 0.0, 0.0, 0.0)).xyz),
                            max(length((settings.viewProjection * vec4(0.0, radius, 0.0, 0.0)).xyz),
                                length((settings.viewProjection * vec4(0.0, 0.0, radius, 0.0)).xyz)));
-    if (!frustumVisible(clipCenter, clipRadius) || historyOccluded(object)) {
+    bool inFrustum = frustumVisible(clipCenter, clipRadius);
+    uint visibilitySlot = object.draw.y;
+    bool trackedSlot = visibilitySlot < settings.extents.w;
+    bool visibleLastFrame = trackedSlot && visibility.values[visibilitySlot] != 0u;
+    uint phase = settings.counts.z;
+    if (phase == earlyPhase) {
+        if (visibleLastFrame && inFrustum) {
+            emit(object, phase);
+        }
         return;
     }
-    uint batchIndex = object.draw.x;
-    uint instanceOffset = atomicAdd(commands.values[batchIndex].instanceCount, 1u);
-    uint outputIndex = commands.values[batchIndex].firstInstance + instanceOffset;
-    visibleObjects.values[outputIndex].model = object.model;
-    visibleObjects.values[outputIndex].previousModel = object.previousModel;
-    visibleObjects.values[outputIndex].skin = object.skin;
+    bool visibleNow = inFrustum && !occluded(object);
+    if (trackedSlot) {
+        visibility.values[visibilitySlot] = visibleNow ? 1u : 0u;
+    }
+    // Objects the early phase drew are already in the depth buffer.
+    bool drawnEarly = visibleLastFrame && inFrustum;
+    if (visibleNow && !drawnEarly) {
+        emit(object, phase);
+    }
 }

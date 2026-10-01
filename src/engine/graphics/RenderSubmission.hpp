@@ -134,3 +134,46 @@ RenderSubmissionPath chooseRenderSubmissionPath(const RenderCapabilities& capabi
 std::vector<IndirectDrawCommand> buildIndirectPrototype(std::span<const RenderBatch> batches,
                                                         const RenderCapabilities& capabilities);
 std::vector<size_t> stableRenderOrder(std::span<const RenderOrderKey> keys);
+
+// Identifies instances that can share one indexed draw. `pipeline` is a caller-
+// defined bucket (for example single- versus double-sided); instances in the
+// same pipeline and geometry page can be issued by a single multi-draw call.
+struct IndirectDrawKey {
+    uint32_t pipeline{0};
+    uint32_t geometryPage{0};
+    uint32_t firstIndex{0};
+    int32_t vertexOffset{0};
+    uint32_t indexCount{0};
+
+    auto operator<=>(const IndirectDrawKey&) const = default;
+};
+
+struct IndirectDrawBatch {
+    IndirectDrawKey key;
+    // Instance slots [firstInstance, firstInstance + instanceCount) belong to
+    // this batch; culling fills them densely from the front.
+    uint32_t firstInstance{0};
+    uint32_t instanceCount{0};
+    uint32_t group{0};
+};
+
+// A contiguous batch range sharing pipeline and geometry page.
+struct IndirectDrawGroup {
+    uint32_t pipeline{0};
+    uint32_t geometryPage{0};
+    uint32_t firstBatch{0};
+    uint32_t batchCount{0};
+};
+
+struct IndirectDrawPlan {
+    std::vector<IndirectDrawBatch> batches;
+    std::vector<IndirectDrawGroup> groups;
+    // instanceOrder[slot] is the input index stored at that instance slot.
+    std::vector<uint32_t> instanceOrder;
+    // instanceBatch[slot] is the batch owning that instance slot.
+    std::vector<uint32_t> instanceBatch;
+};
+
+// Sorts instances by key into batches and groups. The result is deterministic
+// for a given input, and existing vector capacity in `plan` is reused.
+void buildIndirectDrawPlan(std::span<const IndirectDrawKey> instances, IndirectDrawPlan& plan);

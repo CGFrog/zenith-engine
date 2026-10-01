@@ -37,6 +37,8 @@ layout(location = 2) in vec2 inTexCoord;
 layout(location = 4) in uvec4 inJoints;
 layout(location = 5) in vec4 inWeights;
 layout(location = 0) out vec2 texCoord;
+// skin.z carries the object's material record index.
+layout(location = 1) flat out uint materialIndex;
 
 void main() {
     RenderObject object = objects.values[gl_InstanceIndex];
@@ -51,4 +53,5 @@ void main() {
     uint cascadeIndex = uint(drawData.settings.x + 0.5);
     gl_Position = camera.lightViewProjections[cascadeIndex] * object.model * skin * vec4(inPosition, 1.0);
     texCoord = inTexCoord;
+    materialIndex = object.skin.z;
 }

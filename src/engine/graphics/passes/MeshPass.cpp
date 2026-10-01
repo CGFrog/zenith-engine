@@ -17,12 +17,27 @@
 #include <cstddef>
 #include <cstring>
 #include <iostream>
+#include <limits>
 
 namespace {
 constexpr uint32_t shadowResolution = 1448;
 constexpr uint32_t maximumShadowCascades = 3;
 constexpr uint32_t maximumObjectsPerFrame = 16384;
 constexpr uint32_t maximumSkinMatricesPerFrame = 65536;
+constexpr uint32_t maximumMaterials = 4096;
+// Two slots (linear and sRGB view) per texture.
+constexpr uint32_t maximumBindlessTextures = 8192;
+// Slots kept free for the other sampled images bound alongside the array.
+constexpr uint32_t reservedSampledImages = 16;
+constexpr GeometryPageCapacity defaultGeometryPage{.vertices = 1u << 19, .indices = 1u << 21};
+// Draw groups are (pipeline bucket, geometry page) pairs.
+constexpr uint32_t maximumGpuDrawGroups = 64;
+// Pipeline buckets used as IndirectDrawKey::pipeline.
+constexpr uint32_t singleSidedBucket = 0;
+constexpr uint32_t doubleSidedBucket = 1;
+// Per-frame object buffer layout: one region per shadow cascade, then the
+// region for objects the CPU submits to the main view.
+constexpr uint32_t mainObjectBase = maximumShadowCascades * maximumObjectsPerFrame;
 
 struct CameraData {
     glm::mat4 viewProjection{1.0f};
@@ -44,17 +59,21 @@ struct CameraData {
     glm::uvec4 localLightCount{0};
 };
 
-struct PushConstants {
-    glm::mat4 model{1.0f};
+// Mirrors MaterialRecord in shaders/mesh.frag and shaders/shadow.frag (std430).
+struct MaterialRecord {
     glm::vec4 baseColor{1.0f};
-    glm::vec4 material{1.0f, 1.0f, 1.0f, 1.0f};
+    glm::vec4 factors{1.0f}; // metallic, roughness, normal scale, occlusion strength
     glm::vec4 emissive{0.0f};
-    glm::vec4 surface{0.5f, 0.0f, 0.0f, 0.0f};
+    glm::vec4 surface{0.5f, 0.0f, 0.0f, 0.0f}; // alpha cutoff, alpha mode
+    glm::uvec4 textures{0u};                   // base color, normal, metallic-roughness, occlusion
+    glm::uvec4 extraTextures{0u};              // emissive
 };
 
+// Mirrors RenderObject in the mesh, shadow, outline, and selection shaders.
 struct ObjectData {
     glm::mat4 model{1.0f};
     glm::mat4 previousModel{1.0f};
+    // x: skin palette offset, y: joint count, z: material record index.
     glm::uvec4 skin{0};
 };
 
@@ -133,6 +152,10 @@ uint64_t handleKey(MaterialHandle handle) {
     return (static_cast<uint64_t>(handle.generation) << 32) | handle.index;
 }
 
+uint64_t handleKey(TextureHandle handle) {
+    return (static_cast<uint64_t>(handle.generation) << 32) | handle.index;
+}
+
 uint64_t handleKey(GpuSceneHandle handle) {
     return (static_cast<uint64_t>(handle.generation) << 32) | handle.index;
 }
@@ -158,21 +181,69 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     m_visibility.commands.reserve(maximumObjectsPerFrame);
     m_gpuDrivenObjects.reserve(maximumObjectsPerFrame);
     m_gpuDrivenBatches.reserve(maximumObjectsPerFrame);
-    m_gpuDrivenBatchItems.reserve(maximumObjectsPerFrame);
+    m_gpuDrivenCandidates.reserve(maximumObjectsPerFrame);
+    m_gpuDrivenKeys.reserve(maximumObjectsPerFrame);
     if (!m_uploadContext.init(context, true) || !m_textureUploadContext.init(context, false) ||
         !createDescriptors(context, frameCount)) {
         return false;
     }
     TextureAsset white{.width = 1, .height = 1, .rgba = {255, 255, 255, 255}};
     TextureAsset normal{.width = 1, .height = 1, .rgba = {128, 128, 255, 255}};
+    m_geometry = std::make_unique<GeometryArena>(defaultGeometryPage);
     if (!uploadTexture(white, m_whiteTexture) || !uploadTexture(normal, m_normalTexture) ||
-        !createShadowResources(depthFormat) ||
+        !createBindlessDescriptors(context, frameCount) || !createShadowResources(depthFormat) ||
         !m_postProcess.init(context, colorFormat, depthFormat, frameCount, extent, depthView) ||
         !createPipeline(PostProcessPass::sceneFormat, depthFormat)) {
         return false;
     }
+    VkPhysicalDeviceVulkan12Features features12{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceFeatures2 features{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &features12};
+    vkGetPhysicalDeviceFeatures2(context.pDevice(), &features);
+    const GpuDrivenLimits limits{.maximumObjects = maximumObjectsPerFrame,
+                                 .maximumBatches = maximumObjectsPerFrame,
+                                 .maximumGroups = maximumGpuDrawGroups};
     m_gpuDrivenSupported =
-        m_gpuDrivenPass.init(context, frameCount, extent, depthView, maximumObjectsPerFrame, maximumObjectsPerFrame);
+        m_gpuDrivenPass.init(context, frameCount, extent, depthView, limits, features12.drawIndirectCount == VK_TRUE);
+    if (m_gpuDrivenSupported && !createGpuDrivenDescriptors()) {
+        return false;
+    }
+    return true;
+}
+
+bool MeshPass::createGpuDrivenDescriptors() {
+    std::vector<VkDescriptorSetLayout> layouts(m_cameras.size(), m_cameraLayout);
+    std::vector<VkDescriptorSet> sets(m_cameras.size());
+    VkDescriptorSetAllocateInfo allocate{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                                         .descriptorPool = m_descriptorPool,
+                                         .descriptorSetCount = static_cast<uint32_t>(sets.size()),
+                                         .pSetLayouts = layouts.data()};
+    if (!checkVulkan(vkAllocateDescriptorSets(m_device, &allocate, sets.data()),
+                     "Allocate GPU-driven camera descriptor sets")) {
+        return false;
+    }
+    const VkDescriptorBufferInfo instances{.buffer = m_gpuDrivenPass.instanceBuffer(), .range = VK_WHOLE_SIZE};
+    for (size_t frame = 0; frame < m_cameras.size(); ++frame) {
+        CameraBuffer& camera = m_cameras[frame];
+        camera.gpuDrivenDescriptor = sets[frame];
+        // Everything except the object buffer matches the CPU-submission set.
+        std::array<VkCopyDescriptorSet, 4> copies{};
+        const uint32_t sharedBindings[]{0, 1, 3, 4};
+        for (size_t index = 0; index < copies.size(); ++index) {
+            copies[index] = {.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET,
+                             .srcSet = camera.descriptor,
+                             .srcBinding = sharedBindings[index],
+                             .dstSet = camera.gpuDrivenDescriptor,
+                             .dstBinding = sharedBindings[index],
+                             .descriptorCount = 1};
+        }
+        const VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         .dstSet = camera.gpuDrivenDescriptor,
+                                         .dstBinding = 2,
+                                         .descriptorCount = 1,
+                                         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                         .pBufferInfo = &instances};
+        vkUpdateDescriptorSets(m_device, 1, &write, static_cast<uint32_t>(copies.size()), copies.data());
+    }
     return true;
 }
 
@@ -201,7 +272,11 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         {.binding = 3,
          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT}};
+         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT},
+        {.binding = 4,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
     VkDescriptorSetLayoutCreateInfo layoutInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = static_cast<uint32_t>(std::size(cameraBindings)),
@@ -213,29 +288,15 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         return false;
     }
 
-    std::array<VkDescriptorSetLayoutBinding, 5> materialBindings{};
-    for (uint32_t i = 0; i < materialBindings.size(); ++i) {
-        materialBindings[i] = {.binding = i,
-                               .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                               .descriptorCount = 1,
-                               .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT};
-    }
-    VkDescriptorSetLayoutCreateInfo materialLayoutInfo{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-                                                       .bindingCount = static_cast<uint32_t>(materialBindings.size()),
-                                                       .pBindings = materialBindings.data()};
-    if (!checkVulkan(vkCreateDescriptorSetLayout(m_device, &materialLayoutInfo, nullptr, &m_materialLayout),
-                     "Create material descriptor layout")) {
-        return false;
-    }
-
-    constexpr uint32_t maxMaterials = 256;
+    // Each frame has a CPU-submission camera set and a GPU-driven one that reads
+    // instances from the culling output instead of the host object buffer.
     const VkDescriptorPoolSize poolSizes[]{
-        {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = frameCount},
-        {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = frameCount * 2},
-        {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = maxMaterials * 5 + frameCount}};
+        {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = frameCount * 2},
+        {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = frameCount * 6},
+        {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = frameCount * 2}};
     VkDescriptorPoolCreateInfo poolInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets = frameCount + maxMaterials,
+        .maxSets = frameCount * 2,
         .poolSizeCount = static_cast<uint32_t>(std::size(poolSizes)),
         .pPoolSizes = poolSizes,
     };
@@ -314,6 +375,19 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         write.pBufferInfo = &objectDescriptor;
         vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+
+        buffer.size = sizeof(MaterialRecord) * maximumMaterials;
+        if (!checkVulkan(vmaCreateBuffer(m_allocator, &buffer, &allocation, &m_cameras[i].materials.buffer,
+                                         &m_cameras[i].materials.allocation, &info),
+                         "Create per-frame material buffer")) {
+            return false;
+        }
+        m_cameras[i].materialsMapped = info.pMappedData;
+        VkDescriptorBufferInfo materialDescriptor{
+            .buffer = m_cameras[i].materials.buffer, .offset = 0, .range = VK_WHOLE_SIZE};
+        write.dstBinding = 4;
+        write.pBufferInfo = &materialDescriptor;
+        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
     }
 
     VkPhysicalDeviceProperties properties{};
@@ -338,6 +412,106 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
     return true;
 }
 
+bool MeshPass::createBindlessDescriptors(const VulkanContext& context, uint32_t frameCount) {
+    VkPhysicalDeviceVulkan12Features features12{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceFeatures2 features{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &features12};
+    vkGetPhysicalDeviceFeatures2(context.pDevice(), &features);
+    VkPhysicalDeviceVulkan12Properties properties12{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
+    VkPhysicalDeviceProperties2 properties{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+                                           .pNext = &properties12};
+    vkGetPhysicalDeviceProperties2(context.pDevice(), &properties);
+    // Update-after-bind is never used to modify live sets. It is requested only
+    // when the ordinary sampled-image limits cannot hold the full table, since
+    // it raises those limits on some vendors but also restricts tooling such as
+    // frame capture.
+    const auto& limits = properties.properties.limits;
+    const uint32_t ordinaryLimit =
+        std::min(limits.maxPerStageDescriptorSampledImages, limits.maxDescriptorSetSampledImages);
+    const uint32_t updateAfterBindLimit = std::min(properties12.maxPerStageDescriptorUpdateAfterBindSampledImages,
+                                                   properties12.maxDescriptorSetUpdateAfterBindSampledImages);
+    const bool updateAfterBind = ordinaryLimit < maximumBindlessTextures + reservedSampledImages &&
+                                 features12.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE &&
+                                 updateAfterBindLimit > ordinaryLimit;
+    const uint32_t deviceLimit = updateAfterBind ? updateAfterBindLimit : ordinaryLimit;
+    if (deviceLimit <= reservedSampledImages + 3) {
+        std::cerr << "The device exposes too few sampled-image descriptors for bindless materials\n";
+        return false;
+    }
+    const uint32_t capacity = std::min(maximumBindlessTextures, deviceLimit - reservedSampledImages);
+
+    const VkDescriptorSetLayoutBinding bindings[]{{.binding = 0,
+                                                   .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+                                                   .descriptorCount = 1,
+                                                   .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+                                                   .pImmutableSamplers = &m_sampler},
+                                                  {.binding = 1,
+                                                   .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                                   .descriptorCount = capacity,
+                                                   .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
+    const VkDescriptorBindingFlags updateFlag = updateAfterBind ? VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT : 0;
+    const VkDescriptorBindingFlags bindingFlags[]{0, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT |
+                                                         VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT |
+                                                         updateFlag};
+    VkDescriptorSetLayoutBindingFlagsCreateInfo flagsInfo{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+        .bindingCount = static_cast<uint32_t>(std::size(bindingFlags)),
+        .pBindingFlags = bindingFlags};
+    VkDescriptorSetLayoutCreateInfo layoutInfo{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                                               .pNext = &flagsInfo,
+                                               .flags = updateAfterBind
+                                                            ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT
+                                                            : VkDescriptorSetLayoutCreateFlags{0},
+                                               .bindingCount = static_cast<uint32_t>(std::size(bindings)),
+                                               .pBindings = bindings};
+    if (!checkVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_bindlessLayout),
+                     "Create bindless material layout")) {
+        return false;
+    }
+    const VkDescriptorPoolSize poolSizes[]{
+        {.type = VK_DESCRIPTOR_TYPE_SAMPLER, .descriptorCount = frameCount},
+        {.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = capacity * frameCount}};
+    VkDescriptorPoolCreateInfo poolInfo{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+                                        .flags = updateAfterBind ? VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT
+                                                                 : VkDescriptorPoolCreateFlags{0},
+                                        .maxSets = frameCount,
+                                        .poolSizeCount = static_cast<uint32_t>(std::size(poolSizes)),
+                                        .pPoolSizes = poolSizes};
+    if (!checkVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_bindlessPool),
+                     "Create bindless material pool")) {
+        return false;
+    }
+    std::vector<VkDescriptorSetLayout> layouts(frameCount, m_bindlessLayout);
+    std::vector<uint32_t> counts(frameCount, capacity);
+    VkDescriptorSetVariableDescriptorCountAllocateInfo variableCounts{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
+        .descriptorSetCount = frameCount,
+        .pDescriptorCounts = counts.data()};
+    VkDescriptorSetAllocateInfo allocate{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                                         .pNext = &variableCounts,
+                                         .descriptorPool = m_bindlessPool,
+                                         .descriptorSetCount = frameCount,
+                                         .pSetLayouts = layouts.data()};
+    std::vector<VkDescriptorSet> sets(frameCount);
+    if (!checkVulkan(vkAllocateDescriptorSets(m_device, &allocate, sets.data()), "Allocate bindless material sets")) {
+        return false;
+    }
+    for (uint32_t frame = 0; frame < frameCount; ++frame) {
+        m_cameras[frame].bindlessDescriptor = sets[frame];
+    }
+
+    m_textureTable = std::make_unique<BindlessTextureTable>(capacity, frameCount, m_whiteTexture.view);
+    const auto white = m_textureTable->acquire(m_whiteTexture.view);
+    const auto whiteSrgb = m_textureTable->acquire(m_whiteTexture.srgbView);
+    const auto normal = m_textureTable->acquire(m_normalTexture.view);
+    if (!white || !whiteSrgb || !normal) {
+        return false;
+    }
+    m_whiteSlot = *white;
+    m_whiteSrgbSlot = *whiteSrgb;
+    m_normalSlot = *normal;
+    return true;
+}
+
 bool MeshPass::createPipeline(VkFormat colorFormat, VkFormat depthFormat) {
     const std::filesystem::path shaders = shaderRoot();
     ShaderModule shadowVertex(m_device);
@@ -356,7 +530,7 @@ bool MeshPass::createPipeline(VkFormat colorFormat, VkFormat depthFormat) {
 
     m_sceneColorFormat = colorFormat;
     m_sceneDepthFormat = depthFormat;
-    return m_shadowPipeline.initShadowPipeline(m_device, depthFormat, m_cameraLayout, m_materialLayout,
+    return m_shadowPipeline.initShadowPipeline(m_device, depthFormat, m_cameraLayout, m_bindlessLayout,
                                                shadowVertex.handle(), shadowFragment.handle(), m_pipelineCache) &&
            m_selectionMaskPipeline.initSelectionMaskPipeline(m_device, colorFormat, PostProcessPass::motionFormat,
                                                              depthFormat, m_cameraLayout, selectionMaskVertex.handle(),
@@ -395,7 +569,7 @@ const MeshPass::MeshPipelineSet* MeshPass::meshPipelines(MeshShadingVariant vari
     auto pipelines = std::make_unique<MeshPipelineSet>();
     const auto create = [&](GraphicsPipeline& pipeline, bool doubleSided, bool blending) {
         return pipeline.initGraphicsPipeline(m_device, m_sceneColorFormat, PostProcessPass::motionFormat,
-                                             m_sceneDepthFormat, m_cameraLayout, m_materialLayout, vertex.handle(),
+                                             m_sceneDepthFormat, m_cameraLayout, m_bindlessLayout, vertex.handle(),
                                              fragment.handle(), m_pipelineCache, doubleSided, blending,
                                              &specialization);
     };
@@ -479,29 +653,16 @@ bool MeshPass::createShadowResources(VkFormat depthFormat) {
     return true;
 }
 
-bool MeshPass::uploadBuffer(const void* data, VkDeviceSize size, VkBufferUsageFlags usage, GpuBuffer& output) {
+bool MeshPass::uploadToBuffer(const void* data, VkDeviceSize size, VkBuffer destination,
+                              VkDeviceSize destinationOffset) {
     const auto uploadBegin = std::chrono::steady_clock::now();
     const VkBuffer staging = m_uploadContext.stage(data, size);
     if (!staging) {
         return false;
     }
-    VkBufferCreateInfo deviceInfo{
-        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size, .usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
-    const std::span<const uint32_t> queueFamilies = m_uploadContext.sharingQueueFamilies();
-    if (queueFamilies.size() > 1) {
-        deviceInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
-        deviceInfo.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilies.size());
-        deviceInfo.pQueueFamilyIndices = queueFamilies.data();
-    }
-    VmaAllocationCreateInfo deviceAllocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
-    if (!checkVulkan(
-            vmaCreateBuffer(m_allocator, &deviceInfo, &deviceAllocation, &output.buffer, &output.allocation, nullptr),
-            "Create GPU buffer")) {
-        return false;
-    }
     const bool submitted = m_uploadContext.submit([&](VkCommandBuffer command) {
-        VkBufferCopy copy{.size = size};
-        vkCmdCopyBuffer(command, staging, output.buffer, 1, &copy);
+        VkBufferCopy copy{.dstOffset = destinationOffset, .size = size};
+        vkCmdCopyBuffer(command, staging, destination, 1, &copy);
     });
     if (submitted) {
         m_uploadGpuMilliseconds += m_uploadContext.lastGpuMilliseconds();
@@ -509,6 +670,37 @@ bool MeshPass::uploadBuffer(const void* data, VkDeviceSize size, VkBufferUsageFl
     m_uploadMilliseconds +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - uploadBegin).count();
     return submitted;
+}
+
+bool MeshPass::ensureGeometryPage(uint32_t page) {
+    while (m_geometryPages.size() <= page) {
+        const GeometryPageCapacity capacity = m_geometry->pageCapacity(static_cast<uint32_t>(m_geometryPages.size()));
+        GeometryPage created;
+        const auto createBuffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, GpuBuffer& output) {
+            VkBufferCreateInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                    .size = size,
+                                    .usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+            const std::span<const uint32_t> queueFamilies = m_uploadContext.sharingQueueFamilies();
+            if (queueFamilies.size() > 1) {
+                info.sharingMode = VK_SHARING_MODE_CONCURRENT;
+                info.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilies.size());
+                info.pQueueFamilyIndices = queueFamilies.data();
+            }
+            VmaAllocationCreateInfo allocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+            return checkVulkan(
+                vmaCreateBuffer(m_allocator, &info, &allocation, &output.buffer, &output.allocation, nullptr),
+                "Create geometry page");
+        };
+        if (!createBuffer(sizeof(Vertex) * capacity.vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, created.vertices)) {
+            return false;
+        }
+        if (!createBuffer(sizeof(uint32_t) * capacity.indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, created.indices)) {
+            vmaDestroyBuffer(m_allocator, created.vertices.buffer, created.vertices.allocation);
+            return false;
+        }
+        m_geometryPages.push_back(created);
+    }
+    return true;
 }
 
 bool MeshPass::uploadTexture(const TextureAsset& texture, GpuTexture& output) {
@@ -648,35 +840,31 @@ bool MeshPass::uploadTexture(const TextureAsset& texture, GpuTexture& output) {
 }
 
 const MeshPass::GpuMesh* MeshPass::ensureMesh(MeshHandle handle, const AssetManager& assets) {
-    const uint64_t key = (static_cast<uint64_t>(handle.generation) << 32) | handle.index;
+    const uint64_t key = handleKey(handle);
     if (const auto found = m_meshes.find(key); found != m_meshes.end()) {
         return &found->second;
     }
-
     const MeshAsset* mesh = assets.mesh(handle);
-
     if (!mesh || mesh->vertices.empty() || mesh->indices.empty()) {
         return nullptr;
     }
-
-    GpuMesh gpu;
-
-    if (!uploadBuffer(mesh->vertices.data(), mesh->vertices.size() * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                      gpu.vertices) ||
-        !uploadBuffer(mesh->indices.data(), mesh->indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                      gpu.indices)) {
-        if (gpu.vertices.buffer) {
-            vmaDestroyBuffer(m_allocator, gpu.vertices.buffer, gpu.vertices.allocation);
-        }
-
-        if (gpu.indices.buffer) {
-            vmaDestroyBuffer(m_allocator, gpu.indices.buffer, gpu.indices.allocation);
-        }
-
+    const auto geometry =
+        m_geometry->allocate(static_cast<uint32_t>(mesh->vertices.size()), static_cast<uint32_t>(mesh->indices.size()));
+    if (!geometry) {
+        std::cerr << "Geometry arena could not place a mesh\n";
         return nullptr;
     }
-
-    return &m_meshes.emplace(key, gpu).first->second;
+    const bool uploaded =
+        ensureGeometryPage(geometry->page) &&
+        uploadToBuffer(mesh->vertices.data(), mesh->vertices.size() * sizeof(Vertex),
+                       m_geometryPages[geometry->page].vertices.buffer, sizeof(Vertex) * geometry->vertexOffset) &&
+        uploadToBuffer(mesh->indices.data(), mesh->indices.size() * sizeof(uint32_t),
+                       m_geometryPages[geometry->page].indices.buffer, sizeof(uint32_t) * geometry->firstIndex);
+    if (!uploaded) {
+        m_geometry->free(*geometry);
+        return nullptr;
+    }
+    return &m_meshes.emplace(key, GpuMesh{*geometry}).first->second;
 }
 
 const MeshPass::GpuTexture* MeshPass::ensureTexture(TextureHandle handle, const AssetManager& assets) {
@@ -692,11 +880,51 @@ const MeshPass::GpuTexture* MeshPass::ensureTexture(TextureHandle handle, const 
     if (!uploadTexture(*texture, gpu)) {
         return nullptr;
     }
+    if (!assignTextureSlots(gpu)) {
+        // Nothing has referenced the slots or views yet, so release directly.
+        destroyTexture(gpu);
+        return nullptr;
+    }
     return &m_textures.emplace(key, gpu).first->second;
 }
 
+bool MeshPass::assignTextureSlots(GpuTexture& texture) {
+    const auto linear = m_textureTable->acquire(texture.view);
+    const auto srgb = linear ? m_textureTable->acquire(texture.srgbView) : std::nullopt;
+    if (!linear || !srgb) {
+        if (linear) {
+            m_textureTable->release(*linear);
+        }
+        std::cerr << "Bindless texture table is full (" << m_textureTable->capacity() << " slots)\n";
+        return false;
+    }
+    texture.linearSlot = *linear;
+    texture.srgbSlot = *srgb;
+    return true;
+}
+
+void MeshPass::retireTexture(const GpuTexture& texture) {
+    // The slot is rewritten in every frame set before that set is bound again;
+    // the views die only after all frames that could still bind them retire.
+    m_textureTable->release(texture.linearSlot);
+    m_textureTable->release(texture.srgbSlot);
+    m_releaseQueue.defer(m_frameSerial, [this, texture] { destroyTexture(texture); });
+}
+
+void MeshPass::destroyTexture(const GpuTexture& texture) {
+    if (texture.srgbView) {
+        vkDestroyImageView(m_device, texture.srgbView, nullptr);
+    }
+    if (texture.view) {
+        vkDestroyImageView(m_device, texture.view, nullptr);
+    }
+    if (texture.image) {
+        vmaDestroyImage(m_allocator, texture.image, texture.allocation);
+    }
+}
+
 const MeshPass::GpuMaterial* MeshPass::ensureMaterial(MaterialHandle handle, const AssetManager& assets) {
-    const uint64_t key = (static_cast<uint64_t>(handle.generation) << 32) | handle.index;
+    const uint64_t key = handleKey(handle);
     if (const auto found = m_materials.find(key); found != m_materials.end()) {
         return &found->second;
     }
@@ -704,70 +932,129 @@ const MeshPass::GpuMaterial* MeshPass::ensureMaterial(MaterialHandle handle, con
     if (!material) {
         return nullptr;
     }
-
-    VkDescriptorSet descriptor = VK_NULL_HANDLE;
-    VkDescriptorSetAllocateInfo allocate{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-                                         .descriptorPool = m_descriptorPool,
-                                         .descriptorSetCount = 1,
-                                         .pSetLayouts = &m_materialLayout};
-    if (!checkVulkan(vkAllocateDescriptorSets(m_device, &allocate, &descriptor), "Allocate material descriptor")) {
+    uint32_t index = 0;
+    if (!m_freeMaterialIndices.empty()) {
+        index = m_freeMaterialIndices.back();
+        m_freeMaterialIndices.pop_back();
+    } else if (m_nextMaterialIndex < maximumMaterials) {
+        index = m_nextMaterialIndex++;
+    } else {
+        std::cerr << "Material count exceeds the renderer capacity (" << maximumMaterials << ")\n";
         return nullptr;
     }
-    const auto viewFor = [&](TextureHandle texture, const GpuTexture& fallback, bool srgb) {
-        const GpuTexture* gpu = texture ? ensureTexture(texture, assets) : &fallback;
-        if (!gpu) {
-            gpu = &fallback;
+    // Upload referenced textures now so frame recording only resolves slots.
+    for (const TextureHandle texture :
+         {material->baseColorTexture, material->normalTexture, material->metallicRoughnessTexture,
+          material->occlusionTexture, material->emissiveTexture}) {
+        if (texture) {
+            ensureTexture(texture, assets);
         }
-        return srgb && gpu->srgbView ? gpu->srgbView : gpu->view;
-    };
-    const std::array<VkImageView, 5> views{viewFor(material->baseColorTexture, m_whiteTexture, true),
-                                           viewFor(material->normalTexture, m_normalTexture, false),
-                                           viewFor(material->metallicRoughnessTexture, m_whiteTexture, false),
-                                           viewFor(material->occlusionTexture, m_whiteTexture, false),
-                                           viewFor(material->emissiveTexture, m_whiteTexture, true)};
-    std::array<VkDescriptorImageInfo, 5> imageInfos{};
-    std::array<VkWriteDescriptorSet, 5> writes{};
-    for (uint32_t i = 0; i < views.size(); ++i) {
-        imageInfos[i] = {
-            .sampler = m_sampler, .imageView = views[i], .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        writes[i] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                     .dstSet = descriptor,
-                     .dstBinding = i,
-                     .descriptorCount = 1,
-                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                     .pImageInfo = &imageInfos[i]};
     }
-    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-    return &m_materials.emplace(key, GpuMaterial{descriptor}).first->second;
+    return &m_materials.emplace(key, GpuMaterial{index}).first->second;
 }
 
-void MeshPass::beginRendering(VkCommandBuffer commandBuffer, VkImage colorImage, VkImageView colorView,
-                              VkImageView motionView, VkImage depthImage, VkImageView depthView,
-                              VkExtent2D extent) const {
-    (void)colorImage;
-    imageBarrier(commandBuffer, depthImage, VK_IMAGE_ASPECT_DEPTH_BIT,
-                 m_depthInitialized ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
-                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                 m_depthInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
-                 m_depthInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
-                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+void MeshPass::writeMaterialRecords(uint32_t frameIndex, const AssetManager& assets) {
+    auto* records = static_cast<MaterialRecord*>(m_cameras[frameIndex].materialsMapped);
+    const auto slotFor = [&](TextureHandle handle, bool srgb, uint32_t fallback) {
+        if (!handle) {
+            return fallback;
+        }
+        const auto found = m_textures.find(handleKey(handle));
+        if (found == m_textures.end()) {
+            return fallback;
+        }
+        return srgb ? found->second.srgbSlot : found->second.linearSlot;
+    };
+    uint32_t highestIndex = 0;
+    for (const auto& [key, gpu] : m_materials) {
+        const MaterialAsset* material = assets.material(handleFromKey<MaterialHandle>(key));
+        if (!material) {
+            continue;
+        }
+        // Rewritten every frame so edits to factors or texture bindings apply
+        // without invalidating anything the GPU might still be reading.
+        records[gpu.index] = {
+            .baseColor = material->baseColor,
+            .factors = {material->metallic, material->roughness, material->normalScale, material->occlusionStrength},
+            .emissive = {material->emissive * material->emissiveStrength, 0.0f},
+            .surface = {material->alphaCutoff, static_cast<float>(material->alphaMode), 0.0f, 0.0f},
+            .textures = {slotFor(material->baseColorTexture, true, m_whiteSrgbSlot),
+                         slotFor(material->normalTexture, false, m_normalSlot),
+                         slotFor(material->metallicRoughnessTexture, false, m_whiteSlot),
+                         slotFor(material->occlusionTexture, false, m_whiteSlot)},
+            .extraTextures = {slotFor(material->emissiveTexture, true, m_whiteSrgbSlot), 0u, 0u, 0u}};
+        highestIndex = std::max(highestIndex, gpu.index + 1);
+    }
+    if (highestIndex > 0) {
+        vmaFlushAllocation(m_allocator, m_cameras[frameIndex].materials.allocation, 0,
+                           sizeof(MaterialRecord) * highestIndex);
+    }
+}
+
+void MeshPass::updateBindlessDescriptor(uint32_t frameIndex) {
+    const std::vector<uint32_t> slots = m_textureTable->takePendingWrites(frameIndex);
+    if (slots.empty()) {
+        return;
+    }
+    std::vector<VkDescriptorImageInfo> images(slots.size());
+    std::vector<VkWriteDescriptorSet> writes(slots.size());
+    for (size_t index = 0; index < slots.size(); ++index) {
+        images[index] = {.imageView = m_textureTable->view(slots[index]),
+                         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        writes[index] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                         .dstSet = m_cameras[frameIndex].bindlessDescriptor,
+                         .dstBinding = 1,
+                         .dstArrayElement = slots[index],
+                         .descriptorCount = 1,
+                         .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                         .pImageInfo = &images[index]};
+    }
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+}
+
+void MeshPass::bindGeometry(VkCommandBuffer commandBuffer, const GpuMesh& mesh,
+                            std::optional<uint32_t>& boundPage) const {
+    if (boundPage == mesh.geometry.page) {
+        return;
+    }
+    const GeometryPage& page = m_geometryPages[mesh.geometry.page];
+    const VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(commandBuffer, 0, 1, &page.vertices.buffer, &offset);
+    vkCmdBindIndexBuffer(commandBuffer, page.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+    boundPage = mesh.geometry.page;
+}
+
+void MeshPass::beginRendering(VkCommandBuffer commandBuffer, VkImageView colorView, VkImageView motionView,
+                              VkImage depthImage, VkImageView depthView, VkExtent2D extent,
+                              SceneAttachments attachments) const {
+    const bool clear = attachments == SceneAttachments::Clear;
+    // A preserved pass continues one the caller already transitioned.
+    if (clear) {
+        imageBarrier(commandBuffer, depthImage, VK_IMAGE_ASPECT_DEPTH_BIT,
+                     m_depthInitialized ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                     m_depthInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                     VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+                     m_depthInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    }
+    const VkAttachmentLoadOp loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
     VkRenderingAttachmentInfo color{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                                     .imageView = colorView,
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                    .loadOp = loadOp,
                                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
                                     .clearValue = {.color = {.float32 = {0.015f, 0.02f, 0.04f, 0.0f}}}};
     VkRenderingAttachmentInfo depth{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                                     .imageView = depthView,
                                     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                    .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                    .loadOp = loadOp,
                                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
                                     .clearValue = {.depthStencil = {.depth = scene_depth::clearValue, .stencil = 0}}};
     VkRenderingAttachmentInfo motion{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                                      .imageView = motionView,
                                      .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                     .loadOp = loadOp,
                                      .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
                                      .clearValue = {.color = {.float32 = {0.0f, 0.0f, 0.0f, 0.0f}}}};
     const VkRenderingAttachmentInfo colors[]{color, motion};
@@ -859,7 +1146,6 @@ bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
                                        .localBoundsRadius = item.mesh->bounds.radius,
                                        .indexCount = item.primitive->indexCount,
                                        .firstIndex = item.primitive->firstIndex};
-        item.newlySpawned = !m_gpuRecords.contains(item.recordId);
         item.gpuSceneHandle = m_gpuScene.upsert(gpuObject);
         nextGpuRecords.emplace(item.recordId, item.gpuSceneHandle);
         m_gpuHandleItems.emplace(handleKey(item.gpuSceneHandle), index);
@@ -959,8 +1245,12 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline.handle());
         vkCmdSetDepthBias(commandBuffer, std::max(light.shadows.constantBias, 0.0f), 0.0f,
                           std::max(light.shadows.slopeBias, 0.0f));
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline.layout(), 0, 1,
-                                &m_cameras[frameIndex].descriptor, 0, nullptr);
+        const VkDescriptorSet shadowSets[]{m_cameras[frameIndex].descriptor, m_cameras[frameIndex].bindlessDescriptor};
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline.layout(), 0,
+                                static_cast<uint32_t>(std::size(shadowSets)), shadowSets, 0, nullptr);
+        const glm::vec4 shadowPush{static_cast<float>(cascade), 0.0f, 0.0f, 0.0f};
+        vkCmdPushConstants(commandBuffer, m_shadowPipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(shadowPush),
+                           &shadowPush);
         const Frustum shadowFrustum = makeFrustum(lightViewProjections[cascade]);
         m_shadowVisibleItems.clear();
         m_shadowVisibleItems.reserve(items.size());
@@ -977,48 +1267,36 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
             objectData[objectBase + index].previousModel = m_shadowVisibleItems[index]->previousWorld;
             objectData[objectBase + index].skin = {
                 m_shadowVisibleItems[index]->skinPaletteOffset,
-                static_cast<uint32_t>(m_shadowVisibleItems[index]->jointPalette.size()), 0, 0};
+                static_cast<uint32_t>(m_shadowVisibleItems[index]->jointPalette.size()),
+                m_shadowVisibleItems[index]->gpuMaterial->index, 0};
         }
         vmaFlushAllocation(m_allocator, m_cameras[frameIndex].objects.allocation, 0, VK_WHOLE_SIZE);
-        const GpuMesh* boundMesh = nullptr;
-        const GpuMaterial* boundMaterial = nullptr;
+        std::optional<uint32_t> boundPage;
         std::optional<bool> boundDoubleSided;
         for (size_t itemIndex = 0; itemIndex < m_shadowVisibleItems.size();) {
             const RenderItem& item = *m_shadowVisibleItems[itemIndex];
             size_t batchEnd = itemIndex + 1;
             while (batchEnd < m_shadowVisibleItems.size()) {
                 const RenderItem& candidate = *m_shadowVisibleItems[batchEnd];
-                if (candidate.gpuMesh != item.gpuMesh || candidate.gpuMaterial != item.gpuMaterial ||
+                // Materials are per instance now, so only geometry and culling
+                // state split a shadow batch.
+                if (candidate.gpuMesh != item.gpuMesh ||
                     candidate.primitive->firstIndex != item.primitive->firstIndex ||
-                    candidate.primitive->indexCount != item.primitive->indexCount) {
+                    candidate.primitive->indexCount != item.primitive->indexCount ||
+                    candidate.material->doubleSided != item.material->doubleSided) {
                     break;
                 }
                 ++batchEnd;
-            }
-            if (boundMaterial != item.gpuMaterial) {
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline.layout(), 1, 1,
-                                        &item.gpuMaterial->descriptor, 0, nullptr);
-                boundMaterial = item.gpuMaterial;
             }
             if (!boundDoubleSided || *boundDoubleSided != item.material->doubleSided) {
                 vkCmdSetCullMode(commandBuffer, item.material->doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
                 boundDoubleSided = item.material->doubleSided;
             }
-            const glm::vec4 shadowPush{static_cast<float>(cascade),
-                                       item.material->alphaMode == MaterialAlphaMode::Mask ? 1.0f : 0.0f,
-                                       item.material->alphaCutoff, 0.0f};
-            vkCmdPushConstants(commandBuffer, m_shadowPipeline.layout(),
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(shadowPush),
-                               &shadowPush);
-            if (boundMesh != item.gpuMesh) {
-                const VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
-                vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-                boundMesh = item.gpuMesh;
-            }
+            bindGeometry(commandBuffer, *item.gpuMesh, boundPage);
             const uint32_t instanceCount = static_cast<uint32_t>(batchEnd - itemIndex);
-            vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, instanceCount, item.primitive->firstIndex, 0,
-                             objectBase + static_cast<uint32_t>(itemIndex));
+            vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, instanceCount,
+                             item.gpuMesh->geometry.firstIndex + item.primitive->firstIndex,
+                             item.gpuMesh->geometry.vertexOffset, objectBase + static_cast<uint32_t>(itemIndex));
             stats.shadowCasterCount += instanceCount;
             ++stats.drawCalls;
             stats.triangleCount += static_cast<uint64_t>(item.primitive->indexCount / 3) * instanceCount;
@@ -1046,6 +1324,12 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const double previousGpuFrameMilliseconds = rendering.m_stats.gpuFrameMilliseconds;
     rendering.m_stats = {};
 
+    // The caller waited for this frame slot's fence, so every frame at least
+    // one full ring older than this one has completed on the GPU.
+    ++m_frameSerial;
+    if (m_frameSerial > m_cameras.size()) {
+        m_releaseQueue.collect(m_frameSerial - m_cameras.size());
+    }
     pruneUnusedAssets(assets);
 
     glm::mat4 view{1.0f};
@@ -1256,6 +1540,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     m_sceneRevisions = revisions;
     m_assetRevision = assets.revision();
     m_outlineRevision = outlineRevision;
+    writeMaterialRecords(frameIndex, assets);
+    updateBindlessDescriptor(frameIndex);
     const auto packetBuildEnd = std::chrono::steady_clock::now();
     const double packetBuildMilliseconds =
         std::chrono::duration<double, std::milli>(packetBuildEnd - packetBuildStart).count();
@@ -1263,15 +1549,13 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         std::cerr << "Renderable count exceeds the per-frame render capacity\n";
         return false;
     }
-    const bool containsBlendedObjects = std::ranges::any_of(
-        m_renderItems, [](const RenderItem& item) { return item.material->alphaMode == MaterialAlphaMode::Blend; });
+    // Opaque and masked surfaces go through GPU culling; blended surfaces and
+    // editor outlines keep CPU submission within the same frame.
     const bool gpuDrivenRequested =
         rendering.settings().preferGpuDrivenSubmission || SDL_getenv("ZENITH_FORCE_GPU_DRIVEN") != nullptr;
-    const bool gpuDrivenActive =
-        m_gpuDrivenSupported && gpuDrivenRequested && rendering.capabilities().gpuDrivenPath &&
-        rendering.capabilities().descriptorIndexing && rendering.capabilities().multiDrawIndirect &&
-        !containsBlendedObjects && rendering.m_outlinedObjects.empty() && renderExtent.width == extent.width &&
-        renderExtent.height == extent.height && rendering.settings().antialiasing != AntialiasingMode::Taa;
+    const bool gpuDrivenActive = m_gpuDrivenSupported && gpuDrivenRequested && rendering.capabilities().gpuDrivenPath &&
+                                 rendering.capabilities().descriptorIndexing &&
+                                 rendering.capabilities().multiDrawIndirect;
     const FrameResourceUse lightResources[]{{"scene.lights", FrameResourceAccess::Read},
                                             {"frame.light_grid", FrameResourceAccess::Write}};
     const FrameResourceUse visibilityResources[]{{"renderer.persistent_scene", FrameResourceAccess::Read},
@@ -1393,51 +1677,24 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     m_cachedCascadeCount = cascadeCount;
     stats.cpuShadowMilliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - shadowCpuBegin).count();
-    constexpr uint32_t mainObjectBase = maximumShadowCascades * maximumObjectsPerFrame;
+    const DrawContext draw{.commandBuffer = commandBuffer,
+                           .frameIndex = frameIndex,
+                           .pipelines = shadingPipelines,
+                           .timestampQueries = timestampQueries,
+                           .stats = &stats};
     if (gpuDrivenActive) {
-        m_gpuDrivenObjects.clear();
-        m_gpuDrivenBatches.clear();
-        m_gpuDrivenBatchItems.clear();
-        for (size_t begin = 0; begin < m_renderItems.size();) {
-            const RenderItem& first = m_renderItems[begin];
-            size_t end = begin + 1;
-            while (end < m_renderItems.size()) {
-                const RenderItem& candidate = m_renderItems[end];
-                if (candidate.gpuMesh != first.gpuMesh || candidate.gpuMaterial != first.gpuMaterial ||
-                    candidate.primitive->firstIndex != first.primitive->firstIndex ||
-                    candidate.primitive->indexCount != first.primitive->indexCount ||
-                    candidate.material->doubleSided != first.material->doubleSided) {
-                    break;
-                }
-                ++end;
-            }
-            const uint32_t batchIndex = static_cast<uint32_t>(m_gpuDrivenBatches.size());
-            const uint32_t firstInstance = static_cast<uint32_t>(m_gpuDrivenObjects.size());
-            m_gpuDrivenBatches.push_back({.indexCount = first.primitive->indexCount,
-                                          .firstIndex = first.primitive->firstIndex,
-                                          .vertexOffset = 0,
-                                          .firstInstance = firstInstance});
-            m_gpuDrivenBatchItems.push_back(&first);
-            for (size_t index = begin; index < end; ++index) {
-                RenderItem& item = m_renderItems[index];
-                m_gpuDrivenObjects.push_back(
-                    {.model = item.world,
-                     .previousModel = item.previousWorld,
-                     .bounds = {item.boundsCenter, item.boundsRadius},
-                     .draw = {batchIndex, item.newlySpawned ? 1u : 0u, 0u, 0u},
-                     .skin = {item.skinPaletteOffset, static_cast<uint32_t>(item.jointPalette.size()), 0u, 0u}});
-            }
-            begin = end;
-        }
-        if (!m_gpuDrivenPass.prepare(frameIndex, m_gpuDrivenObjects, m_gpuDrivenBatches,
-                                     static_cast<uint32_t>(m_visibility.visibleInstances.size())) ||
-            !m_gpuDrivenPass.record(commandBuffer, frameIndex, m_cameras[frameIndex].objects.buffer,
-                                    sizeof(ObjectData) * mainObjectBase, cameraData.viewProjection, m_depthInitialized,
-                                    cameraCut, timestampQueries)) {
+        if (!prepareGpuDrivenFrame(frameIndex)) {
             return false;
         }
-        for (RenderItem& item : m_renderItems) {
-            item.newlySpawned = false;
+        m_gpuDrivenPass.beginFrame(commandBuffer, frameIndex);
+        // Culling time covers the early phase; the depth pyramid and late phase
+        // run between the opaque passes and count toward opaque time.
+        if (timestampQueries) {
+            vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, timestampQueries, 8);
+        }
+        m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Early, cameraData.viewProjection, renderExtent);
+        if (timestampQueries) {
+            vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, timestampQueries, 9);
         }
     } else if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, timestampQueries, 8);
@@ -1449,236 +1706,58 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 1);
     }
+    if (!collectCpuSubmittedItems(gpuDrivenActive, cameraPosition)) {
+        return false;
+    }
+    uploadCpuSubmittedObjects(frameIndex);
+    stats.culledCount += m_visibility.frustumCulled + (gpuDrivenActive ? 0u : m_visibility.occlusionCulled);
+
     m_postProcess.prepareScene(commandBuffer, frameIndex);
-    beginRendering(commandBuffer, m_postProcess.sceneImage(frameIndex), m_postProcess.sceneView(frameIndex),
-                   m_postProcess.motionView(frameIndex), depthImage, depthView, renderExtent);
+    const VkImageView sceneView = m_postProcess.sceneView(frameIndex);
+    const VkImageView motionView = m_postProcess.motionView(frameIndex);
+    beginRendering(commandBuffer, sceneView, motionView, depthImage, depthView, renderExtent, SceneAttachments::Clear);
     m_depthInitialized = true;
-    VkViewport viewport{.x = 0,
-                        .y = 0,
-                        .width = static_cast<float>(renderExtent.width),
-                        .height = static_cast<float>(renderExtent.height),
-                        .minDepth = 0,
-                        .maxDepth = 1};
-    VkRect2D scissor{.offset = {0, 0}, .extent = renderExtent};
+    const VkViewport viewport{.x = 0,
+                              .y = 0,
+                              .width = static_cast<float>(renderExtent.width),
+                              .height = static_cast<float>(renderExtent.height),
+                              .minDepth = 0,
+                              .maxDepth = 1};
+    const VkRect2D scissor{.offset = {0, 0}, .extent = renderExtent};
     vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
     if (gpuDrivenActive) {
         const auto opaqueCpuBegin = std::chrono::steady_clock::now();
-        const GraphicsPipeline* boundPipeline = nullptr;
-        const GpuMesh* boundMesh = nullptr;
-        const GpuMaterial* boundMaterial = nullptr;
-        for (size_t batchIndex = 0; batchIndex < m_gpuDrivenBatches.size(); ++batchIndex) {
-            const RenderItem& item = *m_gpuDrivenBatchItems[batchIndex];
-            const GraphicsPipeline* pipeline =
-                item.material->doubleSided ? &shadingPipelines->doubleSided : &shadingPipelines->opaque;
-            if (pipeline != boundPipeline) {
-                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->handle());
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout(), 0, 1,
-                                        &m_cameras[frameIndex].descriptor, 0, nullptr);
-                boundPipeline = pipeline;
-                boundMaterial = nullptr;
-            }
-            if (boundMesh != item.gpuMesh) {
-                const VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
-                vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-                boundMesh = item.gpuMesh;
-            }
-            if (boundMaterial != item.gpuMaterial) {
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipeline->layout(), 1, 1,
-                                        &item.gpuMaterial->descriptor, 0, nullptr);
-                boundMaterial = item.gpuMaterial;
-            }
-            PushConstants push;
-            push.model = glm::mat4(1.0f);
-            push.baseColor = item.material->baseColor;
-            push.material = {item.material->metallic, item.material->roughness, item.material->normalScale,
-                             item.material->occlusionStrength};
-            push.emissive = {item.material->emissive * item.material->emissiveStrength, 0.0f};
-            push.surface = {item.material->alphaCutoff, static_cast<float>(item.material->alphaMode), 0.0f, 0.0f};
-            vkCmdPushConstants(commandBuffer, boundPipeline->layout(),
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
-            vkCmdDrawIndexedIndirect(commandBuffer, m_gpuDrivenPass.indirectBuffer(frameIndex),
-                                     batchIndex * sizeof(VkDrawIndexedIndirectCommand), 1,
-                                     sizeof(VkDrawIndexedIndirectCommand));
-            ++stats.drawCalls;
-        }
-        stats.visibleCount = static_cast<uint32_t>(m_visibility.visibleInstances.size());
-        stats.culledCount = m_visibility.frustumCulled;
-        stats.indirectCommandCount = static_cast<uint32_t>(m_gpuDrivenBatches.size());
-        stats.gpuVisibilityMismatches = m_gpuDrivenPass.visibilityMismatchCount();
+        recordGpuDrivenGroups(draw, GpuCullPhase::Early);
+        vkCmdEndRendering(commandBuffer);
+        prepareDepthForPyramid(commandBuffer, depthImage);
+        m_gpuDrivenPass.buildDepthPyramid(commandBuffer);
+        m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Late, cameraData.viewProjection, renderExtent);
+        restoreDepthAfterPyramid(commandBuffer, depthImage);
+        beginRendering(commandBuffer, sceneView, motionView, depthImage, depthView, renderExtent,
+                       SceneAttachments::Preserve);
+        vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+        vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+        recordGpuDrivenGroups(draw, GpuCullPhase::Late);
         stats.cpuOpaqueMilliseconds =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - opaqueCpuBegin).count();
         if (timestampQueries) {
             vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 2);
         }
+        stats.visibleCount = m_gpuDrivenPass.retiredVisibleCount();
+        stats.indirectCommandCount = static_cast<uint32_t>(m_gpuDrivenBatches.size());
+        stats.gpuVisibilityMismatches = m_gpuDrivenPass.visibilityMismatchCount();
     } else {
-        m_visibleItems.clear();
-        stats.culledCount += m_visibility.frustumCulled + m_visibility.occlusionCulled;
         stats.indirectCommandCount = static_cast<uint32_t>(m_visibility.commands.size());
-        for (GpuSceneHandle handle : m_visibility.visibleInstances) {
-            if (const auto found = m_gpuHandleItems.find(handleKey(handle)); found != m_gpuHandleItems.end()) {
-                m_visibleItems.push_back(&m_renderItems[found->second]);
-            }
-        }
-        std::stable_sort(m_visibleItems.begin(), m_visibleItems.end(),
-                         [&cameraPosition](const RenderItem* first, const RenderItem* second) {
-                             const bool firstBlended = first->material->alphaMode == MaterialAlphaMode::Blend;
-                             const bool secondBlended = second->material->alphaMode == MaterialAlphaMode::Blend;
-                             if (firstBlended != secondBlended) {
-                                 return !firstBlended;
-                             }
-                             if (!firstBlended) {
-                                 return false;
-                             }
-                             const glm::vec3 firstOffset = first->boundsCenter - cameraPosition;
-                             const glm::vec3 secondOffset = second->boundsCenter - cameraPosition;
-                             return glm::dot(firstOffset, firstOffset) > glm::dot(secondOffset, secondOffset);
-                         });
-        if (m_visibleItems.size() > maximumObjectsPerFrame) {
-            vkCmdEndRendering(commandBuffer);
-            std::cerr << "Visible object count exceeds the per-frame render capacity\n";
-            return false;
-        }
-        auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped) + mainObjectBase;
-        for (size_t index = 0; index < m_visibleItems.size(); ++index) {
-            objectData[index].model = m_visibleItems[index]->world;
-            objectData[index].previousModel = m_visibleItems[index]->previousWorld;
-            objectData[index].skin = {m_visibleItems[index]->skinPaletteOffset,
-                                      static_cast<uint32_t>(m_visibleItems[index]->jointPalette.size()), 0, 0};
-        }
-        vmaFlushAllocation(m_allocator, m_cameras[frameIndex].objects.allocation, 0, VK_WHOLE_SIZE);
-
-        if (!rendering.m_outlinedObjects.empty()) {
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_selectionMaskPipeline.handle());
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_selectionMaskPipeline.layout(), 0,
-                                    1, &m_cameras[frameIndex].descriptor, 0, nullptr);
-            const GpuMesh* outlinedMesh = nullptr;
-            for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
-                const RenderItem& item = *m_visibleItems[itemIndex];
-                if (!item.outlined) {
-                    continue;
-                }
-                if (outlinedMesh != item.gpuMesh) {
-                    const VkDeviceSize offset = 0;
-                    vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
-                    vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-                    outlinedMesh = item.gpuMesh;
-                }
-                vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, 1, item.primitive->firstIndex, 0,
-                                 mainObjectBase + static_cast<uint32_t>(itemIndex));
-                ++stats.drawCalls;
-            }
-        }
-
-        const GraphicsPipeline* boundPipeline = nullptr;
-        const GpuMesh* boundMesh = nullptr;
-        const GpuMaterial* boundMaterial = nullptr;
-        const auto opaqueCpuBegin = std::chrono::steady_clock::now();
-        auto blendedCpuBegin = opaqueCpuBegin;
-        bool opaqueTimestampWritten = false;
-        for (size_t itemIndex = 0; itemIndex < m_visibleItems.size();) {
-            const RenderItem& item = *m_visibleItems[itemIndex];
-            if (!opaqueTimestampWritten && item.material->alphaMode == MaterialAlphaMode::Blend) {
-                if (timestampQueries) {
-                    vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 2);
-                }
-                blendedCpuBegin = std::chrono::steady_clock::now();
-                stats.cpuOpaqueMilliseconds =
-                    std::chrono::duration<double, std::milli>(blendedCpuBegin - opaqueCpuBegin).count();
-                opaqueTimestampWritten = true;
-            }
-            size_t batchEnd = itemIndex + 1;
-            while (batchEnd < m_visibleItems.size()) {
-                const RenderItem& candidate = *m_visibleItems[batchEnd];
-                if (candidate.gpuMesh != item.gpuMesh || candidate.gpuMaterial != item.gpuMaterial ||
-                    candidate.primitive->firstIndex != item.primitive->firstIndex ||
-                    candidate.primitive->indexCount != item.primitive->indexCount ||
-                    candidate.material->alphaMode != item.material->alphaMode ||
-                    candidate.material->doubleSided != item.material->doubleSided) {
-                    break;
-                }
-                ++batchEnd;
-            }
-            const GraphicsPipeline* pipeline = nullptr;
-            if (item.material->alphaMode == MaterialAlphaMode::Blend) {
-                pipeline = item.material->doubleSided ? &shadingPipelines->blendDoubleSided : &shadingPipelines->blend;
-            } else {
-                pipeline = item.material->doubleSided ? &shadingPipelines->doubleSided : &shadingPipelines->opaque;
-            }
-            if (pipeline != boundPipeline) {
-                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->handle());
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout(), 0, 1,
-                                        &m_cameras[frameIndex].descriptor, 0, nullptr);
-                boundPipeline = pipeline;
-                boundMaterial = nullptr;
-            }
-            if (boundMesh != item.gpuMesh) {
-                const VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
-                vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-                boundMesh = item.gpuMesh;
-            }
-            if (boundMaterial != item.gpuMaterial) {
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipeline->layout(), 1, 1,
-                                        &item.gpuMaterial->descriptor, 0, nullptr);
-                boundMaterial = item.gpuMaterial;
-            }
-            PushConstants push;
-            push.model = glm::mat4(1.0f);
-            push.baseColor = item.material->baseColor;
-            push.material = {item.material->metallic, item.material->roughness, item.material->normalScale,
-                             item.material->occlusionStrength};
-            push.emissive = {item.material->emissive * item.material->emissiveStrength, 0.0f};
-            push.surface = {item.material->alphaCutoff, static_cast<float>(item.material->alphaMode), 0.0f, 0.0f};
-            vkCmdPushConstants(commandBuffer, boundPipeline->layout(),
-                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
-            const uint32_t instanceCount = static_cast<uint32_t>(batchEnd - itemIndex);
-            vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, instanceCount, item.primitive->firstIndex, 0,
-                             mainObjectBase + static_cast<uint32_t>(itemIndex));
-            ++stats.drawCalls;
-            stats.visibleCount += instanceCount;
-            stats.triangleCount += static_cast<uint64_t>(item.primitive->indexCount / 3) * instanceCount;
-            itemIndex = batchEnd;
-        }
-        if (!opaqueTimestampWritten) {
-            if (timestampQueries) {
-                vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 2);
-            }
-            stats.cpuOpaqueMilliseconds =
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - opaqueCpuBegin).count();
-        } else {
-            stats.cpuBlendedMilliseconds =
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - blendedCpuBegin).count();
-        }
-
-        if (!rendering.m_outlinedObjects.empty()) {
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlinePipeline.handle());
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlinePipeline.layout(), 0, 1,
-                                    &m_cameras[frameIndex].descriptor, 0, nullptr);
-            const GpuMesh* outlinedMesh = nullptr;
-            for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
-                const RenderItem& item = *m_visibleItems[itemIndex];
-                if (!item.outlined) {
-                    continue;
-                }
-                if (outlinedMesh != item.gpuMesh) {
-                    const VkDeviceSize offset = 0;
-                    vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
-                    vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-                    outlinedMesh = item.gpuMesh;
-                }
-                const glm::vec4 outlineSettings{item.mesh->bounds.center, 2.0f};
-                vkCmdPushConstants(commandBuffer, m_outlinePipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
-                                   sizeof(outlineSettings), &outlineSettings);
-                vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, 1, item.primitive->firstIndex, 0,
-                                 mainObjectBase + static_cast<uint32_t>(itemIndex));
-                ++stats.drawCalls;
-            }
-        }
     }
+    recordSelectionMask(draw);
+    recordShadedItems(draw, gpuDrivenActive ? ShadedItems::BlendedOnly : ShadedItems::All);
+    recordOutlines(draw);
 
     vkCmdEndRendering(commandBuffer);
+    if (gpuDrivenActive) {
+        m_gpuDrivenPass.finishFrame(commandBuffer, frameIndex);
+    }
     if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 3);
     }
@@ -1702,38 +1781,288 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     return true;
 }
 
+bool MeshPass::prepareGpuDrivenFrame(uint32_t frameIndex) {
+    m_gpuDrivenCandidates.clear();
+    m_gpuDrivenKeys.clear();
+    for (const RenderItem& item : m_renderItems) {
+        if (item.material->alphaMode == MaterialAlphaMode::Blend) {
+            continue;
+        }
+        const GeometryAllocation& geometry = item.gpuMesh->geometry;
+        m_gpuDrivenCandidates.push_back(&item);
+        m_gpuDrivenKeys.push_back({.pipeline = item.material->doubleSided ? doubleSidedBucket : singleSidedBucket,
+                                   .geometryPage = geometry.page,
+                                   .firstIndex = geometry.firstIndex + item.primitive->firstIndex,
+                                   .vertexOffset = geometry.vertexOffset,
+                                   .indexCount = item.primitive->indexCount});
+    }
+    buildIndirectDrawPlan(m_gpuDrivenKeys, m_drawPlan);
+    if (m_drawPlan.groups.size() > maximumGpuDrawGroups) {
+        std::cerr << "GPU-driven draw groups exceed the renderer capacity\n";
+        return false;
+    }
+    m_gpuDrivenBatches.clear();
+    for (const IndirectDrawBatch& batch : m_drawPlan.batches) {
+        m_gpuDrivenBatches.push_back({.indexCount = batch.key.indexCount,
+                                      .firstIndex = batch.key.firstIndex,
+                                      .vertexOffset = batch.key.vertexOffset,
+                                      .firstInstance = batch.firstInstance,
+                                      .group = batch.group,
+                                      .groupFirstBatch = m_drawPlan.groups[batch.group].firstBatch});
+    }
+    m_gpuDrivenObjects.clear();
+    for (size_t slot = 0; slot < m_drawPlan.instanceOrder.size(); ++slot) {
+        const RenderItem& item = *m_gpuDrivenCandidates[m_drawPlan.instanceOrder[slot]];
+        // The persistent-scene slot is stable while the object lives, so it
+        // carries the object's visibility from one frame to the next.
+        m_gpuDrivenObjects.push_back({.model = item.world,
+                                      .previousModel = item.previousWorld,
+                                      .bounds = {item.boundsCenter, item.boundsRadius},
+                                      .draw = {m_drawPlan.instanceBatch[slot], item.gpuSceneHandle.index, 0u, 0u},
+                                      .skin = {item.skinPaletteOffset, static_cast<uint32_t>(item.jointPalette.size()),
+                                               item.gpuMaterial->index, 0u}});
+    }
+    return m_gpuDrivenPass.prepare(frameIndex, m_gpuDrivenObjects, m_gpuDrivenBatches,
+                                   static_cast<uint32_t>(m_visibility.visibleInstances.size()));
+}
+
+void MeshPass::recordGpuDrivenGroups(const DrawContext& draw, GpuCullPhase phase) {
+    const VkDescriptorSet sets[]{m_cameras[draw.frameIndex].gpuDrivenDescriptor,
+                                 m_cameras[draw.frameIndex].bindlessDescriptor};
+    const GraphicsPipeline* boundPipeline = nullptr;
+    for (uint32_t group = 0; group < m_drawPlan.groups.size(); ++group) {
+        const IndirectDrawGroup& drawGroup = m_drawPlan.groups[group];
+        const GraphicsPipeline& pipeline =
+            drawGroup.pipeline == doubleSidedBucket ? draw.pipelines->doubleSided : draw.pipelines->opaque;
+        if (&pipeline != boundPipeline) {
+            vkCmdBindPipeline(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+            vkCmdBindDescriptorSets(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0,
+                                    static_cast<uint32_t>(std::size(sets)), sets, 0, nullptr);
+            boundPipeline = &pipeline;
+        }
+        const GeometryPage& page = m_geometryPages[drawGroup.geometryPage];
+        const VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(draw.commandBuffer, 0, 1, &page.vertices.buffer, &offset);
+        vkCmdBindIndexBuffer(draw.commandBuffer, page.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+        m_gpuDrivenPass.drawGroup(draw.commandBuffer, phase, group, drawGroup.firstBatch, drawGroup.batchCount);
+        ++draw.stats->drawCalls;
+    }
+}
+
+void MeshPass::prepareDepthForPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const {
+    imageBarrier(commandBuffer, depthImage, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                 VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    // The late pass loads the color targets the early pass stored.
+    const VkMemoryBarrier2 colorBarrier{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                                        .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                        .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                                        .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                        .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |
+                                                         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT};
+    const VkDependencyInfo dependency{
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &colorBarrier};
+    vkCmdPipelineBarrier2(commandBuffer, &dependency);
+}
+
+void MeshPass::restoreDepthAfterPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const {
+    imageBarrier(commandBuffer, depthImage, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
+                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+}
+
+bool MeshPass::collectCpuSubmittedItems(bool gpuDrivenActive, const glm::vec3& cameraPosition) {
+    m_visibleItems.clear();
+    for (GpuSceneHandle handle : m_visibility.visibleInstances) {
+        const auto found = m_gpuHandleItems.find(handleKey(handle));
+        if (found == m_gpuHandleItems.end()) {
+            continue;
+        }
+        const RenderItem& item = m_renderItems[found->second];
+        // With GPU culling the CPU only submits what the indirect path cannot:
+        // blended surfaces and the editor's outline passes.
+        if (gpuDrivenActive && item.material->alphaMode != MaterialAlphaMode::Blend && !item.outlined) {
+            continue;
+        }
+        m_visibleItems.push_back(&item);
+    }
+    std::stable_sort(m_visibleItems.begin(), m_visibleItems.end(),
+                     [&cameraPosition](const RenderItem* first, const RenderItem* second) {
+                         const bool firstBlended = first->material->alphaMode == MaterialAlphaMode::Blend;
+                         const bool secondBlended = second->material->alphaMode == MaterialAlphaMode::Blend;
+                         if (firstBlended != secondBlended) {
+                             return !firstBlended;
+                         }
+                         if (!firstBlended) {
+                             return false;
+                         }
+                         const glm::vec3 firstOffset = first->boundsCenter - cameraPosition;
+                         const glm::vec3 secondOffset = second->boundsCenter - cameraPosition;
+                         return glm::dot(firstOffset, firstOffset) > glm::dot(secondOffset, secondOffset);
+                     });
+    if (m_visibleItems.size() > maximumObjectsPerFrame) {
+        std::cerr << "Visible object count exceeds the per-frame render capacity\n";
+        return false;
+    }
+    return true;
+}
+
+void MeshPass::uploadCpuSubmittedObjects(uint32_t frameIndex) {
+    auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped) + mainObjectBase;
+    for (size_t index = 0; index < m_visibleItems.size(); ++index) {
+        const RenderItem& item = *m_visibleItems[index];
+        objectData[index].model = item.world;
+        objectData[index].previousModel = item.previousWorld;
+        objectData[index].skin = {item.skinPaletteOffset, static_cast<uint32_t>(item.jointPalette.size()),
+                                  item.gpuMaterial->index, 0};
+    }
+    vmaFlushAllocation(m_allocator, m_cameras[frameIndex].objects.allocation, sizeof(ObjectData) * mainObjectBase,
+                       sizeof(ObjectData) * std::max<size_t>(m_visibleItems.size(), 1));
+}
+
+void MeshPass::recordSelectionMask(const DrawContext& draw) {
+    if (std::ranges::none_of(m_visibleItems, [](const RenderItem* item) { return item->outlined; })) {
+        return;
+    }
+    vkCmdBindPipeline(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_selectionMaskPipeline.handle());
+    vkCmdBindDescriptorSets(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_selectionMaskPipeline.layout(), 0, 1,
+                            &m_cameras[draw.frameIndex].descriptor, 0, nullptr);
+    std::optional<uint32_t> boundPage;
+    for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
+        const RenderItem& item = *m_visibleItems[itemIndex];
+        if (!item.outlined) {
+            continue;
+        }
+        bindGeometry(draw.commandBuffer, *item.gpuMesh, boundPage);
+        vkCmdDrawIndexed(draw.commandBuffer, item.primitive->indexCount, 1,
+                         item.gpuMesh->geometry.firstIndex + item.primitive->firstIndex,
+                         item.gpuMesh->geometry.vertexOffset, mainObjectBase + static_cast<uint32_t>(itemIndex));
+        ++draw.stats->drawCalls;
+    }
+}
+
+void MeshPass::recordShadedItems(const DrawContext& draw, ShadedItems selection) {
+    const VkDescriptorSet sets[]{m_cameras[draw.frameIndex].descriptor, m_cameras[draw.frameIndex].bindlessDescriptor};
+    const bool blendedOnly = selection == ShadedItems::BlendedOnly;
+    const GraphicsPipeline* boundPipeline = nullptr;
+    std::optional<uint32_t> boundPage;
+    const auto opaqueCpuBegin = std::chrono::steady_clock::now();
+    auto blendedCpuBegin = opaqueCpuBegin;
+    // With GPU culling the opaque timestamp was already written after the
+    // indirect draws.
+    bool opaqueFinished = blendedOnly;
+    for (size_t itemIndex = 0; itemIndex < m_visibleItems.size();) {
+        const RenderItem& item = *m_visibleItems[itemIndex];
+        const bool blended = item.material->alphaMode == MaterialAlphaMode::Blend;
+        if (blendedOnly && !blended) {
+            ++itemIndex;
+            continue;
+        }
+        if (!opaqueFinished && blended) {
+            if (draw.timestampQueries) {
+                vkCmdWriteTimestamp2(draw.commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, draw.timestampQueries,
+                                     2);
+            }
+            blendedCpuBegin = std::chrono::steady_clock::now();
+            draw.stats->cpuOpaqueMilliseconds =
+                std::chrono::duration<double, std::milli>(blendedCpuBegin - opaqueCpuBegin).count();
+            opaqueFinished = true;
+        }
+        size_t batchEnd = itemIndex + 1;
+        while (batchEnd < m_visibleItems.size()) {
+            const RenderItem& candidate = *m_visibleItems[batchEnd];
+            if (candidate.gpuMesh != item.gpuMesh || candidate.primitive->firstIndex != item.primitive->firstIndex ||
+                candidate.primitive->indexCount != item.primitive->indexCount ||
+                candidate.material->alphaMode != item.material->alphaMode ||
+                candidate.material->doubleSided != item.material->doubleSided) {
+                break;
+            }
+            ++batchEnd;
+        }
+        const GraphicsPipeline* pipeline = nullptr;
+        if (blended) {
+            pipeline = item.material->doubleSided ? &draw.pipelines->blendDoubleSided : &draw.pipelines->blend;
+        } else {
+            pipeline = item.material->doubleSided ? &draw.pipelines->doubleSided : &draw.pipelines->opaque;
+        }
+        if (pipeline != boundPipeline) {
+            vkCmdBindPipeline(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->handle());
+            vkCmdBindDescriptorSets(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout(), 0,
+                                    static_cast<uint32_t>(std::size(sets)), sets, 0, nullptr);
+            boundPipeline = pipeline;
+        }
+        bindGeometry(draw.commandBuffer, *item.gpuMesh, boundPage);
+        const uint32_t instanceCount = static_cast<uint32_t>(batchEnd - itemIndex);
+        vkCmdDrawIndexed(draw.commandBuffer, item.primitive->indexCount, instanceCount,
+                         item.gpuMesh->geometry.firstIndex + item.primitive->firstIndex,
+                         item.gpuMesh->geometry.vertexOffset, mainObjectBase + static_cast<uint32_t>(itemIndex));
+        ++draw.stats->drawCalls;
+        draw.stats->visibleCount += instanceCount;
+        draw.stats->triangleCount += static_cast<uint64_t>(item.primitive->indexCount / 3) * instanceCount;
+        itemIndex = batchEnd;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (!opaqueFinished) {
+        if (draw.timestampQueries) {
+            vkCmdWriteTimestamp2(draw.commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, draw.timestampQueries, 2);
+        }
+        draw.stats->cpuOpaqueMilliseconds = std::chrono::duration<double, std::milli>(now - opaqueCpuBegin).count();
+    } else {
+        draw.stats->cpuBlendedMilliseconds = std::chrono::duration<double, std::milli>(now - blendedCpuBegin).count();
+    }
+}
+
+void MeshPass::recordOutlines(const DrawContext& draw) {
+    if (std::ranges::none_of(m_visibleItems, [](const RenderItem* item) { return item->outlined; })) {
+        return;
+    }
+    vkCmdBindPipeline(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlinePipeline.handle());
+    vkCmdBindDescriptorSets(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlinePipeline.layout(), 0, 1,
+                            &m_cameras[draw.frameIndex].descriptor, 0, nullptr);
+    std::optional<uint32_t> boundPage;
+    for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
+        const RenderItem& item = *m_visibleItems[itemIndex];
+        if (!item.outlined) {
+            continue;
+        }
+        bindGeometry(draw.commandBuffer, *item.gpuMesh, boundPage);
+        const glm::vec4 outlineSettings{item.mesh->bounds.center, 2.0f};
+        vkCmdPushConstants(draw.commandBuffer, m_outlinePipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
+                           sizeof(outlineSettings), &outlineSettings);
+        vkCmdDrawIndexed(draw.commandBuffer, item.primitive->indexCount, 1,
+                         item.gpuMesh->geometry.firstIndex + item.primitive->firstIndex,
+                         item.gpuMesh->geometry.vertexOffset, mainObjectBase + static_cast<uint32_t>(itemIndex));
+        ++draw.stats->drawCalls;
+    }
+}
+
 void MeshPass::pruneUnusedAssets(const AssetManager& assets) {
+    // Asset leases keep an asset alive until every frame that drew it retired,
+    // so geometry ranges and material indices can be reused immediately.
     std::erase_if(m_meshes, [&](const auto& entry) {
         if (assets.mesh(handleFromKey<MeshHandle>(entry.first)) != nullptr) {
             return false;
         }
-        const GpuMesh& mesh = entry.second;
-        if (mesh.vertices.buffer) {
-            vmaDestroyBuffer(m_allocator, mesh.vertices.buffer, mesh.vertices.allocation);
-        }
-        if (mesh.indices.buffer) {
-            vmaDestroyBuffer(m_allocator, mesh.indices.buffer, mesh.indices.allocation);
-        }
+        m_geometry->free(entry.second.geometry);
         return true;
     });
     std::erase_if(m_textures, [&](const auto& entry) {
         if (assets.texture(handleFromKey<TextureHandle>(entry.first)) != nullptr) {
             return false;
         }
-        const GpuTexture& texture = entry.second;
-        if (texture.srgbView) {
-            vkDestroyImageView(m_device, texture.srgbView, nullptr);
-        }
-        if (texture.view) {
-            vkDestroyImageView(m_device, texture.view, nullptr);
-        }
-        if (texture.image) {
-            vmaDestroyImage(m_allocator, texture.image, texture.allocation);
-        }
+        retireTexture(entry.second);
         return true;
     });
     std::erase_if(m_materials, [&](const auto& entry) {
-        return assets.material(handleFromKey<MaterialHandle>(entry.first)) == nullptr;
+        if (assets.material(handleFromKey<MaterialHandle>(entry.first)) != nullptr) {
+            return false;
+        }
+        m_freeMaterialIndices.push_back(entry.second.index);
+        return true;
     });
 }
 
@@ -1765,18 +2094,23 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_selectionMaskPipeline.shutdown(context.device());
     m_outlinePipeline.shutdown(context.device());
     m_postProcess.shutdown(context);
-    for (auto& [_, mesh] : m_meshes) {
-        vmaDestroyBuffer(context.vmaAllocator(), mesh.vertices.buffer, mesh.vertices.allocation);
-        vmaDestroyBuffer(context.vmaAllocator(), mesh.indices.buffer, mesh.indices.allocation);
-    }
     m_meshes.clear();
+    for (GeometryPage& page : m_geometryPages) {
+        vmaDestroyBuffer(context.vmaAllocator(), page.vertices.buffer, page.vertices.allocation);
+        vmaDestroyBuffer(context.vmaAllocator(), page.indices.buffer, page.indices.allocation);
+    }
+    m_geometryPages.clear();
+    m_geometry.reset();
+    // Shutdown runs after the device is idle, so deferred releases may run now.
+    m_releaseQueue.collect(std::numeric_limits<uint64_t>::max());
     for (auto& [_, texture] : m_textures) {
-        vkDestroyImageView(context.device(), texture.srgbView, nullptr);
-        vkDestroyImageView(context.device(), texture.view, nullptr);
-        vmaDestroyImage(context.vmaAllocator(), texture.image, texture.allocation);
+        destroyTexture(texture);
     }
     m_textures.clear();
-    const auto destroyTexture = [&](GpuTexture& texture) {
+    m_textureTable.reset();
+    m_freeMaterialIndices.clear();
+    m_nextMaterialIndex = 0;
+    const auto destroyOwnedTexture = [&](GpuTexture& texture) {
         if (texture.srgbView) {
             vkDestroyImageView(context.device(), texture.srgbView, nullptr);
         }
@@ -1788,15 +2122,15 @@ void MeshPass::shutdown(const VulkanContext& context) {
         }
         texture = {};
     };
-    destroyTexture(m_whiteTexture);
-    destroyTexture(m_normalTexture);
+    destroyOwnedTexture(m_whiteTexture);
+    destroyOwnedTexture(m_normalTexture);
     for (VkImageView& view : m_shadowLayerViews) {
         if (view) {
             vkDestroyImageView(context.device(), view, nullptr);
             view = VK_NULL_HANDLE;
         }
     }
-    destroyTexture(m_shadowTexture);
+    destroyOwnedTexture(m_shadowTexture);
     m_materials.clear();
     for (auto& camera : m_cameras) {
         if (camera.buffer.buffer) {
@@ -1808,6 +2142,9 @@ void MeshPass::shutdown(const VulkanContext& context) {
         if (camera.skinPalettes.buffer) {
             vmaDestroyBuffer(context.vmaAllocator(), camera.skinPalettes.buffer, camera.skinPalettes.allocation);
         }
+        if (camera.materials.buffer) {
+            vmaDestroyBuffer(context.vmaAllocator(), camera.materials.buffer, camera.materials.allocation);
+        }
     }
 
     m_cameras.clear();
@@ -1815,12 +2152,15 @@ void MeshPass::shutdown(const VulkanContext& context) {
     if (m_descriptorPool) {
         vkDestroyDescriptorPool(context.device(), m_descriptorPool, nullptr);
     }
+    if (m_bindlessPool) {
+        vkDestroyDescriptorPool(context.device(), m_bindlessPool, nullptr);
+    }
 
     if (m_cameraLayout) {
         vkDestroyDescriptorSetLayout(context.device(), m_cameraLayout, nullptr);
     }
-    if (m_materialLayout) {
-        vkDestroyDescriptorSetLayout(context.device(), m_materialLayout, nullptr);
+    if (m_bindlessLayout) {
+        vkDestroyDescriptorSetLayout(context.device(), m_bindlessLayout, nullptr);
     }
     if (m_sampler) {
         vkDestroySampler(context.device(), m_sampler, nullptr);
@@ -1830,8 +2170,9 @@ void MeshPass::shutdown(const VulkanContext& context) {
     }
 
     m_descriptorPool = VK_NULL_HANDLE;
+    m_bindlessPool = VK_NULL_HANDLE;
     m_cameraLayout = VK_NULL_HANDLE;
-    m_materialLayout = VK_NULL_HANDLE;
+    m_bindlessLayout = VK_NULL_HANDLE;
     m_sampler = VK_NULL_HANDLE;
     m_shadowSampler = VK_NULL_HANDLE;
     m_shadowInitialized = false;

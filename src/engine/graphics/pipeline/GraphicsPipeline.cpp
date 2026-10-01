@@ -81,15 +81,12 @@ bool GraphicsPipeline::initGraphicsPipeline(VkDevice device, VkFormat colorForma
                                             VkDescriptorSetLayout materialLayout, VkShaderModule vertex,
                                             VkShaderModule fragment, VkPipelineCache pipelineCache, bool doubleSided,
                                             bool blending, const VkSpecializationInfo* fragmentSpecialization) {
-    constexpr uint32_t pushConstantSize = sizeof(glm::mat4) + sizeof(glm::vec4) * 4;
-    VkPushConstantRange pushConstants{
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, .offset = 0, .size = pushConstantSize};
+    // Per-object and per-material data live in storage buffers indexed by the
+    // instance, so mesh pipelines take no push constants.
     const VkDescriptorSetLayout setLayouts[]{cameraLayout, materialLayout};
     VkPipelineLayoutCreateInfo layout{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
                                       .setLayoutCount = static_cast<uint32_t>(std::size(setLayouts)),
-                                      .pSetLayouts = setLayouts,
-                                      .pushConstantRangeCount = 1,
-                                      .pPushConstantRanges = &pushConstants};
+                                      .pSetLayouts = setLayouts};
     if (!checkVulkan(vkCreatePipelineLayout(device, &layout, nullptr, &m_pipelineLayout), "Create pipeline layout")) {
         return false;
     }
@@ -145,9 +142,8 @@ void GraphicsPipeline::shutdown(VkDevice device) {
 bool GraphicsPipeline::initShadowPipeline(VkDevice device, VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
                                           VkDescriptorSetLayout materialLayout, VkShaderModule vertex,
                                           VkShaderModule fragment, VkPipelineCache pipelineCache) {
-    VkPushConstantRange pushConstants{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                      .offset = 0,
-                                      .size = sizeof(glm::vec4)};
+    // x selects the cascade; masking reads the object's material record.
+    VkPushConstantRange pushConstants{.stageFlags = VK_SHADER_STAGE_VERTEX_BIT, .offset = 0, .size = sizeof(glm::vec4)};
     const VkDescriptorSetLayout layouts[]{cameraLayout, materialLayout};
     VkPipelineLayoutCreateInfo layout{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
                                       .setLayoutCount = static_cast<uint32_t>(std::size(layouts)),

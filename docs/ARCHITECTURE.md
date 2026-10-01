@@ -336,8 +336,20 @@ Transition to PRESENT -> submit -> present
 ```
 
 The mesh pass maintains per-handle GPU caches. Camera buffers are per frame to
-avoid CPU/GPU write races. Material descriptors bind base color, normal,
-metallic-roughness, occlusion, and emissive textures; missing maps use defaults.
+avoid CPU/GPU write races. Materials are bindless: each frame slot owns a
+material-record buffer and a runtime-sized texture array whose slots are only
+rewritten after that slot's previous submission retires, so no descriptor is
+updated while in use. Every object record carries its material index, so draws
+of one primitive batch across materials and need no per-draw binding; missing
+maps use default slots. Meshes are suballocated into shared vertex/index pages
+and drawn by offset.
+
+GPU-driven submission is opt-in and uses two-phase occlusion culling. Objects
+visible last frame are drawn first; a min-depth pyramid built from that depth
+then tests every object, records its visibility for the next frame, and draws
+the newly visible remainder. A compaction pass packs non-empty draws so each
+pipeline and geometry page is one `vkCmdDrawIndexedIndirectCount`. Blended
+surfaces and editor outlines stay on CPU submission within the same frame.
 The primary directional and environment light components provide direct-light,
 shadow, sky, and ground settings. Material occlusion attenuates only indirect
 environment lighting, leaving direct and emissive contributions unchanged.

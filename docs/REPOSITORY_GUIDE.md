@@ -383,6 +383,24 @@ backpressure so the caller can defer work. Fence retirement is the correctness
 fallback on devices without timeline semaphores. Timestamp and byte counters
 remain attributable to retired uploads.
 
+### `src/engine/graphics/resources/BindlessTextureTable.*`
+
+CPU bookkeeping for the bindless texture array: stable slot assignment, reuse,
+and a per-frame dirty mask so each frame slot's descriptor set is rewritten only
+for slots that changed. Released slots fall back to a default view.
+
+### `src/engine/graphics/resources/GeometryArena.*`
+
+Suballocates meshes into shared vertex/index pages with VMA virtual blocks,
+opening a new page (sized to fit oversized meshes) when none has room. It owns
+no Vulkan buffers; the mesh pass creates one buffer pair per reported page.
+
+### `src/engine/graphics/passes/GpuDrivenPass.*`
+
+Two-phase GPU frustum and occlusion culling, the min-depth pyramid, and
+draw compaction into indirect-count commands. The caller owns render passes
+and the scene-depth transitions around the pyramid build.
+
 ### `src/engine/graphics/graph/RenderGraph.*`
 
 Compiles imported and transient resource declarations into a stable pass order,
@@ -403,7 +421,8 @@ Vulkan dynamic rendering.
 ### `src/engine/graphics/passes/MeshPass.*`
 
 Finds the primary camera, updates per-frame camera data, lazily uploads CPU
-assets to renderer-owned GPU caches, and creates material descriptors. It first
+assets to renderer-owned GPU caches, and publishes bindless material records and
+texture slots. It first
 renders a directional shadow map and then the scene into a floating-point HDR
 target using Cook-Torrance GGX lighting plus hemispherical sky/ground indirect
 lighting. Directional and environment scene components supply lighting and
@@ -433,6 +452,9 @@ render into bounded sub-extents; SSR misses preserve probe and IBL lighting.
 | `shaders/post.frag` | Combines HDR color into the tone-mapped output. |
 | `shaders/ssao.frag` | Estimates scalable screen-space ambient occlusion. |
 | `shaders/ssr.frag` | Traces scalable screen-space reflections with an explicit miss. |
+| `shaders/depth_pyramid.comp` | Reduces scene depth into a conservative min-depth (reversed-Z) pyramid. |
+| `shaders/gpu_visibility.comp` | Runs early/late two-phase frustum and occlusion culling. |
+| `shaders/compact_draws.comp` | Packs non-empty batches into indirect-count draw commands. |
 
 Recognized shader extensions automatically produce matching
 `build/shaders/<relative-path>.spv` files.

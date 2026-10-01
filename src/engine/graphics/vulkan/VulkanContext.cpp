@@ -70,12 +70,20 @@ bool supportsSwapchainExtension(VkPhysicalDevice device) {
 }
 
 bool supportsRenderingFeatures(VkPhysicalDevice device) {
-    VkPhysicalDeviceVulkan13Features renderingFeatures{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+    VkPhysicalDeviceVulkan12Features indexingFeatures{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceVulkan13Features renderingFeatures{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+                                                       .pNext = &indexingFeatures};
     VkPhysicalDeviceFeatures2 features{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
                                        .pNext = &renderingFeatures};
     vkGetPhysicalDeviceFeatures2(device, &features);
+    // Materials are bound through one runtime-sized, non-uniformly indexed
+    // texture array, so these descriptor-indexing features are mandatory.
+    const bool bindlessTextures = indexingFeatures.runtimeDescriptorArray &&
+                                  indexingFeatures.descriptorBindingPartiallyBound &&
+                                  indexingFeatures.descriptorBindingVariableDescriptorCount &&
+                                  indexingFeatures.shaderSampledImageArrayNonUniformIndexing;
     return renderingFeatures.dynamicRendering && renderingFeatures.synchronization2 &&
-           features.features.samplerAnisotropy;
+           features.features.samplerAnisotropy && bindlessTextures;
 }
 
 uint32_t findGraphicsQueueFamily(VkPhysicalDevice device, const Surface& surface) {
@@ -195,7 +203,8 @@ bool VulkanContext::initPhysicalDevice(const Surface& surface) {
         }
     }
     if (!m_pDevice) {
-        std::cerr << "No suitable Vulkan 1.4 graphics/presentation device.\n";
+        std::cerr << "No suitable Vulkan 1.4 graphics/presentation device with dynamic rendering, "
+                     "synchronization2, and bindless texture support.\n";
         return false;
     }
     return true;
@@ -229,6 +238,7 @@ bool VulkanContext::initDevice() {
         .drawIndirectCount = supported12.drawIndirectCount,
         .descriptorIndexing = supported12.descriptorIndexing,
         .shaderSampledImageArrayNonUniformIndexing = supported12.shaderSampledImageArrayNonUniformIndexing,
+        .descriptorBindingSampledImageUpdateAfterBind = supported12.descriptorBindingSampledImageUpdateAfterBind,
         .descriptorBindingPartiallyBound = supported12.descriptorBindingPartiallyBound,
         .descriptorBindingVariableDescriptorCount = supported12.descriptorBindingVariableDescriptorCount,
         .runtimeDescriptorArray = supported12.runtimeDescriptorArray,

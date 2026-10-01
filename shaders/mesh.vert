@@ -27,14 +27,6 @@ layout(std430, set = 0, binding = 3) readonly buffer SkinPalettes {
     mat4 joints[];
 } skinPalettes;
 
-layout(push_constant) uniform DrawData {
-    mat4 model;
-    vec4 baseColor;
-    vec4 material;
-    vec4 emissive;
-    vec4 surface;
-} drawData;
-
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inTexCoord;
@@ -47,6 +39,8 @@ layout(location = 2) out vec2 texCoord;
 layout(location = 3) out vec4 worldTangent;
 layout(location = 4) out vec4 currentClipPosition;
 layout(location = 5) out vec4 previousClipPosition;
+// skin.z carries the object's material record index.
+layout(location = 6) flat out uint materialIndex;
 
 void main() {
     RenderObject object = objects.values[gl_InstanceIndex];
@@ -73,4 +67,5 @@ void main() {
     currentClipPosition = camera.viewProjection * world;
     previousClipPosition = camera.previousViewProjection * object.previousModel * skin * vec4(inPosition, 1.0);
     gl_Position = currentClipPosition;
+    materialIndex = object.skin.z;
 }

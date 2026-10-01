@@ -1,0 +1,72 @@
+#version 450
+
+// Turns per-batch instance counts from gpu_visibility.comp into indexed
+// indirect draw commands. With compaction, non-empty batches are packed to the
+// front of their draw group and counted for vkCmdDrawIndexedIndirectCount;
+// without it, every batch keeps its own slot and empty ones draw nothing.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// Mirrors GpuDrivenBatch in GpuDrivenPass.hpp.
+struct BatchRecord {
+    uint indexCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+    uint group;
+    uint groupFirstBatch;
+    uint reserved0;
+    uint reserved1;
+};
+
+struct DrawCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer Batches {
+    BatchRecord values[];
+} batches;
+
+layout(std430, set = 0, binding = 1) readonly buffer InstanceCounts {
+    uint values[];
+} instanceCounts;
+
+// Two regions of maximumBatches commands: early, then late.
+layout(std430, set = 0, binding = 2) writeonly buffer DrawCommands {
+    DrawCommand values[];
+} drawCommands;
+
+// Two regions of maximumGroups counts: early, then late.
+layout(std430, set = 0, binding = 3) buffer DrawCounts {
+    uint values[];
+} drawCounts;
+
+layout(push_constant) uniform Settings {
+    uvec4 counts;  // x: batches, y: phase, z: maximum batches, w: maximum groups
+    uvec4 options; // x: maximum objects, y: compact (1) or keep slots (0)
+} settings;
+
+void main() {
+    uint batchIndex = gl_GlobalInvocationID.x;
+    if (batchIndex >= settings.counts.x) {
+        return;
+    }
+    uint phase = settings.counts.y;
+    BatchRecord batch = batches.values[batchIndex];
+    uint instanceCount = instanceCounts.values[phase * settings.counts.z + batchIndex];
+    uint outputIndex = phase * settings.counts.z + batchIndex;
+    if (settings.options.y != 0u) {
+        if (instanceCount == 0u) {
+            return;
+        }
+        uint slot = atomicAdd(drawCounts.values[phase * settings.counts.w + batch.group], 1u);
+        outputIndex = phase * settings.counts.z + batch.groupFirstBatch + slot;
+    }
+    drawCommands.values[outputIndex] = DrawCommand(batch.indexCount, instanceCount, batch.firstIndex,
+                                                   batch.vertexOffset,
+                                                   phase * settings.options.x + batch.firstInstance);
+}

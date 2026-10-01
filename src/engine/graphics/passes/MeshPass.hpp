@@ -8,13 +8,17 @@
 #include "../Rendering.hpp"
 #include "../TemporalQuality.hpp"
 #include "../pipeline/GraphicsPipeline.hpp"
+#include "../resources/BindlessTextureTable.hpp"
+#include "../resources/GeometryArena.hpp"
 #include "../resources/UploadContext.hpp"
 #include "../vulkan/VulkanContext.hpp"
 #include "GpuDrivenPass.hpp"
 #include "PostProcessPass.hpp"
+#include "engine/resources/DeferredReleaseQueue.hpp"
 #include <array>
 #include <map>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -34,7 +38,7 @@ class MeshPass {
     }
 
     uint32_t prewarmedPipelineCount() const {
-        return 10u + (m_gpuDrivenSupported ? 2u : 0u);
+        return 10u + (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
     }
 
     VkSemaphore uploadTimelineSemaphore() const {
@@ -61,7 +65,12 @@ class MeshPass {
         VmaAllocation allocation{VK_NULL_HANDLE};
     };
 
+    // A mesh lives in one shared geometry page; draws address it by offset.
     struct GpuMesh {
+        GeometryAllocation geometry;
+    };
+
+    struct GeometryPage {
         GpuBuffer vertices;
         GpuBuffer indices;
     };
@@ -71,10 +80,14 @@ class MeshPass {
         VkImageView view{VK_NULL_HANDLE};
         VkImageView srgbView{VK_NULL_HANDLE};
         VmaAllocation allocation{VK_NULL_HANDLE};
+        // Bindless array slots for the linear and sRGB views.
+        uint32_t linearSlot{0};
+        uint32_t srgbSlot{0};
     };
 
+    // Index of the material's record in the per-frame material buffer.
     struct GpuMaterial {
-        VkDescriptorSet descriptor{VK_NULL_HANDLE};
+        uint32_t index{0};
     };
 
     struct CameraBuffer {
@@ -85,6 +98,13 @@ class MeshPass {
         void* objectsMapped{nullptr};
         GpuBuffer skinPalettes;
         void* skinPalettesMapped{nullptr};
+        GpuBuffer materials;
+        void* materialsMapped{nullptr};
+        // Each frame in flight owns a bindless set, rewritten only after the
+        // frame's previous submission retired.
+        VkDescriptorSet bindlessDescriptor{VK_NULL_HANDLE};
+        // Same bindings, but objects come from the GPU culling output.
+        VkDescriptorSet gpuDrivenDescriptor{VK_NULL_HANDLE};
     };
 
     struct RenderItem {
@@ -103,14 +123,33 @@ class MeshPass {
         glm::vec3 boundsCenter{0.0f};
         float boundsRadius{0.0f};
         bool outlined{false};
-        bool newlySpawned{true};
         std::vector<glm::mat4> jointPalette;
         uint32_t skinPaletteOffset{0};
     };
 
+    enum class SceneAttachments {
+        Clear,
+        // Continue a scene pass whose attachments the caller already prepared.
+        Preserve,
+    };
+
+    enum class ShadedItems {
+        All,
+        BlendedOnly,
+    };
+
     bool createDescriptors(const VulkanContext& context, uint32_t frameCount);
-    bool uploadBuffer(const void* data, VkDeviceSize size, VkBufferUsageFlags usage, GpuBuffer& output);
+    bool createBindlessDescriptors(const VulkanContext& context, uint32_t frameCount);
+    bool createGpuDrivenDescriptors();
+    bool uploadToBuffer(const void* data, VkDeviceSize size, VkBuffer destination, VkDeviceSize destinationOffset);
+    bool ensureGeometryPage(uint32_t page);
     bool uploadTexture(const TextureAsset& texture, GpuTexture& output);
+    bool assignTextureSlots(GpuTexture& texture);
+    void retireTexture(const GpuTexture& texture);
+    void destroyTexture(const GpuTexture& texture);
+    void writeMaterialRecords(uint32_t frameIndex, const AssetManager& assets);
+    void updateBindlessDescriptor(uint32_t frameIndex);
+    void bindGeometry(VkCommandBuffer commandBuffer, const GpuMesh& mesh, std::optional<uint32_t>& boundPage) const;
     const GpuMesh* ensureMesh(MeshHandle handle, const AssetManager& assets);
     const GpuTexture* ensureTexture(TextureHandle handle, const AssetManager& assets);
     const GpuMaterial* ensureMaterial(MaterialHandle handle, const AssetManager& assets);
@@ -131,6 +170,15 @@ class MeshPass {
         GraphicsPipeline blendDoubleSided;
     };
 
+    // Per-frame state shared by the draw-recording helpers.
+    struct DrawContext {
+        VkCommandBuffer commandBuffer{VK_NULL_HANDLE};
+        uint32_t frameIndex{0};
+        const MeshPipelineSet* pipelines{nullptr};
+        VkQueryPool timestampQueries{VK_NULL_HANDLE};
+        RenderStats* stats{nullptr};
+    };
+
     bool createPipeline(VkFormat colorFormat, VkFormat depthFormat);
     // Returns the cached pipelines for a variant, compiling them on first use.
     const MeshPipelineSet* meshPipelines(MeshShadingVariant variant);
@@ -141,8 +189,19 @@ class MeshPass {
     bool recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, const std::vector<RenderItem>& items,
                       const DirectionalLightComponent& light, const std::array<glm::mat4, 3>& lightViewProjections,
                       uint32_t cascadeCount, const std::array<bool, 3>& dirtyCascades, RenderStats& stats);
-    void beginRendering(VkCommandBuffer commandBuffer, VkImage colorImage, VkImageView colorView,
-                        VkImageView motionView, VkImage depthImage, VkImageView depthView, VkExtent2D extent) const;
+    void beginRendering(VkCommandBuffer commandBuffer, VkImageView colorView, VkImageView motionView,
+                        VkImage depthImage, VkImageView depthView, VkExtent2D extent,
+                        SceneAttachments attachments) const;
+    bool prepareGpuDrivenFrame(uint32_t frameIndex);
+    void recordGpuDrivenGroups(const DrawContext& draw, GpuCullPhase phase);
+    void prepareDepthForPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const;
+    void restoreDepthAfterPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const;
+    // Fills m_visibleItems with what the CPU submits this frame, in draw order.
+    bool collectCpuSubmittedItems(bool gpuDrivenActive, const glm::vec3& cameraPosition);
+    void uploadCpuSubmittedObjects(uint32_t frameIndex);
+    void recordSelectionMask(const DrawContext& draw);
+    void recordShadedItems(const DrawContext& draw, ShadedItems selection);
+    void recordOutlines(const DrawContext& draw);
 
     VkDevice m_device{VK_NULL_HANDLE};
     VkPipelineCache m_pipelineCache{VK_NULL_HANDLE};
@@ -150,13 +209,26 @@ class MeshPass {
     UploadContext m_uploadContext;
     UploadContext m_textureUploadContext;
     VkDescriptorSetLayout m_cameraLayout{VK_NULL_HANDLE};
-    VkDescriptorSetLayout m_materialLayout{VK_NULL_HANDLE};
+    VkDescriptorSetLayout m_bindlessLayout{VK_NULL_HANDLE};
     VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
+    VkDescriptorPool m_bindlessPool{VK_NULL_HANDLE};
     VkSampler m_sampler{VK_NULL_HANDLE};
     std::vector<CameraBuffer> m_cameras;
+    std::unique_ptr<BindlessTextureTable> m_textureTable;
+    uint32_t m_whiteSlot{0};
+    uint32_t m_whiteSrgbSlot{0};
+    uint32_t m_normalSlot{0};
+    std::unique_ptr<GeometryArena> m_geometry;
+    std::vector<GeometryPage> m_geometryPages;
     std::unordered_map<uint64_t, GpuMesh> m_meshes;
     std::unordered_map<uint64_t, GpuTexture> m_textures;
     std::unordered_map<uint64_t, GpuMaterial> m_materials;
+    std::vector<uint32_t> m_freeMaterialIndices;
+    uint32_t m_nextMaterialIndex{0};
+    // Native resources a frame in flight may still reference, released once
+    // every frame recorded before their retirement has completed.
+    DeferredReleaseQueue m_releaseQueue;
+    uint64_t m_frameSerial{0};
     std::vector<RenderItem> m_renderItems;
     std::unordered_map<RenderObjectId, std::vector<size_t>> m_objectItems;
     std::unordered_map<uint64_t, GpuSceneHandle> m_gpuRecords;
@@ -189,9 +261,11 @@ class MeshPass {
     PostProcessPass m_postProcess;
     GpuDrivenPass m_gpuDrivenPass;
     bool m_gpuDrivenSupported{false};
+    std::vector<const RenderItem*> m_gpuDrivenCandidates;
+    std::vector<IndirectDrawKey> m_gpuDrivenKeys;
+    IndirectDrawPlan m_drawPlan;
     std::vector<GpuDrivenObjectRecord> m_gpuDrivenObjects;
     std::vector<GpuDrivenBatch> m_gpuDrivenBatches;
-    std::vector<const RenderItem*> m_gpuDrivenBatchItems;
     glm::vec3 m_previousCameraPosition{0.0f};
     glm::vec3 m_previousCameraForward{0.0f, 0.0f, -1.0f};
     glm::mat4 m_previousViewProjection{1.0f};

@@ -261,6 +261,8 @@ add_library(zenith_engine STATIC
     src/engine/graphics/pipeline/ComputePipeline.cpp
     src/engine/graphics/resources/FrameResources.cpp
     src/engine/graphics/resources/UploadContext.cpp
+    src/engine/graphics/resources/BindlessTextureTable.cpp
+    src/engine/graphics/resources/GeometryArena.cpp
     src/engine/graphics/resources/ViewportTarget.cpp
     src/engine/graphics/shader/ShaderModule.cpp
     src/engine/graphics/surface/Surface.cpp
@@ -660,6 +662,10 @@ if(BUILD_TESTING)
     add_executable(zenith_render_submission_tests tests/engine/RenderSubmissionTests.cpp)
     target_link_libraries(zenith_render_submission_tests PRIVATE zenith_engine)
     add_test(NAME zenith_render_submission COMMAND zenith_render_submission_tests)
+
+    add_executable(zenith_gpu_resource_table_tests tests/engine/GpuResourceTableTests.cpp)
+    target_link_libraries(zenith_gpu_resource_table_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_gpu_resource_table COMMAND zenith_gpu_resource_table_tests)
 
     add_executable(zenith_frame_task_graph_tests tests/engine/FrameTaskGraphTests.cpp)
     target_link_libraries(zenith_frame_task_graph_tests PRIVATE zenith_engine)

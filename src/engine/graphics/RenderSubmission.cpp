@@ -220,3 +220,31 @@ std::vector<size_t> stableRenderOrder(std::span<const RenderOrderKey> keys) {
     });
     return order;
 }
+
+void buildIndirectDrawPlan(std::span<const IndirectDrawKey> instances, IndirectDrawPlan& plan) {
+    plan.batches.clear();
+    plan.groups.clear();
+    plan.instanceOrder.resize(instances.size());
+    plan.instanceBatch.resize(instances.size());
+    std::iota(plan.instanceOrder.begin(), plan.instanceOrder.end(), 0u);
+    std::ranges::stable_sort(plan.instanceOrder, [instances](uint32_t first, uint32_t second) {
+        return instances[first] < instances[second];
+    });
+    for (uint32_t slot = 0; slot < plan.instanceOrder.size(); ++slot) {
+        const IndirectDrawKey& key = instances[plan.instanceOrder[slot]];
+        if (plan.batches.empty() || plan.batches.back().key != key) {
+            const bool newGroup = plan.groups.empty() || plan.groups.back().pipeline != key.pipeline ||
+                                  plan.groups.back().geometryPage != key.geometryPage;
+            if (newGroup) {
+                plan.groups.push_back({.pipeline = key.pipeline,
+                                       .geometryPage = key.geometryPage,
+                                       .firstBatch = static_cast<uint32_t>(plan.batches.size())});
+            }
+            plan.batches.push_back(
+                {.key = key, .firstInstance = slot, .group = static_cast<uint32_t>(plan.groups.size() - 1)});
+            ++plan.groups.back().batchCount;
+        }
+        ++plan.batches.back().instanceCount;
+        plan.instanceBatch[slot] = static_cast<uint32_t>(plan.batches.size() - 1);
+    }
+}

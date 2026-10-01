@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : require
 
 const float PI = 3.14159265359;
 
@@ -28,19 +29,27 @@ layout(set = 0, binding = 0) uniform CameraData {
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
 
-layout(set = 1, binding = 0) uniform sampler2D baseColorMap;
-layout(set = 1, binding = 1) uniform sampler2D normalMap;
-layout(set = 1, binding = 2) uniform sampler2D metallicRoughnessMap;
-layout(set = 1, binding = 3) uniform sampler2D occlusionMap;
-layout(set = 1, binding = 4) uniform sampler2D emissiveMap;
-
-layout(push_constant) uniform DrawData {
-    mat4 model;
+// Mirrors MaterialRecord in MeshPass.cpp (std430).
+struct MaterialRecord {
     vec4 baseColor;
-    vec4 material;
-    vec4 emissive;
-    vec4 surface;
-} drawData;
+    vec4 factors;  // metallic, roughness, normal scale, occlusion strength
+    vec4 emissive; // rgb radiance; w unused
+    vec4 surface;  // alpha cutoff, alpha mode (0 opaque, 1 mask, 2 blend)
+    uvec4 textures; // bindless slots: base color, normal, metallic-roughness, occlusion
+    uvec4 extraTextures; // bindless slots: emissive
+};
+
+layout(std430, set = 0, binding = 4) readonly buffer Materials {
+    MaterialRecord values[];
+} materials;
+
+// Bindless material textures; slots come from MaterialRecord.
+layout(set = 1, binding = 0) uniform sampler materialSampler;
+layout(set = 1, binding = 1) uniform texture2D materialTextures[];
+
+vec4 sampleMaterialTexture(uint slot, vec2 uv) {
+    return texture(sampler2D(materialTextures[nonuniformEXT(slot)], materialSampler), uv);
+}
 
 layout(location = 0) in vec3 worldPosition;
 layout(location = 1) in vec3 worldNormal;
@@ -48,6 +57,7 @@ layout(location = 2) in vec2 texCoord;
 layout(location = 3) in vec4 worldTangent;
 layout(location = 4) in vec4 currentClipPosition;
 layout(location = 5) in vec4 previousClipPosition;
+layout(location = 6) flat in uint materialIndex;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outMotionReactive;
 
@@ -156,24 +166,25 @@ vec3 directResponse(vec3 normal, vec3 viewDirection, vec3 lightDirection, float 
 }
 
 void main() {
-    vec4 sampledBase = texture(baseColorMap, texCoord);
-    float alpha = sampledBase.a * drawData.baseColor.a;
-    if (drawData.surface.y > 0.5 && drawData.surface.y < 1.5 && alpha < drawData.surface.x) {
+    MaterialRecord material = materials.values[materialIndex];
+    vec4 sampledBase = sampleMaterialTexture(material.textures.x, texCoord);
+    float alpha = sampledBase.a * material.baseColor.a;
+    if (material.surface.y > 0.5 && material.surface.y < 1.5 && alpha < material.surface.x) {
         discard;
     }
-    vec3 albedo = sampledBase.rgb * drawData.baseColor.rgb;
-    vec4 orm = texture(metallicRoughnessMap, texCoord);
-    float metallic = clamp(orm.b * drawData.material.x, 0.0, 1.0);
-    float roughness = clamp(orm.g * drawData.material.y, 0.045, 1.0);
-    float occlusion = mix(1.0, texture(occlusionMap, texCoord).r, drawData.material.w);
+    vec3 albedo = sampledBase.rgb * material.baseColor.rgb;
+    vec4 orm = sampleMaterialTexture(material.textures.z, texCoord);
+    float metallic = clamp(orm.b * material.factors.x, 0.0, 1.0);
+    float roughness = clamp(orm.g * material.factors.y, 0.045, 1.0);
+    float occlusion = mix(1.0, sampleMaterialTexture(material.textures.w, texCoord).r, material.factors.w);
 
     vec3 tangent = normalize(worldTangent.xyz);
     vec3 geometricNormal = normalize(worldNormal);
     vec3 normal = geometricNormal;
     tangent = normalize(tangent - normal * dot(normal, tangent));
     vec3 bitangent = cross(normal, tangent) * worldTangent.w;
-    vec3 mappedNormal = texture(normalMap, texCoord).xyz * 2.0 - 1.0;
-    mappedNormal.xy *= drawData.material.z;
+    vec3 mappedNormal = sampleMaterialTexture(material.textures.y, texCoord).xyz * 2.0 - 1.0;
+    mappedNormal.xy *= material.factors.z;
     normal = normalize(mat3(tangent, bitangent, normal) * mappedNormal);
 
     vec3 viewDirection = normalize(camera.cameraPosition.xyz - worldPosition);
@@ -226,7 +237,7 @@ void main() {
         indirect = indirectDiffuse + indirectSpecular;
     }
     indirect *= occlusion;
-    vec3 emissive = texture(emissiveMap, texCoord).rgb * drawData.emissive.rgb;
+    vec3 emissive = sampleMaterialTexture(material.extraTextures.x, texCoord).rgb * material.emissive.rgb;
     vec3 color = direct + indirect + emissive;
     if (SHADOW_CASCADE_COUNT > 1 && camera.renderingSettings.w > 0.5) {
         const vec3 cascadeColors[3] = vec3[3](vec3(1.0, 0.35, 0.35), vec3(0.35, 1.0, 0.35),
@@ -236,7 +247,7 @@ void main() {
     outColor = vec4(color, alpha);
     vec2 currentUv = currentClipPosition.xy / max(abs(currentClipPosition.w), 0.00001) * 0.5 + 0.5;
     vec2 previousUv = previousClipPosition.xy / max(abs(previousClipPosition.w), 0.00001) * 0.5 + 0.5;
-    float reactive = max(drawData.surface.y > 1.5 ? alpha : 0.0,
+    float reactive = max(material.surface.y > 1.5 ? alpha : 0.0,
                          smoothstep(1.0, 4.0, dot(emissive, vec3(0.2126, 0.7152, 0.0722))));
     // Surfaces revealed by camera motion are detected in post.frag against the
     // previous frame's depth (stored in .w); only off-screen history is known here.
