@@ -9,6 +9,8 @@
 
 Scene::Scene() {
     m_changedTransforms.reserve(256);
+    m_dirtyTransformRoots.reserve(256);
+    m_transformAuditScratch.reserve(256);
     m_physicsLifecycleEvents.reserve(256);
 }
 
@@ -38,6 +40,7 @@ SceneResult Scene::createEntityWithId(SceneEntityId id, std::string name, Entity
     m_nextEntityId =
         id.value == std::numeric_limits<uint64_t>::max() ? id.value : std::max(m_nextEntityId, id.value + 1);
     entity = createdEntity;
+    m_dirtyTransformRoots.push_back(createdEntity);
     ++m_revisions.transform;
     ++m_renderPacketRevision;
     return {.success = true};
@@ -238,6 +241,8 @@ void Scene::clear() {
     m_registry.clear();
     m_nextEntityId = 1;
     m_changedTransforms.clear();
+    m_dirtyTransformRoots.clear();
+    m_transformAuditScratch.clear();
     m_physicsLifecycleEvents.clear();
     ++m_revisions.transform;
     ++m_revisions.renderable;
@@ -261,6 +266,9 @@ void Scene::replaceWith(Scene&& scene) {
     m_lastTransformUpdateStats = scene.m_lastTransformUpdateStats;
     m_revisions = nextRevisions;
     m_changedTransforms = std::move(scene.m_changedTransforms);
+    m_dirtyTransformRoots = std::move(scene.m_dirtyTransformRoots);
+    m_transformAuditScratch = std::move(scene.m_transformAuditScratch);
+    m_transformAuditCountdown = scene.m_transformAuditCountdown;
     m_physicsLifecycleEvents = std::move(scene.m_physicsLifecycleEvents);
     m_renderPacketRevision = nextRevision;
     scene.m_nextEntityId = 1;
@@ -284,6 +292,9 @@ void Scene::swap(Scene& other) noexcept {
                          .skin = nextRevisions.skin + 1,
                          .material = nextRevisions.material + 1};
     std::swap(m_changedTransforms, other.m_changedTransforms);
+    std::swap(m_dirtyTransformRoots, other.m_dirtyTransformRoots);
+    std::swap(m_transformAuditScratch, other.m_transformAuditScratch);
+    std::swap(m_transformAuditCountdown, other.m_transformAuditCountdown);
     std::swap(m_physicsLifecycleEvents, other.m_physicsLifecycleEvents);
     const uint64_t nextRevision = std::max(m_renderPacketRevision, other.m_renderPacketRevision) + 1;
     m_renderPacketRevision = nextRevision;
@@ -323,12 +334,49 @@ bool Scene::updateBranch(Entity entity, const glm::mat4& parentWorld, bool paren
 void Scene::updateWorldTransforms() {
     m_lastTransformUpdateStats = {};
     m_collectingTransformChanges = false;
-    auto view = m_registry.view<TransformComponent, RelationshipComponent>();
-    for (Entity entity : view) {
-        if (view.get<RelationshipComponent>(entity).parent == entt::null) {
-            updateBranch(entity, glm::mat4(1.0f), false);
+#ifndef NDEBUG
+    constexpr bool forceAudit = true;
+#else
+    const bool forceAudit = m_transformAuditCountdown == 0;
+    m_transformAuditCountdown = forceAudit ? 299 : m_transformAuditCountdown - 1;
+#endif
+    if (forceAudit) {
+        const auto view = m_registry.view<const TransformComponent, const RelationshipComponent>();
+        for (Entity entity : view) {
+            const auto* cache = m_registry.try_get<TransformCacheComponent>(entity);
+            const auto& transform = view.get<const TransformComponent>(entity);
+            const Entity parent = view.get<const RelationshipComponent>(entity).parent;
+            if (cache == nullptr || !cache->valid || cache->dirty || cache->local != transform.local ||
+                cache->parent != parent) {
+                markTransformDirty(entity);
+            }
         }
     }
+    m_transformAuditScratch.clear();
+    for (Entity entity : m_dirtyTransformRoots) {
+        if (!m_registry.valid(entity)) {
+            continue;
+        }
+        Entity root = entity;
+        for (Entity parent = m_registry.get_or_emplace<RelationshipComponent>(root).parent;
+             parent != entt::null && m_registry.valid(parent);
+             parent = m_registry.get_or_emplace<RelationshipComponent>(root).parent) {
+            if (std::ranges::find(m_dirtyTransformRoots, parent) == m_dirtyTransformRoots.end()) {
+                break;
+            }
+            root = parent;
+        }
+        if (std::ranges::find(m_transformAuditScratch, root) != m_transformAuditScratch.end()) {
+            continue;
+        }
+        m_transformAuditScratch.push_back(root);
+        const Entity parent = m_registry.get_or_emplace<RelationshipComponent>(root).parent;
+        const glm::mat4 parentWorld = parent != entt::null && m_registry.valid(parent)
+                                          ? m_registry.get<TransformComponent>(parent).world
+                                          : glm::mat4(1.0f);
+        updateBranch(root, parentWorld, false);
+    }
+    m_dirtyTransformRoots.clear();
     if (m_lastTransformUpdateStats.recomputed > 0) {
         ++m_revisions.transform;
         ++m_renderPacketRevision;
@@ -338,6 +386,9 @@ void Scene::updateWorldTransforms() {
 void Scene::markTransformDirty(Entity entity) {
     if (m_registry.valid(entity)) {
         m_registry.get_or_emplace<TransformCacheComponent>(entity).dirty = true;
+        if (std::ranges::find(m_dirtyTransformRoots, entity) == m_dirtyTransformRoots.end()) {
+            m_dirtyTransformRoots.push_back(entity);
+        }
     }
 }
 

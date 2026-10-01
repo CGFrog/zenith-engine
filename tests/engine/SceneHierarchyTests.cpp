@@ -38,6 +38,7 @@ int main() {
     expect(scene.lastTransformUpdateStats().recomputed == 0,
            "an unchanged hierarchy should reuse cached world transforms");
     scene.registry().get<TransformComponent>(child).local[3].x += 1.0f;
+    scene.markTransformDirty(child);
     scene.updateWorldTransforms();
     expect(scene.lastTransformUpdateStats().recomputed == 1, "a local transform change should update only that branch");
     const glm::mat4 originalWorld = scene.registry().get<TransformComponent>(child).world;

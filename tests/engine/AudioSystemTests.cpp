@@ -139,6 +139,7 @@ int main() {
     expect(std::abs(mixed[1]) > std::abs(mixed[0]), "right-side emitters pan toward the right channel");
     scene.registry().get<TransformComponent>(listener).local =
         glm::rotate(glm::mat4(1.0f), glm::pi<float>(), glm::vec3(0.0f, 1.0f, 0.0f));
+    scene.markTransformDirty(listener);
     scene.updateWorldTransforms();
     audio.syncScene(scene);
     audio.mix(mixed.data(), 1);

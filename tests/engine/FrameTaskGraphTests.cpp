@@ -1,5 +1,6 @@
 #include "engine/jobs/FrameTaskGraph.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <iostream>
 #include <mutex>
@@ -64,6 +65,23 @@ int main() {
     expect(persistentRuns.load(std::memory_order_relaxed) == 2,
            "persistent execution runs each stable range exactly once");
 
+    for (size_t workerCount : {size_t{1}, size_t{2}, size_t{4}, size_t{8}, size_t{0}}) {
+        FrameTaskExecutor executor({.workerCount = workerCount, .minimumGrainSize = 17});
+        std::vector<uint32_t> visits(997, 0);
+        FrameTaskGraph workerGraph(200 + workerCount, {.minimumGrainSize = 17});
+        workerGraph.add(
+            "worker-count matrix", {},
+            [&](const FrameTaskContext& context) {
+                for (size_t index = context.rangeBegin; index < context.rangeEnd; ++index) {
+                    ++visits[index];
+                }
+            },
+            visits.size());
+        const FrameTaskResult workerResult = executor.execute(workerGraph);
+        expect(workerResult.success && std::ranges::all_of(visits, [](uint32_t visitCount) { return visitCount == 1; }),
+               "1, 2, 4, 8, and automatic workers cover every stable range exactly once");
+    }
+
     std::vector<int> order;
     FrameTaskGraph deterministic(7, {.workerCount = 8, .minimumGrainSize = 1, .deterministic = true});
     deterministic.add(
@@ -77,5 +95,27 @@ int main() {
     cancelled.cancel();
     const FrameTaskResult cancelledResult = cancelled.execute();
     expect(!cancelledResult && cancelledResult.cancelled, "cancelled frame generations cannot publish work");
+
+    FrameTaskExecutor transitionExecutor({.workerCount = 4, .minimumGrainSize = 4});
+    for (uint64_t generation = 0; generation < 128; ++generation) {
+        FrameTaskGraph transition(generation, {.minimumGrainSize = 4});
+        std::atomic_uint32_t published{0};
+        transition.add(
+            "transition stress", {},
+            [&](const FrameTaskContext& context) {
+                if (!context.cancellationRequested()) {
+                    published.fetch_add(1, std::memory_order_relaxed);
+                }
+            },
+            64);
+        if ((generation % 3) == 0) {
+            transition.cancel();
+        }
+        const FrameTaskResult transitionResult = transitionExecutor.execute(transition);
+        expect((generation % 3) == 0 ? transitionResult.cancelled : transitionResult.success,
+               "transition stress preserves cancellation and generation state");
+        expect((generation % 3) == 0 ? published.load() == 0 : published.load() == 16,
+               "cancelled transitions cannot publish stale range outputs");
+    }
     return failures == 0 ? 0 : 1;
 }

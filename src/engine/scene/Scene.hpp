@@ -234,7 +234,10 @@ class Scene {
     SceneTransformUpdateStats m_lastTransformUpdateStats;
     SceneRevisions m_revisions;
     std::vector<Entity> m_changedTransforms;
+    std::vector<Entity> m_dirtyTransformRoots;
+    std::vector<Entity> m_transformAuditScratch;
     bool m_collectingTransformChanges{false};
+    uint32_t m_transformAuditCountdown{0};
     std::vector<PhysicsLifecycleEvent> m_physicsLifecycleEvents;
     uint64_t m_renderPacketRevision{1};
 };

@@ -23,6 +23,7 @@ void FirstPersonControllerSystem::updateView(Scene& scene, const FirstPersonCont
         scene.registry().get<TransformComponent>(controller.camera).local =
             glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, controller.halfHeight + controller.radius, 0.0f)) *
             orientation;
+        scene.markTransformDirty(controller.camera);
     }
 }
 

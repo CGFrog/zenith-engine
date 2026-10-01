@@ -254,11 +254,23 @@ bool GpuDrivenPass::resize(const VulkanContext&, VkExtent2D extent, VkImageView 
 }
 
 bool GpuDrivenPass::prepare(uint32_t frameIndex, std::span<const GpuDrivenObjectRecord> objects,
-                            std::span<const GpuDrivenBatch> batches) {
+                            std::span<const GpuDrivenBatch> batches, uint32_t referenceVisibleCount) {
     if (frameIndex >= m_frames.size() || objects.size() > m_maximumObjects || batches.size() > m_maximumBatches) {
         return false;
     }
     FrameData& frame = m_frames[frameIndex];
+    if (frame.hasRetiredSubmission && frame.batchCount > 0) {
+        vmaInvalidateAllocation(m_allocator, frame.commands.allocation, 0,
+                                sizeof(VkDrawIndexedIndirectCommand) * frame.batchCount);
+        const auto* retiredCommands = static_cast<const VkDrawIndexedIndirectCommand*>(frame.commands.mapped);
+        uint32_t retiredVisibleCount = 0;
+        for (uint32_t index = 0; index < frame.batchCount; ++index) {
+            retiredVisibleCount += retiredCommands[index].instanceCount;
+        }
+        if (retiredVisibleCount > frame.referenceVisibleCount) {
+            ++m_visibilityMismatchCount;
+        }
+    }
     if (!objects.empty()) {
         std::memcpy(frame.objects.mapped, objects.data(), objects.size_bytes());
     }
@@ -272,6 +284,8 @@ bool GpuDrivenPass::prepare(uint32_t frameIndex, std::span<const GpuDrivenObject
     }
     frame.objectCount = static_cast<uint32_t>(objects.size());
     frame.batchCount = static_cast<uint32_t>(batches.size());
+    frame.referenceVisibleCount = referenceVisibleCount;
+    frame.hasRetiredSubmission = true;
     vmaFlushAllocation(m_allocator, frame.objects.allocation, 0, objects.size_bytes());
     vmaFlushAllocation(m_allocator, frame.commands.allocation, 0,
                        sizeof(VkDrawIndexedIndirectCommand) * batches.size());
@@ -483,4 +497,5 @@ void GpuDrivenPass::shutdown(const VulkanContext&) {
     m_depthLayout = VK_NULL_HANDLE;
     m_device = VK_NULL_HANDLE;
     m_allocator = VK_NULL_HANDLE;
+    m_visibilityMismatchCount = 0;
 }

@@ -80,6 +80,7 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("object_records_updated", s.updatedObjectRecords, "count");
     sample("main_thread_allocations", s.mainThreadAllocations, "count");
     sample("indirect_commands", s.indirectCommandCount, "count");
+    sample("gpu_visibility_mismatches", s.gpuVisibilityMismatches, "count");
     sample("gpu.culling", s.gpuCullingMilliseconds);
     sample("tasks.queue_depth", s.taskQueueDepth, "count");
     sample("tasks.stolen_jobs", s.taskStolenJobs, "count");

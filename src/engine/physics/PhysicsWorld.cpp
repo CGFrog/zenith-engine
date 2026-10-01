@@ -579,6 +579,7 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
             relationship.parent != entt::null && scene.registry().valid(relationship.parent)
                 ? glm::inverse(scene.registry().get<TransformComponent>(relationship.parent).world) * world
                 : world;
+        scene.markTransformDirty(entity);
     }
 
     m_impl->contactEvents.clear();
@@ -613,6 +614,7 @@ void PhysicsWorld::interpolate(Scene& scene, float alpha) const {
             relationship.parent != entt::null && scene.registry().valid(relationship.parent)
                 ? glm::inverse(scene.registry().get<TransformComponent>(relationship.parent).world) * world
                 : world;
+        scene.markTransformDirty(entity);
     }
 }
 

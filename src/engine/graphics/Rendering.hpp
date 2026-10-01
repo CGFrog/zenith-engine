@@ -132,6 +132,7 @@ struct RenderStats {
     uint32_t updatedObjectRecords{0};
     uint32_t mainThreadAllocations{0};
     uint32_t indirectCommandCount{0};
+    uint32_t gpuVisibilityMismatches{0};
     double gpuCullingMilliseconds{0.0};
     uint32_t taskQueueDepth{0};
     uint32_t taskStolenJobs{0};

@@ -27,13 +27,18 @@ class GpuDrivenPass {
               uint32_t maximumObjects, uint32_t maximumBatches);
     bool resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
     bool prepare(uint32_t frameIndex, std::span<const GpuDrivenObjectRecord> objects,
-                 std::span<const GpuDrivenBatch> batches);
+                 std::span<const GpuDrivenBatch> batches, uint32_t referenceVisibleCount);
     bool record(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkBuffer visibleObjectBuffer,
                 VkDeviceSize visibleObjectOffset, const glm::mat4& viewProjection, bool depthHistoryValid,
                 bool bypassOcclusion, VkQueryPool timestampQueries);
     VkBuffer indirectBuffer(uint32_t frameIndex) const;
     uint32_t batchCount(uint32_t frameIndex) const;
     uint32_t mipLevels() const;
+
+    uint32_t visibilityMismatchCount() const {
+        return m_visibilityMismatchCount;
+    }
+
     void shutdown(const VulkanContext& context);
 
   private:
@@ -49,6 +54,8 @@ class GpuDrivenPass {
         VkDescriptorSet descriptor{VK_NULL_HANDLE};
         uint32_t objectCount{0};
         uint32_t batchCount{0};
+        uint32_t referenceVisibleCount{0};
+        bool hasRetiredSubmission{false};
     };
 
     bool createLayouts();
@@ -77,4 +84,5 @@ class GpuDrivenPass {
     uint32_t m_maximumObjects{0};
     uint32_t m_maximumBatches{0};
     bool m_pyramidInitialized{false};
+    uint32_t m_visibilityMismatchCount{0};
 };

@@ -817,17 +817,20 @@ bool EditorSession::drawGizmo(ApplicationContext& context, glm::vec2 position, g
         context.scene.registry().get<TransformComponent>(entity).local =
             parent == entt::null ? world
                                  : glm::inverse(context.scene.registry().get<TransformComponent>(parent).world) * world;
+        context.scene.markTransformDirty(entity);
         context.scene.updateWorldTransforms();
     }
     const bool usingGizmo = ImGuizmo::IsUsing();
     if (usingGizmo && !m_gizmoWasUsing) {
         const glm::mat4 editedLocal = context.scene.registry().get<TransformComponent>(entity).local;
         context.scene.registry().get<TransformComponent>(entity).local = localBeforeManipulation;
+        context.scene.markTransformDirty(entity);
         context.scene.updateWorldTransforms();
         if (!captureSnapshot(context, m_gizmoBefore)) {
             m_gizmoBefore.clear();
         }
         context.scene.registry().get<TransformComponent>(entity).local = editedLocal;
+        context.scene.markTransformDirty(entity);
         context.scene.updateWorldTransforms();
     } else if (!usingGizmo && m_gizmoWasUsing && !m_gizmoBefore.empty()) {
         commitMutation(context, "Transform Gizmo", {}, std::move(m_gizmoBefore));

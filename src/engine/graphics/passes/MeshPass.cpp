@@ -1162,14 +1162,11 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         std::cerr << "Renderable count exceeds the per-frame render capacity\n";
         return false;
     }
-    const bool containsBlendedObjects =
-        std::ranges::any_of(m_renderItems, [](const RenderItem& item) {
-            return item.material->alphaMode == MaterialAlphaMode::Blend;
-        });
+    const bool containsBlendedObjects = std::ranges::any_of(
+        m_renderItems, [](const RenderItem& item) { return item.material->alphaMode == MaterialAlphaMode::Blend; });
     const bool gpuDrivenRequested =
         rendering.settings().preferGpuDrivenSubmission || SDL_getenv("ZENITH_FORCE_GPU_DRIVEN") != nullptr;
-    const bool gpuDrivenActive = m_gpuDrivenSupported && gpuDrivenRequested &&
-                                 rendering.capabilities().gpuDrivenPath &&
+    const bool gpuDrivenActive = m_gpuDrivenSupported && gpuDrivenRequested && rendering.capabilities().gpuDrivenPath &&
                                  rendering.capabilities().descriptorIndexing &&
                                  rendering.capabilities().multiDrawIndirect && !containsBlendedObjects &&
                                  rendering.m_outlinedObjects.empty();
@@ -1282,18 +1279,19 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             m_gpuDrivenBatchItems.push_back(&first);
             for (size_t index = begin; index < end; ++index) {
                 RenderItem& item = m_renderItems[index];
-                m_gpuDrivenObjects.push_back({.model = item.world,
-                                              .bounds = {item.boundsCenter, item.boundsRadius},
-                                              .draw = {batchIndex, item.newlySpawned ? 1u : 0u, 0u, 0u},
-                                              .skin = {item.skinPaletteOffset,
-                                                       static_cast<uint32_t>(item.jointPalette.size()), 0u, 0u}});
+                m_gpuDrivenObjects.push_back(
+                    {.model = item.world,
+                     .bounds = {item.boundsCenter, item.boundsRadius},
+                     .draw = {batchIndex, item.newlySpawned ? 1u : 0u, 0u, 0u},
+                     .skin = {item.skinPaletteOffset, static_cast<uint32_t>(item.jointPalette.size()), 0u, 0u}});
             }
             begin = end;
         }
-        if (!m_gpuDrivenPass.prepare(frameIndex, m_gpuDrivenObjects, m_gpuDrivenBatches) ||
+        if (!m_gpuDrivenPass.prepare(frameIndex, m_gpuDrivenObjects, m_gpuDrivenBatches,
+                                     static_cast<uint32_t>(m_visibility.visibleInstances.size())) ||
             !m_gpuDrivenPass.record(commandBuffer, frameIndex, m_cameras[frameIndex].objects.buffer,
-                                    sizeof(ObjectData) * mainObjectBase, cameraData.viewProjection,
-                                    m_depthInitialized, cameraCut, timestampQueries)) {
+                                    sizeof(ObjectData) * mainObjectBase, cameraData.viewProjection, m_depthInitialized,
+                                    cameraCut, timestampQueries)) {
             return false;
         }
         for (RenderItem& item : m_renderItems) {
@@ -1344,8 +1342,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
                 boundMesh = item.gpuMesh;
             }
             if (boundMaterial != item.gpuMaterial) {
-                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipeline->layout(), 1,
-                                        1, &item.gpuMaterial->descriptor, 0, nullptr);
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipeline->layout(), 1, 1,
+                                        &item.gpuMaterial->descriptor, 0, nullptr);
                 boundMaterial = item.gpuMaterial;
             }
             PushConstants push;
@@ -1365,174 +1363,175 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         stats.visibleCount = static_cast<uint32_t>(m_visibility.visibleInstances.size());
         stats.culledCount = m_visibility.frustumCulled;
         stats.indirectCommandCount = static_cast<uint32_t>(m_gpuDrivenBatches.size());
+        stats.gpuVisibilityMismatches = m_gpuDrivenPass.visibilityMismatchCount();
         stats.cpuOpaqueMilliseconds =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - opaqueCpuBegin).count();
         if (timestampQueries) {
             vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 2);
         }
     } else {
-    m_visibleItems.clear();
-    stats.culledCount += m_visibility.frustumCulled + m_visibility.occlusionCulled;
-    stats.indirectCommandCount = static_cast<uint32_t>(m_visibility.commands.size());
-    for (GpuSceneHandle handle : m_visibility.visibleInstances) {
-        if (const auto found = m_gpuHandleItems.find(handleKey(handle)); found != m_gpuHandleItems.end()) {
-            m_visibleItems.push_back(&m_renderItems[found->second]);
-        }
-    }
-    std::stable_sort(m_visibleItems.begin(), m_visibleItems.end(),
-                     [&cameraPosition](const RenderItem* first, const RenderItem* second) {
-                         const bool firstBlended = first->material->alphaMode == MaterialAlphaMode::Blend;
-                         const bool secondBlended = second->material->alphaMode == MaterialAlphaMode::Blend;
-                         if (firstBlended != secondBlended) {
-                             return !firstBlended;
-                         }
-                         if (!firstBlended) {
-                             return false;
-                         }
-                         const glm::vec3 firstOffset = first->boundsCenter - cameraPosition;
-                         const glm::vec3 secondOffset = second->boundsCenter - cameraPosition;
-                         return glm::dot(firstOffset, firstOffset) > glm::dot(secondOffset, secondOffset);
-                     });
-    if (m_visibleItems.size() > maximumObjectsPerFrame) {
-        vkCmdEndRendering(commandBuffer);
-        std::cerr << "Visible object count exceeds the per-frame render capacity\n";
-        return false;
-    }
-    auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped) + mainObjectBase;
-    for (size_t index = 0; index < m_visibleItems.size(); ++index) {
-        objectData[index].model = m_visibleItems[index]->world;
-        objectData[index].skin = {m_visibleItems[index]->skinPaletteOffset,
-                                  static_cast<uint32_t>(m_visibleItems[index]->jointPalette.size()), 0, 0};
-    }
-    vmaFlushAllocation(m_allocator, m_cameras[frameIndex].objects.allocation, 0, VK_WHOLE_SIZE);
-
-    if (!rendering.m_outlinedObjects.empty()) {
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_selectionMaskPipeline.handle());
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_selectionMaskPipeline.layout(), 0, 1,
-                                &m_cameras[frameIndex].descriptor, 0, nullptr);
-        const GpuMesh* outlinedMesh = nullptr;
-        for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
-            const RenderItem& item = *m_visibleItems[itemIndex];
-            if (!item.outlined) {
-                continue;
+        m_visibleItems.clear();
+        stats.culledCount += m_visibility.frustumCulled + m_visibility.occlusionCulled;
+        stats.indirectCommandCount = static_cast<uint32_t>(m_visibility.commands.size());
+        for (GpuSceneHandle handle : m_visibility.visibleInstances) {
+            if (const auto found = m_gpuHandleItems.find(handleKey(handle)); found != m_gpuHandleItems.end()) {
+                m_visibleItems.push_back(&m_renderItems[found->second]);
             }
-            if (outlinedMesh != item.gpuMesh) {
+        }
+        std::stable_sort(m_visibleItems.begin(), m_visibleItems.end(),
+                         [&cameraPosition](const RenderItem* first, const RenderItem* second) {
+                             const bool firstBlended = first->material->alphaMode == MaterialAlphaMode::Blend;
+                             const bool secondBlended = second->material->alphaMode == MaterialAlphaMode::Blend;
+                             if (firstBlended != secondBlended) {
+                                 return !firstBlended;
+                             }
+                             if (!firstBlended) {
+                                 return false;
+                             }
+                             const glm::vec3 firstOffset = first->boundsCenter - cameraPosition;
+                             const glm::vec3 secondOffset = second->boundsCenter - cameraPosition;
+                             return glm::dot(firstOffset, firstOffset) > glm::dot(secondOffset, secondOffset);
+                         });
+        if (m_visibleItems.size() > maximumObjectsPerFrame) {
+            vkCmdEndRendering(commandBuffer);
+            std::cerr << "Visible object count exceeds the per-frame render capacity\n";
+            return false;
+        }
+        auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped) + mainObjectBase;
+        for (size_t index = 0; index < m_visibleItems.size(); ++index) {
+            objectData[index].model = m_visibleItems[index]->world;
+            objectData[index].skin = {m_visibleItems[index]->skinPaletteOffset,
+                                      static_cast<uint32_t>(m_visibleItems[index]->jointPalette.size()), 0, 0};
+        }
+        vmaFlushAllocation(m_allocator, m_cameras[frameIndex].objects.allocation, 0, VK_WHOLE_SIZE);
+
+        if (!rendering.m_outlinedObjects.empty()) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_selectionMaskPipeline.handle());
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_selectionMaskPipeline.layout(), 0,
+                                    1, &m_cameras[frameIndex].descriptor, 0, nullptr);
+            const GpuMesh* outlinedMesh = nullptr;
+            for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
+                const RenderItem& item = *m_visibleItems[itemIndex];
+                if (!item.outlined) {
+                    continue;
+                }
+                if (outlinedMesh != item.gpuMesh) {
+                    const VkDeviceSize offset = 0;
+                    vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
+                    vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                    outlinedMesh = item.gpuMesh;
+                }
+                vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, 1, item.primitive->firstIndex, 0,
+                                 mainObjectBase + static_cast<uint32_t>(itemIndex));
+                ++stats.drawCalls;
+            }
+        }
+
+        const GraphicsPipeline* boundPipeline = nullptr;
+        const GpuMesh* boundMesh = nullptr;
+        const GpuMaterial* boundMaterial = nullptr;
+        const auto opaqueCpuBegin = std::chrono::steady_clock::now();
+        auto blendedCpuBegin = opaqueCpuBegin;
+        bool opaqueTimestampWritten = false;
+        for (size_t itemIndex = 0; itemIndex < m_visibleItems.size();) {
+            const RenderItem& item = *m_visibleItems[itemIndex];
+            if (!opaqueTimestampWritten && item.material->alphaMode == MaterialAlphaMode::Blend) {
+                if (timestampQueries) {
+                    vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 2);
+                }
+                blendedCpuBegin = std::chrono::steady_clock::now();
+                stats.cpuOpaqueMilliseconds =
+                    std::chrono::duration<double, std::milli>(blendedCpuBegin - opaqueCpuBegin).count();
+                opaqueTimestampWritten = true;
+            }
+            size_t batchEnd = itemIndex + 1;
+            while (batchEnd < m_visibleItems.size()) {
+                const RenderItem& candidate = *m_visibleItems[batchEnd];
+                if (candidate.gpuMesh != item.gpuMesh || candidate.gpuMaterial != item.gpuMaterial ||
+                    candidate.primitive->firstIndex != item.primitive->firstIndex ||
+                    candidate.primitive->indexCount != item.primitive->indexCount ||
+                    candidate.material->alphaMode != item.material->alphaMode ||
+                    candidate.material->doubleSided != item.material->doubleSided) {
+                    break;
+                }
+                ++batchEnd;
+            }
+            const GraphicsPipeline* pipeline = nullptr;
+            if (item.material->alphaMode == MaterialAlphaMode::Blend) {
+                pipeline = item.material->doubleSided ? &m_blendDoubleSidedPipeline : &m_blendPipeline;
+            } else {
+                pipeline = item.material->doubleSided ? &m_doubleSidedPipeline : &m_pipeline;
+            }
+            if (pipeline != boundPipeline) {
+                vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->handle());
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout(), 0, 1,
+                                        &m_cameras[frameIndex].descriptor, 0, nullptr);
+                boundPipeline = pipeline;
+                boundMaterial = nullptr;
+            }
+            if (boundMesh != item.gpuMesh) {
                 const VkDeviceSize offset = 0;
                 vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
                 vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-                outlinedMesh = item.gpuMesh;
+                boundMesh = item.gpuMesh;
             }
-            vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, 1, item.primitive->firstIndex, 0,
+            if (boundMaterial != item.gpuMaterial) {
+                vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipeline->layout(), 1, 1,
+                                        &item.gpuMaterial->descriptor, 0, nullptr);
+                boundMaterial = item.gpuMaterial;
+            }
+            PushConstants push;
+            push.model = glm::mat4(1.0f);
+            push.baseColor = item.material->baseColor;
+            push.material = {item.material->metallic, item.material->roughness, item.material->normalScale,
+                             item.material->occlusionStrength};
+            push.emissive = {item.material->emissive * item.material->emissiveStrength, 0.0f};
+            push.surface = {item.material->alphaCutoff, static_cast<float>(item.material->alphaMode), 0.0f, 0.0f};
+            vkCmdPushConstants(commandBuffer, boundPipeline->layout(),
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+            const uint32_t instanceCount = static_cast<uint32_t>(batchEnd - itemIndex);
+            vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, instanceCount, item.primitive->firstIndex, 0,
                              mainObjectBase + static_cast<uint32_t>(itemIndex));
             ++stats.drawCalls;
+            stats.visibleCount += instanceCount;
+            stats.triangleCount += static_cast<uint64_t>(item.primitive->indexCount / 3) * instanceCount;
+            itemIndex = batchEnd;
         }
-    }
-
-    const GraphicsPipeline* boundPipeline = nullptr;
-    const GpuMesh* boundMesh = nullptr;
-    const GpuMaterial* boundMaterial = nullptr;
-    const auto opaqueCpuBegin = std::chrono::steady_clock::now();
-    auto blendedCpuBegin = opaqueCpuBegin;
-    bool opaqueTimestampWritten = false;
-    for (size_t itemIndex = 0; itemIndex < m_visibleItems.size();) {
-        const RenderItem& item = *m_visibleItems[itemIndex];
-        if (!opaqueTimestampWritten && item.material->alphaMode == MaterialAlphaMode::Blend) {
+        if (!opaqueTimestampWritten) {
             if (timestampQueries) {
                 vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 2);
             }
-            blendedCpuBegin = std::chrono::steady_clock::now();
             stats.cpuOpaqueMilliseconds =
-                std::chrono::duration<double, std::milli>(blendedCpuBegin - opaqueCpuBegin).count();
-            opaqueTimestampWritten = true;
-        }
-        size_t batchEnd = itemIndex + 1;
-        while (batchEnd < m_visibleItems.size()) {
-            const RenderItem& candidate = *m_visibleItems[batchEnd];
-            if (candidate.gpuMesh != item.gpuMesh || candidate.gpuMaterial != item.gpuMaterial ||
-                candidate.primitive->firstIndex != item.primitive->firstIndex ||
-                candidate.primitive->indexCount != item.primitive->indexCount ||
-                candidate.material->alphaMode != item.material->alphaMode ||
-                candidate.material->doubleSided != item.material->doubleSided) {
-                break;
-            }
-            ++batchEnd;
-        }
-        const GraphicsPipeline* pipeline = nullptr;
-        if (item.material->alphaMode == MaterialAlphaMode::Blend) {
-            pipeline = item.material->doubleSided ? &m_blendDoubleSidedPipeline : &m_blendPipeline;
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - opaqueCpuBegin).count();
         } else {
-            pipeline = item.material->doubleSided ? &m_doubleSidedPipeline : &m_pipeline;
+            stats.cpuBlendedMilliseconds =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - blendedCpuBegin).count();
         }
-        if (pipeline != boundPipeline) {
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->handle());
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout(), 0, 1,
-                                    &m_cameras[frameIndex].descriptor, 0, nullptr);
-            boundPipeline = pipeline;
-            boundMaterial = nullptr;
-        }
-        if (boundMesh != item.gpuMesh) {
-            const VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
-            vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-            boundMesh = item.gpuMesh;
-        }
-        if (boundMaterial != item.gpuMaterial) {
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipeline->layout(), 1, 1,
-                                    &item.gpuMaterial->descriptor, 0, nullptr);
-            boundMaterial = item.gpuMaterial;
-        }
-        PushConstants push;
-        push.model = glm::mat4(1.0f);
-        push.baseColor = item.material->baseColor;
-        push.material = {item.material->metallic, item.material->roughness, item.material->normalScale,
-                         item.material->occlusionStrength};
-        push.emissive = {item.material->emissive * item.material->emissiveStrength, 0.0f};
-        push.surface = {item.material->alphaCutoff, static_cast<float>(item.material->alphaMode), 0.0f, 0.0f};
-        vkCmdPushConstants(commandBuffer, boundPipeline->layout(),
-                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
-        const uint32_t instanceCount = static_cast<uint32_t>(batchEnd - itemIndex);
-        vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, instanceCount, item.primitive->firstIndex, 0,
-                         mainObjectBase + static_cast<uint32_t>(itemIndex));
-        ++stats.drawCalls;
-        stats.visibleCount += instanceCount;
-        stats.triangleCount += static_cast<uint64_t>(item.primitive->indexCount / 3) * instanceCount;
-        itemIndex = batchEnd;
-    }
-    if (!opaqueTimestampWritten) {
-        if (timestampQueries) {
-            vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 2);
-        }
-        stats.cpuOpaqueMilliseconds =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - opaqueCpuBegin).count();
-    } else {
-        stats.cpuBlendedMilliseconds =
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - blendedCpuBegin).count();
-    }
 
-    if (!rendering.m_outlinedObjects.empty()) {
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlinePipeline.handle());
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlinePipeline.layout(), 0, 1,
-                                &m_cameras[frameIndex].descriptor, 0, nullptr);
-        const GpuMesh* outlinedMesh = nullptr;
-        for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
-            const RenderItem& item = *m_visibleItems[itemIndex];
-            if (!item.outlined) {
-                continue;
+        if (!rendering.m_outlinedObjects.empty()) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlinePipeline.handle());
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlinePipeline.layout(), 0, 1,
+                                    &m_cameras[frameIndex].descriptor, 0, nullptr);
+            const GpuMesh* outlinedMesh = nullptr;
+            for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
+                const RenderItem& item = *m_visibleItems[itemIndex];
+                if (!item.outlined) {
+                    continue;
+                }
+                if (outlinedMesh != item.gpuMesh) {
+                    const VkDeviceSize offset = 0;
+                    vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
+                    vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                    outlinedMesh = item.gpuMesh;
+                }
+                const glm::vec4 outlineSettings{item.mesh->bounds.center, 2.0f};
+                vkCmdPushConstants(commandBuffer, m_outlinePipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
+                                   sizeof(outlineSettings), &outlineSettings);
+                vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, 1, item.primitive->firstIndex, 0,
+                                 mainObjectBase + static_cast<uint32_t>(itemIndex));
+                ++stats.drawCalls;
             }
-            if (outlinedMesh != item.gpuMesh) {
-                const VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(commandBuffer, 0, 1, &item.gpuMesh->vertices.buffer, &offset);
-                vkCmdBindIndexBuffer(commandBuffer, item.gpuMesh->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-                outlinedMesh = item.gpuMesh;
-            }
-            const glm::vec4 outlineSettings{item.mesh->bounds.center, 2.0f};
-            vkCmdPushConstants(commandBuffer, m_outlinePipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
-                               sizeof(outlineSettings), &outlineSettings);
-            vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, 1, item.primitive->firstIndex, 0,
-                             mainObjectBase + static_cast<uint32_t>(itemIndex));
-            ++stats.drawCalls;
         }
-    }
     }
 
     vkCmdEndRendering(commandBuffer);
