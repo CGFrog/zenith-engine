@@ -1,6 +1,18 @@
 #pragma once
 #include <volk.h>
 
+#include <cstdint>
+
+// Vertex buffer bindings shared by every mesh pipeline, one per stream of
+// PackedVertexStreams. Binding strides are dynamic state, so meshes without a
+// skin stream bind a single zero influence with stride 0.
+namespace mesh_vertex_binding {
+constexpr uint32_t position = 0;
+constexpr uint32_t attributes = 1;
+constexpr uint32_t skin = 2;
+constexpr uint32_t count = 3;
+} // namespace mesh_vertex_binding
+
 class GraphicsPipeline {
   public:
     GraphicsPipeline() = default;

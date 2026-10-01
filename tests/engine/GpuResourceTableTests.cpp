@@ -51,30 +51,45 @@ void testBindlessTable() {
 
 void testGeometryArena() {
     GeometryArena arena({.vertices = 100, .indices = 300});
-    const auto first = arena.allocate(60, 120);
-    const auto second = arena.allocate(40, 180);
+    const auto first = arena.allocate(60, 120, GeometryLayout::Static);
+    const auto second = arena.allocate(40, 180, GeometryLayout::Static);
     expect(first && second && first->page == 0 && second->page == 0, "meshes share a page while it has room");
     const bool disjoint =
         first->vertexOffset + 60 <= second->vertexOffset || second->vertexOffset + 40 <= first->vertexOffset;
     expect(disjoint, "vertex ranges in one page never overlap");
 
-    const auto third = arena.allocate(10, 10);
+    const auto third = arena.allocate(10, 10, GeometryLayout::Static);
     expect(third && third->page == 1 && arena.pageCount() == 2, "a full page opens another page");
 
-    const auto oversized = arena.allocate(500, 900);
+    const auto oversized = arena.allocate(500, 900, GeometryLayout::Static);
     expect(oversized && arena.pageCapacity(oversized->page).vertices >= 500 &&
                arena.pageCapacity(oversized->page).indices >= 900,
            "oversized meshes receive a page large enough to hold them");
 
     arena.free(*first);
-    const auto reused = arena.allocate(50, 100);
+    const auto reused = arena.allocate(50, 100, GeometryLayout::Static);
     expect(reused && reused->page == 0, "freed ranges are reused before new pages open");
-    expect(!arena.allocate(0, 3).has_value(), "empty meshes are rejected");
+    expect(!arena.allocate(0, 3, GeometryLayout::Static).has_value(), "empty meshes are rejected");
+}
+
+void testGeometryArenaLayouts() {
+    GeometryArena arena({.vertices = 100, .indices = 300});
+    const auto staticMesh = arena.allocate(10, 30, GeometryLayout::Static);
+    const auto skinnedMesh = arena.allocate(10, 30, GeometryLayout::Skinned);
+    expect(staticMesh && skinnedMesh && staticMesh->page != skinnedMesh->page,
+           "skinned meshes never share a page with static meshes");
+    expect(arena.pageLayout(staticMesh->page) == GeometryLayout::Static &&
+               arena.pageLayout(skinnedMesh->page) == GeometryLayout::Skinned,
+           "pages report the vertex layout they were opened for");
+    const auto secondSkinned = arena.allocate(10, 30, GeometryLayout::Skinned);
+    expect(secondSkinned && secondSkinned->page == skinnedMesh->page, "meshes of one layout share its page");
+    expect(arena.pageCount() == 2, "no page opens while a page of the right layout has room");
 }
 } // namespace
 
 int main() {
     testBindlessTable();
     testGeometryArena();
+    testGeometryArenaLayouts();
     return failures == 0 ? 0 : 1;
 }

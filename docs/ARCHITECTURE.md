@@ -342,7 +342,11 @@ rewritten after that slot's previous submission retires, so no descriptor is
 updated while in use. Every object record carries its material index, so draws
 of one primitive batch across materials and need no per-draw binding; missing
 maps use default slots. Meshes are suballocated into shared vertex/index pages
-and drawn by offset.
+and drawn by offset. Vertices upload as quantized split streams (position,
+attributes, and skin for skinned pages only); depth-style pipelines fetch only
+position, skin, and, for alpha-tested shadows, UVs. Static pages bind one zero
+skin influence with a dynamic stride of 0, so every mesh pipeline shares one
+vertex layout.
 
 GPU-driven submission is opt-in and uses two-phase occlusion culling. Objects
 visible last frame are drawn first; a min-depth pyramid built from that depth
