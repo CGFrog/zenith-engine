@@ -59,7 +59,7 @@ bool PostProcessPass::init(const VulkanContext& context, VkFormat outputFormat, 
     return createDescriptors(frameCount) && createPipeline(outputFormat) &&
            createEffectPipeline(shaderRoot() / "ssao.frag.spv", ambientOcclusionFormat, m_ambientOcclusionPipeline) &&
            createEffectPipeline(shaderRoot() / "ssr.frag.spv", sceneFormat, m_reflectionPipeline) &&
-           createTargets(context, extent, depthView);
+           m_temporalResolve.init(context, frameCount, extent) && createTargets(context, extent, depthView);
 }
 
 bool PostProcessPass::createDescriptors(uint32_t frameCount) {
@@ -345,8 +345,9 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
              .imageView = target.view,
              .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             {.sampler = m_depthSampler, .imageView = depthView, .imageLayout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+            // The temporally resolved scene; record() binds the latest one.
             {.sampler = m_colorSampler,
-             .imageView = history.view,
+             .imageView = target.view,
              .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             {.sampler = m_colorSampler,
              .imageView = target.motionView,
@@ -455,30 +456,36 @@ void PostProcessPass::destroyTargets(const VulkanContext& context) {
 
 bool PostProcessPass::resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView) {
     destroyTargets(context);
+    m_previousFrameIndex.reset();
+    m_temporalResolve.resize(extent);
     return createTargets(context, extent, depthView);
 }
 
 void PostProcessPass::prepareScene(VkCommandBuffer commandBuffer, uint32_t frameIndex) {
     Target& target = m_targets[frameIndex];
+    // Earlier frames sampled these targets from fragment shaders and from the
+    // temporal resolve (which also reads the previous frame's motion target).
+    constexpr VkPipelineStageFlags2 sampledStages =
+        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     imageBarrier(commandBuffer, target.image, VK_IMAGE_ASPECT_COLOR_BIT,
                  target.initialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                 target.initialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                 target.initialized ? sampledStages : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                  target.initialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-    imageBarrier(
-        commandBuffer, target.motionImage, VK_IMAGE_ASPECT_COLOR_BIT,
-        target.motionInitialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        target.motionInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-        target.motionInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+    imageBarrier(commandBuffer, target.motionImage, VK_IMAGE_ASPECT_COLOR_BIT,
+                 target.motionInitialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                 target.motionInitialized ? sampledStages : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 target.motionInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 }
 
 bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkImage outputImage,
                              VkImageView outputView, VkImage depthImage, VkExtent2D extent, VkExtent2D internalExtent,
                              const RenderSettings& settings, const glm::mat4& inverseViewProjection,
-                             const glm::mat4& previousViewProjection, bool temporalHistoryValid,
+                             const glm::mat4& previousViewProjection, const TemporalResolveFrame& temporal,
                              const glm::vec3& cameraPosition, const std::optional<GridOverlay>& gridOverlay,
                              VkQueryPool timestampQueries, double& bloomCpuMilliseconds,
                              VkImageLayout outputOldLayout) {
@@ -557,6 +564,10 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
                  VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    if (!resolveTemporal(commandBuffer, frameIndex, internalExtent, settings.antialiasing == AntialiasingMode::Taa,
+                         temporal, timestampQueries)) {
+        return false;
+    }
     const PostSettings postSettings{
         .inverseViewProjection = inverseViewProjection,
         .previousViewProjection = previousViewProjection,
@@ -568,7 +579,7 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
                        static_cast<float>(internalExtent.height) / extent.height},
         .bloomStrength = settings.bloom == BloomQuality::Off ? 0.0f : 0.10f,
         .antialiasingMode = static_cast<float>(settings.antialiasing),
-        .temporalHistoryValid = temporalHistoryValid ? 1.0f : 0.0f,
+        .temporalHistoryValid = temporal.historyValid ? 1.0f : 0.0f,
         .ambientOcclusionMode = static_cast<float>(settings.ambientOcclusion),
         .reflectionMode = static_cast<float>(settings.reflections),
     };
@@ -679,6 +690,54 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
     if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 15);
     }
+    m_previousFrameIndex = frameIndex;
+    m_previousRenderExtent = internalExtent;
+    return true;
+}
+
+bool PostProcessPass::resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent,
+                                      bool enabled, const TemporalResolveFrame& temporal,
+                                      VkQueryPool timestampQueries) {
+    const Target& target = m_targets[frameIndex];
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestampQueries, 17);
+    }
+    if (enabled) {
+        // With a single frame slot the previous motion target was just
+        // overwritten, so disocclusion cannot be tested against it.
+        const bool previousAvailable = m_previousFrameIndex && *m_previousFrameIndex != frameIndex &&
+                                       m_targets[*m_previousFrameIndex].motionInitialized;
+        const Target& previous = previousAvailable ? m_targets[*m_previousFrameIndex] : target;
+        if (!m_temporalResolve.record(
+                commandBuffer, frameIndex,
+                {.sceneColor = target.view,
+                 .motion = target.motionView,
+                 .previousMotion = previous.motionView,
+                 .renderExtent = internalExtent,
+                 .previousRenderExtent = previousAvailable ? m_previousRenderExtent : internalExtent,
+                 .previousMotionValid = previousAvailable},
+                temporal)) {
+            return false;
+        }
+    }
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 18);
+    }
+    // The post set is not yet bound in this command buffer, and its frame slot's
+    // previous submission has retired, so it may be rewritten here. Without a
+    // resolved image, binding 2 falls back to the (unread) scene target.
+    const VkImageView resolvedView = m_temporalResolve.resolvedView();
+    const VkDescriptorImageInfo resolved{.sampler = m_colorSampler,
+                                         .imageView = resolvedView ? resolvedView : target.view,
+                                         .imageLayout = resolvedView ? TemporalResolvePass::resolvedLayout
+                                                                     : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                     .dstSet = m_targets[frameIndex].descriptor,
+                                     .dstBinding = 2,
+                                     .descriptorCount = 1,
+                                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                     .pImageInfo = &resolved};
+    vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
     return true;
 }
 
@@ -700,6 +759,7 @@ VkImageView PostProcessPass::motionView(uint32_t frameIndex) const {
 
 void PostProcessPass::shutdown(const VulkanContext& context) {
     destroyTargets(context);
+    m_temporalResolve.shutdown();
     if (m_pipeline) {
         vkDestroyPipeline(context.device(), m_pipeline, nullptr);
     }

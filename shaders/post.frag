@@ -2,12 +2,11 @@
 
 layout(set = 0, binding = 0) uniform sampler2D hdrScene;
 layout(set = 0, binding = 1) uniform sampler2D sceneDepth;
-layout(set = 0, binding = 2) uniform sampler2D temporalHistory;
-layout(set = 0, binding = 3) uniform sampler2D motionReactive;
+// Output-resolution scene from the temporal resolve (taa_resolve.comp); valid
+// when temporal anti-aliasing is selected.
+layout(set = 0, binding = 2) uniform sampler2D resolvedScene;
 layout(set = 0, binding = 4) uniform sampler2D ambientOcclusion;
 layout(set = 0, binding = 5) uniform sampler2D screenSpaceReflections;
-// Previous frame's motion target; .w holds its reversed-Z depth.
-layout(set = 0, binding = 6) uniform sampler2D previousMotionDepth;
 
 layout(push_constant) uniform PostSettings {
     mat4 inverseViewProjection;
@@ -86,59 +85,11 @@ vec4 editorGrid(vec2 uv) {
     return vec4(color, line * fade * 0.85);
 }
 
-// True when the surface now at this pixel was hidden behind nearer geometry in
-// the previous frame, so its history belongs to a different surface. Only camera
-// motion is reprojected; pixels whose motion vector shows their own movement
-// fall back to the neighborhood clamp.
-bool disoccluded(vec2 uv, vec2 motion, float currentDepth) {
-    vec4 world = settings.inverseViewProjection * vec4(uv * 2.0 - 1.0, currentDepth, 1.0);
-    world /= world.w;
-    vec4 previousClip = settings.previousViewProjection * world;
-    if (previousClip.w <= 0.0) {
-        return true;
-    }
-    vec2 cameraPreviousUv = previousClip.xy / previousClip.w * 0.5 + 0.5;
-    vec2 objectMotionPixels = (uv - cameraPreviousUv - motion) / settings.inverseResolution;
-    if (dot(objectMotionPixels, objectMotionPixels) > 0.25) {
-        return false;
-    }
-    float expectedDepth = previousClip.z / previousClip.w;
-    vec4 previousDepths = textureGather(previousMotionDepth, (uv - motion) * settings.sceneScale, 3);
-    float nearestPrevious = max(max(previousDepths.x, previousDepths.y), max(previousDepths.z, previousDepths.w));
-    // Reversed-Z depth is proportional to 1 / view distance, so this tolerance is
-    // a 2% relative distance regardless of range.
-    return nearestPrevious > expectedDepth * 1.02;
-}
-
 void main() {
     vec2 sceneTexCoord = texCoord * settings.sceneScale;
-    vec3 center = texture(hdrScene, sceneTexCoord).rgb;
-    if (settings.antialiasingMode > 1.5 && settings.temporalHistoryValid > 0.5) {
-        vec4 motion = texture(motionReactive, sceneTexCoord);
-        vec2 previousUv = texCoord - motion.xy;
-        bool historyOnScreen = all(greaterThanEqual(previousUv, vec2(0.0))) &&
-                               all(lessThanEqual(previousUv, vec2(1.0)));
-        if (historyOnScreen) {
-            vec3 neighborhoodMinimum = center;
-            vec3 neighborhoodMaximum = center;
-            for (int y = -1; y <= 1; ++y) {
-                for (int x = -1; x <= 1; ++x) {
-                    vec3 sampleColor = texture(hdrScene, sceneTexCoord + vec2(x, y) * settings.inverseResolution).rgb;
-                    neighborhoodMinimum = min(neighborhoodMinimum, sampleColor);
-                    neighborhoodMaximum = max(neighborhoodMaximum, sampleColor);
-                }
-            }
-            vec3 history = clamp(texture(temporalHistory, previousUv * settings.sceneScale).rgb,
-                                 neighborhoodMinimum, neighborhoodMaximum);
-            float motionPixels = length((texCoord - previousUv) / settings.inverseResolution);
-            float reactive = max(motion.z, smoothstep(0.25, 2.0, abs(luminance(center) - luminance(history))));
-            if (disoccluded(texCoord, motion.xy, motion.w)) {
-                reactive = 1.0;
-            }
-            float historyWeight = 0.92 * (1.0 - reactive) * (1.0 - clamp(motionPixels / 32.0, 0.0, 0.75));
-            center = mix(center, history, historyWeight);
-        }
-    }
+    // With TAA the scene was already accumulated and upsampled to output resolution.
+    vec3 center = settings.antialiasingMode > 1.5 ? texture(resolvedScene, texCoord).rgb
+                                                 : texture(hdrScene, sceneTexCoord).rgb;
     vec2 ambientOcclusionUv = sceneTexCoord * (settings.ambientOcclusionMode > 0.5 && settings.ambientOcclusionMode < 1.5 ? 0.5 : 1.0);
     vec2 reflectionUv = sceneTexCoord * (settings.reflectionMode > 0.5 && settings.reflectionMode < 1.5 ? 0.5 : 1.0);
     center *= texture(ambientOcclusion, ambientOcclusionUv).r;

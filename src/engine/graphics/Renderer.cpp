@@ -422,8 +422,8 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             graph.importImage("scene depth", image(m_swapchain.depthFormat(), 5, 0), VK_IMAGE_LAYOUT_UNDEFINED);
         const auto shadow = graph.importImage("shadow atlas", image(VK_FORMAT_D32_SFLOAT, 5, 0),
                                               VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
-        const auto history = graph.importImage("temporal history", image(PostProcessPass::sceneFormat, 5, 0),
-                                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        const auto history = graph.importImage("temporal history", image(TemporalResolvePass::historyFormat, 5, 0),
+                                               TemporalResolvePass::resolvedLayout);
         const auto probeCache = graph.importImage("reflection probe cache", image(PostProcessPass::sceneFormat, 5, 0),
                                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         const RenderGraphQueue uploadQueue = m_rendering->capabilities().dedicatedTransferQueue
@@ -477,6 +477,19 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
                  VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL}};
             graph.addPass("bloom downsample", RenderGraphQueue::Graphics, bloomAccesses);
         }
+        if (m_rendering->settings().antialiasing == AntialiasingMode::Taa) {
+            // Also reads the previous frame's motion target, which is outside
+            // this frame's transient lifetimes.
+            const RenderGraphAccess resolveAccesses[]{
+                {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {history, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                 TemporalResolvePass::resolvedLayout}};
+            graph.addPass("temporal resolve", RenderGraphQueue::Graphics, resolveAccesses);
+        }
         const RenderGraphAccess ambientOcclusionAccesses[]{
             {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
@@ -497,7 +510,7 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
             {history, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, TemporalResolvePass::resolvedLayout},
             {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             {ambientOcclusion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
@@ -506,7 +519,7 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             {output, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
-        graph.addPass("temporal resolve and tone map", RenderGraphQueue::Graphics, postAccesses);
+        graph.addPass("post-process and tone map", RenderGraphQueue::Graphics, postAccesses);
         RenderGraphPassHandle uiPass;
         if (useViewport) {
             const RenderGraphAccess uiAccesses[]{

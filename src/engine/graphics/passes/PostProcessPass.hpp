@@ -2,7 +2,9 @@
 
 #include "../Rendering.hpp"
 #include "../vulkan/VulkanContext.hpp"
+#include "TemporalResolvePass.hpp"
 #include <filesystem>
+#include <optional>
 #include <vector>
 
 class PostProcessPass {
@@ -18,7 +20,7 @@ class PostProcessPass {
     bool record(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkImage outputImage, VkImageView outputView,
                 VkImage depthImage, VkExtent2D extent, VkExtent2D internalExtent, const RenderSettings& settings,
                 const glm::mat4& inverseViewProjection, const glm::mat4& previousViewProjection,
-                bool temporalHistoryValid, const glm::vec3& cameraPosition,
+                const TemporalResolveFrame& temporal, const glm::vec3& cameraPosition,
                 const std::optional<GridOverlay>& gridOverlay, VkQueryPool timestampQueries,
                 double& bloomCpuMilliseconds, VkImageLayout outputOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
     void shutdown(const VulkanContext& context);
@@ -27,6 +29,10 @@ class PostProcessPass {
     VkImageView sceneView(uint32_t frameIndex) const;
     VkImage motionImage(uint32_t frameIndex) const;
     VkImageView motionView(uint32_t frameIndex) const;
+
+    uint64_t temporalHistoryBytes() const {
+        return m_temporalResolve.historyBytes();
+    }
 
   private:
     struct Target {
@@ -55,6 +61,10 @@ class PostProcessPass {
     bool createEffectPipeline(const std::filesystem::path& fragmentPath, VkFormat outputFormat, VkPipeline& pipeline);
     bool createTargets(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
     void destroyTargets(const VulkanContext& context);
+    // Runs the temporal resolve when enabled and binds the latest resolved image
+    // as the post pass's binding 2. Records timestamps 17 and 18 either way.
+    bool resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent, bool enabled,
+                         const TemporalResolveFrame& temporal, VkQueryPool timestampQueries);
 
     VkDevice m_device{VK_NULL_HANDLE};
     VkPipelineCache m_pipelineCache{VK_NULL_HANDLE};
@@ -69,4 +79,9 @@ class PostProcessPass {
     VkSampler m_depthSampler{VK_NULL_HANDLE};
     VkExtent2D m_extent{};
     std::vector<Target> m_targets;
+    TemporalResolvePass m_temporalResolve;
+    // The most recently recorded frame slot and its render extent; that slot's
+    // motion target supplies the previous frame's motion and depth.
+    std::optional<uint32_t> m_previousFrameIndex;
+    VkExtent2D m_previousRenderExtent{};
 };

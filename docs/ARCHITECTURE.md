@@ -324,9 +324,13 @@ Main mesh pass
   scene meshes + camera + materials + scene lighting + shadow map
   -> per-frame RGBA16F HDR target + motion/reactive target + shared scene depth
 
+Temporal resolve (TAA only, compute)
+  HDR target + motion/reactive target + output-resolution history
+  -> next output-resolution history image (the resolved scene)
+
 Post-process pass
-  HDR target + depth + temporal history
-  -> scalable SSAO/SSR + TAA or FXAA + bloom + ACES tone mapping
+  resolved scene (or HDR target) + depth
+  -> scalable SSAO/SSR + FXAA (non-TAA) + bloom + ACES tone mapping
   -> swapchain image
 
 Game UI pass
@@ -369,7 +373,11 @@ device, recreates the swapchain/depth resources, and resizes dependent render
 targets, invalidating temporal history.
 
 Temporal reconstruction owns jitter, motion/reactive data, camera-cut and
-resolution-change invalidation, and neighborhood-clipped history. Dynamic
+resize invalidation, and variance-clipped history. Jitter spans one internal
+pixel; motion vectors are unjittered and skinned motion uses the previous
+frame's joint palettes. History lives at output resolution and is shared by
+consecutive frames regardless of the frame slot, so dynamic-resolution changes
+keep it: the resolve upsamples each frame from its internal extent. Dynamic
 resolution is driven by smoothed retired GPU time and adjusts slowly in
 quantized steps; native resolution remains the deterministic default.
 

@@ -38,6 +38,8 @@ constexpr uint32_t doubleSidedBucket = 1;
 // Per-frame object buffer layout: one region per shadow cascade, then the
 // region for objects the CPU submits to the main view.
 constexpr uint32_t mainObjectBase = maximumShadowCascades * maximumObjectsPerFrame;
+// Camera-set binding of the previous frame's skin palettes (mesh.vert).
+constexpr uint32_t previousSkinPaletteBinding = 12;
 
 struct CameraData {
     glm::mat4 viewProjection{1.0f};
@@ -57,6 +59,9 @@ struct CameraData {
     std::array<glm::vec4, 64> localLightColorIntensity{};
     std::array<glm::vec4, 64> localLightCone{};
     glm::uvec4 localLightCount{0};
+    // Temporal resolve: NDC jitter of the current (xy) and previous (zw)
+    // projections, removed from motion vectors in mesh.frag. Keep last.
+    glm::vec4 temporalJitter{0.0f};
 };
 
 // Mirrors MaterialRecord in shaders/mesh.frag and shaders/shadow.frag (std430).
@@ -226,8 +231,8 @@ bool MeshPass::createGpuDrivenDescriptors() {
         CameraBuffer& camera = m_cameras[frame];
         camera.gpuDrivenDescriptor = sets[frame];
         // Everything except the object buffer matches the CPU-submission set.
-        std::array<VkCopyDescriptorSet, 4> copies{};
-        const uint32_t sharedBindings[]{0, 1, 3, 4};
+        std::array<VkCopyDescriptorSet, 5> copies{};
+        const uint32_t sharedBindings[]{0, 1, 3, 4, previousSkinPaletteBinding};
         for (size_t index = 0; index < copies.size(); ++index) {
             copies[index] = {.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET,
                              .srcSet = camera.descriptor,
@@ -276,7 +281,11 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         {.binding = 4,
          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        {.binding = previousSkinPaletteBinding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT}};
     VkDescriptorSetLayoutCreateInfo layoutInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = static_cast<uint32_t>(std::size(cameraBindings)),
@@ -292,7 +301,7 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
     // instances from the culling output instead of the host object buffer.
     const VkDescriptorPoolSize poolSizes[]{
         {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = frameCount * 2},
-        {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = frameCount * 6},
+        {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = frameCount * 8},
         {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = frameCount * 2}};
     VkDescriptorPoolCreateInfo poolInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -360,6 +369,23 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         write.dstBinding = 3;
         write.pBufferInfo = &skinDescriptor;
         vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+
+        VkBufferCreateInfo previousSkinBuffer = buffer;
+        previousSkinBuffer.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        if (!checkVulkan(vmaCreateBuffer(m_allocator, &previousSkinBuffer, &allocation,
+                                         &m_cameras[i].previousSkinPalettes.buffer,
+                                         &m_cameras[i].previousSkinPalettes.allocation, &info),
+                         "Create per-frame previous skin palette buffer")) {
+            return false;
+        }
+        m_cameras[i].previousSkinPalettesMapped = info.pMappedData;
+        VkDescriptorBufferInfo previousSkinDescriptor{
+            .buffer = m_cameras[i].previousSkinPalettes.buffer, .offset = 0, .range = VK_WHOLE_SIZE};
+        VkWriteDescriptorSet previousSkinWrite = write;
+        previousSkinWrite.dstBinding = previousSkinPaletteBinding;
+        previousSkinWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        previousSkinWrite.pBufferInfo = &previousSkinDescriptor;
+        vkUpdateDescriptorSets(m_device, 1, &previousSkinWrite, 0, nullptr);
 
         buffer.size = sizeof(ObjectData) * maximumObjectsPerFrame * (maximumShadowCascades + 1);
         buffer.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
@@ -1368,9 +1394,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     glm::mat4 projection = glm::perspectiveRH_ZO(
         fov, static_cast<float>(renderExtent.width) / static_cast<float>(renderExtent.height), farPlane, nearPlane);
     projection[1][1] *= -1.0f;
+    const glm::mat4 unjitteredViewProjection = projection * view;
     if (rendering.settings().antialiasing == AntialiasingMode::Taa) {
-        projection[2][0] += temporal.jitterNdc.x;
-        projection[2][1] += temporal.jitterNdc.y;
+        projection = applyProjectionJitter(projection, temporal.jitterNdc);
     }
     const DirectionalLightComponent light = resolvePrimary<DirectionalLightComponent>(scene);
     EnvironmentLightComponent environment = resolvePrimary<EnvironmentLightComponent>(scene);
@@ -1424,6 +1450,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     CameraData cameraData;
     cameraData.viewProjection = projection * view;
     cameraData.previousViewProjection = m_previousViewProjection;
+    cameraData.temporalJitter = {temporal.jitterNdc, m_previousJitterNdc};
     const float shadowDepthRange = std::max(light.shadows.depthRange, 0.2f);
     uint32_t cascadeCount = 0;
     switch (rendering.settings().shadows) {
@@ -1617,8 +1644,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.internalResolutionScale = temporal.resolutionScale;
     stats.temporalHistoryValid = temporal.historyValid;
     stats.temporalHistoryInvalidated = temporal.historyInvalidated;
-    stats.temporalHistoryBytes =
-        static_cast<uint64_t>(extent.width) * extent.height * sizeof(uint16_t) * 4 * m_cameras.size();
+    stats.temporalHistoryBytes = m_postProcess.temporalHistoryBytes();
     stats.motionVectorBytes =
         static_cast<uint64_t>(extent.width) * extent.height * sizeof(uint16_t) * 4 * m_cameras.size();
     stats.ambientOcclusionBytes = static_cast<uint64_t>(extent.width) * extent.height * m_cameras.size();
@@ -1629,8 +1655,12 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     DirectionalLightComponent shadowLight = light;
     shadowLight.shadows.enabled = shadowsEnabled;
     auto* skinMatrices = static_cast<glm::mat4*>(m_cameras[frameIndex].skinPalettesMapped);
+    // Last frame's palettes at the same offsets, so skinned motion vectors see
+    // joint animation as well as object motion.
+    auto* previousSkinMatrices = static_cast<glm::mat4*>(m_cameras[frameIndex].previousSkinPalettesMapped);
     uint32_t skinMatrixCount = 1;
     skinMatrices[0] = glm::mat4(1.0f);
+    previousSkinMatrices[0] = glm::mat4(1.0f);
     for (RenderItem& item : m_renderItems) {
         item.skinPaletteOffset = 0;
         if (item.jointPalette.empty()) {
@@ -1642,9 +1672,15 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         }
         item.skinPaletteOffset = skinMatrixCount;
         std::copy(item.jointPalette.begin(), item.jointPalette.end(), skinMatrices + skinMatrixCount);
+        const std::vector<glm::mat4>& previousPalette = item.previousJointPalette.size() == item.jointPalette.size()
+                                                            ? item.previousJointPalette
+                                                            : item.jointPalette;
+        std::copy(previousPalette.begin(), previousPalette.end(), previousSkinMatrices + skinMatrixCount);
         skinMatrixCount += static_cast<uint32_t>(item.jointPalette.size());
     }
     vmaFlushAllocation(m_allocator, m_cameras[frameIndex].skinPalettes.allocation, 0,
+                       sizeof(glm::mat4) * skinMatrixCount);
+    vmaFlushAllocation(m_allocator, m_cameras[frameIndex].previousSkinPalettes.allocation, 0,
                        sizeof(glm::mat4) * skinMatrixCount);
     if (timestampQueries) {
         // The transfer timeline wait is scoped to vertex/index consumption, so
@@ -1762,15 +1798,22 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 3);
     }
     const auto bloomCpuBegin = std::chrono::steady_clock::now();
+    const TemporalResolveFrame temporalResolve{.currentToPreviousClip = m_previousUnjitteredViewProjection *
+                                                                        glm::inverse(unjitteredViewProjection),
+                                               .jitterPixels = temporal.jitterPixels,
+                                               .historyValid = temporal.historyValid};
     if (!m_postProcess.record(commandBuffer, frameIndex, colorImage, colorView, depthImage, extent, renderExtent,
-                              rendering.settings(), glm::inverse(cameraData.viewProjection), m_previousViewProjection,
-                              temporal.historyValid, cameraPosition, rendering.m_gridOverlay, timestampQueries,
+                              rendering.settings(), glm::inverse(unjitteredViewProjection), m_previousViewProjection,
+                              temporalResolve, cameraPosition, rendering.m_gridOverlay, timestampQueries,
                               stats.cpuBloomMilliseconds, colorOldLayout)) {
         return false;
     }
     m_previousViewProjection = cameraData.viewProjection;
+    m_previousUnjitteredViewProjection = unjitteredViewProjection;
+    m_previousJitterNdc = temporal.jitterNdc;
     for (RenderItem& item : m_renderItems) {
         item.previousWorld = item.world;
+        item.previousJointPalette = item.jointPalette;
     }
     stats.cpuPostMilliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - bloomCpuBegin).count() -
@@ -2141,6 +2184,10 @@ void MeshPass::shutdown(const VulkanContext& context) {
         }
         if (camera.skinPalettes.buffer) {
             vmaDestroyBuffer(context.vmaAllocator(), camera.skinPalettes.buffer, camera.skinPalettes.allocation);
+        }
+        if (camera.previousSkinPalettes.buffer) {
+            vmaDestroyBuffer(context.vmaAllocator(), camera.previousSkinPalettes.buffer,
+                             camera.previousSkinPalettes.allocation);
         }
         if (camera.materials.buffer) {
             vmaDestroyBuffer(context.vmaAllocator(), camera.materials.buffer, camera.materials.allocation);

@@ -435,11 +435,22 @@ influence boxes, blend distances, and priorities.
 
 ### `src/engine/graphics/passes/PostProcessPass.*`
 
-Owns one RGBA16F history target, motion/reactive target, SSAO target, and SSR
-target per frame slot. Separate GPU-scoped SSAO and SSR passes feed the final
-fullscreen pass, which performs neighborhood-clipped TAA (or FXAA), bloom,
-editor-grid composition, and ACES tone mapping. Half-resolution effect tiers
+Owns one RGBA16F HDR scene target, motion/reactive target, SSAO target, and SSR
+target per frame slot, plus the view's `TemporalResolvePass`. With TAA selected
+the resolve runs first; separate GPU-scoped SSAO and SSR passes then feed the
+final fullscreen pass, which composes the resolved scene (or applies FXAA),
+bloom, the editor grid, and ACES tone mapping. Half-resolution effect tiers
 render into bounded sub-extents; SSR misses preserve probe and IBL lighting.
+
+### `src/engine/graphics/passes/TemporalResolvePass.*`
+
+Temporal anti-aliasing and upsampling (`shaders/taa_resolve.comp`). Owns two
+output-resolution history images per view used ping-pong (not per frame slot),
+allocated on the first TAA frame after creation or resize. It
+reconstructs the jittered internal-resolution frame at output resolution,
+reprojects Catmull-Rom history with dilated motion, rejects disoccluded
+history, and blends after YCoCg variance clipping with luma weighting. Its CPU
+mirror is in `TemporalQuality.*`.
 
 ## Shaders
 
@@ -455,6 +466,7 @@ render into bounded sub-extents; SSR misses preserve probe and IBL lighting.
 | `shaders/depth_pyramid.comp` | Reduces scene depth into a conservative min-depth (reversed-Z) pyramid. |
 | `shaders/gpu_visibility.comp` | Runs early/late two-phase frustum and occlusion culling. |
 | `shaders/compact_draws.comp` | Packs non-empty batches into indirect-count draw commands. |
+| `shaders/taa_resolve.comp` | Temporal anti-aliasing and upsampling into output-resolution history. |
 
 Recognized shader extensions automatically produce matching
 `build/shaders/<relative-path>.spv` files.
