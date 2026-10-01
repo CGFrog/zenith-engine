@@ -1,6 +1,7 @@
 #include "Assets.hpp"
 #include "ImageDecoder.hpp"
 #include "ModelImporter.hpp"
+#include "PackedVertexStreams.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <algorithm>
@@ -59,7 +60,8 @@ uint64_t byteSize(const MeshAsset& asset) {
 }
 
 uint64_t gpuByteSize(const MeshAsset& asset) {
-    return asset.vertices.size() * sizeof(Vertex) + asset.indices.size() * sizeof(uint32_t);
+    // Vertices upload as quantized split streams; see PackedVertexStreams.hpp.
+    return vertex_packing::packedByteSize(asset.vertices) + asset.indices.size() * sizeof(uint32_t);
 }
 
 uint64_t byteSize(const ModelAsset& asset) {

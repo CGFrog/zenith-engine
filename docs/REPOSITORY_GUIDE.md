@@ -275,6 +275,14 @@ Ordered pressure handling discards temporary caches, removes optional distant
 mips, retires unused generations after a completion serial, then reports a hard
 budget failure if live content still cannot fit.
 
+### `src/engine/assets/PackedVertexStreams.*`
+
+Renderer-independent quantization of `Vertex` into split GPU streams:
+float3 positions, octahedral snorm16 normal/tangent (bitangent sign folded into
+the tangent) with float2 UVs, and uint16 joints with unorm8 weights renormalized
+to sum to 255. The skin stream exists only for meshes with weights. Asset GPU
+byte estimates use the same strides.
+
 ### `src/engine/assets/ModelImporter.*`
 
 Uses cgltf to parse `.gltf` and `.glb`, load buffers, validate the document, and
@@ -403,8 +411,10 @@ for slots that changed. Released slots fall back to a default view.
 ### `src/engine/graphics/resources/GeometryArena.*`
 
 Suballocates meshes into shared vertex/index pages with VMA virtual blocks,
-opening a new page (sized to fit oversized meshes) when none has room. It owns
-no Vulkan buffers; the mesh pass creates one buffer pair per reported page.
+opening a new page (sized to fit oversized meshes) when none has room. Pages
+have a static or skinned layout so only skinned pages carry a skin stream. It
+owns no Vulkan buffers; the mesh pass creates one buffer per stream plus an
+index buffer for each reported page.
 
 ### `src/engine/graphics/passes/GpuDrivenPass.*`
 

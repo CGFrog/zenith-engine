@@ -20,7 +20,9 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class MeshPass {
@@ -71,9 +73,21 @@ class MeshPass {
         GeometryAllocation geometry;
     };
 
+    // One buffer per packed vertex stream, all indexed by the same vertex
+    // offset. Static pages have no skin stream and bind m_zeroSkinInfluence.
     struct GeometryPage {
-        GpuBuffer vertices;
+        GeometryLayout layout{GeometryLayout::Static};
+        GpuBuffer positions;
+        GpuBuffer attributes;
+        GpuBuffer skin;
         GpuBuffer indices;
+    };
+
+    struct BufferUploadRegion {
+        const void* source{nullptr};
+        VkDeviceSize size{0};
+        VkBuffer destination{VK_NULL_HANDLE};
+        VkDeviceSize destinationOffset{0};
     };
 
     struct GpuTexture {
@@ -144,8 +158,13 @@ class MeshPass {
     bool createDescriptors(const VulkanContext& context, uint32_t frameCount);
     bool createBindlessDescriptors(const VulkanContext& context, uint32_t frameCount);
     bool createGpuDrivenDescriptors();
-    bool uploadToBuffer(const void* data, VkDeviceSize size, VkBuffer destination, VkDeviceSize destinationOffset);
+    // Stages every region in one upload submission.
+    bool uploadBufferRegions(std::span<const BufferUploadRegion> regions);
+    bool createGeometryBuffer(VkDeviceSize size, VkBufferUsageFlags usage, GpuBuffer& output);
+    bool createZeroSkinInfluence();
     bool ensureGeometryPage(uint32_t page);
+    void destroyGeometryPage(const GeometryPage& page);
+    void bindGeometryPage(VkCommandBuffer commandBuffer, uint32_t page) const;
     bool uploadTexture(const TextureAsset& texture, GpuTexture& output);
     bool assignTextureSlots(GpuTexture& texture);
     void retireTexture(const GpuTexture& texture);
@@ -224,7 +243,11 @@ class MeshPass {
     uint32_t m_normalSlot{0};
     std::unique_ptr<GeometryArena> m_geometry;
     std::vector<GeometryPage> m_geometryPages;
+    // A single zero skin influence, bound with stride 0 for static pages.
+    GpuBuffer m_zeroSkinInfluence;
     std::unordered_map<uint64_t, GpuMesh> m_meshes;
+    // Meshes whose vertices cannot be packed; skipped until the asset unloads.
+    std::unordered_set<uint64_t> m_unpackableMeshes;
     std::unordered_map<uint64_t, GpuTexture> m_textures;
     std::unordered_map<uint64_t, GpuMaterial> m_materials;
     std::vector<uint32_t> m_freeMaterialIndices;

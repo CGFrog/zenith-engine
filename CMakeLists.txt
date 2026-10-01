@@ -256,6 +256,7 @@ add_library(zenith_engine STATIC
     src/engine/assets/ImageDecoder.cpp
     src/engine/assets/ProductionAssetPipeline.cpp
     src/engine/assets/AssetStreaming.cpp
+    src/engine/assets/PackedVertexStreams.cpp
     src/engine/graphics/Renderer.cpp
     src/engine/graphics/Lighting.cpp
     src/engine/graphics/EnvironmentLighting.cpp
@@ -683,6 +684,10 @@ if(BUILD_TESTING)
     add_executable(zenith_mesh_lod_tests tests/engine/MeshLodTests.cpp)
     target_link_libraries(zenith_mesh_lod_tests PRIVATE zenith_engine)
     add_test(NAME zenith_mesh_lod COMMAND zenith_mesh_lod_tests)
+
+    add_executable(zenith_packed_vertex_stream_tests tests/engine/PackedVertexStreamTests.cpp)
+    target_link_libraries(zenith_packed_vertex_stream_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_packed_vertex_streams COMMAND zenith_packed_vertex_stream_tests)
 
     add_executable(zenith_frame_task_graph_tests tests/engine/FrameTaskGraphTests.cpp)
     target_link_libraries(zenith_frame_task_graph_tests PRIVATE zenith_engine)
