@@ -429,6 +429,16 @@ Resolves platform writable locations, performs atomic user-data writes and
 backup recovery, writes local-only structured diagnostics, and serializes exact
 release provenance.
 
+### `src/engine/platform/FileWatcher.*`
+
+Watches a directory tree recursively on a background thread
+(`ReadDirectoryChangesW` on Windows, `inotify` on Linux, snapshot polling
+elsewhere or on request). `poll()` returns debounced, coalesced
+Added/Modified/Removed/Renamed events with root-relative `/` paths; buffer
+overflow or watch failure yields `RescanRequired`. Ignored suffixes and an
+ignore predicate hide temporary files. `FileWatchCoalescer` holds the merge
+rules so they can be tested without the file system.
+
 ## Physics
 
 ### `src/engine/physics/PhysicsComponents.hpp`

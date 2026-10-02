@@ -364,6 +364,7 @@ add_library(zenith_engine STATIC
     src/engine/jobs/JobSystem.cpp
     src/engine/jobs/FrameTaskGraph.cpp
     src/engine/physics/PhysicsWorld.cpp
+    src/engine/platform/FileWatcher.cpp
     src/engine/platform/PlatformServices.cpp
     src/engine/project/ProjectConfig.cpp
     src/engine/reflection/FieldJson.cpp
@@ -690,6 +691,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_audio_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_audio COMMAND zenith_audio_tests)
+
+    add_executable(zenith_file_watcher_tests tests/engine/FileWatcherTests.cpp)
+    target_link_libraries(zenith_file_watcher_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_file_watcher_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_file_watcher_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_file_watcher COMMAND zenith_file_watcher_tests)
 
     add_executable(zenith_asset_tests
         tests/engine/AssetSceneTests.cpp
