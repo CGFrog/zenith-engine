@@ -102,6 +102,13 @@ class GpuDrivenPass {
         return m_retiredFrustumViewVisibleCount;
     }
 
+    // Instances the camera's late phase emitted this frame, counted on the GPU
+    // once cull(Late) ran. Zero means the late phase drew nothing, so the
+    // scene depth is the early phase's.
+    DepthPyramid::DepthChangeCount lateEmittedCount() const {
+        return {.buffer = m_statistics.buffer, .index = GpuCullRegion::phase(GpuCullPhase::Late).index};
+    }
+
     uint32_t pipelineCount() const {
         return 2;
     }

@@ -1,0 +1,224 @@
+#version 450
+
+// Builds every level of the depth pyramid in one dispatch.
+//
+// The structure follows the AMD FidelityFX Single Pass Downsampler (SPD,
+// Copyright (c) Advanced Micro Devices, Inc., MIT license): each workgroup
+// reduces one 64x64 tile of level 0 through six levels in shared memory, and a
+// global atomic counter elects the last workgroup to finish the remaining
+// levels. This is an independent implementation for the Zenith pyramid
+// layout; it shares no code with SPD.
+//
+// Scene depth is reversed Z (near = 1, far = 0). Each texel stores the
+// farthest depth it covers in r (the minimum) and the closest in g (the
+// maximum). See DepthPyramidLayout.hpp for the level layout: levels halve with
+// truncation and the last texel of an odd axis also covers the leftover
+// source texel, so every texel stays conservative for occlusion culling.
+//
+// Tiles reduce aligned power-of-two blocks clipped to the base extent (see
+// reduceTile for how pixels past the extent are handled). Those already equal the layout's texels except the last texel of an axis whose
+// level does not tile the base exactly (depth_pyramid::singlePassEdgeIncomplete);
+// the last workgroup recomputes those from the previous level before it builds
+// the levels past the tile.
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// Mirrors maximumLevels in DepthPyramid.cpp.
+const uint maximumLevels = 16u;
+// Mirrors depth_pyramid::singlePassTileLevels.
+const uint tileLevels = 6u;
+const uint workgroupThreads = 256u;
+
+layout(set = 0, binding = 0) uniform sampler2D sourceDepth;
+// Coherent: the last workgroup reads levels other workgroups wrote.
+layout(rg32f, set = 0, binding = 1) uniform coherent image2D levels[maximumLevels];
+layout(std430, set = 0, binding = 2) coherent buffer Counter {
+    uint finishedWorkgroups;
+} counter;
+layout(std430, set = 0, binding = 3) readonly buffer Condition {
+    uint values[];
+} condition;
+
+// Mirrors SinglePassSettings in DepthPyramid.cpp.
+layout(push_constant) uniform Settings {
+    ivec2 baseExtent;
+    uint levelCount;
+    uint workgroupCount;
+    // When nonzero, the build is skipped unless condition.values[conditionIndex]
+    // is nonzero (the depth changed since the previous build).
+    uint conditional;
+    uint conditionIndex;
+} settings;
+
+shared float tileDepth[64][64];
+shared vec2 level1[32][32];
+shared vec2 level2[16][16];
+shared vec2 level3[8][8];
+shared vec2 level4[4][4];
+shared vec2 level5[2][2];
+shared uint ticket;
+
+// Identity of the reduction: depth lies in [0, 1].
+const vec2 emptyRange = vec2(1.0, 0.0);
+
+vec2 combine(vec2 a, vec2 b) {
+    return vec2(min(a.x, b.x), max(a.y, b.y));
+}
+
+ivec2 levelExtent(uint level) {
+    return max(settings.baseExtent >> level, ivec2(1));
+}
+
+// Writes an aligned-block texel when it lies inside the level.
+void storeTileTexel(uint level, ivec2 texel, vec2 farthestClosest) {
+    if (level < settings.levelCount && all(lessThan(texel, levelExtent(level)))) {
+        imageStore(levels[level], texel, vec4(farthestClosest, 0.0, 0.0));
+    }
+}
+
+// Reduces one texel of `level` from the previous level with the layout's
+// source range (depth_pyramid::sourceTexels).
+void reduceFromPreviousLevel(uint level, ivec2 texel) {
+    ivec2 outputExtent = levelExtent(level);
+    ivec2 sourceExtent = levelExtent(level - 1u);
+    ivec2 sourceBegin = texel * 2;
+    ivec2 sourceEnd = mix(sourceBegin + 2, sourceExtent, equal(texel, outputExtent - 1));
+    sourceEnd = min(sourceEnd, sourceExtent);
+    vec2 farthestClosest = emptyRange;
+    for (int y = sourceBegin.y; y < sourceEnd.y; ++y) {
+        for (int x = sourceBegin.x; x < sourceEnd.x; ++x) {
+            farthestClosest = combine(farthestClosest, imageLoad(levels[level - 1u], ivec2(x, y)).rg);
+        }
+    }
+    imageStore(levels[level], texel, vec4(farthestClosest, 0.0, 0.0));
+}
+
+vec2 combineQuad(vec2 a, vec2 b, vec2 c, vec2 d) {
+    return combine(combine(a, b), combine(c, d));
+}
+
+// Levels 0 to 6 of this workgroup's tile. Consecutive threads touch
+// consecutive texels of a row, so level 0 and 1 traffic stays coalesced.
+void reduceTile() {
+    uint thread = gl_LocalInvocationIndex;
+    ivec2 tileOrigin = ivec2(gl_WorkGroupID.xy) * 64;
+    // Pixels past the base extent load the clamped edge pixel. Every aligned
+    // block that is written contains that edge pixel too, so the duplicates
+    // leave its range unchanged.
+    for (uint row = 0u; row < 64u; row += 4u) {
+        ivec2 local = ivec2(thread % 64u, row + thread / 64u);
+        ivec2 pixel = tileOrigin + local;
+        float depth = texelFetch(sourceDepth, min(pixel, settings.baseExtent - 1), 0).r;
+        if (all(lessThan(pixel, settings.baseExtent))) {
+            imageStore(levels[0], pixel, vec4(depth, depth, 0.0, 0.0));
+        }
+        tileDepth[local.y][local.x] = depth;
+    }
+    barrier();
+    for (uint row = 0u; row < 32u; row += 8u) {
+        ivec2 cell = ivec2(thread % 32u, row + thread / 32u);
+        ivec2 source = cell * 2;
+        float a = tileDepth[source.y][source.x];
+        float b = tileDepth[source.y][source.x + 1];
+        float c = tileDepth[source.y + 1][source.x];
+        float d = tileDepth[source.y + 1][source.x + 1];
+        vec2 value = vec2(min(min(a, b), min(c, d)), max(max(a, b), max(c, d)));
+        storeTileTexel(1u, (tileOrigin >> 1) + cell, value);
+        level1[cell.y][cell.x] = value;
+    }
+    barrier();
+    {
+        ivec2 cell = ivec2(thread % 16u, thread / 16u);
+        ivec2 source = cell * 2;
+        vec2 value = combineQuad(level1[source.y][source.x], level1[source.y][source.x + 1],
+                                 level1[source.y + 1][source.x], level1[source.y + 1][source.x + 1]);
+        storeTileTexel(2u, (tileOrigin >> 2) + cell, value);
+        level2[cell.y][cell.x] = value;
+    }
+    barrier();
+    if (thread < 64u) {
+        ivec2 cell = ivec2(thread % 8u, thread / 8u);
+        ivec2 source = cell * 2;
+        vec2 value = combineQuad(level2[source.y][source.x], level2[source.y][source.x + 1],
+                                 level2[source.y + 1][source.x], level2[source.y + 1][source.x + 1]);
+        storeTileTexel(3u, (tileOrigin >> 3) + cell, value);
+        level3[cell.y][cell.x] = value;
+    }
+    barrier();
+    if (thread < 16u) {
+        ivec2 cell = ivec2(thread % 4u, thread / 4u);
+        ivec2 source = cell * 2;
+        vec2 value = combineQuad(level3[source.y][source.x], level3[source.y][source.x + 1],
+                                 level3[source.y + 1][source.x], level3[source.y + 1][source.x + 1]);
+        storeTileTexel(4u, (tileOrigin >> 4) + cell, value);
+        level4[cell.y][cell.x] = value;
+    }
+    barrier();
+    if (thread < 4u) {
+        ivec2 cell = ivec2(thread % 2u, thread / 2u);
+        ivec2 source = cell * 2;
+        vec2 value = combineQuad(level4[source.y][source.x], level4[source.y][source.x + 1],
+                                 level4[source.y + 1][source.x], level4[source.y + 1][source.x + 1]);
+        storeTileTexel(5u, (tileOrigin >> 5) + cell, value);
+        level5[cell.y][cell.x] = value;
+    }
+    barrier();
+    if (thread == 0u) {
+        vec2 value = combineQuad(level5[0][0], level5[0][1], level5[1][0], level5[1][1]);
+        storeTileTexel(tileLevels, tileOrigin >> 6, value);
+    }
+}
+
+// Runs in the last workgroup only, after every tile is written: completes the
+// tile levels' edge texels, then reduces the levels past the tile.
+void finishLevels() {
+    uint thread = gl_LocalInvocationIndex;
+    for (uint level = 1u; level < settings.levelCount; ++level) {
+        ivec2 extent = levelExtent(level);
+        if (level <= tileLevels) {
+            bvec2 incomplete = notEqual(extent << level, settings.baseExtent);
+            if (incomplete.x) {
+                for (int y = int(thread); y < extent.y; y += int(workgroupThreads)) {
+                    reduceFromPreviousLevel(level, ivec2(extent.x - 1, y));
+                }
+            }
+            if (incomplete.y) {
+                // The column above already covered the corner.
+                int rowEnd = incomplete.x ? extent.x - 1 : extent.x;
+                for (int x = int(thread); x < rowEnd; x += int(workgroupThreads)) {
+                    reduceFromPreviousLevel(level, ivec2(x, extent.y - 1));
+                }
+            }
+        } else {
+            int texels = extent.x * extent.y;
+            for (int index = int(thread); index < texels; index += int(workgroupThreads)) {
+                reduceFromPreviousLevel(level, ivec2(index % extent.x, index / extent.x));
+            }
+        }
+        memoryBarrierImage();
+        barrier();
+    }
+}
+
+void main() {
+    if (settings.conditional != 0u && condition.values[settings.conditionIndex] == 0u) {
+        return;
+    }
+    reduceTile();
+    // Publish this tile, then count it; the workgroup that counts last sees
+    // every tile's writes.
+    memoryBarrierImage();
+    barrier();
+    if (gl_LocalInvocationIndex == 0u) {
+        ticket = atomicAdd(counter.finishedWorkgroups, 1u);
+    }
+    barrier();
+    if (ticket != settings.workgroupCount - 1u) {
+        return;
+    }
+    if (gl_LocalInvocationIndex == 0u) {
+        // Ready for the next build; later dispatches are ordered by a barrier.
+        counter.finishedWorkgroups = 0u;
+    }
+    finishLevels();
+}

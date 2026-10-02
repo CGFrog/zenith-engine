@@ -3,6 +3,8 @@
 #include "../pipeline/ComputePipeline.hpp"
 #include "../vulkan/VulkanContext.hpp"
 
+#include <glm/glm.hpp>
+#include <optional>
 #include <vector>
 
 // Hierarchical depth of the scene view, rebuilt from the scene depth image.
@@ -19,9 +21,21 @@
 //   be scaled by levelExtent / storage size of the sampled level.
 // - build() leaves every level readable by compute and fragment shaders; the
 //   next build waits for those reads.
+//
+// Builds run as one dispatch (shaders/depth_pyramid_single_pass.comp) when
+// the device supports dynamically indexed storage-image arrays, and as one
+// dispatch per level otherwise; both produce identical levels.
 class DepthPyramid {
   public:
     static constexpr VkFormat format = VK_FORMAT_R32G32_SFLOAT;
+
+    // A uint32_t in a storage buffer, written on the GPU by compute shaders
+    // (or transfers) before build() records, that is zero only when the scene
+    // depth is unchanged since the previous build of the same render extent.
+    struct DepthChangeCount {
+        VkBuffer buffer{VK_NULL_HANDLE};
+        uint32_t index{0};
+    };
 
     bool init(const VulkanContext& context, VkExtent2D storageExtent, VkImageView depthView);
     // Recreates storage; the device must be idle.
@@ -31,7 +45,10 @@ class DepthPyramid {
     void prepareFirstUse(VkCommandBuffer commandBuffer);
     // Rebuilds the levels covering renderExtent. The scene depth must be in
     // DEPTH_READ_ONLY_OPTIMAL with its attachment writes visible to compute.
-    void build(VkCommandBuffer commandBuffer, VkExtent2D renderExtent);
+    // With depthChanges, the GPU skips the rebuild when the count is zero and
+    // keeps the previous build's levels; the per-level path always rebuilds.
+    void build(VkCommandBuffer commandBuffer, VkExtent2D renderExtent,
+               std::optional<DepthChangeCount> depthChanges = std::nullopt);
     void shutdown();
 
     VkImageView view() const {
@@ -60,22 +77,41 @@ class DepthPyramid {
         return static_cast<uint32_t>(m_levelViews.size());
     }
 
+    // True when builds use the single-dispatch downsampler.
+    bool singlePass() const {
+        return m_singlePass;
+    }
+
   private:
+    bool createSinglePassResources(const VulkanContext& context);
+    bool createPerLevelResources(const VulkanContext& context);
     bool createImage(VkExtent2D storageExtent, VkImageView depthView);
+    bool writePerLevelDescriptors(VkImageView depthView);
     void destroyImage();
-    void levelBarrier(VkCommandBuffer commandBuffer, uint32_t level) const;
+    void recordSinglePass(VkCommandBuffer commandBuffer, glm::uvec2 baseExtent, uint32_t levels,
+                          std::optional<DepthChangeCount> depthChanges);
+    void recordPerLevel(VkCommandBuffer commandBuffer, glm::uvec2 baseExtent, uint32_t levels);
+    void levelBarrier(VkCommandBuffer commandBuffer, uint32_t baseLevel, uint32_t levelCount) const;
 
     VkDevice m_device{VK_NULL_HANDLE};
     VmaAllocator m_allocator{VK_NULL_HANDLE};
-    VkDescriptorSetLayout m_layout{VK_NULL_HANDLE};
-    VkDescriptorPool m_pool{VK_NULL_HANDLE};
+    bool m_singlePass{false};
     VkSampler m_sampler{VK_NULL_HANDLE};
+    VkDescriptorSetLayout m_layout{VK_NULL_HANDLE};
     ComputePipeline m_pipeline;
+    // Per-level path: one descriptor set per level.
+    VkDescriptorPool m_pool{VK_NULL_HANDLE};
+    std::vector<VkDescriptorSet> m_levelDescriptors;
+    // Single-pass path: the workgroup counter that elects the last workgroup.
+    // The shader returns it to zero at the end of every build.
+    VkBuffer m_counter{VK_NULL_HANDLE};
+    VmaAllocation m_counterAllocation{VK_NULL_HANDLE};
+    bool m_counterInitialized{false};
+    VkImageView m_depthView{VK_NULL_HANDLE};
     VkImage m_image{VK_NULL_HANDLE};
     VmaAllocation m_allocation{VK_NULL_HANDLE};
     VkImageView m_view{VK_NULL_HANDLE};
     std::vector<VkImageView> m_levelViews;
-    std::vector<VkDescriptorSet> m_levelDescriptors;
     VkExtent2D m_storageExtent{};
     VkExtent2D m_renderExtent{};
     uint32_t m_builtLevels{0};

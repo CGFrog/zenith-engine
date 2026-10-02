@@ -2984,9 +2984,17 @@ bool MeshPass::recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive,
     m_postProcess.finishNormals(commandBuffer, draw.frameIndex);
     draw.passTimestamps->write(FrameTimestamp::depthPrepassEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     // Screen-space consumers get the pyramid of the complete opaque depth.
+    // With GPU-driven culling the occlusion build above already covers it
+    // unless the late phase drew something, so the GPU skips this rebuild
+    // when the late phase emitted nothing (the steady state): the pyramid is
+    // then built once per frame. Late-drawn objects must reach the consumers,
+    // so the rebuild cannot be dropped outright, and the late cull cannot use
+    // last frame's pyramid instead, since objects disoccluded by camera motion
+    // would be culled for a frame.
     draw.passTimestamps->write(FrameTimestamp::depthPyramidBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     prepareDepthForPyramid(commandBuffer, depthImage);
-    m_depthPyramid.build(commandBuffer, draw.renderExtent);
+    m_depthPyramid.build(commandBuffer, draw.renderExtent,
+                         gpuDrivenActive ? std::optional(m_gpuDrivenPass.lateEmittedCount()) : std::nullopt);
     draw.passTimestamps->write(FrameTimestamp::depthPyramidEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     restoreDepthAfterPyramid(commandBuffer, depthImage);
     return true;

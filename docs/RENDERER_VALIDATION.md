@@ -222,6 +222,7 @@ or at the decision point named below, after capability validation.
 | `ZENITH_DISABLE_SHADOW_CACHE` | Redraws every shadow cascade each frame, so shadow culling and rendering can be measured on a static scene. |
 | `ZENITH_DISABLE_DEPTH_PREPASS` | Skips the depth/normal prepass even when `RenderSettings::depthPrepass` is set. |
 | `ZENITH_DISABLE_RENDER_PACKET_CACHE` | Rebuilds render packets every frame (packet-cache baseline). |
+| `ZENITH_DEPTH_PYRAMID_PER_LEVEL` | Builds the depth pyramid with one dispatch per level and always rebuilds it after the prepass (the pre-Milestone 25 behavior; A/B baseline for the single-pass build). |
 | `ZENITH_VALIDATION_STRICT=1` | Requires the validation layer, enables synchronization validation, and fails the process on any counted validation message (exit 77 when the layer is unavailable). Any value other than empty or `0` enables it. |
 | `ZENITH_SMOKE_FRAMES=N` | Quits after N presented frames; used by bounded smoke runs and CTest. |
 | `ZENITH_EDITOR_SMOKE` | Runs the scripted editor scenario (viewport resizes, play-mode transitions, streamed layer). |
@@ -359,6 +360,53 @@ depth-weighted upsample shows no halos at silhouettes, and the result is
 slightly softer in the pedestals' fine surface detail. Moving the clamp after
 the average changed new Full by an RMSE of 0.41 from old Full (largest channel
 difference 4), within the reference-capture tolerance.
+### Single-pass depth pyramid
+
+`DepthPyramid` builds every level in one dispatch
+(`shaders/depth_pyramid_single_pass.comp`, structured after AMD FidelityFX SPD):
+each 256-thread workgroup reduces a 64x64 tile through six levels in shared
+memory, and a global atomic counter elects the last workgroup, which completes
+the edge texels of levels whose extent does not tile the base exactly and then
+reduces the remaining levels. The result is identical to the per-level build
+(`zenith_depth_prepass` checks both against a brute-force min/max on odd
+sizes). Devices without `shaderStorageImageArrayDynamicIndexing` fall back to
+the per-level build and log it once; `ZENITH_DEPTH_PYRAMID_PER_LEVEL` forces it.
+
+With GPU-driven submission and the depth prepass, the pyramid used to be built
+twice per frame: once from the early phase's depth for the late cull, and again
+after the late phase for screen-space effects. The second build now passes the
+late phase's emitted-instance count (`GpuDrivenPass::lateEmittedCount`) and the
+shader exits when it is zero, since the depth is then unchanged. In the steady
+state the pyramid is built once per frame; when objects become visible the
+rebuild still runs, so SSR and GTAO always see the complete depth. Using last
+frame's pyramid for the late cull instead would cull objects disoccluded by
+camera motion for a frame. `gpu.depth_pyramid` measures only the post-prepass
+build on that path (the occlusion build counts toward `gpu.depth_prepass`).
+
+The 2026-10-02 Release measurement (RTX 2070 SUPER, 1280x720, render mode, 300
+warm-up and 600 measured frames, three alternating A/B rounds per row, medians
+of the per-run medians and p95s) was taken while other jobs shared the GPU:
+
+| Scene | Path | Build | `gpu.depth_pyramid` | `gpu.depth_prepass` | `gpu.frame` median | `gpu.frame` p95 |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| demo | CPU | per level | 0.066 ms | 0.079 ms | 0.429 ms | 0.432 ms |
+| demo | CPU | single pass | 0.046 ms | 0.079 ms | 0.408 ms | 0.412 ms |
+| demo | GPU-driven | per level | 0.068 ms | 0.132 ms | 0.501 ms | 0.504 ms |
+| demo | GPU-driven | single pass | 0.005 ms | 0.125 ms | 0.470 ms | 0.480 ms |
+| showcase | CPU | per level | 0.068 ms | 0.076 ms | 1.460 ms | 1.473 ms |
+| showcase | CPU | single pass | 0.047 ms | 0.076 ms | 1.450 ms | 1.459 ms |
+| showcase | GPU-driven | per level | 0.070 ms | 0.147 ms | 1.551 ms | 1.561 ms |
+| showcase | GPU-driven | single pass | 0.004 ms | 0.125 ms | 1.466 ms | 1.478 ms |
+| showcase, moving camera | GPU-driven | per level | 0.060 ms | 0.129 ms | 1.527 ms | 1.539 ms |
+| showcase, moving camera | GPU-driven | single pass | 0.004 ms | 0.115 ms | 1.471 ms | 1.483 ms |
+
+A full single-pass build costs about 0.047 ms against 0.066-0.070 ms for the
+per-level build. The 4,000-object benchmark was too noisy under the shared load
+for medians to mean much (runs of one configuration varied 3x), so it was run
+five times per configuration. The fastest runs were 0.766 ms per level against
+0.745 ms single pass on the CPU path, and 1.006 ms against 0.929 ms GPU-driven.
+GPU-driven `gpu.depth_pyramid` fell from 0.105 ms to 0.005 ms median. No
+configuration regressed beyond that noise.
 
 ## Reflection probe blending
 
