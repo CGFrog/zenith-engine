@@ -1,9 +1,10 @@
 {
-  "version": 3,
+  "version": 4,
   "displayName": "Zenith Demo",
   "assetRoot": "../assets",
   "sceneRoot": "scenes",
   "startupScene": "demo.zenith-scene",
+  "gameModule": "modules/zenith_game_demo.zmodule",
   "renderSettings": {
     "version": 1,
     "antialiasing": 1,

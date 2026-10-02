@@ -16,6 +16,7 @@ set(required_paths
     "shaders"
     "licenses"
     "demo.zenith-project"
+    "modules/zenith_game_demo.zmodule"
     "scenes/demo.zenith-scene"
     "shaders/mesh.vert.spv"
     "shaders/mesh.frag.spv"

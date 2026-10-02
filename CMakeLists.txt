@@ -432,19 +432,49 @@ if(MSVC)
     set_source_files_properties(src/engine/diagnostics/StbImageWrite.cpp PROPERTIES COMPILE_OPTIONS /W0)
 endif()
 
+# The demo's gameplay: component types and systems registered through
+# registerDemoGameplay. Linked into the zenith_game_demo module the editor
+# loads and statically into the zenith executable, so both run the same
+# registration.
+add_library(zenith_demo_gameplay STATIC
+    src/game/gameplay/DemoGameplay.cpp
+    src/game/input/DemoInput.cpp
+    src/game/player/FirstPersonController.cpp
+)
+set_target_properties(zenith_demo_gameplay PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(zenith_demo_gameplay PUBLIC zenith_engine)
+
+# The demo game module. Each build also copies it to
+# projects/modules/zenith_game_demo.zmodule, the platform-independent,
+# project-relative path projects/demo.zenith-project names, so the editor can
+# open the checked-in project from any build directory. The copy is the most
+# recently built configuration; a module built for another configuration is
+# refused by its build hash.
+add_library(zenith_game_demo MODULE src/game/module/DemoGameModule.cpp)
+target_link_libraries(zenith_game_demo PRIVATE zenith_demo_gameplay)
+set(ZENITH_DEMO_PROJECT_MODULE "${CMAKE_CURRENT_SOURCE_DIR}/projects/modules/zenith_game_demo.zmodule")
+add_custom_command(TARGET zenith_game_demo POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_SOURCE_DIR}/projects/modules"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:zenith_game_demo>" "${ZENITH_DEMO_PROJECT_MODULE}"
+    VERBATIM)
+
+# Application composition for the zenith executable: menus, settings, audio,
+# and scene switching around the linked gameplay.
 add_library(zenith_demo STATIC
     src/game/application/DemoApplication.cpp
     src/game/application/GameSettings.cpp
-    src/game/input/DemoInput.cpp
-    src/game/player/FirstPersonController.cpp
+    src/game/application/LinkedGameplay.cpp
     src/game/scene/CaptureCamera.cpp
     src/game/scene/DemoScene.cpp
     src/game/scene/GameplayScene.cpp
 )
-target_link_libraries(zenith_demo PUBLIC zenith_engine)
+target_link_libraries(zenith_demo PUBLIC zenith_demo_gameplay)
 
 add_executable(zenith src/main.cpp)
 target_link_libraries(zenith PRIVATE zenith_demo)
+# The game links its gameplay statically, but the module is built with it so a
+# build of the game also refreshes the module the demo project names.
+add_dependencies(zenith zenith_game_demo)
 if(APPLE)
     set_target_properties(zenith PROPERTIES MACOSX_BUNDLE TRUE
         OUTPUT_NAME "Zenith"
@@ -651,10 +681,14 @@ endforeach()
 if(MSVC)
     target_compile_options(zenith_engine PRIVATE /W4 /permissive- /FS)
     target_compile_options(zenith_demo PRIVATE /W4 /permissive-)
+    target_compile_options(zenith_demo_gameplay PRIVATE /W4 /permissive-)
+    target_compile_options(zenith_game_demo PRIVATE /W4 /permissive-)
     target_compile_options(zenith_editor_app PRIVATE /W4 /permissive-)
 else()
     target_compile_options(zenith_engine PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(zenith_demo PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(zenith_demo_gameplay PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(zenith_game_demo PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(zenith_editor_app PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
@@ -678,6 +712,8 @@ install(DIRECTORY "${ZENITH_ASSET_SOURCE_DIR}/" DESTINATION assets)
 install(DIRECTORY "${ZENITH_SHADER_BINARY_DIR}/" DESTINATION shaders FILES_MATCHING PATTERN "*.spv")
 install(DIRECTORY "${ZENITH_DERIVED_BINARY_DIR}/" DESTINATION derived FILES_MATCHING PATTERN "*.zderived")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/projects/demo.zenith-project" DESTINATION .)
+# At the path the packaged project names, relative to the project file.
+install(FILES "$<TARGET_FILE:zenith_game_demo>" DESTINATION modules RENAME zenith_game_demo.zmodule)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/projects/scenes/demo.zenith-scene" DESTINATION scenes)
 if(UNIX AND NOT APPLE)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/zenith.desktop" DESTINATION share/applications)
@@ -873,6 +909,18 @@ if(BUILD_TESTING)
         target_compile_options(zenith_game_settings_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_game_settings COMMAND zenith_game_settings_tests)
+
+    add_executable(zenith_demo_game_module_tests tests/game/DemoGameModuleTests.cpp)
+    target_link_libraries(zenith_demo_game_module_tests PRIVATE zenith_demo)
+    target_compile_definitions(zenith_demo_game_module_tests PRIVATE
+        ZENITH_DEMO_GAME_MODULE="$<TARGET_FILE:zenith_game_demo>")
+    add_dependencies(zenith_demo_game_module_tests zenith_game_demo)
+    if(MSVC)
+        target_compile_options(zenith_demo_game_module_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_demo_game_module_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_demo_game_module COMMAND zenith_demo_game_module_tests)
 
     add_executable(zenith_editor_settings_tests
         tests/editor/EditorSettingsTests.cpp

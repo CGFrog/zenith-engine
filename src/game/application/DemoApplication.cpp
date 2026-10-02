@@ -16,6 +16,9 @@ DemoApplication::DemoApplication(std::optional<ProjectConfig> project, std::file
     , m_captureCamera(captureCamera) {}
 
 SceneResult DemoApplication::onStart(ApplicationContext& context) {
+    if (const LinkedGameplayResult result = linkDemoGameplay(m_gameplay); !result) {
+        return {.error = result.error};
+    }
     if (!m_settingsPath.empty() && std::filesystem::exists(m_settingsPath)) {
         if (const GameSettingsResult result = loadGameSettings(m_settingsPath, *m_settings); !result) {
             return {.error = result.error};
@@ -75,8 +78,8 @@ SceneKey DemoApplication::initialScene() const {
 
 std::unique_ptr<ApplicationScene> DemoApplication::createScene(SceneKey scene) {
     if (scene == demoSceneKey(DemoSceneId::Gameplay)) {
-        return std::make_unique<GameplayScene>(m_interactionSound, m_inputActions, m_settings, m_settingsPath,
-                                               m_project, m_captureCamera);
+        return std::make_unique<GameplayScene>(m_gameplay, m_interactionSound, m_inputActions, m_settings,
+                                               m_settingsPath, m_project, m_captureCamera);
     }
 
     return nullptr;

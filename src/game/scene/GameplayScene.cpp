@@ -3,12 +3,14 @@
 #include "DemoScene.hpp"
 
 #include "game/application/DemoApplication.hpp"
+#include "game/player/FirstPersonController.hpp"
 
 #include <SDL3/SDL_stdinc.h>
 #include <charconv>
 #include <glm/gtc/matrix_transform.hpp>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 namespace {
 std::optional<uint32_t> environmentCount(const char* name, uint32_t maximum) {
@@ -32,12 +34,39 @@ uint32_t benchmarkLightCount(uint32_t objectCount) {
     constexpr uint32_t objectBenchmarkLights = 96;
     return environmentCount("ZENITH_BENCHMARK_LIGHTS", 8192).value_or(objectCount > 0 ? objectBenchmarkLights : 0);
 }
+
+// The body the movement system drives: upright, frictionless, and heavy
+// enough to push props.
+RigidBodyComponent playerBody() {
+    RigidBodyComponent body{};
+    body.motionType = PhysicsMotionType::Dynamic;
+    body.layer = PhysicsLayer::Player;
+    body.mass = 80.0f;
+    body.friction = 0.0f;
+    body.angularDamping = 1.0f;
+    body.continuousCollision = true;
+    body.lockRotation = true;
+    return body;
+}
+
+Entity firstCameraChild(const Scene& scene, Entity entity) {
+    if (const auto* relationship = scene.registry().try_get<RelationshipComponent>(entity)) {
+        for (Entity child : relationship->children) {
+            if (scene.registry().valid(child) && scene.registry().all_of<CameraComponent>(child)) {
+                return child;
+            }
+        }
+    }
+    return entt::null;
+}
 } // namespace
 
-GameplayScene::GameplayScene(AudioClipHandle interactionSound, std::shared_ptr<InputActionMap> inputActions,
-                             std::shared_ptr<GameSettings> settings, std::filesystem::path settingsPath,
-                             std::optional<ProjectConfig> project, std::optional<CaptureCameraPath> captureCamera)
-    : m_interactionSound(interactionSound)
+GameplayScene::GameplayScene(LinkedGameplay gameplay, AudioClipHandle interactionSound,
+                             std::shared_ptr<InputActionMap> inputActions, std::shared_ptr<GameSettings> settings,
+                             std::filesystem::path settingsPath, std::optional<ProjectConfig> project,
+                             std::optional<CaptureCameraPath> captureCamera)
+    : m_gameplay(std::move(gameplay))
+    , m_interactionSound(interactionSound)
     , m_inputActions(std::move(inputActions))
     , m_settings(std::move(settings))
     , m_settingsPath(std::move(settingsPath))
@@ -45,9 +74,13 @@ GameplayScene::GameplayScene(AudioClipHandle interactionSound, std::shared_ptr<I
     , m_captureCamera(captureCamera) {}
 
 SceneResult GameplayScene::load(ApplicationContext& context) {
+    if (!m_gameplay.componentTypes || !m_gameplay.systems) {
+        return {.error = "Gameplay scene was created without linked gameplay"};
+    }
     Scene& scene = context.scene;
     if (m_project) {
-        const ProjectConfigResult result = loadProjectStartupScene(*m_project, context.assets, scene);
+        const ProjectConfigResult result =
+            loadProjectStartupScene(*m_project, context.assets, scene, m_gameplay.componentTypes);
         if (!result) {
             return {.error = result.error};
         }
@@ -62,8 +95,11 @@ SceneResult GameplayScene::load(ApplicationContext& context) {
 
     if (m_captureCamera) {
         spawnCaptureCamera(scene);
-    } else {
+    } else if (scene.registry().view<CharacterControllerComponent>().empty()) {
         spawnPlayer(scene);
+    } else {
+        // A scene authored with its own character controller keeps it.
+        completeAuthoredPlayers(scene);
     }
     return {.success = true};
 }
@@ -86,21 +122,38 @@ void GameplayScene::spawnPlayer(Scene& scene) {
     controller.camera = camera;
     scene.registry().emplace<CharacterControllerComponent>(player, controller);
     scene.registry().emplace<ColliderComponent>(player, CapsuleCollider{controller.halfHeight, controller.radius});
-    RigidBodyComponent playerBody{};
-    playerBody.motionType = PhysicsMotionType::Dynamic;
-    playerBody.layer = PhysicsLayer::Player;
-    playerBody.mass = 80.0f;
-    playerBody.friction = 0.0f;
-    playerBody.angularDamping = 1.0f;
-    playerBody.continuousCollision = true;
-    playerBody.lockRotation = true;
-    scene.registry().emplace<RigidBodyComponent>(player, playerBody);
+    scene.registry().emplace<RigidBodyComponent>(player, playerBody());
 
     scene.registry().emplace<CameraComponent>(camera);
     scene.registry().emplace<AudioListenerComponent>(camera);
     scene.setParent(camera, player);
     scene.registry().get<TransformComponent>(camera).local =
         glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, controller.halfHeight + controller.radius, 0.0f));
+}
+
+void GameplayScene::completeAuthoredPlayers(Scene& scene) {
+    entt::registry& registry = scene.registry();
+    const bool hasListener = !registry.view<AudioListenerComponent>().empty();
+    bool listenerAdded = false;
+    std::vector<Entity> controllers;
+    for (const Entity entity : registry.view<CharacterControllerComponent>()) {
+        controllers.push_back(entity);
+    }
+    for (const Entity entity : controllers) {
+        const auto& controller = registry.get<CharacterControllerComponent>(entity);
+        if (!registry.all_of<ColliderComponent>(entity)) {
+            registry.emplace<ColliderComponent>(entity, CapsuleCollider{controller.halfHeight, controller.radius});
+        }
+        if (!registry.all_of<RigidBodyComponent>(entity)) {
+            registry.emplace<RigidBodyComponent>(entity, playerBody());
+        }
+        if (!hasListener && !listenerAdded) {
+            if (const Entity camera = firstCameraChild(scene, entity); camera != entt::null) {
+                registry.emplace<AudioListenerComponent>(camera);
+                listenerAdded = true;
+            }
+        }
+    }
 }
 
 void GameplayScene::update(ApplicationContext& context, const InputState& input, float deltaSeconds) {
@@ -135,22 +188,31 @@ void GameplayScene::update(ApplicationContext& context, const InputState& input,
         options.gain = 0.8f;
         context.audio.playAt(m_interactionSound, options);
     }
-    glm::vec2 look = m_actions.axis2D(DemoAction::Look) * m_settings->lookSensitivity;
-    look.y *= m_settings->invertLookY ? -1.0f : 1.0f;
-    m_firstPersonControllers.updateView(
-        context.scene, {.look = look, .gamepadLook = m_actions.activeDevice() == InputDevice::Gamepad}, deltaSeconds);
+    applyViewPreferences(context.scene);
+    runSystems(context, SystemPhase::Update, input, deltaSeconds);
 }
 
 void GameplayScene::fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) {
     if (m_captureCamera) {
         return;
     }
-    const InputActionState actions = m_inputActions->evaluate(input);
-    m_firstPersonControllers.fixedUpdate(context.scene, context.physics,
-                                         {.move = actions.axis2D(DemoAction::Move),
-                                          .jumpPressed = actions.pressed(DemoAction::Jump),
-                                          .sprint = actions.down(DemoAction::Sprint)},
-                                         deltaSeconds);
+    runSystems(context, SystemPhase::FixedUpdate, input, deltaSeconds);
+}
+
+void GameplayScene::applyViewPreferences(Scene& scene) const {
+    scene.registry().ctx().insert_or_assign(FirstPersonViewPreferences{
+        .lookScale = m_settings->lookSensitivity,
+        .invertLookY = m_settings->invertLookY,
+    });
+}
+
+void GameplayScene::runSystems(ApplicationContext& context, SystemPhase phase, const InputState& input,
+                               float deltaSeconds) const {
+    m_gameplay.systems->run(phase, {.scene = context.scene,
+                                    .application = &context,
+                                    .mode = SimulationMode::Play,
+                                    .deltaSeconds = deltaSeconds,
+                                    .input = &input});
 }
 
 bool GameplayScene::fixedUpdatesEnabled() const {
