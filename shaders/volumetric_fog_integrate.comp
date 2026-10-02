@@ -1,0 +1,55 @@
+#version 450
+
+// Froxel volumetric fog, step 2: accumulates every froxel column front to back.
+// Texel z of the output holds the light scattered toward the eye (rgb) and the
+// transmittance (a) from the eye to the far end of froxel slice z. Mirrors
+// volumetric_fog::integrateFroxelColumn (VolumetricFog.cpp).
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// rgb: in-scattered radiance per unit length; a: extinction per unit length.
+layout(set = 0, binding = 0, rgba16f) uniform readonly image3D scatteringVolume;
+layout(set = 0, binding = 1, rgba16f) uniform writeonly image3D integratedVolume;
+
+// Mirrors IntegrateSettings in VolumetricFogPass.cpp.
+layout(push_constant) uniform Settings {
+    uvec4 volume;    // xyz: froxel counts
+    vec4 projection; // view.xy / depth = (ndc + zw) / xy
+    vec4 slices;     // x, y: slice log scale and bias; z: near depth; w: volume end depth
+} settings;
+
+const float MINIMUM_EXTINCTION = 1e-6;
+
+// Mirrors FroxelGrid::sliceDepth.
+float sliceDepth(float slice) {
+    return settings.slices.z * pow(settings.slices.w / settings.slices.z, slice / float(settings.volume.z));
+}
+
+void main() {
+    uvec2 column = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(column, settings.volume.xy))) {
+        return;
+    }
+    // View-ray length per unit of view depth through the column's center.
+    vec2 ndc = (vec2(column) + 0.5) / vec2(settings.volume.xy) * 2.0 - 1.0;
+    float rayLengthPerDepth = length(vec3((ndc + settings.projection.zw) / settings.projection.xy, 1.0));
+
+    vec3 scattering = vec3(0.0);
+    float transmittance = 1.0;
+    float sliceNear = sliceDepth(0.0);
+    for (uint slice = 0u; slice < settings.volume.z; ++slice) {
+        float sliceFar = sliceDepth(float(slice + 1u));
+        float segment = (sliceFar - sliceNear) * rayLengthPerDepth;
+        sliceNear = sliceFar;
+        vec4 medium = imageLoad(scatteringVolume, ivec3(column, slice));
+        float extinction = max(medium.a, 0.0);
+        float sliceTransmittance = exp(-extinction * segment);
+        // Integral over the slice of inScattering * exp(-extinction * t).
+        vec3 sliceScattering = extinction > MINIMUM_EXTINCTION
+                                   ? medium.rgb * (1.0 - sliceTransmittance) / extinction
+                                   : medium.rgb * segment;
+        scattering += transmittance * sliceScattering;
+        transmittance *= sliceTransmittance;
+        imageStore(integratedVolume, ivec3(column, slice), vec4(scattering, transmittance));
+    }
+}

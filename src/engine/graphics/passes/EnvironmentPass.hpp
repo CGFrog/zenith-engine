@@ -37,6 +37,10 @@ struct EnvironmentFrameState {
     float probeWeight{0.0f};
     // Mip of the prefiltered specular cube that holds roughness 1.
     float specularMaximumLod{0.0f};
+    // Irradiance SH of the primary environment (vec4 coefficients[9], see
+    // camera binding 6), valid for this frame and readable by fragment and
+    // compute shaders after prepare's commands.
+    VkBuffer primaryIrradiance{VK_NULL_HANDLE};
 };
 
 // Split-sum image-based lighting. For each environment source it precomputes on

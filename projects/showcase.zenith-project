@@ -23,6 +23,7 @@
     "cascadeBlendFraction": 0.1,
     "visualizeShadowCascades": false,
     "ambientOcclusion": 2,
-    "reflections": 2
+    "reflections": 2,
+    "volumetricFog": 2
   }
 }

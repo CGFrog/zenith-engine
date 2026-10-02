@@ -202,13 +202,14 @@ void ClusteredLightingPass::record(VkCommandBuffer commandBuffer, uint32_t frame
     const uint32_t clusterCount = gridSize.columns * gridSize.rows * gridSize.depthSlices;
     vkCmdDispatch(commandBuffer, (clusterCount + workgroupSize - 1) / workgroupSize, 1, 1);
     frame.statisticsPending = true;
-    // Lists feed this frame's fragment shading; statistics are read by the
-    // host once the frame's fence signals.
+    // Lists feed this frame's fragment shading and volumetric fog injection
+    // (compute); statistics are read by the host once the frame's fence signals.
     const VkMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
                                    .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                    .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                                   .dstStageMask =
-                                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_HOST_BIT,
+                                   .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                                                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                                                   VK_PIPELINE_STAGE_2_HOST_BIT,
                                    .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_HOST_READ_BIT};
     const VkDependencyInfo dependency{
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &barrier};

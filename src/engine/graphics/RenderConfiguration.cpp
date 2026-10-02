@@ -133,6 +133,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"quantization", settings.dynamicResolution.quantization}}},
                            {"ambientOcclusion", settings.ambientOcclusion},
                            {"reflections", settings.reflections},
+                           {"volumetricFog", settings.volumetricFog},
                            {"budgets",
                             {{"shadow", budget(settings.budgets.shadow)},
                              {"opaque", budget(settings.budgets.opaque)},
@@ -147,7 +148,8 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"depthPrepass", budget(settings.budgets.depthPrepass)},
                              {"depthPyramid", budget(settings.budgets.depthPyramid)},
                              {"lightClusters", budget(settings.budgets.lightClusters)},
-                             {"environment", budget(settings.budgets.environment)}}}};
+                             {"environment", budget(settings.budgets.environment)},
+                             {"volumetricFog", budget(settings.budgets.volumetricFog)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -217,6 +219,10 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
             !readEnum(document, "reflections", ReflectionQuality::ScreenSpaceFullResolution, loaded.reflections)) {
             return {.error = "Render settings contain an unknown reflection quality"};
         }
+        if (document.contains("volumetricFog") &&
+            !readEnum(document, "volumetricFog", VolumetricFogQuality::High, loaded.volumetricFog)) {
+            return {.error = "Render settings contain an unknown volumetric-fog quality"};
+        }
         if (const auto budgets = document.find("budgets"); budgets != document.end()) {
             if (!budgets->is_object() || !readBudget(*budgets, "shadow", loaded.budgets.shadow) ||
                 !readBudget(*budgets, "opaque", loaded.budgets.opaque) ||
@@ -231,7 +237,8 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "depthPrepass", loaded.budgets.depthPrepass) ||
                 !readOptionalBudget(*budgets, "depthPyramid", loaded.budgets.depthPyramid) ||
                 !readOptionalBudget(*budgets, "lightClusters", loaded.budgets.lightClusters) ||
-                !readOptionalBudget(*budgets, "environment", loaded.budgets.environment)) {
+                !readOptionalBudget(*budgets, "environment", loaded.budgets.environment) ||
+                !readOptionalBudget(*budgets, "volumetricFog", loaded.budgets.volumetricFog)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }
@@ -288,6 +295,10 @@ ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
     if (result.settings.reflections != ReflectionQuality::ProbesOnly && !result.settings.depthPrepass) {
         result.settings.reflections = ReflectionQuality::ProbesOnly;
         result.fallbacks.emplace_back("Screen-space reflections need the depth prepass; using probes and IBL");
+    }
+    if (result.settings.volumetricFog != VolumetricFogQuality::Off && !capabilities.volumetricFog) {
+        result.settings.volumetricFog = VolumetricFogQuality::Off;
+        result.fallbacks.emplace_back("Volumetric fog needs RGBA16F 3D storage images and was disabled");
     }
     return result;
 }

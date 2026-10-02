@@ -82,6 +82,18 @@ bool drawEnvironmentLight(EnvironmentLightComponent& component) {
     return changed;
 }
 
+bool drawVolumetricFog(VolumetricFogComponent& component) {
+    bool changed = ImGui::DragFloat("Density", &component.density, 0.001f, 0.0f, 10.0f, "%.4f");
+    changed |= ImGui::DragFloat("Height falloff", &component.heightFalloff, 0.005f, 0.0f, 10.0f, "%.3f");
+    changed |= ImGui::DragFloat("Base height", &component.baseHeight, 0.05f, -10000.0f, 10000.0f);
+    changed |= ImGui::ColorEdit3("Albedo", &component.albedo.x);
+    changed |= ImGui::SliderFloat("Anisotropy", &component.anisotropy, -0.95f, 0.95f, "%.2f");
+    changed |= ImGui::SliderFloat("Noise amount", &component.noiseAmount, 0.0f, 1.0f, "%.2f");
+    changed |= ImGui::DragFloat("Noise scale", &component.noiseScale, 0.05f, 0.05f, 1000.0f);
+    changed |= ImGui::Checkbox("Primary", &component.primary);
+    return changed;
+}
+
 bool drawCollider(ColliderComponent& component) {
     bool changed = false;
     std::visit(

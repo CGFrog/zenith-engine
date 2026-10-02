@@ -317,7 +317,8 @@ std::optional<EnvironmentFrameState> EnvironmentPass::prepare(VkCommandBuffer co
     if (request.probe && request.probeWeight > 0.0f) {
         probe = ensureEnvironment(commandBuffer, *request.probe, request.quality);
     }
-    EnvironmentFrameState state{.probeWeight = probe ? std::clamp(request.probeWeight, 0.0f, 1.0f) : 0.0f};
+    EnvironmentFrameState state{.probeWeight = probe ? std::clamp(request.probeWeight, 0.0f, 1.0f) : 0.0f,
+                                .primaryIrradiance = primary->irradiance.buffer};
     // Slot 1 always needs a valid descriptor; an unweighted copy of slot 0 costs nothing.
     writeCameraSets(m_frameBindings[frameIndex], cameraSets, {primary, probe ? probe : primary});
     if (FrameBinding& binding = m_frameBindings[frameIndex]; binding.sky != primary->id) {
@@ -658,8 +659,10 @@ bool EnvironmentPass::projectIrradiance(VkCommandBuffer commandBuffer, const Res
                        &settings);
     vkCmdDispatch(commandBuffer, 1, 1, 1);
     retireComputeSet(set);
+    // Shading reads the coefficients in fragment shaders, volumetric fog in compute.
     memoryBarrier(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                  VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
     return true;
 }
 

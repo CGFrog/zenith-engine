@@ -482,6 +482,7 @@ Entity Scene::cloneBranch(Entity source, Entity parent, bool appendCopySuffix) {
     copy.operator()<CameraComponent>();
     copy.operator()<DirectionalLightComponent>();
     copy.operator()<EnvironmentLightComponent>();
+    copy.operator()<VolumetricFogComponent>();
     copy.operator()<PointLightComponent>();
     copy.operator()<SpotLightComponent>();
     copy.operator()<ReflectionProbeComponent>();

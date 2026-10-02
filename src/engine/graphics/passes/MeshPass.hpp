@@ -20,6 +20,7 @@
 #include "GpuDrivenPass.hpp"
 #include "PostProcessPass.hpp"
 #include "SceneGeometryViews.hpp"
+#include "VolumetricFogPass.hpp"
 #include "engine/resources/DeferredReleaseQueue.hpp"
 #include <array>
 #include <map>
@@ -47,10 +48,15 @@ class MeshPass {
 
     uint32_t prewarmedPipelineCount() const {
         // Twelve graphics pipelines (two depth-normal), the light-cluster
-        // assignment, the depth-pyramid build, ambient occlusion, and the
-        // environment pipelines.
+        // assignment, the depth-pyramid build, ambient occlusion, volumetric
+        // fog, and the environment pipelines.
         return 14u + m_ambientOcclusion.pipelineCount() + m_environmentPass.pipelineCount() +
+               (m_volumetricFog.supported() ? VolumetricFogPass::pipelineCount() : 0u) +
                (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
+    }
+
+    bool volumetricFogSupported() const {
+        return m_volumetricFog.supported();
     }
 
     uint32_t localLightCapacity() const {
@@ -188,6 +194,9 @@ class MeshPass {
     void writeClusteredLightingDescriptors();
     // Binds each frame slot's occlusion image to camera binding 13 of both sets.
     void writeAmbientOcclusionDescriptors();
+    // Binds the fog pass's integrated volume to camera binding 18 of the frame
+    // slot's sets when the volume changed since they were last written.
+    void writeVolumetricFogDescriptors(uint32_t frameIndex);
     bool ensureGeometryPage(uint32_t page);
     void destroyGeometryPage(const GeometryPage& page);
     void bindGeometryPage(VkCommandBuffer commandBuffer, uint32_t page) const;
@@ -274,6 +283,9 @@ class MeshPass {
     // prepass did not run). Records timestamps 10 and 11 either way.
     void recordAmbientOcclusion(const DrawContext& draw, AmbientOcclusionQuality quality, const glm::mat4& projection,
                                 bool temporalNoise);
+    // Records this frame's fog (or clears it) between light clustering and the
+    // depth prepass, with its timestamp scope.
+    void recordVolumetricFog(const DrawContext& draw, const VolumetricFogFrame* frame);
     void bindOpaquePipeline(const DrawContext& draw, const GraphicsPipeline& pipeline, OpaquePipelines pipelines,
                             VkDescriptorSet cameraSet) const;
     void selectRenderItemLods(const MeshLodView& view);
@@ -357,6 +369,9 @@ class MeshPass {
     std::optional<uint32_t> m_depthPrepassFrame;
     GpuDrivenPass m_gpuDrivenPass;
     ClusteredLightingPass m_clusteredLighting;
+    VolumetricFogPass m_volumetricFog;
+    // Fog volume generation each frame slot's camera sets reference.
+    std::vector<uint64_t> m_fogDescriptorGenerations;
     bool m_gpuDrivenSupported{false};
     std::vector<const RenderItem*> m_gpuDrivenCandidates;
     std::vector<IndirectDrawKey> m_gpuDrivenKeys;

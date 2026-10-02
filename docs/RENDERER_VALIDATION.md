@@ -72,7 +72,8 @@ or at the decision point named below, after capability validation.
 
 | Variable | Effect |
 | --- | --- |
-| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, clustered local lights, depth prepass on, cascaded (high) shadows, and bloom. |
+| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, clustered local lights, depth prepass on, cascaded (high) shadows, bloom, and High volumetric fog. |
+| `ZENITH_DISABLE_VOLUMETRIC_FOG` | Forces volumetric fog Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
 | `ZENITH_FORCE_TAA` | Temporal anti-aliasing. |
 | `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
 | `ZENITH_FORCE_GPU_DRIVEN` | GPU-driven submission (two-phase occlusion culling and indirect draws) when the device supports it. |
@@ -100,7 +101,10 @@ environment changes), the early-phase `gpu.culling`, and any upload wait. `gpu.o
 `gpu.light_clusters`, `gpu.depth_prepass` (which includes the GPU-driven late
 cull), `gpu.depth_pyramid`, `gpu.ambient_occlusion`, and shading. `gpu.blended` includes `gpu.skybox`;
 `gpu.reflections` runs between them inside the scene pass and is subtracted from `gpu.blended`.
-`gpu.environment` is precompute plus skybox. The editor's Graphics panel shows
+`gpu.environment` is precompute plus skybox. `gpu.volumetric_fog` (fog
+injection, reprojection, and integration) runs inside `gpu.opaque` after
+`gpu.light_clusters` and reports zero when fog is Off or the scene has no
+`VolumetricFogComponent`; `render.volumetric_fog_bytes` reports its volumes. The editor's Graphics panel shows
 the same table live.
 
 `gpu_visibility_mismatches` counts retired GPU-driven frames whose culling kept

@@ -36,6 +36,7 @@ struct RenderGraphShape {
     bool localLights{false};
     bool depthPrepass{false};
     bool gpuDriven{false};
+    bool volumetricFog{false};
 
     bool operator==(const RenderGraphShape&) const = default;
 };

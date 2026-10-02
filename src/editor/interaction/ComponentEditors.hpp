@@ -18,6 +18,7 @@ bool drawTransform(TransformComponent& component);
 bool drawCamera(CameraComponent& component);
 bool drawDirectionalLight(DirectionalLightComponent& component);
 bool drawEnvironmentLight(EnvironmentLightComponent& component);
+bool drawVolumetricFog(VolumetricFogComponent& component);
 bool drawCollider(ColliderComponent& component);
 bool drawRigidBody(RigidBodyComponent& component);
 bool drawAnimation(AnimationComponent& component, const ModelAsset* model);

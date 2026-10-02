@@ -108,6 +108,7 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("render.ambient_occlusion_bytes", static_cast<double>(s.ambientOcclusionBytes), "bytes");
     sample("render.reflection_bytes", static_cast<double>(s.reflectionBytes), "bytes");
     sample("render.shadow_cache_bytes", static_cast<double>(s.shadowCacheBytes), "bytes");
+    sample("render.volumetric_fog_bytes", static_cast<double>(s.volumetricFogBytes), "bytes");
     sample("streaming.decoded_bytes", static_cast<double>(s.streamingDecodedBytes), "bytes");
     sample("streaming.uploaded_bytes", static_cast<double>(s.streamingUploadedBytes), "bytes");
     sample("streaming.decode_backlog_bytes", static_cast<double>(s.streamingDecodeBacklogBytes), "bytes");
@@ -146,6 +147,7 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
            budgets.environment.gpuMilliseconds);
     sample("gpu.environment_precompute", s.gpuEnvironmentPrecomputeMilliseconds);
     sample("gpu.skybox", s.gpuSkyboxMilliseconds);
+    sample("gpu.volumetric_fog", s.gpuVolumetricFogMilliseconds, "ms", budgets.volumetricFog.gpuMilliseconds);
     sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
     sample("gpu.ui", s.gpuUiMilliseconds, "ms", budgets.ui.gpuMilliseconds);

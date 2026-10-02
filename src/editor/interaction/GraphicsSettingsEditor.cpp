@@ -114,6 +114,14 @@ bool drawLighting(RenderSettings& settings, const RenderCapabilities& capabiliti
         changed = true;
     }
     ImGui::EndDisabled();
+    changed |= enumCombo("Volumetric fog", settings.volumetricFog,
+                         std::array<EnumOption, 4>{{{"Off"},
+                                                    {"Low", capabilities.volumetricFog},
+                                                    {"Medium", capabilities.volumetricFog},
+                                                    {"High", capabilities.volumetricFog}}});
+    if (settings.volumetricFog != VolumetricFogQuality::Off) {
+        ImGui::TextDisabled("Add a Volumetric Fog component to the scene to author the medium.");
+    }
     return changed;
 }
 
@@ -192,6 +200,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Depth pyramid", budgets.depthPyramid);
     changed |= drawBudget("Light clusters", budgets.lightClusters);
     changed |= drawBudget("Environment", budgets.environment);
+    changed |= drawBudget("Volumetric fog", budgets.volumetricFog);
     return changed;
 }
 
@@ -208,12 +217,13 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
     }
     // Shadow time runs from the frame start through the early GPU cull, so it
     // also covers the environment precompute; opaque time spans the clusters,
-    // prepass, pyramid and ambient occlusion; blended time spans the skybox.
+    // prepass, pyramid, volumetric fog and ambient occlusion; blended time spans the skybox.
     return {{"Shadows", stats.gpuShadowMilliseconds},
             {"Environment precompute", stats.gpuEnvironmentPrecomputeMilliseconds, true},
             {"GPU culling", stats.gpuCullingMilliseconds, true},
             {"Opaque", stats.gpuOpaqueMilliseconds},
             {"Light clusters", stats.gpuLightClusterMilliseconds, true},
+            {"Volumetric fog", stats.gpuVolumetricFogMilliseconds, true},
             {"Depth prepass", stats.gpuDepthPrepassMilliseconds, true},
             {"Depth pyramid", stats.gpuDepthPyramidMilliseconds, true},
             {"Ambient occlusion", stats.gpuAmbientOcclusionMilliseconds, true},
@@ -259,7 +269,8 @@ void clampToDocumentRanges(RenderSettings& settings) {
     for (RenderPassBudget* budget :
          {&budgets.shadow, &budgets.opaque, &budgets.blended, &budgets.bloom, &budgets.ui, &budgets.upload,
           &budgets.temporalResolve, &budgets.ambientOcclusion, &budgets.reflections, &budgets.exposure,
-          &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment}) {
+          &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment,
+          &budgets.volumetricFog}) {
         clampBudget(*budget);
     }
 }

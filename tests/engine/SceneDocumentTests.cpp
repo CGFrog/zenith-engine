@@ -54,6 +54,15 @@ int main() {
     body.motionType = PhysicsMotionType::Dynamic;
     body.mass = 3.0f;
     scene.registry().emplace<RigidBodyComponent>(child, body);
+    const Entity fog = scene.createEntity("Fog");
+    scene.registry().emplace<VolumetricFogComponent>(fog, VolumetricFogComponent{.density = 0.04f,
+                                                                                 .heightFalloff = 0.25f,
+                                                                                 .baseHeight = -1.5f,
+                                                                                 .albedo = {0.8f, 0.85f, 0.9f},
+                                                                                 .anisotropy = -0.2f,
+                                                                                 .noiseAmount = 0.5f,
+                                                                                 .noiseScale = 6.0f,
+                                                                                 .primary = false});
 
     const AssetLoadResult<ModelHandle> model = assets.loadModel(assetRoot / "sample.gltf");
     expect(static_cast<bool>(model), model.error);
@@ -83,6 +92,13 @@ int main() {
     expect(restoredResult.success, restoredResult.error);
     expect(serialize(restored, assets, options) == original,
            "serializing after a load should reproduce identical document content");
+    const Entity restoredFog = restored.findEntity(scene.id(fog));
+    const auto* restoredMedium =
+        restoredFog != entt::null ? restored.registry().try_get<VolumetricFogComponent>(restoredFog) : nullptr;
+    expect(restoredMedium != nullptr && restoredMedium->density == 0.04f && restoredMedium->baseHeight == -1.5f &&
+               restoredMedium->albedo == glm::vec3(0.8f, 0.85f, 0.9f) && restoredMedium->anisotropy == -0.2f &&
+               restoredMedium->noiseScale == 6.0f && !restoredMedium->primary,
+           "volumetric fog parameters should round trip");
 
     const std::filesystem::path tempDirectory = std::filesystem::temp_directory_path() / "zenith_scene_document_tests";
     std::error_code filesystemError;
@@ -110,6 +126,13 @@ int main() {
     expectRejectedWithoutReplacement(
         R"({"version":1,"entities":[{"id":1,"name":"a","local_transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"parent":null,"components":{"model":{"path":"missing.gltf"}}}]})",
         "Missing asset", assets, options);
+
+    expectRejectedWithoutReplacement(
+        R"({"version":1,"entities":[{"id":1,"name":"a","local_transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"parent":null,"components":{"volumetric_fog":{"density":0.1,"height_falloff":0.1,"base_height":0,"albedo":[1,1,1],"anisotropy":1.0,"primary":true}}}]})",
+        "Volumetric fog parameters are invalid", assets, options);
+    expectRejectedWithoutReplacement(
+        R"({"version":1,"entities":[{"id":1,"name":"a","local_transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"parent":null,"components":{"volumetric_fog":{"density":1e39,"height_falloff":0.1,"base_height":0,"albedo":[1,1,1],"anisotropy":0.2,"primary":true}}}]})",
+        "Volumetric fog parameters are invalid", assets, options);
 
     std::filesystem::remove_all(tempDirectory, filesystemError);
     return failures == 0 ? 0 : 1;

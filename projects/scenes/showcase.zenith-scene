@@ -91,6 +91,45 @@
    }
   },
   {
+   "id": 124,
+   "name": "Fog",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "volumetric_fog": {
+     "density": 0.015,
+     "height_falloff": 0.3,
+     "base_height": 0.0,
+     "albedo": [
+      0.9,
+      0.92,
+      0.95
+     ],
+     "anisotropy": 0.6,
+     "noise_amount": 0.35,
+     "noise_scale": 3.0,
+     "primary": true
+    }
+   }
+  },
+  {
    "id": 3,
    "name": "Floor",
    "local_transform": [
