@@ -37,6 +37,7 @@ src/
 |  |- audio/               decoding, streaming, and mixing
 |  |- graphics/            rendering and Vulkan implementation
 |  |- input/ jobs/ physics/ resources/ scene/ ui/ window/
+|  |- module/              game module loading and system scheduling
 |  `- project/             shared project manifests and scene paths
 |- editor/                 authoring application
 |  |- application/ document/ interaction/ panels/ settings/
@@ -45,6 +46,7 @@ src/
 `- main.cpp                game executable composition root
 tests/
 |- engine/                 reusable subsystem contracts
+|  `- modules/             game module libraries loaded by the module tests
 |- editor/                 authoring behavior
 `- game/                   demo integration
 ```
@@ -62,7 +64,7 @@ explicit, so a file move must update `CMakeLists.txt` as well as include sites.
 
 | Target | Kind | Responsibility |
 | --- | --- | --- |
-| `zenith_engine` | Static library | Reusable application lifecycle, scene, asset, audio, input, physics, graphics, and window systems. |
+| `zenith_engine` | Shared library | Reusable application lifecycle, scene, asset, audio, input, physics, graphics, window, and game module systems. Exports every function (`WINDOWS_EXPORT_ALL_SYMBOLS`) and Dear ImGui plus ImGuizmo (`IMGUI_API`); links volk, Jolt, shaderc, meshoptimizer, and bc7enc privately. |
 | `zenith_demo` | Static library | Current game composition, scene factory, first-person controller, and gameplay input mapping. |
 | `zenith` | Executable | Thin composition root that initializes `Engine` and runs `DemoApplication`. |
 | `zenith_editor_app` | Static library | Editor lifecycle, documents, history, interaction, and settings. |
@@ -72,8 +74,15 @@ explicit, so a file move must update `CMakeLists.txt` as well as include sites.
 | `zenith_cooked_textures` | Custom target | Runs `zenith_asset_build cook-model-textures` on every `assets/*.gltf`, writing BC7/BC5 KTX2 entries to `build/derived/`. |
 | `zenith_bc7enc` | Static library | The bc7enc_rdo BC7/BC5 block encoders and decoders, linked privately into the engine for texture cooking. |
 | `zenith_asset_tests` | Test executable | Asset importing and scene hierarchy behavior. |
+| `zenith_game_module_tests` | Test executable | Loads, reloads, and unloads the `zenith_test_*_module` libraries: registration, system order and modes, shadow copies, and refused modules. |
 | `zenith_physics_tests` | Test executable | Rigid bodies, contacts, impulses, raycasts, mesh collision, and cleanup. |
 | `zenith_application_tests` | Test executable | Lifecycle ordering, deferred switching, failed-load cleanup, demo composition, controls, and reload behavior. |
+
+Every executable, test, and shared library (the engine, SDL, and test modules)
+is written to one runtime directory, `build/<config>/` with multi-config
+generators and `build/` otherwise, so the loader finds the engine library
+beside each executable. A target that calls a privately linked dependency
+directly (volk, meshoptimizer) links its own copy of it.
 
 The build publishes `src/` as the engine include root. Consumers include
 headers as, for example, `engine/scene/Scene.hpp`. Runtime code uses the
@@ -86,7 +95,7 @@ Third-party libraries are pinned with CMake `FetchContent`:
 | --- | --- |
 | Vulkan Headers + Volk | Vulkan declarations and dynamic loader. |
 | Vulkan Memory Allocator (VMA) | GPU buffer and image memory allocation. |
-| SDL 3 | Window creation, Vulkan surface creation, events, keyboard, and mouse. |
+| SDL 3 (shared) | Window creation, Vulkan surface creation, events, keyboard, and mouse. |
 | GLM | Vectors, matrices, quaternions, and transforms. |
 | EnTT | Entity-component registry. |
 | Jolt Physics | Collision detection and rigid-body simulation behind Zenith's physics API. |
@@ -226,6 +235,25 @@ requests, and `ApplicationSession`. The session guarantees load/update/fixed
 update/unload ordering and clears ECS/physics state between scenes while assets
 remain cached.
 
+### `src/engine/module/*`
+
+Game modules: shared libraries that add component types and systems to a host.
+`ModuleApi.hpp` is the C-linkage contract (`ZENITH_GAME_MODULE` defines
+`zenith_module_api_version`, `zenith_module_build_hash`, name, and version; the
+module defines `zenith_module_register(ModuleRegistrar&)`), and
+`checkModuleCompatibility` refuses another API version or toolchain/runtime
+build hash. `GameModule::load` copies the library (and its PDB, patching the
+copy to name it) to a unique shadow file, loads that with
+`SharedLibrary` (`LoadLibrary`/`dlopen`), and registers into a copy of the
+built-in (or host-supplied) `ComponentTypeRegistry` plus its own
+`SystemRegistry`, recording which component keys the module added.
+`SystemScheduler` runs a registry's systems per `SystemPhase` (update, fixed
+update) by ascending order, filtered by `RunIn` edit/play flags. Everything a
+module registered must be released, and every scene its components touched
+destroyed, before the `GameModule` is destroyed; otherwise the library is
+deliberately left loaded. `EngineExport.hpp` defines `ZENITH_ENGINE_API` for
+data that must cross the engine library boundary.
+
 ### `src/engine/jobs/JobSystem.*` and `scene/AdditiveSceneManager.*`
 
 `JobSystem` runs bounded prioritized work with cancellation and filtered
@@ -249,10 +277,10 @@ movement and view input and remains entirely outside `zenith_engine`.
 ### `src/engine/project/ProjectConfig.*`
 
 Defines the shared versioned project manifest used by both game and editor
-applications. Version 3 stores a display name, project-relative asset and scene
-roots, a scene-root-relative startup scene, and validated renderer quality and
-per-pass budget settings. Versions 1 and 2 remain readable and are upgraded on
-save. Scene references are validated against the scene root before
+applications. Version 4 stores a display name, project-relative asset and scene
+roots, a scene-root-relative startup scene, validated renderer quality and
+per-pass budget settings, and an optional project-relative `gameModule`
+library path. Versions 1 to 3 remain readable and are upgraded on save. Scene references are validated against the scene root before
 `SceneDocument` loads them.
 
 The `zenith` executable accepts `--project <project-file>`. The demo application

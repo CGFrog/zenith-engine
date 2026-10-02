@@ -52,6 +52,31 @@ Important boundaries:
   separately from runtime scene data, so changing the workspace cannot mutate
   the scene.
 
+## Shared engine library and game modules
+
+`zenith_engine` is a shared library. The editor, the game executable, tests,
+and any game module loaded at runtime link the same engine binary, so there is
+one copy of engine code and of third-party state that must not be duplicated:
+SDL (itself built shared), the Dear ImGui context (compiled into the engine with
+ImGuizmo and exported with `IMGUI_API`), and the privately linked volk function table, Jolt
+allocator and factory, and shaderc. On Windows the build exports every engine
+function automatically; data that must cross the boundary needs
+`ZENITH_ENGINE_API` (`engine/module/EngineExport.hpp`). Engine headers must not
+call privately linked libraries inline, and a consumer that uses one directly
+links its own independent copy.
+
+A game module (`engine/module/`) is a shared library exposing C-linkage entry
+points. The host loads a uniquely named shadow copy so the original can be
+rebuilt while loaded, refuses a module whose API version or toolchain/runtime
+build hash differs, and lets it register component types into a copy of the
+host's registry and systems into its own `SystemRegistry`. A
+`SystemScheduler` runs systems per update or fixed-update phase by order,
+filtered by edit/play `RunIn` flags. Module code is reachable through
+registered functions, EnTT storage created by module code, and component
+values, so a host releases all of them, destroying affected scenes after
+serializing what must survive, before unloading. Wiring modules and systems
+into `Engine` and the editor is application composition.
+
 ## Ownership and lifetime
 
 `main` owns `Engine` and `DemoApplication`. The engine owns subsystems by value.
@@ -129,10 +154,11 @@ across successful transitions.
 ## Project and authored-scene flow
 
 Both applications consume the engine-owned `ProjectConfig` contract. Manifest
-version 3 resolves asset and scene roots relative to the project file, keeps the
-startup scene contained by the scene root, and persists renderer quality and
-per-pass CPU/GPU budget choices. Versions 1 and 2 remain readable; version 1
-has no startup scene until it is saved in the current format.
+version 4 resolves asset and scene roots relative to the project file, keeps the
+startup scene contained by the scene root, persists renderer quality and
+per-pass CPU/GPU budget choices, and may name a project-relative game module
+library. Versions 1 to 3 remain readable; version 1 has no startup scene until
+it is saved in the current format.
 
 The game executable accepts `--project <project-file>`. `DemoApplication`
 selects the gameplay scene, while `GameplayScene` loads the configured authored
@@ -631,7 +657,7 @@ that CPU picking no longer meets the interaction budget.
 
 ### Scalable lighting and environment data
 
-Project manifest version 3 serializes every renderer quality choice plus
+Project manifest version 3 and later serialize every renderer quality choice plus
 per-pass CPU/GPU budgets. Startup validates requested settings against device
 capabilities and reports each explicit fallback. The compatible instanced draw
 path remains the default; GPU-driven submission cannot be selected unless a

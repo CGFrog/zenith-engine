@@ -48,6 +48,16 @@ ProjectConfigResult readRoot(const Json& document, std::string_view key, const s
     return {.success = true};
 }
 
+// An absent key leaves path empty; a present one must be a relative path.
+ProjectConfigResult readOptionalPath(const Json& document, std::string_view key,
+                                     const std::filesystem::path& projectDirectory, std::filesystem::path& path) {
+    if (!document.contains(key)) {
+        path.clear();
+        return {.success = true};
+    }
+    return readRoot(document, key, projectDirectory, path);
+}
+
 ProjectConfigResult containedRelativeForSave(const std::filesystem::path& root, const std::filesystem::path& path,
                                              std::string_view field, std::filesystem::path& relative) {
     const std::filesystem::path normalizedRoot = std::filesystem::absolute(root).lexically_normal();
@@ -135,6 +145,13 @@ ProjectConfigResult loadProjectConfig(const std::filesystem::path& path, Project
         }
     }
 
+    if (version >= 4) {
+        if (ProjectConfigResult result = readOptionalPath(document, "gameModule", projectDirectory, loaded.gameModule);
+            !result) {
+            return result;
+        }
+    }
+
     config = std::move(loaded);
     return {.success = true};
 }
@@ -166,6 +183,15 @@ ProjectConfigResult saveProjectConfig(const std::filesystem::path& path, const P
         }
     }
 
+    std::filesystem::path gameModule;
+    if (!config.gameModule.empty()) {
+        if (ProjectConfigResult result =
+                rootRelativeForSave(projectDirectory, config.gameModule, "gameModule", gameModule);
+            !result) {
+            return result;
+        }
+    }
+
     std::error_code error;
     std::filesystem::create_directories(projectDirectory, error);
     if (error) {
@@ -181,10 +207,13 @@ ProjectConfigResult saveProjectConfig(const std::filesystem::path& path, const P
         !result) {
         return {.error = result.error};
     }
-    const Json document = {
+    Json document = {
         {"version", ProjectConfig::currentVersion},      {"displayName", config.displayName},
         {"assetRoot", assetRoot.generic_string()},       {"sceneRoot", sceneRoot.generic_string()},
         {"startupScene", startupScene.generic_string()}, {"renderSettings", Json::parse(serializedRenderSettings)}};
+    if (!gameModule.empty()) {
+        document["gameModule"] = gameModule.generic_string();
+    }
     output << document.dump(2) << '\n';
     if (!output) {
         return {.error = "Could not finish writing project file: " + projectPath.string()};
