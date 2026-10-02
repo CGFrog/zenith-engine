@@ -261,9 +261,24 @@ class MeshPass {
     bool buildRenderItems(const Scene& scene, const AssetManager& assets,
                           const std::vector<RenderObjectId>& outlinedObjects, std::vector<RenderItem>& items);
     uint32_t updateRenderItems(const Scene& scene, std::span<const Entity> changedEntities);
+    // Who selects the directional shadow casters of each dirty cascade.
+    enum class ShadowCulling {
+        // Frustum-tests render items on the CPU and draws them instanced.
+        Cpu,
+        // Culls on the GPU into GpuDrivenPass frustum views and draws the
+        // indirect commands; requires this frame's GPU-driven preparation.
+        Gpu,
+    };
+
+    // Clears and redraws the dirty cascades; cached cascades keep their depth.
     bool recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, const std::vector<RenderItem>& items,
                       const DirectionalLightComponent& light, const std::array<glm::mat4, 3>& lightViewProjections,
-                      uint32_t cascadeCount, const std::array<bool, 3>& dirtyCascades, RenderStats& stats);
+                      uint32_t cascadeCount, const std::array<bool, 3>& dirtyCascades, ShadowCulling culling,
+                      const MeshLodView& lodView, OptionalPassTimestamps& passTimestamps, RenderStats& stats);
+    // Draws a GPU-culled cascade's indirect commands; called inside the
+    // cascade's rendering scope with the shadow pipeline bound.
+    void recordGpuShadowCascade(VkCommandBuffer commandBuffer, uint32_t frameIndex, uint32_t cascade,
+                                RenderStats& stats);
     void beginRendering(VkCommandBuffer commandBuffer, VkImageView colorView, VkImageView motionView,
                         VkImage depthImage, VkImageView depthView, VkExtent2D extent,
                         SceneAttachments attachments) const;

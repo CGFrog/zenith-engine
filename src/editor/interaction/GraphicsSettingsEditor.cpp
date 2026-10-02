@@ -192,6 +192,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Depth pyramid", budgets.depthPyramid);
     changed |= drawBudget("Light clusters", budgets.lightClusters);
     changed |= drawBudget("Environment", budgets.environment);
+    changed |= drawBudget("Shadow culling", budgets.shadowCulling);
     return changed;
 }
 
@@ -207,10 +208,12 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
         return {};
     }
     // Shadow time runs from the frame start through the early GPU cull, so it
-    // also covers the environment precompute; opaque time spans the clusters,
-    // prepass, pyramid and ambient occlusion; blended time spans the skybox.
+    // also covers the environment precompute and GPU shadow-cascade culling;
+    // opaque time spans the clusters, prepass, pyramid and ambient occlusion;
+    // blended time spans the skybox.
     return {{"Shadows", stats.gpuShadowMilliseconds},
             {"Environment precompute", stats.gpuEnvironmentPrecomputeMilliseconds, true},
+            {"Shadow culling", stats.gpuShadowCullingMilliseconds, true},
             {"GPU culling", stats.gpuCullingMilliseconds, true},
             {"Opaque", stats.gpuOpaqueMilliseconds},
             {"Light clusters", stats.gpuLightClusterMilliseconds, true},
@@ -259,7 +262,8 @@ void clampToDocumentRanges(RenderSettings& settings) {
     for (RenderPassBudget* budget :
          {&budgets.shadow, &budgets.opaque, &budgets.blended, &budgets.bloom, &budgets.ui, &budgets.upload,
           &budgets.temporalResolve, &budgets.ambientOcclusion, &budgets.reflections, &budgets.exposure,
-          &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment}) {
+          &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment,
+          &budgets.shadowCulling}) {
         clampBudget(*budget);
     }
 }

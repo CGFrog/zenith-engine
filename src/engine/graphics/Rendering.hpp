@@ -115,6 +115,8 @@ struct RenderPassBudgets {
     RenderPassBudget lightClusters;
     // Environment precompute (only when its inputs change) plus the skybox.
     RenderPassBudget environment;
+    // GPU culling of the redrawn shadow cascades (GPU-driven path).
+    RenderPassBudget shadowCulling;
 };
 
 struct DynamicResolutionSettings {
@@ -265,6 +267,8 @@ struct RenderStats {
     // Precompute runs only on frames whose environment inputs changed.
     double gpuEnvironmentPrecomputeMilliseconds{0.0};
     double gpuSkyboxMilliseconds{0.0};
+    // GPU culling of the redrawn shadow cascades; within gpuShadowMilliseconds.
+    double gpuShadowCullingMilliseconds{0.0};
     uint64_t temporalHistoryBytes{0};
     uint64_t motionVectorBytes{0};
     uint64_t ambientOcclusionBytes{0};

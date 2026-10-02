@@ -450,7 +450,8 @@ uploaded buffers or textures. `collectTimings` decodes each timestamp pair into
 ### `src/engine/graphics/resources/FrameTimestamps.hpp`
 
 Names the timestamp slots of passes a frame may skip (depth prepass, depth
-pyramid, light clusters, environment precompute, skybox).
+pyramid, light clusters, environment precompute, skybox, shadow-cascade
+culling).
 `OptionalPassTimestamps` writes each slot at most once and closes skipped pairs
 back to back, so every query becomes available and skipped passes read zero.
 
@@ -483,6 +484,15 @@ indirect-count commands. The cull shader also picks each object's LOD batch.
 Both phases' compacted draws stay valid for the rest of the frame, so the
 shading pass redraws what the prepass culled. The caller owns render passes,
 the depth pyramid, and the scene-depth transitions around the pyramid build.
+Frustum-only views (the directional shadow cascades) cull into their own
+output regions without touching the camera phases or visibility history.
+
+### `src/engine/graphics/GpuCullLayout.*`
+
+Device-free contracts of GPU culling: cull phases and modes, the region-major
+layout of the cull output buffers (camera phases first, then frustum views),
+and the clip-volume sphere test that `gpu_visibility.comp` mirrors and the CPU
+shadow-cascade cull shares.
 
 ### `src/engine/graphics/passes/DepthPyramid.*`
 

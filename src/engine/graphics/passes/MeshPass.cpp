@@ -138,32 +138,6 @@ glm::vec3 normalizedLightDirection(const glm::vec3& direction) {
     return glm::normalize(direction);
 }
 
-struct Frustum {
-    std::array<glm::vec4, 6> planes;
-};
-
-Frustum makeFrustum(const glm::mat4& matrix) {
-    const glm::mat4 rows = glm::transpose(matrix);
-    Frustum frustum{
-        {rows[3] + rows[0], rows[3] - rows[0], rows[3] + rows[1], rows[3] - rows[1], rows[2], rows[3] - rows[2]}};
-    for (glm::vec4& plane : frustum.planes) {
-        const float length = glm::length(glm::vec3(plane));
-        if (length > 0.0f) {
-            plane /= length;
-        }
-    }
-    return frustum;
-}
-
-bool sphereVisible(const Frustum& frustum, const glm::vec3& center, float radius) {
-    for (const glm::vec4& plane : frustum.planes) {
-        if (glm::dot(glm::vec3(plane), center) + plane.w < -radius) {
-            return false;
-        }
-    }
-    return true;
-}
-
 uint64_t handleKey(MeshHandle handle) {
     return (static_cast<uint64_t>(handle.generation) << 32) | handle.index;
 }
@@ -268,7 +242,9 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     const GpuDrivenLimits limits{.maximumObjects = maximumObjectsPerFrame,
                                  .maximumInstances = maximumGpuDrivenInstances,
                                  .maximumBatches = maximumGpuDrivenInstances,
-                                 .maximumGroups = maximumGpuDrawGroups};
+                                 .maximumGroups = maximumGpuDrawGroups,
+                                 // Shadow cascades cull into their own regions.
+                                 .frustumViews = maximumShadowCascades};
     m_gpuDrivenSupported =
         m_gpuDrivenPass.init(context, frameCount, m_depthPyramid, limits, features12.drawIndirectCount == VK_TRUE);
     if (m_gpuDrivenSupported && !createGpuDrivenDescriptors()) {
@@ -1733,10 +1709,25 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
                             const DirectionalLightComponent& light,
                             const std::array<glm::mat4, maximumShadowCascades>& lightViewProjections,
                             uint32_t cascadeCount, const std::array<bool, maximumShadowCascades>& dirtyCascades,
+                            ShadowCulling culling, const MeshLodView& lodView, OptionalPassTimestamps& passTimestamps,
                             RenderStats& stats) {
     if (cascadeCount == 0 || std::ranges::none_of(dirtyCascades, [](bool dirty) { return dirty; })) {
         stats.shadowCascadesCached = cascadeCount;
         return true;
+    }
+    // Disabled light shadows still clear the dirty cascades, without casters.
+    const bool drawCasters = light.shadows.enabled;
+    if (culling == ShadowCulling::Gpu && drawCasters) {
+        // All dirty cascades are culled up front: compute work cannot run
+        // inside the cascades' rendering scopes.
+        passTimestamps.write(FrameTimestamp::shadowCullBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+        for (uint32_t cascade = 0; cascade < cascadeCount; ++cascade) {
+            if (dirtyCascades[cascade]) {
+                m_gpuDrivenPass.cullFrustumView(commandBuffer, frameIndex, cascade, lightViewProjections[cascade],
+                                                lodView);
+            }
+        }
+        passTimestamps.write(FrameTimestamp::shadowCullEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     }
     imageBarrier(commandBuffer, m_shadowTexture.image, VK_IMAGE_ASPECT_DEPTH_BIT,
                  m_shadowInitialized ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
@@ -1776,18 +1767,25 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline.handle());
         vkCmdSetDepthBias(commandBuffer, std::max(light.shadows.constantBias, 0.0f), 0.0f,
                           std::max(light.shadows.slopeBias, 0.0f));
-        const VkDescriptorSet shadowSets[]{m_cameras[frameIndex].descriptor, m_cameras[frameIndex].bindlessDescriptor};
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline.layout(), 0,
-                                static_cast<uint32_t>(std::size(shadowSets)), shadowSets, 0, nullptr);
         const glm::vec4 shadowPush{static_cast<float>(cascade), 0.0f, 0.0f, 0.0f};
         vkCmdPushConstants(commandBuffer, m_shadowPipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(shadowPush),
                            &shadowPush);
-        const Frustum shadowFrustum = makeFrustum(lightViewProjections[cascade]);
+        if (culling == ShadowCulling::Gpu) {
+            if (drawCasters) {
+                recordGpuShadowCascade(commandBuffer, frameIndex, cascade, stats);
+            }
+            vkCmdEndRendering(commandBuffer);
+            continue;
+        }
+        const VkDescriptorSet shadowSets[]{m_cameras[frameIndex].descriptor, m_cameras[frameIndex].bindlessDescriptor};
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline.layout(), 0,
+                                static_cast<uint32_t>(std::size(shadowSets)), shadowSets, 0, nullptr);
+        const std::array<glm::vec4, 6> shadowFrustum = clipVolumePlanes(lightViewProjections[cascade]);
         m_shadowVisibleItems.clear();
         m_shadowVisibleItems.reserve(items.size());
         for (const RenderItem& item : items) {
             if (light.shadows.enabled && item.material->alphaMode != MaterialAlphaMode::Blend &&
-                sphereVisible(shadowFrustum, item.boundsCenter, item.boundsRadius)) {
+                sphereReachesClipVolume(shadowFrustum, item.boundsCenter, item.boundsRadius)) {
                 m_shadowVisibleItems.push_back(&item);
             }
         }
@@ -1846,6 +1844,29 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
                  maximumShadowCascades);
     m_shadowInitialized = true;
     return true;
+}
+
+void MeshPass::recordGpuShadowCascade(VkCommandBuffer commandBuffer, uint32_t frameIndex, uint32_t cascade,
+                                      RenderStats& stats) {
+    // The GPU-driven set binds the cull output as the object buffer, so
+    // shadow.vert reads each instance by gl_InstanceIndex on both paths.
+    const VkDescriptorSet shadowSets[]{m_cameras[frameIndex].gpuDrivenDescriptor,
+                                       m_cameras[frameIndex].bindlessDescriptor};
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline.layout(), 0,
+                            static_cast<uint32_t>(std::size(shadowSets)), shadowSets, 0, nullptr);
+    std::optional<bool> boundDoubleSided;
+    for (uint32_t group = 0; group < m_drawPlan.groups.size(); ++group) {
+        const IndirectDrawGroup& drawGroup = m_drawPlan.groups[group];
+        const bool doubleSided = drawGroup.pipeline == doubleSidedBucket;
+        if (!boundDoubleSided || *boundDoubleSided != doubleSided) {
+            vkCmdSetCullMode(commandBuffer, doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
+            boundDoubleSided = doubleSided;
+        }
+        bindGeometryPage(commandBuffer, drawGroup.geometryPage);
+        m_gpuDrivenPass.drawGroup(commandBuffer, GpuCullRegion::frustumView(cascade), group, drawGroup.firstBatch,
+                                  drawGroup.batchCount);
+        ++stats.drawCalls;
+    }
 }
 
 bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImageView colorView, VkImage depthImage,
@@ -2188,11 +2209,28 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const MeshLodView lodView = makeMeshLodView(cameraPosition, projection[1][1], renderExtent.height,
                                                 rendering.settings().lodErrorThresholdPixels);
     selectRenderItemLods(lodView);
+    if (gpuDrivenActive) {
+        // Shadow cascades cull from the same records before the camera does.
+        if (!prepareGpuDrivenFrame(frameIndex, lodView)) {
+            return false;
+        }
+        m_gpuDrivenPass.beginFrame(commandBuffer, frameIndex);
+        // Every cull dispatch statically references the pyramid.
+        m_depthPyramid.prepareFirstUse(commandBuffer);
+    }
+    // Cascades cull on the GPU whenever GPU-driven submission is active; the CPU
+    // path is the fallback and the A/B baseline (docs/RENDERER_VALIDATION.md).
+    const ShadowCulling shadowCulling = gpuDrivenActive && SDL_getenv("ZENITH_DISABLE_GPU_SHADOW_CULLING") == nullptr
+                                            ? ShadowCulling::Gpu
+                                            : ShadowCulling::Cpu;
     const auto shadowCpuBegin = std::chrono::steady_clock::now();
+    // ZENITH_DISABLE_SHADOW_CACHE redraws every cascade each frame, so shadow
+    // rendering and culling can be measured on a static scene.
     const bool shadowCastersChanged =
-        !m_shadowInitialized || revisions.transform != m_shadowRevisions.transform ||
-        revisions.renderable != m_shadowRevisions.renderable || revisions.light != m_shadowRevisions.light ||
-        revisions.skin != m_shadowRevisions.skin || revisions.material != m_shadowRevisions.material;
+        !m_shadowInitialized || SDL_getenv("ZENITH_DISABLE_SHADOW_CACHE") != nullptr ||
+        revisions.transform != m_shadowRevisions.transform || revisions.renderable != m_shadowRevisions.renderable ||
+        revisions.light != m_shadowRevisions.light || revisions.skin != m_shadowRevisions.skin ||
+        revisions.material != m_shadowRevisions.material;
     std::array<bool, maximumShadowCascades> dirtyCascades{};
     for (uint32_t cascade = 0; cascade < cascadeCount; ++cascade) {
         float maximumDifference = 0.0f;
@@ -2206,7 +2244,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         dirtyCascades[cascade] = shadowCastersChanged || cascade >= m_cachedCascadeCount || maximumDifference > 0.0001f;
     }
     if (!recordShadow(commandBuffer, frameIndex, m_renderItems, shadowLight, cameraData.lightViewProjections,
-                      cascadeCount, dirtyCascades, stats)) {
+                      cascadeCount, dirtyCascades, shadowCulling, lodView, passTimestamps, stats)) {
         return false;
     }
     m_shadowRevisions = revisions;
@@ -2223,12 +2261,6 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
                            .view = view,
                            .renderExtent = renderExtent};
     if (gpuDrivenActive) {
-        if (!prepareGpuDrivenFrame(frameIndex, lodView)) {
-            return false;
-        }
-        m_gpuDrivenPass.beginFrame(commandBuffer, frameIndex);
-        // The cull shader statically references the pyramid in both phases.
-        m_depthPyramid.prepareFirstUse(commandBuffer);
         // Culling time covers the early phase; the depth pyramid and late phase
         // run between the opaque passes and count toward opaque time.
         if (timestampQueries) {
@@ -2305,6 +2337,11 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 2);
         }
         stats.visibleCount = m_gpuDrivenPass.retiredVisibleCount();
+        if (shadowCulling == ShadowCulling::Gpu) {
+            // Like visibleCount, a retired frame's count: casters drawn into
+            // the cascades that frame redrew.
+            stats.shadowCasterCount = m_gpuDrivenPass.retiredFrustumViewVisibleCount();
+        }
         stats.indirectCommandCount = static_cast<uint32_t>(m_gpuDrivenBatches.size());
         stats.gpuVisibilityMismatches = m_gpuDrivenPass.visibilityMismatchCount();
     } else {
@@ -2487,7 +2524,8 @@ void MeshPass::recordGpuDrivenGroups(const DrawContext& draw, GpuCullPhase phase
             boundPipeline = &pipeline;
         }
         bindGeometryPage(draw.commandBuffer, drawGroup.geometryPage);
-        m_gpuDrivenPass.drawGroup(draw.commandBuffer, phase, group, drawGroup.firstBatch, drawGroup.batchCount);
+        m_gpuDrivenPass.drawGroup(draw.commandBuffer, GpuCullRegion::phase(phase), group, drawGroup.firstBatch,
+                                  drawGroup.batchCount);
         ++draw.stats->drawCalls;
     }
 }

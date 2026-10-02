@@ -136,16 +136,22 @@ void testPassTimings() {
     stats.gpuFrameMilliseconds = 2.0;
     stats.gpuDepthPrepassMilliseconds = 0.25;
     stats.gpuSkyboxMilliseconds = 0.05;
+    stats.gpuShadowCullingMilliseconds = 0.02;
     const std::vector<GpuPassTiming> timings = GraphicsSettingsEditor::gpuPassTimings(stats);
     expect(!timings.empty() && std::strcmp(timings.back().name, "Frame") == 0 && timings.back().milliseconds == 2.0,
            "the table should end with the whole frame");
     bool foundPrepass = false;
+    bool foundShadowCulling = false;
     for (const GpuPassTiming& timing : timings) {
         if (std::strcmp(timing.name, "Depth prepass") == 0) {
             foundPrepass = timing.milliseconds == 0.25 && timing.nested;
         }
+        if (std::strcmp(timing.name, "Shadow culling") == 0) {
+            foundShadowCulling = timing.milliseconds == 0.02 && timing.nested;
+        }
     }
     expect(foundPrepass, "the prepass should be listed within opaque time");
+    expect(foundShadowCulling, "shadow-cascade culling should be listed within shadow time");
 }
 } // namespace
 
