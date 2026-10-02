@@ -25,6 +25,10 @@ OperatorRegistrationResult OperatorRegistry::add(Operator op) {
     return {.success = true};
 }
 
+bool OperatorRegistry::remove(std::string_view id) {
+    return std::erase_if(m_operators, [id](const std::unique_ptr<const Operator>& op) { return op->id == id; }) > 0;
+}
+
 const Operator* OperatorRegistry::find(std::string_view id) const {
     for (const std::unique_ptr<const Operator>& op : m_operators) {
         if (op->id == id) {

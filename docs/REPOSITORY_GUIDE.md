@@ -40,7 +40,7 @@ src/
 |  |- module/              game module loading and system scheduling
 |  `- project/             shared project manifests and scene paths
 |- editor/                 authoring application
-|  |- application/ document/ interaction/ panels/ project/ settings/
+|  |- application/ document/ interaction/ modules/ operators/ panels/ project/ settings/
 |- game/                   current demo client
 |  |- application/ scene/  game executable composition
 |  |- gameplay/ input/ player/  gameplay registered by the demo game module
@@ -50,6 +50,7 @@ tests/
 |- engine/                 reusable subsystem contracts
 |  `- modules/             game module libraries loaded by the module tests
 |- editor/                 authoring behavior
+|  `- modules/             game modules with editor extensions for the module host tests
 `- game/                   demo integration
 ```
 
@@ -79,6 +80,7 @@ explicit, so a file move must update `CMakeLists.txt` as well as include sites.
 | `zenith_bc7enc` | Static library | The bc7enc_rdo BC7/BC5 block encoders and decoders, linked privately into the engine for texture cooking. |
 | `zenith_asset_tests` | Test executable | Asset importing and scene hierarchy behavior. |
 | `zenith_game_module_tests` | Test executable | Loads, reloads, and unloads the `zenith_test_*_module` libraries: registration, system order and modes, shadow copies, and refused modules. |
+| `zenith_game_module_host_tests` | Test executable | Hosts `zenith_editor_test_module` in the editor's `GameModuleHost` without a window: module components through the document, edit/play systems, editor operators and panels, hot reload over the `_v2` build, and a failed reload that keeps module data as JSON. |
 | `zenith_asset_database_tests` | Test executable | Content hashing, asset GUIDs, `.meta` sidecars, and asset database scans, moves, external changes, and dependencies on real temporary directories. |
 | `zenith_physics_tests` | Test executable | Rigid bodies, contacts, impulses, raycasts, mesh collision, and cleanup. |
 | `zenith_application_tests` | Test executable | Lifecycle ordering, deferred switching, failed-load cleanup, demo composition, controls, and reload behavior. |
@@ -394,7 +396,7 @@ into arguments (never a shell); the default is
 Blender-style operators: every menu item, button, and key runs an `Operator`
 (stable id, label, description, `poll`, `execute`, properties described by
 reflected `Fields<T>`, and `Undo`/`Register` flags) registered in the
-`OperatorRegistry`; game or tool modules can register their own. The
+`OperatorRegistry`; game modules register their own (see Game module hosting). The
 `OperatorRunner` checks poll, wraps `Undo` operators in one `SceneEditing`
 undo step, reports failures to diagnostics, and keeps the last `Register`
 operator so the Adjust Last Operation panel can undo it and re-run it with
@@ -404,6 +406,39 @@ user's differences from `DefaultKeymap` are saved to `keymap.json` in the
 editor settings directory. `OperatorSearch` is the F3 popup and `KeymapEditor`
 the rebinding window. `ObjectOperators` holds the document-only object
 operators, which run headless in `tests/editor/OperatorTests.cpp`.
+
+### Game module hosting (`src/editor/modules/`)
+
+When the project names a `gameModule`, `EditorSession` loads it at startup
+through `GameModuleHost` (a failure is reported under the `Game Module`
+diagnostics source and the editor continues with the built-in types). The
+host gives `EditorDocument` the module's merged component registry, so the
+startup scene, Play mode, autosave, copy/paste, undo, and the inspector's Add
+Component menu all see module components. Module systems run through a
+`SystemScheduler`: `Update` from `EditorSession::update` and `FixedUpdate` from
+`fixedUpdate` in Play mode (pause and single step apply), and `RunIn::Edit`
+systems every Edit-mode frame, with fixed updates on an editor-side fixed
+clock. Edit-mode systems change the scene directly, outside undo.
+
+Hot reload (`module.reload` in the Module menu, a settled change to the
+library file, or a successful Build that changed it) waits for Edit mode, a
+finished build, and no modal tool, then serializes the scene, releases every
+holder of module code (editor extensions, scheduler, the document's registry,
+and the scene's whole EnTT registry), unloads, loads a fresh shadow copy, and
+restores the scene by stable entity ids, so selection and undo history
+survive. If the new library fails to load, the scene is restored with the
+built-in types and module components stay as `PreservedComponentsComponent`
+JSON until a later reload succeeds.
+
+A module may also export `zenith_module_register_editor`
+(`ZENITH_EDITOR_MODULE_REGISTER` in `modules/EditorModuleApi.hpp`) to add
+operators (undoable, Edit mode only, bindable like any operator) and ImGui
+panels (toggled in the Module menu). The API is header-only and dispatches
+through a virtual registrar, because a module links the engine but never the
+editor; the host removes everything it registered before unloading. The
+status bar and Module menu show the loaded module, its version, and pending
+or failed reloads. `zenith_editor_module_smoke` runs the editor smoke on a
+generated project naming `zenith_editor_test_module` and hot reloads it once.
 
 ### `src/editor/settings/EditorRenderSettings.*`
 

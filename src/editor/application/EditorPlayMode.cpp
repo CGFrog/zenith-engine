@@ -45,8 +45,11 @@ void EditorPlayMode::stop(Scene& activeScene, std::vector<SceneEntityId>& select
     if (m_mode == EditorMode::Edit) {
         return;
     }
-    activeScene.clear();
     activeScene.swap(m_editScene);
+    // Drops the runtime registry entirely rather than clearing it: its storage
+    // for game module component types was created by module code, which a
+    // module reload unloads.
+    m_editScene.replaceWith(Scene{});
     selection = std::move(m_editSelection);
     m_editSelection.clear();
     m_mode = EditorMode::Edit;

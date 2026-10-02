@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <iostream>
 #include <limits>
 #include <utility>
 
@@ -53,13 +54,14 @@ std::filesystem::path dialogStartLocation(const std::optional<std::filesystem::p
 
 EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::filesystem::path assetRoot,
                              std::filesystem::path sceneRoot, std::filesystem::path fontPath,
-                             EditorRenderSettings renderSettings,
-                             std::function<SceneResult(ApplicationContext&)> initialSceneLoader)
+                             EditorRenderSettings renderSettings, EditorSceneLoader initialSceneLoader,
+                             std::filesystem::path gameModule)
     : m_settings(settingsDirectory / "settings.ini")
     , m_document(assetRoot)
     , m_recovery(settingsDirectory / (std::string("recovery") + sceneExtension))
     , m_fileDialog("Zenith scene", sceneExtension)
     , m_operatorRunner(m_operators, m_history)
+    , m_gameModulePath(std::move(gameModule))
     , m_keymap(defaultEditorKeymap())
     , m_keymapPath(settingsDirectory / "keymap.json")
     , m_assetBrowser(std::move(assetRoot), sceneRoot, settingsDirectory / "asset-browser.json")
@@ -82,6 +84,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     }
     registerSessionOperators();
     registerObjectModeOperators();
+    registerModuleOperators();
     if (const OperatorRegistrationResult result = registerObjectOperators(m_operators); !result) {
         m_diagnostics.reportError(result.error);
     }
@@ -344,8 +347,10 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     // Asset paths in render settings (the colour-grading LUT) resolve against
     // the edited project's assets.
     context.rendering.setAssetRoot(m_document.options().assetRoot);
+    // Before any scene loads, so documents read the module's component types.
+    loadGameModule();
     if (m_initialSceneLoader) {
-        if (SceneResult result = m_initialSceneLoader(context); !result) {
+        if (SceneResult result = m_initialSceneLoader(context, m_document.options()); !result) {
             return result;
         }
     } else if (const SceneResult result =
@@ -391,6 +396,7 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
     for (const PanelSlot& slot : m_panels) {
         slot.panel->update(editor, input, deltaSeconds);
     }
+    updateGameModule(context, deltaSeconds);
 }
 
 void EditorSession::updateSmokeScenario(ApplicationContext& context) {
@@ -422,6 +428,9 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
             m_smokeLayers->unload(*m_smokeStreamInstance);
             context.assets.collectUnused(true);
             m_smokeStreamCompleted = true;
+            // The layers share the document's component registry; release
+            // them so the module reload below can unload the old module.
+            releaseSmokeLayers();
         } else if (state &&
                    (state->status == AdditiveSceneStatus::Failed || state->status == AdditiveSceneStatus::Cancelled)) {
             m_diagnostics.reportError("Streaming smoke failed: " + state->error);
@@ -432,7 +441,42 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
         m_diagnostics.reportError("Streaming smoke did not commit while frames were being presented");
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
     } else if (m_smokeFrame >= 8 && m_smokeStreamCompleted) {
+        updateSmokeModuleReload(context);
+    }
+}
+
+void EditorSession::updateSmokeModuleReload(ApplicationContext& context) {
+    if (m_moduleHost.sourcePath().empty()) {
         context.control.requestQuit();
+        return;
+    }
+    if (!m_smokeModuleReloadRequested) {
+        // A project with a game module also hot reloads it once.
+        m_smokeModuleReloadRequested = true;
+        m_moduleReloadPending = true;
+        return;
+    }
+    if (m_moduleReloadPending) {
+        return;
+    }
+    if (m_moduleHost.status() == GameModuleStatus::Loaded && m_moduleHost.loadCount() >= 2) {
+        context.control.requestQuit();
+        return;
+    }
+    const std::string error = "Game module smoke reload failed: " + m_moduleHost.error();
+    std::cerr << error << '\n';
+    m_diagnostics.reportError(error);
+    context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+}
+
+void EditorSession::releaseSmokeLayers() {
+    if (m_smokeLayers) {
+        m_smokeLayers->clear();
+        m_smokeLayers.reset();
+    }
+    if (m_smokeJobs) {
+        m_smokeJobs->shutdown(true);
+        m_smokeJobs.reset();
     }
 }
 
@@ -451,7 +495,13 @@ void EditorSession::updateAutosave(ApplicationContext& context, float deltaSecon
     }
 }
 
-void EditorSession::fixedUpdate(ApplicationContext&, const InputState&, float) {}
+void EditorSession::fixedUpdate(ApplicationContext& context, const InputState&, float deltaSeconds) {
+    // Fixed updates run only while simulating (including a paused single
+    // step); Edit mode keeps its own fixed clock in updateGameModule.
+    if (m_playMode.mode() != EditorMode::Edit) {
+        m_moduleHost.runSystems(SystemPhase::FixedUpdate, context.scene, &context, SimulationMode::Play, deltaSeconds);
+    }
+}
 
 bool EditorSession::fixedUpdatesEnabled() const {
     return m_playMode.fixedUpdatesEnabled();
@@ -477,6 +527,7 @@ void EditorSession::drawUi(ApplicationContext& context) {
     drawUnsavedChangesDialog(context);
     drawRecoveryDialog(context);
     drawPanels(context);
+    drawModulePanels(context);
     drawObjectPopups(context);
     drawOperatorWindows(context);
     drawStatusBar(context.rendering.stats());
@@ -509,19 +560,16 @@ void EditorSession::initializeDefaultLayout(uint32_t dockspaceId) {
 }
 
 void EditorSession::unload(ApplicationContext& context) {
-    if (m_smokeLayers) {
-        m_smokeLayers->clear();
-        m_smokeLayers.reset();
-    }
-    if (m_smokeJobs) {
-        m_smokeJobs->shutdown(true);
-        m_smokeJobs.reset();
-    }
+    releaseSmokeLayers();
     if (m_smokeScenario) {
         std::error_code ignored;
         std::filesystem::remove(m_smokeScenePath, ignored);
     }
     stopPlayMode(context);
+    // The scene and document release module code before the module unloads.
+    context.audio.stopSceneVoices();
+    context.physics.clear();
+    m_moduleHost.unload(context.scene, m_document);
     context.rendering.setGridOverlay(std::nullopt);
     context.rendering.clearOutlinedObjects();
     context.rendering.clearViewOverride();
@@ -615,6 +663,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         }
         ImGui::EndMenu();
     }
+    drawModuleMenu(context);
     ImGui::EndMainMenuBar();
 }
 
@@ -660,6 +709,10 @@ void EditorSession::drawStatusBar(const RenderStats& stats) {
                     stats.visibleCount, stats.gpuFrameMilliseconds);
         ImGui::SameLine();
         ImGui::Text("| %s", playModeNames[static_cast<int>(m_playMode.mode())]);
+        if (m_moduleHost.status() != GameModuleStatus::None) {
+            ImGui::SameLine();
+            ImGui::Text("| %s", gameModuleStatusText().c_str());
+        }
     }
     ImGui::End();
 }

@@ -2,14 +2,20 @@
 
 #include "engine/application/Application.hpp"
 #include "engine/project/ProjectConfig.hpp"
+#include "engine/scene/SceneDocument.hpp"
 
 #include <filesystem>
 #include <functional>
 
+// The editor executable's application: one EditorSession for the project.
+// The project's game module (ProjectConfig::gameModule) is loaded by the
+// session, which passes its component types to initialSceneLoader.
 class EditorApplication final : public Application {
   public:
+    using SceneLoader = std::function<SceneResult(ApplicationContext&, const SceneDocumentOptions&)>;
+
     EditorApplication(std::filesystem::path settingsDirectory, std::filesystem::path fontPath, ProjectConfig project,
-                      std::function<SceneResult(ApplicationContext&)> initialSceneLoader = {});
+                      SceneLoader initialSceneLoader = {});
 
     MouseCapturePolicy mouseCapturePolicy() const override;
     SceneKey initialScene() const override;
@@ -19,5 +25,5 @@ class EditorApplication final : public Application {
     std::filesystem::path m_settingsDirectory;
     std::filesystem::path m_fontPath;
     ProjectConfig m_project;
-    std::function<SceneResult(ApplicationContext&)> m_initialSceneLoader;
+    SceneLoader m_initialSceneLoader;
 };

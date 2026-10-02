@@ -10,6 +10,7 @@
 #include "editor/interaction/EditorCamera.hpp"
 #include "editor/interaction/ModalTransform.hpp"
 #include "editor/interaction/Selection.hpp"
+#include "editor/modules/GameModuleHost.hpp"
 #include "editor/operators/Keymap.hpp"
 #include "editor/operators/KeymapEditor.hpp"
 #include "editor/operators/LastOperatorPanel.hpp"
@@ -41,16 +42,23 @@
 #include <string_view>
 #include <vector>
 
+// Loads the scene the editor opens with into the context's scene, reading
+// documents with the given options (which carry the game module's component
+// types when the project has a module).
+using EditorSceneLoader = std::function<SceneResult(ApplicationContext&, const SceneDocumentOptions&)>;
+
 // Composes the editor: owns the document, history, selection, camera, panels,
-// and the operator registry and keymap, runs the frame loop, and coordinates
-// workflows that span panels (file commands, Play mode, and modal transforms).
-// Every menu item, button, and key runs a registered operator. The runtime
-// Scene stays owned by Engine and is changed only through SceneEditing.
+// the operator registry and keymap, and the project's game module, runs the
+// frame loop, and coordinates workflows that span panels (file commands, Play
+// mode, module reloads, and modal transforms). Every menu item, button, and
+// key runs a registered operator. The runtime Scene stays owned by Engine and
+// is changed only through SceneEditing.
 class EditorSession final : public ApplicationScene, private EditorSessionActions {
   public:
+    // gameModule is the project's module library, or empty for none.
     EditorSession(std::filesystem::path settingsDirectory, std::filesystem::path assetRoot,
                   std::filesystem::path sceneRoot, std::filesystem::path fontPath, EditorRenderSettings renderSettings,
-                  std::function<SceneResult(ApplicationContext&)> initialSceneLoader = {});
+                  EditorSceneLoader initialSceneLoader = {}, std::filesystem::path gameModule = {});
     // Panels are referenced by address from the panel table.
     EditorSession(const EditorSession&) = delete;
     EditorSession& operator=(const EditorSession&) = delete;
@@ -94,6 +102,7 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void registerOperator(Operator op);
     void registerSessionOperators();
     void registerObjectModeOperators();
+    void registerModuleOperators();
     bool documentCommandsAvailable(const OperatorContext& context) const;
     OperatorResult invokeOperator(ApplicationContext& context, std::string_view operatorId,
                                   const OperatorProperties& properties);
@@ -105,8 +114,19 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void drawOperatorWindows(ApplicationContext& context);
     void saveKeymap();
 
+    // Game module hosting.
+    void loadGameModule();
+    void updateGameModule(ApplicationContext& context, float deltaSeconds);
+    void reloadGameModule(ApplicationContext& context);
+    void reportGameModule(const GameModuleHostResult& result);
+    std::string gameModuleStatusText() const;
+    void drawModuleMenu(ApplicationContext& context);
+    void drawModulePanels(ApplicationContext& context);
+
     SceneResult prepareSmokeScenario(ApplicationContext& context);
     void updateSmokeScenario(ApplicationContext& context);
+    void updateSmokeModuleReload(ApplicationContext& context);
+    void releaseSmokeLayers();
     void updateAutosave(ApplicationContext& context, float deltaSeconds);
     void drawMainMenu(ApplicationContext& context);
     void handleGlobalShortcuts(ApplicationContext& context);
@@ -162,6 +182,13 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     Selection m_selection;
     OperatorRegistry m_operators;
     OperatorRunner m_operatorRunner;
+    // Declared after the operator registry and runner, which it removes the
+    // module's operators from when destroyed.
+    GameModuleHost m_moduleHost{m_operators, m_operatorRunner};
+    std::filesystem::path m_gameModulePath;
+    // A reload waits for Edit mode, a finished build, and no modal tool.
+    bool m_moduleReloadPending{false};
+    BuildState m_lastBuildState{BuildState::Idle};
     Keymap m_keymap;
     std::filesystem::path m_keymapPath;
     OperatorSearch m_operatorSearch;
@@ -182,7 +209,7 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
 
     std::filesystem::path m_sceneRoot;
     std::filesystem::path m_fontPath;
-    std::function<SceneResult(ApplicationContext&)> m_initialSceneLoader;
+    EditorSceneLoader m_initialSceneLoader;
     std::string m_layoutPath;
     std::string m_clipboardFragment;
     std::array<char, 1024> m_pathBuffer{};
@@ -203,6 +230,7 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     std::unique_ptr<AdditiveSceneManager> m_smokeLayers;
     std::optional<SceneInstanceId> m_smokeStreamInstance;
     bool m_smokeStreamCompleted{false};
+    bool m_smokeModuleReloadRequested{false};
 
     struct ActiveTransform {
         ModalTransform transform;

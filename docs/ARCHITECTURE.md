@@ -83,7 +83,12 @@ to the scene (null otherwise) and interprets it with its own bindings. Module co
 registered functions, EnTT storage created by module code, and component
 values, so a host releases all of them, destroying affected scenes after
 serializing what must survive, before unloading. Wiring modules and systems
-into `Engine` and the editor is application composition.
+into `Engine` and the editor is application composition. The editor's
+`GameModuleHost` (`editor/modules/`) does this for the project's module,
+hot reloading it by serializing the scene, replacing the scene's registry, and
+restoring it with the new module's registry. A module's optional editor
+extensions use a header-only, editor-owned API (`EditorModuleApi.hpp`) the
+engine never sees.
 
 ## Ownership and lifetime
 
