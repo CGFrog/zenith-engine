@@ -10,7 +10,8 @@ depend on this subtree.
 | `main.cpp` | Editor executable composition root. |
 | `application/` | Editor application lifecycle and the UI/session coordinator. |
 | `document/` | Scene document state, persistence workflow, and undo/redo history. |
-| `interaction/` | Editor camera, picking, gizmos, and component editing widgets. |
+| `interaction/` | Editor camera, picking, selection, gizmos, and component editing widgets. |
+| `panels/` | One class per dockable window, drawn from an `EditorContext`. |
 | `settings/` | Persistent editor preferences and panel/layout state. |
 
 ## Local rules
@@ -23,3 +24,9 @@ depend on this subtree.
   lists in the root `CMakeLists.txt`.
 - `EditorSession` is integration code. Move reusable document or interaction
   behavior into its focused folder rather than growing the coordinator.
+- Component inspectors come from the engine's component registry. Prefer
+  better field presentation hints over a custom editor; register a custom
+  editor in `InspectorPanel` only when reflected fields cannot express the UI.
+- A new window is an `EditorPanel` in `panels/`. Panels receive everything
+  through `EditorContext`, record scene changes through `SceneEditing` so they
+  are undoable, and never reach into other panels.

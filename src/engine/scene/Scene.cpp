@@ -503,6 +503,7 @@ Entity Scene::cloneBranch(Entity source, Entity parent, bool appendCopySuffix) {
     copy.operator()<RigidBodyComponent>();
     copy.operator()<AudioListenerComponent>();
     copy.operator()<AudioEmitterComponent>();
+    copy.operator()<PreservedComponentsComponent>();
 
     reparent(duplicate, parent);
     const std::vector<Entity> children = m_registry.get<RelationshipComponent>(source).children;

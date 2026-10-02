@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <iterator>
 #include <type_traits>
 
 namespace ComponentEditors {
@@ -46,152 +45,6 @@ bool drawTransform(TransformComponent& component) {
     return changed;
 }
 
-bool drawCamera(CameraComponent& component) {
-    float fovDegrees = glm::degrees(component.verticalFovRadians);
-    bool changed = ImGui::DragFloat("Vertical FOV", &fovDegrees, 0.25f, 1.0f, 179.0f, "%.1f deg");
-    changed |= ImGui::DragFloat("Near plane", &component.nearPlane, 0.01f, 0.001f, component.farPlane);
-    changed |= ImGui::DragFloat("Far plane", &component.farPlane, 1.0f, component.nearPlane, 100000.0f);
-    changed |= ImGui::Checkbox("Primary", &component.primary);
-    component.verticalFovRadians = glm::radians(fovDegrees);
-    return changed;
-}
-
-bool drawDirectionalLight(DirectionalLightComponent& component) {
-    bool changed = ImGui::DragFloat3("Direction", &component.direction.x, 0.01f, -1.0f, 1.0f);
-    changed |= ImGui::ColorEdit3("Color", &component.color.x);
-    changed |= ImGui::DragFloat("Intensity", &component.intensity, 0.05f, 0.0f, 10000.0f);
-    changed |= ImGui::Checkbox("Primary", &component.primary);
-    changed |= ImGui::Checkbox("Cast shadows", &component.shadows.enabled);
-    if (ImGui::TreeNode("Shadow tuning")) {
-        changed |= ImGui::DragFloat("Constant bias", &component.shadows.constantBias, 0.01f, 0.0f, 10.0f);
-        changed |= ImGui::DragFloat("Slope bias", &component.shadows.slopeBias, 0.01f, 0.0f, 10.0f);
-        changed |= ImGui::DragFloat("Normal bias", &component.shadows.normalBias, 0.0005f, 0.0f, 1.0f);
-        changed |= ImGui::DragFloat("Focus distance", &component.shadows.focusDistance, 0.1f, 0.0f, 10000.0f);
-        changed |= ImGui::DragFloat("Depth range", &component.shadows.depthRange, 0.5f, 1.0f, 10000.0f);
-        ImGui::TreePop();
-    }
-    return changed;
-}
-
-bool drawEnvironmentLight(EnvironmentLightComponent& component) {
-    bool changed = ImGui::ColorEdit3("Sky color", &component.skyColor.x);
-    changed |= ImGui::ColorEdit3("Ground color", &component.groundColor.x);
-    changed |= ImGui::DragFloat("Diffuse intensity", &component.diffuseIntensity, 0.01f, 0.0f, 100.0f);
-    changed |= ImGui::DragFloat("Specular intensity", &component.specularIntensity, 0.01f, 0.0f, 100.0f);
-    changed |= ImGui::Checkbox("Primary", &component.primary);
-    return changed;
-}
-
-namespace {
-bool drawLocalLightShadows(bool& castsShadows, uint32_t& resolution, int32_t& priority) {
-    bool changed = ImGui::Checkbox("Cast shadows", &castsShadows);
-    ImGui::BeginDisabled(!castsShadows);
-    int texels = static_cast<int>(resolution);
-    if (ImGui::DragInt("Shadow resolution", &texels, 8.0f, 0, 4096, texels == 0 ? "Quality default" : "%d texels")) {
-        resolution = static_cast<uint32_t>(std::max(texels, 0));
-        changed = true;
-    }
-    changed |= ImGui::DragInt("Shadow priority", &priority, 0.1f);
-    ImGui::EndDisabled();
-    return changed;
-}
-} // namespace
-
-bool drawPointLight(PointLightComponent& component) {
-    bool changed = ImGui::ColorEdit3("Color", &component.color.x);
-    changed |= ImGui::DragFloat("Intensity", &component.intensity, 0.05f, 0.0f, 10000.0f);
-    changed |= ImGui::DragFloat("Range", &component.range, 0.05f, 0.01f, 10000.0f);
-    changed |= drawLocalLightShadows(component.castsShadows, component.shadowResolution, component.shadowPriority);
-    return changed;
-}
-
-bool drawSpotLight(SpotLightComponent& component) {
-    bool changed = ImGui::DragFloat3("Direction", &component.direction.x, 0.01f, -1.0f, 1.0f);
-    changed |= ImGui::ColorEdit3("Color", &component.color.x);
-    changed |= ImGui::DragFloat("Intensity", &component.intensity, 0.05f, 0.0f, 10000.0f);
-    changed |= ImGui::DragFloat("Range", &component.range, 0.05f, 0.01f, 10000.0f);
-    // The outer cone never narrows below the inner one (SceneDocument rejects it).
-    changed |= ImGui::SliderAngle("Inner cone", &component.innerConeRadians, 0.0f, 89.0f);
-    changed |= ImGui::SliderAngle("Outer cone", &component.outerConeRadians, 0.0f, 89.0f);
-    component.outerConeRadians = std::max(component.outerConeRadians, component.innerConeRadians);
-    changed |= drawLocalLightShadows(component.castsShadows, component.shadowResolution, component.shadowPriority);
-    return changed;
-}
-
-bool drawVolumetricFog(VolumetricFogComponent& component) {
-    bool changed = ImGui::DragFloat("Density", &component.density, 0.001f, 0.0f, 10.0f, "%.4f");
-    changed |= ImGui::DragFloat("Height falloff", &component.heightFalloff, 0.005f, 0.0f, 10.0f, "%.3f");
-    changed |= ImGui::DragFloat("Base height", &component.baseHeight, 0.05f, -10000.0f, 10000.0f);
-    changed |= ImGui::ColorEdit3("Albedo", &component.albedo.x);
-    changed |= ImGui::SliderFloat("Anisotropy", &component.anisotropy, -0.95f, 0.95f, "%.2f");
-    changed |= ImGui::SliderFloat("Noise amount", &component.noiseAmount, 0.0f, 1.0f, "%.2f");
-    changed |= ImGui::DragFloat("Noise scale", &component.noiseScale, 0.05f, 0.05f, 1000.0f);
-    changed |= ImGui::Checkbox("Primary", &component.primary);
-    return changed;
-}
-
-namespace {
-// Edits a [minimum, maximum] pair, keeping the maximum at least the minimum.
-bool drawRange(const char* label, float& minimum, float& maximum, float speed, float lowest, float highest) {
-    float range[2]{minimum, maximum};
-    if (!ImGui::DragFloat2(label, range, speed, lowest, highest)) {
-        return false;
-    }
-    minimum = std::clamp(range[0], lowest, highest);
-    maximum = std::clamp(std::max(range[1], minimum), lowest, highest);
-    return true;
-}
-} // namespace
-
-bool drawParticleEmitter(ParticleEmitterComponent& component) {
-    int maxParticles = static_cast<int>(component.maxParticles);
-    bool changed = false;
-    if (ImGui::DragInt("Max particles", &maxParticles, 16.0f, 1, static_cast<int>(maximumParticlesPerEmitter))) {
-        component.maxParticles =
-            static_cast<uint32_t>(std::clamp(maxParticles, 1, static_cast<int>(maximumParticlesPerEmitter)));
-        changed = true;
-    }
-    changed |= ImGui::Checkbox("Emitting", &component.emitting);
-    changed |= ImGui::DragFloat("Spawn rate", &component.spawnRate, 0.5f, 0.0f, 100000.0f, "%.1f /s");
-    int burstCount = static_cast<int>(component.burstCount);
-    if (ImGui::DragInt("Burst count", &burstCount, 1.0f, 0, static_cast<int>(maximumParticlesPerEmitter))) {
-        component.burstCount = static_cast<uint32_t>(std::max(burstCount, 0));
-        changed = true;
-    }
-    changed |= ImGui::DragFloat("Burst interval", &component.burstInterval, 0.01f, 0.0f, 3600.0f, "%.2f s");
-    changed |= drawRange("Lifetime", component.lifetimeMin, component.lifetimeMax, 0.01f, 0.001f, 3600.0f);
-    changed |= ImGui::DragFloat3("Direction", &component.direction.x, 0.01f, -1.0f, 1.0f);
-    if (glm::dot(component.direction, component.direction) < 1e-8f) {
-        component.direction = {0.0f, 1.0f, 0.0f};
-    }
-    changed |= ImGui::SliderAngle("Cone angle", &component.coneAngleRadians, 0.0f, 180.0f);
-    changed |= drawRange("Speed", component.speedMin, component.speedMax, 0.01f, 0.0f, 10000.0f);
-    changed |= ImGui::DragFloat("Spawn radius", &component.spawnRadius, 0.01f, 0.0f, 10000.0f);
-    changed |= ImGui::DragFloat3("Gravity", &component.gravity.x, 0.05f, -1000.0f, 1000.0f);
-    changed |= ImGui::DragFloat("Drag", &component.drag, 0.01f, 0.0f, 100.0f);
-    changed |= ImGui::DragFloat("Start size", &component.startSize, 0.005f, 0.0f, 1000.0f);
-    changed |= ImGui::DragFloat("End size", &component.endSize, 0.005f, 0.0f, 1000.0f);
-    changed |= ImGui::DragFloat("Angular speed", &component.angularSpeed, 0.01f, 0.0f, 100.0f, "%.2f rad/s");
-    changed |= ImGui::ColorEdit4("Start color", &component.startColor.x, ImGuiColorEditFlags_Float);
-    changed |= ImGui::ColorEdit4("End color", &component.endColor.x, ImGuiColorEditFlags_Float);
-    changed |= ImGui::DragFloat("Emissive intensity", &component.emissiveIntensity, 0.05f, 0.0f, 10000.0f);
-    changed |= ImGui::Checkbox("Lit", &component.lit);
-    int blendMode = component.blendMode == ParticleBlendMode::Additive ? 1 : 0;
-    if (ImGui::Combo("Blend mode", &blendMode, "Alpha\0Additive\0")) {
-        component.blendMode = blendMode == 1 ? ParticleBlendMode::Additive : ParticleBlendMode::Alpha;
-        changed = true;
-    }
-    int space = component.space == ParticleSimulationSpace::Local ? 1 : 0;
-    if (ImGui::Combo("Simulation space", &space, "World\0Local\0")) {
-        component.space = space == 1 ? ParticleSimulationSpace::Local : ParticleSimulationSpace::World;
-        changed = true;
-    }
-    changed |= ImGui::DragFloat("Soft distance", &component.softDistance, 0.01f, 0.0f, 100.0f);
-    ImGui::TextDisabled("Sprite: %s",
-                        component.textureAsset.empty() ? "procedural round" : component.textureAsset.c_str());
-    return changed;
-}
-
 bool drawCollider(ColliderComponent& component) {
     bool changed = false;
     std::visit(
@@ -209,21 +62,6 @@ bool drawCollider(ColliderComponent& component) {
             }
         },
         component.shape);
-    return changed;
-}
-
-bool drawRigidBody(RigidBodyComponent& component) {
-    constexpr const char* motionTypes[] = {"Static", "Kinematic", "Dynamic"};
-    int motionType = static_cast<int>(component.motionType);
-    bool changed = ImGui::Combo("Motion", &motionType, motionTypes, std::size(motionTypes));
-    component.motionType = static_cast<PhysicsMotionType>(motionType);
-    changed |= ImGui::DragFloat("Mass", &component.mass, 0.05f, 0.001f, 100000.0f);
-    changed |= ImGui::SliderFloat("Friction", &component.friction, 0.0f, 1.0f);
-    changed |= ImGui::SliderFloat("Restitution", &component.restitution, 0.0f, 1.0f);
-    changed |= ImGui::Checkbox("Sensor", &component.sensor);
-    changed |= ImGui::Checkbox("Allow sleeping", &component.allowSleeping);
-    changed |= ImGui::Checkbox("Continuous collision", &component.continuousCollision);
-    changed |= ImGui::Checkbox("Lock rotation", &component.lockRotation);
     return changed;
 }
 
@@ -305,42 +143,4 @@ bool drawIrradianceVolume(IrradianceVolumeComponent& component) {
     return changed;
 }
 
-bool drawDecal(DecalComponent& component) {
-    bool changed = ImGui::DragFloat3("Half extents", &component.halfExtents.x, 0.01f, 0.01f, 10000.0f);
-    changed |= ImGui::ColorEdit3("Tint", &component.tint.x, ImGuiColorEditFlags_Float);
-    changed |= ImGui::SliderFloat("Opacity", &component.opacity, 0.0f, 1.0f);
-    changed |= ImGui::SliderFloat("Base color strength", &component.baseColorStrength, 0.0f, 1.0f);
-    changed |= ImGui::SliderFloat("Normal strength", &component.normalStrength, 0.0f, 1.0f);
-    changed |= ImGui::SliderFloat("Roughness", &component.roughness, 0.0f, 1.0f);
-    changed |= ImGui::SliderFloat("Roughness strength", &component.roughnessStrength, 0.0f, 1.0f);
-    changed |= ImGui::SliderFloat("Metallic", &component.metallic, 0.0f, 1.0f);
-    changed |= ImGui::SliderFloat("Metallic strength", &component.metallicStrength, 0.0f, 1.0f);
-    float fadeDegrees[2]{glm::degrees(component.angleFadeStartRadians), glm::degrees(component.angleFadeEndRadians)};
-    if (ImGui::DragFloat2("Angle fade (deg)", fadeDegrees, 0.25f, 0.0f, 180.0f, "%.1f")) {
-        const float start = std::clamp(fadeDegrees[0], 0.0f, 180.0f);
-        component.angleFadeStartRadians = glm::radians(start);
-        component.angleFadeEndRadians = glm::radians(std::clamp(fadeDegrees[1], start, 180.0f));
-        changed = true;
-    }
-    changed |= ImGui::DragInt("Sort order", &component.sortOrder, 0.1f);
-    component.halfExtents = glm::max(component.halfExtents, glm::vec3(0.01f));
-    component.tint = glm::max(component.tint, glm::vec3(0.0f));
-    for (float* unit :
-         {&component.opacity, &component.baseColorStrength, &component.normalStrength, &component.roughness,
-          &component.roughnessStrength, &component.metallic, &component.metallicStrength}) {
-        *unit = std::clamp(*unit, 0.0f, 1.0f);
-    }
-    const auto drawTexture = [](const char* label, const std::string& path, TextureHandle handle) {
-        if (path.empty()) {
-            ImGui::TextDisabled("%s: (none)", label);
-        } else if (!handle) {
-            ImGui::TextColored({1.0f, 0.35f, 0.35f, 1.0f}, "%s missing: %s", label, path.c_str());
-        } else {
-            ImGui::TextDisabled("%s: %s", label, path.c_str());
-        }
-    };
-    drawTexture("Albedo", component.albedoAsset, component.albedoTexture);
-    drawTexture("Normal", component.normalAsset, component.normalTexture);
-    return changed;
-}
 } // namespace ComponentEditors

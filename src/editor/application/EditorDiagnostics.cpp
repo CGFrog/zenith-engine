@@ -10,6 +10,20 @@ uint64_t EditorDiagnostics::add(EditorDiagnosticSeverity severity, std::string s
     return id;
 }
 
+void EditorDiagnostics::reportError(std::string message) {
+    add(EditorDiagnosticSeverity::Error, "Editor", std::move(message),
+        "Review the operation, correct the path or data, then retry.");
+    m_unacknowledgedError = true;
+}
+
+bool EditorDiagnostics::hasUnacknowledgedError() const {
+    return m_unacknowledgedError;
+}
+
+void EditorDiagnostics::acknowledgeErrors() {
+    m_unacknowledgedError = false;
+}
+
 void EditorDiagnostics::dismiss(uint64_t id) {
     std::erase_if(m_entries, [id](const EditorDiagnostic& entry) { return entry.id == id; });
 }

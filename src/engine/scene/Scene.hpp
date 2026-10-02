@@ -11,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 using Entity = entt::entity;
@@ -270,6 +271,14 @@ struct IrradianceVolumeComponent {
     // bakedData stays null when the referenced file is missing.
     std::string bakeAsset;
     std::shared_ptr<const IrradianceVolumeData> bakedData;
+};
+
+// Components a scene document named but the loading registry did not know,
+// for example types from a game module that is not loaded. Each entry is the
+// document key and its JSON object exactly as read; saving writes them back
+// unchanged so documents never lose data they cannot interpret.
+struct PreservedComponentsComponent {
+    std::vector<std::pair<std::string, std::string>> components;
 };
 
 struct SceneResult {

@@ -45,9 +45,12 @@ Important boundaries:
 - Editor panels, selection, projects, commands, and document policy live in
   `src/editor/`. The editor depends on `zenith_engine`; the engine and game do
   not depend on editor code.
-- `EditorSession` owns editor-only UI and persistence state. Panel visibility
-  and docking layout are stored separately from runtime scene data, so changing
-  the workspace cannot mutate the scene.
+- `EditorSession` owns editor-only UI and persistence state and composes the
+  dockable panels in `src/editor/panels/`. Panels see the session only through
+  a per-frame `EditorContext` and change the scene only through undoable
+  `SceneEditing` commands. Panel visibility and docking layout are stored
+  separately from runtime scene data, so changing the workspace cannot mutate
+  the scene.
 
 ## Ownership and lifetime
 
@@ -143,6 +146,12 @@ not assign gameplay meaning to those references.
 filtered completion delivery, deterministic single-thread pumping for tests,
 and explicit shutdown. Background jobs may read and parse authored scene files,
 but they do not mutate ECS registries or acquire scene-owned resources.
+
+Scene documents are driven by a `ComponentTypeRegistry`: each component type
+contributes its document key, codec, validation, and schema migrations, so the
+document format, the editor inspector, and game-defined components share one
+description. Unknown component keys are preserved rather than dropped, so
+loading a scene without the module that defines a component never loses data.
 
 `SceneDocument::parse` produces an immutable validated scene description.
 `SceneDocument::commit` performs the main-thread ECS and asset operations, so a

@@ -39,7 +39,7 @@ src/
 |  |- input/ jobs/ physics/ resources/ scene/ ui/ window/
 |  `- project/             shared project manifests and scene paths
 |- editor/                 authoring application
-|  |- application/ document/ interaction/ settings/
+|  |- application/ document/ interaction/ panels/ settings/
 |- game/                   current demo client
 |  |- application/ player/ scene/
 `- main.cpp                game executable composition root
@@ -195,6 +195,20 @@ cycles. `instantiateModel` expands imported nodes into entities while preserving
 their hierarchy. `destroyEntity` recursively destroys descendants.
 `updateWorldTransforms` walks roots and computes `world = parent.world * local`.
 
+### `src/engine/reflection/*` and `src/engine/scene/ComponentTypes.*`
+
+`Fields<T>` describes a struct's members (`FieldDescriptor`: key, kind,
+optional flag, and inspector hints such as ranges, angles, and colors);
+`FieldJson` reads and writes described fields generically. A `ComponentType`
+pairs a component's stable document key with its fields or a custom codec,
+validation, sanitizing, texture bindings, and schema migrations, and a
+`ComponentTypeRegistry` holds the types a document understands.
+`BuiltInComponentTypes.cpp` registers the engine's components;
+`SceneDocumentOptions::componentTypes` lets a game pass a registry that adds
+its own. `SceneDocument` saves and loads every registered component, and keeps
+components with unknown keys verbatim in `PreservedComponentsComponent`.
+`SceneAssetReferences.*` converts project-relative asset references for codecs.
+
 ### `src/engine/scene/Prefab.*`
 
 Defines versioned reusable entity documents with stable local IDs,
@@ -271,10 +285,16 @@ rebakes the volume and saves the scene.
 ## Editor
 
 `src/editor/main.cpp` is the editor composition root. `application/` owns the
-editor lifecycle and session coordinator; `document/` owns scene file state and
-command history; `interaction/` owns camera, picking, gizmos, and component
-widgets; and `settings/` owns persisted editor preferences. The editor depends
-on the engine, while neither the engine nor demo depends on editor code.
+editor lifecycle, the session coordinator, undoable scene editing
+(`SceneEditing`), and shared entity commands; `document/` owns scene file state
+and command history; `interaction/` owns camera, picking, selection, gizmos,
+and component widgets; `panels/` holds one `EditorPanel` per dockable window;
+and `settings/` owns persisted editor preferences. The editor depends on the
+engine, while neither the engine nor demo depends on editor code.
+
+`EditorSession` owns the panels and builds an `EditorContext` each frame: the
+application context, a `SceneEditing` view over the document and history, the
+selection, diagnostics, camera, and the session workflows panels may request.
 
 ### `src/editor/settings/EditorRenderSettings.*`
 
@@ -289,8 +309,8 @@ keeps what the user chose.
 ImGui controls for every `RenderSettings` field (options a device cannot run
 stay visible but disabled), clamping into the ranges the render-settings
 document accepts, and the live per-pass GPU timing table built from
-`RenderStats`. `EditorSession` hosts them in the dockable Graphics panel with
-Save and Revert.
+`RenderStats`. `panels/GraphicsPanel` hosts them in the dockable Graphics
+panel with Save and Revert.
 
 ## Assets
 
@@ -980,7 +1000,7 @@ The source directory is copied as a whole to `build/assets/` for runtime use.
 | Path | Coverage |
 | --- | --- |
 | `tests/engine/` | Audio, asset importing, scene documents/hierarchy, and physics contracts. |
-| `tests/editor/` | Settings, render-settings persistence and graphics-panel helpers, document state, command history, camera behavior, and component editing helpers. |
+| `tests/editor/` | Settings, render-settings persistence and graphics-panel helpers, document state, command history, undoable scene editing and entity commands, selection, camera behavior, and component editing helpers. |
 | `tests/game/` | Application callback order, scene changes, cleanup, demo composition, controls, and reload behavior. |
 | `tests/capture/`, `tests/references/` | Reference capture driver, showcase capture manifest, and reference PNGs (`docs/RENDERER_VALIDATION.md`). |
 

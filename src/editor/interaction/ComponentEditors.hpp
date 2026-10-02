@@ -11,20 +11,17 @@ struct EditableTransform {
     glm::vec3 scale{1.0f};
 };
 
+// Hand-written inspectors for components whose data the generic reflected
+// field editor cannot present well: the transform matrix, the collider shape
+// variant, clips that depend on the model, per-target morph weights, and the
+// irradiance probe budget. Every other component is drawn from its reflected
+// fields (see ReflectedFieldEditor).
 namespace ComponentEditors {
 bool decomposeTransform(const glm::mat4& matrix, EditableTransform& transform);
 glm::mat4 composeTransform(const EditableTransform& transform);
 
 bool drawTransform(TransformComponent& component);
-bool drawCamera(CameraComponent& component);
-bool drawDirectionalLight(DirectionalLightComponent& component);
-bool drawEnvironmentLight(EnvironmentLightComponent& component);
-bool drawPointLight(PointLightComponent& component);
-bool drawSpotLight(SpotLightComponent& component);
-bool drawVolumetricFog(VolumetricFogComponent& component);
-bool drawParticleEmitter(ParticleEmitterComponent& component);
 bool drawCollider(ColliderComponent& component);
-bool drawRigidBody(RigidBodyComponent& component);
 bool drawAnimation(AnimationComponent& component, const ModelAsset* model);
 bool drawMorphWeights(MorphWeightsComponent& component);
 // Applies requested per-axis probe counts clamped to 1..maximumIrradianceProbesPerAxis;
@@ -32,7 +29,4 @@ bool drawMorphWeights(MorphWeightsComponent& component);
 // Returns whether counts changed.
 bool clampIrradianceProbeCounts(const glm::ivec3& requested, glm::uvec3& counts);
 bool drawIrradianceVolume(IrradianceVolumeComponent& component);
-// Keeps every field in the range the scene document accepts; texture paths are
-// shown but chosen in the scene document.
-bool drawDecal(DecalComponent& component);
 } // namespace ComponentEditors

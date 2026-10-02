@@ -366,10 +366,15 @@ add_library(zenith_engine STATIC
     src/engine/physics/PhysicsWorld.cpp
     src/engine/platform/PlatformServices.cpp
     src/engine/project/ProjectConfig.cpp
+    src/engine/reflection/FieldJson.cpp
+    src/engine/reflection/Reflection.cpp
     src/engine/resources/ResourceLocator.cpp
     src/engine/resources/ContentManifest.cpp
     src/engine/scene/Scene.cpp
     src/engine/scene/ParticleEmitter.cpp
+    src/engine/scene/BuiltInComponentTypes.cpp
+    src/engine/scene/ComponentTypes.cpp
+    src/engine/scene/SceneAssetReferences.cpp
     src/engine/scene/SceneDocument.cpp
     src/engine/scene/AdditiveSceneManager.cpp
     src/engine/scene/Prefab.cpp
@@ -414,6 +419,8 @@ add_library(zenith_editor_app STATIC
     src/editor/application/EditorTheme.cpp
     src/editor/application/NativeFileDialog.cpp
     src/editor/application/EditorSession.cpp
+    src/editor/application/EntityCommands.cpp
+    src/editor/application/SceneEditing.cpp
     src/editor/document/CommandHistory.cpp
     src/editor/document/DefaultScene.cpp
     src/editor/document/EditorDocument.cpp
@@ -425,6 +432,16 @@ add_library(zenith_editor_app STATIC
     src/editor/interaction/ModalTransform.cpp
     src/editor/interaction/ObjectKeymap.cpp
     src/editor/interaction/GraphicsSettingsEditor.cpp
+    src/editor/interaction/ReflectedFieldEditor.cpp
+    src/editor/interaction/Selection.cpp
+    src/editor/panels/AssetBrowserPanel.cpp
+    src/editor/panels/DiagnosticsPanel.cpp
+    src/editor/panels/EditorContext.cpp
+    src/editor/panels/GraphicsPanel.cpp
+    src/editor/panels/HierarchyPanel.cpp
+    src/editor/panels/InspectorPanel.cpp
+    src/editor/panels/RenderStatisticsPanel.cpp
+    src/editor/panels/ViewportPanel.cpp
     src/editor/project/AssetCatalog.cpp
     src/editor/project/DerivedAssetInspector.cpp
     src/editor/project/IrradianceVolumeBaker.cpp
@@ -785,6 +802,15 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_scene_document COMMAND zenith_scene_document_tests)
 
+    add_executable(zenith_component_types_tests tests/engine/ComponentTypesTests.cpp)
+    target_link_libraries(zenith_component_types_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_component_types_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_component_types_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_component_types COMMAND zenith_component_types_tests)
+
     add_executable(zenith_project_config_tests tests/engine/ProjectConfigTests.cpp)
     target_link_libraries(zenith_project_config_tests PRIVATE zenith_engine)
     if(MSVC)
@@ -1124,6 +1150,33 @@ if(BUILD_TESTING)
         target_compile_options(zenith_modal_transform_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_modal_transform COMMAND zenith_modal_transform_tests)
+
+    add_executable(zenith_selection_tests tests/editor/SelectionTests.cpp)
+    target_link_libraries(zenith_selection_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_selection_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_selection_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_selection COMMAND zenith_selection_tests)
+
+    add_executable(zenith_scene_editing_tests tests/editor/SceneEditingTests.cpp)
+    target_link_libraries(zenith_scene_editing_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_scene_editing_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_scene_editing_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_scene_editing COMMAND zenith_scene_editing_tests)
+
+    add_executable(zenith_reflected_field_editor_tests tests/editor/ReflectedFieldEditorTests.cpp)
+    target_link_libraries(zenith_reflected_field_editor_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_reflected_field_editor_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_reflected_field_editor_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_reflected_field_editor COMMAND zenith_reflected_field_editor_tests)
 
     add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
     set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES

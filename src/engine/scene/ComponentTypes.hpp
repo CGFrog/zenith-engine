@@ -1,0 +1,283 @@
+#pragma once
+
+#include "../reflection/Reflection.hpp"
+#include "SceneDocument.hpp"
+
+#include <nlohmann/json_fwd.hpp>
+
+#include <any>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+// Everything a component codec may use while writing a scene document.
+struct ComponentSaveContext {
+    const AssetManager& assets;
+    const SceneDocumentOptions& options;
+};
+
+// Everything a component codec may use while reading a scene document.
+struct ComponentLoadContext {
+    AssetManager& assets;
+    const SceneDocumentOptions& options;
+};
+
+template <typename Component> class ComponentTypeBuilder;
+
+// Runtime description of one ECS component type: its stable document key, how
+// it is saved and loaded, how it is created and removed, and the reflected
+// fields the editor inspects. Built with ComponentTypeBuilder and held by a
+// ComponentTypeRegistry.
+//
+// Most types are described by reflected fields alone and serialize
+// generically. Types whose data does not map to fields (asset handles,
+// variants, dynamic arrays) supply a custom codec instead.
+//
+// Each type has a schema version. Versions above 1 are written to the
+// component's document object as "$version"; older documents are upgraded by
+// the registered migrations before they are read.
+class ComponentType {
+  public:
+    const std::string& key() const;
+    const std::string& displayName() const;
+    const std::string& category() const;
+    // Internal types are created by the engine (for example by model
+    // instantiation) rather than added by users, so editors hide them.
+    bool internal() const;
+    uint32_t schemaVersion() const;
+    std::span<const FieldDescriptor> fields() const;
+
+    bool has(const Scene& scene, Entity entity) const;
+    // The entity's component, or null when it has none.
+    void* find(Scene& scene, Entity entity) const;
+    const void* find(const Scene& scene, Entity entity) const;
+    // Adds a default-constructed component; the entity must not have one.
+    void addDefault(Scene& scene, Entity entity) const;
+    void remove(Scene& scene, Entity entity) const;
+
+    // Copies a component value, and assigns one back, so callers can undo an
+    // in-place edit without knowing the type.
+    std::any copy(const void* component) const;
+    void assign(void* component, const std::any& value) const;
+    // Restores invariants an edit may have broken, such as a spot light's
+    // outer cone narrower than its inner cone.
+    void sanitize(void* component) const;
+    // Empty when the component is valid, otherwise why it is not. Documents
+    // containing an invalid component fail to load with this message.
+    std::string validate(const void* component) const;
+    // Whether the texture named by a path field loaded; nullopt when the field
+    // is not a texture path.
+    std::optional<bool> textureLoaded(const void* component, std::string_view pathField) const;
+
+    SceneDocumentResult save(const Scene& scene, Entity entity, const ComponentSaveContext& context,
+                             nlohmann::json& output) const;
+    // Reads the document object and adds the component to entity, replacing
+    // any it already has. Nothing is added when reading fails.
+    SceneDocumentResult load(const nlohmann::json& input, Scene& scene, Entity entity,
+                             const ComponentLoadContext& context) const;
+
+  private:
+    template <typename Component> friend class ComponentTypeBuilder;
+    friend class ComponentTypeRegistry;
+
+    struct TextureBinding {
+        std::string pathField;
+        std::function<std::string&(void*)> path;
+        std::function<TextureHandle&(void*)> handle;
+    };
+
+    struct Migration {
+        uint32_t fromVersion{1};
+        std::function<SceneDocumentResult(nlohmann::json&)> apply;
+    };
+
+    ComponentType() = default;
+
+    std::string m_key;
+    std::string m_displayName;
+    std::string m_category;
+    bool m_internal{false};
+    uint32_t m_schemaVersion{1};
+    std::vector<FieldDescriptor> m_fields;
+    std::vector<TextureBinding> m_textures;
+    std::vector<Migration> m_migrations;
+    // Set by the builder when the description is inconsistent; the registry
+    // refuses such types.
+    std::string m_definitionError;
+
+    std::function<void*(entt::registry&, Entity)> m_find;
+    std::function<void(entt::registry&, Entity)> m_addDefault;
+    std::function<void(entt::registry&, Entity)> m_remove;
+    std::function<void(entt::registry&, Entity, std::any&&)> m_emplace;
+    std::function<std::any()> m_makeDefault;
+    std::function<void*(std::any&)> m_valueAddress;
+    std::function<std::any(const void*)> m_copy;
+    std::function<void(void*, const std::any&)> m_assign;
+    std::function<std::string(const void*)> m_validate;
+    std::function<void(void*)> m_sanitize;
+    std::function<SceneDocumentResult(void*, const ComponentLoadContext&)> m_afterLoad;
+    std::function<SceneDocumentResult(const void*, const ComponentSaveContext&, nlohmann::json&)> m_customSave;
+    std::function<SceneDocumentResult(const nlohmann::json&, void*, const ComponentLoadContext&)> m_customLoad;
+};
+
+// Describes Component as a ComponentType:
+//
+//   ComponentTypeBuilder<PointLightComponent>("point_light", "Point Light")
+//       .category("Lights")
+//       .fields(Fields<PointLightComponent>().add("range", &PointLightComponent::range))
+//       .validate([](const PointLightComponent& light) { return light.range > 0 ? "" : "range must be positive"; })
+//       .build();
+template <typename Component> class ComponentTypeBuilder {
+  public:
+    using Saver = std::function<SceneDocumentResult(const Component&, const ComponentSaveContext&, nlohmann::json&)>;
+    using Loader = std::function<SceneDocumentResult(const nlohmann::json&, Component&, const ComponentLoadContext&)>;
+
+    ComponentTypeBuilder(std::string key, std::string displayName) {
+        m_type.m_key = std::move(key);
+        m_type.m_displayName = std::move(displayName);
+        m_type.m_find = [](entt::registry& registry, Entity entity) -> void* {
+            return registry.try_get<Component>(entity);
+        };
+        m_type.m_addDefault = [](entt::registry& registry, Entity entity) { registry.emplace<Component>(entity); };
+        m_type.m_remove = [](entt::registry& registry, Entity entity) { registry.remove<Component>(entity); };
+        m_type.m_emplace = [](entt::registry& registry, Entity entity, std::any&& value) {
+            registry.emplace_or_replace<Component>(entity, std::move(*std::any_cast<Component>(&value)));
+        };
+        m_type.m_makeDefault = [] { return std::any(Component{}); };
+        m_type.m_valueAddress = [](std::any& value) -> void* { return std::any_cast<Component>(&value); };
+        m_type.m_copy = [](const void* component) { return std::any(*static_cast<const Component*>(component)); };
+        m_type.m_assign = [](void* component, const std::any& value) {
+            *static_cast<Component*>(component) = *std::any_cast<Component>(&value);
+        };
+    }
+
+    ComponentTypeBuilder& category(std::string name) {
+        m_type.m_category = std::move(name);
+        return *this;
+    }
+
+    ComponentTypeBuilder& internal() {
+        m_type.m_internal = true;
+        return *this;
+    }
+
+    ComponentTypeBuilder& fields(Fields<Component> fields) {
+        m_type.m_fields = std::move(fields).build();
+        return *this;
+    }
+
+    // Loads the texture named by a reflected path field into handle after
+    // reading, and saves the loaded texture's path in place of the authored
+    // one. The path member must be one of the reflected fields.
+    ComponentTypeBuilder& texture(std::string Component::* path, TextureHandle Component::* handle) {
+        m_pendingTextures.emplace_back(path, handle);
+        return *this;
+    }
+
+    ComponentTypeBuilder& validate(std::function<std::string(const Component&)> validator) {
+        m_type.m_validate = [validator = std::move(validator)](const void* component) {
+            return validator(*static_cast<const Component*>(component));
+        };
+        return *this;
+    }
+
+    ComponentTypeBuilder& sanitize(std::function<void(Component&)> sanitizer) {
+        m_type.m_sanitize = [sanitizer = std::move(sanitizer)](void* component) {
+            sanitizer(*static_cast<Component*>(component));
+        };
+        return *this;
+    }
+
+    // Runs after the component is read and validated, for derived data such
+    // as baked lighting.
+    ComponentTypeBuilder& afterLoad(std::function<SceneDocumentResult(Component&, const ComponentLoadContext&)> hook) {
+        m_type.m_afterLoad = [hook = std::move(hook)](void* component, const ComponentLoadContext& context) {
+            return hook(*static_cast<Component*>(component), context);
+        };
+        return *this;
+    }
+
+    // Replaces field-driven serialization. Validation, texture bindings, and
+    // afterLoad still run.
+    ComponentTypeBuilder& codec(Saver save, Loader load) {
+        m_type.m_customSave = [save = std::move(save)](const void* component, const ComponentSaveContext& context,
+                                                       nlohmann::json& output) {
+            return save(*static_cast<const Component*>(component), context, output);
+        };
+        m_type.m_customLoad = [load = std::move(load)](const nlohmann::json& input, void* component,
+                                                       const ComponentLoadContext& context) {
+            return load(input, *static_cast<Component*>(component), context);
+        };
+        return *this;
+    }
+
+    ComponentTypeBuilder& schemaVersion(uint32_t version) {
+        m_type.m_schemaVersion = version;
+        return *this;
+    }
+
+    // Upgrades a document object written at fromVersion to fromVersion + 1.
+    ComponentTypeBuilder& migration(uint32_t fromVersion, std::function<SceneDocumentResult(nlohmann::json&)> apply) {
+        m_type.m_migrations.push_back({fromVersion, std::move(apply)});
+        return *this;
+    }
+
+    // Consumes the builder; it must not be used afterwards.
+    ComponentType build() {
+        // A path member is identified by the field that addresses it.
+        Component probe{};
+        for (const auto& binding : m_pendingTextures) {
+            std::string Component::* const path = binding.first;
+            TextureHandle Component::* const handle = binding.second;
+            const FieldDescriptor* pathField = nullptr;
+            for (const FieldDescriptor& field : m_type.m_fields) {
+                if (field.kind == FieldKind::String && field.address(&probe) == &(probe.*path)) {
+                    pathField = &field;
+                }
+            }
+            if (pathField == nullptr) {
+                m_type.m_definitionError = "A texture path of '" + m_type.m_key + "' is not a reflected string field";
+                continue;
+            }
+            m_type.m_textures.push_back(
+                {pathField->key,
+                 [path](void* component) -> std::string& { return static_cast<Component*>(component)->*path; },
+                 [handle](void* component) -> TextureHandle& { return static_cast<Component*>(component)->*handle; }});
+        }
+        return std::move(m_type);
+    }
+
+  private:
+    ComponentType m_type;
+    std::vector<std::pair<std::string Component::*, TextureHandle Component::*>> m_pendingTextures;
+};
+
+// The component types a scene document understands, in registration order.
+// Build it fully before use: add() may move earlier entries, so pointers from
+// find() are valid only while no type is being added.
+class ComponentTypeRegistry {
+  public:
+    // Rejects inconsistent descriptions, duplicate keys, and schema versions
+    // without a migration from every earlier version.
+    SceneDocumentResult add(ComponentType type);
+    const ComponentType* find(std::string_view key) const;
+    std::span<const ComponentType> types() const;
+
+  private:
+    std::vector<ComponentType> m_types;
+};
+
+// Registers the engine's own components (lights, cameras, particles, physics,
+// model instances, ...). Games start from these and add their own.
+SceneDocumentResult registerBuiltInComponentTypes(ComponentTypeRegistry& registry);
+
+// An immutable registry holding only the built-in types, created on first use.
+std::shared_ptr<const ComponentTypeRegistry> builtInComponentTypes();
+
+// The registry a document uses: options.componentTypes, or the built-ins.
+const ComponentTypeRegistry& componentTypesFor(const SceneDocumentOptions& options);

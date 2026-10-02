@@ -3,6 +3,7 @@
 
 #include "EditorSession.hpp"
 
+#include "editor/application/EntityCommands.hpp"
 #include "editor/document/DefaultScene.hpp"
 
 #include <imgui.h>
@@ -103,14 +104,15 @@ void EditorSession::runObjectCommand(ApplicationContext& context, ObjectCommand 
     case ObjectCommand::Duplicate: {
         // In the viewport the duplicate follows the mouse; the copy and its
         // move form one undo step, and cancelling the move keeps the copy.
+        const SceneEditing sceneEditing = editing(context);
         if (region != KeymapRegion::Viewport) {
-            duplicateSelection(context);
+            EntityCommands::duplicateSelection(sceneEditing, m_selection);
             break;
         }
         std::string before;
-        if (duplicateSelectionUncommitted(context, before) &&
+        if (EntityCommands::duplicateSelectionUncommitted(sceneEditing, m_selection, before) &&
             !beginModalTransform(context, TransformOperation::Translate, "Duplicate Objects", before, true)) {
-            commitMutation(context, "Duplicate Objects", {}, std::move(before));
+            sceneEditing.commit("Duplicate Objects", {}, std::move(before));
         }
         break;
     }
@@ -118,7 +120,7 @@ void EditorSession::runObjectCommand(ApplicationContext& context, ObjectCommand 
         m_openDeleteMenu = !m_selection.empty();
         break;
     case ObjectCommand::Delete:
-        deleteSelection(context);
+        EntityCommands::deleteSelection(editing(context), m_selection);
         break;
     case ObjectCommand::SelectAll: {
         // Tapping A twice quickly deselects everything.
@@ -127,7 +129,7 @@ void EditorSession::runObjectCommand(ApplicationContext& context, ObjectCommand 
             m_selection.clear();
             m_lastSelectAllTime = -1.0;
         } else {
-            selectAll(context.scene);
+            m_selection.selectAll(context.scene);
             m_lastSelectAllTime = now;
         }
         break;
@@ -136,13 +138,13 @@ void EditorSession::runObjectCommand(ApplicationContext& context, ObjectCommand 
         m_selection.clear();
         break;
     case ObjectCommand::InvertSelection:
-        invertSelection(context.scene);
+        m_selection.invert(context.scene);
         break;
     case ObjectCommand::AddMenu:
         m_openAddMenu = true;
         break;
     case ObjectCommand::Rename:
-        if (const Entity active = m_selection.empty() ? entt::null : context.scene.findEntity(m_selection.front());
+        if (const Entity active = m_selection.empty() ? entt::null : context.scene.findEntity(*m_selection.active());
             active != entt::null) {
             m_renameBuffer = context.scene.registry().get<NameComponent>(active).name;
             m_openRenamePopup = true;
@@ -156,10 +158,10 @@ void EditorSession::runObjectCommand(ApplicationContext& context, ObjectCommand 
         pasteClipboard(context);
         break;
     case ObjectCommand::ToggleSnapping:
-        m_gizmoSnapping = !m_gizmoSnapping;
+        m_viewport.tools().snapping = !m_viewport.tools().snapping;
         break;
     case ObjectCommand::FrameSelected:
-        frameEntities(context, m_selection);
+        frameEntities(context, m_selection.ids());
         break;
     case ObjectCommand::FrameAll:
         frameAll(context);
@@ -235,7 +237,7 @@ void EditorSession::drawObjectPopups(ApplicationContext& context) {
     }
     if (ImGui::BeginPopup(deleteMenuPopup)) {
         if (ImGui::MenuItem("Delete")) {
-            deleteSelection(context);
+            EntityCommands::deleteSelection(editing(context), m_selection);
         }
         ImGui::EndPopup();
     }
@@ -253,10 +255,10 @@ void EditorSession::drawObjectPopups(ApplicationContext& context) {
         ImGui::SetNextItemWidth(220.0f);
         if (ImGui::InputText("##RenameObject", &m_renameBuffer,
                              ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
-            const Entity active = m_selection.empty() ? entt::null : context.scene.findEntity(m_selection.front());
+            const Entity active = m_selection.empty() ? entt::null : context.scene.findEntity(*m_selection.active());
             if (active != entt::null) {
                 const std::string name = m_renameBuffer;
-                performMutation(context, "Rename", {}, [&] {
+                editing(context).perform("Rename", {}, [&] {
                     context.scene.registry().get<NameComponent>(active).name = name;
                     return SceneResult{.success = true};
                 });
@@ -267,63 +269,6 @@ void EditorSession::drawObjectPopups(ApplicationContext& context) {
     }
 }
 
-void EditorSession::selectFromClick(SceneEntityId id, bool extend) {
-    // The active object is the front of the selection, as the inspector and
-    // local transform axes expect.
-    const auto found = std::ranges::find(m_selection, id);
-    if (!extend) {
-        m_selection = {id};
-    } else if (found == m_selection.end()) {
-        m_selection.insert(m_selection.begin(), id);
-    } else if (found == m_selection.begin()) {
-        m_selection.erase(found);
-    } else {
-        std::rotate(m_selection.begin(), found, found + 1);
-    }
-}
-
-void EditorSession::selectAll(const Scene& scene) {
-    std::vector<SceneEntityId> all;
-    if (!m_selection.empty() && scene.findEntity(m_selection.front()) != entt::null) {
-        all.push_back(m_selection.front());
-    }
-    for (Entity entity : scene.registry().view<const TransformComponent>()) {
-        const SceneEntityId id = scene.id(entity);
-        if (all.empty() || id != all.front()) {
-            all.push_back(id);
-        }
-    }
-    m_selection = std::move(all);
-}
-
-void EditorSession::invertSelection(const Scene& scene) {
-    std::vector<SceneEntityId> inverted;
-    for (Entity entity : scene.registry().view<const TransformComponent>()) {
-        const SceneEntityId id = scene.id(entity);
-        if (!selected(id)) {
-            inverted.push_back(id);
-        }
-    }
-    m_selection = std::move(inverted);
-}
-
-void EditorSession::deleteSelection(ApplicationContext& context) {
-    if (m_selection.empty()) {
-        return;
-    }
-    const std::vector<SceneEntityId> selection = m_selection;
-    performMutation(context, "Delete", {}, [&] {
-        for (SceneEntityId id : selection) {
-            // Deleting a parent removes its children, so look each one up again.
-            if (const Entity entity = context.scene.findEntity(id); entity != entt::null) {
-                context.scene.destroyEntity(entity);
-            }
-        }
-        return SceneResult{.success = true};
-    });
-    m_selection.clear();
-}
-
 void EditorSession::clearSelectedTransforms(ApplicationContext& context, TransformPart part) {
     if (m_selection.empty()) {
         return;
@@ -331,8 +276,8 @@ void EditorSession::clearSelectedTransforms(ApplicationContext& context, Transfo
     const char* name = part == TransformPart::Location
                            ? "Clear Location"
                            : (part == TransformPart::Rotation ? "Clear Rotation" : "Clear Scale");
-    const std::vector<SceneEntityId> selection = m_selection;
-    performMutation(context, name, {}, [&] {
+    const std::vector<SceneEntityId> selection = m_selection.ids();
+    editing(context).perform(name, {}, [&] {
         for (SceneEntityId id : selection) {
             if (const Entity entity = context.scene.findEntity(id); entity != entt::null) {
                 glm::mat4& local = context.scene.registry().get<TransformComponent>(entity).local;
@@ -348,7 +293,7 @@ void EditorSession::clearSelectedTransforms(ApplicationContext& context, Transfo
 void EditorSession::addObject(ApplicationContext& context, AddableObject object) {
     static constexpr std::array names{"Add Cube", "Add Sun", "Add Environment", "Add Empty"};
     SceneEntityId created;
-    performMutation(context, names[static_cast<size_t>(object)], {}, [&]() -> SceneResult {
+    editing(context).perform(names[static_cast<size_t>(object)], {}, [&]() -> SceneResult {
         Entity entity = entt::null;
         switch (object) {
         case AddableObject::Cube:
@@ -371,7 +316,7 @@ void EditorSession::addObject(ApplicationContext& context, AddableObject object)
         return {.success = true};
     });
     if (created) {
-        m_selection = {created};
+        m_selection.selectOnly(created);
     }
 }
 
@@ -414,39 +359,17 @@ void EditorSession::frameAll(ApplicationContext& context) {
     frameEntities(context, all);
 }
 
-std::vector<SceneEntityId> EditorSession::transformRoots(const Scene& scene) const {
-    std::vector<SceneEntityId> roots;
-    for (SceneEntityId id : m_selection) {
-        const Entity entity = scene.findEntity(id);
-        if (entity == entt::null) {
-            continue;
-        }
-        bool ancestorSelected = false;
-        for (Entity parent = scene.registry().get<RelationshipComponent>(entity).parent; parent != entt::null;
-             parent = scene.registry().get<RelationshipComponent>(parent).parent) {
-            if (selected(scene.id(parent))) {
-                ancestorSelected = true;
-                break;
-            }
-        }
-        if (!ancestorSelected) {
-            roots.push_back(id);
-        }
-    }
-    return roots;
-}
-
 bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOperation operation,
                                         std::string commandName, std::string before, bool commitOnCancel) {
     if (m_playMode.mode() != EditorMode::Edit || m_selection.empty()) {
         return false;
     }
     context.scene.updateWorldTransforms();
-    std::vector<SceneEntityId> roots = transformRoots(context.scene);
+    std::vector<SceneEntityId> roots = m_selection.transformRoots(context.scene);
     if (roots.empty()) {
         return false;
     }
-    if (before.empty() && !captureSnapshot(context, before)) {
+    if (before.empty() && !editing(context).capture(before)) {
         return false;
     }
     std::vector<glm::mat4> startWorld;
@@ -457,14 +380,15 @@ bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOp
         startLocal.push_back(transform.local);
     }
     glm::mat3 localAxes(1.0f);
-    if (const Entity active = context.scene.findEntity(m_selection.front()); active != entt::null) {
+    if (const Entity active = context.scene.findEntity(*m_selection.active()); active != entt::null) {
         localAxes = normalizedAxes(context.scene.registry().get<TransformComponent>(active).world);
     }
-    const float aspectRatio = m_viewportSize.x / std::max(m_viewportSize.y, 1.0f);
+    const glm::vec2 viewportSize = m_viewport.size();
+    const float aspectRatio = viewportSize.x / std::max(viewportSize.y, 1.0f);
     const ModalTransformView view{.view = m_camera.viewMatrix(),
                                   .projection = m_camera.projectionMatrix(aspectRatio),
-                                  .viewportPosition = m_viewportPosition,
-                                  .viewportSize = m_viewportSize};
+                                  .viewportPosition = m_viewport.position(),
+                                  .viewportSize = viewportSize};
     const ImVec2 mouse = ImGui::GetMousePos();
     m_activeTransform.emplace(ActiveTransform{
         .transform = ModalTransform(operation, std::move(startWorld), localAxes, {mouse.x, mouse.y}, view),
@@ -476,11 +400,17 @@ bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOp
     return true;
 }
 
+bool EditorSession::modalTransformActive() const {
+    return m_activeTransform.has_value();
+}
+
 void EditorSession::updateModalTransform(ApplicationContext& context) {
     ModalTransform& transform = m_activeTransform->transform;
     const ImGuiIO& io = ImGui::GetIO();
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-        m_suppressCameraUntilRelease = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+            m_viewport.suppressCameraUntilRightRelease();
+        }
         finishModalTransform(context, false);
         return;
     }
@@ -517,10 +447,11 @@ void EditorSession::updateModalTransform(ApplicationContext& context) {
 
     transform.moveMouse({io.MousePos.x, io.MousePos.y}, io.KeyShift);
     // Ctrl inverts the snapping toggle while it is held, as in Blender.
-    const TransformSnapping snapping{.enabled = m_gizmoSnapping != io.KeyCtrl,
-                                     .translation = m_translationSnap,
-                                     .rotationDegrees = m_rotationSnap,
-                                     .scale = m_scaleSnap};
+    const TransformToolSettings& tools = m_viewport.tools();
+    const TransformSnapping snapping{.enabled = tools.snapping != io.KeyCtrl,
+                                     .translation = tools.translationSnap,
+                                     .rotationDegrees = tools.rotationSnapDegrees,
+                                     .scale = tools.scaleSnap};
     const ModalTransformResult result = transform.evaluate(snapping);
     const std::vector<SceneEntityId>& entities = m_activeTransform->entities;
     for (size_t index = 0; index < entities.size() && index < result.world.size(); ++index) {
@@ -552,20 +483,22 @@ void EditorSession::finishModalTransform(ApplicationContext& context, bool confi
         context.scene.updateWorldTransforms();
     }
     if (confirm || active.commitOnCancel) {
-        commitMutation(context, std::move(active.commandName), {}, std::move(active.before));
+        editing(context).commit(std::move(active.commandName), {}, std::move(active.before));
     }
 }
 
 void EditorSession::drawModalTransformOverlay(const ModalTransformResult& result) const {
     const ModalTransform& transform = m_activeTransform->transform;
+    const glm::vec2 viewportPosition = m_viewport.position();
+    const glm::vec2 viewportSize = m_viewport.size();
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    const ImVec2 clipMin{m_viewportPosition.x, m_viewportPosition.y};
-    const ImVec2 clipMax{m_viewportPosition.x + m_viewportSize.x, m_viewportPosition.y + m_viewportSize.y};
+    const ImVec2 clipMin{viewportPosition.x, viewportPosition.y};
+    const ImVec2 clipMax{viewportPosition.x + viewportSize.x, viewportPosition.y + viewportSize.y};
     drawList->PushClipRect(clipMin, clipMax, true);
 
     // Constraint axes are drawn as lines through the pivot across the view.
     const glm::vec2 pivot = transform.pivotOnScreen();
-    const float extent = glm::length(m_viewportSize) * 2.0f;
+    const float extent = glm::length(viewportSize) * 2.0f;
     for (const ConstraintGuide& guide : transform.constraintGuides()) {
         const glm::vec2 along = transform.toScreen(transform.pivot() + guide.direction) - pivot;
         if (glm::length(along) < 1e-3f) {
@@ -594,7 +527,7 @@ void EditorSession::drawModalTransformOverlay(const ModalTransformResult& result
                            ? "LMB/Enter confirm   RMB/Esc cancel   X Y Z axis   R trackball   Shift precision   "
                              "Ctrl snap"
                            : "LMB/Enter confirm   RMB/Esc cancel   X Y Z axis   Shift precision   Ctrl snap";
-    const ImVec2 position{m_viewportPosition.x + 8.0f, m_viewportPosition.y + 8.0f};
+    const ImVec2 position{viewportPosition.x + 8.0f, viewportPosition.y + 8.0f};
     const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
     const ImVec2 descriptionSize = ImGui::CalcTextSize(result.description.c_str());
     const ImVec2 hintSize = ImGui::CalcTextSize(hint);

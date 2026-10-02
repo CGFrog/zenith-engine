@@ -1,0 +1,36 @@
+#pragma once
+
+struct EditorContext;
+struct InputState;
+
+// One dockable editor window. The session owns each panel, decides whether it
+// is visible, and opens its ImGui window; the panel draws only its contents.
+class EditorPanel {
+  public:
+    virtual ~EditorPanel() = default;
+
+    // Window title. It also names the panel's dock slot in the saved layout,
+    // so changing it resets where users docked the panel.
+    virtual const char* title() const = 0;
+
+    // ImGuiWindowFlags for the panel's window.
+    virtual int windowFlags() const {
+        return 0;
+    }
+
+    // Panels that edit the authored scene are read-only outside Edit mode,
+    // because Play mode runs on a throwaway copy of the scene.
+    virtual bool editModeOnly() const {
+        return false;
+    }
+
+    // Runs every frame before drawing, whether or not the panel is visible.
+    virtual void update(EditorContext& context, const InputState& input, float deltaSeconds);
+    virtual void draw(EditorContext& context) = 0;
+    // Runs on frames where the user has closed the panel.
+    virtual void hidden(EditorContext& context);
+};
+
+inline void EditorPanel::update(EditorContext&, const InputState&, float) {}
+
+inline void EditorPanel::hidden(EditorContext&) {}

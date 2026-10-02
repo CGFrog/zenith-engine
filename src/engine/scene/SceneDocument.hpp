@@ -9,9 +9,13 @@
 #include <string_view>
 
 class AssetManager;
+class ComponentTypeRegistry;
 
 struct SceneDocumentOptions {
     std::filesystem::path assetRoot;
+    // Component types the document reads and writes. Null uses the built-in
+    // engine types; games that add their own pass a registry extending them.
+    std::shared_ptr<const ComponentTypeRegistry> componentTypes;
 };
 
 struct SceneDocumentResult {
