@@ -54,9 +54,10 @@ class MeshPass {
     uint32_t prewarmedPipelineCount() const {
         // Thirteen graphics pipelines (two depth-normal, one local-shadow), the
         // light- and reflection-probe-cluster assignments, the depth-pyramid
-        // build, ambient occlusion, volumetric fog, and the environment
-        // pipelines.
+        // build, ambient occlusion, volumetric fog, depth of field, and the
+        // environment pipelines.
         return 16u + m_ambientOcclusion.pipelineCount() + m_environmentPass.pipelineCount() +
+               DepthOfFieldPass::pipelineCount() +
                (m_volumetricFog.supported() ? VolumetricFogPass::pipelineCount() : 0u) +
                (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
     }

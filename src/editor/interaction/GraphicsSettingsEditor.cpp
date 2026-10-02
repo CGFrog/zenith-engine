@@ -1,5 +1,7 @@
 #include "GraphicsSettingsEditor.hpp"
 
+#include "engine/graphics/DepthOfField.hpp"
+
 #include <imgui.h>
 
 #include <algorithm>
@@ -145,6 +147,24 @@ bool drawScreenSpaceEffects(RenderSettings& settings, const RenderCapabilities& 
                          std::array<EnumOption, 3>{{{"Probes only"},
                                                     {"Screen-space (half)", capabilities.screenSpaceReflections},
                                                     {"Screen-space (full)", capabilities.screenSpaceReflections}}});
+    DepthOfFieldSettings& depthOfField = settings.depthOfField;
+    changed |= enumCombo("Depth of field", depthOfField.quality,
+                         std::array<EnumOption, 3>{{{"Off"},
+                                                    {"Low (half resolution)", capabilities.depthOfField},
+                                                    {"High (half resolution)", capabilities.depthOfField}}});
+    ImGui::BeginDisabled(depthOfField.quality == DepthOfFieldQuality::Off);
+    changed |=
+        ImGui::DragFloat("Focus distance", &depthOfField.focusDistance, 0.05f, depth_of_field::minimumFocusDistance,
+                         depth_of_field::maximumFocusDistance, "%.2f m", ImGuiSliderFlags_Logarithmic);
+    changed |= ImGui::SliderFloat("Aperture (f-stop)", &depthOfField.fStop, depth_of_field::minimumFStop,
+                                  depth_of_field::maximumFStop, "f/%.1f", ImGuiSliderFlags_Logarithmic);
+    changed |= ImGui::SliderFloat("Sensor height", &depthOfField.sensorHeightMillimeters,
+                                  depth_of_field::minimumSensorHeightMillimeters,
+                                  depth_of_field::maximumSensorHeightMillimeters, "%.1f mm");
+    changed |=
+        ImGui::SliderFloat("Maximum blur radius", &depthOfField.maximumCocRadiusPixels,
+                           depth_of_field::minimumCocRadiusPixels, depth_of_field::maximumCocRadiusPixels, "%.1f px");
+    ImGui::EndDisabled();
     return changed;
 }
 
@@ -215,6 +235,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Probe clusters", budgets.reflectionProbeClusters);
     changed |= drawBudget("Volumetric fog", budgets.volumetricFog);
     changed |= drawBudget("Irradiance volume", budgets.irradianceVolume);
+    changed |= drawBudget("Depth of field", budgets.depthOfField);
     return changed;
 }
 
@@ -250,6 +271,7 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
             {"Skybox", stats.gpuSkyboxMilliseconds, true},
             {"Reflections", stats.gpuReflectionsMilliseconds},
             {"Temporal resolve", stats.gpuTemporalMilliseconds},
+            {"Depth of field", stats.gpuDepthOfFieldMilliseconds},
             {"Exposure", stats.gpuExposureMilliseconds},
             {"Bloom", stats.gpuBloomMilliseconds},
             {"Post-process", stats.gpuPostMilliseconds},
@@ -285,14 +307,39 @@ void clampToDocumentRanges(RenderSettings& settings) {
     exposure.highPercentile = std::clamp(exposure.highPercentile, exposure.lowPercentile + minimumPercentileGap, 1.0f);
 
     RenderPassBudgets& budgets = settings.budgets;
-    for (RenderPassBudget* budget :
-         {&budgets.shadow, &budgets.opaque, &budgets.blended, &budgets.bloom, &budgets.ui, &budgets.upload,
-          &budgets.temporalResolve, &budgets.ambientOcclusion, &budgets.reflections, &budgets.exposure,
-          &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment,
-          &budgets.localShadows, &budgets.shadowCulling, &budgets.reflectionProbeClusters, &budgets.volumetricFog,
-          &budgets.irradianceVolume}) {
+    for (RenderPassBudget* budget : {&budgets.shadow,
+                                     &budgets.opaque,
+                                     &budgets.blended,
+                                     &budgets.bloom,
+                                     &budgets.ui,
+                                     &budgets.upload,
+                                     &budgets.temporalResolve,
+                                     &budgets.ambientOcclusion,
+                                     &budgets.reflections,
+                                     &budgets.exposure,
+                                     &budgets.depthPrepass,
+                                     &budgets.depthPyramid,
+                                     &budgets.lightClusters,
+                                     &budgets.environment,
+                                     &budgets.localShadows,
+                                     &budgets.shadowCulling,
+                                     &budgets.reflectionProbeClusters,
+                                     &budgets.volumetricFog,
+                                     &budgets.irradianceVolume,
+                                     &budgets.depthOfField}) {
         clampBudget(*budget);
     }
+
+    DepthOfFieldSettings& depthOfField = settings.depthOfField;
+    depthOfField.focusDistance = std::clamp(depthOfField.focusDistance, depth_of_field::minimumFocusDistance,
+                                            depth_of_field::maximumFocusDistance);
+    depthOfField.fStop = std::clamp(depthOfField.fStop, depth_of_field::minimumFStop, depth_of_field::maximumFStop);
+    depthOfField.sensorHeightMillimeters =
+        std::clamp(depthOfField.sensorHeightMillimeters, depth_of_field::minimumSensorHeightMillimeters,
+                   depth_of_field::maximumSensorHeightMillimeters);
+    depthOfField.maximumCocRadiusPixels =
+        std::clamp(depthOfField.maximumCocRadiusPixels, depth_of_field::minimumCocRadiusPixels,
+                   depth_of_field::maximumCocRadiusPixels);
 }
 
 bool drawSettings(RenderSettings& settings, const RenderCapabilities& capabilities) {

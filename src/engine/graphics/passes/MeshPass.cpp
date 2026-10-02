@@ -2793,7 +2793,6 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 3);
     }
-    passTimestamps.closeSkippedPasses();
     const auto bloomCpuBegin = std::chrono::steady_clock::now();
     const TemporalResolveFrame temporalResolve{.currentToPreviousClip = m_previousUnjitteredViewProjection *
                                                                         glm::inverse(unjitteredViewProjection),
@@ -2801,10 +2800,14 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
                                                .historyValid = temporal.historyValid};
     if (!m_postProcess.record(commandBuffer, frameIndex, colorImage, colorView, depthImage, extent, renderExtent,
                               rendering.settings(), glm::inverse(unjitteredViewProjection), m_previousViewProjection,
-                              temporalResolve, cameraPosition, rendering.m_gridOverlay, timestampQueries,
-                              stats.cpuBloomMilliseconds, colorOldLayout)) {
+                              temporalResolve, depth_of_field::cameraFromProjection(projection), cameraPosition,
+                              rendering.m_gridOverlay, timestampQueries, passTimestamps, stats.cpuBloomMilliseconds,
+                              colorOldLayout)) {
         return false;
     }
+    // After post-processing, whose depth of field pair is optional too.
+    passTimestamps.closeSkippedPasses();
+    stats.depthOfFieldBytes = m_postProcess.depthOfFieldBytes();
     m_previousViewProjection = cameraData.viewProjection;
     m_previousUnjitteredViewProjection = unjitteredViewProjection;
     m_previousJitterNdc = temporal.jitterNdc;

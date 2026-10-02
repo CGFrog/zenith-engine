@@ -61,7 +61,7 @@ bool PostProcessPass::init(const VulkanContext& context, VkFormat outputFormat, 
     m_targets.resize(frameCount);
     return m_bloomExposure.init(context) && createDescriptors(frameCount) && createPipeline(outputFormat) &&
            m_temporalResolve.init(context, frameCount, extent) && m_reflections.init(context, extent) &&
-           createTargets(context, extent, depthView);
+           m_depthOfField.init(context, frameCount, extent) && createTargets(context, extent, depthView);
 }
 
 bool PostProcessPass::createDescriptors(uint32_t frameCount) {
@@ -429,6 +429,7 @@ bool PostProcessPass::resize(const VulkanContext& context, VkExtent2D extent, Vk
     m_previousFrameIndex.reset();
     m_temporalResolve.resize(extent);
     m_reflections.resize(extent);
+    m_depthOfField.resize(extent);
     return createTargets(context, extent, depthView);
 }
 
@@ -490,8 +491,9 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
                              VkImageView outputView, VkImage depthImage, VkExtent2D extent, VkExtent2D internalExtent,
                              const RenderSettings& settings, const glm::mat4& inverseViewProjection,
                              const glm::mat4& previousViewProjection, const TemporalResolveFrame& temporal,
-                             const glm::vec3& cameraPosition, const std::optional<GridOverlay>& gridOverlay,
-                             VkQueryPool timestampQueries, double& bloomCpuMilliseconds,
+                             const depth_of_field::CameraTerms& depthOfFieldCamera, const glm::vec3& cameraPosition,
+                             const std::optional<GridOverlay>& gridOverlay, VkQueryPool timestampQueries,
+                             OptionalPassTimestamps& passTimestamps, double& bloomCpuMilliseconds,
                              VkImageLayout outputOldLayout) {
     Target& target = m_targets[frameIndex];
     constexpr VkPipelineStageFlags2 sampledStages =
@@ -512,15 +514,23 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
     if (!resolveTemporal(commandBuffer, frameIndex, internalExtent, temporalEnabled, temporal, timestampQueries)) {
         return false;
     }
-    // With TAA, exposure and bloom read the resolved output-resolution scene;
-    // otherwise the raw HDR target within its render extent.
-    const BloomExposureInput bloomInput =
-        temporalEnabled
-            ? BloomExposureInput{.view = m_temporalResolve.resolvedView(),
-                                 .imageExtent = m_extent,
-                                 .validExtent = m_extent,
-                                 .layout = TemporalResolvePass::resolvedLayout}
-            : BloomExposureInput{.view = target.view, .imageExtent = m_extent, .validExtent = internalExtent};
+    // With TAA, later passes read the resolved output-resolution scene;
+    // otherwise the raw HDR target within its render extent. Depth of field
+    // replaces either with its focused copy.
+    const SceneColor resolved = temporalEnabled ? SceneColor{.view = m_temporalResolve.resolvedView(),
+                                                             .layout = TemporalResolvePass::resolvedLayout,
+                                                             .validExtent = m_extent}
+                                                : SceneColor{.view = target.view,
+                                                             .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                                             .validExtent = internalExtent};
+    const std::optional<SceneColor> scene = focusScene(commandBuffer, frameIndex, resolved, internalExtent,
+                                                       settings.depthOfField, depthOfFieldCamera, passTimestamps);
+    if (!scene) {
+        return false;
+    }
+    bindSceneColor(frameIndex, *scene, temporalEnabled);
+    const BloomExposureInput bloomInput{
+        .view = scene->view, .imageExtent = m_extent, .validExtent = scene->validExtent, .layout = scene->layout};
     recordBloomAndExposure(commandBuffer, bloomInput, settings, timestampQueries, bloomCpuMilliseconds);
     const BloomSampling bloomSampling = m_bloomExposure.bloomSampling(bloomInput.validExtent);
     const PostSettings postSettings{
@@ -617,22 +627,56 @@ bool PostProcessPass::resolveTemporal(VkCommandBuffer commandBuffer, uint32_t fr
     if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 20);
     }
-    // The post set is not yet bound in this command buffer, and its frame slot's
-    // previous submission has retired, so it may be rewritten here. Without a
-    // resolved image, binding 2 falls back to the (unread) scene target.
-    const VkImageView resolvedView = m_temporalResolve.resolvedView();
-    const VkDescriptorImageInfo resolved{.sampler = m_colorSampler,
-                                         .imageView = resolvedView ? resolvedView : target.view,
-                                         .imageLayout = resolvedView ? TemporalResolvePass::resolvedLayout
-                                                                     : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    const VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                     .dstSet = m_targets[frameIndex].descriptor,
-                                     .dstBinding = 2,
-                                     .descriptorCount = 1,
-                                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                     .pImageInfo = &resolved};
-    vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
     return true;
+}
+
+std::optional<PostProcessPass::SceneColor>
+PostProcessPass::focusScene(VkCommandBuffer commandBuffer, uint32_t frameIndex, const SceneColor& scene,
+                            VkExtent2D internalExtent, const DepthOfFieldSettings& settings,
+                            const depth_of_field::CameraTerms& camera, OptionalPassTimestamps& passTimestamps) {
+    if (settings.quality == DepthOfFieldQuality::Off) {
+        return scene;
+    }
+    passTimestamps.write(FrameTimestamp::depthOfFieldBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    // The scene and motion targets were made readable by compute at the start
+    // of record(), and the resolved history by the temporal resolve.
+    const DepthOfFieldImages images{.color = scene.view,
+                                    .colorLayout = scene.layout,
+                                    .colorExtent = scene.validExtent,
+                                    .motionDepth = m_targets[frameIndex].motionView,
+                                    .depthExtent = internalExtent};
+    if (!m_depthOfField.record(commandBuffer, frameIndex, images, settings, camera)) {
+        return std::nullopt;
+    }
+    passTimestamps.write(FrameTimestamp::depthOfFieldEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    return SceneColor{.view = m_depthOfField.outputView(),
+                      .layout = DepthOfFieldPass::outputLayout,
+                      .validExtent = scene.validExtent};
+}
+
+void PostProcessPass::bindSceneColor(uint32_t frameIndex, const SceneColor& scene, bool temporalEnabled) {
+    // The post set is not yet bound in this command buffer, and its frame slot's
+    // previous submission has retired, so it may be rewritten here.
+    const Target& target = m_targets[frameIndex];
+    const VkDescriptorImageInfo placeholder{
+        .sampler = m_colorSampler, .imageView = target.view, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorImageInfo sceneImage{
+        .sampler = m_colorSampler, .imageView = scene.view, .imageLayout = scene.layout};
+    const VkDescriptorImageInfo& renderResolution = temporalEnabled ? placeholder : sceneImage;
+    const VkDescriptorImageInfo& outputResolution = temporalEnabled ? sceneImage : placeholder;
+    const VkWriteDescriptorSet writes[]{{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         .dstSet = target.descriptor,
+                                         .dstBinding = 0,
+                                         .descriptorCount = 1,
+                                         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                         .pImageInfo = &renderResolution},
+                                        {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         .dstSet = target.descriptor,
+                                         .dstBinding = 2,
+                                         .descriptorCount = 1,
+                                         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                         .pImageInfo = &outputResolution}};
+    vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(std::size(writes)), writes, 0, nullptr);
 }
 
 void PostProcessPass::recordBloomAndExposure(VkCommandBuffer commandBuffer, const BloomExposureInput& input,
@@ -809,6 +853,7 @@ void PostProcessPass::shutdown(const VulkanContext& context) {
     destroyTargets(context);
     m_temporalResolve.shutdown();
     m_reflections.shutdown();
+    m_depthOfField.shutdown();
     m_bloomExposure.shutdown(context);
     m_previousExposureTime.reset();
     if (m_pipeline) {

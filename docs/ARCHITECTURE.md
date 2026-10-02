@@ -358,6 +358,10 @@ Scene shading
   -> blended surfaces -> editor outlines
 Temporal resolve (TAA only, compute)
   HDR + motion/reactive + output-resolution history -> resolved scene
+Depth of field (compute, when enabled)
+  resolved scene (else HDR) + motion-target depth -> thin-lens circle of
+  confusion -> half-resolution bokeh gather -> full-resolution composite into
+  the focused scene that exposure, bloom, and post read instead
 Exposure and bloom (compute)
   luminance histogram -> adapted exposure buffer; bloom down/upsample chain
 Post-process and tone mapping
@@ -377,7 +381,7 @@ editor's Graphics panel. `Renderer::updateRenderGraphPlan` mirrors this list as
 a declarative render-graph model whose shape (`RenderGraphShape`) follows the
 settings that add or remove passes: anti-aliasing, AO and reflection quality,
 bloom, exposure mode, shadows, environment quality and background, local
-lighting, the depth prepass, and GPU-driven submission. The model validates
+lighting, the depth prepass, depth of field, and GPU-driven submission. The model validates
 ordering and hazards and supplies barrier and transient-memory statistics;
 only its UI-boundary barriers are recorded, and the passes keep their own
 synchronization.

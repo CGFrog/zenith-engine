@@ -421,6 +421,7 @@ Renderer
    |- VolumetricFogPass (froxel fog injection, reprojection, and integration)
    `- PostProcessPass (HDR/history, motion, prepass normals, and fullscreen pipelines)
       |- ScreenSpaceReflectionPass (Hi-Z reflection trace and in-place composite)
+      |- DepthOfFieldPass (thin-lens CoC, half-resolution bokeh gather, composite)
       `- BloomExposurePass (luminance histogram, exposure, bloom chain)
 ```
 
@@ -656,11 +657,14 @@ volume in a project's startup scene without opening a window.
 
 Owns one RGBA16F HDR scene target, motion/reactive target, prepass normal
 target (A2B10G10R10) per frame slot, plus the view's `ScreenSpaceReflectionPass`,
-`TemporalResolvePass`, and `BloomExposurePass`. `recordReflections()` runs
-inside the scene pass, between opaque and blended surfaces, and blends
-screen-space reflections into the HDR target when enabled and the depth prepass
-ran. With TAA selected the resolve runs first and exposure and bloom read its
-output-resolution result; otherwise they read the HDR target. The final
+`TemporalResolvePass`, `DepthOfFieldPass`, and `BloomExposurePass`.
+`recordReflections()` runs inside the scene pass, between opaque and blended
+surfaces, and blends screen-space reflections into the HDR target when enabled
+and the depth prepass ran. With TAA selected the resolve runs first and exposure
+and bloom read its output-resolution result; otherwise they read the HDR
+target. Depth of field, when enabled, replaces that scene with its focused copy
+for exposure, bloom, and the fullscreen pass (bound as the resolved scene with
+TAA, else as the HDR scene that FXAA samples). The final
 fullscreen pass composes the resolved scene (or applies FXAA), the editor grid,
 exposure, the bloom mix, and tone mapping (AgX by default, AgX punchy or
 legacy ACES). Half-resolution effect tiers render into bounded sub-extents.
@@ -707,6 +711,27 @@ reprojects Catmull-Rom history with dilated motion, rejects disoccluded
 history, and blends after YCoCg variance clipping with luma weighting. Its CPU
 mirror is in `TemporalQuality.*`.
 
+### `src/engine/graphics/passes/DepthOfFieldPass.*`
+
+Thin-lens depth of field on the HDR scene, after the temporal resolve and
+before exposure and bloom (`RenderSettings::depthOfField`). `dof_prepare.comp`
+downsamples the scene to half resolution and stores each texel's signed circle
+of confusion from the motion target's depth; `dof_gather.comp` gathers a
+golden-angle bokeh spiral there (background samples limited so they never
+spread over a sharper foreground); `dof_composite.comp` blends the upsampled
+blur over the sharp full-resolution scene by the pixel's own CoC and the
+foreground blur covering it. The gather targets and output persist across
+frame slots in GENERAL and are allocated on first use.
+
+### `src/engine/graphics/DepthOfField.*`
+
+CPU reference for the depth of field: settings ranges, projection terms, view
+distance from reversed-Z depth, the thin-lens circle of confusion in pixels
+(focal length from the vertical field of view and sensor height), the gather
+spiral's sample count, and the composite blend. The shaders mirror it by hand;
+`tests/engine/DepthOfFieldTests.cpp` covers it with settings serialization and
+the capability fallback.
+
 ## Shaders
 
 | File | Stage and job |
@@ -734,6 +759,9 @@ mirror is in `TemporalQuality.*`.
 | `shaders/gpu_visibility.comp` | Runs early/late two-phase frustum and occlusion culling. |
 | `shaders/compact_draws.comp` | Packs non-empty batches into indirect-count draw commands. |
 | `shaders/taa_resolve.comp` | Temporal anti-aliasing and upsampling into output-resolution history. |
+| `shaders/dof_prepare.comp` | Depth of field: half-resolution scene downsample with the signed circle of confusion. |
+| `shaders/dof_gather.comp` | Depth of field: half-resolution golden-angle bokeh gather. |
+| `shaders/dof_composite.comp` | Depth of field: blends the upsampled blur over the sharp scene. |
 | `shaders/env_equirect_to_cube.comp` | Resamples an equirectangular radiance map into an environment cube. |
 | `shaders/env_procedural_sky.comp` | Writes the analytic sky cube used when no environment map is loaded. |
 | `shaders/env_prefilter_specular.comp` | GGX-prefilters one specular cube mip with mip-filtered importance sampling. |

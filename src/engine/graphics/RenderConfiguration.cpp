@@ -1,5 +1,7 @@
 #include "RenderConfiguration.hpp"
 
+#include "DepthOfField.hpp"
+
 #include <cmath>
 #include <nlohmann/json.hpp>
 
@@ -90,6 +92,33 @@ bool validBloom(const RenderSettings& settings) {
            settings.bloomFilterRadius <= 4.0f;
 }
 
+Json depthOfFieldDocument(const DepthOfFieldSettings& depthOfField) {
+    return {{"quality", depthOfField.quality},
+            {"focusDistance", depthOfField.focusDistance},
+            {"fStop", depthOfField.fStop},
+            {"sensorHeightMillimeters", depthOfField.sensorHeightMillimeters},
+            {"maximumCocRadiusPixels", depthOfField.maximumCocRadiusPixels}};
+}
+
+// The whole object is optional, and so is each field: documents written before
+// depth of field keep it Off with default lens settings.
+bool readDepthOfField(const Json& document, DepthOfFieldSettings& output) {
+    const auto found = document.find("depthOfField");
+    if (found == document.end()) {
+        return true;
+    }
+    if (!found->is_object() ||
+        (found->contains("quality") && !readEnum(*found, "quality", DepthOfFieldQuality::High, output.quality))) {
+        return false;
+    }
+    const DepthOfFieldSettings defaults;
+    output.focusDistance = found->value("focusDistance", defaults.focusDistance);
+    output.fStop = found->value("fStop", defaults.fStop);
+    output.sensorHeightMillimeters = found->value("sensorHeightMillimeters", defaults.sensorHeightMillimeters);
+    output.maximumCocRadiusPixels = found->value("maximumCocRadiusPixels", defaults.maximumCocRadiusPixels);
+    return depth_of_field::validSettings(output);
+}
+
 // Accepts the retired tiled modes (1: 32 lights, 2: 64 lights) as Clustered;
 // the light cap then comes from maximumLocalLights or its default.
 bool readLocalLighting(const Json& document, LocalLightingQuality& value) {
@@ -137,6 +166,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"ambientOcclusion", settings.ambientOcclusion},
                            {"reflections", settings.reflections},
                            {"volumetricFog", settings.volumetricFog},
+                           {"depthOfField", depthOfFieldDocument(settings.depthOfField)},
                            {"budgets",
                             {{"shadow", budget(settings.budgets.shadow)},
                              {"opaque", budget(settings.budgets.opaque)},
@@ -156,7 +186,8 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"shadowCulling", budget(settings.budgets.shadowCulling)},
                              {"reflectionProbeClusters", budget(settings.budgets.reflectionProbeClusters)},
                              {"volumetricFog", budget(settings.budgets.volumetricFog)},
-                             {"irradianceVolume", budget(settings.budgets.irradianceVolume)}}}};
+                             {"irradianceVolume", budget(settings.budgets.irradianceVolume)},
+                             {"depthOfField", budget(settings.budgets.depthOfField)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -244,6 +275,9 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
             !readEnum(document, "volumetricFog", VolumetricFogQuality::High, loaded.volumetricFog)) {
             return {.error = "Render settings contain an unknown volumetric-fog quality"};
         }
+        if (!readDepthOfField(document, loaded.depthOfField)) {
+            return {.error = "Render settings contain invalid depth of field settings"};
+        }
         if (const auto budgets = document.find("budgets"); budgets != document.end()) {
             if (!budgets->is_object() || !readBudget(*budgets, "shadow", loaded.budgets.shadow) ||
                 !readBudget(*budgets, "opaque", loaded.budgets.opaque) ||
@@ -263,7 +297,8 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "shadowCulling", loaded.budgets.shadowCulling) ||
                 !readOptionalBudget(*budgets, "reflectionProbeClusters", loaded.budgets.reflectionProbeClusters) ||
                 !readOptionalBudget(*budgets, "volumetricFog", loaded.budgets.volumetricFog) ||
-                !readOptionalBudget(*budgets, "irradianceVolume", loaded.budgets.irradianceVolume)) {
+                !readOptionalBudget(*budgets, "irradianceVolume", loaded.budgets.irradianceVolume) ||
+                !readOptionalBudget(*budgets, "depthOfField", loaded.budgets.depthOfField)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }
@@ -340,6 +375,16 @@ ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
     if (result.settings.volumetricFog != VolumetricFogQuality::Off && !capabilities.volumetricFog) {
         result.settings.volumetricFog = VolumetricFogQuality::Off;
         result.fallbacks.emplace_back("Volumetric fog needs RGBA16F 3D storage images and was disabled");
+    }
+    if (result.settings.depthOfField.quality != DepthOfFieldQuality::Off && !capabilities.depthOfField) {
+        result.settings.depthOfField.quality = DepthOfFieldQuality::Off;
+        result.fallbacks.emplace_back("Depth of field needs RGBA16F storage images and was disabled");
+    }
+    // Documents are range-checked on load; settings set in code are not.
+    if (result.settings.depthOfField.quality != DepthOfFieldQuality::Off &&
+        !depth_of_field::validSettings(result.settings.depthOfField)) {
+        result.settings.depthOfField.quality = DepthOfFieldQuality::Off;
+        result.fallbacks.emplace_back("Depth of field lens settings are out of range; depth of field was disabled");
     }
     return result;
 }

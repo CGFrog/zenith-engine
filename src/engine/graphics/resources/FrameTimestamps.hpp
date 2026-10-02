@@ -37,7 +37,10 @@ inline constexpr uint32_t volumetricFogEnd = 38;
 // volume changes. Probe sampling is part of opaque shading.
 inline constexpr uint32_t irradianceVolumeBegin = 39;
 inline constexpr uint32_t irradianceVolumeEnd = 40;
-inline constexpr uint32_t count = 41;
+// Depth of field (circle of confusion, half-resolution gather, composite).
+inline constexpr uint32_t depthOfFieldBegin = 41;
+inline constexpr uint32_t depthOfFieldEnd = 42;
+inline constexpr uint32_t count = 43;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot

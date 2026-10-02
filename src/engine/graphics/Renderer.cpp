@@ -30,9 +30,13 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
         settings.bloom = BloomQuality::Downsampled;
         settings.volumetricFog = VolumetricFogQuality::High;
         settings.indirectDiffuse = IndirectDiffuseMode::ProbeVolume;
+        settings.depthOfField.quality = DepthOfFieldQuality::High;
     }
     if (SDL_getenv("ZENITH_DISABLE_VOLUMETRIC_FOG") != nullptr) {
         settings.volumetricFog = VolumetricFogQuality::Off;
+    }
+    if (SDL_getenv("ZENITH_DISABLE_DEPTH_OF_FIELD") != nullptr) {
+        settings.depthOfField.quality = DepthOfFieldQuality::Off;
     }
     if (SDL_getenv("ZENITH_FORCE_DYNAMIC_RESOLUTION") != nullptr) {
         settings.dynamicResolution.enabled = true;
@@ -110,7 +114,8 @@ RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const Render
             .depthPrepass = depthPrepassActive(settings),
             .gpuDriven = gpuDrivenSubmissionActive(settings, capabilities),
             .volumetricFog = settings.volumetricFog != VolumetricFogQuality::Off,
-            .irradianceVolume = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume};
+            .irradianceVolume = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume,
+            .depthOfField = settings.depthOfField.quality != DepthOfFieldQuality::Off};
 }
 } // namespace
 
@@ -312,6 +317,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuReflectionProbeClusterMilliseconds = gpuTimings.reflectionProbeClusterMilliseconds;
     stats.gpuVolumetricFogMilliseconds = gpuTimings.volumetricFogMilliseconds;
     stats.gpuIrradianceVolumeMilliseconds = gpuTimings.irradianceVolumeMilliseconds;
+    stats.gpuDepthOfFieldMilliseconds = gpuTimings.depthOfFieldMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;
@@ -807,22 +813,36 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
                  TemporalResolvePass::resolvedLayout}};
             graph.addPass("temporal resolve", RenderGraphQueue::Graphics, resolveAccesses);
         }
-        // Exposure and bloom only sample the scene (the resolved history with
-        // TAA); their own buffers and the bloom chain persist across frames and
-        // are synchronized by their pass.
-        const RenderGraphAccess sceneComputeRead[]{
+        // The scene the later passes read: the resolved history with TAA, the
+        // HDR target otherwise, or the depth of field output when it runs.
+        RenderGraphAccess sceneComputeRead =
             temporalResolve
                 ? RenderGraphAccess{history, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, TemporalResolvePass::resolvedLayout}
                 : RenderGraphAccess{hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+                                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        // Persistent and shared by consecutive frames; DepthOfFieldPass keeps
+        // its gather targets and output in GENERAL.
+        const auto focusedScene = graph.importImage(
+            "depth of field targets", image(DepthOfFieldPass::imageFormat, 5, 0), DepthOfFieldPass::outputLayout);
+        if (shape.depthOfField) {
+            const RenderGraphAccess depthOfFieldAccesses[]{
+                sceneComputeRead,
+                {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {focusedScene, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, DepthOfFieldPass::outputLayout}};
+            graph.addPass("depth of field", RenderGraphQueue::Graphics, depthOfFieldAccesses);
+            sceneComputeRead = {focusedScene, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, DepthOfFieldPass::outputLayout};
+        }
         if (m_rendering->settings().exposure.mode == ExposureMode::Auto) {
-            graph.addPass("luminance histogram", RenderGraphQueue::Graphics, sceneComputeRead);
+            graph.addPass("luminance histogram", RenderGraphQueue::Graphics, {&sceneComputeRead, 1});
         }
         if (m_rendering->settings().bloom != BloomQuality::Off) {
-            graph.addPass("bloom chain", RenderGraphQueue::Graphics, sceneComputeRead);
+            graph.addPass("bloom chain", RenderGraphQueue::Graphics, {&sceneComputeRead, 1});
         }
-        const RenderGraphAccess postAccesses[]{
+        std::vector<RenderGraphAccess> postAccesses{
             {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
@@ -833,6 +853,10 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             {output, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+        if (shape.depthOfField) {
+            postAccesses.push_back({focusedScene, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, DepthOfFieldPass::outputLayout});
+        }
         graph.addPass("post-process and tone map", RenderGraphQueue::Graphics, postAccesses);
         RenderGraphPassHandle uiPass;
         if (useViewport) {

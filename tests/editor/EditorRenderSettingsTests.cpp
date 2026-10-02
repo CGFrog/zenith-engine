@@ -122,6 +122,10 @@ void testDocumentRangeClamping() {
     settings.exposure.highPercentile = 0.5f;
     settings.exposure.adaptationSpeedUp = 0.0f;
     settings.budgets.environment.gpuMilliseconds = -1.0;
+    settings.depthOfField.focusDistance = 0.0f;
+    settings.depthOfField.fStop = 1000.0f;
+    settings.depthOfField.sensorHeightMillimeters = 0.0f;
+    settings.depthOfField.maximumCocRadiusPixels = 500.0f;
     GraphicsSettingsEditor::clampToDocumentRanges(settings);
     RenderSettings restored;
     expect(deserializeRenderSettings(serialized(settings), restored).success,

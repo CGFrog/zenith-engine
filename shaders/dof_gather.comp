@@ -1,0 +1,74 @@
+#version 450
+
+// Depth of field, step 2 of 3: scatter-as-gather bokeh blur at half
+// resolution (after Gustafsson's single-pass bokeh depth of field). Samples
+// lie on a golden-angle spiral whose radius grows by ringSpacing / radius per
+// sample, so their density per area stays roughly constant. A sample
+// contributes where its own circle of confusion reaches the center; samples
+// behind the center are limited to twice the center's radius, so blurred
+// background never spreads over a sharper foreground. The loop mirrors
+// depth_of_field::gatherSampleCount in src/engine/graphics/DepthOfField.cpp.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// rgb: scene color, a: signed CoC radius in half-resolution pixels.
+layout(set = 0, binding = 2) uniform sampler2D prepared;
+// rgb: blurred color, a: radius in half-resolution pixels of the nearer
+// (foreground) blur that covers this texel; zero when none does.
+layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D gathered;
+
+// Mirrors DepthOfFieldSettings in DepthOfFieldPass.cpp.
+layout(push_constant) uniform DepthOfFieldSettings {
+    vec4 fullSize;
+    vec4 gatherSize;
+    vec2 gatherUvScale;
+    vec2 depthSize;
+    float cocScale;
+    float focusDistance;
+    float maximumRadius; // full-resolution pixels
+    float depthScale;
+    float depthBias;
+    float ringSpacing; // half-resolution pixels
+} settings;
+
+const float goldenAngle = 2.39996323;
+// depth_of_field::maximumGatherSamples
+const int maximumSamples = 512;
+
+vec4 samplePrepared(vec2 position) {
+    vec2 clamped = clamp(position, vec2(0.5), settings.gatherSize.xy - 0.5);
+    return textureLod(prepared, clamped * settings.gatherSize.zw * settings.gatherUvScale, 0.0);
+}
+
+void main() {
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(texel, ivec2(settings.gatherSize.xy)))) {
+        return;
+    }
+    vec4 center = texelFetch(prepared, texel, 0);
+    float centerRadius = abs(center.a);
+    vec3 color = center.rgb;
+    float total = 1.0;
+    float foreground = 0.0;
+    float maximumRadius = settings.maximumRadius * 0.5;
+    float radius = settings.ringSpacing;
+    float angle = 0.0;
+    for (int i = 0; i < maximumSamples && radius < maximumRadius; ++i) {
+        vec4 neighbor = samplePrepared(vec2(texel) + 0.5 + vec2(cos(angle), sin(angle)) * radius);
+        float neighborRadius = abs(neighbor.a);
+        // The signed CoC grows with view distance, so it orders the samples.
+        bool behind = neighbor.a > center.a;
+        if (behind) {
+            neighborRadius = min(neighborRadius, centerRadius * 2.0);
+        }
+        float coverage = smoothstep(radius - 0.5, radius + 0.5, neighborRadius);
+        color += mix(color / total, neighbor.rgb, coverage);
+        total += 1.0;
+        if (!behind) {
+            foreground = max(foreground, coverage * neighborRadius);
+        }
+        angle += goldenAngle;
+        radius += settings.ringSpacing / radius;
+    }
+    imageStore(gathered, texel, vec4(color / total, foreground));
+}

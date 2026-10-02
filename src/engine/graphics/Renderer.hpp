@@ -42,6 +42,7 @@ struct RenderGraphShape {
     bool volumetricFog{false};
     // Irradiance volume (U6)
     bool irradianceVolume{false};
+    bool depthOfField{false};
 
     bool operator==(const RenderGraphShape&) const = default;
 };
