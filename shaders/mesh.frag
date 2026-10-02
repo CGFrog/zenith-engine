@@ -24,6 +24,9 @@ layout(set = 0, binding = 0) uniform CameraData {
     vec4 clusterDepth;     // xy: slice log scale, bias; zw: view depth = z / (depth + w)
     vec4 clusterTileScale; // xy: cluster columns, rows per pixel
     uvec4 clusterGrid;     // columns, rows, depth slices, local light count
+    // Temporal resolve: NDC jitter applied to the current (xy) and previous (zw)
+    // projections, removed from motion vectors. Keep last in the block.
+    vec4 temporalJitter;
 } camera;
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
@@ -276,12 +279,17 @@ void main() {
         color = mix(color, color * cascadeColors[shadowCascade(worldPosition)], 0.45);
     }
     outColor = vec4(color, alpha);
-    vec2 currentUv = currentClipPosition.xy / max(abs(currentClipPosition.w), 0.00001) * 0.5 + 0.5;
-    vec2 previousUv = previousClipPosition.xy / max(abs(previousClipPosition.w), 0.00001) * 0.5 + 0.5;
+    // Jitter moved each projected point by -jitter in NDC; adding it back gives
+    // unjittered positions, so a static scene has zero motion (mirrored by
+    // unjitteredMotionUv in TemporalQuality.cpp).
+    vec2 currentUv =
+        (currentClipPosition.xy / max(abs(currentClipPosition.w), 0.00001) + camera.temporalJitter.xy) * 0.5 + 0.5;
+    vec2 previousUv =
+        (previousClipPosition.xy / max(abs(previousClipPosition.w), 0.00001) + camera.temporalJitter.zw) * 0.5 + 0.5;
     float reactive = max(material.surface.y > 1.5 ? alpha : 0.0,
                          smoothstep(1.0, 4.0, dot(emissive, vec3(0.2126, 0.7152, 0.0722))));
-    // Surfaces revealed by camera motion are detected in post.frag against the
-    // previous frame's depth (stored in .w); only off-screen history is known here.
+    // Surfaces revealed by camera motion are detected in taa_resolve.comp against
+    // the previous frame's depth (stored in .w); only off-screen history is known here.
     bool previousOffscreen = previousClipPosition.w <= 0.0 || any(lessThan(previousUv, vec2(0.0))) ||
                              any(greaterThan(previousUv, vec2(1.0)));
     outMotionReactive = vec4(currentUv - previousUv, previousOffscreen ? 1.0 : reactive, gl_FragCoord.z);

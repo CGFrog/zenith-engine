@@ -3,6 +3,7 @@
 #include "../Rendering.hpp"
 #include "../vulkan/VulkanContext.hpp"
 #include "BloomExposurePass.hpp"
+#include "TemporalResolvePass.hpp"
 #include <chrono>
 #include <filesystem>
 #include <optional>
@@ -24,7 +25,7 @@ class PostProcessPass {
     bool record(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkImage outputImage, VkImageView outputView,
                 VkImage depthImage, VkExtent2D extent, VkExtent2D internalExtent, const RenderSettings& settings,
                 const glm::mat4& inverseViewProjection, const glm::mat4& previousViewProjection,
-                bool temporalHistoryValid, const glm::vec3& cameraPosition,
+                const TemporalResolveFrame& temporal, const glm::vec3& cameraPosition,
                 const std::optional<GridOverlay>& gridOverlay, VkQueryPool timestampQueries,
                 double& bloomCpuMilliseconds, VkImageLayout outputOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
     void shutdown(const VulkanContext& context);
@@ -40,6 +41,10 @@ class PostProcessPass {
     // and fragment shaders.
     void finishNormals(VkCommandBuffer commandBuffer, uint32_t frameIndex);
     VkImageView normalView(uint32_t frameIndex) const;
+
+    uint64_t temporalHistoryBytes() const {
+        return m_temporalResolve.historyBytes();
+    }
 
   private:
     struct Target {
@@ -70,7 +75,11 @@ class PostProcessPass {
     bool createEffectPipeline(const std::filesystem::path& fragmentPath, VkFormat outputFormat, VkPipeline& pipeline);
     bool createTargets(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
     void destroyTargets(const VulkanContext& context);
-    void recordBloomAndExposure(VkCommandBuffer commandBuffer, const Target& target, VkExtent2D internalExtent,
+    // Runs the temporal resolve when enabled and binds the latest resolved image
+    // as the post pass's binding 2. Records timestamps 19 and 20 either way.
+    bool resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent, bool enabled,
+                         const TemporalResolveFrame& temporal, VkQueryPool timestampQueries);
+    void recordBloomAndExposure(VkCommandBuffer commandBuffer, const BloomExposureInput& input,
                                 const RenderSettings& settings, VkQueryPool timestampQueries,
                                 double& bloomCpuMilliseconds);
     float exposureDeltaSeconds();
@@ -88,6 +97,11 @@ class PostProcessPass {
     VkSampler m_depthSampler{VK_NULL_HANDLE};
     VkExtent2D m_extent{};
     std::vector<Target> m_targets;
+    TemporalResolvePass m_temporalResolve;
+    // The most recently recorded frame slot and its render extent; that slot's
+    // motion target supplies the previous frame's motion and depth.
+    std::optional<uint32_t> m_previousFrameIndex;
+    VkExtent2D m_previousRenderExtent{};
     BloomExposurePass m_bloomExposure;
     std::optional<std::chrono::steady_clock::time_point> m_previousExposureTime;
 };

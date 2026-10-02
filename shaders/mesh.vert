@@ -31,6 +31,11 @@ layout(std430, set = 0, binding = 3) readonly buffer SkinPalettes {
     mat4 joints[];
 } skinPalettes;
 
+// The previous frame's palettes at the same offsets, for motion vectors.
+layout(std430, set = 0, binding = 12) readonly buffer PreviousSkinPalettes {
+    mat4 joints[];
+} previousSkinPalettes;
+
 layout(location = 0) in vec3 inPosition;
 // Packed streams (engine/assets/PackedVertexStreams.hpp): octahedral normal,
 // octahedral tangent with the bitangent sign folded into y, float UV.
@@ -70,6 +75,7 @@ void main() {
     vec4 inTangent = decodeTangent(inTangentOctahedral);
     RenderObject object = objects.values[gl_InstanceIndex];
     mat4 skin = mat4(1.0);
+    mat4 previousSkin = mat4(1.0);
     float weightSum = dot(inWeights, vec4(1.0));
     if (object.skin.y > 0 && weightSum > 0.0001) {
         uvec4 joint = min(inJoints, uvec4(object.skin.y - 1));
@@ -77,6 +83,10 @@ void main() {
                skinPalettes.joints[object.skin.x + joint.y] * inWeights.y +
                skinPalettes.joints[object.skin.x + joint.z] * inWeights.z +
                skinPalettes.joints[object.skin.x + joint.w] * inWeights.w;
+        previousSkin = previousSkinPalettes.joints[object.skin.x + joint.x] * inWeights.x +
+                       previousSkinPalettes.joints[object.skin.x + joint.y] * inWeights.y +
+                       previousSkinPalettes.joints[object.skin.x + joint.z] * inWeights.z +
+                       previousSkinPalettes.joints[object.skin.x + joint.w] * inWeights.w;
     }
     mat4 model = object.model * skin;
     precise vec4 world = model * vec4(inPosition, 1.0);
@@ -91,7 +101,7 @@ void main() {
     texCoord = inTexCoord;
     precise vec4 clipPosition = camera.viewProjection * world;
     currentClipPosition = clipPosition;
-    previousClipPosition = camera.previousViewProjection * object.previousModel * skin * vec4(inPosition, 1.0);
+    previousClipPosition = camera.previousViewProjection * object.previousModel * previousSkin * vec4(inPosition, 1.0);
     gl_Position = clipPosition;
     materialIndex = object.skin.z;
 }

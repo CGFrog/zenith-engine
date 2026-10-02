@@ -506,12 +506,15 @@ influence boxes, blend distances, and priorities.
 
 ### `src/engine/graphics/passes/PostProcessPass.*`
 
-Owns one RGBA16F history target, motion/reactive target, prepass normal target
-(A2B10G10R10), SSAO target, and SSR target per frame slot. Separate GPU-scoped SSAO and SSR passes feed the final
-fullscreen pass, which performs neighborhood-clipped TAA (or FXAA),
-editor-grid composition, exposure, the bloom mix, and tone mapping (AgX by
-default, AgX punchy or legacy ACES). Half-resolution effect tiers render into
-bounded sub-extents; SSR misses preserve probe and IBL lighting.
+Owns one RGBA16F HDR scene target, motion/reactive target, prepass normal
+target (A2B10G10R10), SSAO target, and SSR target per frame slot, plus the view's `TemporalResolvePass` and
+`BloomExposurePass`. With TAA selected the resolve runs first and exposure and
+bloom read its output-resolution result; otherwise they read the HDR target.
+Separate GPU-scoped SSAO and SSR passes then feed the final fullscreen pass,
+which composes the resolved scene (or applies FXAA), the editor grid,
+exposure, the bloom mix, and tone mapping (AgX by default, AgX punchy or
+legacy ACES). Half-resolution effect tiers render into bounded sub-extents;
+SSR misses preserve probe and IBL lighting.
 
 ### `src/engine/graphics/passes/BloomExposurePass.*`
 
@@ -526,6 +529,16 @@ and exposure buffer persist across frame slots and use push descriptors.
 CPU reference for the AgX/ACES display transform, histogram binning,
 percentile averaging, and frame-rate independent exposure adaptation. The
 shaders mirror it by hand; `tests/engine/ToneMappingTests.cpp` covers it.
+
+### `src/engine/graphics/passes/TemporalResolvePass.*`
+
+Temporal anti-aliasing and upsampling (`shaders/taa_resolve.comp`). Owns two
+output-resolution history images per view used ping-pong (not per frame slot),
+allocated on the first TAA frame after creation or resize. It
+reconstructs the jittered internal-resolution frame at output resolution,
+reprojects Catmull-Rom history with dilated motion, rejects disoccluded
+history, and blends after YCoCg variance clipping with luma weighting. Its CPU
+mirror is in `TemporalQuality.*`.
 
 ## Shaders
 
@@ -548,6 +561,7 @@ shaders mirror it by hand; `tests/engine/ToneMappingTests.cpp` covers it.
 | `shaders/depth_pyramid.comp` | Reduces scene depth into a conservative min-depth (reversed-Z) pyramid. |
 | `shaders/gpu_visibility.comp` | Runs early/late two-phase frustum and occlusion culling. |
 | `shaders/compact_draws.comp` | Packs non-empty batches into indirect-count draw commands. |
+| `shaders/taa_resolve.comp` | Temporal anti-aliasing and upsampling into output-resolution history. |
 
 Recognized shader extensions automatically produce matching
 `build/shaders/<relative-path>.spv` files.
