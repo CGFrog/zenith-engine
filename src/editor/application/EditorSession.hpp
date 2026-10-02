@@ -38,6 +38,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -84,6 +85,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     bool operatorAvailable(ApplicationContext& context, std::string_view operatorId) override;
     std::string operatorShortcut(std::string_view operatorId, std::string_view properties) const override;
     void requestOpenScene(ApplicationContext& context, std::filesystem::path path) override;
+    void projectFilesMoved(ApplicationContext& context, std::span<const ProjectFileMove> moves) override;
+    void projectFilesRemoved(ApplicationContext& context, std::span<const std::filesystem::path> removed) override;
     void handleObjectKeys(ApplicationContext& context, KeymapRegion region) override;
     bool modalTransformActive() const override;
     void updateModalTransform(ApplicationContext& context) override;

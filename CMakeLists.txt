@@ -526,6 +526,7 @@ add_library(zenith_editor_app STATIC
     src/editor/panels/RenderStatisticsPanel.cpp
     src/editor/panels/ViewportPanel.cpp
     src/editor/project/AssetCatalog.cpp
+    src/editor/project/AssetRelocation.cpp
     src/editor/project/BuildRunner.cpp
     src/editor/project/CompilerOutputParser.cpp
     src/editor/project/DerivedAssetInspector.cpp
@@ -1384,6 +1385,20 @@ if(BUILD_TESTING)
         target_compile_options(zenith_asset_browser_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_asset_browser COMMAND zenith_asset_browser_tests)
+
+    add_executable(zenith_asset_reference_workflow_tests tests/editor/AssetReferenceWorkflowTests.cpp)
+    target_compile_definitions(zenith_asset_reference_workflow_tests PRIVATE
+        ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}"
+        ZENITH_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    add_dependencies(zenith_asset_reference_workflow_tests zenith_assets)
+    target_link_libraries(zenith_asset_reference_workflow_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_asset_reference_workflow_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_asset_reference_workflow_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_asset_reference_workflow COMMAND zenith_asset_reference_workflow_tests)
 
     add_executable(zenith_operator_tests tests/editor/OperatorTests.cpp)
     target_link_libraries(zenith_operator_tests PRIVATE zenith_editor_app)

@@ -5,9 +5,11 @@
 #include "editor/interaction/Selection.hpp"
 #include "editor/operators/KeymapRegion.hpp"
 #include "editor/operators/Operator.hpp"
+#include "editor/project/AssetRelocation.hpp"
 #include "engine/application/Application.hpp"
 
 #include <filesystem>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -29,6 +31,13 @@ class EditorSessionActions {
     virtual std::string operatorShortcut(std::string_view operatorId, std::string_view properties) const = 0;
     // Opens a scene, asking about unsaved changes first.
     virtual void requestOpenScene(ApplicationContext& context, std::filesystem::path path) = 0;
+    // Project files moved (in the asset browser or outside the editor): the
+    // open document follows its file, and the edited scene's asset references
+    // follow the assets.
+    virtual void projectFilesMoved(ApplicationContext& context, std::span<const ProjectFileMove> moves) = 0;
+    // Project files were moved to the trash or deleted: an open document
+    // among them becomes untitled with unsaved changes.
+    virtual void projectFilesRemoved(ApplicationContext& context, std::span<const std::filesystem::path> removed) = 0;
     // Runs the keymap of the region under the mouse.
     virtual void handleObjectKeys(ApplicationContext& context, KeymapRegion region) = 0;
     virtual bool modalTransformActive() const = 0;

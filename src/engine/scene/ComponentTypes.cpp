@@ -14,6 +14,28 @@ using Json = nlohmann::json;
 constexpr const char* versionKey = "$version";
 } // namespace
 
+const FieldDescriptor* findStringFieldAt(std::span<const FieldDescriptor> fields, void* object, const void* member) {
+    for (const FieldDescriptor& field : fields) {
+        if (field.kind == FieldKind::String && field.address(object) == member) {
+            return &field;
+        }
+    }
+    return nullptr;
+}
+
+std::string addAssetReferenceFields(ComponentType& type, void* probe, std::span<const std::ptrdiff_t> offsets) {
+    for (const std::ptrdiff_t offset : offsets) {
+        const FieldDescriptor* field = findStringFieldAt(type.m_fields, probe, static_cast<char*>(probe) + offset);
+        if (field == nullptr) {
+            return "An asset reference of '" + type.m_key + "' is not a reflected string field";
+        }
+        if (std::ranges::find(type.m_assetReferenceFields, field->key) == type.m_assetReferenceFields.end()) {
+            type.m_assetReferenceFields.push_back(field->key);
+        }
+    }
+    return {};
+}
+
 const std::string& ComponentType::key() const {
     return m_key;
 }
@@ -113,6 +135,15 @@ SceneDocumentResult ComponentType::save(const Scene& scene, Entity entity, const
         }
         output[binding.pathField] = std::move(reference);
     }
+    for (const std::string& key : m_assetReferenceFields) {
+        const auto field = output.find(key);
+        if (field == output.end() || !field->is_string() || field->get_ref<const std::string&>().empty()) {
+            continue;
+        }
+        Json reference = Json::object();
+        writeAssetReference(field->get<std::string>(), context.options, reference);
+        *field = std::move(reference);
+    }
     if (m_schemaVersion > 1) {
         output[versionKey] = m_schemaVersion;
     }
@@ -143,6 +174,18 @@ SceneDocumentResult ComponentType::load(const Json& input, Scene& scene, Entity 
             return {.error = m_displayName + " migration from version " + std::to_string(version) +
                              " failed: " + result.error};
         }
+    }
+
+    for (const std::string& key : m_assetReferenceFields) {
+        const auto field = document.find(key);
+        if (field == document.end() || !field->is_object()) {
+            continue;
+        }
+        std::string path;
+        if (SceneDocumentResult result = readAssetReference(*field, context.options, path); !result) {
+            return {.error = m_displayName + " " + key + ": " + result.error};
+        }
+        *field = std::move(path);
     }
 
     std::any value = m_makeDefault();

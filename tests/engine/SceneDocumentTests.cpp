@@ -1,7 +1,12 @@
+#include "engine/assets/AssetDatabase.hpp"
+#include "engine/scene/SceneAssetReferences.hpp"
 #include "engine/scene/SceneDocument.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -139,6 +144,102 @@ void testEntityChanges(AssetManager& assets, const SceneDocumentOptions& options
     expectPatchRejected(invalidComponent, "Entity 6", scene, assets, options);
     expect(scene.findEntity({8}) == entt::null, "a rejected patch should not create any of its entities");
 }
+
+const nlohmann::json& onlyEntityWith(const nlohmann::json& document, std::string_view component) {
+    static const nlohmann::json empty = nlohmann::json::object();
+    for (const nlohmann::json& entity : document.at("entities")) {
+        if (entity.at("components").contains(component)) {
+            return entity.at("components").at(component);
+        }
+    }
+    return empty;
+}
+
+// Version 1 documents migrate on load, references carry GUIDs in version 2,
+// and a reference whose asset moved resolves through the asset database.
+void testAssetReferences(const std::filesystem::path& sourceAssets, const std::filesystem::path& tempDirectory) {
+    const std::filesystem::path root = tempDirectory / "references";
+    std::filesystem::create_directories(root / "models");
+    std::filesystem::create_directories(root / "textures");
+    std::filesystem::copy_file(sourceAssets / "primitives" / "cube.gltf", root / "models" / "cube.gltf");
+    std::filesystem::copy_file(sourceAssets / "showcase" / "decals" / "decal_arrow.png",
+                               root / "textures" / "arrow.png");
+
+    const std::string version1 =
+        R"({"version":1,"entities":[)" + entityJson(1, "Cube", "null", R"({"model":{"path":"models/cube.gltf"}})") +
+        "," +
+        entityJson(2, "Decal", "null",
+                   R"({"decal":{"half_extents":[1,1,1],"albedo_asset":"textures/arrow.png","normal_asset":""}})") +
+        "]}";
+    const SceneDocumentOptions pathOnly{.assetRoot = root};
+    AssetManager assets;
+    Scene migrated;
+    const SceneDocumentResult migratedResult = SceneDocument::deserialize(version1, assets, pathOnly, migrated);
+    expect(migratedResult.success, "a version 1 document should load through migration: " + migratedResult.error);
+    const auto* decal = migrated.registry().try_get<DecalComponent>(migrated.findEntity({2}));
+    expect(decal != nullptr && decal->albedoAsset == "textures/arrow.png" && decal->albedoTexture &&
+               decal->normalAsset.empty(),
+           "migrated texture references should load their textures");
+
+    const nlohmann::json pathOnlyDocument = nlohmann::json::parse(serialize(migrated, assets, pathOnly));
+    expect(pathOnlyDocument.at("version") == SceneDocument::currentVersion, "saving should write the current version");
+    expect(onlyEntityWith(pathOnlyDocument, "decal").at("albedo_asset") ==
+               nlohmann::json{{"path", "textures/arrow.png"}},
+           "without a database a reference should be a path-only object");
+    expect(onlyEntityWith(pathOnlyDocument, "decal").at("normal_asset") == "",
+           "an empty reference should stay an empty string");
+
+    const auto database = std::make_shared<AssetDatabase>(root, AssetDatabaseOptions{.guidSeed = 7});
+    expect(database->rescan().success, "the reference test database should scan");
+    const SceneDocumentOptions withDatabase{.assetRoot = root, .assetDatabase = database};
+    const std::string saved = serialize(migrated, assets, withDatabase);
+    const nlohmann::json savedDocument = nlohmann::json::parse(saved);
+    const std::string modelGuid = database->guidForPath("models/cube.gltf").value_or(AssetGuid{}).toString();
+    const std::string textureGuid = database->guidForPath("textures/arrow.png").value_or(AssetGuid{}).toString();
+    expect(onlyEntityWith(savedDocument, "model").value("guid", "") == modelGuid &&
+               onlyEntityWith(savedDocument, "model").value("path", "") == "models/cube.gltf",
+           "model references should carry the asset GUID beside the path");
+    expect(onlyEntityWith(savedDocument, "decal").at("albedo_asset") ==
+               nlohmann::json{{"guid", textureGuid}, {"path", "textures/arrow.png"}},
+           "texture references should carry the asset GUID beside the path");
+
+    // The assets move; the saved document still names the old paths.
+    expect(database->move("models/cube.gltf", "props/box.gltf").success &&
+               database->move("textures/arrow.png", "textures/signs/arrow.png").success,
+           "the database should move the referenced assets");
+    Scene moved;
+    const SceneDocumentResult movedResult = SceneDocument::deserialize(saved, assets, withDatabase, moved);
+    expect(movedResult.success, "references to moved assets should resolve by GUID: " + movedResult.error);
+    const nlohmann::json resaved = nlohmann::json::parse(serialize(moved, assets, withDatabase));
+    expect(onlyEntityWith(resaved, "model").value("path", "") == "props/box.gltf" &&
+               onlyEntityWith(resaved, "decal").at("albedo_asset").value("path", "") == "textures/signs/arrow.png",
+           "resaving should write the moved assets' new paths");
+    Scene withoutDatabase;
+    expect(!SceneDocument::deserialize(saved, assets, pathOnly, withoutDatabase).success,
+           "without a database a moved asset cannot be found by its old path");
+
+    const std::map<std::string, std::string> movedPaths{{"props/box.gltf", "props/crate.gltf"}};
+    std::string relocatedDocument;
+    size_t relocated = 0;
+    expect(
+        relocateSceneAssetReferences(serialize(moved, assets, withDatabase), movedPaths, relocatedDocument, relocated)
+                .success &&
+            relocated == 1 && relocatedDocument.find("props/crate.gltf") != std::string::npos &&
+            relocatedDocument.find("props/box.gltf") == std::string::npos,
+        "relocation should rewrite every reference to a moved path");
+
+    Scene rejected;
+    std::string future = version1;
+    future.replace(future.find(R"("version":1)"), 11, R"("version":3)");
+    const SceneDocumentResult futureResult = SceneDocument::deserialize(future, assets, pathOnly, rejected);
+    expect(!futureResult.success && futureResult.error.find("newer") != std::string::npos,
+           "documents from a newer format version should be rejected with a clear message");
+    std::string unknownGuid = saved;
+    unknownGuid.replace(unknownGuid.find(textureGuid), textureGuid.size(), std::string(32, 'f'));
+    const SceneDocumentResult unknownResult = SceneDocument::deserialize(unknownGuid, assets, withDatabase, rejected);
+    expect(!unknownResult.success && unknownResult.error.find("Missing asset") != std::string::npos,
+           "an unknown GUID should fall back to the stored path, which has moved away");
+}
 } // namespace
 
 int main() {
@@ -241,6 +342,7 @@ int main() {
         "Volumetric fog parameters are invalid", assets, options);
 
     testEntityChanges(assets, options);
+    testAssetReferences(assetRoot, tempDirectory);
 
     std::filesystem::remove_all(tempDirectory, filesystemError);
     return failures == 0 ? 0 : 1;

@@ -6,6 +6,7 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include <any>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -29,6 +30,10 @@ struct ComponentLoadContext {
 
 template <typename Component> class ComponentTypeBuilder;
 
+// The reflected string field that addresses member within object, or null.
+// Builders use it to find the field behind a member pointer.
+const FieldDescriptor* findStringFieldAt(std::span<const FieldDescriptor> fields, void* object, const void* member);
+
 // Runtime description of one ECS component type: its stable document key, how
 // it is saved and loaded, how it is created and removed, and the reflected
 // fields the editor inspects. Built with ComponentTypeBuilder and held by a
@@ -41,6 +46,12 @@ template <typename Component> class ComponentTypeBuilder;
 // Each type has a schema version. Versions above 1 are written to the
 // component's document object as "$version"; older documents are upgraded by
 // the registered migrations before they are read.
+//
+// Asset reference fields (texture paths and other `assetReference` fields)
+// hold a project-relative path at runtime and are written to documents as
+// reference objects (see SceneAssetReferences.hpp). They are converted back to
+// path strings after the component migrations run, so a migration sees a
+// field either as a reference object or as a legacy path string.
 class ComponentType {
   public:
     const std::string& key() const;
@@ -84,6 +95,10 @@ class ComponentType {
   private:
     template <typename Component> friend class ComponentTypeBuilder;
     friend class ComponentTypeRegistry;
+    // Records the reflected string fields at the given byte offsets within
+    // probe as asset references; returns why one is not such a field.
+    friend std::string addAssetReferenceFields(ComponentType& type, void* probe,
+                                               std::span<const std::ptrdiff_t> offsets);
 
     struct TextureBinding {
         std::string pathField;
@@ -105,6 +120,9 @@ class ComponentType {
     uint32_t m_schemaVersion{1};
     std::vector<FieldDescriptor> m_fields;
     std::vector<TextureBinding> m_textures;
+    // Keys of reflected string fields saved as asset references, including
+    // every texture path.
+    std::vector<std::string> m_assetReferenceFields;
     std::vector<Migration> m_migrations;
     // Set by the builder when the description is inconsistent; the registry
     // refuses such types.
@@ -176,6 +194,17 @@ template <typename Component> class ComponentTypeBuilder {
     // one. The path member must be one of the reflected fields.
     ComponentTypeBuilder& texture(std::string Component::* path, TextureHandle Component::* handle) {
         m_pendingTextures.emplace_back(path, handle);
+        return assetReference(path);
+    }
+
+    // Saves a reflected path field as an asset reference (with the asset's
+    // GUID when the document has an asset database) and resolves it by GUID
+    // on load. Nothing is loaded; use texture() for texture paths.
+    ComponentTypeBuilder& assetReference(std::string Component::* path) {
+        // Kept as an offset so every component type shares one container type.
+        const Component probe{};
+        m_pendingAssetReferenceOffsets.push_back(reinterpret_cast<const char*>(&(probe.*path)) -
+                                                 reinterpret_cast<const char*>(&probe));
         return *this;
     }
 
@@ -231,15 +260,14 @@ template <typename Component> class ComponentTypeBuilder {
     ComponentType build() {
         // A path member is identified by the field that addresses it.
         Component probe{};
+        if (std::string error = addAssetReferenceFields(m_type, &probe, m_pendingAssetReferenceOffsets);
+            !error.empty()) {
+            m_type.m_definitionError = std::move(error);
+        }
         for (const auto& binding : m_pendingTextures) {
             std::string Component::* const path = binding.first;
             TextureHandle Component::* const handle = binding.second;
-            const FieldDescriptor* pathField = nullptr;
-            for (const FieldDescriptor& field : m_type.m_fields) {
-                if (field.kind == FieldKind::String && field.address(&probe) == &(probe.*path)) {
-                    pathField = &field;
-                }
-            }
+            const FieldDescriptor* pathField = findStringFieldAt(m_type.m_fields, &probe, &(probe.*path));
             if (pathField == nullptr) {
                 m_type.m_definitionError = "A texture path of '" + m_type.m_key + "' is not a reflected string field";
                 continue;
@@ -255,6 +283,7 @@ template <typename Component> class ComponentTypeBuilder {
   private:
     ComponentType m_type;
     std::vector<std::pair<std::string Component::*, TextureHandle Component::*>> m_pendingTextures;
+    std::vector<std::ptrdiff_t> m_pendingAssetReferenceOffsets;
 };
 
 // The component types a scene document understands, in registration order.

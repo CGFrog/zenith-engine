@@ -46,6 +46,19 @@ SceneDocumentResult EditorDocument::saveAs(const std::filesystem::path& path, co
     return {.success = true};
 }
 
+void EditorDocument::relocate(std::filesystem::path path) {
+    m_path = std::move(path);
+}
+
+void EditorDocument::detach() {
+    m_path.reset();
+    m_dirty = true;
+}
+
+void EditorDocument::setAssetDatabase(std::shared_ptr<const AssetDatabase> database) {
+    m_options.assetDatabase = std::move(database);
+}
+
 void EditorDocument::markDirty() {
     m_dirty = true;
 }

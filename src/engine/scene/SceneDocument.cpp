@@ -7,7 +7,9 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <ranges>
@@ -42,6 +44,91 @@ bool readMatrix4(const Json& json, glm::mat4& value) {
         elements[index] = json[index].get<float>();
     }
     return true;
+}
+
+// Version 1 wrote these built-in fields as bare path strings. The table is
+// frozen with the version 1 format; later fields are written in the current
+// shape from the start.
+struct LegacyAssetField {
+    const char* component;
+    const char* field;
+};
+
+constexpr std::array<LegacyAssetField, 6> version1AssetFields{{
+    {"environment_light", "environment_asset"},
+    {"reflection_probe", "environment_asset"},
+    {"particle_emitter", "texture_asset"},
+    {"decal", "albedo_asset"},
+    {"decal", "normal_asset"},
+    {"irradiance_volume", "bake_asset"},
+}};
+
+// Version 1 to 2: path strings become reference objects. Model, mesh, and
+// skin references were already `{"path": ...}` objects; empty strings still
+// mean "no asset". Asset fields of game component types stay strings, which
+// the loader still accepts.
+SceneDocumentResult migrateVersion1To2(Json& document) {
+    for (Json& entity : document["entities"]) {
+        if (!entity.is_object()) {
+            continue;
+        }
+        const auto components = entity.find("components");
+        if (components == entity.end() || !components->is_object()) {
+            continue;
+        }
+        for (const LegacyAssetField& legacy : version1AssetFields) {
+            const auto component = components->find(legacy.component);
+            if (component == components->end() || !component->is_object()) {
+                continue;
+            }
+            const auto field = component->find(legacy.field);
+            if (field != component->end() && field->is_string() && !field->get_ref<const std::string&>().empty()) {
+                *field = Json{{"path", field->get<std::string>()}};
+            }
+        }
+    }
+    return {.success = true};
+}
+
+// Upgrades the raw JSON of a document written at fromVersion to
+// fromVersion + 1. Steps run in order before the document is validated.
+struct DocumentMigration {
+    uint32_t fromVersion;
+    SceneDocumentResult (*apply)(Json& document);
+};
+
+constexpr std::array<DocumentMigration, 1> documentMigrations{{{1, migrateVersion1To2}}};
+static_assert(documentMigrations.size() + 1 == SceneDocument::currentVersion,
+              "every earlier scene document version needs a migration");
+
+// Checks the document's shape and version and upgrades it to the current
+// version in place.
+SceneDocumentResult upgradeDocument(Json& document) {
+    if (!document.is_object() || !document.contains("version") || !document.contains("entities") ||
+        !document["entities"].is_array()) {
+        return {.error = "Scene document must contain version and entities fields"};
+    }
+    const Json& versionField = document["version"];
+    if (!versionField.is_number_unsigned() || versionField.get<uint64_t>() == 0 ||
+        versionField.get<uint64_t>() > (std::numeric_limits<uint32_t>::max)()) {
+        return {.error = "Unsupported scene document version " + versionField.dump() +
+                         ": the version must be a positive whole number"};
+    }
+    uint32_t version = versionField.get<uint32_t>();
+    if (version > SceneDocument::currentVersion) {
+        return {.error = "Unsupported scene document version " + std::to_string(version) +
+                         ": this build reads versions up to " + std::to_string(SceneDocument::currentVersion) +
+                         "; the file was saved by a newer Zenith"};
+    }
+    for (; version < SceneDocument::currentVersion; ++version) {
+        const auto migration = std::ranges::find(documentMigrations, version, &DocumentMigration::fromVersion);
+        if (SceneDocumentResult result = migration->apply(document); !result) {
+            return {.error = "Scene document migration from version " + std::to_string(version) +
+                             " failed: " + result.error};
+        }
+    }
+    document["version"] = SceneDocument::currentVersion;
+    return {.success = true};
 }
 
 SceneDocumentResult serializeEntity(const Scene& scene, Entity entity, const AssetManager& assets,
@@ -130,12 +217,8 @@ SceneDocumentResult replaceFile(const std::filesystem::path& temporary, const st
 SceneDocumentResult readDocumentEntities(std::string_view input, Json& document,
                                          std::map<uint64_t, const Json*>& entities) {
     document = Json::parse(input);
-    if (!document.is_object() || !document.contains("version") || !document.contains("entities") ||
-        !document["entities"].is_array()) {
-        return {.error = "Scene document must contain version and entities fields"};
-    }
-    if (const uint32_t version = document["version"].get<uint32_t>(); version != SceneDocument::currentVersion) {
-        return {.error = "Unsupported scene document version " + std::to_string(version)};
+    if (SceneDocumentResult result = upgradeDocument(document); !result) {
+        return result;
     }
     for (const Json& serialized : document["entities"]) {
         const uint64_t id = serialized.at("id").get<uint64_t>();
@@ -400,13 +483,8 @@ SceneDocumentResult SceneDocument::deserialize(std::string_view input, AssetMana
 SceneDocumentResult SceneDocument::parse(std::string_view input, ParsedSceneDocument& output) {
     try {
         Json document = Json::parse(input);
-        if (!document.is_object() || !document.contains("version") || !document.contains("entities") ||
-            !document["entities"].is_array()) {
-            return {.error = "Scene document must contain version and entities fields"};
-        }
-        const uint32_t version = document["version"].get<uint32_t>();
-        if (version != currentVersion) {
-            return {.error = "Unsupported scene document version " + std::to_string(version)};
+        if (SceneDocumentResult result = upgradeDocument(document); !result) {
+            return result;
         }
 
         std::unordered_set<uint64_t> ids;
