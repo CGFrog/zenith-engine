@@ -50,6 +50,25 @@ void testBindlessTable() {
     expect(!table.acquire(VK_NULL_HANDLE).has_value(), "null views are rejected");
 }
 
+void testBindlessTableReplace() {
+    const VkImageView fallback = fakeView(1);
+    BindlessTextureTable table(2, 2, fallback);
+    table.takePendingWrites(0);
+    table.takePendingWrites(1);
+    const auto slot = table.acquire(fakeView(10));
+    table.takePendingWrites(0);
+    table.takePendingWrites(1);
+    expect(slot && table.replace(*slot, fakeView(20)) && table.view(*slot) == fakeView(20),
+           "a live slot can point at a new view");
+    expect(table.takePendingWrites(0) == std::vector<uint32_t>({*slot}) &&
+               table.takePendingWrites(1) == std::vector<uint32_t>({*slot}),
+           "replacing a view makes every frame set rewrite the slot");
+    expect(table.liveCount() == 1, "replacing a view keeps the slot's ownership");
+    expect(!table.replace(*slot, VK_NULL_HANDLE) && table.view(*slot) == fakeView(20), "null views are rejected");
+    expect(!table.replace(1, fakeView(30)) && table.view(1) == fallback, "free slots cannot be replaced");
+    expect(!table.replace(7, fakeView(30)), "out-of-range slots are rejected");
+}
+
 void testGeometryArena() {
     GeometryArena arena({.vertices = 100, .indices = 300});
     const auto first = arena.allocate(60, 120, GeometryLayout::Static);
@@ -124,6 +143,7 @@ void testMipChainBlitPlan() {
 int main() {
     testMipChainBlitPlan();
     testBindlessTable();
+    testBindlessTableReplace();
     testGeometryArena();
     testGeometryArenaLayouts();
     return failures == 0 ? 0 : 1;

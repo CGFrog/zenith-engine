@@ -315,6 +315,16 @@ Ordered pressure handling discards temporary caches, removes optional distant
 mips, retires unused generations after a completion serial, then reports a hard
 budget failure if live content still cannot fit.
 
+### `src/engine/assets/TextureMipStreaming.*`
+
+Renderer-independent mip-range streaming policy. It picks the resident tail a
+streamed texture starts with, turns object bounds into projected-visibility
+priorities, and plans each frame's contiguous mip-range uploads within a byte
+budget (one level per texture per round, most visible first, with a lone
+oversized level always allowed so streaming progresses). The mesh pass owns the
+GPU side: it uploads planned ranges from the cooked mip data and republishes
+the texture's views over the wider range.
+
 ### `src/engine/assets/PackedVertexStreams.*`
 
 Renderer-independent quantization of `Vertex` into split GPU streams:
@@ -480,7 +490,17 @@ remain attributable to retired uploads.
 
 CPU bookkeeping for the bindless texture array: stable slot assignment, reuse,
 and a per-frame dirty mask so each frame slot's descriptor set is rewritten only
-for slots that changed. Released slots fall back to a default view.
+for slots that changed. Released slots fall back to a default view. `replace`
+points a live slot at a new view (a streamed texture's wider mip range) without
+changing its index, so material records stay valid.
+
+### `src/engine/graphics/resources/MipChainBlit.*`
+
+Records the linear-blit mip chain shared by material RGBA8 uploads and the
+environment pass. The layout contract is explicit: every level starts in
+`TRANSFER_DST_OPTIMAL` with level 0 written and ends `SHADER_READ_ONLY_OPTIMAL`,
+visible to caller-named consumer stages. `planMipChainBlits` is the CPU-testable
+extent plan the recorder follows.
 
 ### `src/engine/graphics/resources/GeometryArena.*`
 

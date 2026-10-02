@@ -191,6 +191,17 @@ bool drawGeometryAndSubmission(RenderSettings& settings, const RenderCapabilitie
     ImGui::BeginDisabled(!capabilities.gpuDrivenPath);
     changed |= ImGui::Checkbox("Prefer GPU-driven submission", &settings.preferGpuDrivenSubmission);
     ImGui::EndDisabled();
+    // Zero (Off) uploads every texture's full mip chain on first use.
+    // Budgets below 1 MiB (only reachable from a settings file) round up so
+    // they never read as Off.
+    constexpr uint32_t mebibyte = 1024u * 1024u;
+    int streamingMegabytes =
+        static_cast<int>((static_cast<uint64_t>(settings.textureStreamingBytesPerFrame) + mebibyte - 1) / mebibyte);
+    if (ImGui::SliderInt("Texture streaming budget", &streamingMegabytes, 0, 64,
+                         streamingMegabytes == 0 ? "Off" : "%d MiB/frame")) {
+        settings.textureStreamingBytesPerFrame = static_cast<uint32_t>(streamingMegabytes) * mebibyte;
+        changed = true;
+    }
     return changed;
 }
 

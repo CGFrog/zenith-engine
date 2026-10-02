@@ -215,6 +215,12 @@ struct RenderSettings {
     // Zero disables enforcement for that processor/pass pair.
     RenderPassBudgets budgets;
 
+    // Block-compressed texture mip streaming. A streamed texture becomes
+    // resident with its smallest levels and then gains higher-resolution levels
+    // within this many bytes of mip data per frame, most visible textures
+    // first. Zero uploads every texture's full chain when it is first used.
+    uint32_t textureStreamingBytesPerFrame{8u * 1024u * 1024u};
+
     // Silent-fallback diagnostics. A mesh or texture whose upload stays
     // deferred (skipped draws or fallback texture) for more than this many
     // consecutive frames is logged once. Zero disables the warning.
@@ -377,6 +383,14 @@ struct RenderStats {
     // deferred textures sample a fallback until the upload lands.
     uint32_t deferredMeshUploads{0};
     uint32_t deferredTextureUploads{0};
+    // Texture mip streaming: resident and requested mip levels summed over
+    // the renderer's textures, textures still below their requested level,
+    // mip bytes uploaded this submission, and mip bytes still to upload.
+    uint32_t textureResidentMips{0};
+    uint32_t textureRequestedMips{0};
+    uint32_t texturesStreaming{0};
+    uint64_t textureStreamedBytes{0};
+    uint64_t textureStreamingBacklogBytes{0};
     // Scene local lights left out this submission because the scene had more
     // than the effective local-light limit (the nearest are kept).
     uint32_t droppedLocalLights{0};

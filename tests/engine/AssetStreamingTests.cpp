@@ -1,8 +1,10 @@
 #include "engine/assets/AssetStreaming.hpp"
+#include "engine/assets/TextureMipStreaming.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -50,9 +52,112 @@ double percentile(std::vector<double> samples, double fraction) {
     std::ranges::sort(samples);
     return samples[static_cast<size_t>(std::ceil(fraction * samples.size())) - 1];
 }
+
+// Bytes of a 4:1 block-compressed square chain: each level a quarter of the
+// one above, never below one 16-byte block.
+std::vector<uint64_t> squareChainBytes(uint32_t levels, uint64_t baseBytes) {
+    std::vector<uint64_t> bytes;
+    for (uint32_t level = 0; level < levels; ++level) {
+        bytes.push_back(std::max<uint64_t>(baseBytes >> (2 * level), 16));
+    }
+    return bytes;
+}
+
+void testTextureMipTail() {
+    expect(textureMipTailFirstLevel(1024, 1024, 11, 64) == 4, "a 1024 texture starts with its 64-texel tail");
+    expect(textureMipTailFirstLevel(1024, 256, 11, 64) == 4, "the tail starts where the larger dimension fits");
+    expect(textureMipTailFirstLevel(32, 32, 6, 64) == 0, "a texture inside the tail is fully resident at once");
+    expect(textureMipTailFirstLevel(4096, 4096, 3, 64) == 2, "a truncated chain still starts with its smallest level");
+    expect(textureMipTailFirstLevel(16, 16, 0, 64) == 0, "an empty chain has no tail");
+}
+
+void testTextureStreamPriority() {
+    const StreamPriority near = textureStreamPriority(2.0f, 1.0f);
+    const StreamPriority far = textureStreamPriority(20.0f, 1.0f);
+    const StreamPriority inside = textureStreamPriority(0.5f, 1.0f);
+    expect(near.projectedVisibility > far.projectedVisibility && near.distance < far.distance,
+           "nearer bounds project larger and closer");
+    expect(inside.projectedVisibility == 1.0f && inside.distance == 0.0f,
+           "a camera inside the bounds sees them at full size");
+    const StreamPriority merged = mostDemandingStreamPriority(far, near);
+    expect(merged.projectedVisibility == near.projectedVisibility && merged.distance == near.distance,
+           "a texture used twice keeps its most demanding use");
+    expect(mostDemandingStreamPriority(StreamPriority{}, far).projectedVisibility == far.projectedVisibility,
+           "an unused texture's default priority never outranks a use");
+}
+
+void testTextureMipPlanning() {
+    const std::vector<uint64_t> large = squareChainBytes(11, 1'048'576);
+    const std::vector<uint64_t> small = squareChainBytes(9, 65'536);
+    // Both start from their 64-texel tails (levels 4 and 2).
+    const std::vector<TextureMipStreamCandidate> candidates{
+        {.key = 1,
+         .residency = {.mipCount = 11, .residentFirstMip = 4, .requestedFirstMip = 0},
+         .levelBytes = large,
+         .priority = textureStreamPriority(30.0f, 1.0f)},
+        {.key = 2,
+         .residency = {.mipCount = 9, .residentFirstMip = 2, .requestedFirstMip = 0},
+         .levelBytes = small,
+         .priority = textureStreamPriority(3.0f, 1.0f)}};
+
+    const std::vector<TextureMipUpload> first = planTextureMipUploads(candidates, 40'000);
+    expect(first.size() == 2 && first[0].key == 2 && first[1].key == 1,
+           "the more visible texture's uploads come first");
+    expect(first.size() == 2 && first[0].firstMip + first[0].levelCount == 2 &&
+               first[1].firstMip + first[1].levelCount == 4,
+           "uploaded ranges end where the resident levels begin");
+    uint64_t firstBytes = 0;
+    for (const TextureMipUpload& upload : first) {
+        firstBytes += upload.bytes;
+    }
+    expect(firstBytes <= 40'000, "a frame's uploads stay within the byte budget");
+    expect(first.size() == 2 && first[1].levelCount == 1 && first[1].bytes == large[3],
+           "each texture sharpens one level per round before any takes a second");
+
+    const std::vector<TextureMipUpload> oversized = planTextureMipUploads(candidates, 1'000);
+    expect(oversized.size() == 1 && oversized[0].key == 2 && oversized[0].levelCount == 1 &&
+               oversized[0].bytes == small[1],
+           "a level larger than the budget still streams, alone, so streaming always progresses");
+
+    const std::vector<TextureMipUpload> unbounded =
+        planTextureMipUploads(candidates, std::numeric_limits<uint64_t>::max());
+    expect(unbounded.size() == 2 && unbounded[0].firstMip == 0 && unbounded[0].levelCount == 2 &&
+               unbounded[1].firstMip == 0 && unbounded[1].levelCount == 4,
+           "an unbounded budget completes every texture in one frame");
+
+    const std::vector<TextureMipStreamCandidate> complete{
+        {.key = 3, .residency = {.mipCount = 4, .residentFirstMip = 0}, .levelBytes = small}};
+    expect(planTextureMipUploads(complete, 1'000'000).empty(), "complete textures need no uploads");
+
+    // Draining the plan converges to the requested levels within a bounded
+    // number of frames and never exceeds the budget except for a lone level.
+    std::vector<TextureMipStreamCandidate> streaming = candidates;
+    uint32_t frames = 0;
+    for (; frames < 64; ++frames) {
+        const std::vector<TextureMipUpload> uploads = planTextureMipUploads(streaming, 300'000);
+        if (uploads.empty()) {
+            break;
+        }
+        uint64_t frameBytes = 0;
+        for (const TextureMipUpload& upload : uploads) {
+            frameBytes += upload.bytes;
+            for (TextureMipStreamCandidate& candidate : streaming) {
+                if (candidate.key == upload.key) {
+                    candidate.residency.residentFirstMip = upload.firstMip;
+                }
+            }
+        }
+        expect(frameBytes <= 300'000 || uploads.size() == 1, "streaming frames respect the budget");
+    }
+    expect(streaming[0].residency.complete() && streaming[1].residency.complete() && frames <= 6,
+           "streaming reaches full residency in a few frames");
+}
 } // namespace
 
 int main() {
+    testTextureMipTail();
+    testTextureStreamPriority();
+    testTextureMipPlanning();
     const StreamingBudgets bounded{.decodeBytesPerFrame = 500,
                                    .uploadBytesPerFrame = 300,
                                    .decodeJobsPerFrame = 1,

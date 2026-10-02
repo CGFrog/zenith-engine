@@ -126,6 +126,11 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("streaming.gpu_peak_bytes", static_cast<double>(s.streamingGpuPeakBytes), "bytes");
     sample("streaming.residency_misses", s.streamingResidencyMisses, "count");
     sample("streaming.hard_budget_failures", s.streamingHardBudgetFailures, "count");
+    sample("texture_streaming.resident_mips", s.textureResidentMips, "count");
+    sample("texture_streaming.requested_mips", s.textureRequestedMips, "count");
+    sample("texture_streaming.textures_streaming", s.texturesStreaming, "count");
+    sample("texture_streaming.streamed_bytes", static_cast<double>(s.textureStreamedBytes), "bytes");
+    sample("texture_streaming.backlog_bytes", static_cast<double>(s.textureStreamingBacklogBytes), "bytes");
     sample("pipeline.cache_warm", s.pipelineCacheWarm ? 1.0 : 0.0, "count");
     sample("pipeline.creation_events", s.pipelineCreationEvents, "count");
     sample("pipeline.creation_time", s.pipelineCreationMilliseconds);

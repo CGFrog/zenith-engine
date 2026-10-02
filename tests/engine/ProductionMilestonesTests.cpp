@@ -638,6 +638,32 @@ void testLightingAndConfiguration() {
                decoded.budgets.environment.gpuMilliseconds == 0.5 &&
                decoded.budgets.shadowCulling.gpuMilliseconds == 0.15,
            "new-pass budgets round trip");
+    {
+        RenderSettings streamingOff;
+        streamingOff.textureStreamingBytesPerFrame = 0;
+        std::string streamingEncoded;
+        RenderSettings streamingDecoded;
+        expect(serializeRenderSettings(streamingOff, streamingEncoded) &&
+                   deserializeRenderSettings(streamingEncoded, streamingDecoded) &&
+                   streamingDecoded.textureStreamingBytesPerFrame == 0,
+               "the texture-streaming budget round trips, including Off");
+        const auto withBudget = [&](const std::string& replacement) {
+            const std::string key = "\"textureStreamingBytesPerFrame\": 0";
+            std::string document = streamingEncoded;
+            const size_t found = document.find(key);
+            return found == std::string::npos ? std::string{} : document.replace(found, key.size(), replacement);
+        };
+        RenderSettings legacy;
+        expect(deserializeRenderSettings(withBudget("\"unrelatedKey\": 0"), legacy) &&
+                   legacy.textureStreamingBytesPerFrame == RenderSettings{}.textureStreamingBytesPerFrame,
+               "settings without a texture-streaming budget keep the default");
+        RenderSettings invalid;
+        expect(deserializeRenderSettings(withBudget("\"textureStreamingBytesPerFrame\": 1048576"), invalid) &&
+                   invalid.textureStreamingBytesPerFrame == 1048576 &&
+                   !deserializeRenderSettings(withBudget("\"textureStreamingBytesPerFrame\": -1"), invalid) &&
+                   !deserializeRenderSettings(withBudget("\"textureStreamingBytesPerFrame\": 5000000000"), invalid),
+               "negative or oversized texture-streaming budgets are rejected");
+    }
 
     TextureAsset environment;
     environment.width = 2;
