@@ -48,7 +48,13 @@ Important boundaries:
 - `EditorSession` owns editor-only UI and persistence state and composes the
   dockable panels in `src/editor/panels/`. Panels see the session only through
   a per-frame `EditorContext` and change the scene only through undoable
-  `SceneEditing` commands. Panel visibility and docking layout are stored
+  `SceneEditing` commands. Each command stores the document form of only the
+  entities an edit touched and undoes or redoes it by patching them in place
+  (`SceneDocument::diff` and `applyChanges`), so untouched entities keep their
+  EnTT handles; selections and other long-lived references still use stable
+  `SceneEntityId`s because restored entities receive new handles. Patched
+  entities are placed among their siblings in stable-id order, which is the
+  order a full document load produces. Panel visibility and docking layout are stored
   separately from runtime scene data, so changing the workspace cannot mutate
   the scene.
 

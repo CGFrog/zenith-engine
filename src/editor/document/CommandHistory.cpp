@@ -5,8 +5,18 @@
 #include <algorithm>
 #include <utility>
 
+namespace {
+size_t optionalBytes(const std::optional<std::string>& value) {
+    return value ? value->capacity() : 0;
+}
+} // namespace
+
 bool EditorCommand::mergeWith(const EditorCommand&) {
     return false;
+}
+
+size_t EditorCommand::storedBytes() const {
+    return 0;
 }
 
 SceneStateCommand::SceneStateCommand(std::string name, std::string before, std::string after, std::string coalesceKey)
@@ -38,6 +48,78 @@ bool SceneStateCommand::mergeWith(const EditorCommand& newer) {
     }
     m_after = state->m_after;
     return true;
+}
+
+size_t SceneStateCommand::storedBytes() const {
+    return sizeof(*this) + m_name.capacity() + m_before.capacity() + m_after.capacity() + m_coalesceKey.capacity();
+}
+
+EntityDiffCommand::EntityDiffCommand(std::string name, std::vector<SceneEntityChange> changes, std::string coalesceKey)
+    : m_name(std::move(name))
+    , m_changes(std::move(changes))
+    , m_coalesceKey(std::move(coalesceKey)) {
+    std::ranges::sort(m_changes, {}, [](const SceneEntityChange& change) { return change.id.value; });
+}
+
+std::string_view EntityDiffCommand::name() const {
+    return m_name;
+}
+
+EditorCommandResult EntityDiffCommand::execute(EditorCommandContext& context) {
+    const SceneDocumentResult result = SceneDocument::applyChanges(
+        m_changes, SceneChangeDirection::Forward, context.assets, context.documentOptions, context.scene);
+    return {.success = result.success, .error = result.error};
+}
+
+EditorCommandResult EntityDiffCommand::undo(EditorCommandContext& context) {
+    const SceneDocumentResult result = SceneDocument::applyChanges(
+        m_changes, SceneChangeDirection::Backward, context.assets, context.documentOptions, context.scene);
+    return {.success = result.success, .error = result.error};
+}
+
+bool EntityDiffCommand::mergeWith(const EditorCommand& newer) {
+    const auto* diff = dynamic_cast<const EntityDiffCommand*>(&newer);
+    if (diff == nullptr || m_coalesceKey.empty() || diff->m_coalesceKey != m_coalesceKey) {
+        return false;
+    }
+    // Both lists are sorted by id. An entity keeps this command's before
+    // state when it already changed here, and takes the newer after state
+    // when the newer edit touched it.
+    std::vector<SceneEntityChange> merged;
+    merged.reserve(m_changes.size() + diff->m_changes.size());
+    auto older = m_changes.begin();
+    auto latest = diff->m_changes.begin();
+    while (older != m_changes.end() || latest != diff->m_changes.end()) {
+        if (latest == diff->m_changes.end() || (older != m_changes.end() && older->id < latest->id)) {
+            merged.push_back(std::move(*older++));
+            continue;
+        }
+        if (older == m_changes.end() || latest->id < older->id) {
+            merged.push_back(*latest++);
+            continue;
+        }
+        SceneEntityChange change{.id = older->id, .before = std::move(older->before), .after = latest->after};
+        ++older;
+        ++latest;
+        if (change.before != change.after) {
+            merged.push_back(std::move(change));
+        }
+    }
+    m_changes = std::move(merged);
+    return true;
+}
+
+size_t EntityDiffCommand::storedBytes() const {
+    size_t bytes =
+        sizeof(*this) + m_name.capacity() + m_coalesceKey.capacity() + m_changes.capacity() * sizeof(SceneEntityChange);
+    for (const SceneEntityChange& change : m_changes) {
+        bytes += optionalBytes(change.before) + optionalBytes(change.after);
+    }
+    return bytes;
+}
+
+const std::vector<SceneEntityChange>& EntityDiffCommand::changes() const {
+    return m_changes;
 }
 
 CommandHistory::CommandHistory(size_t limit)
@@ -131,6 +213,14 @@ bool CommandHistory::dirty() const {
 
 size_t CommandHistory::size() const {
     return m_commands.size();
+}
+
+size_t CommandHistory::storedBytes() const {
+    size_t bytes = 0;
+    for (const std::unique_ptr<EditorCommand>& command : m_commands) {
+        bytes += command->storedBytes();
+    }
+    return bytes;
 }
 
 void CommandHistory::enforceLimit() {

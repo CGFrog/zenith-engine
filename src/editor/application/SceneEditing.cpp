@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
 SceneEditing::SceneEditing(Scene& scene, AssetManager& assets, EditorDocument& document, CommandHistory& history,
                            EditorDiagnostics& diagnostics)
@@ -47,18 +48,26 @@ void SceneEditing::commit(std::string name, std::string coalesceKey, std::string
     if (before == after) {
         return;
     }
-    // History commands apply their own after state, so the scene returns to
-    // before first and the command reproduces the edit exactly.
-    if (const SceneDocumentResult result = SceneDocument::deserialize(before, m_assets, m_document.options(), m_scene);
+    std::vector<SceneEntityChange> changes;
+    if (const SceneDocumentResult result = SceneDocument::diff(before, after, changes); !result) {
+        m_diagnostics.reportError("Could not record editor command: " + result.error);
+        return;
+    }
+    if (changes.empty()) {
+        return;
+    }
+    // History commands apply their own after state, so the changed entities
+    // return to before first and the command reproduces the edit exactly,
+    // just as redo will.
+    if (const SceneDocumentResult result = SceneDocument::applyChanges(changes, SceneChangeDirection::Backward,
+                                                                       m_assets, m_document.options(), m_scene);
         !result) {
         m_diagnostics.reportError("Could not prepare editor command: " + result.error);
         return;
     }
     EditorCommandContext command = commandContext();
-    if (const EditorCommandResult result =
-            m_history.execute(std::make_unique<SceneStateCommand>(std::move(name), std::move(before), std::move(after),
-                                                                  std::move(coalesceKey)),
-                              command);
+    if (const EditorCommandResult result = m_history.execute(
+            std::make_unique<EntityDiffCommand>(std::move(name), std::move(changes), std::move(coalesceKey)), command);
         !result) {
         m_diagnostics.reportError(result.error);
         return;
