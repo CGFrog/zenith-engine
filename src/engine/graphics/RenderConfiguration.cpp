@@ -4,10 +4,9 @@
 #include "DepthOfField.hpp"
 
 #include <cmath>
-#include <nlohmann/json.hpp>
-
 #include <limits>
 #include <utility>
+#include <nlohmann/json.hpp>
 
 namespace {
 using Json = nlohmann::json;
@@ -226,6 +225,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"cascadeSplitLambda", settings.cascadeSplitLambda},
                            {"cascadeBlendFraction", settings.cascadeBlendFraction},
                            {"visualizeShadowCascades", settings.visualizeShadowCascades},
+                           {"textureStreamingBytesPerFrame", settings.textureStreamingBytesPerFrame},
                            {"dynamicResolution",
                             {{"enabled", settings.dynamicResolution.enabled},
                              {"minimumScale", settings.dynamicResolution.minimumScale},
@@ -316,6 +316,12 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
         loaded.cascadeSplitLambda = document.value("cascadeSplitLambda", 0.65f);
         loaded.cascadeBlendFraction = document.value("cascadeBlendFraction", 0.10f);
         loaded.visualizeShadowCascades = document.value("visualizeShadowCascades", false);
+        if (const auto streaming = document.find("textureStreamingBytesPerFrame"); streaming != document.end()) {
+            if (!streaming->is_number_unsigned() || streaming->get<uint64_t>() > std::numeric_limits<uint32_t>::max()) {
+                return {.error = "Render settings contain an invalid texture-streaming budget"};
+            }
+            loaded.textureStreamingBytesPerFrame = streaming->get<uint32_t>();
+        }
         loaded.bloomIntensity = document.value("bloomIntensity", loaded.bloomIntensity);
         loaded.bloomFilterRadius = document.value("bloomFilterRadius", loaded.bloomFilterRadius);
         if (document.contains("tonemap") &&

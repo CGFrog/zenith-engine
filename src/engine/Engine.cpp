@@ -391,8 +391,8 @@ bool Engine::writeFrameCapture(const FrameCaptureRequest& request) {
     }
     // A capture taken while content is still arriving would not be repeatable.
     const RenderStats& stats = m_rendering.stats();
-    const uint64_t pendingBytes =
-        stats.uploadBytes + stats.streamingUploadBacklogBytes + stats.streamingDecodeBacklogBytes;
+    const uint64_t pendingBytes = stats.uploadBytes + stats.streamingUploadBacklogBytes +
+                                  stats.streamingDecodeBacklogBytes + stats.textureStreamingBacklogBytes;
     if (pendingBytes != 0) {
         std::cerr << "Frame " << request.frame << " was captured while " << pendingBytes
                   << " bytes of assets were still uploading; capture a later frame\n";

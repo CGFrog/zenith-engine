@@ -19,6 +19,11 @@ class BindlessTextureTable {
     std::optional<uint32_t> acquire(VkImageView view);
     // Points the slot back at the fallback view and makes it reusable.
     void release(uint32_t slot);
+    // Points an acquired slot at a new view (for example one covering more
+    // mip levels) and makes every frame set rewrite it. The caller keeps the
+    // old view alive until every frame that could still bind it has retired.
+    // Returns false for a free slot or a null view.
+    bool replace(uint32_t slot, VkImageView view);
 
     // Slots whose current view must be written into `frame`'s descriptor set.
     // Calling this marks them as written for that frame.

@@ -39,6 +39,15 @@ void BindlessTextureTable::release(uint32_t slot) {
     --m_liveCount;
 }
 
+bool BindlessTextureTable::replace(uint32_t slot, VkImageView view) {
+    if (slot >= m_views.size() || m_views[slot] == m_fallback || view == VK_NULL_HANDLE) {
+        return false;
+    }
+    m_views[slot] = view;
+    markDirty(slot);
+    return true;
+}
+
 std::vector<uint32_t> BindlessTextureTable::takePendingWrites(uint32_t frame) {
     std::vector<uint32_t> pending;
     const uint32_t frameBit = 1u << frame;

@@ -195,6 +195,52 @@ allocation, and scheduling costs rather than merely renaming passes.
   bloom, and later effects. Enable overlap only when timestamps demonstrate a
   net gain on that queue topology.
 
+### Asynchronous compute evaluation (2026-10-02)
+
+Evaluated for light clustering, the depth pyramid, and bloom on an RTX 2070
+SUPER (driver 576.80; queue families: 16 graphics+compute, 2 transfer, 8
+compute-only). Release, 1280x720, 400 measured frames after 120 warmup, median
+GPU milliseconds from the per-pass timestamps:
+
+| Scene | GPU frame | Light clusters | Depth pyramid | Bloom chain | Exposure |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Showcase | 1.48 | 0.029 | 0.068 | 0.077 | 0.039 |
+| Demo | 0.26 | 0.001 | 0.071 | 0.075 | 0.031 |
+| 4,000 objects | 0.77 (clock-dependent, 0.9-5.8) | 0.028 | 0.067 | 0.081 | — |
+
+Not implemented; the measured ceiling does not justify the mechanism:
+
+- **Upper bound.** Even perfect overlap hides at most the three passes'
+  combined ~0.17 ms (~11% of the showcase frame, ~0.15 ms of the
+  4,000-object frame). Each pass is a few short dispatches that already
+  overlap neighbouring graphics work inside one command buffer; a compute
+  queue only helps where the graphics queue is otherwise serialized.
+- **Dependencies leave little to overlap.** The depth pyramid reads the
+  prepass depth and feeds the late GPU cull, ambient occlusion, and
+  screen-space reflections, so it sits on the critical path with nothing
+  independent to run beside it. Bloom reads the temporally resolved HDR target
+  and feeds tone mapping; overlap needs cross-frame pipelining against the
+  next frame's shadow pass, which the single per-frame submission does not
+  support. Light clustering (CPU-uploaded lights only) is the one candidate
+  that could overlap shadows and the prepass, and it costs ~0.03 ms.
+- **Cost of the mechanism.** The device has no compute queue today, the render
+  graph's queue parameter only splits the asset-upload submission, and the
+  cluster, pyramid, and bloom resources are exclusive to the graphics family.
+  Async compute would need per-frame submission splitting, timeline
+  semaphores between queues, and queue-family ownership transfers (or
+  concurrent sharing, which can disable compression on render targets). Each
+  extra submission and semaphore wait costs tens of microseconds on this
+  driver, comparable to the clustering pass it would hide.
+- **Measurement noise.** With other GPU work sharing the device, GPU frame
+  times at 4,000 objects swing 0.9-5.8 ms run to run because a CPU-bound frame
+  lets the GPU drop clocks; a ~0.03-0.17 ms gain cannot be demonstrated
+  through that noise, so the roadmap's "enable only on a demonstrated net
+  gain" gate cannot be met.
+
+Revisit when a pass becomes long enough to matter (for example volumetric fog
+or GPU-driven culling at much larger scene counts) and the graph can split a
+frame into multiple submissions.
+
 ### Measurement and completion gate
 
 - Measure GPU frame time, barrier count, transient peak bytes, queue overlap,
@@ -294,6 +340,14 @@ Peak speed is not useful if traversal or content arrival produces long stalls.
 - Stream texture mip ranges and large mesh chunks independently. Begin with
   deterministic heuristic residency; consider GPU feedback only after the
   simpler policy is measured.
+  Status: cooked (BC5/BC7) textures stream mip ranges. They become resident
+  with their 64-texel tail, then `planTextureMipUploads` spends
+  `RenderSettings::textureStreamingBytesPerFrame` (default 8 MiB, 0 = Off)
+  per frame on the next levels, most visible first. The showcase's 43 MB of
+  mip data converges in 7 frames; steady-state GPU frame time is unchanged
+  (showcase 1.533 vs 1.533 ms median against the parent commit). Mesh chunks,
+  screen-size-driven partial residency, and dropping distant mips under
+  memory pressure remain open.
 - Maintain upload rings with fence/timeline retirement and backpressure. When a
   budget is exhausted, defer low-priority work rather than blocking rendering.
 - Prewarm required pipelines and cache compatible pipeline binaries. Record

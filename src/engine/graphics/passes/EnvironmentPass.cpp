@@ -2,6 +2,7 @@
 
 #include "engine/graphics/EnvironmentLighting.hpp"
 #include "engine/graphics/ReflectionProbes.hpp"
+#include "engine/graphics/resources/MipChainBlit.hpp"
 #include "engine/graphics/shader/ShaderModule.hpp"
 #include "engine/graphics/vulkan/VulkanCheck.hpp"
 #include "engine/resources/ResourceLocator.hpp"
@@ -52,7 +53,7 @@ struct SkySettings {
 };
 
 uint32_t mipCountFor(uint32_t width, uint32_t height) {
-    return 1u + static_cast<uint32_t>(std::floor(std::log2(static_cast<float>(std::max(width, height)))));
+    return fullMipChainLength(width, height);
 }
 
 uint32_t groupsFor(uint32_t size) {
@@ -95,43 +96,11 @@ void memoryBarrier(VkCommandBuffer commandBuffer, VkPipelineStageFlags2 sourceSt
     vkCmdPipelineBarrier2(commandBuffer, &dependency);
 }
 
-// Fills mips 1..n by successive linear blits. Every mip starts in
-// TRANSFER_DST_OPTIMAL with mip 0 written; all end shader-readable.
-void generateMipChain(VkCommandBuffer commandBuffer, VkImage image, uint32_t width, uint32_t height,
-                      uint32_t layerCount, uint32_t mipCount) {
-    constexpr VkPipelineStageFlags2 readers =
-        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-    int32_t sourceWidth = static_cast<int32_t>(width);
-    int32_t sourceHeight = static_cast<int32_t>(height);
-    for (uint32_t mip = 1; mip < mipCount; ++mip) {
-        imageBarrier(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                     VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                     VK_ACCESS_2_TRANSFER_READ_BIT, mip - 1, 1, layerCount);
-        const int32_t destinationWidth = std::max(sourceWidth / 2, 1);
-        const int32_t destinationHeight = std::max(sourceHeight / 2, 1);
-        const VkImageBlit blit{.srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                                  .mipLevel = mip - 1,
-                                                  .baseArrayLayer = 0,
-                                                  .layerCount = layerCount},
-                               .srcOffsets = {{0, 0, 0}, {sourceWidth, sourceHeight, 1}},
-                               .dstSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                                  .mipLevel = mip,
-                                                  .baseArrayLayer = 0,
-                                                  .layerCount = layerCount},
-                               .dstOffsets = {{0, 0, 0}, {destinationWidth, destinationHeight, 1}}};
-        vkCmdBlitImage(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image,
-                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
-        imageBarrier(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                     VK_ACCESS_2_TRANSFER_READ_BIT, readers, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, mip - 1, 1,
-                     layerCount);
-        sourceWidth = destinationWidth;
-        sourceHeight = destinationHeight;
-    }
-    imageBarrier(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                 VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, readers,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, mipCount - 1, 1, layerCount);
-}
+// Every environment image is read by compute (prefilter, probe capture) and
+// fragment shading (background).
+constexpr MipChainConsumers environmentImageReaders{.stages = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                                                              VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                                    .access = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
 
 bool hasUsablePixels(const TextureAsset& texture) {
     const size_t components = static_cast<size_t>(texture.width) * texture.height * 4;
@@ -538,7 +507,10 @@ bool EnvironmentPass::renderRadiance(VkCommandBuffer commandBuffer, const Enviro
                  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT, 0,
                  mipCount, cubeFaces);
-    generateMipChain(commandBuffer, radiance.image, size, size, cubeFaces, mipCount);
+    recordMipChainBlits(
+        commandBuffer,
+        {.image = radiance.image, .width = size, .height = size, .layerCount = cubeFaces, .mipCount = mipCount},
+        environmentImageReaders);
     return true;
 }
 
@@ -597,7 +569,9 @@ bool EnvironmentPass::uploadEquirectangular(VkCommandBuffer commandBuffer, const
                                                       .layerCount = 1},
                                  .imageExtent = {.width = texture.width, .height = texture.height, .depth = 1}};
     vkCmdCopyBufferToImage(commandBuffer, staging.buffer, output.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-    generateMipChain(commandBuffer, output.image, texture.width, texture.height, 1, mipCount);
+    recordMipChainBlits(commandBuffer,
+                        {.image = output.image, .width = texture.width, .height = texture.height, .mipCount = mipCount},
+                        environmentImageReaders);
     return true;
 }
 

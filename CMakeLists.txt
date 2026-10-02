@@ -293,6 +293,7 @@ add_library(zenith_engine STATIC
     src/engine/assets/CompressedTexture.cpp
     src/engine/assets/TextureCooker.cpp
     src/engine/assets/AssetStreaming.cpp
+    src/engine/assets/TextureMipStreaming.cpp
     src/engine/assets/PackedVertexStreams.cpp
     src/engine/assets/IrradianceVolumeAsset.cpp
     src/engine/assets/ColorLut.cpp
@@ -342,6 +343,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/resources/GeometryArena.cpp
     src/engine/graphics/resources/ImageReadback.cpp
     src/engine/graphics/resources/ViewportTarget.cpp
+    src/engine/graphics/resources/MipChainBlit.cpp
     src/engine/graphics/shader/ShaderModule.cpp
     src/engine/graphics/surface/Surface.cpp
     src/engine/graphics/swapchain/Swapchain.cpp

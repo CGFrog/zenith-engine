@@ -290,9 +290,18 @@ The build cooks the shipped models into `build/derived`, and executables point
 `AssetManager::setCookedTextureRoot` at `<resource root>/derived`. `Engine`
 publishes the device's BC capability to the asset manager; when a format is
 unsupported, or no current cooked entry exists, import decodes the RGBA8 source
-and the renderer generates mips as before. Cooked textures upload every stored
-level directly. BC7 images get UNORM and sRGB views; BC5 has a single linear
-view, and shaders reconstruct normal Z from X and Y for every normal map.
+and the renderer generates mips as before. Cooked textures stream their stored
+levels: the image is created with the full chain, but only the tail (levels of
+at most 64 texels per side) uploads on first use. Each frame,
+`planTextureMipUploads` spends `RenderSettings::textureStreamingBytesPerFrame`
+on the next higher-resolution levels, most visible textures first, and the mesh
+pass republishes the texture's views over the wider range in the same bindless
+slots; old views retire with the frames that could still bind them. A budget of
+zero (Off) uploads every level on first use. Captures refuse frames with mip
+backlog, and UI images are completed before their view is handed out because
+UI descriptor sets keep it. BC7 images get UNORM and sRGB views; BC5 has a
+single linear view, and shaders reconstruct normal Z from X and Y for every
+normal map.
 
 Localization, accessibility, and platform services stay below game policy.
 Stable message IDs select runtime locales and plural forms; UTF-8 shaping emits

@@ -132,6 +132,19 @@ class MeshPass {
         // Bindless array slots for the linear and sRGB views.
         uint32_t linearSlot{0};
         uint32_t srgbSlot{0};
+        // Levels [residentFirstMip, mipCount) hold texels and both views cover
+        // exactly them. Block-compressed textures start at their mip tail and
+        // stream toward level 0; other textures are complete when created.
+        uint32_t mipCount{1};
+        uint32_t residentFirstMip{0};
+    };
+
+    // Levels [firstMip, firstMip + levelCount) of a block-compressed texture.
+    struct TextureMipRangeUpload {
+        const TextureAsset* texture{nullptr};
+        GpuTexture* gpu{nullptr};
+        uint32_t firstMip{0};
+        uint32_t levelCount{0};
     };
 
     // Index of the material's record in the per-frame material buffer.
@@ -215,7 +228,32 @@ class MeshPass {
     void destroyGeometryPage(const GeometryPage& page);
     void bindGeometryPage(VkCommandBuffer commandBuffer, uint32_t page) const;
     bool uploadTexture(const TextureAsset& texture, GpuTexture& output);
-    bool uploadBlockCompressedTexture(const TextureAsset& texture, GpuTexture& output);
+    bool uploadBlockCompressedTexture(const TextureAsset& texture, GpuTexture& output, uint32_t firstMip);
+    // Stages every range in one texture-upload submission and moves the
+    // uploaded levels to SHADER_READ_ONLY_OPTIMAL; views are left unchanged.
+    // False on staging backpressure or failure, with nothing published.
+    bool uploadTextureMipRanges(std::span<const TextureMipRangeUpload> ranges);
+    // Linear and (when srgbFormat is defined) sRGB views of levels
+    // [firstMip, mipCount). On failure no view is left behind.
+    bool createTextureViews(VkImage image, VkFormat linearFormat, VkFormat srgbFormat, uint32_t firstMip,
+                            uint32_t mipCount, VkImageView& view, VkImageView& srgbView);
+    // Points the texture's views and bindless slots at levels [firstMip,
+    // mipCount) after they were uploaded; the old views retire with the frame.
+    bool publishResidentMips(const TextureAsset& texture, GpuTexture& gpu, uint32_t firstMip);
+    // Uploads this frame's budget of higher-resolution levels, most visible
+    // textures first (see planTextureMipUploads).
+    void streamTextureMips(const AssetManager& assets, const glm::vec3& cameraPosition);
+
+    // Streaming needs non-blocking uploads: without a timeline semaphore every
+    // texture-upload submission waits for the device, so a frame-by-frame
+    // trickle would stall each frame and textures upload whole instead.
+    bool textureStreamingActive() const {
+        return m_textureStreamingBytesPerFrame != 0 && m_textureUploadContext.timelineSemaphore() != VK_NULL_HANDLE;
+    }
+
+    // Makes every level of an uploaded texture resident now.
+    bool completeTextureMips(uint64_t key, const AssetManager& assets);
+    void recordTextureStreaming(const AssetManager& assets, RenderStats& stats) const;
     // Why the texture can never upload on this device; empty when it can.
     std::string textureRejectionReason(const TextureAsset& texture) const;
     bool assignTextureSlots(GpuTexture& texture);
@@ -471,5 +509,10 @@ class MeshPass {
     IrradianceVolumePass m_irradianceVolume;
     double m_uploadMilliseconds{0.0};
     double m_uploadGpuMilliseconds{0.0};
+    // RenderSettings::textureStreamingBytesPerFrame of the frame being recorded.
+    uint32_t m_textureStreamingBytesPerFrame{RenderSettings{}.textureStreamingBytesPerFrame};
+    uint64_t m_textureStreamedBytes{0};
+    // Reused CPU staging for batched mip uploads.
+    std::vector<std::byte> m_mipStagingBytes;
     uint64_t m_taskGeneration{0};
 };
