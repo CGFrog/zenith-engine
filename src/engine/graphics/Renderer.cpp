@@ -1,4 +1,5 @@
 #include "Renderer.hpp"
+#include "ColorGrading.hpp"
 #include "vulkan/VulkanCheck.hpp"
 
 #include <algorithm>
@@ -110,7 +111,10 @@ RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const Render
             .depthPrepass = depthPrepassActive(settings),
             .gpuDriven = gpuDrivenSubmissionActive(settings, capabilities),
             .volumetricFog = settings.volumetricFog != VolumetricFogQuality::Off,
-            .irradianceVolume = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume};
+            .irradianceVolume = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume,
+            .colorGrade = color_grading::lutRequested(settings.colorLut) ||
+                          color_grading::vignetteActive(settings.vignette) ||
+                          color_grading::filmGrainActive(settings.filmGrain)};
 }
 } // namespace
 
@@ -312,6 +316,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuReflectionProbeClusterMilliseconds = gpuTimings.reflectionProbeClusterMilliseconds;
     stats.gpuVolumetricFogMilliseconds = gpuTimings.volumetricFogMilliseconds;
     stats.gpuIrradianceVolumeMilliseconds = gpuTimings.irradianceVolumeMilliseconds;
+    stats.gpuColorGradeMilliseconds = gpuTimings.colorGradeMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;
@@ -822,6 +827,12 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
         if (m_rendering->settings().bloom != BloomQuality::Off) {
             graph.addPass("bloom chain", RenderGraphQueue::Graphics, sceneComputeRead);
         }
+        // With a grade effect, tone mapping writes the grade's persistent
+        // display target and the grade writes the output.
+        const auto displayTarget =
+            graph.importImage("colour-grade display target", image(ColorGradePass::displayFormat, 5, 0),
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        const auto toneMapTarget = shape.colorGrade ? displayTarget : output;
         const RenderGraphAccess postAccesses[]{
             {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
@@ -829,11 +840,17 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
             {history, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, TemporalResolvePass::resolvedLayout},
-            {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            {output, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            {toneMapTarget, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
         graph.addPass("post-process and tone map", RenderGraphQueue::Graphics, postAccesses);
+        if (shape.colorGrade) {
+            const RenderGraphAccess gradeAccesses[]{
+                {displayTarget, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {output, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+            graph.addPass("colour grade", RenderGraphQueue::Graphics, gradeAccesses);
+        }
         RenderGraphPassHandle uiPass;
         if (useViewport) {
             const RenderGraphAccess uiAccesses[]{

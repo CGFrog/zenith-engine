@@ -2793,18 +2793,21 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 3);
     }
-    passTimestamps.closeSkippedPasses();
     const auto bloomCpuBegin = std::chrono::steady_clock::now();
     const TemporalResolveFrame temporalResolve{.currentToPreviousClip = m_previousUnjitteredViewProjection *
                                                                         glm::inverse(unjitteredViewProjection),
                                                .jitterPixels = temporal.jitterPixels,
                                                .historyValid = temporal.historyValid};
-    if (!m_postProcess.record(commandBuffer, frameIndex, colorImage, colorView, depthImage, extent, renderExtent,
-                              rendering.settings(), glm::inverse(unjitteredViewProjection), m_previousViewProjection,
-                              temporalResolve, cameraPosition, rendering.m_gridOverlay, timestampQueries,
-                              stats.cpuBloomMilliseconds, colorOldLayout)) {
+    if (!m_postProcess.record(
+            commandBuffer, frameIndex, colorImage, colorView, depthImage, extent, renderExtent, rendering.settings(),
+            glm::inverse(unjitteredViewProjection), m_previousViewProjection, temporalResolve, cameraPosition,
+            rendering.m_gridOverlay,
+            {.serial = m_frameSerial, .assetRoot = rendering.assetRoot(), .timestamps = passTimestamps},
+            timestampQueries, stats.cpuBloomMilliseconds, colorOldLayout)) {
         return false;
     }
+    // The post chain owns the last optional scope (colour grading).
+    passTimestamps.closeSkippedPasses();
     m_previousViewProjection = cameraData.viewProjection;
     m_previousUnjitteredViewProjection = unjitteredViewProjection;
     m_previousJitterNdc = temporal.jitterNdc;

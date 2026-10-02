@@ -42,6 +42,9 @@ struct RenderGraphShape {
     bool volumetricFog{false};
     // Irradiance volume (U6)
     bool irradianceVolume{false};
+    // Any colour-grade effect requested (ColorGradePass); a LUT whose file
+    // fails to load still counts, so the model may show an idle grade pass.
+    bool colorGrade{false};
 
     bool operator==(const RenderGraphShape&) const = default;
 };

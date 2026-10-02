@@ -3,6 +3,7 @@
 
 #include "engine/resources/ResourceLocator.hpp"
 
+#include "../resources/FrameTimestamps.hpp"
 #include "../shader/ShaderModule.hpp"
 #include "../vulkan/VulkanCheck.hpp"
 
@@ -59,12 +60,18 @@ bool PostProcessPass::init(const VulkanContext& context, VkFormat outputFormat, 
     m_pipelineCache = context.pipelineCache();
     m_allocator = context.vmaAllocator();
     m_targets.resize(frameCount);
-    return m_bloomExposure.init(context) && createDescriptors(frameCount) && createPipeline(outputFormat) &&
+    // The display pipeline tone-maps into the colour-grade stage's target
+    // instead of the output when a grade effect is active.
+    return m_bloomExposure.init(context) && createDescriptors(frameCount) && createPipelineLayout() &&
+           createPipeline(outputFormat, m_pipeline) &&
+           createPipeline(ColorGradePass::displayFormat, m_displayPipeline) &&
            m_temporalResolve.init(context, frameCount, extent) && m_reflections.init(context, extent) &&
-           createTargets(context, extent, depthView);
+           m_colorGrade.init(context, outputFormat, frameCount, extent) && createTargets(context, extent, depthView);
 }
 
 bool PostProcessPass::createDescriptors(uint32_t frameCount) {
+    // 0: HDR scene, 1: depth, 2: temporally resolved scene, 3: bloom mip 0,
+    // 4: exposure state. Must match the set declared in shaders/post.frag.
     const VkDescriptorSetLayoutBinding bindings[]{{.binding = 0,
                                                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                                    .descriptorCount = 1,
@@ -82,22 +89,6 @@ bool PostProcessPass::createDescriptors(uint32_t frameCount) {
                                                    .descriptorCount = 1,
                                                    .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
                                                   {.binding = 4,
-                                                   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                                   .descriptorCount = 1,
-                                                   .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-                                                  {.binding = 5,
-                                                   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                                   .descriptorCount = 1,
-                                                   .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-                                                  {.binding = 6,
-                                                   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                                   .descriptorCount = 1,
-                                                   .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-                                                  {.binding = 7,
-                                                   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                                   .descriptorCount = 1,
-                                                   .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-                                                  {.binding = 8,
                                                    .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                                    .descriptorCount = 1,
                                                    .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
@@ -109,7 +100,7 @@ bool PostProcessPass::createDescriptors(uint32_t frameCount) {
         return false;
     }
     const VkDescriptorPoolSize poolSizes[]{
-        {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = frameCount * 8},
+        {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = frameCount * 4},
         {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = frameCount}};
     VkDescriptorPoolCreateInfo pool{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                                     .maxSets = frameCount,
@@ -150,21 +141,22 @@ bool PostProcessPass::createDescriptors(uint32_t frameCount) {
                        "Create post-process depth sampler");
 }
 
-bool PostProcessPass::createPipeline(VkFormat outputFormat) {
-    const std::filesystem::path shaders = shaderRoot();
-    ShaderModule vertex(m_device);
-    ShaderModule fragment(m_device);
-    if (!vertex.load(shaders / "fullscreen.vert.spv") || !fragment.load(shaders / "post.frag.spv")) {
-        return false;
-    }
+bool PostProcessPass::createPipelineLayout() {
     VkPushConstantRange push{.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT, .offset = 0, .size = sizeof(PostSettings)};
     VkPipelineLayoutCreateInfo pipelineLayout{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
                                               .setLayoutCount = 1,
                                               .pSetLayouts = &m_layout,
                                               .pushConstantRangeCount = 1,
                                               .pPushConstantRanges = &push};
-    if (!checkVulkan(vkCreatePipelineLayout(m_device, &pipelineLayout, nullptr, &m_pipelineLayout),
-                     "Create post-process pipeline layout")) {
+    return checkVulkan(vkCreatePipelineLayout(m_device, &pipelineLayout, nullptr, &m_pipelineLayout),
+                       "Create post-process pipeline layout");
+}
+
+bool PostProcessPass::createPipeline(VkFormat outputFormat, VkPipeline& output) {
+    const std::filesystem::path shaders = shaderRoot();
+    ShaderModule vertex(m_device);
+    ShaderModule fragment(m_device);
+    if (!vertex.load(shaders / "fullscreen.vert.spv") || !fragment.load(shaders / "post.frag.spv")) {
         return false;
     }
     const VkPipelineShaderStageCreateInfo stages[]{{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -213,7 +205,7 @@ bool PostProcessPass::createPipeline(VkFormat outputFormat) {
                                           .pColorBlendState = &blend,
                                           .pDynamicState = &dynamic,
                                           .layout = m_pipelineLayout};
-    return checkVulkan(vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &pipeline, nullptr, &m_pipeline),
+    return checkVulkan(vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &pipeline, nullptr, &output),
                        "Create post-process pipeline");
 }
 
@@ -281,9 +273,7 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
             return false;
         }
     }
-    for (uint32_t index = 0; index < m_targets.size(); ++index) {
-        Target& target = m_targets[index];
-        const Target& history = m_targets[(index + m_targets.size() - 1) % m_targets.size()];
+    for (Target& target : m_targets) {
         const VkDescriptorImageInfo images[]{
             {.sampler = m_colorSampler,
              .imageView = target.view,
@@ -293,85 +283,27 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
             {.sampler = m_colorSampler,
              .imageView = target.view,
              .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            {.sampler = m_colorSampler,
-             .imageView = target.motionView,
-             .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            // Unused: ambient occlusion moved into the shading pass
-            // (AmbientOcclusionPass). The binding stays in the shared layout and
-            // holds the scene target as a valid placeholder.
-            {.sampler = m_colorSampler,
-             .imageView = target.view,
-             .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            // Unused: screen-space reflections moved into the scene pass
-            // (ScreenSpaceReflectionPass). The binding stays in the shared layout
-            // and holds the scene target as a valid placeholder.
-            {.sampler = m_colorSampler,
-             .imageView = target.view,
-             .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            // The previous frame's motion target; its alpha holds that frame's depth.
-            {.sampler = m_colorSampler,
-             .imageView = history.motionView,
-             .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             // The bloom chain stays in GENERAL for compute writes.
             {.sampler = m_colorSampler,
              .imageView = m_bloomExposure.bloomView(),
              .imageLayout = VK_IMAGE_LAYOUT_GENERAL}};
         const VkDescriptorBufferInfo exposure{
             .buffer = m_bloomExposure.exposureBuffer(), .offset = 0, .range = BloomExposurePass::exposureBufferSize};
-        const VkWriteDescriptorSet writes[]{{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                             .dstSet = target.descriptor,
-                                             .dstBinding = 0,
-                                             .descriptorCount = 1,
-                                             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                             .pImageInfo = &images[0]},
-                                            {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                             .dstSet = target.descriptor,
-                                             .dstBinding = 1,
-                                             .descriptorCount = 1,
-                                             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                             .pImageInfo = &images[1]},
-                                            {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                             .dstSet = target.descriptor,
-                                             .dstBinding = 2,
-                                             .descriptorCount = 1,
-                                             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                             .pImageInfo = &images[2]},
-                                            {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                             .dstSet = target.descriptor,
-                                             .dstBinding = 3,
-                                             .descriptorCount = 1,
-                                             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                             .pImageInfo = &images[3]},
-                                            {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                             .dstSet = target.descriptor,
-                                             .dstBinding = 4,
-                                             .descriptorCount = 1,
-                                             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                             .pImageInfo = &images[4]},
-                                            {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                             .dstSet = target.descriptor,
-                                             .dstBinding = 5,
-                                             .descriptorCount = 1,
-                                             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                             .pImageInfo = &images[5]},
-                                            {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                             .dstSet = target.descriptor,
-                                             .dstBinding = 6,
-                                             .descriptorCount = 1,
-                                             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                             .pImageInfo = &images[6]},
-                                            {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                             .dstSet = target.descriptor,
-                                             .dstBinding = 7,
-                                             .descriptorCount = 1,
-                                             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                             .pImageInfo = &images[7]},
-                                            {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                             .dstSet = target.descriptor,
-                                             .dstBinding = 8,
-                                             .descriptorCount = 1,
-                                             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                                             .pBufferInfo = &exposure}};
+        VkWriteDescriptorSet writes[std::size(images) + 1]{};
+        for (uint32_t binding = 0; binding < std::size(images); ++binding) {
+            writes[binding] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                               .dstSet = target.descriptor,
+                               .dstBinding = binding,
+                               .descriptorCount = 1,
+                               .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                               .pImageInfo = &images[binding]};
+        }
+        writes[std::size(images)] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                     .dstSet = target.descriptor,
+                                     .dstBinding = static_cast<uint32_t>(std::size(images)),
+                                     .descriptorCount = 1,
+                                     .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     .pBufferInfo = &exposure};
         vkUpdateDescriptorSets(context.device(), static_cast<uint32_t>(std::size(writes)), writes, 0, nullptr);
     }
     return true;
@@ -429,7 +361,7 @@ bool PostProcessPass::resize(const VulkanContext& context, VkExtent2D extent, Vk
     m_previousFrameIndex.reset();
     m_temporalResolve.resize(extent);
     m_reflections.resize(extent);
-    return createTargets(context, extent, depthView);
+    return m_colorGrade.resize(extent) && createTargets(context, extent, depthView);
 }
 
 void PostProcessPass::prepareScene(VkCommandBuffer commandBuffer, uint32_t frameIndex) {
@@ -491,7 +423,7 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
                              const RenderSettings& settings, const glm::mat4& inverseViewProjection,
                              const glm::mat4& previousViewProjection, const TemporalResolveFrame& temporal,
                              const glm::vec3& cameraPosition, const std::optional<GridOverlay>& gridOverlay,
-                             VkQueryPool timestampQueries, double& bloomCpuMilliseconds,
+                             const PostProcessFrame& frame, VkQueryPool timestampQueries, double& bloomCpuMilliseconds,
                              VkImageLayout outputOldLayout) {
     Target& target = m_targets[frameIndex];
     constexpr VkPipelineStageFlags2 sampledStages =
@@ -541,9 +473,41 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
         .bloomUvScale = bloomSampling.uvScale,
         .bloomUvLimit = bloomSampling.uvLimit,
     };
-    // An undefined output is a freshly acquired swapchain image: the frame
-    // waits on the acquire semaphore at color-attachment output, so the
-    // layout transition must start from that stage to stay ordered after it.
+    bool grading = false;
+    if (!m_colorGrade.prepare(commandBuffer, frame.serial, settings, frame.assetRoot, grading)) {
+        return false;
+    }
+    // With a grade effect active, tone mapping writes the grade's display
+    // target and the grade writes the output.
+    if (grading) {
+        m_colorGrade.beginDisplayTarget(commandBuffer);
+    } else {
+        transitionOutput(commandBuffer, outputImage, outputOldLayout);
+    }
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestampQueries, 14);
+    }
+    recordToneMap(commandBuffer, target.descriptor, grading ? m_colorGrade.displayView() : outputView,
+                  grading ? m_displayPipeline : m_pipeline, extent, &postSettings);
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 15);
+    }
+    frame.timestamps.write(FrameTimestamp::colorGradeBegin, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
+    if (grading) {
+        transitionOutput(commandBuffer, outputImage, outputOldLayout);
+        m_colorGrade.record(commandBuffer, frameIndex, outputView, extent, settings, frame.serial);
+    }
+    frame.timestamps.write(FrameTimestamp::colorGradeEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    m_previousFrameIndex = frameIndex;
+    m_previousRenderExtent = internalExtent;
+    return true;
+}
+
+// An undefined output is a freshly acquired swapchain image: the frame waits
+// on the acquire semaphore at color-attachment output, so the layout
+// transition must start from that stage to stay ordered after it.
+void PostProcessPass::transitionOutput(VkCommandBuffer commandBuffer, VkImage outputImage,
+                                       VkImageLayout outputOldLayout) {
     imageBarrier(commandBuffer, outputImage, VK_IMAGE_ASPECT_COLOR_BIT, outputOldLayout,
                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                  outputOldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT
@@ -551,8 +515,12 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                  outputOldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+}
+
+void PostProcessPass::recordToneMap(VkCommandBuffer commandBuffer, VkDescriptorSet descriptor, VkImageView target,
+                                    VkPipeline pipeline, VkExtent2D extent, const void* postSettings) {
     VkRenderingAttachmentInfo color{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                                    .imageView = outputView,
+                                    .imageView = target,
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                     .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
@@ -571,22 +539,13 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
     VkRect2D scissor{.offset = {0, 0}, .extent = extent};
     vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-    if (timestampQueries) {
-        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestampQueries, 14);
-    }
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &target.descriptor,
-                            0, nullptr);
-    vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(postSettings),
-                       &postSettings);
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1, &descriptor, 0,
+                            nullptr);
+    vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PostSettings),
+                       postSettings);
     vkCmdDraw(commandBuffer, 3, 1, 0, 0);
     vkCmdEndRendering(commandBuffer);
-    if (timestampQueries) {
-        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 15);
-    }
-    m_previousFrameIndex = frameIndex;
-    m_previousRenderExtent = internalExtent;
-    return true;
 }
 
 bool PostProcessPass::resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent,
@@ -810,9 +769,13 @@ void PostProcessPass::shutdown(const VulkanContext& context) {
     m_temporalResolve.shutdown();
     m_reflections.shutdown();
     m_bloomExposure.shutdown(context);
+    m_colorGrade.shutdown();
     m_previousExposureTime.reset();
     if (m_pipeline) {
         vkDestroyPipeline(context.device(), m_pipeline, nullptr);
+    }
+    if (m_displayPipeline) {
+        vkDestroyPipeline(context.device(), m_displayPipeline, nullptr);
     }
     if (m_pipelineLayout) {
         vkDestroyPipelineLayout(context.device(), m_pipelineLayout, nullptr);
@@ -830,6 +793,7 @@ void PostProcessPass::shutdown(const VulkanContext& context) {
         vkDestroyDescriptorSetLayout(context.device(), m_layout, nullptr);
     }
     m_pipeline = VK_NULL_HANDLE;
+    m_displayPipeline = VK_NULL_HANDLE;
     m_pipelineLayout = VK_NULL_HANDLE;
     m_colorSampler = VK_NULL_HANDLE;
     m_depthSampler = VK_NULL_HANDLE;

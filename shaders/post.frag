@@ -6,9 +6,9 @@ layout(set = 0, binding = 1) uniform sampler2D sceneDepth;
 // when temporal anti-aliasing is selected.
 layout(set = 0, binding = 2) uniform sampler2D resolvedScene;
 // Mip 0 of the bloom chain (BloomExposurePass); covers the valid scene region.
-layout(set = 0, binding = 7) uniform sampler2D bloomChain;
+layout(set = 0, binding = 3) uniform sampler2D bloomChain;
 // Adapted exposure written by exposure_adapt.comp.
-layout(std430, set = 0, binding = 8) readonly buffer ExposureState {
+layout(std430, set = 0, binding = 4) readonly buffer ExposureState {
     float exposure;
     float averageLogLuminance;
     float targetExposure;
@@ -82,10 +82,16 @@ vec3 toneMap(vec3 color) {
     return agxToneMap(color, settings.tonemapOperator > 1.5);
 }
 
-vec4 editorGrid(vec2 uv) {
-    if (settings.grid.w < 0.5) {
-        return vec4(0.0);
-    }
+// Where the view ray through uv meets the grid plane. worldPosition stays
+// finite even on a miss so screen-space derivatives of it are defined.
+struct GridRay {
+    bool hit;
+    vec3 worldPosition;
+    float distance;
+};
+
+GridRay gridRay(vec2 uv) {
+    GridRay ray = GridRay(false, settings.cameraPosition.xyz, 0.0);
     vec2 ndc = uv * 2.0 - 1.0;
     // Reversed Z: depth 1 is the near plane and 0 the far plane.
     vec4 nearPoint = settings.inverseViewProjection * vec4(ndc, 1.0, 1.0);
@@ -94,33 +100,58 @@ vec4 editorGrid(vec2 uv) {
     farPoint /= farPoint.w;
     vec3 rayDirection = normalize(farPoint.xyz - nearPoint.xyz);
     if (abs(rayDirection.y) < 0.00001) {
+        return ray;
+    }
+    ray.distance = (settings.grid.x - settings.cameraPosition.y) / rayDirection.y;
+    ray.worldPosition = settings.cameraPosition.xyz + rayDirection * ray.distance;
+    ray.hit = ray.distance > 0.0;
+    return ray;
+}
+
+// Screen-space widths of the grid's line coordinates at one pixel. Taken once
+// at the shaded pixel, in uniform control flow, and reused for the FXAA
+// neighbours one pixel away, where they are practically equal.
+struct GridFootprint {
+    vec2 minorWidth;
+    vec2 majorWidth;
+    vec2 axisWidth;
+};
+
+GridFootprint gridFootprint(vec2 uv) {
+    vec3 worldPosition = gridRay(uv).worldPosition;
+    vec2 minorCoordinates = worldPosition.xz / settings.grid.y;
+    return GridFootprint(max(fwidth(minorCoordinates), vec2(0.0001)), max(fwidth(minorCoordinates / 10.0), vec2(0.0001)),
+                         vec2(fwidth(worldPosition.z), fwidth(worldPosition.x)));
+}
+
+vec4 editorGrid(vec2 uv, GridFootprint footprint) {
+    if (settings.grid.w < 0.5) {
         return vec4(0.0);
     }
-    float intersection = (settings.grid.x - settings.cameraPosition.y) / rayDirection.y;
-    if (intersection <= 0.0) {
+    GridRay ray = gridRay(uv);
+    if (!ray.hit) {
         return vec4(0.0);
     }
-    vec3 worldPosition = settings.cameraPosition.xyz + rayDirection * intersection;
+    vec3 worldPosition = ray.worldPosition;
+    vec2 ndc = uv * 2.0 - 1.0;
     float sampledDepth = texture(sceneDepth, uv * settings.sceneScale).r;
     if (sampledDepth > 0.000001) {
         vec4 sceneWorld = settings.inverseViewProjection * vec4(ndc, sampledDepth, 1.0);
         sceneWorld /= sceneWorld.w;
         float sceneDistance = length(sceneWorld.xyz - settings.cameraPosition.xyz);
-        if (intersection > sceneDistance + settings.grid.y * 0.02) {
+        if (ray.distance > sceneDistance + settings.grid.y * 0.02) {
             return vec4(0.0);
         }
     }
 
     vec2 minorCoordinates = worldPosition.xz / settings.grid.y;
-    vec2 minorWidth = max(fwidth(minorCoordinates), vec2(0.0001));
-    vec2 minorDistance = abs(fract(minorCoordinates - 0.5) - 0.5) / minorWidth;
+    vec2 minorDistance = abs(fract(minorCoordinates - 0.5) - 0.5) / footprint.minorWidth;
     float minorLine = 1.0 - min(min(minorDistance.x, minorDistance.y), 1.0);
     vec2 majorCoordinates = minorCoordinates / 10.0;
-    vec2 majorWidth = max(fwidth(majorCoordinates), vec2(0.0001));
-    vec2 majorDistance = abs(fract(majorCoordinates - 0.5) - 0.5) / majorWidth;
+    vec2 majorDistance = abs(fract(majorCoordinates - 0.5) - 0.5) / footprint.majorWidth;
     float majorLine = 1.0 - min(min(majorDistance.x, majorDistance.y), 1.0);
-    float xAxis = 1.0 - smoothstep(0.0, fwidth(worldPosition.z) * 1.5, abs(worldPosition.z));
-    float zAxis = 1.0 - smoothstep(0.0, fwidth(worldPosition.x) * 1.5, abs(worldPosition.x));
+    float xAxis = 1.0 - smoothstep(0.0, footprint.axisWidth.x * 1.5, abs(worldPosition.z));
+    float zAxis = 1.0 - smoothstep(0.0, footprint.axisWidth.y * 1.5, abs(worldPosition.x));
 
     vec3 color = mix(vec3(0.22, 0.23, 0.27), vec3(0.42, 0.43, 0.48), majorLine);
     color = mix(color, vec3(0.85, 0.12, 0.10), xAxis);
@@ -131,36 +162,51 @@ vec4 editorGrid(vec2 uv) {
     return vec4(color, line * fade * 0.85);
 }
 
-void main() {
-    vec2 sceneTexCoord = texCoord * settings.sceneScale;
-    // With TAA the scene was already accumulated and upsampled to output resolution.
-    vec3 center = settings.antialiasingMode > 1.5 ? texture(resolvedScene, texCoord).rgb
-                                                 : texture(hdrScene, sceneTexCoord).rgb;
-    vec4 grid = editorGrid(texCoord);
+// The HDR scene at an output-space uv with the editor grid composited over
+// it: the image FXAA, exposure and tone mapping operate on. With TAA the scene
+// was already accumulated and upsampled to output resolution.
+vec3 compositedScene(vec2 uv, GridFootprint footprint) {
+    vec3 scene = settings.antialiasingMode > 1.5 ? texture(resolvedScene, uv).rgb
+                                                 : texture(hdrScene, uv * settings.sceneScale).rgb;
+    vec4 grid = editorGrid(uv, footprint);
     // Grid colors are display-referred; pre-divide so exposure leaves them unchanged.
-    center = mix(center, grid.rgb / max(exposureState.exposure, 1e-6), grid.a);
+    return mix(scene, grid.rgb / max(exposureState.exposure, 1e-6), grid.a);
+}
 
+// FXAA over the composited image (scene plus grid), so grid lines are
+// antialiased consistently with the scene edges around them. Neighbours are
+// one scene-image texel apart, as the raw scene's pixel grid defines edges.
+vec3 fxaa(vec3 center, GridFootprint footprint) {
+    vec2 texelStep = settings.inverseResolution / settings.sceneScale;
+    float centerLuma = luminance(center);
+    float northLuma = luminance(compositedScene(texCoord + vec2(0.0, -texelStep.y), footprint));
+    float southLuma = luminance(compositedScene(texCoord + vec2(0.0, texelStep.y), footprint));
+    float westLuma = luminance(compositedScene(texCoord + vec2(-texelStep.x, 0.0), footprint));
+    float eastLuma = luminance(compositedScene(texCoord + vec2(texelStep.x, 0.0), footprint));
+    float minimumLuma = min(centerLuma, min(min(northLuma, southLuma), min(westLuma, eastLuma)));
+    float maximumLuma = max(centerLuma, max(max(northLuma, southLuma), max(westLuma, eastLuma)));
+    float contrast = maximumLuma - minimumLuma;
+    float threshold = max(0.0312, maximumLuma * 0.125);
+    if (contrast <= threshold) {
+        return center;
+    }
+    vec2 edgeDirection = vec2(-(northLuma - southLuma), westLuma - eastLuma);
+    float directionScale = max(abs(edgeDirection.x), abs(edgeDirection.y));
+    if (directionScale <= 0.0001) {
+        return center;
+    }
+    edgeDirection = edgeDirection / directionScale * texelStep;
+    vec3 first = compositedScene(texCoord + edgeDirection * 0.5, footprint);
+    vec3 second = compositedScene(texCoord - edgeDirection * 0.5, footprint);
+    return (first + second) * 0.5;
+}
+
+void main() {
+    GridFootprint footprint = gridFootprint(texCoord);
+    vec3 center = compositedScene(texCoord, footprint);
     vec3 antialiased = center;
     if (settings.antialiasingMode > 0.5 && settings.antialiasingMode < 1.5) {
-        float centerLuma = luminance(center);
-        float northLuma = luminance(texture(hdrScene, sceneTexCoord + vec2(0.0, -settings.inverseResolution.y)).rgb);
-        float southLuma = luminance(texture(hdrScene, sceneTexCoord + vec2(0.0, settings.inverseResolution.y)).rgb);
-        float westLuma = luminance(texture(hdrScene, sceneTexCoord + vec2(-settings.inverseResolution.x, 0.0)).rgb);
-        float eastLuma = luminance(texture(hdrScene, sceneTexCoord + vec2(settings.inverseResolution.x, 0.0)).rgb);
-        float minimumLuma = min(centerLuma, min(min(northLuma, southLuma), min(westLuma, eastLuma)));
-        float maximumLuma = max(centerLuma, max(max(northLuma, southLuma), max(westLuma, eastLuma)));
-        float contrast = maximumLuma - minimumLuma;
-        float threshold = max(0.0312, maximumLuma * 0.125);
-        if (contrast > threshold) {
-            vec2 edgeDirection = vec2(-(northLuma - southLuma), westLuma - eastLuma);
-            float directionScale = max(abs(edgeDirection.x), abs(edgeDirection.y));
-            if (directionScale > 0.0001) {
-                edgeDirection = edgeDirection / directionScale * settings.inverseResolution;
-                vec3 first = texture(hdrScene, sceneTexCoord + edgeDirection * 0.5).rgb;
-                vec3 second = texture(hdrScene, sceneTexCoord - edgeDirection * 0.5).rgb;
-                antialiased = (first + second) * 0.5;
-            }
-        }
+        antialiased = fxaa(center, footprint);
     }
     // Exposure scales the scene and bloom alike; bloom is an energy-conserving mix.
     vec3 exposed = antialiased * exposureState.exposure;
