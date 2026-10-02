@@ -398,7 +398,13 @@ editor's Graphics panel. `Renderer::updateRenderGraphPlan` mirrors this list as
 a declarative render-graph model whose shape (`RenderGraphShape`) follows the
 settings that add or remove passes: anti-aliasing, AO and reflection quality,
 bloom, exposure mode, shadows, environment quality and background, local
-lighting, the depth prepass, depth of field, and GPU-driven submission. The model validates
+lighting, the depth prepass, depth of field, and GPU-driven submission. Every choice the mesh
+pass makes while recording (prepass, GPU-driven submission, GPU shadow
+culling, effective AO quality, screen-space reflections, per-pixel probes)
+comes from one `MeshPassFramePlan` (`MeshPassFramePlan.*`) that
+`MeshPass::planFrame` computes once per frame; `MeshPass::record` consumes it
+and the Renderer copies it into `RenderGraphShape`, so the model never
+re-derives a pass decision. The model validates
 ordering and hazards and supplies barrier and transient-memory statistics;
 only its UI-boundary barriers are recorded, and the passes keep their own
 synchronization.

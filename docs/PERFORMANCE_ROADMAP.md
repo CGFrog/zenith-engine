@@ -171,6 +171,20 @@ to 1.466 ms median. See `RENDERER_VALIDATION.md` for the full A/B table.
 - Select the GPU-driven path by default only where it produces a repeated,
   material improvement on supported hardware without a GPU-frame regression.
 
+### Default decision (Milestone 25, 2026-10-02)
+
+Release A/B runs on the demo, the showcase, and the 4,000- and 10,000-object
+benchmarks (RTX 2070 SUPER, 1280x720, render mode) found GPU-driven
+submission slower in every scene. The `gpu.frame` medians were 0.489 vs 0.548 ms
+(demo), 1.489 vs 1.593 ms (showcase), 0.822 vs 1.064 ms (4,000 objects), and
+1.015 vs 1.494 ms (10,000 objects), and CPU recording cost 0.2 to 0.4 ms more.
+The cost of culling outweighs the raster savings for cheap, already-instanced
+geometry. CPU submission therefore stays the default, with no automatic
+draw-count threshold. `docs/RENDERER_VALIDATION.md` has the full table and
+methodology. The decision lives in `planMeshPassFrame()`
+(`src/engine/graphics/MeshPassFramePlan.*`), so a future data-driven policy
+such as a measured instance threshold changes one pure, tested function.
+
 ## Step 5: render graph, transient memory, and asynchronous transfers
 
 A declarative render graph is justified when it replaces measurable barrier,

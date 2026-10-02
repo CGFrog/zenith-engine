@@ -210,11 +210,6 @@ EnvironmentSource environmentSource(TextureHandle map, const AssetManager& asset
             .groundColor = environment.groundColor};
 }
 
-bool perPixelReflectionProbes(const RenderSettings& settings) {
-    return settings.environment != EnvironmentQuality::Hemisphere && settings.reflectionProbes &&
-           settings.reflectionProbeBlending == ReflectionProbeBlending::PerPixel;
-}
-
 // Probes to keep resident for per-pixel blending: those with a loaded map,
 // nearest the camera first, returned in entity order with their sources.
 std::vector<ReflectionProbeVolume> selectPerPixelProbes(const Scene& scene, const AssetManager& assets,
@@ -245,7 +240,7 @@ std::vector<ReflectionProbeVolume> selectPerPixelProbes(const Scene& scene, cons
 // resident probe sources; hemisphere lighting keeps only the analytic sky bound.
 EnvironmentFrameRequest environmentRequest(const Scene& scene, const AssetManager& assets,
                                            const EnvironmentLightComponent& environment, const RenderSettings& settings,
-                                           const glm::vec3& cameraPosition,
+                                           const glm::vec3& cameraPosition, bool perPixelProbes,
                                            std::vector<EnvironmentSource> residentProbes) {
     EnvironmentFrameRequest request{.quality = settings.environment};
     if (settings.environment == EnvironmentQuality::Hemisphere) {
@@ -258,7 +253,7 @@ EnvironmentFrameRequest environmentRequest(const Scene& scene, const AssetManage
     if (!settings.reflectionProbes) {
         return request;
     }
-    if (perPixelReflectionProbes(settings)) {
+    if (perPixelProbes) {
         request.residentProbes = std::move(residentProbes);
         return request;
     }
@@ -2375,8 +2370,8 @@ void MeshPass::recordGpuShadowCascade(VkCommandBuffer commandBuffer, uint32_t fr
 
 bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImageView colorView, VkImage depthImage,
                       VkImageView depthView, VkExtent2D extent, uint32_t frameIndex, const Scene& scene,
-                      const AssetManager& assets, RenderRuntime& rendering, FrameTaskExecutor& frameTasks,
-                      VkQueryPool timestampQueries, VkImageLayout colorOldLayout) {
+                      const AssetManager& assets, RenderRuntime& rendering, const MeshPassFramePlan& plan,
+                      FrameTaskExecutor& frameTasks, VkQueryPool timestampQueries, VkImageLayout colorOldLayout) {
     if (frameIndex >= m_cameras.size()) {
         return false;
     }
@@ -2461,8 +2456,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         cascadeCount = 3;
         break;
     }
-    const bool depthPrepass =
-        rendering.settings().depthPrepass && SDL_getenv("ZENITH_DISABLE_DEPTH_PREPASS") == nullptr;
+    const bool depthPrepass = plan.depthPrepass;
     const MeshPipelineSet* shadingPipelines =
         meshPipelines({.physicallyBased = rendering.settings().lighting == LightingQuality::PhysicallyBased,
                        .shadowCascades = cascadeCount,
@@ -2532,7 +2526,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const std::array<VkDescriptorSet, 2> environmentSets{frameCamera.descriptor, frameCamera.gpuDrivenDescriptor};
     std::vector<EnvironmentSource> residentProbeSources;
     const std::vector<ReflectionProbeVolume> residentProbes =
-        perPixelReflectionProbes(rendering.settings())
+        plan.perPixelReflectionProbes
             ? selectPerPixelProbes(scene, assets, environment, cameraPosition, residentProbeSources)
             : std::vector<ReflectionProbeVolume>{};
     OptionalPassTimestamps passTimestamps(commandBuffer, timestampQueries);
@@ -2540,7 +2534,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const std::optional<EnvironmentFrameState> environmentState =
         m_environmentPass.prepare(commandBuffer, frameIndex, m_frameSerial,
                                   environmentRequest(scene, assets, environment, rendering.settings(), cameraPosition,
-                                                     std::move(residentProbeSources)),
+                                                     plan.perPixelReflectionProbes, std::move(residentProbeSources)),
                                   std::span(environmentSets.data(), frameCamera.gpuDrivenDescriptor ? 2u : 1u));
     passTimestamps.write(FrameTimestamp::environmentPrecomputeEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     if (!environmentState) {
@@ -2557,8 +2551,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
                                         0.0f, 0.0f};
     // GTAO needs the prepass normals; without them the occlusion target is
     // cleared to unoccluded and any scale samples it correctly.
-    const AmbientOcclusionQuality ambientOcclusion =
-        depthPrepass ? rendering.settings().ambientOcclusion : AmbientOcclusionQuality::Off;
+    const AmbientOcclusionQuality ambientOcclusion = plan.ambientOcclusion;
     cameraData.environmentParams = {imageBasedLighting ? 1.0f : 0.0f, environmentState->probeWeight,
                                     environmentState->specularMaximumLod,
                                     AmbientOcclusionPass::resolutionScale(ambientOcclusion)};
@@ -2639,11 +2632,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     }
     // Opaque and masked surfaces go through GPU culling; blended surfaces and
     // editor outlines keep CPU submission within the same frame.
-    const bool gpuDrivenRequested =
-        rendering.settings().preferGpuDrivenSubmission || SDL_getenv("ZENITH_FORCE_GPU_DRIVEN") != nullptr;
-    const bool gpuDrivenActive = m_gpuDrivenSupported && gpuDrivenRequested && rendering.capabilities().gpuDrivenPath &&
-                                 rendering.capabilities().descriptorIndexing &&
-                                 rendering.capabilities().multiDrawIndirect;
+    const bool gpuDrivenActive = m_gpuDrivenSupported && plan.gpuDrivenSubmission;
     const FrameResourceUse lightResources[]{{"scene.lights", FrameResourceAccess::Read},
                                             {"frame.light_list", FrameResourceAccess::Write}};
     const FrameResourceUse visibilityResources[]{{"renderer.persistent_scene", FrameResourceAccess::Read},
@@ -2792,9 +2781,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     }
     // Cascades cull on the GPU whenever GPU-driven submission is active; the CPU
     // path is the fallback and the A/B baseline (docs/RENDERER_VALIDATION.md).
-    const ShadowCulling shadowCulling = gpuDrivenActive && SDL_getenv("ZENITH_DISABLE_GPU_SHADOW_CULLING") == nullptr
-                                            ? ShadowCulling::Gpu
-                                            : ShadowCulling::Cpu;
+    const ShadowCulling shadowCulling =
+        gpuDrivenActive && plan.gpuShadowCulling ? ShadowCulling::Gpu : ShadowCulling::Cpu;
     const auto shadowCpuBegin = std::chrono::steady_clock::now();
     // ZENITH_DISABLE_SHADOW_CACHE redraws every cascade each frame, so shadow
     // rendering and culling can be measured on a static scene.
@@ -2977,7 +2965,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     // blended surfaces and outlines composite over it, and before the temporal
     // resolve accumulates it.
     if (!recordScreenSpaceReflections(
-            draw, depthImage, depthView, rendering.settings(),
+            draw, depthImage, depthView,
+            plan.screenSpaceReflections ? rendering.settings().reflections : ReflectionQuality::ProbesOnly,
             {.projection = projection,
              .frameNumber = static_cast<uint32_t>(m_frameSerial),
              .temporalAccumulation = rendering.settings().antialiasing == AntialiasingMode::Taa})) {
@@ -3240,13 +3229,13 @@ void MeshPass::recordDepthNormalItems(const DrawContext& draw) {
 }
 
 bool MeshPass::recordScreenSpaceReflections(const DrawContext& draw, VkImage depthImage, VkImageView depthView,
-                                            const RenderSettings& settings, const ScreenSpaceReflectionCamera& camera) {
+                                            ReflectionQuality reflections, const ScreenSpaceReflectionCamera& camera) {
     const SceneGeometryViews geometry = sceneGeometry(draw.frameIndex);
-    const bool traces = PostProcessPass::tracesReflections(geometry, settings.reflections);
+    const bool traces = PostProcessPass::tracesReflections(geometry, reflections);
     if (traces) {
         vkCmdEndRendering(draw.commandBuffer);
     }
-    if (!m_postProcess.recordReflections(draw.commandBuffer, draw.frameIndex, geometry, settings.reflections, camera,
+    if (!m_postProcess.recordReflections(draw.commandBuffer, draw.frameIndex, geometry, reflections, camera,
                                          draw.timestampQueries)) {
         return false;
     }

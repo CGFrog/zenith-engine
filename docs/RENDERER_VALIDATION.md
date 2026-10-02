@@ -208,6 +208,11 @@ Every variable is read at runtime; unset means off. Presence is enough for the
 `ZENITH_FORCE_*` and `ZENITH_DISABLE_*` switches, which override the requested
 `RenderSettings` on every frame (`applyDiagnosticOverrides` in `Renderer.cpp`)
 or at the decision point named below, after capability validation.
+`ZENITH_DISABLE_DEPTH_PREPASS`, `ZENITH_FORCE_GPU_DRIVEN`, and
+`ZENITH_DISABLE_GPU_SHADOW_CULLING` are read once when the renderer starts
+(`MeshPassDiagnosticOverrides`) and applied by `planMeshPassFrame`, the one
+place both the recorded mesh pass and the render-graph model take those
+decisions from.
 
 | Variable | Effect |
 | --- | --- |
@@ -407,6 +412,51 @@ five times per configuration. The fastest runs were 0.766 ms per level against
 0.745 ms single pass on the CPU path, and 1.006 ms against 0.929 ms GPU-driven.
 GPU-driven `gpu.depth_pyramid` fell from 0.105 ms to 0.005 ms median. No
 configuration regressed beyond that noise.
+
+### GPU-driven submission default (Milestone 25)
+
+The 2026-10-02 Release comparison (RTX 2070 SUPER, 1280x720,
+`ZENITH_BENCHMARK_MODE=render`, 300 warm-up and 600 measured frames, CPU and
+GPU-driven runs alternated back to back, three or more rounds) measured the
+project defaults against `ZENITH_FORCE_GPU_DRIVEN=1`. Ten other build and GPU
+jobs shared the machine, so the table reports the round medians of runs whose
+GPU load before launch was low; contaminated rounds moved both paths by up to
+10 ms and are excluded. Values are median / p95 in milliseconds.
+
+| Scene | Path | `gpu.frame` | `cpu.opaque` | draw calls | visible |
+| --- | --- | ---: | ---: | ---: | ---: |
+| demo | CPU | 0.489 / 0.493 | 0.314 | 2 | 14 |
+| demo | GPU-driven | 0.548 / 0.552 | 0.527 | 4 | 14 |
+| showcase | CPU | 1.489 / 1.507 | 0.571 | 55 | 61 |
+| showcase | GPU-driven | 1.593 / 1.617 | 0.776 | 13 | 61 |
+| 4,000 benchmark objects | CPU | 0.822 / 0.841 | 0.256 | 2 | 3,376 |
+| 4,000 benchmark objects | GPU-driven | 1.064 / 1.190 | 0.700 | 4 | 1,680 |
+| 10,000 benchmark objects | CPU | 1.015 / 1.537 | 0.401 | 2 | 9,376 |
+| 10,000 benchmark objects | GPU-driven | 1.494 / 2.259 | 0.669 | 4 | 2,014 |
+
+GPU-driven submission is slower on the GPU in every scene (+12% on the demo,
++7% on the showcase, +29% at 4,000 objects, +47% at 10,000) and costs 0.2 to
+0.4 ms more CPU recording time. Hi-Z occlusion removes up to 80% of the
+benchmark instances, but those instances are cheap, instanced, and already
+batched into two draws, so culling (0.11 to 0.29 ms per camera phase) and
+cascade culling (0.12 to 0.30 ms) cost more than the raster work they save.
+Keeping CPU cascade culling (`ZENITH_DISABLE_GPU_SHADOW_CULLING`) did not
+change the outcome. `cpu.frame` in the benchmark scenes is dominated by work
+outside submission (10 to 47 ms) and varied by more than the path difference
+under load.
+
+Decision: CPU (instanced) submission stays the default and there is no
+automatic threshold, because no measured draw or instance count produced a
+GPU-frame win. GPU-driven submission stays opt-in through
+`RenderSettings::preferGpuDrivenSubmission` or `ZENITH_FORCE_GPU_DRIVEN`, and
+remains covered by the validation matrix. Revisit the decision with a
+vertex- or fill-bound occluded scene (many distinct meshes or materials,
+expensive shading) where CPU draw counts grow with visible batches.
+
+Moving the graph-shaping decisions into `MeshPassFramePlan` was checked
+against the previous build on the same matrix: `gpu.frame` medians matched
+within 0.01 ms (demo 0.481 to 0.478, showcase 1.483 to 1.483, 4,000 objects
+0.974 to 0.940 under load), and `cpu.opaque` did not regress.
 
 ## Reflection probe blending
 

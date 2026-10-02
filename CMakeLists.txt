@@ -308,6 +308,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/RenderConfiguration.cpp
     src/engine/graphics/RenderSubmission.cpp
     src/engine/graphics/MeshLodSelection.cpp
+    src/engine/graphics/MeshPassFramePlan.cpp
     src/engine/graphics/GpuCullLayout.cpp
     src/engine/graphics/TemporalQuality.cpp
     src/engine/graphics/ToneMapping.cpp
@@ -823,6 +824,10 @@ if(BUILD_TESTING)
     add_executable(zenith_mesh_lod_tests tests/engine/MeshLodTests.cpp)
     target_link_libraries(zenith_mesh_lod_tests PRIVATE zenith_engine)
     add_test(NAME zenith_mesh_lod COMMAND zenith_mesh_lod_tests)
+
+    add_executable(zenith_mesh_pass_frame_plan_tests tests/engine/MeshPassFramePlanTests.cpp)
+    target_link_libraries(zenith_mesh_pass_frame_plan_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_mesh_pass_frame_plan COMMAND zenith_mesh_pass_frame_plan_tests)
 
     add_executable(zenith_deferred_upload_tracker_tests tests/engine/DeferredUploadTrackerTests.cpp)
     target_link_libraries(zenith_deferred_upload_tracker_tests PRIVATE zenith_engine)

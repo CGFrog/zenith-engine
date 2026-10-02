@@ -85,26 +85,16 @@ RenderCapabilities detectRenderCapabilities(VkPhysicalDevice device) {
             .gpuDrivenPath = false};
 }
 
-// Mirrors the depth-prepass decision in MeshPass::record.
-bool depthPrepassActive(const RenderSettings& settings) {
-    return settings.depthPrepass && SDL_getenv("ZENITH_DISABLE_DEPTH_PREPASS") == nullptr;
-}
-
-// Mirrors the submission-path decision in MeshPass::record.
-bool gpuDrivenSubmissionActive(const RenderSettings& settings, const RenderCapabilities& capabilities) {
-    const bool requested = settings.preferGpuDrivenSubmission || SDL_getenv("ZENITH_FORCE_GPU_DRIVEN") != nullptr;
-    return requested && capabilities.gpuDrivenPath && capabilities.descriptorIndexing && capabilities.multiDrawIndirect;
-}
-
+// Settings-driven choices come from `settings`; every choice MeshPass makes
+// while recording comes from the frame's `plan`, never re-derived here.
 RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const RenderSettings& settings,
-                                  const RenderCapabilities& capabilities) {
+                                  const MeshPassFramePlan& plan) {
     const bool imageBasedLighting = settings.environment != EnvironmentQuality::Hemisphere;
     return {.width = extent.width,
             .height = extent.height,
             .viewport = viewport,
             .antialiasing = settings.antialiasing,
-            .ambientOcclusion = settings.ambientOcclusion,
-            .reflections = settings.reflections,
+            .ambientOcclusion = plan.ambientOcclusion,
             .bloom = settings.bloom,
             .exposure = settings.exposure.mode,
             .shadows = settings.shadows != ShadowQuality::Off,
@@ -113,12 +103,12 @@ RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const Render
             .localLights = settings.localLights != LocalLightingQuality::Disabled,
             .localShadows = settings.localLights != LocalLightingQuality::Disabled &&
                             settings.localShadows != LocalShadowQuality::Off,
-            // Mirrors perPixelReflectionProbes in MeshPass.cpp; the pass also
-            // skips frames whose scene has no resident probe.
-            .perPixelReflectionProbes = imageBasedLighting && settings.reflectionProbes &&
-                                        settings.reflectionProbeBlending == ReflectionProbeBlending::PerPixel,
-            .depthPrepass = depthPrepassActive(settings),
-            .gpuDriven = gpuDrivenSubmissionActive(settings, capabilities),
+            // The pass also skips frames whose scene has no resident probe.
+            .perPixelReflectionProbes = plan.perPixelReflectionProbes,
+            .depthPrepass = plan.depthPrepass,
+            .gpuDriven = plan.gpuDrivenSubmission,
+            .gpuShadowCulling = plan.gpuShadowCulling,
+            .screenSpaceReflections = plan.screenSpaceReflections,
             .volumetricFog = settings.volumetricFog != VolumetricFogQuality::Off,
             .irradianceVolume = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume,
             .motionBlur = settings.motionBlur != MotionBlurQuality::Off,
@@ -171,6 +161,7 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pipelineCreationBegin).count();
     m_prewarmedPipelineCount = m_meshPass.prewarmedPipelineCount();
     m_meshPass.setFixedFrameSeconds(options.fixedFrameSeconds);
+    m_meshPass.setDiagnosticOverrides(MeshPassDiagnosticOverrides::fromEnvironment());
     rendering.m_capabilities.gpuDrivenPath = m_meshPass.gpuDrivenSupported();
     rendering.m_capabilities.maximumLocalLights = m_meshPass.localLightCapacity();
     rendering.m_capabilities.volumetricFog = m_meshPass.volumetricFogSupported();
@@ -443,14 +434,16 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
     const VkImage colorImage = useViewport ? m_viewportTarget.image(m_currentFrame) : image;
     const VkImageView colorView = useViewport ? m_viewportTarget.view(m_currentFrame) : view;
     const VkExtent2D extent = useViewport ? m_viewportTarget.extent() : m_swapchain.extent();
-    if (!updateRenderGraphPlan(extent, useViewport)) {
+    // One plan drives both the descriptive graph and the recorded passes.
+    const MeshPassFramePlan meshPassPlan = m_meshPass.planFrame(m_rendering->settings(), m_rendering->capabilities());
+    if (!updateRenderGraphPlan(extent, useViewport, meshPassPlan)) {
         return false;
     }
     const VkImageLayout oldLayout =
         useViewport ? m_viewportTarget.oldLayout(m_currentFrame) : VK_IMAGE_LAYOUT_UNDEFINED;
     if (!m_meshPass.record(frame.commandBuffer(), colorImage, colorView, m_viewportTarget.depthImage(),
                            m_viewportTarget.depthView(), extent, m_currentFrame, scene, assets, *m_rendering,
-                           *m_frameTasks, frame.timestampQueries(), oldLayout)) {
+                           meshPassPlan, *m_frameTasks, frame.timestampQueries(), oldLayout)) {
         return false;
     }
     RenderStats& graphStats = m_rendering->m_stats;
@@ -486,9 +479,8 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
     return frame.endRecording();
 }
 
-bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
-    const RenderGraphShape shape =
-        renderGraphShape(extent, useViewport, m_rendering->settings(), m_rendering->capabilities());
+bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport, const MeshPassFramePlan& meshPassPlan) {
+    const RenderGraphShape shape = renderGraphShape(extent, useViewport, m_rendering->settings(), meshPassPlan);
     if (shape != m_renderGraphShape) {
         RenderGraph graph;
         const uint64_t pixels = static_cast<uint64_t>(extent.width) * extent.height;
@@ -592,13 +584,11 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             graph.addPass("irradiance volume upload", RenderGraphQueue::Graphics, irradianceUploadAccesses);
         }
         if (shape.shadows) {
-            // Mirrors the shadow-culling decision in MeshPass::record.
-            const bool gpuShadowCulling = shape.gpuDriven && SDL_getenv("ZENITH_DISABLE_GPU_SHADOW_CULLING") == nullptr;
             std::vector<RenderGraphAccess> shadowAccesses{
                 {shadow, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL},
                 {meshAssets, RenderGraphAccessMode::Read, geometryStages, geometryAccess, VK_IMAGE_LAYOUT_UNDEFINED}};
-            if (gpuShadowCulling) {
+            if (shape.gpuShadowCulling) {
                 // Dirty cascades cull into their own GPU-driven regions first.
                 const RenderGraphAccess shadowCullAccesses[]{
                     {gpuDrivenDraws, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -693,7 +683,7 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             if (shape.gpuDriven) {
                 prepassAccesses.push_back(indirectDrawRead);
             }
-            if (shape.reflections != ReflectionQuality::ProbesOnly) {
+            if (shape.screenSpaceReflections) {
                 prepassAccesses.push_back(
                     {specular, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
@@ -713,7 +703,7 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
         std::vector<RenderGraphAccess> ambientOcclusionAccesses{
             {ambientOcclusion, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
              VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, AmbientOcclusionPass::occlusionLayout}};
-        if (shape.depthPrepass && shape.ambientOcclusion != AmbientOcclusionQuality::Off) {
+        if (shape.ambientOcclusion != AmbientOcclusionQuality::Off) {
             ambientOcclusionAccesses.push_back(
                 {normals, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
@@ -790,8 +780,8 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             addLateCull();
         }
         graph.addPass("opaque and blended scene", RenderGraphQueue::Graphics, opaqueAccesses);
-        if (shape.depthPrepass && shape.reflections != ReflectionQuality::ProbesOnly) {
-            // Mirrors PostProcessPass::tracesReflections. Traces the prepass
+        if (shape.screenSpaceReflections) {
+            // Traces the prepass
             // normals and depth pyramid into the reflection target and blends it
             // into the scene in place. It runs inside the scene pass, after
             // opaque surfaces and the background and before blended ones, which
@@ -864,10 +854,10 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             sceneComputeRead = {motionBlurred, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, MotionBlurPass::blurredLayout};
         }
-        if (m_rendering->settings().exposure.mode == ExposureMode::Auto) {
+        if (shape.exposure == ExposureMode::Auto) {
             graph.addPass("luminance histogram", RenderGraphQueue::Graphics, {&sceneComputeRead, 1});
         }
-        if (m_rendering->settings().bloom != BloomQuality::Off) {
+        if (shape.bloom != BloomQuality::Off) {
             graph.addPass("bloom chain", RenderGraphQueue::Graphics, {&sceneComputeRead, 1});
         }
         // With a grade effect, tone mapping writes the grade's persistent

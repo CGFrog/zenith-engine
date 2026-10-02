@@ -568,6 +568,14 @@ The CPU definition of LOD selection: the coarsest level whose geometric error,
 projected from the nearest point of the bounding sphere, stays within
 `RenderSettings::lodErrorThresholdPixels`. `gpu_visibility.comp` mirrors it.
 
+### `src/engine/graphics/MeshPassFramePlan.*`
+
+The per-frame mesh-pass decisions that change the render graph's passes,
+computed by the pure `planMeshPassFrame()` from validated settings,
+capabilities, and the diagnostic overrides read once at renderer startup.
+`MeshPass::record` and `Renderer::updateRenderGraphPlan` consume the same
+plan; `tests/engine/MeshPassFramePlanTests.cpp` covers it.
+
 ### `src/engine/graphics/passes/ClusteredLightingPass.*`
 
 Owns the per-frame local-light buffer and the cluster light lists. Each frame

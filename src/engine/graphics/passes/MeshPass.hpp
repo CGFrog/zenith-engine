@@ -5,6 +5,7 @@
 #include "../../scene/Scene.hpp"
 #include "../DeferredUploadTracker.hpp"
 #include "../MeshLodSelection.hpp"
+#include "../MeshPassFramePlan.hpp"
 #include "../RenderSubmission.hpp"
 #include "../Rendering.hpp"
 #include "../TemporalQuality.hpp"
@@ -41,10 +42,18 @@ class MeshPass {
     bool init(const VulkanContext& context, VkFormat colorFormat, VkFormat depthFormat, uint32_t frameCount,
               VkExtent2D extent, VkImageView depthView);
     bool resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
+
+    // Decides this frame's graph-shaping choices; pass the result to record().
+    MeshPassFramePlan planFrame(const RenderSettings& settings, const RenderCapabilities& capabilities) const {
+        return planMeshPassFrame(settings, capabilities, m_diagnosticOverrides);
+    }
+
+    // `plan` must come from planFrame() with this frame's settings.
     bool record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImageView colorView, VkImage depthImage,
                 VkImageView depthView, VkExtent2D extent, uint32_t frameIndex, const Scene& scene,
-                const AssetManager& assets, RenderRuntime& rendering, FrameTaskExecutor& frameTasks,
-                VkQueryPool timestampQueries, VkImageLayout colorOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
+                const AssetManager& assets, RenderRuntime& rendering, const MeshPassFramePlan& plan,
+                FrameTaskExecutor& frameTasks, VkQueryPool timestampQueries,
+                VkImageLayout colorOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
     bool uiTexture(TextureHandle handle, const AssetManager& assets, VkSampler& sampler, VkImageView& view);
 
     bool gpuDrivenSupported() const {
@@ -92,6 +101,10 @@ class MeshPass {
     // See PostProcessPass::setFixedFrameSeconds.
     void setFixedFrameSeconds(std::optional<float> seconds) {
         m_postProcess.setFixedFrameSeconds(seconds);
+    }
+
+    void setDiagnosticOverrides(const MeshPassDiagnosticOverrides& overrides) {
+        m_diagnosticOverrides = overrides;
     }
 
     void shutdown(const VulkanContext& context);
@@ -367,7 +380,7 @@ class MeshPass {
     // screen-space reflections into the HDR target when they are traced,
     // ending and resuming the pass around the compute work.
     bool recordScreenSpaceReflections(const DrawContext& draw, VkImage depthImage, VkImageView depthView,
-                                      const RenderSettings& settings, const ScreenSpaceReflectionCamera& camera);
+                                      ReflectionQuality reflections, const ScreenSpaceReflectionCamera& camera);
     // Computes the frame's occlusion from this frame's prepass outputs, or
     // clears it to unoccluded when `quality` is Off (also used when the
     // prepass did not run). Records timestamps 10 and 11 either way.
@@ -483,6 +496,7 @@ class MeshPass {
     // Fog volume generation each frame slot's camera sets reference.
     std::vector<uint64_t> m_fogDescriptorGenerations;
     bool m_gpuDrivenSupported{false};
+    MeshPassDiagnosticOverrides m_diagnosticOverrides;
     std::vector<const RenderItem*> m_gpuDrivenCandidates;
     std::vector<IndirectDrawKey> m_gpuDrivenKeys;
 
