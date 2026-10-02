@@ -27,7 +27,10 @@ inline constexpr uint32_t localShadowsEnd = 32;
 // GPU culling of the dirty directional shadow cascades (GPU-driven path only).
 inline constexpr uint32_t shadowCullBegin = 33;
 inline constexpr uint32_t shadowCullEnd = 34;
-inline constexpr uint32_t count = 35;
+// Per-pixel reflection probe upload and cluster assignment.
+inline constexpr uint32_t reflectionProbeClustersBegin = 35;
+inline constexpr uint32_t reflectionProbeClustersEnd = 36;
+inline constexpr uint32_t count = 37;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot

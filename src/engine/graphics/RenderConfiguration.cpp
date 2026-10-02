@@ -119,6 +119,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"maximumLocalLights", settings.maximumLocalLights},
                            {"localShadows", settings.localShadows},
                            {"reflectionProbes", settings.reflectionProbes},
+                           {"reflectionProbeBlending", settings.reflectionProbeBlending},
                            {"preferGpuDrivenSubmission", settings.preferGpuDrivenSubmission},
                            {"depthPrepass", settings.depthPrepass},
                            {"lodErrorThresholdPixels", settings.lodErrorThresholdPixels},
@@ -150,7 +151,8 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"lightClusters", budget(settings.budgets.lightClusters)},
                              {"environment", budget(settings.budgets.environment)},
                              {"localShadows", budget(settings.budgets.localShadows)},
-                             {"shadowCulling", budget(settings.budgets.shadowCulling)}}}};
+                             {"shadowCulling", budget(settings.budgets.shadowCulling)},
+                             {"reflectionProbeClusters", budget(settings.budgets.reflectionProbeClusters)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -184,6 +186,11 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
             return {.error = "Render settings contain an unknown local-shadow quality"};
         }
         loaded.reflectionProbes = document.value("reflectionProbes", true);
+        if (document.contains("reflectionProbeBlending") &&
+            !readEnum(document, "reflectionProbeBlending", ReflectionProbeBlending::PerPixel,
+                      loaded.reflectionProbeBlending)) {
+            return {.error = "Render settings contain an unknown reflection-probe blending mode"};
+        }
         loaded.preferGpuDrivenSubmission = document.value("preferGpuDrivenSubmission", false);
         loaded.depthPrepass = document.value("depthPrepass", true);
         loaded.lodErrorThresholdPixels = document.value("lodErrorThresholdPixels", 1.0f);
@@ -241,7 +248,8 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "lightClusters", loaded.budgets.lightClusters) ||
                 !readOptionalBudget(*budgets, "environment", loaded.budgets.environment) ||
                 !readOptionalBudget(*budgets, "localShadows", loaded.budgets.localShadows) ||
-                !readOptionalBudget(*budgets, "shadowCulling", loaded.budgets.shadowCulling)) {
+                !readOptionalBudget(*budgets, "shadowCulling", loaded.budgets.shadowCulling) ||
+                !readOptionalBudget(*budgets, "reflectionProbeClusters", loaded.budgets.reflectionProbeClusters)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }
@@ -271,6 +279,13 @@ ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
     if (result.settings.reflectionProbes && !capabilities.reflectionProbes) {
         result.settings.reflectionProbes = false;
         result.fallbacks.emplace_back("Reflection probes are unsupported and were disabled");
+    }
+    if (result.settings.reflectionProbes &&
+        result.settings.reflectionProbeBlending == ReflectionProbeBlending::PerPixel &&
+        !capabilities.perPixelReflectionProbes) {
+        result.settings.reflectionProbeBlending = ReflectionProbeBlending::CameraOnly;
+        result.fallbacks.emplace_back(
+            "Per-pixel reflection probe blending is unsupported; blending the dominant probe at the camera");
     }
     if (result.settings.localLights != LocalLightingQuality::Disabled && capabilities.maximumLocalLights == 0) {
         result.settings.localLights = LocalLightingQuality::Disabled;

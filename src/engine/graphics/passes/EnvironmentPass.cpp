@@ -1,6 +1,7 @@
 #include "EnvironmentPass.hpp"
 
 #include "engine/graphics/EnvironmentLighting.hpp"
+#include "engine/graphics/ReflectionProbes.hpp"
 #include "engine/graphics/shader/ShaderModule.hpp"
 #include "engine/graphics/vulkan/VulkanCheck.hpp"
 #include "engine/resources/ResourceLocator.hpp"
@@ -26,6 +27,10 @@ constexpr uint32_t proceduralRadianceSize = 128;
 // Recently used environments kept resident; the frame's own are never evicted.
 constexpr size_t maximumCachedEnvironments = 4;
 constexpr uint32_t maximumComputeSets = 256;
+// New probe environments precomputed per frame, so a scene's probes spread
+// their build cost over a few frames instead of stalling one.
+constexpr uint32_t maximumProbeBuildsPerFrame = 2;
+constexpr VkDeviceSize irradianceBytes = sizeof(glm::vec4) * irradianceCoefficientCount;
 
 // Mirrors the push-constant blocks of the env_*.comp filters.
 struct FilterSettings {
@@ -57,7 +62,7 @@ uint32_t groupsFor(uint32_t size) {
 void imageBarrier(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout,
                   VkPipelineStageFlags2 sourceStage, VkAccessFlags2 sourceAccess,
                   VkPipelineStageFlags2 destinationStage, VkAccessFlags2 destinationAccess, uint32_t baseMip,
-                  uint32_t mipCount, uint32_t layerCount) {
+                  uint32_t mipCount, uint32_t layerCount, uint32_t baseLayer = 0) {
     const VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
                                         .srcStageMask = sourceStage,
                                         .srcAccessMask = sourceAccess,
@@ -71,7 +76,7 @@ void imageBarrier(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout ol
                                         .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                                                              .baseMipLevel = baseMip,
                                                              .levelCount = mipCount,
-                                                             .baseArrayLayer = 0,
+                                                             .baseArrayLayer = baseLayer,
                                                              .layerCount = layerCount}};
     const VkDependencyInfo dependency{
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier};
@@ -131,6 +136,10 @@ void generateMipChain(VkCommandBuffer commandBuffer, VkImage image, uint32_t wid
 bool hasUsablePixels(const TextureAsset& texture) {
     const size_t components = static_cast<size_t>(texture.width) * texture.height * 4;
     return components != 0 && (texture.rgbaHalf.size() == components || texture.rgba.size() == components);
+}
+
+bool sourceUsesMap(const EnvironmentSource& source) {
+    return source.mapAsset != nullptr && hasUsablePixels(*source.mapAsset);
 }
 
 uint64_t environmentKey(const EnvironmentSource& source, bool usesMap, EnvironmentQuality quality) {
@@ -318,6 +327,23 @@ std::optional<EnvironmentFrameState> EnvironmentPass::prepare(VkCommandBuffer co
         probe = ensureEnvironment(commandBuffer, *request.probe, request.quality);
     }
     EnvironmentFrameState state{.probeWeight = probe ? std::clamp(request.probeWeight, 0.0f, 1.0f) : 0.0f};
+    // The probe array binding must stay valid, so without resident probes a
+    // one-texel placeholder array is kept instead of the full cache.
+    // A full cache that could not be allocated is not retried; the frame keeps
+    // the placeholder, so probes are left out and shading uses the scene
+    // environment instead.
+    const bool fullCache = !request.residentProbes.empty() && !m_probeCacheUnavailable;
+    if (!ensureProbeCache(commandBuffer, request.quality, fullCache ? maximumResidentReflectionProbes : 1u)) {
+        if (!fullCache) {
+            return std::nullopt;
+        }
+        m_probeCacheUnavailable = true;
+        std::cerr << "The reflection probe cache could not be allocated; per-pixel probes are disabled\n";
+        if (!ensureProbeCache(commandBuffer, request.quality, 1u)) {
+            return std::nullopt;
+        }
+    }
+    state.probeSlots = updateResidentProbes(commandBuffer, request);
     // Slot 1 always needs a valid descriptor; an unweighted copy of slot 0 costs nothing.
     writeCameraSets(m_frameBindings[frameIndex], cameraSets, {primary, probe ? probe : primary});
     if (FrameBinding& binding = m_frameBindings[frameIndex]; binding.sky != primary->id) {
@@ -370,7 +396,7 @@ EnvironmentPass::Resolution EnvironmentPass::resolutionFor(EnvironmentQuality qu
 const EnvironmentPass::Environment* EnvironmentPass::ensureEnvironment(VkCommandBuffer commandBuffer,
                                                                        const EnvironmentSource& source,
                                                                        EnvironmentQuality quality) {
-    const bool usesMap = source.mapAsset != nullptr && hasUsablePixels(*source.mapAsset);
+    const bool usesMap = sourceUsesMap(source);
     const uint64_t key = environmentKey(source, usesMap, quality);
     if (const auto found = m_environments.find(key); found != m_environments.end()) {
         found->second.lastUsedSerial = m_frameSerial;
@@ -418,7 +444,8 @@ bool EnvironmentPass::buildEnvironment(VkCommandBuffer commandBuffer, const Envi
         createView(environment.radiance.image, VK_IMAGE_VIEW_TYPE_CUBE, radianceFormat, 0, cube.mipLevels, cubeFaces);
     cube.extent = {.width = resolution.specularSize, .height = resolution.specularSize, .depth = 1};
     cube.mipLevels = resolution.specularMips;
-    cube.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    // Transfer source for copies into the resident probe cache.
+    cube.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     if (!environment.radiance.view || !createImage(cube, environment.specular, "Create prefiltered specular cube")) {
         return false;
     }
@@ -426,7 +453,7 @@ bool EnvironmentPass::buildEnvironment(VkCommandBuffer commandBuffer, const Envi
                                            resolution.specularMips, cubeFaces);
     const VkBufferCreateInfo buffer{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                                     .size = sizeof(glm::vec4) * irradianceCoefficientCount,
-                                    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+                                    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
     const VmaAllocationCreateInfo allocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
     if (!environment.specular.view ||
         !checkVulkan(vmaCreateBuffer(m_allocator, &buffer, &allocation, &environment.irradiance.buffer,
@@ -709,13 +736,211 @@ VkDescriptorSet EnvironmentPass::allocateComputeSet() {
     return set;
 }
 
+bool EnvironmentPass::ensureProbeCache(VkCommandBuffer commandBuffer, EnvironmentQuality quality, uint32_t slotCount) {
+    // The placeholder is one 1-texel cube; the full cache matches the
+    // prefiltered cubes of the frame's quality so slots are plain copies.
+    const bool placeholder = slotCount <= 1;
+    const Resolution resolution = resolutionFor(quality, false);
+    const uint32_t size = placeholder ? 1u : resolution.specularSize;
+    const uint32_t mips = placeholder ? 1u : resolution.specularMips;
+    if (m_probeCache.id != 0 && m_probeCache.slots.size() == slotCount && m_probeCache.size == size &&
+        m_probeCache.mips == mips) {
+        m_probeCache.quality = quality;
+        return true;
+    }
+    if (m_probeCache.id != 0) {
+        // Older frames' descriptor sets still name the cache until they retire.
+        m_releaseQueue.defer(m_frameSerial, [this, cache = m_probeCache] { destroyProbeCache(cache); });
+        m_probeCache = {};
+    }
+    ProbeCache cache{.quality = quality, .size = size, .mips = mips};
+    const uint32_t layerCount = cubeFaces * slotCount;
+    const VkImageCreateInfo array{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                                  .flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
+                                  .imageType = VK_IMAGE_TYPE_2D,
+                                  .format = radianceFormat,
+                                  .extent = {.width = size, .height = size, .depth = 1},
+                                  .mipLevels = mips,
+                                  .arrayLayers = layerCount,
+                                  .samples = VK_SAMPLE_COUNT_1_BIT,
+                                  .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                  .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+    const VkBufferCreateInfo buffer{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                    .size = irradianceBytes * slotCount,
+                                    .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+    const VmaAllocationCreateInfo allocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    bool created = createImage(array, cache.specular, "Create reflection probe cache");
+    if (created) {
+        cache.specular.view =
+            createView(cache.specular.image, VK_IMAGE_VIEW_TYPE_CUBE_ARRAY, radianceFormat, 0, mips, layerCount);
+        created = cache.specular.view != VK_NULL_HANDLE &&
+                  checkVulkan(vmaCreateBuffer(m_allocator, &buffer, &allocation, &cache.irradiance.buffer,
+                                              &cache.irradiance.allocation, nullptr),
+                              "Create reflection probe irradiance buffer");
+    }
+    if (!created) {
+        destroyProbeCache(cache);
+        return false;
+    }
+    // Empty slots are never sampled, but clearing keeps the whole array in a
+    // defined, shader-readable state.
+    imageBarrier(commandBuffer, cache.specular.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                 VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                 VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, mips, layerCount);
+    const VkClearColorValue black{};
+    const VkImageSubresourceRange everything{.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                             .baseMipLevel = 0,
+                                             .levelCount = mips,
+                                             .baseArrayLayer = 0,
+                                             .layerCount = layerCount};
+    vkCmdClearColorImage(commandBuffer, cache.specular.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1,
+                         &everything);
+    imageBarrier(commandBuffer, cache.specular.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                 VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, 0, mips, layerCount);
+    vkCmdFillBuffer(commandBuffer, cache.irradiance.buffer, 0, VK_WHOLE_SIZE, 0);
+    memoryBarrier(commandBuffer, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                  VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    cache.slots.assign(slotCount, {});
+    cache.id = m_nextProbeCacheId++;
+    m_probeCache = cache;
+    return true;
+}
+
+std::vector<int32_t> EnvironmentPass::updateResidentProbes(VkCommandBuffer commandBuffer,
+                                                           const EnvironmentFrameRequest& request) {
+    const size_t requested = std::min<size_t>(request.residentProbes.size(), maximumResidentReflectionProbes);
+    std::vector<int32_t> result(request.residentProbes.size(), -1);
+    if (requested == 0 || m_probeCache.slots.size() < maximumResidentReflectionProbes) {
+        return result;
+    }
+    std::vector<uint64_t> keys(requested);
+    std::vector<bool> claimed(m_probeCache.slots.size(), false);
+    const auto findSlot = [&](uint64_t key) -> int32_t {
+        for (uint32_t slot = 0; slot < m_probeCache.slots.size(); ++slot) {
+            if (m_probeCache.slots[slot].key == key) {
+                return static_cast<int32_t>(slot);
+            }
+        }
+        return -1;
+    };
+    // Resident probes keep their slots first, so a newcomer never evicts a
+    // probe this frame still needs.
+    for (size_t index = 0; index < requested; ++index) {
+        const EnvironmentSource& source = request.residentProbes[index];
+        keys[index] = environmentKey(source, sourceUsesMap(source), request.quality);
+        if (const int32_t slot = findSlot(keys[index]); slot >= 0) {
+            result[index] = slot;
+            claimed[slot] = true;
+            m_probeCache.slots[slot].lastUsedSerial = m_frameSerial;
+        }
+    }
+    uint32_t builds = 0;
+    for (size_t index = 0; index < requested; ++index) {
+        if (result[index] >= 0) {
+            continue;
+        }
+        // Probes sharing a source share the slot an earlier one just filled.
+        if (const int32_t slot = findSlot(keys[index]); slot >= 0) {
+            result[index] = slot;
+            continue;
+        }
+        int32_t victim = -1;
+        for (uint32_t slot = 0; slot < m_probeCache.slots.size(); ++slot) {
+            if (!claimed[slot] &&
+                (victim < 0 || m_probeCache.slots[slot].lastUsedSerial < m_probeCache.slots[victim].lastUsedSerial)) {
+                victim = static_cast<int32_t>(slot);
+            }
+        }
+        const bool cached = m_environments.contains(keys[index]);
+        if (victim < 0 || m_failedEnvironments.contains(keys[index]) ||
+            (!cached && builds >= maximumProbeBuildsPerFrame)) {
+            continue;
+        }
+        const Environment* environment =
+            ensureEnvironment(commandBuffer, request.residentProbes[index], request.quality);
+        builds += cached ? 0u : 1u;
+        if (!environment) {
+            continue;
+        }
+        copyIntoProbeSlot(commandBuffer, *environment, static_cast<uint32_t>(victim));
+        m_probeCache.slots[victim] = {.key = keys[index], .lastUsedSerial = m_frameSerial};
+        claimed[victim] = true;
+        result[index] = victim;
+    }
+    return result;
+}
+
+void EnvironmentPass::copyIntoProbeSlot(VkCommandBuffer commandBuffer, const Environment& environment, uint32_t slot) {
+    const uint32_t mips = m_probeCache.mips;
+    const uint32_t baseLayer = slot * cubeFaces;
+    constexpr VkPipelineStageFlags2 samplers =
+        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    // The source may have been prefiltered earlier in this command buffer.
+    imageBarrier(commandBuffer, environment.specular.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, samplers, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT, 0, mips, cubeFaces);
+    // Earlier frames may still sample the slot being replaced.
+    imageBarrier(commandBuffer, m_probeCache.specular.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                 VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, 0, mips, cubeFaces, baseLayer);
+    // Irradiance was projected by a compute shader; earlier frames' transfers
+    // may still read the slot's coefficients.
+    memoryBarrier(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                  VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                  VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    std::vector<VkImageCopy> regions(mips);
+    for (uint32_t mip = 0; mip < mips; ++mip) {
+        const uint32_t size = std::max(m_probeCache.size >> mip, 1u);
+        regions[mip] = {.srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                           .mipLevel = mip,
+                                           .baseArrayLayer = 0,
+                                           .layerCount = cubeFaces},
+                        .dstSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                           .mipLevel = mip,
+                                           .baseArrayLayer = baseLayer,
+                                           .layerCount = cubeFaces},
+                        .extent = {.width = size, .height = size, .depth = 1}};
+    }
+    vkCmdCopyImage(commandBuffer, environment.specular.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                   m_probeCache.specular.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                   static_cast<uint32_t>(regions.size()), regions.data());
+    const VkBufferCopy coefficients{.srcOffset = 0, .dstOffset = irradianceBytes * slot, .size = irradianceBytes};
+    vkCmdCopyBuffer(commandBuffer, environment.irradiance.buffer, m_probeCache.irradiance.buffer, 1, &coefficients);
+    imageBarrier(commandBuffer, environment.specular.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0, samplers,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, 0, mips, cubeFaces);
+    imageBarrier(commandBuffer, m_probeCache.specular.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                 VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, 0, mips, cubeFaces, baseLayer);
+    // ReflectionProbeClusterPass gathers the coefficients with a transfer.
+    memoryBarrier(commandBuffer, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                  VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+}
+
+void EnvironmentPass::destroyProbeCache(const ProbeCache& cache) {
+    if (cache.specular.view) {
+        vkDestroyImageView(m_device, cache.specular.view, nullptr);
+    }
+    if (cache.specular.image) {
+        vmaDestroyImage(m_allocator, cache.specular.image, cache.specular.allocation);
+    }
+    if (cache.irradiance.buffer) {
+        vmaDestroyBuffer(m_allocator, cache.irradiance.buffer, cache.irradiance.allocation);
+    }
+}
+
 void EnvironmentPass::writeCameraSets(FrameBinding& binding, std::span<const VkDescriptorSet> cameraSets,
                                       const std::array<const Environment*, environmentSlots>& environments) {
     std::array<uint64_t, environmentSlots> ids{};
     for (uint32_t slot = 0; slot < environmentSlots; ++slot) {
         ids[slot] = environments[slot]->id;
     }
-    if (std::ranges::equal(binding.cameraSets, cameraSets) && binding.environments == ids) {
+    if (std::ranges::equal(binding.cameraSets, cameraSets) && binding.environments == ids &&
+        binding.probeCache == m_probeCache.id) {
         return;
     }
     std::array<VkDescriptorImageInfo, environmentSlots> specularInfo{};
@@ -729,8 +954,11 @@ void EnvironmentPass::writeCameraSets(FrameBinding& binding, std::span<const VkD
     const VkDescriptorImageInfo brdfInfo{.sampler = m_cubeSampler,
                                          .imageView = m_brdfTable.view,
                                          .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorImageInfo probeInfo{.sampler = m_cubeSampler,
+                                          .imageView = m_probeCache.specular.view,
+                                          .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     std::vector<VkWriteDescriptorSet> writes;
-    writes.reserve(cameraSets.size() * 3);
+    writes.reserve(cameraSets.size() * 4);
     for (VkDescriptorSet set : cameraSets) {
         writes.push_back({.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                           .dstSet = set,
@@ -750,10 +978,17 @@ void EnvironmentPass::writeCameraSets(FrameBinding& binding, std::span<const VkD
                           .descriptorCount = 1,
                           .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                           .pImageInfo = &brdfInfo});
+        writes.push_back({.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                          .dstSet = set,
+                          .dstBinding = probeSpecularBinding,
+                          .descriptorCount = 1,
+                          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                          .pImageInfo = &probeInfo});
     }
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
     binding.cameraSets.assign(cameraSets.begin(), cameraSets.end());
     binding.environments = ids;
+    binding.probeCache = m_probeCache.id;
 }
 
 void EnvironmentPass::evictUnusedEnvironments() {
@@ -854,6 +1089,9 @@ void EnvironmentPass::shutdown() {
     }
     m_environments.clear();
     m_failedEnvironments.clear();
+    destroyProbeCache(m_probeCache);
+    m_probeCache = {};
+    m_probeCacheUnavailable = false;
     if (m_brdfTable.view) {
         vkDestroyImageView(m_device, m_brdfTable.view, nullptr);
     }

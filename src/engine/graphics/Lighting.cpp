@@ -1,4 +1,5 @@
 #include "Lighting.hpp"
+#include "ReflectionProbes.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -250,42 +251,11 @@ ClusterLightLists assignLightsToClusters(const ClusterGrid& grid, std::span<cons
 
 std::vector<ProbeBlend> blendReflectionProbes(const Scene& scene, const glm::vec3& worldPosition,
                                               size_t maximumProbes) {
-    struct Candidate {
-        ProbeBlend blend;
-        int32_t priority;
-    };
-
-    std::vector<Candidate> candidates;
-    const auto probes = scene.registry().view<const ReflectionProbeComponent, const TransformComponent>();
-    for (Entity entity : probes) {
-        const auto& probe = probes.get<const ReflectionProbeComponent>(entity);
-        const glm::vec3 center = glm::vec3(probes.get<const TransformComponent>(entity).world[3]);
-        const glm::vec3 outside = glm::max(glm::abs(worldPosition - center) - probe.halfExtents, glm::vec3(0.0f));
-        const float distance = glm::length(outside);
-        if (distance > probe.blendDistance) {
-            continue;
-        }
-        const float weight = probe.blendDistance <= 0.0f ? 1.0f : 1.0f - distance / probe.blendDistance;
-        candidates.push_back({{entity, weight}, probe.priority});
-    }
-    std::ranges::sort(candidates, [](const Candidate& left, const Candidate& right) {
-        if (left.priority != right.priority) {
-            return left.priority > right.priority;
-        }
-        if (left.blend.weight != right.blend.weight) {
-            return left.blend.weight > right.blend.weight;
-        }
-        return entt::to_integral(left.blend.entity) < entt::to_integral(right.blend.entity);
-    });
-    candidates.resize(std::min(maximumProbes, candidates.size()));
-    float total = 0.0f;
-    for (const Candidate& candidate : candidates) {
-        total += candidate.blend.weight;
-    }
+    // Probes arrive in entity order, which breaks ties as documented.
+    const std::vector<ReflectionProbeVolume> probes = gatherReflectionProbes(scene);
     std::vector<ProbeBlend> result;
-    for (const Candidate& candidate : candidates) {
-        result.push_back(
-            {candidate.blend.entity, total > 0.0f ? candidate.blend.weight / total : 0.0f, candidate.blend.weight});
+    for (const ReflectionProbeWeight& blend : blendReflectionProbeVolumes(probes, worldPosition, maximumProbes)) {
+        result.push_back({probes[blend.probe].entity, blend.weight, blend.influence});
     }
     return result;
 }

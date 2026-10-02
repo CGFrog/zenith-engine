@@ -21,6 +21,7 @@
 #include "GpuDrivenPass.hpp"
 #include "LocalShadowPass.hpp"
 #include "PostProcessPass.hpp"
+#include "ReflectionProbeClusterPass.hpp"
 #include "SceneGeometryViews.hpp"
 #include "engine/resources/DeferredReleaseQueue.hpp"
 #include <array>
@@ -50,9 +51,9 @@ class MeshPass {
 
     uint32_t prewarmedPipelineCount() const {
         // Thirteen graphics pipelines (two depth-normal, one local-shadow), the
-        // light-cluster assignment, the depth-pyramid build, ambient occlusion,
-        // and the environment pipelines.
-        return 15u + m_ambientOcclusion.pipelineCount() + m_environmentPass.pipelineCount() +
+        // light- and reflection-probe-cluster assignments, the depth-pyramid
+        // build, ambient occlusion, and the environment pipelines.
+        return 16u + m_ambientOcclusion.pipelineCount() + m_environmentPass.pipelineCount() +
                (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
     }
 
@@ -194,6 +195,8 @@ class MeshPass {
     bool createGeometryBuffer(VkDeviceSize size, VkBufferUsageFlags usage, GpuBuffer& output);
     bool createZeroSkinInfluence();
     void writeClusteredLightingDescriptors();
+    // Binds each frame slot's probe buffer to camera binding 17.
+    void writeReflectionProbeDescriptors();
     // Binds each frame slot's occlusion image to camera binding 13 of both sets.
     void writeAmbientOcclusionDescriptors();
     bool ensureGeometryPage(uint32_t page);
@@ -422,6 +425,7 @@ class MeshPass {
     std::optional<uint32_t> m_depthPrepassFrame;
     GpuDrivenPass m_gpuDrivenPass;
     ClusteredLightingPass m_clusteredLighting;
+    ReflectionProbeClusterPass m_reflectionProbeClusters;
     bool m_gpuDrivenSupported{false};
     std::vector<const RenderItem*> m_gpuDrivenCandidates;
     std::vector<IndirectDrawKey> m_gpuDrivenKeys;

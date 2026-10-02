@@ -1,0 +1,86 @@
+#version 450
+
+// Assigns resident reflection probes to view clusters: one invocation per
+// cluster writes a mask with bit i set when probe i's view-space influence
+// box touches the cluster's view-space box. Mirrors
+// assignReflectionProbesToClusters in src/engine/graphics/ReflectionProbes.cpp
+// and the cluster bounds of ClusterGrid in Lighting.cpp (also used by
+// light_clusters.comp).
+
+// Mirrors maximumResidentReflectionProbes in ReflectionProbes.hpp.
+const uint MAXIMUM_RESIDENT_REFLECTION_PROBES = 8;
+
+layout(local_size_x = 64) in;
+
+// Mirrors GpuReflectionProbe in ReflectionProbeClusterPass.hpp (std430).
+struct ReflectionProbeRecord {
+    vec4 centerBlend;
+    vec4 halfExtents;
+    ivec4 parameters;
+    vec4 viewMinimum;
+    vec4 viewMaximum;
+};
+
+// Same layout as ReflectionProbes in mesh.frag.
+layout(std430, set = 0, binding = 0) buffer ReflectionProbes {
+    uvec4 header;
+    ReflectionProbeRecord records[MAXIMUM_RESIDENT_REFLECTION_PROBES];
+    vec4 irradiance[MAXIMUM_RESIDENT_REFLECTION_PROBES * 9];
+    uint clusterMasks[];
+} probes;
+
+layout(push_constant) uniform ProbeClusterSettings {
+    // For NDC (x, y): view.x / depth = (x + offset.x) / scale.x; xy scale, zw offset.
+    vec4 projection;
+    // x: near depth, y: end of exponential slicing, z: far depth.
+    vec4 depth;
+    // x: columns, y: rows, z: depth slices, w: probe count.
+    uvec4 grid;
+} settings;
+
+float sliceStart(uint slice) {
+    if (slice >= settings.grid.z) {
+        return settings.depth.z;
+    }
+    return settings.depth.x * pow(settings.depth.y / settings.depth.x, float(slice) / float(settings.grid.z));
+}
+
+void clusterBounds(uvec3 cluster, out vec3 minimum, out vec3 maximum) {
+    vec2 tileSize = vec2(2.0) / vec2(settings.grid.xy);
+    vec2 ndcMinimum = vec2(cluster.xy) * tileSize - 1.0;
+    float depths[2] = float[2](sliceStart(cluster.z), sliceStart(cluster.z + 1));
+    minimum = vec3(3.4e38);
+    maximum = vec3(-3.4e38);
+    for (uint corner = 0; corner < 4; ++corner) {
+        vec2 ndc = ndcMinimum + vec2(corner & 1u, corner >> 1u) * tileSize;
+        vec2 ray = (ndc + settings.projection.zw) / settings.projection.xy;
+        for (int index = 0; index < 2; ++index) {
+            vec3 point = vec3(ray * depths[index], -depths[index]);
+            minimum = min(minimum, point);
+            maximum = max(maximum, point);
+        }
+    }
+}
+
+void main() {
+    uint clusterCount = settings.grid.x * settings.grid.y * settings.grid.z;
+    uint clusterIndex = gl_GlobalInvocationID.x;
+    if (clusterIndex >= clusterCount) {
+        return;
+    }
+    uvec3 cluster = uvec3(clusterIndex % settings.grid.x, (clusterIndex / settings.grid.x) % settings.grid.y,
+                          clusterIndex / (settings.grid.x * settings.grid.y));
+    vec3 minimum;
+    vec3 maximum;
+    clusterBounds(cluster, minimum, maximum);
+    uint mask = 0u;
+    uint probeCount = min(settings.grid.w, MAXIMUM_RESIDENT_REFLECTION_PROBES);
+    for (uint probe = 0; probe < probeCount; ++probe) {
+        vec3 probeMinimum = probes.records[probe].viewMinimum.xyz;
+        vec3 probeMaximum = probes.records[probe].viewMaximum.xyz;
+        if (all(lessThanEqual(probeMinimum, maximum)) && all(lessThanEqual(minimum, probeMaximum))) {
+            mask |= 1u << probe;
+        }
+    }
+    probes.clusterMasks[clusterIndex] = mask;
+}

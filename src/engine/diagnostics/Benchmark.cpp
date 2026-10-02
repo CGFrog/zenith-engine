@@ -92,6 +92,7 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("tasks.main_thread_assist", s.taskMainThreadAssistMilliseconds);
     sample("tasks.graph_latency", s.taskGraphLatencyMilliseconds);
     sample("lights", s.localLightCount, "count");
+    sample("reflection_probes", s.reflectionProbeCount, "count");
     sample("discarded_light_assignments", s.discardedLightAssignments, "count");
     sample("upload_bytes", static_cast<double>(s.uploadBytes), "bytes");
     sample("upload.backpressure_events", s.uploadBackpressureEvents, "count");
@@ -158,6 +159,8 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
     sample("gpu.skybox", s.gpuSkyboxMilliseconds);
     sample("gpu.shadow_culling", s.gpuShadowCullingMilliseconds, "ms", budgets.shadowCulling.gpuMilliseconds);
     sample("gpu.local_shadows", s.gpuLocalShadowMilliseconds, "ms", budgets.localShadows.gpuMilliseconds);
+    sample("gpu.reflection_probe_clusters", s.gpuReflectionProbeClusterMilliseconds, "ms",
+           budgets.reflectionProbeClusters.gpuMilliseconds);
     sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
     sample("gpu.ui", s.gpuUiMilliseconds, "ms", budgets.ui.gpuMilliseconds);

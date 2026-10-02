@@ -203,7 +203,7 @@ or at the decision point named below, after capability validation.
 
 | Variable | Effect |
 | --- | --- |
-| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, clustered local lights with high-quality local shadows, depth prepass on, cascaded (high) shadows, and bloom. |
+| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, per-pixel reflection probe blending, clustered local lights with high-quality local shadows, depth prepass on, cascaded (high) shadows, and bloom. |
 | `ZENITH_FORCE_TAA` | Temporal anti-aliasing. |
 | `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
 | `ZENITH_FORCE_GPU_DRIVEN` | GPU-driven submission (two-phase occlusion culling and indirect draws) when the device supports it. Shadow cascades are then culled on the GPU too. |
@@ -235,10 +235,11 @@ Each frame's timestamp pool brackets every pass; `RenderStats` exposes the
 retired frame's durations and the benchmark reports them as `gpu.*` metrics.
 Passes a frame skips report zero. `gpu.shadow` runs from the frame start, so it
 also includes `gpu.environment_precompute` (which records work only when the
-environment changes), `gpu.local_shadows` (zero on frames that reuse every cached
-atlas tile), `gpu.shadow_culling` (GPU-driven only; zero on frames whose cascades
-were all cached), the early-phase `gpu.culling`, and any upload wait. `gpu.opaque` spans
-`gpu.light_clusters`, `gpu.depth_prepass` (which includes the GPU-driven late
+environment changes or a reflection probe becomes resident), `gpu.local_shadows`
+(zero on frames that reuse every cached atlas tile), `gpu.shadow_culling`
+(GPU-driven only; zero on frames whose cascades were all cached), the
+early-phase `gpu.culling`, and any upload wait. `gpu.opaque` spans
+`gpu.light_clusters`, `gpu.reflection_probe_clusters`, `gpu.depth_prepass` (which includes the GPU-driven late
 cull), `gpu.depth_pyramid`, `gpu.ambient_occlusion`, and shading. `gpu.blended` includes `gpu.skybox`;
 `gpu.reflections` runs between them inside the scene pass and is subtracted from `gpu.blended`.
 `gpu.environment` is precompute plus skybox. The editor's Graphics panel shows
@@ -273,6 +274,34 @@ warm-up and 600 measured frames) compared CPU and GPU cascade culling:
 GPU culling moves about 0.3 ms of CPU work per fully redrawn frame at 5,000
 objects onto about 0.14 ms of GPU time; cached cascades cost neither. Small
 scenes gain little, so the trade only pays when the CPU is the bottleneck.
+
+## Reflection probe blending
+
+`RenderSettings::reflectionProbeBlending` selects how reflection probes reach
+shading when image-based lighting and `reflectionProbes` are on:
+
+- **PerPixel** (default): up to eight probes nearest the camera stay resident.
+  `EnvironmentPass` copies each one's prefiltered specular cube into a slot of
+  one cube-map array (binding 16) once, when it becomes resident, building at
+  most two new probe environments per frame. `ReflectionProbeClusterPass`
+  uploads the probe records and their irradiance and
+  `reflection_probe_clusters.comp` assigns each probe's influence box (its box
+  expanded by the blend distance) to the light-cluster grid (binding 17).
+  `mesh.frag` blends up to four of its cluster's probes per pixel with
+  box-projected specular lookups and blended irradiance, matching
+  `blendReflectionProbes`; the scene environment fills the remainder across
+  each probe's blend distance. The GPU scope is `gpu.reflection_probe_clusters`
+  with the `reflectionProbeClusters` budget; `reflection_probes` counts the
+  resident probes.
+- **CameraOnly** (the Off fallback): the dominant probe at the camera is
+  blended over the whole frame, as before. Validation selects it, with a
+  fallback message, when the device lacks per-pixel support.
+
+`zenith_reflection_probes` covers box projection against an independent slab
+intersection, weight normalization against `blendReflectionProbes`, resident
+selection, and conservative cluster assignment against brute-force frustum
+samples. The showcase project's west and east halves carry two overlapping
+probes with distinct environments (`tools/showcase/build_probe_environments.py`).
 
 `gpu_visibility_mismatches` counts retired GPU-driven frames whose culling kept
 more objects than the CPU frustum reference. The GPU sphere test uses the

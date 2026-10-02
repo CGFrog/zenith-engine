@@ -86,8 +86,10 @@ bool supportsRenderingFeatures(VkPhysicalDevice device) {
     // SPIR-V 1.6 lower discard to demote-to-helper-invocation.
     const bool pipelineFeatures = vulkan14.pushDescriptor && features.features.independentBlend &&
                                   renderingFeatures.shaderDemoteToHelperInvocation;
+    // Resident reflection probes are sampled from one cube-map array.
     return renderingFeatures.dynamicRendering && renderingFeatures.synchronization2 &&
-           features.features.samplerAnisotropy && bindlessTextures && pipelineFeatures;
+           features.features.samplerAnisotropy && features.features.imageCubeArray && bindlessTextures &&
+           pipelineFeatures;
 }
 
 uint32_t findGraphicsQueueFamily(VkPhysicalDevice device, const Surface& surface) {
@@ -342,7 +344,8 @@ bool VulkanContext::initDevice() {
                                               .dynamicRendering = VK_TRUE};
     // BC sampling is optional: without it, textures stay on the RGBA8 path.
     m_blockCompressionSupported = supported.features.textureCompressionBC == VK_TRUE;
-    VkPhysicalDeviceFeatures enabledFeatures{.independentBlend = VK_TRUE,
+    VkPhysicalDeviceFeatures enabledFeatures{.imageCubeArray = VK_TRUE,
+                                             .independentBlend = VK_TRUE,
                                              .multiDrawIndirect = supported.features.multiDrawIndirect,
                                              .samplerAnisotropy = VK_TRUE,
                                              .textureCompressionBC = supported.features.textureCompressionBC};

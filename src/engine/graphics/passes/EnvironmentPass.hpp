@@ -29,6 +29,10 @@ struct EnvironmentFrameRequest {
     // Dominant reflection probe, blended over the primary environment by weight.
     std::optional<EnvironmentSource> probe;
     float probeWeight{0.0f};
+    // Per-pixel blending: probes to keep resident in the probe cube array, at
+    // most maximumResidentReflectionProbes. When empty only a placeholder
+    // array stays allocated.
+    std::vector<EnvironmentSource> residentProbes;
     EnvironmentQuality quality{EnvironmentQuality::ImageBasedHigh};
 };
 
@@ -37,6 +41,10 @@ struct EnvironmentFrameState {
     float probeWeight{0.0f};
     // Mip of the prefiltered specular cube that holds roughness 1.
     float specularMaximumLod{0.0f};
+    // Per entry of EnvironmentFrameRequest::residentProbes: its cube-array
+    // slot, or -1 while it is not resident (waiting for its build, or its map
+    // failed to build).
+    std::vector<int32_t> probeSlots;
 };
 
 // Split-sum image-based lighting. For each environment source it precomputes on
@@ -44,12 +52,22 @@ struct EnvironmentFrameState {
 // specular cube, and order-2 spherical-harmonic irradiance; a BRDF table is
 // computed once. Precomputation is recorded into the frame's command buffer
 // before the scene pass, and retired resources wait for their frames to finish.
+//
+// For per-pixel probe blending it also owns the resident probe cache: one
+// cube-map array whose slot s spans layers 6s..6s+5 and holds a copy of a
+// probe's prefiltered specular cube, plus a buffer of each slot's irradiance
+// coefficients. A slot is copied once when its probe becomes resident and is
+// reused while the probe's source is unchanged, so the cached environment it
+// came from may later be evicted. Frames share the cache on the one graphics
+// queue; slot rewrites wait for earlier frames' reads with pipeline barriers.
 class EnvironmentPass {
   public:
     // Camera-set bindings this pass owns; mirrored in shaders/mesh.frag.
     static constexpr uint32_t specularBinding = 5;
     static constexpr uint32_t irradianceBinding = 6;
     static constexpr uint32_t brdfBinding = 7;
+    // samplerCubeArray of the resident probes' prefiltered specular cubes.
+    static constexpr uint32_t probeSpecularBinding = 16;
     // Slot 0 is the primary environment, slot 1 the dominant reflection probe.
     static constexpr uint32_t environmentSlots = 2;
 
@@ -76,6 +94,14 @@ class EnvironmentPass {
     // jitter, which motion vectors exclude.
     void recordSkybox(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkDescriptorSet cameraSet,
                       float radianceScale, const glm::vec4& temporalJitter) const;
+
+    // Irradiance coefficients of the resident probes: nine vec4 per slot, in
+    // slot order. prepare writes it with transfers made visible to later
+    // transfer reads in the same command buffer.
+    VkBuffer probeIrradianceBuffer() const {
+        return m_probeCache.irradiance.buffer;
+    }
+
     void shutdown();
 
   private:
@@ -105,8 +131,26 @@ class EnvironmentPass {
     struct FrameBinding {
         std::vector<VkDescriptorSet> cameraSets;
         std::array<uint64_t, environmentSlots> environments{};
+        uint64_t probeCache{0};
         uint64_t sky{0};
         bool proceduralSky{true};
+    };
+
+    struct ProbeSlot {
+        // Environment key of the copied source; zero while the slot is empty.
+        uint64_t key{0};
+        uint64_t lastUsedSerial{0};
+    };
+
+    struct ProbeCache {
+        Image specular;
+        Buffer irradiance;
+        EnvironmentQuality quality{EnvironmentQuality::Hemisphere};
+        uint32_t size{0};
+        uint32_t mips{0};
+        std::vector<ProbeSlot> slots;
+        // Never reused; zero means no cache exists.
+        uint64_t id{0};
     };
 
     struct Resolution {
@@ -134,6 +178,10 @@ class EnvironmentPass {
     bool prefilterSpecular(VkCommandBuffer commandBuffer, const Resolution& resolution, const Environment& environment);
     bool projectIrradiance(VkCommandBuffer commandBuffer, const Resolution& resolution, const Environment& environment);
     VkDescriptorSet allocateComputeSet();
+    bool ensureProbeCache(VkCommandBuffer commandBuffer, EnvironmentQuality quality, uint32_t slotCount);
+    std::vector<int32_t> updateResidentProbes(VkCommandBuffer commandBuffer, const EnvironmentFrameRequest& request);
+    void copyIntoProbeSlot(VkCommandBuffer commandBuffer, const Environment& environment, uint32_t slot);
+    void destroyProbeCache(const ProbeCache& cache);
     void writeCameraSets(FrameBinding& binding, std::span<const VkDescriptorSet> cameraSets,
                          const std::array<const Environment*, environmentSlots>& environments);
     void evictUnusedEnvironments();
@@ -170,4 +218,9 @@ class EnvironmentPass {
     std::unordered_set<uint64_t> m_failedEnvironments;
     uint64_t m_nextEnvironmentId{1};
     std::vector<FrameBinding> m_frameBindings;
+    ProbeCache m_probeCache;
+    uint64_t m_nextProbeCacheId{1};
+    // Set once the full probe cache failed to allocate; only the placeholder
+    // is created afterwards.
+    bool m_probeCacheUnavailable{false};
 };

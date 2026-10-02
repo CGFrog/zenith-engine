@@ -35,6 +35,15 @@ enum class ReflectionQuality : uint8_t {
     ScreenSpaceFullResolution,
 };
 
+// How reflection probes reach shading. CameraOnly blends the dominant probe at
+// the camera over the whole frame (the fallback); PerPixel assigns resident
+// probes to the light-cluster grid and blends them per pixel with box
+// projection. Serialized by value.
+enum class ReflectionProbeBlending : uint8_t {
+    CameraOnly,
+    PerPixel,
+};
+
 enum class ShadowQuality : uint8_t {
     Off,
     Single,
@@ -130,6 +139,8 @@ struct RenderPassBudgets {
     RenderPassBudget shadowCulling;
     // Local-light shadow atlas tiles re-rendered this frame.
     RenderPassBudget localShadows;
+    // Per-pixel reflection probe upload and cluster assignment.
+    RenderPassBudget reflectionProbeClusters;
 };
 
 struct DynamicResolutionSettings {
@@ -161,6 +172,7 @@ struct RenderSettings {
     // Requires clustered local lighting; validation turns it Off otherwise.
     LocalShadowQuality localShadows{LocalShadowQuality::Medium};
     bool reflectionProbes{true};
+    ReflectionProbeBlending reflectionProbeBlending{ReflectionProbeBlending::PerPixel};
     bool preferGpuDrivenSubmission{false};
     // Opaque depth and view-space normals are drawn before shading, so opaque
     // pixels shade once and screen-space effects get normals and a depth
@@ -191,6 +203,7 @@ struct RenderCapabilities {
     bool gpuDrivenPath{false};
     bool imageBasedLighting{false};
     bool reflectionProbes{false};
+    bool perPixelReflectionProbes{false};
     bool temporalAntialiasing{true};
     bool screenSpaceAmbientOcclusion{true};
     bool screenSpaceReflections{true};
@@ -296,6 +309,10 @@ struct RenderStats {
     uint32_t localShadowCasterCount{0};
     double cpuLocalShadowMilliseconds{0.0};
     uint64_t localShadowAtlasBytes{0};
+    // Zero when the retired frame did not blend probes per pixel.
+    double gpuReflectionProbeClusterMilliseconds{0.0};
+    // Probes resident for per-pixel blending this submission.
+    uint32_t reflectionProbeCount{0};
     uint64_t temporalHistoryBytes{0};
     uint64_t motionVectorBytes{0};
     uint64_t ambientOcclusionBytes{0};

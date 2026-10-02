@@ -511,6 +511,13 @@ def build_scene_document(document, templates):
                                    "range": 6.0, "inner_cone": 0.25, "outer_cone": 0.45}})
     # The skinned tentacle and gold mirror come from build_coverage.py (assets/showcase/coverage/).
     writer.entities.extend(build_coverage.scene_entities(len(writer.entities) + 1))
+    # Two overlapping probes with distinct environments (build_probe_environments.py)
+    # split the room into west and east halves for per-pixel probe blending.
+    for name, x, asset in (("Reflection Probe West", -4.0, "showcase/probe_cool.hdr"),
+                           ("Reflection Probe East", 4.0, "showcase/probe_warm.hdr")):
+        writer.add(name, Matrix.Translation((x, 2.0, -3.0)),
+                   {"reflection_probe": {"half_extents": [4.0, 2.0, 6.0], "blend_distance": 1.5, "priority": 0,
+                                         "environment_asset": asset}})
     return {"version": 1, "entities": writer.entities}
 
 
@@ -526,7 +533,7 @@ PROJECT = {
     "renderSettings": {
         "version": 1, "antialiasing": 2, "shadows": 3, "lighting": 1, "bloom": 1, "tonemap": 1,
         "environment": 2, "environmentBackground": True, "localLights": 1, "maximumLocalLights": 1024,
-        "reflectionProbes": True, "preferGpuDrivenSubmission": False, "depthPrepass": True,
+        "reflectionProbes": True, "reflectionProbeBlending": 1, "preferGpuDrivenSubmission": False, "depthPrepass": True,
         "lodErrorThresholdPixels": 1.0, "cascadeSplitLambda": 0.65, "cascadeBlendFraction": 0.1,
         "visualizeShadowCascades": False, "ambientOcclusion": 2, "reflections": 2,
     },
