@@ -517,16 +517,18 @@ the CPU-testable level-extent and texel-coverage rules the shaders mirror.
 ### `src/engine/graphics/passes/AmbientOcclusionPass.*`
 
 GTAO after the depth prepass: `gtao.comp` writes raw visibility and view depth
-(one shared RG16F image), `gtao_denoise.comp` blurs it depth-aware into an R8
-image per frame slot that `mesh.frag` reads at camera binding 13 for indirect
-diffuse and specular occlusion. Half or full render resolution; cleared to 1
+(one shared RG16F image); at full resolution `gtao_denoise.comp` blurs it
+depth-aware, at half resolution `gtao_upsample.comp` denoises and upsamples it,
+into an R8 render-resolution image per frame slot that `mesh.frag` reads at
+camera binding 13 for indirect diffuse and specular occlusion. Cleared to 1
 when occlusion is off or the prepass did not run.
 
 ### `src/engine/graphics/AmbientOcclusion.*`
 
-CPU mirror of the GTAO integration, view-position reconstruction from
-reversed-Z depth, occlusion-texel mapping under dynamic resolution, specular
-occlusion, and denoise weights; `tests/engine/AmbientOcclusionTests.cpp`
+CPU mirror of the GTAO integration, per-quality sampling profiles, horizon
+sampling of depth-pyramid levels, view-position reconstruction from reversed-Z
+depth, occlusion-texel mapping under dynamic resolution, specular occlusion,
+and denoise and upsample weights; `tests/engine/AmbientOcclusionTests.cpp`
 covers it.
 
 ### `src/engine/graphics/MeshLodSelection.*`
@@ -724,7 +726,8 @@ mirror is in `TemporalQuality.*`.
 | `shaders/bloom_downsample.comp` | 13-tap bloom downsample; Karis average on the first level. |
 | `shaders/bloom_upsample.comp` | 3x3 tent bloom upsample accumulated into the next larger level. |
 | `shaders/gtao.comp` | Integrates ground-truth ambient occlusion from prepass depth and normals. |
-| `shaders/gtao_denoise.comp` | Depth-aware 5x5 blur of the raw GTAO visibility. |
+| `shaders/gtao_denoise.comp` | Depth-aware 5x5 blur of the raw GTAO visibility (full resolution). |
+| `shaders/gtao_upsample.comp` | Depth-aware denoise and upsample of half-resolution GTAO to the render resolution. |
 | `shaders/ssr_trace.comp` | Hi-Z screen-space reflection trace over the closest-depth pyramid. |
 | `shaders/ssr_composite.comp` | Blends traced reflections into the HDR scene before blended surfaces. |
 | `shaders/light_clusters.comp` | Assigns local lights to view clusters for clustered forward shading. |

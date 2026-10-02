@@ -1,11 +1,13 @@
 #version 450
 
-// Depth-aware 5x5 blur of gtao.comp's raw visibility. The window covers the 4x4
+// Depth-aware 5x5 blur of gtao.comp's raw visibility at full resolution
+// (gtao_upsample.comp replaces it at half resolution). The window covers the 4x4
 // noise tile with equal weight per phase, so on flat regions every slice
 // rotation contributes equally to each texel; neighbours
 // across depth edges are rejected (mirrors denoiseDepthWeight in
 // src/engine/graphics/AmbientOcclusion.cpp). Temporal accumulation is left to
-// the temporal resolve.
+// the temporal resolve. The clamp and occlusion power follow the average, so
+// raw estimates above 1 do not bias the result darker.
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -16,6 +18,7 @@ layout(set = 0, binding = 1, r8) uniform writeonly image2D occlusion;
 // Mirrors DenoiseSettings in AmbientOcclusionPass.cpp.
 layout(push_constant) uniform Settings {
     ivec2 dispatchExtent; // texels written by gtao.comp and by this pass
+    float occlusionPower; // see ambient_occlusion::applyOcclusionPower
 } settings;
 
 const float DEPTH_TOLERANCE = 0.1;
@@ -51,5 +54,5 @@ void main() {
         }
     }
     // The center always has weight 1, so totalWeight > 0.
-    imageStore(occlusion, texel, vec4(weightedVisibility / totalWeight));
+    imageStore(occlusion, texel, vec4(pow(clamp(weightedVisibility / totalWeight, 0.0, 1.0), settings.occlusionPower)));
 }

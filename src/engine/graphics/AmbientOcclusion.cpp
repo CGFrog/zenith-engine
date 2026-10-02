@@ -7,6 +7,8 @@ namespace ambient_occlusion {
 namespace {
 // Relative view-depth difference at which a denoise neighbour stops counting.
 constexpr float denoiseDepthTolerance = 0.1f;
+// Weight an upsampling texel across a depth edge keeps; mirrors gtao_upsample.comp.
+constexpr float upsampleEdgeWeight = 1e-3f;
 
 // Highest horizon cosine found along one side of a slice. `lowCosine` is the
 // horizon of an unoccluded hemisphere on that side; samples fade towards it
@@ -19,17 +21,18 @@ float sideHorizonCosine(const GtaoSample& sample, const ViewPositionSource& posi
     const glm::vec3 viewVector = glm::normalize(-sample.viewPosition);
     const glm::vec2 center = glm::vec2(sample.pixel) + 0.5f;
     float horizon = lowCosine;
+    const uint32_t level = parameters.horizonDepthLevel;
+    const float minimumOffset = minimumStepPixels(level);
     for (uint32_t step = 0; step < parameters.stepsPerSide; ++step) {
         float distance = (static_cast<float>(step) + sample.stepNoise) / static_cast<float>(parameters.stepsPerSide);
         // Quadratic spacing concentrates samples near the center.
-        const float offsetPixels = std::max(distance * distance * radiusPixels, 1.0f);
-        const glm::vec2 position = center + screenDirection * offsetPixels;
-        const glm::ivec2 pixel(static_cast<int>(std::floor(position.x)), static_cast<int>(std::floor(position.y)));
-        if (pixel.x < 0 || pixel.y < 0 || pixel.x >= static_cast<int>(sample.renderExtent.x) ||
-            pixel.y >= static_cast<int>(sample.renderExtent.y)) {
+        const float offsetPixels = std::max(distance * distance * radiusPixels, minimumOffset);
+        const std::optional<glm::ivec2> texel =
+            horizonTexel(center + screenDirection * offsetPixels, level, sample.renderExtent);
+        if (!texel) {
             continue;
         }
-        const std::optional<glm::vec3> samplePosition = positions(pixel);
+        const std::optional<glm::vec3> samplePosition = positions(*texel, level);
         if (!samplePosition) {
             continue;
         }
@@ -45,6 +48,17 @@ float sideHorizonCosine(const GtaoSample& sample, const ViewPositionSource& posi
     return horizon;
 }
 } // namespace
+
+GtaoQualityProfile qualityProfile(AmbientOcclusionQuality quality) {
+    if (quality == AmbientOcclusionQuality::HalfResolution) {
+        // Half the texels in each direction, two slices instead of three, and
+        // horizons from pyramid level 1, whose texels match the occlusion
+        // texels' footprint. The 4x4 noise tile still gives the denoiser 32
+        // slice directions per window.
+        return {.resolutionScale = 0.5f, .parameters = {.sliceCount = 2, .stepsPerSide = 4, .horizonDepthLevel = 1}};
+    }
+    return {.resolutionScale = 1.0f, .parameters = {}};
+}
 
 glm::uvec2 occlusionExtent(glm::uvec2 renderExtent, float scale) {
     const glm::vec2 scaled = glm::ceil(glm::vec2(renderExtent) * scale);
@@ -62,6 +76,30 @@ glm::ivec2 sourcePixel(glm::uvec2 texel, float scale, glm::uvec2 renderExtent) {
 
 glm::vec2 occlusionUv(glm::vec2 fragmentCoordinate, float scale, glm::uvec2 storageExtent) {
     return (fragmentCoordinate * scale + 0.5f * (1.0f - scale)) / glm::vec2(storageExtent);
+}
+
+std::optional<glm::ivec2> horizonTexel(glm::vec2 pixelPosition, uint32_t level, glm::uvec2 renderExtent) {
+    const glm::ivec2 pixel(static_cast<int>(std::floor(pixelPosition.x)),
+                           static_cast<int>(std::floor(pixelPosition.y)));
+    if (pixel.x < 0 || pixel.y < 0 || pixel.x >= static_cast<int>(renderExtent.x) ||
+        pixel.y >= static_cast<int>(renderExtent.y)) {
+        return std::nullopt;
+    }
+    const glm::ivec2 levelExtent(glm::max(glm::uvec2(renderExtent.x >> level, renderExtent.y >> level), 1u));
+    return glm::min(glm::ivec2(pixel.x >> level, pixel.y >> level), levelExtent - 1);
+}
+
+glm::vec2 horizonTexelCenter(glm::ivec2 texel, uint32_t level) {
+    return (glm::vec2(texel) + 0.5f) * static_cast<float>(1u << level);
+}
+
+bool horizonUsesClosestDepth(glm::ivec2 texel) {
+    return ((texel.x + texel.y) & 1) != 0;
+}
+
+float minimumStepPixels(uint32_t level) {
+    // 1.5 texels reaches the next texel along any direction, diagonals included.
+    return level == 0 ? 1.0f : 1.5f * static_cast<float>(1u << level);
 }
 
 glm::vec3 reconstructViewPosition(const glm::mat4& inverseProjection, glm::vec2 pixel, glm::uvec2 renderExtent,
@@ -117,7 +155,7 @@ float integrateVisibility(const GtaoSample& sample, const ViewPositionSource& po
         h1 = n + std::min(h1 - n, 0.5f * pi);
         visibility += sliceDensityWeight(direction, viewVector) * projectedLength * sliceArcVisibility(h0, h1, n);
     }
-    return std::clamp(visibility / static_cast<float>(parameters.sliceCount), 0.0f, 1.0f);
+    return std::max(visibility / static_cast<float>(parameters.sliceCount), 0.0f);
 }
 
 float applyOcclusionPower(float visibility, const GtaoParameters& parameters) {
@@ -141,6 +179,14 @@ float denoiseSpatialWeight(int offset) {
 float denoiseDepthWeight(float centerDepth, float sampleDepth) {
     const float tolerance = std::max(centerDepth * denoiseDepthTolerance, 1e-4f);
     return std::clamp(1.0f - std::abs(sampleDepth - centerDepth) / tolerance, 0.0f, 1.0f);
+}
+
+glm::ivec2 upsampleWindowOrigin(glm::ivec2 pixel) {
+    return glm::ivec2(pixel.x >> 1, pixel.y >> 1) - 1;
+}
+
+float upsampleDepthWeight(float pixelDepth, float sampleDepth) {
+    return denoiseDepthWeight(pixelDepth, sampleDepth) + upsampleEdgeWeight;
 }
 
 } // namespace ambient_occlusion

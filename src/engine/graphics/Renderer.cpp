@@ -14,11 +14,12 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
     if (SDL_getenv("ZENITH_FORCE_TAA") != nullptr) {
         settings.antialiasing = AntialiasingMode::Taa;
     }
-    // Every renderer feature at its highest quality; documented with the other
-    // diagnostic variables in docs/RENDERER_VALIDATION.md.
+    // Every renderer feature at its highest quality (ambient occlusion at the
+    // half-resolution default, which matches full resolution visually);
+    // documented with the other diagnostic variables in docs/RENDERER_VALIDATION.md.
     if (SDL_getenv("ZENITH_FORCE_HIGH_QUALITY") != nullptr) {
         settings.antialiasing = AntialiasingMode::Taa;
-        settings.ambientOcclusion = AmbientOcclusionQuality::FullResolution;
+        settings.ambientOcclusion = AmbientOcclusionQuality::HalfResolution;
         settings.reflections = ReflectionQuality::ScreenSpaceFullResolution;
         settings.environment = EnvironmentQuality::ImageBasedHigh;
         settings.reflectionProbes = true;

@@ -211,7 +211,7 @@ or at the decision point named below, after capability validation.
 
 | Variable | Effect |
 | --- | --- |
-| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, per-pixel reflection probe blending, probe-volume indirect diffuse, clustered local lights with high-quality local shadows, depth prepass on, cascaded (high) shadows, bloom, and High volumetric fog. |
+| `ZENITH_FORCE_HIGH_QUALITY` | TAA, half-resolution AO (the recommended quality; see [Ground-truth ambient occlusion](#ground-truth-ambient-occlusion)), full-resolution screen-space reflections, high image-based lighting, per-pixel reflection probe blending, probe-volume indirect diffuse, clustered local lights with high-quality local shadows, depth prepass on, cascaded (high) shadows, bloom, and High volumetric fog. |
 | `ZENITH_DISABLE_VOLUMETRIC_FOG` | Forces volumetric fog Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
 | `ZENITH_FORCE_TAA` | Temporal anti-aliasing. |
 | `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
@@ -291,6 +291,67 @@ warm-up and 600 measured frames) compared CPU and GPU cascade culling:
 GPU culling moves about 0.3 ms of CPU work per fully redrawn frame at 5,000
 objects onto about 0.14 ms of GPU time; cached cascades cost neither. Small
 scenes gain little, so the trade only pays when the CPU is the bottleneck.
+
+## Ground-truth ambient occlusion
+
+`RenderSettings::ambientOcclusion` selects GTAO's resolution and sampling
+pattern (`ambient_occlusion::qualityProfile`); both qualities write a
+render-resolution R8 image, so shading is identical:
+
+| Quality | Traced texels | Slices x steps per side | Horizon depth | Denoise |
+| --- | --- | --- | --- | --- |
+| **HalfResolution** (recommended) | one per 2x2 pixels | 2 x 4 | pyramid level 1, farthest/closest depth in a checkerboard | `gtao_upsample.comp`: 4x4 raw texels per render pixel, depth-weighted against the pixel's own view depth |
+| **FullResolution** | every pixel | 3 x 4 | pyramid level 0 | `gtao_denoise.comp`: depth-aware 5x5 |
+
+Both rotate slices with a 4x4 ordered dither (advanced per frame under TAA),
+and the denoise window holds each of its 16 phases, so half resolution still
+averages 32 slice directions per pixel. The clamp to [0, 1] and the occlusion
+power apply after the average: clamping each few-slice estimate first darkened
+open surfaces far from the view axis. The scope is `gpu.ambient_occlusion` and
+the budget `RenderPassBudgets::ambientOcclusion` (zero, unenforced, like every
+default budget; half resolution fits 0.2 ms at 720p and 0.35 ms at 1080p on the
+reference GPU).
+
+The 2026-10-02 Release measurement (RTX 2070 SUPER, render mode, 200 warm-up
+and 600 measured frames per run, the median of 3-5 alternating runs of each
+configuration; the GPU was shared with other build and benchmark jobs, so p95s
+of the dynamic scenes are noisy) compared the previous implementation (old)
+with this one (new). The showcase used the `gtao_contact` camera
+(`-2,1,0,0,-22`) with only `ambientOcclusion` changed:
+
+| Scene | Resolution | Configuration | `gpu.ambient_occlusion` median / p95 | `gpu.frame` median / p95 |
+| --- | --- | --- | ---: | ---: |
+| showcase | 1280x720 | old Full | 0.504 / 0.511 ms | 2.295 / 2.325 ms |
+| showcase | 1280x720 | old Half | 0.161 / 0.164 ms | 1.936 / 1.956 ms |
+| showcase | 1280x720 | new Full | 0.514 / 0.519 ms | 2.302 / 2.331 ms |
+| showcase | 1280x720 | new Half | 0.143 / 0.144 ms | 1.923 / 1.945 ms |
+| showcase | 1280x720 | Off | - | 1.775 / 1.792 ms |
+| showcase | 1920x1080 | old Full | 2.050 / 2.134 ms | 5.530 / 5.683 ms |
+| showcase | 1920x1080 | old Half | 0.709 / 0.730 ms | 4.158 / 4.229 ms |
+| showcase | 1920x1080 | new Full | 2.067 / 2.157 ms | 5.552 / 5.693 ms |
+| showcase | 1920x1080 | new Half | 0.320 / 0.323 ms | 3.788 / 3.861 ms |
+| showcase | 1920x1080 | Off | - | 3.473 / 3.540 ms |
+| demo, `ZENITH_FORCE_HIGH_QUALITY` | 1280x720 | old (Full) | 0.313 / 0.395 ms | 1.016 / 1.124 ms |
+| demo, `ZENITH_FORCE_HIGH_QUALITY` | 1280x720 | new (Half) | 0.106 / 0.119 ms | 0.808 / 0.846 ms |
+| demo, `ZENITH_FORCE_HIGH_QUALITY` | 1920x1080 | old (Full) | 0.762 / 1.024 ms | 2.064 / 2.419 ms |
+| demo, `ZENITH_FORCE_HIGH_QUALITY` | 1920x1080 | new (Half) | 0.229 / 0.266 ms | 1.536 / 1.672 ms |
+| 4,000 objects, `ZENITH_FORCE_HIGH_QUALITY` | 1280x720 | old (Full) | 0.470 / 1.477 ms | 1.564 / 5.642 ms |
+| 4,000 objects, `ZENITH_FORCE_HIGH_QUALITY` | 1280x720 | new (Half) | 0.162 / 0.567 ms | 1.378 / 4.932 ms |
+
+Half resolution now costs 0.14 ms at 720p and 0.32 ms at 1080p, a 3.5x and
+6.4x reduction from full resolution, and less than the previous half-resolution
+path, which traced 3 slices against full-resolution depth and was upsampled
+bilinearly in `mesh.frag`. Full resolution is unchanged within noise. The
+remaining shading cost (`gpu.opaque` minus GTAO) matches Off.
+
+Image quality at 1280x720 on the `gtao_contact` view (8-bit RMSE of the final
+image): new Half differs from new Full by 0.46 (old Half from old Full: 0.30),
+while ambient occlusion itself accounts for an RMSE of 5.0 against Off. Contact
+shadows under the spheres and along the pedestal bases are preserved, the
+depth-weighted upsample shows no halos at silhouettes, and the result is
+slightly softer in the pedestals' fine surface detail. Moving the clamp after
+the average changed new Full by an RMSE of 0.41 from old Full (largest channel
+difference 4), within the reference-capture tolerance.
 
 ## Reflection probe blending
 

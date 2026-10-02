@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Rendering.hpp"
+
 #include <glm/glm.hpp>
 
 #include <cstdint>
@@ -7,8 +9,8 @@
 #include <optional>
 
 // Ground-truth ambient occlusion (GTAO, Jimenez et al. 2016): CPU mirror of
-// shaders/gtao.comp, shaders/gtao_denoise.comp, and the occlusion lookup in
-// shaders/mesh.frag, for tests and tools. Keep the formulas in sync.
+// shaders/gtao.comp, shaders/gtao_denoise.comp, shaders/gtao_upsample.comp, and
+// the occlusion lookup in shaders/mesh.frag, for tests and tools. Keep the formulas in sync.
 //
 // Conventions:
 // - Scene depth is reversed Z (near = 1, far = 0, see DepthConvention.hpp);
@@ -24,7 +26,7 @@ namespace ambient_occlusion {
 
 inline constexpr float pi = 3.14159265358979f;
 
-// Tunable integration settings, shared by both resolutions.
+// Tunable integration settings; qualityProfile() picks them per quality.
 struct GtaoParameters {
     // View-space radius of the occlusion search, in world units.
     float radius{0.75f};
@@ -34,7 +36,21 @@ struct GtaoParameters {
     uint32_t stepsPerSide{4};
     // Exponent applied to the integrated visibility.
     float occlusionPower{1.25f};
+    // Depth-pyramid level the horizon samples read. Level L texels cover
+    // 2^L x 2^L render pixels; above level 0 a checkerboard alternates between
+    // their farthest and closest depth (see horizonUsesClosestDepth).
+    uint32_t horizonDepthLevel{0};
 };
+
+// Resolution and sampling pattern of one AmbientOcclusionQuality.
+struct GtaoQualityProfile {
+    // Occlusion texels per render pixel along each axis.
+    float resolutionScale{1.0f};
+    GtaoParameters parameters;
+};
+
+// Off reports the full-resolution profile; nothing is computed for it.
+GtaoQualityProfile qualityProfile(AmbientOcclusionQuality quality);
 
 // Number of occlusion texels that cover the render extent at `scale`.
 glm::uvec2 occlusionExtent(glm::uvec2 renderExtent, float scale);
@@ -70,8 +86,25 @@ float sliceArcVisibility(float h0, float h1, float n);
 // unit view-space direction (screen direction with y flipped, z = 0).
 float sliceDensityWeight(glm::vec3 direction, glm::vec3 viewVector);
 
-// View-space position at a render pixel, or nothing for the sky.
-using ViewPositionSource = std::function<std::optional<glm::vec3>(glm::ivec2 pixel)>;
+// Depth-pyramid texel of `level` that a continuous render-pixel position falls
+// in (see DepthPyramidLayout.hpp), or nothing outside the render extent.
+std::optional<glm::ivec2> horizonTexel(glm::vec2 pixelPosition, uint32_t level, glm::uvec2 renderExtent);
+
+// Continuous render-pixel position whose view position a level texel stands for.
+glm::vec2 horizonTexelCenter(glm::ivec2 texel, uint32_t level);
+
+// Above level 0, texels on one checkerboard colour report the closest depth
+// they cover and the others the farthest, so thin occluders and the surfaces
+// behind them both survive the downsampling.
+bool horizonUsesClosestDepth(glm::ivec2 texel);
+
+// Shortest screen distance, in render pixels, of a horizon sample; at higher
+// levels it skips the texel that holds the center pixel itself.
+float minimumStepPixels(uint32_t level);
+
+// View-space position a horizon sample reads at a texel of `level` (the
+// checkerboarded depth at horizonTexelCenter), or nothing for the sky.
+using ViewPositionSource = std::function<std::optional<glm::vec3>(glm::ivec2 texel, uint32_t level)>;
 
 struct GtaoSample {
     // Render pixel (integer) the occlusion is evaluated at.
@@ -87,11 +120,15 @@ struct GtaoSample {
     float stepNoise{0.0f};
 };
 
-// Visibility in [0, 1] (1 = unoccluded) before the occlusion power is applied.
+// Unbiased visibility estimate (1 = unoccluded) before the occlusion power is
+// applied. It is never negative but may exceed 1 with few slices off the view
+// axis; the denoiser averages estimates before applyOcclusionPower clamps them,
+// so clamping does not bias the result darker.
 float integrateVisibility(const GtaoSample& sample, const ViewPositionSource& positions,
                           const GtaoParameters& parameters);
 
-// Final stored occlusion for a raw visibility.
+// Final stored occlusion for a denoised visibility: clamped to [0, 1], then
+// raised to the occlusion power.
 float applyOcclusionPower(float visibility, const GtaoParameters& parameters);
 
 // Lagarde's specular occlusion from ambient occlusion, roughness, and n.v. It
@@ -109,5 +146,17 @@ float denoiseSpatialWeight(int offset);
 // Weight of a denoise neighbour with view depth `sampleDepth` around a center
 // at `centerDepth`; 1 at equal depth, falling to 0 across an edge.
 float denoiseDepthWeight(float centerDepth, float sampleDepth);
+
+// Half resolution denoises and upsamples in one pass (shaders/gtao_upsample.comp):
+// render pixel p averages the upsampleWindowSize x upsampleWindowSize raw
+// texels starting at upsampleWindowOrigin(p), which hold every phase of the
+// noise tile once, each weighted by upsampleDepthWeight against the pixel's
+// own view depth. Raw texel t is evaluated at render pixel 2t.
+inline constexpr int upsampleWindowSize = noiseTileSize;
+glm::ivec2 upsampleWindowOrigin(glm::ivec2 pixel);
+
+// denoiseDepthWeight plus a tiny floor, so a window with no matching depth
+// (for example only sky texels) falls back to a plain average.
+float upsampleDepthWeight(float pixelDepth, float sampleDepth);
 
 } // namespace ambient_occlusion

@@ -26,9 +26,13 @@ struct AmbientOcclusionInput {
     bool temporalNoise{false};
 };
 
-// Ground-truth ambient occlusion (shaders/gtao.comp) plus a depth-aware spatial
-// denoise (shaders/gtao_denoise.comp), run after the depth prepass so the
-// shading pass can apply it to indirect lighting only.
+// Ground-truth ambient occlusion (shaders/gtao.comp), run after the depth
+// prepass so the shading pass can apply it to indirect lighting only. Full
+// resolution follows it with a depth-aware spatial denoise
+// (shaders/gtao_denoise.comp); half resolution traces a quarter of the texels
+// with a cheaper sampling pattern (ambient_occlusion::qualityProfile) and then
+// denoises and upsamples to the render resolution in one depth-aware pass
+// (shaders/gtao_upsample.comp).
 //
 // Contract for readers:
 // - occlusionView(frame) is an R8 visibility image (1 = unoccluded) that stays
@@ -46,7 +50,9 @@ class AmbientOcclusionPass {
     static constexpr VkFormat rawFormat = VK_FORMAT_R16G16_SFLOAT;
     static constexpr VkImageLayout occlusionLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-    // Occlusion texels per render pixel; Off reports 1.
+    // Texels per render pixel in occlusionView(). Every quality upsamples to
+    // the render resolution, so this is 1; GTAO's own resolution is
+    // ambient_occlusion::qualityProfile(quality).resolutionScale.
     static float resolutionScale(AmbientOcclusionQuality quality);
 
     bool init(const VulkanContext& context, uint32_t frameCount, VkExtent2D storageExtent);
@@ -75,7 +81,7 @@ class AmbientOcclusionPass {
     // Zero when the device cannot write the storage formats; record() then
     // behaves like recordUnoccluded().
     uint32_t pipelineCount() const {
-        return m_computeSupported ? 2u : 0u;
+        return m_computeSupported ? 3u : 0u;
     }
 
   private:
@@ -101,23 +107,33 @@ class AmbientOcclusionPass {
     bool createImage(VkFormat format, VkImageUsageFlags usage, const char* name, Image& output);
     void destroyImage(Image& image);
     void destroyImages();
-    void recordGtao(VkCommandBuffer commandBuffer, float scale, glm::uvec2 dispatchExtent,
-                    const AmbientOcclusionInput& input);
-    void recordDenoise(VkCommandBuffer commandBuffer, uint32_t frameIndex, glm::uvec2 dispatchExtent);
+    void recordGtao(VkCommandBuffer commandBuffer, const ambient_occlusion::GtaoQualityProfile& profile,
+                    glm::uvec2 dispatchExtent, const AmbientOcclusionInput& input);
+    void recordDenoise(VkCommandBuffer commandBuffer, uint32_t frameIndex, glm::uvec2 dispatchExtent,
+                       float occlusionPower);
+    void recordUpsample(VkCommandBuffer commandBuffer, uint32_t frameIndex, glm::uvec2 rawExtent, float occlusionPower,
+                        const AmbientOcclusionInput& input);
+    // Moves the frame slot's occlusion image to a compute write after its
+    // previous reader or clear.
+    void prepareOcclusionWrite(VkCommandBuffer commandBuffer, FrameOcclusion& frame);
+    // Makes the compute write visible to the shading pass.
+    void finishOcclusionWrite(VkCommandBuffer commandBuffer, FrameOcclusion& frame);
 
     VkDevice m_device{VK_NULL_HANDLE};
     VmaAllocator m_allocator{VK_NULL_HANDLE};
     VkDescriptorSetLayout m_gtaoLayout{VK_NULL_HANDLE};
     VkDescriptorSetLayout m_denoiseLayout{VK_NULL_HANDLE};
+    VkDescriptorSetLayout m_upsampleLayout{VK_NULL_HANDLE};
     VkSampler m_pointSampler{VK_NULL_HANDLE};
     VkSampler m_linearSampler{VK_NULL_HANDLE};
     ComputePipeline m_gtaoPipeline;
     ComputePipeline m_denoisePipeline;
-    ambient_occlusion::GtaoParameters m_parameters;
+    ComputePipeline m_upsamplePipeline;
     bool m_computeSupported{false};
     VkExtent2D m_storageExtent{};
-    // Shared by every frame slot: it lives only between the two dispatches,
-    // and queue-ordered barriers keep consecutive frames from overlapping.
+    // Shared by every frame slot: it lives only between GTAO and the denoise
+    // or upsample dispatch, and queue-ordered barriers keep consecutive frames
+    // from overlapping.
     Image m_raw;
     bool m_rawInitialized{false};
     std::vector<FrameOcclusion> m_frames;

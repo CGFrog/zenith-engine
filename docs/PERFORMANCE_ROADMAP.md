@@ -230,6 +230,16 @@ included in the same frame-budget system as existing passes.
   devices select an explicit fallback, and its worst representative scene fits
   the declared GPU and memory budget.
 
+GTAO cost (Milestone 25, 2026-10-02): full-resolution GTAO measured 0.50 ms at
+1280x720 and 2.05 ms at 1920x1080 on the reference RTX 2070 SUPER. Half
+resolution now traces 2 slices x 4 steps against depth-pyramid level 1 and
+denoises and upsamples to the render resolution in one depth-aware pass:
+0.14 ms at 720p and 0.32 ms at 1080p with visually equivalent contact
+occlusion, so it is the recommended quality and the one
+`ZENITH_FORCE_HIGH_QUALITY` selects. Full resolution remains available and
+unchanged in cost. `RENDERER_VALIDATION.md` has the full table and the image
+comparison.
+
 ## Step 7: physics scale and capability expansion
 
 Optimize the synchronization boundary before adding more simulation features.
