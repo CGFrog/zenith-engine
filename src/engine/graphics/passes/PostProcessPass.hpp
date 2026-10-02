@@ -13,7 +13,6 @@ class PostProcessPass {
   public:
     static constexpr VkFormat sceneFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
     static constexpr VkFormat motionFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-    static constexpr VkFormat ambientOcclusionFormat = VK_FORMAT_R8_UNORM;
     // Depth prepass output: octahedral view-space normal in rg, roughness in
     // b, coverage in a. SceneNormalEncoding.hpp documents the encoding.
     static constexpr VkFormat normalFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
@@ -57,9 +56,6 @@ class PostProcessPass {
         VkImageView motionView{VK_NULL_HANDLE};
         VmaAllocation motionAllocation{VK_NULL_HANDLE};
         bool motionInitialized{false};
-        VkImage ambientOcclusionImage{VK_NULL_HANDLE};
-        VkImageView ambientOcclusionView{VK_NULL_HANDLE};
-        VmaAllocation ambientOcclusionAllocation{VK_NULL_HANDLE};
         VkImage reflectionImage{VK_NULL_HANDLE};
         VkImageView reflectionView{VK_NULL_HANDLE};
         VmaAllocation reflectionAllocation{VK_NULL_HANDLE};
@@ -91,7 +87,6 @@ class PostProcessPass {
     VkDescriptorPool m_pool{VK_NULL_HANDLE};
     VkPipelineLayout m_pipelineLayout{VK_NULL_HANDLE};
     VkPipeline m_pipeline{VK_NULL_HANDLE};
-    VkPipeline m_ambientOcclusionPipeline{VK_NULL_HANDLE};
     VkPipeline m_reflectionPipeline{VK_NULL_HANDLE};
     VkSampler m_colorSampler{VK_NULL_HANDLE};
     VkSampler m_depthSampler{VK_NULL_HANDLE};

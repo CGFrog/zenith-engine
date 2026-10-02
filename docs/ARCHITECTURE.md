@@ -345,7 +345,7 @@ Post-process pass
   resolved scene with TAA (else HDR target within its render extent) + depth
   -> compute: luminance histogram -> adapted exposure buffer (persistent)
   -> compute: bloom downsample/upsample chain (when enabled)
-  -> scalable SSAO/SSR + FXAA (non-TAA) + exposure + bloom mix + AgX tone mapping
+  -> scalable SSR + FXAA (non-TAA) + exposure + bloom mix + AgX tone mapping
   -> swapchain image
 
 Game UI pass
@@ -414,6 +414,22 @@ frame being recorded only when the prepass ran):
   base pixel `p` lies in texel `min(p >> L, levelExtent - 1)`. Normalized UVs
   must be scaled by `levelExtent / storageExtent` of the sampled level.
   Readers in compute or fragment shaders are ordered before the next rebuild.
+
+Ambient occlusion (`AmbientOcclusionPass`) is GTAO: right after the prepass
+and pyramid, `gtao.comp` integrates cosine-weighted horizon visibility per
+slice from pyramid level 0 and the prepass normals (view positions come from
+the inverse of the jittered projection), at half or full render resolution per
+`AmbientOcclusionQuality`; `gtao_denoise.comp` applies a depth-aware 5x5 blur
+that covers its 4x4 noise tile. The R8 result (one image per frame slot, kept
+in `GENERAL`) is camera binding 13, which `mesh.frag` samples with
+`ambient_occlusion::occlusionUv` (scale in `environmentParams.w`). Its minimum
+with material occlusion attenuates indirect diffuse, and Lagarde's specular
+occlusion attenuates indirect specular; blended surfaces skip it. With TAA the
+noise rotates per frame and the temporal resolve supplies stability. When the
+prepass is off (its normals are missing) or occlusion is Off, the image is
+cleared to 1 and no dispatch runs. `AmbientOcclusion.hpp` mirrors the
+integration on the CPU.
+
 The primary directional and environment light components provide direct-light,
 shadow, sky, and ground settings. Material occlusion attenuates only indirect
 environment lighting, leaving direct and emissive contributions unchanged.

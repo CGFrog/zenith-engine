@@ -12,6 +12,7 @@
 #include "../resources/GeometryArena.hpp"
 #include "../resources/UploadContext.hpp"
 #include "../vulkan/VulkanContext.hpp"
+#include "AmbientOcclusionPass.hpp"
 #include "ClusteredLightingPass.hpp"
 #include "DepthPyramid.hpp"
 #include "EnvironmentPass.hpp"
@@ -63,8 +64,8 @@ class MeshPass {
 
     uint32_t prewarmedPipelineCount() const {
         // Twelve graphics pipelines (two depth-normal), the light-cluster
-        // assignment, and the depth-pyramid build.
-        return 14u + (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
+        // assignment, the depth-pyramid build, and ambient occlusion.
+        return 14u + m_ambientOcclusion.pipelineCount() + (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
     }
 
     uint32_t localLightCapacity() const {
@@ -200,6 +201,8 @@ class MeshPass {
     bool createGeometryBuffer(VkDeviceSize size, VkBufferUsageFlags usage, GpuBuffer& output);
     bool createZeroSkinInfluence();
     void writeClusteredLightingDescriptors();
+    // Binds each frame slot's occlusion image to camera binding 13 of both sets.
+    void writeAmbientOcclusionDescriptors();
     bool ensureGeometryPage(uint32_t page);
     void destroyGeometryPage(const GeometryPage& page);
     void bindGeometryPage(VkCommandBuffer commandBuffer, uint32_t page) const;
@@ -275,6 +278,11 @@ class MeshPass {
     void recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive, VkImage depthImage, VkImageView depthView,
                             const glm::mat4& viewProjection, const MeshLodView& lodView);
     void recordDepthNormalItems(const DrawContext& draw);
+    // Computes the frame's occlusion from this frame's prepass outputs, or
+    // clears it to unoccluded when `quality` is Off (also used when the
+    // prepass did not run). Records timestamps 10 and 11 either way.
+    void recordAmbientOcclusion(const DrawContext& draw, AmbientOcclusionQuality quality, const glm::mat4& projection,
+                                bool temporalNoise);
     void bindOpaquePipeline(const DrawContext& draw, const GraphicsPipeline& pipeline, OpaquePipelines pipelines,
                             VkDescriptorSet cameraSet) const;
     void selectRenderItemLods(const MeshLodView& view);
@@ -353,6 +361,7 @@ class MeshPass {
     GraphicsPipeline m_depthNormalDoubleSidedPipeline;
     PostProcessPass m_postProcess;
     DepthPyramid m_depthPyramid;
+    AmbientOcclusionPass m_ambientOcclusion;
     // Frame slot whose latest record() ran the depth prepass, if any.
     std::optional<uint32_t> m_depthPrepassFrame;
     GpuDrivenPass m_gpuDrivenPass;

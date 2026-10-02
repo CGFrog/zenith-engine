@@ -47,6 +47,8 @@ constexpr uint32_t doubleSidedBucket = 1;
 constexpr uint32_t mainObjectBase = maximumShadowCascades * maximumObjectsPerFrame;
 // Camera-set binding of the previous frame's skin palettes (mesh.vert).
 constexpr uint32_t previousSkinPaletteBinding = 12;
+// Camera-set binding of the frame's screen-space ambient occlusion (mesh.frag).
+constexpr uint32_t ambientOcclusionBinding = 13;
 
 struct CameraData {
     glm::mat4 viewProjection{1.0f};
@@ -69,7 +71,8 @@ struct CameraData {
     // Columns, rows, depth slices, uploaded local-light count.
     glm::uvec4 clusterGrid{0u};
     // x: image-based lighting enabled, y: reflection-probe blend weight,
-    // z: prefiltered specular mip holding roughness 1, w: unused.
+    // z: prefiltered specular mip holding roughness 1, w: ambient-occlusion
+    // texels per render pixel (see ambient_occlusion::occlusionUv).
     glm::vec4 environmentParams{0.0f};
     // Temporal resolve: NDC jitter of the current (xy) and previous (zw)
     // projections, removed from motion vectors in mesh.frag. Keep last.
@@ -253,7 +256,7 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
         !uploadTexture(normal, m_normalTexture) || !createBindlessDescriptors(context, frameCount) ||
         !createShadowResources(depthFormat) ||
         !m_postProcess.init(context, colorFormat, depthFormat, frameCount, extent, depthView) ||
-        !m_depthPyramid.init(context, extent, depthView) ||
+        !m_depthPyramid.init(context, extent, depthView) || !m_ambientOcclusion.init(context, frameCount, extent) ||
         !createPipeline(PostProcessPass::sceneFormat, depthFormat) ||
         !m_environmentPass.init(context, m_cameraLayout, PostProcessPass::sceneFormat, PostProcessPass::motionFormat,
                                 depthFormat, frameCount)) {
@@ -271,6 +274,7 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     if (m_gpuDrivenSupported && !createGpuDrivenDescriptors()) {
         return false;
     }
+    writeAmbientOcclusionDescriptors();
     return true;
 }
 
@@ -331,14 +335,40 @@ void MeshPass::writeClusteredLightingDescriptors() {
     }
 }
 
+void MeshPass::writeAmbientOcclusionDescriptors() {
+    for (uint32_t frame = 0; frame < m_cameras.size(); ++frame) {
+        const VkDescriptorImageInfo occlusion{.sampler = m_ambientOcclusion.sampler(),
+                                              .imageView = m_ambientOcclusion.occlusionView(frame),
+                                              .imageLayout = AmbientOcclusionPass::occlusionLayout};
+        // The GPU-driven set is written directly: copying would need the
+        // CPU-submission set written first on every resize.
+        std::array<VkWriteDescriptorSet, 2> writes{};
+        uint32_t writeCount = 0;
+        for (VkDescriptorSet set : {m_cameras[frame].descriptor, m_cameras[frame].gpuDrivenDescriptor}) {
+            if (set == VK_NULL_HANDLE) {
+                continue;
+            }
+            writes[writeCount++] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                    .dstSet = set,
+                                    .dstBinding = ambientOcclusionBinding,
+                                    .descriptorCount = 1,
+                                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                    .pImageInfo = &occlusion};
+        }
+        vkUpdateDescriptorSets(m_device, writeCount, writes.data(), 0, nullptr);
+    }
+}
+
 bool MeshPass::resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView) {
     m_depthInitialized = false;
     m_cameraHistoryValid = false;
     m_temporalQuality.invalidateHistory();
     m_depthPrepassFrame.reset();
-    if (!m_postProcess.resize(context, extent, depthView) || !m_depthPyramid.resize(extent, depthView)) {
+    if (!m_postProcess.resize(context, extent, depthView) || !m_depthPyramid.resize(extent, depthView) ||
+        !m_ambientOcclusion.resize(extent)) {
         return false;
     }
+    writeAmbientOcclusionDescriptors();
     if (m_gpuDrivenSupported) {
         m_gpuDrivenPass.bindDepthPyramid(m_depthPyramid);
     }
@@ -396,7 +426,12 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         {.binding = previousSkinPaletteBinding,
          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT}};
+         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT},
+        // Screen-space ambient occlusion, written by AmbientOcclusionPass.
+        {.binding = ambientOcclusionBinding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
     VkDescriptorSetLayoutCreateInfo layoutInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = static_cast<uint32_t>(std::size(cameraBindings)),
@@ -415,7 +450,7 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          .descriptorCount = frameCount * 2 * (7 + EnvironmentPass::environmentSlots)},
         {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         .descriptorCount = frameCount * 2 * (2 + EnvironmentPass::environmentSlots)}};
+         .descriptorCount = frameCount * 2 * (3 + EnvironmentPass::environmentSlots)}};
     VkDescriptorPoolCreateInfo poolInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = frameCount * 2,
@@ -1898,8 +1933,13 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     if (!environmentState) {
         return false;
     }
+    // GTAO needs the prepass normals; without them the occlusion target is
+    // cleared to unoccluded and any scale samples it correctly.
+    const AmbientOcclusionQuality ambientOcclusion =
+        depthPrepass ? rendering.settings().ambientOcclusion : AmbientOcclusionQuality::Off;
     cameraData.environmentParams = {imageBasedLighting ? 1.0f : 0.0f, environmentState->probeWeight,
-                                    environmentState->specularMaximumLod, 0.0f};
+                                    environmentState->specularMaximumLod,
+                                    AmbientOcclusionPass::resolutionScale(ambientOcclusion)};
     const uint32_t localLightLimit =
         rendering.settings().localLights == LocalLightingQuality::Disabled
             ? 0u
@@ -2021,7 +2061,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.temporalHistoryBytes = m_postProcess.temporalHistoryBytes();
     stats.motionVectorBytes =
         static_cast<uint64_t>(extent.width) * extent.height * sizeof(uint16_t) * 4 * m_cameras.size();
-    stats.ambientOcclusionBytes = static_cast<uint64_t>(extent.width) * extent.height * m_cameras.size();
+    stats.ambientOcclusionBytes = m_ambientOcclusion.allocatedBytes();
     stats.reflectionBytes =
         static_cast<uint64_t>(extent.width) * extent.height * sizeof(uint16_t) * 4 * m_cameras.size();
     stats.shadowCacheBytes =
@@ -2137,6 +2177,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     }
     const auto prepassCpuEnd = std::chrono::steady_clock::now();
     m_depthPrepassFrame = depthPrepass ? std::optional<uint32_t>(frameIndex) : std::nullopt;
+    recordAmbientOcclusion(draw, ambientOcclusion, projection,
+                           rendering.settings().antialiasing == AntialiasingMode::Taa);
     m_postProcess.prepareScene(commandBuffer, frameIndex);
     const VkImageView sceneView = m_postProcess.sceneView(frameIndex);
     const VkImageView motionView = m_postProcess.motionView(frameIndex);
@@ -2427,6 +2469,30 @@ SceneGeometryViews MeshPass::sceneGeometry(uint32_t frameIndex) const {
             .storageExtent = m_depthPyramid.storageExtent()};
 }
 
+void MeshPass::recordAmbientOcclusion(const DrawContext& draw, AmbientOcclusionQuality quality,
+                                      const glm::mat4& projection, bool temporalNoise) {
+    if (draw.timestampQueries) {
+        vkCmdWriteTimestamp2(draw.commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, draw.timestampQueries, 10);
+    }
+    const SceneGeometryViews geometry = sceneGeometry(draw.frameIndex);
+    if (quality == AmbientOcclusionQuality::Off || !geometry.valid()) {
+        m_ambientOcclusion.recordUnoccluded(draw.commandBuffer, draw.frameIndex);
+    } else {
+        m_ambientOcclusion.record(
+            draw.commandBuffer, draw.frameIndex, quality,
+            {.normals = geometry.normals,
+             .depthPyramid = geometry.depthPyramid,
+             .depthPyramidSampler = geometry.depthPyramidSampler,
+             .renderExtent = geometry.renderExtent,
+             .inverseProjection = glm::inverse(projection),
+             .projectionScale = 0.5f * static_cast<float>(geometry.renderExtent.height) * std::abs(projection[1][1]),
+             .temporalNoise = temporalNoise});
+    }
+    if (draw.timestampQueries) {
+        vkCmdWriteTimestamp2(draw.commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, draw.timestampQueries, 11);
+    }
+}
+
 void MeshPass::prepareDepthForPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const {
     imageBarrier(commandBuffer, depthImage, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
                  VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
@@ -2686,6 +2752,7 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_depthNormalDoubleSidedPipeline.shutdown(context.device());
     m_postProcess.shutdown(context);
     m_depthPyramid.shutdown();
+    m_ambientOcclusion.shutdown();
     m_depthPrepassFrame.reset();
     m_meshes.clear();
     m_unpackableMeshes.clear();

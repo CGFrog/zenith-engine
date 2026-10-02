@@ -24,7 +24,9 @@ layout(set = 0, binding = 0) uniform CameraData {
     vec4 clusterDepth;     // xy: slice log scale, bias; zw: view depth = z / (depth + w)
     vec4 clusterTileScale; // xy: cluster columns, rows per pixel
     uvec4 clusterGrid;     // columns, rows, depth slices, local light count
-    vec4 environmentParams; // x: image-based lighting, y: probe weight, z: specular mip of roughness 1
+    // x: image-based lighting, y: probe weight, z: specular mip of roughness 1,
+    // w: ambient-occlusion texels per render pixel
+    vec4 environmentParams;
     // Temporal resolve: NDC jitter applied to the current (xy) and previous (zw)
     // projections, removed from motion vectors. Keep last in the block.
     vec4 temporalJitter;
@@ -41,6 +43,9 @@ layout(std430, set = 0, binding = 6) readonly buffer EnvironmentIrradiance {
 } environmentIrradiance[2];
 // Split-sum BRDF scale and bias, indexed by (n.v, roughness).
 layout(set = 0, binding = 7) uniform sampler2D environmentBrdf;
+// GTAO visibility of the opaque scene (AmbientOcclusionPass); uniformly 1 when
+// ambient occlusion is off or the depth prepass did not run.
+layout(set = 0, binding = 13) uniform sampler2D screenSpaceOcclusion;
 
 // Mirrors MaterialRecord in MeshPass.cpp (std430).
 struct MaterialRecord {
@@ -239,28 +244,47 @@ vec3 prefilteredRadiance(vec3 direction, float roughness) {
     return radiance;
 }
 
+// Lagarde's specular occlusion from ambient occlusion: 1 when unoccluded, 0
+// when fully occluded. Mirrors ambient_occlusion::specularOcclusion.
+float specularOcclusion(float nDotV, float occlusion, float roughness) {
+    return clamp(pow(nDotV + occlusion, exp2(-16.0 * roughness - 1.0)) - 1.0 + occlusion, 0.0, 1.0);
+}
+
+// Screen-space ambient occlusion of the opaque surface at this fragment. The
+// occlusion texel t was evaluated at render pixel center t / scale + 0.5, so
+// fragment f samples texel coordinate f * scale + 0.5 * (1 - scale); mirrors
+// ambient_occlusion::occlusionUv.
+float screenSpaceAmbientOcclusion() {
+    float scale = camera.environmentParams.w;
+    vec2 uv = (gl_FragCoord.xy * scale + 0.5 * (1.0 - scale)) / vec2(textureSize(screenSpaceOcclusion, 0));
+    return textureLod(screenSpaceOcclusion, uv, 0.0).r;
+}
+
 // Flat sky/ground approximation used when image-based lighting is disabled.
-vec3 hemisphereLighting(vec3 normal, float nDotV, vec3 albedo, float metallic, float roughness, vec3 reflectance) {
+// Occlusion applies to the diffuse term and, as specular occlusion, to the
+// reflection term.
+vec3 hemisphereLighting(vec3 normal, float nDotV, vec3 albedo, float metallic, float roughness, vec3 reflectance,
+                        float occlusion) {
     float hemisphereWeight = normal.y * 0.5 + 0.5;
     vec3 diffuseEnvironment = mix(camera.environmentGround.rgb, camera.environmentSky.rgb, hemisphereWeight);
     vec3 indirect = albedo * diffuseEnvironment * camera.environmentSky.w;
-    if (PHYSICALLY_BASED_LIGHTING) {
-        vec3 indirectFresnel = fresnelSchlickRoughness(nDotV, reflectance, roughness);
-        vec3 indirectDiffuse = (vec3(1.0) - indirectFresnel) * (1.0 - metallic) * indirect;
-        float specularLevel = roughness * 5.0;
-        int specularLow = int(floor(specularLevel));
-        int specularHigh = min(specularLow + 1, 5);
-        vec3 specularEnvironment = mix(camera.environmentSpecular[specularLow].rgb,
-                                       camera.environmentSpecular[specularHigh].rgb, fract(specularLevel));
-        vec3 indirectSpecular = indirectFresnel * specularEnvironment * camera.environmentGround.w *
-                                mix(1.0, 0.35, roughness);
-        indirect = indirectDiffuse + indirectSpecular;
+    if (!PHYSICALLY_BASED_LIGHTING) {
+        return indirect * occlusion;
     }
-    return indirect;
+    vec3 indirectFresnel = fresnelSchlickRoughness(nDotV, reflectance, roughness);
+    vec3 indirectDiffuse = (vec3(1.0) - indirectFresnel) * (1.0 - metallic) * indirect;
+    float specularLevel = roughness * 5.0;
+    int specularLow = int(floor(specularLevel));
+    int specularHigh = min(specularLow + 1, 5);
+    vec3 specularEnvironment = mix(camera.environmentSpecular[specularLow].rgb,
+                                   camera.environmentSpecular[specularHigh].rgb, fract(specularLevel));
+    vec3 indirectSpecular = indirectFresnel * specularEnvironment * camera.environmentGround.w *
+                            mix(1.0, 0.35, roughness);
+    return indirectDiffuse * occlusion + indirectSpecular * specularOcclusion(nDotV, occlusion, roughness);
 }
 
-// Split-sum image-based lighting with material ambient occlusion applied to the
-// diffuse term and converted to specular occlusion for reflections.
+// Split-sum image-based lighting with ambient occlusion applied to the diffuse
+// term and converted to specular occlusion for reflections.
 vec3 imageBasedLighting(vec3 normal, vec3 geometricNormal, vec3 viewDirection, float nDotV, vec3 albedo,
                         float metallic, float roughness, vec3 reflectance, float occlusion) {
     vec3 diffuse = albedo * environmentIrradianceAt(normal) * camera.environmentSky.w;
@@ -270,13 +294,11 @@ vec3 imageBasedLighting(vec3 normal, vec3 geometricNormal, vec3 viewDirection, f
     vec3 diffuseWeight = (vec3(1.0) - fresnelSchlickRoughness(nDotV, reflectance, roughness)) * (1.0 - metallic);
     vec3 reflected = reflect(-viewDirection, normal);
     vec2 brdf = textureLod(environmentBrdf, vec2(nDotV, roughness), 0.0).rg;
-    // Lagarde's specular occlusion, plus a horizon fade for reflections that a
-    // normal map bends below the geometric surface.
-    float specularOcclusion =
-        clamp(pow(nDotV + occlusion, exp2(-16.0 * roughness - 1.0)) - 1.0 + occlusion, 0.0, 1.0);
+    // A horizon fade removes reflections that a normal map bends below the
+    // geometric surface.
     float horizon = min(1.0 + dot(reflected, geometricNormal), 1.0);
     vec3 specular = prefilteredRadiance(reflected, roughness) * (reflectance * brdf.x + brdf.y) *
-                    camera.environmentGround.w * specularOcclusion * horizon * horizon;
+                    camera.environmentGround.w * specularOcclusion(nDotV, occlusion, roughness) * horizon * horizon;
     return diffuseWeight * diffuse * occlusion + specular;
 }
 
@@ -292,6 +314,11 @@ void main() {
     float metallic = clamp(orm.b * material.factors.x, 0.0, 1.0);
     float roughness = clamp(orm.g * material.factors.y, 0.045, 1.0);
     float occlusion = mix(1.0, sampleMaterialTexture(material.textures.w, texCoord).r, material.factors.w);
+    // Screen-space occlusion describes the opaque depth; blended surfaces in
+    // front of it keep only their material occlusion.
+    if (material.surface.y < 1.5) {
+        occlusion = min(occlusion, screenSpaceAmbientOcclusion());
+    }
 
     vec3 tangent = normalize(worldTangent.xyz);
     vec3 geometricNormal = normalize(worldNormal);
@@ -343,7 +370,7 @@ void main() {
         indirect = imageBasedLighting(normal, geometricNormal, viewDirection, nDotV, albedo, metallic, roughness,
                                       reflectance, occlusion);
     } else {
-        indirect = hemisphereLighting(normal, nDotV, albedo, metallic, roughness, reflectance) * occlusion;
+        indirect = hemisphereLighting(normal, nDotV, albedo, metallic, roughness, reflectance, occlusion);
     }
     vec3 emissive = sampleMaterialTexture(material.extraTextures.x, texCoord).rgb * material.emissive.rgb;
     vec3 color = direct + indirect + emissive;
