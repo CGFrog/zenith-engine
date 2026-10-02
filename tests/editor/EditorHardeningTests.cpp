@@ -1,5 +1,4 @@
 #include "editor/application/EditorDiagnostics.hpp"
-#include "editor/application/EditorShortcuts.hpp"
 #include "editor/document/EditorRecovery.hpp"
 #include "editor/document/SceneFragment.hpp"
 #include "engine/assets/Assets.hpp"
@@ -50,11 +49,6 @@ int main() {
            "recovery should restore autosaved work");
     std::string discardError;
     expect(recovery.discard(discardError) && !recovery.available(), "discard should remove only the recovery file");
-
-    EditorShortcuts shortcuts;
-    expect(shortcuts.bind("Save", "Ctrl+S").success, "a unique shortcut should bind");
-    expect(!shortcuts.bind("Stop", "Ctrl+S").success, "shortcut conflicts should be rejected");
-    expect(shortcuts.chord("Save") == "Ctrl+S", "shortcut labels should be discoverable from the registry");
 
     EditorDiagnostics diagnostics;
     const uint64_t id = diagnostics.add(EditorDiagnosticSeverity::Error, "Document", "Save failed", "Save As");

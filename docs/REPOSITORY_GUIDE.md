@@ -296,6 +296,22 @@ engine, while neither the engine nor demo depends on editor code.
 application context, a `SceneEditing` view over the document and history, the
 selection, diagnostics, camera, and the session workflows panels may request.
 
+### `src/editor/operators/`
+
+Blender-style operators: every menu item, button, and key runs an `Operator`
+(stable id, label, description, `poll`, `execute`, properties described by
+reflected `Fields<T>`, and `Undo`/`Register` flags) registered in the
+`OperatorRegistry`; game or tool modules can register their own. The
+`OperatorRunner` checks poll, wraps `Undo` operators in one `SceneEditing`
+undo step, reports failures to diagnostics, and keeps the last `Register`
+operator so the Adjust Last Operation panel can undo it and re-run it with
+edited properties. `Keymap` binds chords to operator ids per region (Global,
+Viewport, Outliner) with conflict detection and double-tap triggers; only the
+user's differences from `DefaultKeymap` are saved to `keymap.json` in the
+editor settings directory. `OperatorSearch` is the F3 popup and `KeymapEditor`
+the rebinding window. `ObjectOperators` holds the document-only object
+operators, which run headless in `tests/editor/OperatorTests.cpp`.
+
 ### `src/editor/settings/EditorRenderSettings.*`
 
 Owns the render settings the editor requests and their persistent home: the
@@ -1000,7 +1016,7 @@ The source directory is copied as a whole to `build/assets/` for runtime use.
 | Path | Coverage |
 | --- | --- |
 | `tests/engine/` | Audio, asset importing, scene documents/hierarchy, and physics contracts. |
-| `tests/editor/` | Settings, render-settings persistence and graphics-panel helpers, document state, command history, undoable scene editing and entity commands, selection, camera behavior, and component editing helpers. |
+| `tests/editor/` | Settings, render-settings persistence and graphics-panel helpers, document state, command history, undoable scene editing and entity commands, operators and keymaps, selection, camera behavior, and component editing helpers. |
 | `tests/game/` | Application callback order, scene changes, cleanup, demo composition, controls, and reload behavior. |
 | `tests/capture/`, `tests/references/` | Reference capture driver, showcase capture manifest, and reference PNGs (`docs/RENDERER_VALIDATION.md`). |
 

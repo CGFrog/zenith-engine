@@ -1,6 +1,5 @@
 #include "HierarchyPanel.hpp"
 
-#include "editor/application/EntityCommands.hpp"
 #include "editor/panels/EditorContext.hpp"
 
 #include <imgui.h>
@@ -8,7 +7,8 @@
 
 #include <algorithm>
 #include <cctype>
-#include <span>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -18,6 +18,23 @@ std::string lowercase(std::string text) {
     std::ranges::transform(text, text.begin(),
                            [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
     return text;
+}
+
+void operatorButton(EditorContext& context, const char* label, std::string_view operatorId,
+                    std::string_view properties = {}) {
+    ImGui::BeginDisabled(!context.canInvoke(operatorId));
+    if (ImGui::Button(label)) {
+        context.invoke(operatorId, properties);
+    }
+    ImGui::EndDisabled();
+}
+
+void operatorMenuItem(EditorContext& context, const char* label, std::string_view operatorId,
+                      std::string_view properties = {}) {
+    const std::string shortcut = context.shortcut(operatorId, properties);
+    if (ImGui::MenuItem(label, shortcut.empty() ? nullptr : shortcut.c_str(), false, context.canInvoke(operatorId))) {
+        context.invoke(operatorId, properties);
+    }
 }
 } // namespace
 
@@ -36,6 +53,7 @@ bool HierarchyPanel::matchesFilter(const std::string& name) const {
 void HierarchyPanel::draw(EditorContext& context) {
     Scene& scene = context.app.scene;
     context.selection.removeMissing(scene);
+    m_setAllOpen = std::exchange(m_requestedAllOpen, std::nullopt);
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
         context.actions.handleObjectKeys(context.app, KeymapRegion::Outliner);
     }
@@ -43,21 +61,12 @@ void HierarchyPanel::draw(EditorContext& context) {
     ImGui::SetNextItemWidth(-1);
     ImGui::InputTextWithHint("##HierarchyFilter", "Search...", &m_filter);
 
-    if (ImGui::Button("Create")) {
-        const Entity parent =
-            context.selection.size() == 1 ? scene.findEntity(*context.selection.active()) : entt::null;
-        if (const SceneEntityId created = EntityCommands::createEntity(context.editing, parent)) {
-            context.selection.selectOnly(created);
-        }
-    }
+    // Create parents the new entity to the active one when exactly one is selected.
+    operatorButton(context, "Create", "object.create_entity", R"({"placement":"child"})");
     ImGui::SameLine();
-    if (ImGui::Button("Duplicate") && context.selection.size() == 1) {
-        EntityCommands::duplicateSelection(context.editing, context.selection);
-    }
+    operatorButton(context, "Duplicate", "object.duplicate");
     ImGui::SameLine();
-    if (ImGui::Button("Delete") && !context.selection.empty()) {
-        EntityCommands::deleteSelection(context.editing, context.selection);
-    }
+    operatorButton(context, "Delete", "object.delete");
     ImGui::SameLine();
     ImGui::Checkbox("Preserve world", &m_preserveWorldOnReparent);
 
@@ -75,6 +84,7 @@ void HierarchyPanel::draw(EditorContext& context) {
             drawEntity(context, entity);
         }
     }
+    m_setAllOpen.reset();
 }
 
 void HierarchyPanel::acceptReparentDrop(EditorContext& context, Entity parent) const {
@@ -104,6 +114,9 @@ void HierarchyPanel::drawEntity(EditorContext& context, Entity entity) {
         flags |= ImGuiTreeNodeFlags_Selected;
     }
     const std::string& name = registry.get<NameComponent>(entity).name;
+    if (m_setAllOpen) {
+        ImGui::SetNextItemOpen(*m_setAllOpen);
+    }
     const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<uintptr_t>(entityId.value)), flags, "%s",
                                         name.empty() ? "Unnamed Entity" : name.c_str());
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
@@ -136,34 +149,24 @@ void HierarchyPanel::drawContextMenu(EditorContext& context, Entity entity) {
     if (!ImGui::BeginPopupContextItem("HierarchyContextMenu")) {
         return;
     }
-    Scene& scene = context.app.scene;
-    if (ImGui::MenuItem("Create Child")) {
-        if (const SceneEntityId created = EntityCommands::createEntity(context.editing, entity)) {
-            context.selection.selectOnly(created);
-        }
+    // As in Blender's outliner, the menu acts on the clicked entity: it keeps
+    // a selection the entity is part of and otherwise selects only it.
+    const SceneEntityId entityId = context.app.scene.id(entity);
+    if (ImGui::IsWindowAppearing() && !context.selection.contains(entityId)) {
+        context.selection.selectOnly(entityId);
     }
-    if (ImGui::MenuItem("Create Sibling")) {
-        const Entity parent = scene.registry().get<RelationshipComponent>(entity).parent;
-        if (const SceneEntityId created = EntityCommands::createEntity(context.editing, parent)) {
-            context.selection.selectOnly(created);
-        }
-    }
+    operatorMenuItem(context, "Create Child", "object.create_entity", R"({"placement":"child"})");
+    operatorMenuItem(context, "Create Sibling", "object.create_entity", R"({"placement":"sibling"})");
     ImGui::Separator();
-    if (ImGui::MenuItem("Duplicate", objectCommandLabel(ObjectCommand::Duplicate), false, true)) {
-        EntityCommands::duplicateSelection(context.editing, context.selection);
-    }
-    if (ImGui::MenuItem("Delete", objectCommandLabel(ObjectCommand::Delete), false, true)) {
-        const SceneEntityId entityId = scene.id(entity);
-        EntityCommands::deleteEntities(context.editing, std::span(&entityId, 1), "Delete Entity");
-        context.selection.clear();
-    }
+    operatorMenuItem(context, "Duplicate", "object.duplicate");
+    operatorMenuItem(context, "Delete", "object.delete");
     ImGui::Separator();
-    if (ImGui::MenuItem("Rename", "F2", false, true)) {
-        ImGui::SetKeyboardFocusHere(-1);
-    }
+    operatorMenuItem(context, "Rename", "object.rename_popup");
     if (ImGui::MenuItem("Expand All")) {
+        m_requestedAllOpen = true;
     }
     if (ImGui::MenuItem("Collapse All")) {
+        m_requestedAllOpen = false;
     }
     ImGui::EndPopup();
 }

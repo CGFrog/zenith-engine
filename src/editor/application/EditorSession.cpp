@@ -4,6 +4,8 @@
 #include "editor/application/EntityCommands.hpp"
 #include "editor/document/DefaultScene.hpp"
 #include "editor/document/SceneFragment.hpp"
+#include "editor/operators/DefaultKeymap.hpp"
+#include "editor/operators/ObjectOperators.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -11,6 +13,7 @@
 #include <ImGuizmo.h>
 #include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_video.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <limits>
@@ -23,12 +26,10 @@ constexpr const char* sceneExtension = ".zenith-scene";
 constexpr float editorFontPixelSize = 15.0f;
 constexpr float autosaveIntervalSeconds = 30.0f;
 
-// Editor commands are registered outside any panel, so they must route
-// globally; focus routing would drop them whenever a panel has focus. Global
-// routes rank below focused widgets, so text fields keep their own Ctrl+Z.
-bool editorShortcut(ImGuiKeyChord chord) {
-    return ImGui::Shortcut(chord, ImGuiInputFlags_RouteGlobal);
-}
+struct PanelProperties {
+    // The panel's window title, for example "Inspector".
+    std::string panel;
+};
 
 // Native dialogs need an existing absolute folder to start in. A trailing
 // separator marks the location as a folder with no suggested file name.
@@ -57,6 +58,9 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_document(assetRoot)
     , m_recovery(settingsDirectory / (std::string("recovery") + sceneExtension))
     , m_fileDialog("Zenith scene", sceneExtension)
+    , m_operatorRunner(m_operators, m_history)
+    , m_keymap(defaultEditorKeymap())
+    , m_keymapPath(settingsDirectory / "keymap.json")
     , m_assetBrowser(std::move(assetRoot), sceneRoot)
     , m_graphics(std::move(renderSettings))
     , m_panels{{{&m_viewport, &EditorPanelVisibility::viewport},
@@ -71,14 +75,13 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_initialSceneLoader(std::move(initialSceneLoader))
     , m_layoutPath((settingsDirectory / "layout.ini").string())
     , m_smokeScenePath(settingsDirectory / (std::string("streaming-smoke") + sceneExtension)) {
-    const std::pair<const char*, const char*> bindings[]{
-        {"New", "Ctrl+N"},  {"Open", "Ctrl+O"},       {"Save", "Ctrl+S"},  {"Save As", "Ctrl+Shift+S"},
-        {"Undo", "Ctrl+Z"}, {"Redo", "Ctrl+Shift+Z"}, {"Quit", "Ctrl+Q"},  {"Play", "F5"},
-        {"Pause", "F6"},    {"Step", "F7"},           {"Stop", "Shift+F5"}};
-    for (const auto& [action, chord] : bindings) {
-        if (const EditorShortcutResult result = m_shortcuts.bind(action, chord); !result) {
-            m_diagnostics.reportError(result.error);
-        }
+    for (const std::string& problem : m_keymap.defaultProblems()) {
+        m_diagnostics.reportError(problem);
+    }
+    registerSessionOperators();
+    registerObjectModeOperators();
+    if (const OperatorRegistrationResult result = registerObjectOperators(m_operators); !result) {
+        m_diagnostics.reportError(result.error);
     }
 }
 
@@ -96,11 +99,227 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .actions = *this};
 }
 
+OperatorContext EditorSession::operatorContext(ApplicationContext& context, KeymapRegion region) {
+    return {.editing = editing(context),
+            .selection = m_selection,
+            .mode = m_playMode.mode(),
+            .region = region,
+            .app = &context};
+}
+
+Operator EditorSession::applicationOperator(std::string id, std::string label, std::string description,
+                                            std::function<bool(const OperatorContext&)> poll,
+                                            std::function<void(ApplicationContext&)> run) {
+    return {.id = std::move(id),
+            .label = std::move(label),
+            .description = std::move(description),
+            .poll = [poll = std::move(poll)](
+                        const OperatorContext& context) { return context.app != nullptr && (!poll || poll(context)); },
+            .execute =
+                [run = std::move(run)](OperatorContext& context, OperatorProperties&) {
+                    run(*context.app);
+                    return OperatorResult::finished();
+                }};
+}
+
+void EditorSession::registerOperator(Operator op) {
+    if (const OperatorRegistrationResult result = m_operators.add(std::move(op)); !result) {
+        m_diagnostics.reportError(result.error);
+    }
+}
+
+bool EditorSession::documentCommandsAvailable(const OperatorContext& context) const {
+    return context.editMode() && !m_fileDialog.pending() && !m_activeTransform;
+}
+
+void EditorSession::registerSessionOperators() {
+    const auto documentCommands = [this](const OperatorContext& context) { return documentCommandsAvailable(context); };
+    registerOperator(applicationOperator("file.new", "New", "Start a new scene with the default content",
+                                         documentCommands, [this](ApplicationContext& app) { requestNew(app); }));
+    registerOperator(applicationOperator("file.open", "Open", "Open a scene file", documentCommands,
+                                         [this](ApplicationContext& app) { requestOpen(app); }));
+    registerOperator(applicationOperator("file.save", "Save", "Save the scene to its file", documentCommands,
+                                         [this](ApplicationContext& app) { saveDocument(app); }));
+    registerOperator(applicationOperator("file.save_as", "Save As", "Save the scene to a new file", documentCommands,
+                                         [this](ApplicationContext&) { requestFileDialog(FileDialogKind::Save); }));
+    registerOperator(applicationOperator(
+        "file.quit", "Quit", "Close the editor, asking about unsaved changes first",
+        [this](const OperatorContext&) { return !m_activeTransform; },
+        [this](ApplicationContext& app) { requestClose(app); }));
+
+    registerOperator(applicationOperator(
+        "edit.undo", "Undo", "Undo the last scene change",
+        [this](const OperatorContext& context) { return documentCommandsAvailable(context) && m_history.canUndo(); },
+        [this](ApplicationContext& app) { undo(app); }));
+    registerOperator(applicationOperator(
+        "edit.redo", "Redo", "Redo the last undone scene change",
+        [this](const OperatorContext& context) { return documentCommandsAvailable(context) && m_history.canRedo(); },
+        [this](ApplicationContext& app) { redo(app); }));
+    registerOperator(
+        {.id = "edit.copy",
+         .label = "Copy",
+         .description = "Copy the selected objects to the clipboard",
+         .poll =
+             [](const OperatorContext& context) {
+                 return context.app != nullptr && context.editMode() && !context.selection.empty();
+             },
+         .execute = [this](OperatorContext& context, OperatorProperties&) { return copySelection(*context.app); }});
+    registerOperator(
+        {.id = "edit.paste",
+         .label = "Paste Entities",
+         .description = "Paste objects from the clipboard and select them",
+         .flags = OperatorFlags::Undo,
+         .poll = [](const OperatorContext& context) { return context.app != nullptr && context.editMode(); },
+         .execute = [this](OperatorContext& context, OperatorProperties&) { return pasteClipboard(*context.app); }});
+
+    registerOperator(applicationOperator(
+        "play.start", "Play", "Run the scene in Play mode on a copy of the document",
+        [](const OperatorContext& context) { return context.mode == EditorMode::Edit; },
+        [this](ApplicationContext& app) { enterPlayMode(app); }));
+    registerOperator(applicationOperator(
+        "play.toggle_pause", "Pause / Resume", "Pause or resume Play mode",
+        [](const OperatorContext& context) { return context.mode != EditorMode::Edit; },
+        [this](ApplicationContext&) {
+            if (m_playMode.mode() == EditorMode::Play) {
+                m_playMode.pause();
+            } else {
+                m_playMode.resume();
+            }
+        }));
+    registerOperator(applicationOperator(
+        "play.step", "Single Step", "Advance paused Play mode by one fixed update",
+        [](const OperatorContext& context) { return context.mode == EditorMode::Paused; },
+        [this](ApplicationContext&) { m_playMode.requestSingleStep(); }));
+    registerOperator(applicationOperator(
+        "play.stop", "Stop", "Leave Play mode and restore the authored scene",
+        [](const OperatorContext& context) { return context.mode != EditorMode::Edit; },
+        [this](ApplicationContext& app) { stopPlayMode(app); }));
+
+    registerOperator(applicationOperator("wm.search_menu", "Search Operators",
+                                         "Find and run any available operator by name", {},
+                                         [this](ApplicationContext&) { m_operatorSearch.open(); }));
+    registerOperator(applicationOperator("wm.keymap_editor", "Keymap Editor",
+                                         "Change, add, or reset keyboard shortcuts", {},
+                                         [this](ApplicationContext&) { m_showKeymapEditor = true; }));
+    registerOperator(
+        {.id = "wm.toggle_panel",
+         .label = "Toggle Panel",
+         .description = "Show or hide an editor panel",
+         .flags = OperatorFlags::Internal,
+         .properties = OperatorProperties::make(
+             PanelProperties{}, std::move(Fields<PanelProperties>().add("panel", &PanelProperties::panel))),
+         .poll = [](const OperatorContext& context) { return context.app != nullptr; },
+         .execute =
+             [this](OperatorContext&, OperatorProperties& properties) {
+                 const PanelProperties* values = properties.get<PanelProperties>();
+                 for (const PanelSlot& slot : m_panels) {
+                     if (values != nullptr && values->panel == slot.panel->title()) {
+                         bool& visible = m_settings.panels().*slot.visible;
+                         visible = !visible;
+                         return OperatorResult::finished();
+                     }
+                 }
+                 return OperatorResult::failed("There is no panel named \"" + (values ? values->panel : "") + "\"");
+             }});
+}
+
+OperatorResult EditorSession::invokeOperator(ApplicationContext& context, std::string_view operatorId,
+                                             std::string_view properties, KeymapRegion region) {
+    OperatorContext operatorContext = this->operatorContext(context, region);
+    return m_operatorRunner.invokeWithJson(operatorId, operatorContext, properties);
+}
+
+OperatorResult EditorSession::invokeOperator(ApplicationContext& context, std::string_view operatorId,
+                                             const OperatorProperties& properties) {
+    OperatorContext operatorContext = this->operatorContext(context, KeymapRegion::Global);
+    return m_operatorRunner.invoke(operatorId, operatorContext, &properties);
+}
+
+bool EditorSession::operatorAvailable(ApplicationContext& context, std::string_view operatorId) {
+    const Operator* op = m_operators.find(operatorId);
+    return op != nullptr && op->canRun(operatorContext(context, KeymapRegion::Global));
+}
+
+std::string EditorSession::operatorShortcut(std::string_view operatorId, std::string_view properties) const {
+    return m_keymap.shortcutLabel(operatorId, properties);
+}
+
+void EditorSession::dispatchKeymap(ApplicationContext& context, KeymapRegion region) {
+    for (const ImGuiKeyChord chord : m_keymap.chords(region)) {
+        // Global keys work while any panel has focus, so they route globally;
+        // global routes rank below focused widgets, so text fields keep their
+        // own Ctrl+Z. Region keys already require the mouse over the region.
+        const bool pressed = region == KeymapRegion::Global ? ImGui::Shortcut(chord, ImGuiInputFlags_RouteGlobal)
+                                                            : ImGui::IsKeyChordPressed(chord);
+        if (!pressed) {
+            continue;
+        }
+        const KeymapBinding* binding =
+            m_keymap.resolve(region, chord, ImGui::GetTime(), ImGui::GetIO().MouseDoubleClickTime);
+        if (binding != nullptr) {
+            // Copied: an operator may change the keymap.
+            const std::string operatorId = binding->operatorId;
+            const std::string properties = binding->properties;
+            invokeOperator(context, operatorId, properties, region);
+        }
+        return;
+    }
+}
+
+void EditorSession::operatorMenuItem(ApplicationContext& context, std::string_view operatorId, const char* label,
+                                     std::string_view properties, bool selected) {
+    const Operator* op = m_operators.find(operatorId);
+    if (op == nullptr) {
+        return;
+    }
+    const bool enabled = op->canRun(operatorContext(context, KeymapRegion::Global));
+    const std::string shortcut = m_keymap.shortcutLabel(operatorId, properties);
+    if (ImGui::MenuItem(label != nullptr ? label : op->label.c_str(), shortcut.empty() ? nullptr : shortcut.c_str(),
+                        selected, enabled)) {
+        invokeOperator(context, operatorId, properties, KeymapRegion::Global);
+    }
+    if (!op->description.empty()) {
+        ImGui::SetItemTooltip("%s", op->description.c_str());
+    }
+}
+
+void EditorSession::drawOperatorWindows(ApplicationContext& context) {
+    if (const std::optional<std::string> chosen =
+            m_operatorSearch.draw(m_operators, m_keymap, operatorContext(context, KeymapRegion::Global))) {
+        invokeOperator(context, *chosen, {}, KeymapRegion::Global);
+    }
+    if (m_keymapEditor.draw(m_showKeymapEditor, m_keymap, m_operators)) {
+        saveKeymap();
+    }
+    if (m_playMode.mode() != EditorMode::Edit || m_activeTransform) {
+        return;
+    }
+    const glm::vec2 viewportCorner = m_viewport.position() + glm::vec2(0.0f, m_viewport.size().y);
+    if (const std::optional<OperatorProperties> edited =
+            m_lastOperatorPanel.draw(m_operatorRunner.lastOperator(), viewportCorner)) {
+        OperatorContext operatorContext = this->operatorContext(context, KeymapRegion::Global);
+        m_operatorRunner.adjustLast(operatorContext, *edited);
+    }
+}
+
+void EditorSession::saveKeymap() {
+    if (const KeymapResult result = m_keymap.save(m_keymapPath); !result) {
+        m_diagnostics.reportError(result.error);
+    }
+}
+
 SceneResult EditorSession::load(ApplicationContext& context) {
     if (const EditorSettingsResult result = m_settings.load(); !result) {
         m_diagnostics.reportError(result.error);
     }
     m_graphics.loadSettings(context.rendering, m_diagnostics);
+    const KeymapResult keymap = m_keymap.load(m_keymapPath);
+    if (!keymap) {
+        m_diagnostics.reportError(keymap.error);
+    }
+    for (const std::string& warning : keymap.warnings) {
+        m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Keymap", warning);
+    }
     m_assetBrowser.refresh(m_diagnostics);
     m_openRecoveryDialog = m_recovery.available();
     m_smokeScenario = SDL_getenv("ZENITH_EDITOR_SMOKE") != nullptr;
@@ -257,6 +476,7 @@ void EditorSession::drawUi(ApplicationContext& context) {
     drawRecoveryDialog(context);
     drawPanels(context);
     drawObjectPopups(context);
+    drawOperatorWindows(context);
     drawStatusBar(context.rendering.stats());
 }
 
@@ -310,45 +530,11 @@ void EditorSession::unload(ApplicationContext& context) {
 }
 
 void EditorSession::handleGlobalShortcuts(ApplicationContext& context) {
-    if (ImGui::GetIO().WantTextInput) {
+    // Operator polls decide which shortcuts apply in the current mode.
+    if (ImGui::GetIO().WantTextInput || m_keymapEditor.capturing()) {
         return;
     }
-    if (m_playMode.mode() == EditorMode::Edit && !m_fileDialog.pending() && !m_activeTransform) {
-        if (editorShortcut(ImGuiMod_Ctrl | ImGuiKey_N)) {
-            requestNew(context);
-        }
-        if (editorShortcut(ImGuiMod_Ctrl | ImGuiKey_O)) {
-            requestOpen(context);
-        }
-        if (editorShortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S)) {
-            requestFileDialog(FileDialogKind::Save);
-        } else if (editorShortcut(ImGuiMod_Ctrl | ImGuiKey_S)) {
-            saveDocument(context);
-        }
-        if (editorShortcut(ImGuiMod_Ctrl | ImGuiKey_Z)) {
-            undo(context);
-        }
-        // Blender redoes with Ctrl Shift Z; Ctrl Y is kept as the Windows alias.
-        if (editorShortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z) || editorShortcut(ImGuiMod_Ctrl | ImGuiKey_Y)) {
-            redo(context);
-        }
-        if (editorShortcut(ImGuiMod_Ctrl | ImGuiKey_Q)) {
-            requestClose(context);
-        }
-    }
-    if (m_playMode.mode() == EditorMode::Edit && editorShortcut(ImGuiKey_F5)) {
-        enterPlayMode(context);
-    } else if (m_playMode.mode() != EditorMode::Edit && editorShortcut(ImGuiMod_Shift | ImGuiKey_F5)) {
-        stopPlayMode(context);
-    }
-    if (m_playMode.mode() == EditorMode::Play && editorShortcut(ImGuiKey_F6)) {
-        m_playMode.pause();
-    } else if (m_playMode.mode() == EditorMode::Paused && editorShortcut(ImGuiKey_F6)) {
-        m_playMode.resume();
-    }
-    if (m_playMode.mode() == EditorMode::Paused && editorShortcut(ImGuiKey_F7)) {
-        m_playMode.requestSingleStep();
-    }
+    dispatchKeymap(context, KeymapRegion::Global);
 }
 
 void EditorSession::drawMainMenu(ApplicationContext& context) {
@@ -358,112 +544,59 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
     }
 
     if (ImGui::BeginMenu("File")) {
-        ImGui::BeginDisabled(m_playMode.mode() != EditorMode::Edit || m_fileDialog.pending());
-        if (ImGui::MenuItem("New", m_shortcuts.chord("New").c_str())) {
-            requestNew(context);
-        }
-        if (ImGui::MenuItem("Open...", m_shortcuts.chord("Open").c_str())) {
-            requestOpen(context);
-        }
-        if (ImGui::MenuItem("Save", m_shortcuts.chord("Save").c_str())) {
-            saveDocument(context);
-        }
-        if (ImGui::MenuItem("Save As...", m_shortcuts.chord("Save As").c_str())) {
-            requestFileDialog(FileDialogKind::Save);
-        }
-        ImGui::EndDisabled();
+        operatorMenuItem(context, "file.new", "New");
+        operatorMenuItem(context, "file.open", "Open...");
+        operatorMenuItem(context, "file.save", "Save");
+        operatorMenuItem(context, "file.save_as", "Save As...");
         ImGui::Separator();
-        if (ImGui::MenuItem("Quit", m_shortcuts.chord("Quit").c_str())) {
-            requestClose(context);
-        }
+        operatorMenuItem(context, "file.quit", "Quit");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit")) {
         const bool editing = m_playMode.mode() == EditorMode::Edit;
-        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, editing && m_history.canUndo())) {
-            undo(context);
-        }
-        if (ImGui::MenuItem("Redo", m_shortcuts.chord("Redo").c_str(), false, editing && m_history.canRedo())) {
-            redo(context);
-        }
+        operatorMenuItem(context, "edit.undo", "Undo");
+        operatorMenuItem(context, "edit.redo", "Redo");
         ImGui::Separator();
-        if (ImGui::MenuItem("Copy", objectCommandLabel(ObjectCommand::Copy), false, editing && !m_selection.empty())) {
-            copySelection(context);
-        }
-        if (ImGui::MenuItem("Paste", objectCommandLabel(ObjectCommand::Paste), false,
-                            editing && !m_clipboardFragment.empty())) {
-            pasteClipboard(context);
-        }
-        if (ImGui::MenuItem("Duplicate", objectCommandLabel(ObjectCommand::Duplicate), false,
-                            editing && !m_selection.empty())) {
-            EntityCommands::duplicateSelection(this->editing(context), m_selection);
-        }
-        if (ImGui::MenuItem("Delete", objectCommandLabel(ObjectCommand::Delete), false,
-                            editing && !m_selection.empty())) {
-            EntityCommands::deleteSelection(this->editing(context), m_selection);
-        }
+        operatorMenuItem(context, "edit.copy", "Copy");
+        operatorMenuItem(context, "edit.paste", "Paste");
+        operatorMenuItem(context, "object.duplicate", "Duplicate");
+        operatorMenuItem(context, "object.delete", "Delete");
         ImGui::Separator();
-        if (ImGui::MenuItem("Select All", objectCommandLabel(ObjectCommand::SelectAll), false, editing)) {
-            m_selection.selectAll(context.scene);
-        }
-        if (ImGui::MenuItem("Deselect All", objectCommandLabel(ObjectCommand::DeselectAll), false, editing)) {
-            m_selection.clear();
-        }
-        if (ImGui::MenuItem("Invert Selection", objectCommandLabel(ObjectCommand::InvertSelection), false, editing)) {
-            m_selection.invert(context.scene);
-        }
+        operatorMenuItem(context, "object.select_all", "Select All", R"({"action":"select"})");
+        operatorMenuItem(context, "object.select_all", "Deselect All", R"({"action":"deselect"})");
+        operatorMenuItem(context, "object.select_all", "Invert Selection", R"({"action":"invert"})");
         ImGui::Separator();
         if (ImGui::BeginMenu("Clear", editing && !m_selection.empty())) {
-            if (ImGui::MenuItem("Location", objectCommandLabel(ObjectCommand::ClearLocation))) {
-                clearSelectedTransforms(context, TransformPart::Location);
-            }
-            if (ImGui::MenuItem("Rotation", objectCommandLabel(ObjectCommand::ClearRotation))) {
-                clearSelectedTransforms(context, TransformPart::Rotation);
-            }
-            if (ImGui::MenuItem("Scale", objectCommandLabel(ObjectCommand::ClearScale))) {
-                clearSelectedTransforms(context, TransformPart::Scale);
-            }
+            operatorMenuItem(context, "object.location_clear", "Location");
+            operatorMenuItem(context, "object.rotation_clear", "Rotation");
+            operatorMenuItem(context, "object.scale_clear", "Scale");
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Add", editing)) {
-            if (ImGui::MenuItem("Cube")) {
-                addObject(context, AddableObject::Cube);
-            }
-            if (ImGui::MenuItem("Sun")) {
-                addObject(context, AddableObject::Sun);
-            }
-            if (ImGui::MenuItem("Environment")) {
-                addObject(context, AddableObject::Environment);
-            }
-            if (ImGui::MenuItem("Empty")) {
-                addObject(context, AddableObject::Empty);
-            }
+            operatorMenuItem(context, "object.add_cube", "Cube");
+            operatorMenuItem(context, "object.add_sun", "Sun");
+            operatorMenuItem(context, "object.add_environment", "Environment");
+            operatorMenuItem(context, "object.add_empty", "Empty");
             ImGui::EndMenu();
         }
+        ImGui::Separator();
+        operatorMenuItem(context, "wm.search_menu", "Search Operators...");
+        operatorMenuItem(context, "wm.keymap_editor", "Keymap...");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
-        EditorPanelVisibility& visibility = m_settings.panels();
+        const EditorPanelVisibility& visibility = m_settings.panels();
         for (const PanelSlot& slot : m_panels) {
-            ImGui::MenuItem(slot.panel->title(), nullptr, &(visibility.*slot.visible));
+            operatorMenuItem(context, "wm.toggle_panel", slot.panel->title(),
+                             nlohmann::json{{"panel", slot.panel->title()}}.dump(), visibility.*slot.visible);
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Frame Selected", objectCommandLabel(ObjectCommand::FrameSelected), false,
-                            !m_selection.empty())) {
-            frameEntities(context, m_selection.ids());
-        }
-        if (ImGui::MenuItem("Frame All", objectCommandLabel(ObjectCommand::FrameAll))) {
-            frameAll(context);
-        }
+        operatorMenuItem(context, "view3d.frame_selected", "Frame Selected");
+        operatorMenuItem(context, "view3d.frame_all", "Frame All");
         if (ImGui::BeginMenu("Viewpoint")) {
-            constexpr std::pair<const char*, ObjectCommand> viewpoints[]{
-                {"Front", ObjectCommand::ViewFront}, {"Back", ObjectCommand::ViewBack},
-                {"Right", ObjectCommand::ViewRight}, {"Left", ObjectCommand::ViewLeft},
-                {"Top", ObjectCommand::ViewTop},     {"Bottom", ObjectCommand::ViewBottom}};
-            for (const auto& [name, command] : viewpoints) {
-                if (ImGui::MenuItem(name, objectCommandLabel(command))) {
-                    runObjectCommand(context, command, KeymapRegion::Viewport);
-                }
+            for (const char* axis : {"front", "back", "right", "left", "top", "bottom"}) {
+                const std::string label = labelFromKey(axis);
+                operatorMenuItem(context, "view3d.view_axis", label.c_str(), nlohmann::json{{"type", axis}}.dump());
             }
             ImGui::EndMenu();
         }
@@ -471,21 +604,11 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
     }
     if (ImGui::BeginMenu("Play")) {
         if (m_playMode.mode() == EditorMode::Edit) {
-            if (ImGui::MenuItem("Play", "F5")) {
-                enterPlayMode(context);
-            }
+            operatorMenuItem(context, "play.start", "Play");
         } else {
-            if (m_playMode.mode() == EditorMode::Play && ImGui::MenuItem("Pause", "F6")) {
-                m_playMode.pause();
-            } else if (m_playMode.mode() == EditorMode::Paused && ImGui::MenuItem("Resume", "F6")) {
-                m_playMode.resume();
-            }
-            if (ImGui::MenuItem("Single Step", "F7", false, m_playMode.mode() == EditorMode::Paused)) {
-                m_playMode.requestSingleStep();
-            }
-            if (ImGui::MenuItem("Stop", "Shift+F5")) {
-                stopPlayMode(context);
-            }
+            operatorMenuItem(context, "play.toggle_pause", m_playMode.mode() == EditorMode::Play ? "Pause" : "Resume");
+            operatorMenuItem(context, "play.step", "Single Step");
+            operatorMenuItem(context, "play.stop", "Stop");
         }
         ImGui::EndMenu();
     }
@@ -808,40 +931,31 @@ void EditorSession::redo(ApplicationContext& context) {
     m_selection.removeMissing(context.scene);
 }
 
-void EditorSession::copySelection(ApplicationContext& context) {
-    if (m_selection.empty()) {
-        return;
-    }
+OperatorResult EditorSession::copySelection(ApplicationContext& context) {
     if (const SceneDocumentResult result = SceneFragment::copy(context.scene, context.assets, m_document.options(),
                                                                m_selection.ids(), m_clipboardFragment);
         !result) {
-        m_diagnostics.reportError("Copy failed: " + result.error);
-        return;
+        return OperatorResult::failed("Copy failed: " + result.error);
     }
     ImGui::SetClipboardText(m_clipboardFragment.c_str());
+    return OperatorResult::finished();
 }
 
-void EditorSession::pasteClipboard(ApplicationContext& context) {
+OperatorResult EditorSession::pasteClipboard(ApplicationContext& context) {
     const char* systemClipboard = ImGui::GetClipboardText();
     const std::string_view fragment =
         systemClipboard != nullptr && *systemClipboard != '\0' ? systemClipboard : m_clipboardFragment;
     if (fragment.empty()) {
-        return;
-    }
-    const SceneEditing sceneEditing = editing(context);
-    std::string before;
-    if (!sceneEditing.capture(before)) {
-        return;
+        return OperatorResult::cancelled("The clipboard is empty");
     }
     std::vector<SceneEntityId> pasted;
     if (const SceneDocumentResult result =
             SceneFragment::paste(fragment, context.scene, context.assets, m_document.options(), entt::null, pasted);
         !result) {
-        m_diagnostics.reportError("Paste failed: " + result.error);
-        return;
+        return OperatorResult::failed("Paste failed: " + result.error);
     }
-    sceneEditing.commit("Paste Entities", {}, std::move(before));
     m_selection.assign(std::move(pasted));
+    return OperatorResult::finished();
 }
 
 void EditorSession::enterPlayMode(ApplicationContext& context) {

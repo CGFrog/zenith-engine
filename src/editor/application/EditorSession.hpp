@@ -2,7 +2,6 @@
 
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/EditorPlayMode.hpp"
-#include "editor/application/EditorShortcuts.hpp"
 #include "editor/application/NativeFileDialog.hpp"
 #include "editor/application/SceneEditing.hpp"
 #include "editor/document/CommandHistory.hpp"
@@ -10,8 +9,13 @@
 #include "editor/document/EditorRecovery.hpp"
 #include "editor/interaction/EditorCamera.hpp"
 #include "editor/interaction/ModalTransform.hpp"
-#include "editor/interaction/ObjectKeymap.hpp"
 #include "editor/interaction/Selection.hpp"
+#include "editor/operators/Keymap.hpp"
+#include "editor/operators/KeymapEditor.hpp"
+#include "editor/operators/LastOperatorPanel.hpp"
+#include "editor/operators/OperatorRegistry.hpp"
+#include "editor/operators/OperatorRunner.hpp"
+#include "editor/operators/OperatorSearch.hpp"
 #include "editor/panels/AssetBrowserPanel.hpp"
 #include "editor/panels/DiagnosticsPanel.hpp"
 #include "editor/panels/EditorContext.hpp"
@@ -33,12 +37,14 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
-// Composes the editor: owns the document, history, selection, camera, and
-// panels, runs the frame loop, and coordinates workflows that span panels
-// (file commands, Play mode, object-mode keys, and modal transforms). The
-// runtime Scene stays owned by Engine and is changed only through SceneEditing.
+// Composes the editor: owns the document, history, selection, camera, panels,
+// and the operator registry and keymap, runs the frame loop, and coordinates
+// workflows that span panels (file commands, Play mode, and modal transforms).
+// Every menu item, button, and key runs a registered operator. The runtime
+// Scene stays owned by Engine and is changed only through SceneEditing.
 class EditorSession final : public ApplicationScene, private EditorSessionActions {
   public:
     EditorSession(std::filesystem::path settingsDirectory, std::filesystem::path assetRoot,
@@ -64,6 +70,10 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     };
 
     // EditorSessionActions
+    OperatorResult invokeOperator(ApplicationContext& context, std::string_view operatorId, std::string_view properties,
+                                  KeymapRegion region) override;
+    bool operatorAvailable(ApplicationContext& context, std::string_view operatorId) override;
+    std::string operatorShortcut(std::string_view operatorId, std::string_view properties) const override;
     void requestOpenScene(ApplicationContext& context, std::filesystem::path path) override;
     void handleObjectKeys(ApplicationContext& context, KeymapRegion region) override;
     bool modalTransformActive() const override;
@@ -71,6 +81,28 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
 
     SceneEditing editing(ApplicationContext& context);
     EditorContext editorContext(ApplicationContext& context);
+    OperatorContext operatorContext(ApplicationContext& context, KeymapRegion region);
+
+    // Operators (session operators in EditorSession.cpp, object-mode ones in
+    // EditorObjectCommands.cpp).
+    // An operator that runs a session workflow. It needs the running
+    // application, so it polls false in headless contexts.
+    static Operator applicationOperator(std::string id, std::string label, std::string description,
+                                        std::function<bool(const OperatorContext&)> poll,
+                                        std::function<void(ApplicationContext&)> run);
+    void registerOperator(Operator op);
+    void registerSessionOperators();
+    void registerObjectModeOperators();
+    bool documentCommandsAvailable(const OperatorContext& context) const;
+    OperatorResult invokeOperator(ApplicationContext& context, std::string_view operatorId,
+                                  const OperatorProperties& properties);
+    // Runs the binding of the first pressed chord bound in region.
+    void dispatchKeymap(ApplicationContext& context, KeymapRegion region);
+    // A menu item showing the operator's shortcut, disabled when its poll fails.
+    void operatorMenuItem(ApplicationContext& context, std::string_view operatorId, const char* label,
+                          std::string_view properties = {}, bool selected = false);
+    void drawOperatorWindows(ApplicationContext& context);
+    void saveKeymap();
 
     SceneResult prepareSmokeScenario(ApplicationContext& context);
     void updateSmokeScenario(ApplicationContext& context);
@@ -98,20 +130,12 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void requestClose(ApplicationContext& context);
     void finishPendingAction(ApplicationContext& context);
     bool saveDocument(ApplicationContext& context);
-    void copySelection(ApplicationContext& context);
-    void pasteClipboard(ApplicationContext& context);
+    OperatorResult copySelection(ApplicationContext& context);
+    // Pastes without recording undo; edit.paste is an Undo operator.
+    OperatorResult pasteClipboard(ApplicationContext& context);
 
-    // Blender object-mode commands (EditorObjectCommands.cpp).
-    enum class AddableObject {
-        Cube,
-        Sun,
-        Environment,
-        Empty,
-    };
-    void runObjectCommand(ApplicationContext& context, ObjectCommand command, KeymapRegion region);
+    // Blender object-mode workflows (EditorObjectCommands.cpp).
     void drawObjectPopups(ApplicationContext& context);
-    void clearSelectedTransforms(ApplicationContext& context, TransformPart part);
-    void addObject(ApplicationContext& context, AddableObject object);
     void frameEntities(ApplicationContext& context, const std::vector<SceneEntityId>& entities);
     void frameAll(ApplicationContext& context);
     bool beginModalTransform(ApplicationContext& context, TransformOperation operation, std::string commandName,
@@ -130,12 +154,19 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     EditorDocument m_document;
     EditorRecovery m_recovery;
     EditorDiagnostics m_diagnostics;
-    EditorShortcuts m_shortcuts;
     CommandHistory m_history;
     EditorCamera m_camera;
     EditorPlayMode m_playMode;
     NativeFileDialog m_fileDialog;
     Selection m_selection;
+    OperatorRegistry m_operators;
+    OperatorRunner m_operatorRunner;
+    Keymap m_keymap;
+    std::filesystem::path m_keymapPath;
+    OperatorSearch m_operatorSearch;
+    KeymapEditor m_keymapEditor;
+    LastOperatorPanel m_lastOperatorPanel;
+    bool m_showKeymapEditor{false};
 
     ViewportPanel m_viewport;
     HierarchyPanel m_hierarchy;
@@ -183,7 +214,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     };
 
     std::optional<ActiveTransform> m_activeTransform;
-    double m_lastSelectAllTime{-1.0};
     bool m_openAddMenu{false};
     bool m_openDeleteMenu{false};
     bool m_openRenamePopup{false};

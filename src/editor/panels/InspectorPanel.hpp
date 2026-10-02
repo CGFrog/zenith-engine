@@ -35,9 +35,6 @@ class InspectorPanel final : public EditorPanel {
     void drawPreservedComponents(EditorContext& context, SceneEntityId entityId);
     void drawAssetWarnings(EditorContext& context, Entity entity);
     void drawAddComponentMenu(EditorContext& context, SceneEntityId entityId);
-    // Bakes the volume's probes next to the project's other derived assets
-    // and records the new bake reference as an undoable edit.
-    void bakeIrradianceVolume(EditorContext& context, SceneEntityId volume);
 
     std::string m_filter;
     std::unordered_map<std::string, CustomEditor> m_customEditors;
