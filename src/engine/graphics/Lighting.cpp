@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <limits>
 
 LocalShadowAtlas allocateLocalShadowAtlas(std::span<const LocalShadowRequest> requests, uint32_t width,
                                           uint32_t height) {
@@ -51,14 +52,6 @@ LocalShadowAtlas allocateLocalShadowAtlas(std::span<const LocalShadowRequest> re
     return atlas;
 }
 
-std::span<const uint32_t> LightTileGrid::tile(uint32_t x, uint32_t y) const {
-    if (x >= columns || y >= rows || offsets.empty()) {
-        return {};
-    }
-    const size_t index = static_cast<size_t>(y) * columns + x;
-    return {lightIndices.data() + offsets[index], offsets[index + 1] - offsets[index]};
-}
-
 std::vector<LocalLight> gatherLocalLights(const Scene& scene) {
     std::vector<LocalLight> result;
     const auto points = scene.registry().view<const PointLightComponent, const TransformComponent>();
@@ -93,88 +86,162 @@ std::vector<LocalLight> gatherLocalLights(const Scene& scene) {
     return result;
 }
 
-LightTileGrid selectTiledLights(std::span<const LocalLight> lights, const glm::mat4& viewProjection, uint32_t width,
-                                uint32_t height, uint32_t tileSize, uint32_t maximumLightsPerTile) {
-    LightTileGrid grid;
-    tileSize = std::max(tileSize, 1u);
-    grid.columns = (width + tileSize - 1) / tileSize;
-    grid.rows = (height + tileSize - 1) / tileSize;
-    grid.maximumLightsPerTile = maximumLightsPerTile;
-    std::vector<std::vector<std::pair<float, uint32_t>>> candidates(static_cast<size_t>(grid.columns) * grid.rows);
-    for (uint32_t index = 0; index < lights.size(); ++index) {
-        const LocalLight& light = lights[index];
-        const glm::vec4 clip = viewProjection * glm::vec4(light.position, 1.0f);
-        if (clip.w <= 0.0001f) {
-            continue;
+std::vector<LocalLight> selectLocalLights(std::span<const LocalLight> lights, const glm::vec3& cameraPosition,
+                                          uint32_t maximumLights) {
+    std::vector<LocalLight> selected(lights.begin(), lights.end());
+    if (selected.size() <= maximumLights) {
+        return selected;
+    }
+    // Distance from the camera to the light's range sphere; zero inside it.
+    const auto reach = [&](const LocalLight& light) {
+        return std::max(glm::distance(light.position, cameraPosition) - light.range, 0.0f);
+    };
+    const auto nearer = [&](const LocalLight& left, const LocalLight& right) {
+        const float leftReach = reach(left);
+        const float rightReach = reach(right);
+        if (leftReach != rightReach) {
+            return leftReach < rightReach;
         }
-        const glm::vec2 center = (glm::vec2(clip) / clip.w * 0.5f + 0.5f) * glm::vec2(width, height);
-        const float radiusPixels = std::max(1.0f, light.range / clip.w * static_cast<float>(height));
-        const int minimumX = std::max(0, static_cast<int>((center.x - radiusPixels) / tileSize));
-        const int maximumX =
-            std::min(static_cast<int>(grid.columns) - 1, static_cast<int>((center.x + radiusPixels) / tileSize));
-        const int minimumY = std::max(0, static_cast<int>((center.y - radiusPixels) / tileSize));
-        const int maximumY =
-            std::min(static_cast<int>(grid.rows) - 1, static_cast<int>((center.y + radiusPixels) / tileSize));
-        const float score = light.intensity / std::max(clip.w * clip.w, 0.001f);
-        for (int y = minimumY; y <= maximumY; ++y) {
-            for (int x = minimumX; x <= maximumX; ++x) {
-                candidates[static_cast<size_t>(y) * grid.columns + x].emplace_back(score, index);
-            }
+        if (left.intensity != right.intensity) {
+            return left.intensity > right.intensity;
+        }
+        return left.stableId < right.stableId;
+    };
+    std::ranges::nth_element(selected, selected.begin() + maximumLights, nearer);
+    selected.resize(maximumLights);
+    std::ranges::sort(selected,
+                      [](const LocalLight& left, const LocalLight& right) { return left.stableId < right.stableId; });
+    return selected;
+}
+
+LocalLight transformLocalLight(const LocalLight& light, const glm::mat4& transform) {
+    LocalLight transformed = light;
+    transformed.position = glm::vec3(transform * glm::vec4(light.position, 1.0f));
+    transformed.direction = glm::mat3(transform) * light.direction;
+    return transformed;
+}
+
+uint32_t ClusterGrid::clusterCount() const {
+    return configuration.columns * configuration.rows * configuration.depthSlices;
+}
+
+uint32_t ClusterGrid::clusterIndex(uint32_t column, uint32_t row, uint32_t slice) const {
+    return column + configuration.columns * (row + configuration.rows * slice);
+}
+
+float ClusterGrid::sliceStart(uint32_t slice) const {
+    if (slice >= configuration.depthSlices) {
+        return farDepth;
+    }
+    const float fraction = static_cast<float>(slice) / static_cast<float>(configuration.depthSlices);
+    return nearDepth * std::pow(sliceEndDepth / nearDepth, fraction);
+}
+
+glm::vec2 ClusterGrid::sliceScaleBias() const {
+    const float scale = static_cast<float>(configuration.depthSlices) / std::log(sliceEndDepth / nearDepth);
+    return {scale, -std::log(nearDepth) * scale};
+}
+
+uint32_t ClusterGrid::sliceIndex(float viewDepth) const {
+    const glm::vec2 scaleBias = sliceScaleBias();
+    const float slice = std::log(std::max(viewDepth, nearDepth)) * scaleBias.x + scaleBias.y;
+    return std::min(static_cast<uint32_t>(std::max(slice, 0.0f)), configuration.depthSlices - 1);
+}
+
+uint32_t ClusterGrid::clusterIndexAt(const glm::vec2& pixel, float viewDepth) const {
+    const glm::vec2 tile =
+        glm::max(pixel, glm::vec2(0.0f)) * glm::vec2(configuration.columns, configuration.rows) / renderExtent;
+    const uint32_t column = std::min(static_cast<uint32_t>(tile.x), configuration.columns - 1);
+    const uint32_t row = std::min(static_cast<uint32_t>(tile.y), configuration.rows - 1);
+    return clusterIndex(column, row, sliceIndex(viewDepth));
+}
+
+ClusterBounds ClusterGrid::bounds(uint32_t column, uint32_t row, uint32_t slice) const {
+    const glm::vec2 tileSize = glm::vec2(2.0f) / glm::vec2(configuration.columns, configuration.rows);
+    const glm::vec2 ndcMinimum = glm::vec2(column, row) * tileSize - 1.0f;
+    const float depths[2]{sliceStart(slice), sliceStart(slice + 1)};
+    ClusterBounds result{.minimum = glm::vec3(std::numeric_limits<float>::max()),
+                         .maximum = glm::vec3(std::numeric_limits<float>::lowest())};
+    // A tile's view rays are linear in depth, so its frustum segment is the
+    // hull of these eight corners.
+    for (uint32_t corner = 0; corner < 4; ++corner) {
+        const glm::vec2 ndc = ndcMinimum + glm::vec2(corner & 1u, corner >> 1u) * tileSize;
+        const glm::vec2 ray = (ndc + projectionOffset) / projectionScale;
+        for (float depth : depths) {
+            const glm::vec3 point(ray * depth, -depth);
+            result.minimum = glm::min(result.minimum, point);
+            result.maximum = glm::max(result.maximum, point);
         }
     }
-    grid.offsets.reserve(candidates.size() + 1);
-    grid.offsets.push_back(0);
-    for (auto& tile : candidates) {
-        std::ranges::sort(tile, [](const auto& left, const auto& right) {
-            return left.first != right.first ? left.first > right.first : left.second < right.second;
-        });
-        if (tile.size() > maximumLightsPerTile) {
-            grid.discardedAssignments += static_cast<uint32_t>(tile.size() - maximumLightsPerTile);
-            tile.resize(maximumLightsPerTile);
-        }
-        for (const auto& [_, index] : tile) {
-            grid.lightIndices.push_back(index);
-        }
-        grid.offsets.push_back(static_cast<uint32_t>(grid.lightIndices.size()));
-    }
+    return result;
+}
+
+ClusterGrid makeClusterGrid(const ClusterGridConfiguration& configuration, const glm::mat4& projection,
+                            const glm::uvec2& renderExtent, float nearDepth, float farDepth) {
+    ClusterGrid grid{.configuration = configuration};
+    grid.configuration.columns = std::max(configuration.columns, 1u);
+    grid.configuration.rows = std::max(configuration.rows, 1u);
+    grid.configuration.depthSlices = std::max(configuration.depthSlices, 1u);
+    grid.renderExtent = glm::max(glm::vec2(renderExtent), glm::vec2(1.0f));
+    grid.projectionScale = {projection[0][0], projection[1][1]};
+    grid.projectionOffset = {projection[2][0], projection[2][1]};
+    grid.nearDepth = std::max(nearDepth, 0.0001f);
+    grid.farDepth = std::max(farDepth, grid.nearDepth * 1.001f);
+    grid.sliceEndDepth = std::clamp(configuration.maximumSliceDepth, grid.nearDepth * 1.001f, grid.farDepth);
     return grid;
 }
 
-std::vector<uint32_t> selectTiledLightSet(const LightTileGrid& grid, std::span<const LocalLight> lights,
-                                          uint32_t maximumLights) {
-    struct Candidate {
-        uint32_t index{0};
-        uint32_t coveredTiles{0};
-    };
+bool localLightAffectsCluster(const LocalLight& viewSpaceLight, const ClusterBounds& bounds) {
+    const glm::vec3 closest = glm::clamp(viewSpaceLight.position, bounds.minimum, bounds.maximum);
+    const glm::vec3 offset = closest - viewSpaceLight.position;
+    if (glm::dot(offset, offset) > viewSpaceLight.range * viewSpaceLight.range) {
+        return false;
+    }
+    // Cones wider than a hemisphere keep the sphere test alone.
+    const float coneCosine = viewSpaceLight.outerConeCosine;
+    if (viewSpaceLight.type != LocalLightType::Spot || coneCosine <= 0.0f) {
+        return true;
+    }
+    const glm::vec3 center = (bounds.minimum + bounds.maximum) * 0.5f;
+    const float radius = glm::length(bounds.maximum - bounds.minimum) * 0.5f;
+    const glm::vec3 toCenter = center - viewSpaceLight.position;
+    const float alongAxis = glm::dot(toCenter, viewSpaceLight.direction);
+    const float acrossAxis = std::sqrt(std::max(glm::dot(toCenter, toCenter) - alongAxis * alongAxis, 0.0f));
+    const float coneSine = std::sqrt(std::max(1.0f - coneCosine * coneCosine, 0.0f));
+    // Signed distance from the bounding sphere's center to the cone surface.
+    const float coneDistance = coneCosine * acrossAxis - alongAxis * coneSine;
+    return coneDistance <= radius && alongAxis >= -radius;
+}
 
-    std::vector<Candidate> candidates(lights.size());
-    for (uint32_t index = 0; index < candidates.size(); ++index) {
-        candidates[index].index = index;
-    }
-    for (uint32_t index : grid.lightIndices) {
-        if (index < candidates.size()) {
-            ++candidates[index].coveredTiles;
+ClusterLightLists assignLightsToClusters(const ClusterGrid& grid, std::span<const LocalLight> viewSpaceLights) {
+    ClusterLightLists lists;
+    lists.ranges.resize(grid.clusterCount());
+    lists.lightIndices.resize(static_cast<size_t>(grid.clusterCount()) * maximumLightsPerCluster);
+    const ClusterGridConfiguration& configuration = grid.configuration;
+    for (uint32_t slice = 0; slice < configuration.depthSlices; ++slice) {
+        for (uint32_t row = 0; row < configuration.rows; ++row) {
+            for (uint32_t column = 0; column < configuration.columns; ++column) {
+                const uint32_t cluster = grid.clusterIndex(column, row, slice);
+                const ClusterBounds bounds = grid.bounds(column, row, slice);
+                const uint32_t first = cluster * maximumLightsPerCluster;
+                uint32_t affecting = 0;
+                for (uint32_t light = 0; light < viewSpaceLights.size(); ++light) {
+                    if (!localLightAffectsCluster(viewSpaceLights[light], bounds)) {
+                        continue;
+                    }
+                    if (affecting < maximumLightsPerCluster) {
+                        lists.lightIndices[first + affecting] = light;
+                    }
+                    ++affecting;
+                }
+                const uint32_t stored = std::min(affecting, maximumLightsPerCluster);
+                lists.ranges[cluster] = {first, stored};
+                lists.maximumLightsInCluster = std::max(lists.maximumLightsInCluster, affecting);
+                lists.discardedAssignments += affecting - stored;
+            }
         }
     }
-    std::erase_if(candidates, [](const Candidate& candidate) { return candidate.coveredTiles == 0; });
-    std::ranges::sort(candidates, [&](const Candidate& left, const Candidate& right) {
-        if (left.coveredTiles != right.coveredTiles) {
-            return left.coveredTiles > right.coveredTiles;
-        }
-        const LocalLight& leftLight = lights[left.index];
-        const LocalLight& rightLight = lights[right.index];
-        if (leftLight.intensity != rightLight.intensity) {
-            return leftLight.intensity > rightLight.intensity;
-        }
-        return leftLight.stableId < rightLight.stableId;
-    });
-    candidates.resize(std::min<size_t>(candidates.size(), maximumLights));
-    std::vector<uint32_t> result;
-    result.reserve(candidates.size());
-    for (const Candidate& candidate : candidates) {
-        result.push_back(candidate.index);
-    }
-    return result;
+    return lists;
 }
 
 std::vector<ProbeBlend> blendReflectionProbes(const Scene& scene, const glm::vec3& worldPosition,

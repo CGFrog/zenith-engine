@@ -434,6 +434,13 @@ Two-phase GPU frustum and occlusion culling, the min-depth pyramid, and
 draw compaction into indirect-count commands. The caller owns render passes
 and the scene-depth transitions around the pyramid build.
 
+### `src/engine/graphics/passes/ClusteredLightingPass.*`
+
+Owns the per-frame local-light buffer and the cluster light lists. Each frame
+`light_clusters.comp` assigns lights to a 16x9 screen grid times 24
+exponential view-depth slices before the scene pass; `Lighting.*` holds the
+CPU mirror of the cluster math used by tests.
+
 ### `src/engine/graphics/graph/RenderGraph.*`
 
 Compiles imported and transient resource declarations into a stable pass order,
@@ -461,8 +468,9 @@ target using Cook-Torrance GGX lighting plus hemispherical sky/ground indirect
 lighting. Directional and environment scene components supply lighting and
 shadow settings. Fallback textures fill missing maps.
 
-Local point and spot lights are selected through deterministic 16-pixel tile
-coverage with a saved 32- or 64-light bound. Environment textures use cached
+Local point and spot lights use clustered forward shading: up to the configured
+light limit (nearest first) is uploaded each frame, and mesh.frag shades only
+the lights listed for its view cluster. Environment textures use cached
 roughness-prefiltered data, while reflection probes contribute through explicit
 influence boxes, blend distances, and priorities.
 
@@ -517,6 +525,7 @@ mirror is in `TemporalQuality.*`.
 | `shaders/bloom_upsample.comp` | 3x3 tent bloom upsample accumulated into the next larger level. |
 | `shaders/ssao.frag` | Estimates scalable screen-space ambient occlusion. |
 | `shaders/ssr.frag` | Traces scalable screen-space reflections with an explicit miss. |
+| `shaders/light_clusters.comp` | Assigns local lights to view clusters for clustered forward shading. |
 | `shaders/depth_pyramid.comp` | Reduces scene depth into a conservative min-depth (reversed-Z) pyramid. |
 | `shaders/gpu_visibility.comp` | Runs early/late two-phase frustum and occlusion culling. |
 | `shaders/compact_draws.comp` | Packs non-empty batches into indirect-count draw commands. |

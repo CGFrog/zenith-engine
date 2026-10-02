@@ -37,7 +37,8 @@ int main() {
                          .sceneRoot = directory / "scenes",
                          .startupScene = directory / "scenes" / "room.zenith-scene"};
     source.renderSettings.environment = EnvironmentQuality::ImageBasedHigh;
-    source.renderSettings.localLights = LocalLightingQuality::Tiled64;
+    source.renderSettings.localLights = LocalLightingQuality::Disabled;
+    source.renderSettings.maximumLocalLights = 2048;
     source.renderSettings.budgets.shadow = {1.0, 0.5};
     expect(saveProjectConfig(projectPath, source).success, "project configuration should save");
 
@@ -47,6 +48,7 @@ int main() {
                loaded.sceneRoot == source.sceneRoot && loaded.startupScene == source.startupScene &&
                loaded.renderSettings.environment == source.renderSettings.environment &&
                loaded.renderSettings.localLights == source.renderSettings.localLights &&
+               loaded.renderSettings.maximumLocalLights == 2048 &&
                loaded.renderSettings.budgets.shadow.gpuMilliseconds == 0.5,
            "project fields should round-trip as paths relative to the project file");
 
