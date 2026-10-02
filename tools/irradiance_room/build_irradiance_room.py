@@ -180,6 +180,11 @@ def build_scene():
     entity("IrradianceVolume", {"irradiance_volume": {
         "half_extents": [4.2, 1.95, 5.2], "probe_counts": [8, 4, 10], "intensity": 1.0, "blend_distance": 0.2,
         "normal_bias": 0.15, "view_bias": 0.15, "bake_asset": ""}}, translation(0.0, 1.75, 0.0))
+    # Dense, uniform fog so the sun through the window draws visible shafts
+    # against the shadowed interior (the volumetric fog reference view).
+    entity("Fog", {"volumetric_fog": {
+        "density": 0.06, "height_falloff": 0.0, "base_height": 0.0, "albedo": [0.9, 0.9, 0.88],
+        "anisotropy": 0.55, "noise_amount": 0.25, "noise_scale": 2.0, "primary": True}})
     return {"version": 1, "entities": entities}
 
 
@@ -194,7 +199,7 @@ PROJECT = {
         "environmentBackground": True, "localLights": 1, "maximumLocalLights": 1024, "reflectionProbes": True,
         "indirectDiffuse": 1, "preferGpuDrivenSubmission": False, "depthPrepass": True,
         "lodErrorThresholdPixels": 1.0, "cascadeSplitLambda": 0.65, "cascadeBlendFraction": 0.1,
-        "visualizeShadowCascades": False, "ambientOcclusion": 2, "reflections": 0,
+        "visualizeShadowCascades": False, "ambientOcclusion": 2, "reflections": 0, "volumetricFog": 2,
     },
 }
 

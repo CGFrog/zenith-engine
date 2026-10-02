@@ -66,6 +66,13 @@ struct Sample {
 Sample sample(const IrradianceVolumeData& data, const ShadingParameters& parameters, const glm::vec3& position,
               const glm::vec3& normal, const glm::vec3& viewDirection);
 
+// Direction-averaged radiance at a point in a participating medium (no surface
+// normal): each probe's mean (its order-0 SH term), blended with trilinear and
+// Chebyshev visibility weights. Mirrored by volumetric fog injection so fog
+// inside an enclosed volume is not lit by the unoccluded sky. `irradiance`
+// holds the mean radiance; volumeWeight is the edge fade.
+Sample sampleMeanRadiance(const IrradianceVolumeData& data, const glm::vec3& position, float blendDistance);
+
 // Chooses the baked volume to bind for a camera: one containing the camera,
 // else the nearest; ties go to the lower scene entity ID. entt::null when no
 // volume has baked data.

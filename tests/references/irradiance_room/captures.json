@@ -1,0 +1,24 @@
+{
+  "project": "../../../projects/irradiance_room.zenith-project",
+  "windowSize": "640x360",
+  "tolerance": {
+    "channelTolerance": 3,
+    "maximumChannelDifference": 255,
+    "maximumRootMeanSquareError": 1.5,
+    "maximumDifferingPixelFraction": 0.001
+  },
+  "views": [
+    {
+      "name": "volumetric_fog_shafts",
+      "covers": "froxel fog light shafts through the window, lit ambiently by the irradiance volume",
+      "frame": 300,
+      "camera": "0,1.6,-4.5,180,5"
+    },
+    {
+      "name": "irradiance_bounce",
+      "covers": "baked irradiance volume bounce and color bleed from the sunlit floor, seen through fog",
+      "frame": 300,
+      "camera": "0,1.6,4,0,-5"
+    }
+  ]
+}

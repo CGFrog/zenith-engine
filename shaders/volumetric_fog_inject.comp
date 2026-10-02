@@ -30,6 +30,11 @@ layout(set = 0, binding = 0) uniform FogFrame {
     vec4 density;          // x: density; y: height falloff; z: base height; w: noise amount
     vec4 noiseAmbient;     // x: noise cell size; w: ambient scale
     vec4 ambientRadiance;  // rgb
+    // Irradiance volume (see VolumetricFogFrame): xyz world minimum, w intensity;
+    // xyz probe spacing, w edge blend distance; xyz probes per axis, w bound.
+    vec4 irradianceVolumeMinimum;
+    vec4 irradianceVolumeCellSize;
+    uvec4 irradianceVolumeCounts;
 } fog;
 
 layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
@@ -61,6 +66,19 @@ layout(std430, set = 0, binding = 5) readonly buffer EnvironmentIrradiance {
 
 layout(set = 0, binding = 6) uniform sampler3D historyVolume;
 layout(set = 0, binding = 7, rgba16f) uniform writeonly image3D scatteringVolume;
+
+// Mirrors IrradianceProbe in mesh.frag and irradiance_volume::GpuProbe:
+// order-2 SH of irradiance / pi (irradiance[0].w is 1 for valid probes) and
+// distance moments per octahedral texel.
+const int IRRADIANCE_PROBE_DEPTH_RESOLUTION = 8;
+struct IrradianceProbe {
+    vec4 irradiance[9];
+    vec2 depthMoments[IRRADIANCE_PROBE_DEPTH_RESOLUTION * IRRADIANCE_PROBE_DEPTH_RESOLUTION];
+};
+
+layout(std430, set = 0, binding = 8) readonly buffer IrradianceVolumeProbes {
+    IrradianceProbe probes[];
+} irradianceVolume;
 
 // Mirrors volumetric_fog::henyeyGreenstein.
 float henyeyGreenstein(float cosine, float anisotropy) {
@@ -154,12 +172,104 @@ vec3 localLightScattering(uvec3 froxel, vec3 world, vec3 toEye) {
     return radiance;
 }
 
-vec3 ambientScattering() {
-    // Isotropic phase over uniform incident radiance integrates to the mean radiance.
-    if (fog.clusterGrid.w != 0u) {
-        return max(environmentIrradiance.coefficients[0].rgb * 0.282095, vec3(0.0)) * fog.noiseAmbient.w;
+// Octahedral lookup and Chebyshev test mirror the irradiance volume functions
+// in mesh.frag (and engine/graphics/IrradianceVolume.cpp).
+vec2 signNotZero(vec2 value) {
+    return vec2(value.x >= 0.0 ? 1.0 : -1.0, value.y >= 0.0 ? 1.0 : -1.0);
+}
+
+vec2 octahedralEncode(vec3 direction) {
+    vec2 projected = direction.xz / (abs(direction.x) + abs(direction.y) + abs(direction.z));
+    if (direction.y < 0.0) {
+        projected = (1.0 - abs(projected.yx)) * signNotZero(projected);
     }
-    return fog.ambientRadiance.rgb;
+    return projected * 0.5 + 0.5;
+}
+
+vec2 probeDepthTexel(uint probe, ivec2 texel) {
+    texel = clamp(texel, ivec2(0), ivec2(IRRADIANCE_PROBE_DEPTH_RESOLUTION - 1));
+    return irradianceVolume.probes[probe].depthMoments[texel.y * IRRADIANCE_PROBE_DEPTH_RESOLUTION + texel.x];
+}
+
+vec2 sampleProbeDepth(uint probe, vec3 direction) {
+    vec2 texel = octahedralEncode(direction) * float(IRRADIANCE_PROBE_DEPTH_RESOLUTION) - 0.5;
+    vec2 base = floor(texel);
+    vec2 fraction = texel - base;
+    ivec2 corner = ivec2(base);
+    vec2 top = mix(probeDepthTexel(probe, corner), probeDepthTexel(probe, corner + ivec2(1, 0)), fraction.x);
+    vec2 bottom =
+        mix(probeDepthTexel(probe, corner + ivec2(0, 1)), probeDepthTexel(probe, corner + ivec2(1, 1)), fraction.x);
+    return mix(top, bottom, fraction.y);
+}
+
+float chebyshevVisibility(vec2 moments, float distanceToProbe) {
+    if (distanceToProbe <= moments.x) {
+        return 1.0;
+    }
+    float variance = max(moments.y - moments.x * moments.x, 0.0001);
+    float delta = distanceToProbe - moments.x;
+    float probability = variance / (variance + delta * delta);
+    return probability * probability * probability;
+}
+
+// Mirrors irradiance_volume::sampleMeanRadiance: rgb is the probes' mean
+// radiance (order-0 SH term), a the edge weight (zero outside the box or when
+// no probe sees the point).
+vec4 volumeMeanRadiance(vec3 world) {
+    uvec3 counts = fog.irradianceVolumeCounts.xyz;
+    vec3 minimum = fog.irradianceVolumeMinimum.xyz;
+    vec3 cellSize = fog.irradianceVolumeCellSize.xyz;
+    vec3 inside = min(world - minimum, minimum + cellSize * vec3(counts) - world);
+    float edgeDistance = min(inside.x, min(inside.y, inside.z));
+    if (edgeDistance < 0.0) {
+        return vec4(0.0);
+    }
+    float blendDistance = fog.irradianceVolumeCellSize.w;
+    float edge = blendDistance <= 0.0 ? 1.0 : min(edgeDistance / blendDistance, 1.0);
+    vec3 lastProbe = vec3(counts) - 1.0;
+    vec3 lattice = clamp((world - minimum) / cellSize - 0.5, vec3(0.0), lastProbe);
+    vec3 base = min(floor(lattice), max(lastProbe - 1.0, vec3(0.0)));
+    vec3 alpha = clamp(lattice - base, vec3(0.0), vec3(1.0));
+    vec3 radiance = vec3(0.0);
+    float totalWeight = 0.0;
+    for (uint corner = 0u; corner < 8u; ++corner) {
+        uvec3 offset = uvec3(corner & 1u, (corner >> 1u) & 1u, (corner >> 2u) & 1u);
+        vec3 trilinearAxes = mix(1.0 - alpha, alpha, vec3(offset));
+        float trilinear = trilinearAxes.x * trilinearAxes.y * trilinearAxes.z;
+        uvec3 index = min(uvec3(base) + offset, counts - 1u);
+        uint probe = index.x + counts.x * (index.y + counts.y * index.z);
+        if (irradianceVolume.probes[probe].irradiance[0].w < 0.5 || trilinear <= 0.0) {
+            continue;
+        }
+        vec3 probeToPoint = world - (minimum + (vec3(index) + 0.5) * cellSize);
+        float pointDistance = length(probeToPoint);
+        float weight = 1.0;
+        if (pointDistance > 0.0001) {
+            weight = chebyshevVisibility(sampleProbeDepth(probe, probeToPoint / pointDistance), pointDistance);
+        }
+        weight = max(weight, 0.000001) * trilinear;
+        radiance += max(irradianceVolume.probes[probe].irradiance[0].rgb * 0.282095, vec3(0.0)) * weight;
+        totalWeight += weight;
+    }
+    if (totalWeight <= 0.0) {
+        return vec4(0.0);
+    }
+    return vec4(radiance / totalWeight, edge);
+}
+
+vec3 ambientScattering(vec3 world) {
+    // Isotropic phase over uniform incident radiance integrates to the mean radiance.
+    vec3 ambient = fog.ambientRadiance.rgb;
+    if (fog.clusterGrid.w != 0u) {
+        ambient = max(environmentIrradiance.coefficients[0].rgb * 0.282095, vec3(0.0)) * fog.noiseAmbient.w;
+    }
+    // The environment term is unoccluded; inside a baked volume the probes see
+    // the enclosing walls, so interior fog is not lit like open sky.
+    if (fog.irradianceVolumeCounts.w != 0u) {
+        vec4 volume = volumeMeanRadiance(world);
+        ambient = mix(ambient, volume.rgb * fog.irradianceVolumeMinimum.w, volume.a);
+    }
+    return ambient;
 }
 
 void main() {
@@ -184,7 +294,7 @@ void main() {
         // Sunlight travels along -lightDirection.
         float sunPhase = henyeyGreenstein(dot(-lightDirection, toEye), fog.albedoAnisotropy.w);
         vec3 incident = fog.lightRadiance.rgb * sunPhase * sunVisibility(world) +
-                        localLightScattering(froxel, world, toEye) + ambientScattering();
+                        localLightScattering(froxel, world, toEye) + ambientScattering(world);
         medium = vec4(scattering * incident, extinction);
     }
 

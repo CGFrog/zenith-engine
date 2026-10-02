@@ -82,12 +82,19 @@ $env:ZENITH_CAPTURE_PATH='build\captures\overview.png'
 build\Debug\zenith.exe --project projects\showcase.zenith-project
 ```
 
-### Showcase references
+### Reference sets
 
-`tests/references/showcase/captures.json` lists deterministic showcase views
-with the feature each covers: converged and adapting auto exposure, TAAU
-ghosting during a lateral pan, alpha-tested foliage edges through the depth
-prepass, GTAO contact occlusion, screen-space reflections, and bloom. Each view
+Each folder under `tests/references/` is one reference set: a `captures.json`
+naming the project it renders, plus the reference PNGs.
+
+- `showcase/` covers converged and adapting auto exposure, TAAU ghosting during
+  a lateral pan, alpha-tested foliage edges through the depth prepass, GTAO
+  contact occlusion, screen-space reflections, and bloom.
+- `irradiance_room/` covers volumetric fog light shafts through the room's
+  window (dense uniform fog, ambient-lit by the baked irradiance volume) and
+  the volume's bounce lighting and color bleed.
+
+Each view
 names a capture frame, a camera pose and optional motion, optional extra
 environment variables, and optional per-view tolerances. The checked-in PNGs
 beside it are the references.
@@ -100,20 +107,21 @@ are per RGB channel in 8-bit units: a pixel differs when any channel exceeds
 `channelTolerance`, and a view fails when the RMSE, the largest channel
 difference, or the fraction of differing pixels exceeds its limit. A failure
 writes `<view>.diff.png` (amplified absolute difference) beside the capture in
-`build/captures/showcase/`. Consecutive runs on one machine differ by at most a
+`build/captures/<set>/`. Consecutive runs on one machine differ by at most a
 few 8-bit steps in a handful of pixels; the default limits (3 per channel, RMSE
 1.5, 0.1% of pixels) leave room for that and nothing larger.
 
-The CTest `zenith_showcase_reference_captures` (labels `vulkan;capture`) runs the
-comparison and returns 77, reported as skipped, when the machine has no
+The CTests `zenith_<set>_reference_captures` (labels `vulkan;capture`) run the
+comparison and return 77, reported as skipped, when the machine has no
 hardware Vulkan device. CI runs it in the Vulkan-labelled step only.
 
-**Regenerate the references** after an intentional visual change, a showcase
-content change, or a driver/GPU change, then review the PNG diff before
-committing:
+**Regenerate the references** after an intentional visual change, a content
+change, or a driver/GPU change, then review the PNG diff before committing.
+`zenith_update_references` regenerates every set; `zenith_update_<set>_references`
+regenerates one:
 
 ```powershell
-cmake --build build --config Debug --target zenith_update_showcase_references
+cmake --build build --config Debug --target zenith_update_references
 ```
 
 To check stability, or to work on one view, run the driver directly;

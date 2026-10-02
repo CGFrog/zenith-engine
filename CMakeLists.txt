@@ -898,30 +898,35 @@ if(BUILD_TESTING)
     target_link_libraries(zenith_capture_camera_tests PRIVATE zenith_demo)
     add_test(NAME zenith_capture_camera COMMAND zenith_capture_camera_tests)
 
-    # Renders the showcase reference views and compares them with
-    # tests/references/showcase (docs/RENDERER_VALIDATION.md). Skips without a
-    # hardware Vulkan device; the update target regenerates the references.
+    # Renders each reference set's views and compares them with
+    # tests/references/<set> (docs/RENDERER_VALIDATION.md). Skips without a
+    # hardware Vulkan device; zenith_update_<set>_references regenerates one
+    # set and zenith_update_references regenerates all of them.
     add_executable(zenith_reference_capture tests/capture/ReferenceCaptureDriver.cpp)
     target_link_libraries(zenith_reference_capture PRIVATE zenith_engine)
     # Captures sample the cooked BC7/BC5 textures, so they must be current.
     add_dependencies(zenith_reference_capture zenith zenith_cooked_textures)
-    set(ZENITH_SHOWCASE_CAPTURE_ARGUMENTS
-        --executable "$<TARGET_FILE:zenith>"
-        --manifest "${CMAKE_CURRENT_SOURCE_DIR}/tests/references/showcase/captures.json"
-        --output "${CMAKE_CURRENT_BINARY_DIR}/captures/showcase")
-    add_test(NAME zenith_showcase_reference_captures
-        COMMAND zenith_reference_capture ${ZENITH_SHOWCASE_CAPTURE_ARGUMENTS})
-    set_tests_properties(zenith_showcase_reference_captures PROPERTIES
-        LABELS "vulkan;capture"
-        SKIP_RETURN_CODE 77
-        TIMEOUT 900
-    )
-    add_custom_target(zenith_update_showcase_references
-        COMMAND zenith_reference_capture ${ZENITH_SHOWCASE_CAPTURE_ARGUMENTS} --update
-        DEPENDS zenith_reference_capture zenith zenith_cooked_textures
-        COMMENT "Regenerating showcase reference captures"
-        VERBATIM
-    )
+    add_custom_target(zenith_update_references)
+    foreach(reference_set IN ITEMS showcase irradiance_room)
+        set(capture_arguments
+            --executable "$<TARGET_FILE:zenith>"
+            --manifest "${CMAKE_CURRENT_SOURCE_DIR}/tests/references/${reference_set}/captures.json"
+            --output "${CMAKE_CURRENT_BINARY_DIR}/captures/${reference_set}")
+        add_test(NAME zenith_${reference_set}_reference_captures
+            COMMAND zenith_reference_capture ${capture_arguments})
+        set_tests_properties(zenith_${reference_set}_reference_captures PROPERTIES
+            LABELS "vulkan;capture"
+            SKIP_RETURN_CODE 77
+            TIMEOUT 900
+        )
+        add_custom_target(zenith_update_${reference_set}_references
+            COMMAND zenith_reference_capture ${capture_arguments} --update
+            DEPENDS zenith_reference_capture zenith zenith_cooked_textures
+            COMMENT "Regenerating ${reference_set} reference captures"
+            VERBATIM
+        )
+        add_dependencies(zenith_update_references zenith_update_${reference_set}_references)
+    endforeach()
 
     add_executable(zenith_render_packet_benchmark tests/engine/RenderPacketBenchmarkTests.cpp)
     target_link_libraries(zenith_render_packet_benchmark PRIVATE zenith_engine)

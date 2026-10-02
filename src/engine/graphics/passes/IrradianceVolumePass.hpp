@@ -38,6 +38,12 @@ class IrradianceVolumePass {
         return m_capacity;
     }
 
+    // The current probe buffer (never null after init). Uploads are visible to
+    // fragment and compute shaders recorded after prepare().
+    VkBuffer buffer() const {
+        return m_buffer.buffer;
+    }
+
   private:
     struct Buffer {
         VkBuffer buffer{VK_NULL_HANDLE};

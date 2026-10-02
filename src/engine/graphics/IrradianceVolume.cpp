@@ -133,6 +133,33 @@ Sample sample(const IrradianceVolumeData& data, const ShadingParameters& paramet
             .volumeWeight = edgeWeight(data, position, parameters.blendDistance)};
 }
 
+Sample sampleMeanRadiance(const IrradianceVolumeData& data, const glm::vec3& position, float blendDistance) {
+    // Y00: the order-0 coefficient times the constant basis is the mean over
+    // all directions.
+    constexpr float y00 = 0.282095f;
+    glm::vec3 radiance(0.0f);
+    float totalWeight = 0.0f;
+    for (const ProbeCorner& corner : surroundingProbes(data, position)) {
+        const IrradianceProbe& probe = data.probes[data.probeIndex(corner.index)];
+        if (!probe.valid || corner.trilinear <= 0.0f) {
+            continue;
+        }
+        const glm::vec3 probeToPoint = position - data.probePosition(corner.index);
+        const float pointDistance = glm::length(probeToPoint);
+        float weight = 1.0f;
+        if (pointDistance > 0.0001f) {
+            weight = chebyshevVisibility(sampleDepthMoments(probe, probeToPoint / pointDistance), pointDistance);
+        }
+        weight = std::max(weight, 0.000001f) * corner.trilinear;
+        radiance += glm::max(probe.irradiance[0] * y00, glm::vec3(0.0f)) * weight;
+        totalWeight += weight;
+    }
+    if (totalWeight <= 0.0f) {
+        return {};
+    }
+    return {.irradiance = radiance / totalWeight, .volumeWeight = edgeWeight(data, position, blendDistance)};
+}
+
 Entity selectVolume(const Scene& scene, const glm::vec3& cameraPosition) {
     Entity selected = entt::null;
     float selectedDistance = std::numeric_limits<float>::max();

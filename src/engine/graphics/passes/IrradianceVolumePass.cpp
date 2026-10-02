@@ -64,10 +64,13 @@ void IrradianceVolumePass::writeDescriptors(uint32_t frameIndex, std::span<const
 }
 
 void IrradianceVolumePass::recordUpload(VkCommandBuffer commandBuffer, std::span<const std::byte> bytes) const {
-    // Earlier frames may still read the buffer in fragment shaders; the barrier
-    // orders those reads before the overwrite (write-after-read).
+    // Earlier frames may still read the buffer in fragment shaders and fog
+    // injection; the barrier orders those reads before the overwrite
+    // (write-after-read).
+    constexpr VkPipelineStageFlags2 readers =
+        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     VkBufferMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                                   .srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                   .srcStageMask = readers,
                                    .srcAccessMask = VK_ACCESS_2_NONE,
                                    .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                                    .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
@@ -85,7 +88,7 @@ void IrradianceVolumePass::recordUpload(VkCommandBuffer commandBuffer, std::span
     }
     barrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
     barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-    barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    barrier.dstStageMask = readers;
     barrier.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
     vkCmdPipelineBarrier2(commandBuffer, &dependency);
 }

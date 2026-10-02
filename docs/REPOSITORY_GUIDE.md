@@ -564,8 +564,11 @@ offset.
 Froxel volumetric fog for scenes with a `VolumetricFogComponent` when
 `RenderSettings::volumetricFog` is not Off. After light clustering,
 `volumetric_fog_inject.comp` evaluates height fog (with optional noise) lit by
-the cascade-shadowed sun, the froxel's cluster light list, and the environment's
-ambient SH, blending it with the reprojected previous frame (Medium and High);
+the cascade-shadowed sun, the froxel's cluster light list, and ambient light,
+blending it with the reprojected previous frame (Medium and High). Ambient comes
+from the environment's SH, or inside a bound irradiance volume from its probes'
+visibility-weighted mean radiance (`irradiance_volume::sampleMeanRadiance`), so
+fog in enclosed spaces is not lit like open sky;
 `volumetric_fog_integrate.comp` accumulates it front to back. `mesh.frag` and
 `skybox.frag` composite the integrated RGBA16F volume at camera binding 18.
 

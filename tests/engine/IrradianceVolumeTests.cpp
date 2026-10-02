@@ -174,6 +174,28 @@ void testSampling() {
     expect(none.volumeWeight == 0.0f, "a point no probe can light falls back to the environment");
 }
 
+void testMeanRadiance() {
+    using namespace irradiance_volume;
+    // A uniform probe's mean radiance is its band-0 value in every direction.
+    const IrradianceVolumeData uniform = uniformVolume({3u, 3u, 3u}, {0.2f, 0.4f, 0.6f});
+    const Sample inside = sampleMeanRadiance(uniform, {1.4f, 1.6f, 1.2f}, 0.25f);
+    expect(near(inside.irradiance, {0.2f, 0.4f, 0.6f}, 1e-4f), "fog ambient reproduces a uniform volume");
+    expect(near(inside.volumeWeight, 1.0f, 1e-6f), "fog inside the volume takes its full weight");
+    expect(sampleMeanRadiance(uniform, {-0.5f, 1.0f, 1.0f}, 0.25f).volumeWeight == 0.0f,
+           "fog outside the volume keeps the environment ambient");
+
+    // Same wall as testSampling: the right probe is occluded from the point.
+    IrradianceVolumeData wall{.minimum = glm::vec3(0.0f), .maximum = {2.0f, 1.0f, 1.0f}, .probeCounts = {2u, 1u, 1u}};
+    wall.probes = {uniformProbe({1.0f, 0.0f, 0.0f}, 10.0f), uniformProbe({0.0f, 0.0f, 1.0f}, 0.2f)};
+    const Sample occluded = sampleMeanRadiance(wall, {0.9f, 0.5f, 0.5f}, 0.0f);
+    expect(occluded.irradiance.r > 0.95f && occluded.irradiance.b < 0.05f,
+           "fog ambient ignores probes that cannot see the point");
+    wall.probes[0].valid = false;
+    wall.probes[1].valid = false;
+    expect(sampleMeanRadiance(wall, {0.9f, 0.5f, 0.5f}, 0.0f).volumeWeight == 0.0f,
+           "fog no probe can light falls back to the environment ambient");
+}
+
 void testEncoding() {
     IrradianceVolumeData data = uniformVolume({2u, 1u, 3u}, {0.5f, 0.25f, 0.125f});
     data.minimum = {-1.0f, 0.0f, -2.0f};
@@ -359,6 +381,7 @@ int main() {
     testVisibilityWeight();
     testEdgeWeight();
     testSampling();
+    testMeanRadiance();
     testEncoding();
     testVolumeSelection();
     testSceneDocumentRoundTrip();

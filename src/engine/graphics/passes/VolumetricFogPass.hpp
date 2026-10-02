@@ -40,6 +40,13 @@ struct VolumetricFogFrame {
     glm::vec3 ambientRadiance{0.0f};
     bool environmentIrradiance{false};
     float ambientScale{1.0f};
+    // Bound irradiance volume (see irradiance_volume::sampleMeanRadiance):
+    // inside it, ambient in-scattering comes from its probes, which see the
+    // enclosing geometry, fading to the ambient above across the box edge.
+    // Mirrors the camera data of the same name; counts.w is 1 when bound.
+    glm::vec4 irradianceVolumeMinimum{0.0f};  // xyz: world minimum, w: intensity
+    glm::vec4 irradianceVolumeCellSize{1.0f}; // xyz: probe spacing, w: edge blend distance
+    glm::uvec4 irradianceVolumeCounts{0u};    // xyz: probes per axis, w: bound
 
     VolumetricFogComponent medium;
     uint32_t localLightCount{0};
@@ -47,13 +54,16 @@ struct VolumetricFogFrame {
     // Directional shadow map array (DEPTH_READ_ONLY_OPTIMAL, writes visible to
     // compute) with a comparison sampler; local lights and cluster lists from
     // ClusteredLightingPass (visible to compute); the irradiance SH buffer of
-    // EnvironmentPass (vec4 coefficients[9], visible to compute).
+    // EnvironmentPass (vec4 coefficients[9], visible to compute); the
+    // irradiance volume probe buffer (IrradianceVolumePass, always valid,
+    // visible to compute).
     VkImageView shadowMap{VK_NULL_HANDLE};
     VkSampler shadowSampler{VK_NULL_HANDLE};
     VkBuffer localLights{VK_NULL_HANDLE};
     VkBuffer clusterRanges{VK_NULL_HANDLE};
     VkBuffer clusterLightIndices{VK_NULL_HANDLE};
     VkBuffer environmentIrradianceBuffer{VK_NULL_HANDLE};
+    VkBuffer irradianceVolumeProbes{VK_NULL_HANDLE};
 };
 
 // Froxel volumetric fog: per frame, volumetric_fog_inject.comp evaluates the

@@ -2684,6 +2684,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
                                cameraData.environmentSky.w,
             .environmentIrradiance = imageBasedLighting,
             .ambientScale = cameraData.environmentSky.w,
+            .irradianceVolumeMinimum = cameraData.irradianceVolumeMinimum,
+            .irradianceVolumeCellSize = cameraData.irradianceVolumeCellSize,
+            .irradianceVolumeCounts = cameraData.irradianceVolumeCounts,
             .medium = *fogMedium,
             .localLightCount = localLightCount,
             .shadowMap = m_shadowTexture.view,
@@ -2691,7 +2694,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             .localLights = clusterBuffers.lights,
             .clusterRanges = clusterBuffers.clusterRanges,
             .clusterLightIndices = clusterBuffers.lightIndices,
-            .environmentIrradianceBuffer = environmentState->primaryIrradiance};
+            .environmentIrradianceBuffer = environmentState->primaryIrradiance,
+            .irradianceVolumeProbes = m_irradianceVolume.buffer()};
         recordVolumetricFog(draw, &fogFrame);
     } else {
         recordVolumetricFog(draw, nullptr);

@@ -564,7 +564,7 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             }
         }
         // Irradiance volume (U6): rewrites the probe buffer only when the bound
-        // volume changes; opaque and blended shading read it.
+        // volume changes; fog injection and opaque and blended shading read it.
         const auto irradianceProbes =
             graph.importBuffer("irradiance volume probes", {.size = 0, .usage = 1, .alignment = 256});
         if (shape.irradianceVolume) {
@@ -635,6 +635,12 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             }
             if (shape.localLights) {
                 fogAccesses.push_back({lightClusters, RenderGraphAccessMode::Read,
+                                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                       VK_IMAGE_LAYOUT_UNDEFINED});
+            }
+            if (shape.irradianceVolume) {
+                // Ambient in-scattering inside the volume comes from its probes.
+                fogAccesses.push_back({irradianceProbes, RenderGraphAccessMode::Read,
                                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
                                        VK_IMAGE_LAYOUT_UNDEFINED});
             }

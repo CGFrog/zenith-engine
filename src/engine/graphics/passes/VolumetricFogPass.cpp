@@ -12,7 +12,7 @@
 namespace {
 // Mirrors local_size in the fog compute shaders.
 constexpr uint32_t workgroupSize = 8;
-constexpr uint32_t injectBindingCount = 8;
+constexpr uint32_t injectBindingCount = 9;
 // Halton points cycled by temporally reprojected qualities.
 constexpr uint32_t jitterSequenceLength = 16;
 
@@ -47,6 +47,10 @@ struct InjectUniforms {
     // x: noise cell size; w: ambient scale.
     glm::vec4 noiseAmbient{0.0f};
     glm::vec4 ambientRadiance{0.0f};
+    // Irradiance volume: see VolumetricFogFrame.
+    glm::vec4 irradianceVolumeMinimum{0.0f};
+    glm::vec4 irradianceVolumeCellSize{1.0f};
+    glm::uvec4 irradianceVolumeCounts{0u};
 };
 
 // Mirrors Settings in shaders/volumetric_fog_integrate.comp.
@@ -137,7 +141,7 @@ bool VolumetricFogPass::createLayouts() {
          computeBinding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER), computeBinding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
          computeBinding(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER), computeBinding(5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
          computeBinding(6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
-         computeBinding(7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)}};
+         computeBinding(7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE), computeBinding(8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)}};
     const std::array<VkDescriptorSetLayoutBinding, 2> integrateBindings{
         {computeBinding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE), computeBinding(1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)}};
     VkDescriptorSetLayoutCreateInfo layout{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -381,7 +385,10 @@ void VolumetricFogPass::recordInject(VkCommandBuffer commandBuffer, uint32_t fra
         .density = {std::max(medium.density, 0.0f), std::max(medium.heightFalloff, 0.0f), medium.baseHeight,
                     std::clamp(medium.noiseAmount, 0.0f, 1.0f)},
         .noiseAmbient = {std::max(medium.noiseScale, 0.001f), 0.0f, 0.0f, std::max(frame.ambientScale, 0.0f)},
-        .ambientRadiance = {glm::max(frame.ambientRadiance, glm::vec3(0.0f)), 0.0f}};
+        .ambientRadiance = {glm::max(frame.ambientRadiance, glm::vec3(0.0f)), 0.0f},
+        .irradianceVolumeMinimum = frame.irradianceVolumeMinimum,
+        .irradianceVolumeCellSize = frame.irradianceVolumeCellSize,
+        .irradianceVolumeCounts = frame.irradianceVolumeCounts};
     const UniformBuffer& uniform = m_uniforms[frameIndex];
     std::memcpy(uniform.mapped, &uniforms, sizeof(uniforms));
     vmaFlushAllocation(m_allocator, uniform.allocation, 0, sizeof(uniforms));
@@ -396,6 +403,7 @@ void VolumetricFogPass::recordInject(VkCommandBuffer commandBuffer, uint32_t fra
     const VkDescriptorBufferInfo rangeInfo{.buffer = frame.clusterRanges, .range = VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo indexInfo{.buffer = frame.clusterLightIndices, .range = VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo irradianceInfo{.buffer = frame.environmentIrradianceBuffer, .range = VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo probeInfo{.buffer = frame.irradianceVolumeProbes, .range = VK_WHOLE_SIZE};
     const VkDescriptorImageInfo historyInfo{
         .sampler = m_sampler, .imageView = history.view, .imageLayout = volumeLayout};
     const VkDescriptorImageInfo outputInfo{.imageView = output.view, .imageLayout = volumeLayout};
@@ -407,7 +415,8 @@ void VolumetricFogPass::recordInject(VkCommandBuffer commandBuffer, uint32_t fra
          bufferWrite(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &indexInfo),
          bufferWrite(5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &irradianceInfo),
          imageWrite(6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &historyInfo),
-         imageWrite(7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &outputInfo)}};
+         imageWrite(7, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &outputInfo),
+         bufferWrite(8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &probeInfo)}};
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_injectPipeline.handle());
     vkCmdPushDescriptorSet(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_injectPipeline.layout(), 0,
                            static_cast<uint32_t>(writes.size()), writes.data());

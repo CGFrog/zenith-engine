@@ -409,6 +409,45 @@
       ],
       "name": "IrradianceVolume",
       "parent": null
+    },
+    {
+      "components": {
+        "volumetric_fog": {
+          "albedo": [
+            0.9,
+            0.9,
+            0.88
+          ],
+          "anisotropy": 0.55,
+          "base_height": 0.0,
+          "density": 0.06,
+          "height_falloff": 0.0,
+          "noise_amount": 0.25,
+          "noise_scale": 2.0,
+          "primary": true
+        }
+      },
+      "id": 13,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Fog",
+      "parent": null
     }
   ],
   "version": 1
