@@ -70,7 +70,7 @@ layout(std430, set = 0, binding = 6) readonly buffer Batches {
 layout(push_constant) uniform Settings {
     mat4 viewProjection;
     uvec4 counts;   // x: objects, y: pyramid levels, z: phase, w: maximum instances
-    uvec4 extents;  // x: maximum batches, y: render width, z: render height, w: visibility slots
+    uvec4 extents;  // x: maximum batches, y/z: pyramid render extent, w: visibility slots
     vec4 lodView;   // xyz: camera position, w: LOD error scale (0 = full detail only)
 } settings;
 
@@ -107,8 +107,8 @@ bool occluded(ObjectRecord object) {
 
     // Reversed Z: the nearest point has the largest depth.
     float nearestDepth = upper.z;
-    // Dynamic resolution renders into the top-left of the depth image; pixels
-    // beyond it only make the pyramid's minimum farther, which stays safe.
+    // The pyramid covers the rendered top-left region of its storage; level L
+    // spans max(renderSize >> L, 1) texels (DepthPyramidLayout.hpp).
     ivec2 renderSize = ivec2(settings.extents.yz);
     vec2 uvLower = clamp(lower.xy * 0.5 + 0.5, 0.0, 1.0);
     vec2 uvUpper = clamp(upper.xy * 0.5 + 0.5, 0.0, 1.0);
@@ -120,7 +120,7 @@ bool occluded(ObjectRecord object) {
     ivec2 span = pixelUpper - pixelLower;
     int level = int(ceil(log2(float(max(max(span.x, span.y), 1)))));
     level = clamp(level, 0, int(settings.counts.y) - 1);
-    ivec2 levelSize = textureSize(depthPyramid, level);
+    ivec2 levelSize = max(renderSize >> level, ivec2(1));
     ivec2 texelLower = min(pixelLower >> level, levelSize - 1);
     ivec2 texelUpper = min(pixelUpper >> level, levelSize - 1);
     float farthestOccluder = min(min(texelFetch(depthPyramid, texelLower, level).r,

@@ -140,6 +140,10 @@ struct RenderSettings {
     uint32_t maximumLocalLights{1024};
     bool reflectionProbes{true};
     bool preferGpuDrivenSubmission{false};
+    // Opaque depth and view-space normals are drawn before shading, so opaque
+    // pixels shade once and screen-space effects get normals and a depth
+    // pyramid. Off restores single-pass depth testing.
+    bool depthPrepass{true};
     // Largest projected geometric error, in pixels at internal render
     // resolution, a simplified mesh LOD may show. Zero always draws full detail.
     float lodErrorThresholdPixels{1.0f};

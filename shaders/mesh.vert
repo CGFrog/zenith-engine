@@ -1,5 +1,9 @@
 #version 450
 
+// The depth prepass (depth_normal.vert) repeats the position math below and the
+// shading pass tests EQUAL against its depth, so keep both bit-identical.
+invariant gl_Position;
+
 layout(set = 0, binding = 0) uniform CameraData {
     mat4 viewProjection;
     mat4 previousViewProjection;
@@ -85,7 +89,7 @@ void main() {
                        previousSkinPalettes.joints[object.skin.x + joint.w] * inWeights.w;
     }
     mat4 model = object.model * skin;
-    vec4 world = model * vec4(inPosition, 1.0);
+    precise vec4 world = model * vec4(inPosition, 1.0);
     // The cofactor matrix transforms normals correctly for affine transforms;
     // normalization removes the determinant scale without a per-vertex inverse.
     mat3 linearModel = mat3(model);
@@ -95,8 +99,9 @@ void main() {
     worldNormal = normalize(normalMatrix * inNormal);
     worldTangent = vec4(normalize(linearModel * inTangent.xyz), inTangent.w);
     texCoord = inTexCoord;
-    currentClipPosition = camera.viewProjection * world;
+    precise vec4 clipPosition = camera.viewProjection * world;
+    currentClipPosition = clipPosition;
     previousClipPosition = camera.previousViewProjection * object.previousModel * previousSkin * vec4(inPosition, 1.0);
-    gl_Position = currentClipPosition;
+    gl_Position = clipPosition;
     materialIndex = object.skin.z;
 }

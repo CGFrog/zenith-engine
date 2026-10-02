@@ -13,6 +13,7 @@
 #include "../resources/UploadContext.hpp"
 #include "../vulkan/VulkanContext.hpp"
 #include "ClusteredLightingPass.hpp"
+#include "DepthPyramid.hpp"
 #include "EnvironmentPass.hpp"
 #include "GpuDrivenPass.hpp"
 #include "PostProcessPass.hpp"
@@ -25,6 +26,25 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+// Depth-prepass outputs for screen-space effects, valid from the end of the
+// prepass until the frame's next record(). PostProcessPass::normalFormat and
+// DepthPyramid document the encodings.
+struct SceneGeometryViews {
+    // SHADER_READ_ONLY_OPTIMAL; covers renderExtent at the top-left.
+    VkImageView normals{VK_NULL_HANDLE};
+    // GENERAL; complete opaque depth of the frame.
+    VkImageView depthPyramid{VK_NULL_HANDLE};
+    VkSampler depthPyramidSampler{VK_NULL_HANDLE};
+    uint32_t depthPyramidLevels{0};
+    VkExtent2D renderExtent{};
+    // Size of the normal target and of pyramid level 0's storage.
+    VkExtent2D storageExtent{};
+
+    bool valid() const {
+        return normals != VK_NULL_HANDLE;
+    }
+};
 
 class MeshPass {
   public:
@@ -42,13 +62,17 @@ class MeshPass {
     }
 
     uint32_t prewarmedPipelineCount() const {
-        // Ten graphics pipelines plus the light-cluster assignment.
-        return 11u + (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
+        // Twelve graphics pipelines (two depth-normal), the light-cluster
+        // assignment, and the depth-pyramid build.
+        return 14u + (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
     }
 
     uint32_t localLightCapacity() const {
         return m_clusteredLighting.lightCapacity();
     }
+
+    // Empty unless the latest record() for frameIndex ran the depth prepass.
+    SceneGeometryViews sceneGeometry(uint32_t frameIndex) const;
 
     VkSemaphore uploadTimelineSemaphore() const {
         return m_uploadContext.timelineSemaphore();
@@ -158,6 +182,9 @@ class MeshPass {
         Clear,
         // Continue a scene pass whose attachments the caller already prepared.
         Preserve,
+        // Clear the color targets but keep the depth prepass result, which the
+        // caller left in DEPTH_ATTACHMENT_OPTIMAL.
+        ClearColorKeepDepth,
     };
 
     enum class ShadedItems {
@@ -194,6 +221,8 @@ class MeshPass {
     struct MeshShadingVariant {
         bool physicallyBased{true};
         uint32_t shadowCascades{0};
+        // Opaque pipelines test EQUAL against prepass depth without writing it.
+        bool depthPrepass{false};
         auto operator<=>(const MeshShadingVariant&) const = default;
     };
 
@@ -211,6 +240,17 @@ class MeshPass {
         const MeshPipelineSet* pipelines{nullptr};
         VkQueryPool timestampQueries{VK_NULL_HANDLE};
         RenderStats* stats{nullptr};
+        // World-to-view transform; the depth prepass encodes view-space normals.
+        glm::mat4 view{1.0f};
+        VkExtent2D renderExtent{};
+    };
+
+    // Single- and double-sided pipelines for opaque surfaces of one pass.
+    struct OpaquePipelines {
+        const GraphicsPipeline* singleSided{nullptr};
+        const GraphicsPipeline* doubleSided{nullptr};
+        // Depth-normal pipelines take DrawContext::view as a push constant.
+        bool pushesView{false};
     };
 
     bool createPipeline(VkFormat colorFormat, VkFormat depthFormat);
@@ -226,9 +266,20 @@ class MeshPass {
     void beginRendering(VkCommandBuffer commandBuffer, VkImageView colorView, VkImageView motionView,
                         VkImage depthImage, VkImageView depthView, VkExtent2D extent,
                         SceneAttachments attachments) const;
+    void beginDepthPrepass(VkCommandBuffer commandBuffer, VkImageView normalView, VkImage depthImage,
+                           VkImageView depthView, VkExtent2D extent, SceneAttachments attachments) const;
+    void prepareDepthForClear(VkCommandBuffer commandBuffer, VkImage depthImage) const;
+    void setSceneViewport(const DrawContext& draw) const;
+    // Draws opaque depth and normals, then builds the depth pyramid from it.
+    // With GPU-driven submission it also runs the late cull between phases.
+    void recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive, VkImage depthImage, VkImageView depthView,
+                            const glm::mat4& viewProjection, const MeshLodView& lodView);
+    void recordDepthNormalItems(const DrawContext& draw);
+    void bindOpaquePipeline(const DrawContext& draw, const GraphicsPipeline& pipeline, OpaquePipelines pipelines,
+                            VkDescriptorSet cameraSet) const;
     void selectRenderItemLods(const MeshLodView& view);
     bool prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lodView);
-    void recordGpuDrivenGroups(const DrawContext& draw, GpuCullPhase phase);
+    void recordGpuDrivenGroups(const DrawContext& draw, GpuCullPhase phase, OpaquePipelines pipelines);
     void prepareDepthForPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const;
     void restoreDepthAfterPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const;
     // Fills m_visibleItems with what the CPU submits this frame, in draw order.
@@ -298,7 +349,12 @@ class MeshPass {
     GraphicsPipeline m_shadowPipeline;
     GraphicsPipeline m_selectionMaskPipeline;
     GraphicsPipeline m_outlinePipeline;
+    GraphicsPipeline m_depthNormalPipeline;
+    GraphicsPipeline m_depthNormalDoubleSidedPipeline;
     PostProcessPass m_postProcess;
+    DepthPyramid m_depthPyramid;
+    // Frame slot whose latest record() ran the depth prepass, if any.
+    std::optional<uint32_t> m_depthPrepassFrame;
     GpuDrivenPass m_gpuDrivenPass;
     ClusteredLightingPass m_clusteredLighting;
     bool m_gpuDrivenSupported{false};
