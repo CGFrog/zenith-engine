@@ -75,7 +75,9 @@ or at the decision point named below, after capability validation.
 | `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, clustered local lights, depth prepass on, cascaded (high) shadows, and bloom. |
 | `ZENITH_FORCE_TAA` | Temporal anti-aliasing. |
 | `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
-| `ZENITH_FORCE_GPU_DRIVEN` | GPU-driven submission (two-phase occlusion culling and indirect draws) when the device supports it. |
+| `ZENITH_FORCE_GPU_DRIVEN` | GPU-driven submission (two-phase occlusion culling and indirect draws) when the device supports it. Shadow cascades are then culled on the GPU too. |
+| `ZENITH_DISABLE_GPU_SHADOW_CULLING` | Keeps CPU shadow-cascade culling while GPU-driven submission is active (A/B baseline). |
+| `ZENITH_DISABLE_SHADOW_CACHE` | Redraws every shadow cascade each frame, so shadow culling and rendering can be measured on a static scene. |
 | `ZENITH_DISABLE_DEPTH_PREPASS` | Skips the depth/normal prepass even when `RenderSettings::depthPrepass` is set. |
 | `ZENITH_DISABLE_RENDER_PACKET_CACHE` | Rebuilds render packets every frame (packet-cache baseline). |
 | `ZENITH_SMOKE_FRAMES=N` | Quits after N presented frames; used by bounded smoke runs and CTest. |
@@ -96,12 +98,43 @@ Each frame's timestamp pool brackets every pass; `RenderStats` exposes the
 retired frame's durations and the benchmark reports them as `gpu.*` metrics.
 Passes a frame skips report zero. `gpu.shadow` runs from the frame start, so it
 also includes `gpu.environment_precompute` (which records work only when the
-environment changes), the early-phase `gpu.culling`, and any upload wait. `gpu.opaque` spans
+environment changes), `gpu.shadow_culling` (GPU-driven only; zero on frames
+whose cascades were all cached), the early-phase `gpu.culling`, and any upload wait. `gpu.opaque` spans
 `gpu.light_clusters`, `gpu.depth_prepass` (which includes the GPU-driven late
 cull), `gpu.depth_pyramid`, `gpu.ambient_occlusion`, and shading. `gpu.blended` includes `gpu.skybox`;
 `gpu.reflections` runs between them inside the scene pass and is subtracted from `gpu.blended`.
 `gpu.environment` is precompute plus skybox. The editor's Graphics panel shows
 the same table live.
+
+### GPU-culled shadow cascades
+
+GPU-driven submission culls each dirty directional shadow cascade on the GPU
+(`GpuDrivenPass::cullFrustumView`) and draws it with indirect commands. There is
+no separate render setting: the technique's Off fallback is the CPU cascade
+cull, used whenever GPU-driven submission is off or unsupported, and
+`ZENITH_DISABLE_GPU_SHADOW_CULLING` forces it for A/B measurement. Culling has its
+own timestamp scope (`gpu.shadow_culling`) and budget
+(`RenderPassBudgets::shadowCulling`, serialized as `shadowCulling`). The three
+cascade regions add about 33 MB of device memory to the GPU-driven buffers
+(visible instances, counters, and commands sized like a camera phase). With GPU
+culling, `RenderStats::shadowCasterCount` reports the casters a retired frame
+emitted, like `visibleCount`, and shadow triangles are not counted.
+
+The 2026-10-02 Release measurement (RTX 2070 SUPER, 1280x720, render mode,
+`ZENITH_FORCE_GPU_DRIVEN`, `ZENITH_FORCE_HIGH_QUALITY`,
+`ZENITH_DISABLE_SHADOW_CACHE` so all three cascades redraw every frame, 300
+warm-up and 600 measured frames) compared CPU and GPU cascade culling:
+
+| Scene | Culling | `cpu.shadow` median | `gpu.shadow` median | `gpu.shadow_culling` median | `gpu.frame` median |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 5,000 benchmark objects | CPU | 0.465 ms | 0.270 ms | - | 1.874 ms |
+| 5,000 benchmark objects | GPU | 0.169 ms | 0.410 ms | 0.166 ms | 2.015 ms |
+| showcase project (49 visible) | CPU | 0.155 ms | 0.056 ms | - | 0.858 ms |
+| showcase project (49 visible) | GPU | 0.146 ms | 0.080 ms | 0.031 ms | 0.881 ms |
+
+GPU culling moves about 0.3 ms of CPU work per fully redrawn frame at 5,000
+objects onto about 0.14 ms of GPU time; cached cascades cost neither. Small
+scenes gain little, so the trade only pays when the CPU is the bottleneck.
 
 `gpu_visibility_mismatches` counts retired GPU-driven frames whose culling kept
 more objects than the CPU frustum reference. The GPU sphere test uses the

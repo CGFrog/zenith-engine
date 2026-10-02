@@ -24,6 +24,7 @@ struct GpuFrameTimings {
     double lightClusterMilliseconds{0.0};
     double environmentPrecomputeMilliseconds{0.0};
     double skyboxMilliseconds{0.0};
+    double shadowCullingMilliseconds{0.0};
 };
 
 // Owns the resources reused for one frame of CPU work.

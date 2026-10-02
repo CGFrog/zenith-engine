@@ -296,6 +296,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/RenderConfiguration.cpp
     src/engine/graphics/RenderSubmission.cpp
     src/engine/graphics/MeshLodSelection.cpp
+    src/engine/graphics/GpuCullLayout.cpp
     src/engine/graphics/TemporalQuality.cpp
     src/engine/graphics/ToneMapping.cpp
     src/engine/graphics/AmbientOcclusion.cpp
@@ -781,6 +782,10 @@ if(BUILD_TESTING)
     add_executable(zenith_mesh_lod_tests tests/engine/MeshLodTests.cpp)
     target_link_libraries(zenith_mesh_lod_tests PRIVATE zenith_engine)
     add_test(NAME zenith_mesh_lod COMMAND zenith_mesh_lod_tests)
+
+    add_executable(zenith_gpu_cull_layout_tests tests/engine/GpuCullLayoutTests.cpp)
+    target_link_libraries(zenith_gpu_cull_layout_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_gpu_cull_layout COMMAND zenith_gpu_cull_layout_tests)
 
     add_executable(zenith_packed_vertex_stream_tests tests/engine/PackedVertexStreamTests.cpp)
     target_link_libraries(zenith_packed_vertex_stream_tests PRIVATE zenith_engine)

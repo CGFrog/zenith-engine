@@ -332,8 +332,11 @@ presentation image and records one command buffer:
 ```text
 Environment precompute (compute, only when an environment source changes)
   equirect or analytic sky -> radiance cube -> prefiltered specular + SH irradiance
+GPU culling, shadow cascades (GPU-driven only, compute)
+  every dirty cascade's orthographic frustum -> its own compacted indirect draws
 Directional shadows
   shadow casters -> cascaded depth atlas (cached per cascade while unchanged)
+  CPU path: frustum-culled render items, instanced; GPU-driven: indirect draws
 GPU culling, early phase (GPU-driven only, compute)
   objects visible last frame -> compacted indirect draws
 Light cluster assignment (compute, local lights enabled)
@@ -409,6 +412,20 @@ camera's choice. The GPU path gives each level its own batch, chains a
 primitive's levels through the batch records, and selects in the cull shader
 with the same formula; every object reserves an instance slot in each of its
 level batches.
+
+With GPU-driven submission the directional shadow cascades are culled on the
+GPU as well. `GpuDrivenPass` owns one output region per view
+(`GpuCullLayout.hpp`): the camera's early and late phases, then one
+frustum-only region per cascade. A frustum-only cull tests the sphere against
+the cascade's orthographic clip volume with the same predicate the CPU cascade
+cull uses, never reads the depth pyramid or the camera's visibility history,
+and selects LODs from the camera's view, so cascades match the CPU path's
+choice. Only cascades the cache marks dirty are culled and redrawn; their draws
+use the shadow pipeline with the GPU-driven camera set, whose object binding is
+the cull output, so `shadow.vert` is shared by both paths. Blended materials
+never enter the GPU-driven records, matching the CPU cascade cull. The CPU path
+remains the fallback whenever GPU-driven submission is off, and
+`ZENITH_DISABLE_GPU_SHADOW_CULLING` selects it explicitly for comparison.
 
 `RenderSettings::depthPrepass` (on by default) draws opaque and masked
 surfaces into scene depth and a view-space normal target before shading. With

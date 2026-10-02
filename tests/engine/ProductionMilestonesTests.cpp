@@ -613,6 +613,7 @@ void testLightingAndConfiguration() {
     requested.budgets.depthPyramid = {0.0, 0.1};
     requested.budgets.lightClusters = {0.0, 0.2};
     requested.budgets.environment = {0.0, 0.5};
+    requested.budgets.shadowCulling = {0.0, 0.15};
     const ValidatedRenderSettings validated = validateRenderSettings(requested, {});
     expect(validated.settings.environment == EnvironmentQuality::Hemisphere &&
                validated.settings.localLights == LocalLightingQuality::Clustered &&
@@ -634,7 +635,8 @@ void testLightingAndConfiguration() {
            "render quality settings and per-pass CPU/GPU budgets round trip");
     expect(decoded.budgets.depthPrepass.gpuMilliseconds == 0.3 && decoded.budgets.depthPyramid.gpuMilliseconds == 0.1 &&
                decoded.budgets.lightClusters.gpuMilliseconds == 0.2 &&
-               decoded.budgets.environment.gpuMilliseconds == 0.5,
+               decoded.budgets.environment.gpuMilliseconds == 0.5 &&
+               decoded.budgets.shadowCulling.gpuMilliseconds == 0.15,
            "new-pass budgets round trip");
 
     TextureAsset environment;

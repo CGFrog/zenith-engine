@@ -147,7 +147,8 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"depthPrepass", budget(settings.budgets.depthPrepass)},
                              {"depthPyramid", budget(settings.budgets.depthPyramid)},
                              {"lightClusters", budget(settings.budgets.lightClusters)},
-                             {"environment", budget(settings.budgets.environment)}}}};
+                             {"environment", budget(settings.budgets.environment)},
+                             {"shadowCulling", budget(settings.budgets.shadowCulling)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -231,7 +232,8 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "depthPrepass", loaded.budgets.depthPrepass) ||
                 !readOptionalBudget(*budgets, "depthPyramid", loaded.budgets.depthPyramid) ||
                 !readOptionalBudget(*budgets, "lightClusters", loaded.budgets.lightClusters) ||
-                !readOptionalBudget(*budgets, "environment", loaded.budgets.environment)) {
+                !readOptionalBudget(*budgets, "environment", loaded.budgets.environment) ||
+                !readOptionalBudget(*budgets, "shadowCulling", loaded.budgets.shadowCulling)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }

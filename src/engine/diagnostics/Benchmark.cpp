@@ -146,6 +146,7 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
            budgets.environment.gpuMilliseconds);
     sample("gpu.environment_precompute", s.gpuEnvironmentPrecomputeMilliseconds);
     sample("gpu.skybox", s.gpuSkyboxMilliseconds);
+    sample("gpu.shadow_culling", s.gpuShadowCullingMilliseconds, "ms", budgets.shadowCulling.gpuMilliseconds);
     sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
     sample("gpu.ui", s.gpuUiMilliseconds, "ms", budgets.ui.gpuMilliseconds);

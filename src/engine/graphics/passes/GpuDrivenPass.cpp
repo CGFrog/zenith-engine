@@ -11,7 +11,6 @@
 #include <filesystem>
 
 namespace {
-constexpr uint32_t phaseCount = 2;
 constexpr uint32_t workgroupSize = 64;
 // Size of RenderObject in the mesh shaders: model, previous model, skin.
 constexpr VkDeviceSize renderObjectSize = sizeof(glm::mat4) * 2 + sizeof(glm::uvec4);
@@ -27,7 +26,12 @@ struct CullSettings {
     glm::uvec4 extents{0u};
     // xyz: camera position, w: LOD error scale (zero selects full detail).
     glm::vec4 lodView{0.0f};
+    // x: output region, y: GpuCullMode.
+    glm::uvec4 view{0u};
 };
+
+// Push constants must fit the 128 bytes every device guarantees.
+static_assert(sizeof(CullSettings) <= 128);
 
 struct CompactSettings {
     glm::uvec4 counts{0u};
@@ -56,9 +60,9 @@ bool GpuDrivenPass::init(const VulkanContext& context, uint32_t frameCount, cons
                          const GpuDrivenLimits& limits, bool indirectCount) {
     m_device = context.device();
     m_allocator = context.vmaAllocator();
-    m_limits = limits;
+    m_layout = {.limits = limits};
     m_indirectCount = indirectCount;
-    if (!createLayouts() || !createPool(frameCount) || !createBuffers(frameCount)) {
+    if (!m_layout.valid() || !createLayouts() || !createPool(frameCount) || !createBuffers(frameCount)) {
         shutdown(context);
         return false;
     }
@@ -138,14 +142,15 @@ bool GpuDrivenPass::createDeviceBuffer(VkDeviceSize size, VkBufferUsageFlags usa
 bool GpuDrivenPass::createBuffers(uint32_t frameCount) {
     constexpr VkBufferUsageFlags storage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     constexpr VkBufferUsageFlags cleared = storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    if (!createDeviceBuffer(renderObjectSize * m_limits.maximumInstances * phaseCount, storage, m_visibleObjects) ||
-        !createDeviceBuffer(sizeof(uint32_t) * m_limits.maximumBatches * phaseCount, cleared, m_instanceCounts) ||
-        !createDeviceBuffer(drawCommandSize * m_limits.maximumBatches * phaseCount,
-                            storage | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, m_drawCommands) ||
-        !createDeviceBuffer(sizeof(uint32_t) * m_limits.maximumGroups * phaseCount,
-                            cleared | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, m_drawCounts) ||
-        !createDeviceBuffer(sizeof(uint32_t) * m_limits.maximumObjects, cleared, m_visibility) ||
-        !createDeviceBuffer(sizeof(uint32_t) * 4, cleared | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, m_statistics)) {
+    const VkDeviceSize statisticsSize = sizeof(uint32_t) * m_layout.regionCount();
+    if (!createDeviceBuffer(renderObjectSize * m_layout.instanceCapacity(), storage, m_visibleObjects) ||
+        !createDeviceBuffer(sizeof(uint32_t) * m_layout.batchCapacity(), cleared, m_instanceCounts) ||
+        !createDeviceBuffer(drawCommandSize * m_layout.batchCapacity(), storage | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                            m_drawCommands) ||
+        !createDeviceBuffer(sizeof(uint32_t) * m_layout.groupCapacity(), cleared | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                            m_drawCounts) ||
+        !createDeviceBuffer(sizeof(uint32_t) * m_layout.limits.maximumObjects, cleared, m_visibility) ||
+        !createDeviceBuffer(statisticsSize, cleared | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, m_statistics)) {
         return false;
     }
     m_frames.resize(frameCount);
@@ -167,9 +172,9 @@ bool GpuDrivenPass::createBuffers(uint32_t frameCount) {
         FrameData& frame = m_frames[index];
         frame.cullDescriptor = descriptors[index * 2];
         frame.compactDescriptor = descriptors[index * 2 + 1];
-        if (!createHostBuffer(sizeof(GpuDrivenObjectRecord) * m_limits.maximumObjects, storage, frame.objects) ||
-            !createHostBuffer(sizeof(GpuDrivenBatch) * m_limits.maximumBatches, storage, frame.batches) ||
-            !createHostBuffer(sizeof(uint32_t) * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, frame.statistics)) {
+        if (!createHostBuffer(sizeof(GpuDrivenObjectRecord) * m_layout.limits.maximumObjects, storage, frame.objects) ||
+            !createHostBuffer(sizeof(GpuDrivenBatch) * m_layout.limits.maximumBatches, storage, frame.batches) ||
+            !createHostBuffer(statisticsSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT, frame.statistics)) {
             return false;
         }
     }
@@ -221,16 +226,23 @@ void GpuDrivenPass::bindDepthPyramid(const DepthPyramid& depthPyramid) {
 
 bool GpuDrivenPass::prepare(uint32_t frameIndex, std::span<const GpuDrivenObjectRecord> objects,
                             std::span<const GpuDrivenBatch> batches, uint32_t referenceVisibleCount) {
-    if (frameIndex >= m_frames.size() || objects.size() > m_limits.maximumObjects ||
-        batches.size() > m_limits.maximumBatches) {
+    if (frameIndex >= m_frames.size() || objects.size() > m_layout.limits.maximumObjects ||
+        batches.size() > m_layout.limits.maximumBatches) {
         return false;
     }
     FrameData& frame = m_frames[frameIndex];
     // The caller waited for this frame slot, so its last statistics are final.
     if (frame.statisticsPending) {
-        vmaInvalidateAllocation(m_allocator, frame.statistics.allocation, 0, sizeof(uint32_t) * 2);
+        const uint32_t regionCount = m_layout.regionCount();
+        vmaInvalidateAllocation(m_allocator, frame.statistics.allocation, 0, sizeof(uint32_t) * regionCount);
+        // One emitted-instance count per output region.
         const auto* emitted = static_cast<const uint32_t*>(frame.statistics.mapped);
-        m_retiredVisibleCount = emitted[0] + emitted[1];
+        m_retiredVisibleCount = emitted[GpuCullRegion::phase(GpuCullPhase::Early).index] +
+                                emitted[GpuCullRegion::phase(GpuCullPhase::Late).index];
+        m_retiredFrustumViewVisibleCount = 0;
+        for (uint32_t region = GpuCullRegion::cameraRegionCount; region < regionCount; ++region) {
+            m_retiredFrustumViewVisibleCount += emitted[region];
+        }
         // The GPU never keeps more than the CPU frustum reference for the frame:
         // its x/y planes match the reference exactly and its depth planes are
         // tighter (gpu_visibility.comp). Any excess is a culling defect.
@@ -278,18 +290,35 @@ void GpuDrivenPass::beginFrame(VkCommandBuffer commandBuffer, uint32_t) {
 void GpuDrivenPass::cull(VkCommandBuffer commandBuffer, uint32_t frameIndex, GpuCullPhase phase,
                          const glm::mat4& viewProjection, const DepthPyramid& depthPyramid,
                          const MeshLodView& lodView) {
+    // The early phase never samples the pyramid, so a stale build is harmless.
+    const GpuCullMode mode = phase == GpuCullPhase::Early ? GpuCullMode::EarlyOcclusion : GpuCullMode::LateOcclusion;
+    dispatchCull(commandBuffer, frameIndex, GpuCullRegion::phase(phase), mode, viewProjection, lodView,
+                 depthPyramid.levelCount(), depthPyramid.renderExtent());
+}
+
+void GpuDrivenPass::cullFrustumView(VkCommandBuffer commandBuffer, uint32_t frameIndex, uint32_t view,
+                                    const glm::mat4& viewProjection, const MeshLodView& lodView) {
+    if (view >= m_layout.limits.frustumViews) {
+        return;
+    }
+    dispatchCull(commandBuffer, frameIndex, GpuCullRegion::frustumView(view), GpuCullMode::FrustumOnly, viewProjection,
+                 lodView, 0, {});
+}
+
+void GpuDrivenPass::dispatchCull(VkCommandBuffer commandBuffer, uint32_t frameIndex, GpuCullRegion region,
+                                 GpuCullMode mode, const glm::mat4& viewProjection, const MeshLodView& lodView,
+                                 uint32_t pyramidLevels, VkExtent2D pyramidExtent) {
     const FrameData& frame = m_frames[frameIndex];
-    const uint32_t phaseIndex = static_cast<uint32_t>(phase);
+    const GpuDrivenLimits& limits = m_layout.limits;
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_cullPipeline.handle());
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_cullPipeline.layout(), 0, 1,
                             &frame.cullDescriptor, 0, nullptr);
-    // The early phase never samples the pyramid, so a stale build is harmless.
-    const VkExtent2D pyramidExtent = depthPyramid.renderExtent();
     const CullSettings cullSettings{
         .viewProjection = viewProjection,
-        .counts = {frame.objectCount, depthPyramid.levelCount(), phaseIndex, m_limits.maximumInstances},
-        .extents = {m_limits.maximumBatches, pyramidExtent.width, pyramidExtent.height, m_limits.maximumObjects},
-        .lodView = {lodView.cameraPosition, lodView.errorScale}};
+        .counts = {frame.objectCount, pyramidLevels, 0u, limits.maximumInstances},
+        .extents = {limits.maximumBatches, pyramidExtent.width, pyramidExtent.height, limits.maximumObjects},
+        .lodView = {lodView.cameraPosition, lodView.errorScale},
+        .view = {region.index, static_cast<uint32_t>(mode), 0u, 0u}};
     vkCmdPushConstants(commandBuffer, m_cullPipeline.layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(cullSettings),
                        &cullSettings);
     if (frame.objectCount > 0) {
@@ -303,8 +332,8 @@ void GpuDrivenPass::cull(VkCommandBuffer commandBuffer, uint32_t frameIndex, Gpu
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_compactPipeline.layout(), 0, 1,
                             &frame.compactDescriptor, 0, nullptr);
     const CompactSettings compactSettings{
-        .counts = {frame.batchCount, phaseIndex, m_limits.maximumBatches, m_limits.maximumGroups},
-        .options = {m_limits.maximumInstances, m_indirectCount ? 1u : 0u, 0u, 0u}};
+        .counts = {frame.batchCount, region.index, limits.maximumBatches, limits.maximumGroups},
+        .options = {limits.maximumInstances, m_indirectCount ? 1u : 0u, 0u, 0u}};
     vkCmdPushConstants(commandBuffer, m_compactPipeline.layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0,
                        sizeof(compactSettings), &compactSettings);
     if (frame.batchCount > 0) {
@@ -315,12 +344,14 @@ void GpuDrivenPass::cull(VkCommandBuffer commandBuffer, uint32_t frameIndex, Gpu
                   VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
 }
 
-void GpuDrivenPass::drawGroup(VkCommandBuffer commandBuffer, GpuCullPhase phase, uint32_t group, uint32_t firstBatch,
+void GpuDrivenPass::drawGroup(VkCommandBuffer commandBuffer, GpuCullRegion region, uint32_t group, uint32_t firstBatch,
                               uint32_t batchCount) const {
-    const uint32_t phaseIndex = static_cast<uint32_t>(phase);
-    const VkDeviceSize commandOffset = drawCommandSize * (phaseIndex * m_limits.maximumBatches + firstBatch);
+    if (!m_layout.contains(region)) {
+        return;
+    }
+    const VkDeviceSize commandOffset = drawCommandSize * (m_layout.firstBatch(region) + firstBatch);
     if (m_indirectCount) {
-        const VkDeviceSize countOffset = sizeof(uint32_t) * (phaseIndex * m_limits.maximumGroups + group);
+        const VkDeviceSize countOffset = sizeof(uint32_t) * (m_layout.firstGroup(region) + group);
         vkCmdDrawIndexedIndirectCount(commandBuffer, m_drawCommands.buffer, commandOffset, m_drawCounts.buffer,
                                       countOffset, batchCount, static_cast<uint32_t>(drawCommandSize));
     } else {
@@ -333,7 +364,7 @@ void GpuDrivenPass::finishFrame(VkCommandBuffer commandBuffer, uint32_t frameInd
     FrameData& frame = m_frames[frameIndex];
     memoryBarrier(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                   VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
-    const VkBufferCopy copy{.size = sizeof(uint32_t) * 2};
+    const VkBufferCopy copy{.size = sizeof(uint32_t) * m_layout.regionCount()};
     vkCmdCopyBuffer(commandBuffer, m_statistics.buffer, frame.statistics.buffer, 1, &copy);
     memoryBarrier(commandBuffer, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                   VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT);

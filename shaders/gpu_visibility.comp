@@ -4,11 +4,16 @@
 // last frame (frustum test only); they are drawn and the depth pyramid is built
 // from that depth. The late phase tests every object against this frame's
 // pyramid, records the result for the next frame, and emits only the objects
-// the early phase did not draw.
+// the early phase did not draw. Frustum-only views (shadow cascades) skip the
+// pyramid and the visibility history and emit everything inside the frustum.
+// Each cull writes one output region; see GpuCullLayout.hpp.
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-const uint earlyPhase = 0u;
+// Mirrors GpuCullMode in GpuCullLayout.hpp.
+const uint earlyOcclusionMode = 0u;
+const uint lateOcclusionMode = 1u;
+const uint frustumOnlyMode = 2u;
 
 // Mirrors GpuDrivenObjectRecord in GpuDrivenPass.hpp.
 struct ObjectRecord {
@@ -41,12 +46,12 @@ layout(std430, set = 0, binding = 0) readonly buffer ObjectRecords {
     ObjectRecord values[];
 } records;
 
-// Two regions of maximum-instance slots: early, then late.
+// One region of maximum-instance slots per output region.
 layout(std430, set = 0, binding = 1) writeonly buffer VisibleObjects {
     RenderObject values[];
 } visibleObjects;
 
-// Two regions of maximumBatches counters: early, then late.
+// One region of maximumBatches counters per output region.
 layout(std430, set = 0, binding = 2) buffer InstanceCounts {
     uint values[];
 } instanceCounts;
@@ -58,7 +63,7 @@ layout(std430, set = 0, binding = 4) buffer Visibility {
     uint values[];
 } visibility;
 
-// x: early instances emitted, y: late instances emitted.
+// Instances emitted, one counter per output region.
 layout(std430, set = 0, binding = 5) buffer Statistics {
     uint values[];
 } statistics;
@@ -69,9 +74,10 @@ layout(std430, set = 0, binding = 6) readonly buffer Batches {
 
 layout(push_constant) uniform Settings {
     mat4 viewProjection;
-    uvec4 counts;   // x: objects, y: pyramid levels, z: phase, w: maximum instances
+    uvec4 counts;   // x: objects, y: pyramid levels, z: unused, w: maximum instances
     uvec4 extents;  // x: maximum batches, y/z: pyramid render extent, w: visibility slots
     vec4 lodView;   // xyz: camera position, w: LOD error scale (0 = full detail only)
+    uvec4 view;     // x: output region, y: cull mode
 } settings;
 
 vec4 matrixRow(mat4 matrix, int row) {
@@ -165,14 +171,14 @@ uint selectLodBatch(ObjectRecord object) {
     return batchIndex;
 }
 
-void emit(ObjectRecord object, uint phase) {
+void emit(ObjectRecord object, uint region) {
     uint batchIndex = selectLodBatch(object);
-    uint slot = atomicAdd(instanceCounts.values[phase * settings.extents.x + batchIndex], 1u);
-    uint outputIndex = phase * settings.counts.w + batches.values[batchIndex].firstInstance + slot;
+    uint slot = atomicAdd(instanceCounts.values[region * settings.extents.x + batchIndex], 1u);
+    uint outputIndex = region * settings.counts.w + batches.values[batchIndex].firstInstance + slot;
     visibleObjects.values[outputIndex].model = object.model;
     visibleObjects.values[outputIndex].previousModel = object.previousModel;
     visibleObjects.values[outputIndex].skin = object.skin;
-    atomicAdd(statistics.values[phase], 1u);
+    atomicAdd(statistics.values[region], 1u);
 }
 
 void main() {
@@ -182,13 +188,20 @@ void main() {
     }
     ObjectRecord object = records.values[objectIndex];
     bool inFrustum = frustumVisible(object.bounds.xyz, object.bounds.w);
+    uint region = settings.view.x;
+    uint mode = settings.view.y;
+    if (mode == frustumOnlyMode) {
+        if (inFrustum) {
+            emit(object, region);
+        }
+        return;
+    }
     uint visibilitySlot = object.draw.y;
     bool trackedSlot = visibilitySlot < settings.extents.w;
     bool visibleLastFrame = trackedSlot && visibility.values[visibilitySlot] != 0u;
-    uint phase = settings.counts.z;
-    if (phase == earlyPhase) {
+    if (mode == earlyOcclusionMode) {
         if (visibleLastFrame && inFrustum) {
-            emit(object, phase);
+            emit(object, region);
         }
         return;
     }
@@ -199,6 +212,6 @@ void main() {
     // Objects the early phase drew are already in the depth buffer.
     bool drawnEarly = visibleLastFrame && inFrustum;
     if (visibleNow && !drawnEarly) {
-        emit(object, phase);
+        emit(object, region);
     }
 }

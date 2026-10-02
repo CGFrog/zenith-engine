@@ -280,6 +280,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuLightClusterMilliseconds = gpuTimings.lightClusterMilliseconds;
     stats.gpuEnvironmentPrecomputeMilliseconds = gpuTimings.environmentPrecomputeMilliseconds;
     stats.gpuSkyboxMilliseconds = gpuTimings.skyboxMilliseconds;
+    stats.gpuShadowCullingMilliseconds = gpuTimings.shadowCullingMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;
@@ -509,10 +510,23 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             graph.addPass("environment precompute", RenderGraphQueue::Graphics, environmentAccesses);
         }
         if (shape.shadows) {
-            const RenderGraphAccess shadowAccesses[]{
+            // Mirrors the shadow-culling decision in MeshPass::record.
+            const bool gpuShadowCulling = shape.gpuDriven && SDL_getenv("ZENITH_DISABLE_GPU_SHADOW_CULLING") == nullptr;
+            std::vector<RenderGraphAccess> shadowAccesses{
                 {shadow, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL},
                 {meshAssets, RenderGraphAccessMode::Read, geometryStages, geometryAccess, VK_IMAGE_LAYOUT_UNDEFINED}};
+            if (gpuShadowCulling) {
+                // Dirty cascades cull into their own GPU-driven regions first.
+                const RenderGraphAccess shadowCullAccesses[]{
+                    {gpuDrivenDraws, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
+                graph.addPass("GPU culling (shadow cascades)", RenderGraphQueue::Graphics, shadowCullAccesses);
+                shadowAccesses.push_back({gpuDrivenDraws, RenderGraphAccessMode::Read,
+                                          VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                                          VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                          VK_IMAGE_LAYOUT_UNDEFINED});
+            }
             graph.addPass("directional shadows", RenderGraphQueue::Graphics, shadowAccesses);
         }
         if (shape.gpuDriven) {

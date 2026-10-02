@@ -35,18 +35,18 @@ layout(std430, set = 0, binding = 1) readonly buffer InstanceCounts {
     uint values[];
 } instanceCounts;
 
-// Two regions of maximumBatches commands: early, then late.
+// One region of maximumBatches commands per output region (GpuCullLayout.hpp).
 layout(std430, set = 0, binding = 2) writeonly buffer DrawCommands {
     DrawCommand values[];
 } drawCommands;
 
-// Two regions of maximumGroups counts: early, then late.
+// One region of maximumGroups counts per output region.
 layout(std430, set = 0, binding = 3) buffer DrawCounts {
     uint values[];
 } drawCounts;
 
 layout(push_constant) uniform Settings {
-    uvec4 counts;  // x: batches, y: phase, z: maximum batches, w: maximum groups
+    uvec4 counts;  // x: batches, y: output region, z: maximum batches, w: maximum groups
     uvec4 options; // x: maximum instances, y: compact (1) or keep slots (0)
 } settings;
 
@@ -55,18 +55,18 @@ void main() {
     if (batchIndex >= settings.counts.x) {
         return;
     }
-    uint phase = settings.counts.y;
+    uint region = settings.counts.y;
     BatchRecord batch = batches.values[batchIndex];
-    uint instanceCount = instanceCounts.values[phase * settings.counts.z + batchIndex];
-    uint outputIndex = phase * settings.counts.z + batchIndex;
+    uint instanceCount = instanceCounts.values[region * settings.counts.z + batchIndex];
+    uint outputIndex = region * settings.counts.z + batchIndex;
     if (settings.options.y != 0u) {
         if (instanceCount == 0u) {
             return;
         }
-        uint slot = atomicAdd(drawCounts.values[phase * settings.counts.w + batch.group], 1u);
-        outputIndex = phase * settings.counts.z + batch.groupFirstBatch + slot;
+        uint slot = atomicAdd(drawCounts.values[region * settings.counts.w + batch.group], 1u);
+        outputIndex = region * settings.counts.z + batch.groupFirstBatch + slot;
     }
     drawCommands.values[outputIndex] = DrawCommand(batch.indexCount, instanceCount, batch.firstIndex,
                                                    batch.vertexOffset,
-                                                   phase * settings.options.x + batch.firstInstance);
+                                                   region * settings.options.x + batch.firstInstance);
 }
