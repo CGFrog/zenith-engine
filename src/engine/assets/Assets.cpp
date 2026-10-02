@@ -1,6 +1,7 @@
 #include "Assets.hpp"
 #include "ImageDecoder.hpp"
 #include "ModelImporter.hpp"
+#include "PackedVertexStreams.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <algorithm>
@@ -20,10 +21,15 @@ const T* resolve(const std::vector<T>& assets, const std::vector<Metadata>& meta
 }
 
 uint64_t byteSize(const TextureAsset& asset) {
-    return sizeof(TextureAsset) + asset.rgba.size();
+    return sizeof(TextureAsset) + asset.rgba.size() + asset.compressed.size() +
+           asset.mips.size() * sizeof(TextureMipLevel);
 }
 
 uint64_t gpuByteSize(const TextureAsset& asset) {
+    if (asset.blockCompressed()) {
+        // Cooked textures upload their stored mip chain unchanged.
+        return asset.compressed.size();
+    }
     uint64_t bytes = 0;
     uint32_t width = asset.width;
     uint32_t height = asset.height;
@@ -59,7 +65,8 @@ uint64_t byteSize(const MeshAsset& asset) {
 }
 
 uint64_t gpuByteSize(const MeshAsset& asset) {
-    return asset.vertices.size() * sizeof(Vertex) + asset.indices.size() * sizeof(uint32_t);
+    // Vertices upload as quantized split streams; see PackedVertexStreams.hpp.
+    return vertex_packing::packedByteSize(asset.vertices) + asset.indices.size() * sizeof(uint32_t);
 }
 
 uint64_t byteSize(const ModelAsset& asset) {
@@ -241,6 +248,13 @@ AssetLoadResult<TextureHandle> AssetManager::loadTexture(const std::filesystem::
     if (!decoded) {
         return {.error = decoded.error};
     }
+    if (decoded.texture.blockCompressed()) {
+        // Standalone textures feed CPU consumers such as environment
+        // prefiltering, which read RGBA8 texels.
+        return {.error = "Standalone textures must be RGBA8; block-compressed KTX2 is only supported for model "
+                         "materials: " +
+                         normalized.string()};
+    }
     const TextureHandle handle = addTexture(std::move(decoded.texture));
     if (handle.index >= m_textureSources.size()) {
         m_textureSources.resize(handle.index + 1);
@@ -346,6 +360,14 @@ TextureHandle AssetManager::addTexture(TextureAsset asset) {
         insertSlot<TextureAsset, TextureHandle>(m_textures, m_textureMetadata, std::move(asset), bytes, ++m_useSerial);
     m_textureMetadata[handle.index].gpuBytes = gpuByteSize(m_textures[handle.index]);
     return handle;
+}
+
+void AssetManager::setCookedTextureRoot(std::filesystem::path root) {
+    m_cookedTextureRoot = std::move(root);
+}
+
+void AssetManager::setTextureFormatCapabilities(TextureFormatCapabilities capabilities) {
+    m_textureCapabilities = capabilities;
 }
 
 uint64_t AssetManager::revision() const {

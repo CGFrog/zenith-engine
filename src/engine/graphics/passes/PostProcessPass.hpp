@@ -2,7 +2,9 @@
 
 #include "../Rendering.hpp"
 #include "../vulkan/VulkanContext.hpp"
+#include "BloomExposurePass.hpp"
 #include "TemporalResolvePass.hpp"
+#include <chrono>
 #include <filesystem>
 #include <optional>
 #include <vector>
@@ -40,9 +42,7 @@ class PostProcessPass {
         VkImageView view{VK_NULL_HANDLE};
         VmaAllocation allocation{VK_NULL_HANDLE};
         VkDescriptorSet descriptor{VK_NULL_HANDLE};
-        uint32_t mipLevels{1};
         bool initialized{false};
-        bool mipsInitialized{false};
         VkImage motionImage{VK_NULL_HANDLE};
         VkImageView motionView{VK_NULL_HANDLE};
         VmaAllocation motionAllocation{VK_NULL_HANDLE};
@@ -62,9 +62,13 @@ class PostProcessPass {
     bool createTargets(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
     void destroyTargets(const VulkanContext& context);
     // Runs the temporal resolve when enabled and binds the latest resolved image
-    // as the post pass's binding 2. Records timestamps 17 and 18 either way.
+    // as the post pass's binding 2. Records timestamps 19 and 20 either way.
     bool resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent, bool enabled,
                          const TemporalResolveFrame& temporal, VkQueryPool timestampQueries);
+    void recordBloomAndExposure(VkCommandBuffer commandBuffer, const BloomExposureInput& input,
+                                const RenderSettings& settings, VkQueryPool timestampQueries,
+                                double& bloomCpuMilliseconds);
+    float exposureDeltaSeconds();
 
     VkDevice m_device{VK_NULL_HANDLE};
     VkPipelineCache m_pipelineCache{VK_NULL_HANDLE};
@@ -84,4 +88,6 @@ class PostProcessPass {
     // motion target supplies the previous frame's motion and depth.
     std::optional<uint32_t> m_previousFrameIndex;
     VkExtent2D m_previousRenderExtent{};
+    BloomExposurePass m_bloomExposure;
+    std::optional<std::chrono::steady_clock::time_point> m_previousExposureTime;
 };

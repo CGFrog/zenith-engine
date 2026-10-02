@@ -15,6 +15,7 @@ struct GpuFrameTimings {
     double ambientOcclusionMilliseconds{0.0};
     double reflectionsMilliseconds{0.0};
     double uploadWaitMilliseconds{0.0};
+    double exposureMilliseconds{0.0};
     double uiMilliseconds{0.0};
     double cullingMilliseconds{0.0};
 };

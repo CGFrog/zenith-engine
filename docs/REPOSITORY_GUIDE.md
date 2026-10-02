@@ -65,6 +65,8 @@ explicit, so a file move must update `CMakeLists.txt` as well as include sites.
 | `zenith_editor` | Executable | Thin editor composition root. |
 | `zenith_shaders` | Custom target | Recursively finds recognized GLSL stages in `shaders/` and compiles each file with glslang for Vulkan 1.4. |
 | `zenith_assets` | Custom target | Copies `assets/` to `build/assets/` so runtime paths do not depend on the process working directory. |
+| `zenith_cooked_textures` | Custom target | Runs `zenith_asset_build cook-model-textures` on every `assets/*.gltf`, writing BC7/BC5 KTX2 entries to `build/derived/`. |
+| `zenith_bc7enc` | Static library | The bc7enc_rdo BC7/BC5 block encoders and decoders, linked privately into the engine for texture cooking. |
 | `zenith_asset_tests` | Test executable | Asset importing and scene hierarchy behavior. |
 | `zenith_physics_tests` | Test executable | Rigid bodies, contacts, impulses, raycasts, mesh collision, and cleanup. |
 | `zenith_application_tests` | Test executable | Lifecycle ordering, deferred switching, failed-load cleanup, demo composition, controls, and reload behavior. |
@@ -86,6 +88,7 @@ Third-party libraries are pinned with CMake `FetchContent`:
 | Jolt Physics | Collision detection and rigid-body simulation behind Zenith's physics API. |
 | cgltf | `.gltf`/`.glb` parsing. |
 | stb_image | Image decoding to RGBA pixels. |
+| bc7enc_rdo | Offline BC7 (bc7enc) and BC5 (rgbcx) block compression for cooked textures. |
 | glslang | Build-time GLSL-to-SPIR-V compiler. |
 | shaderc + SPIR-V Tools | In-process shader compiler dependencies available to the engine target. |
 
@@ -254,7 +257,9 @@ Defines renderer-independent CPU asset types and opaque typed handles:
   indices, and optional mesh handles.
 - `MeshAsset` owns vertices, indices, and material-bearing draw primitives.
 - `MaterialAsset` holds glTF metallic-roughness factors and texture handles.
-- `TextureAsset` stores decoded width, height, and RGBA8 pixels.
+- `TextureAsset` stores width, height, a `TextureUsage` (color, normal, or
+  data) derived from referencing material slots, and either an RGBA8 base level
+  or a complete BC7/BC5 mip chain.
 
 `AssetManager` owns these values in recyclable generational slots. It normalizes
 model paths, caches repeated loads, and resolves handles without exposing its
@@ -274,6 +279,14 @@ Ordered pressure handling discards temporary caches, removes optional distant
 mips, retires unused generations after a completion serial, then reports a hard
 budget failure if live content still cannot fit.
 
+### `src/engine/assets/PackedVertexStreams.*`
+
+Renderer-independent quantization of `Vertex` into split GPU streams:
+float3 positions, octahedral snorm16 normal/tangent (bitangent sign folded into
+the tangent) with float2 UVs, and uint16 joints with unorm8 weights renormalized
+to sum to 255. The skin stream exists only for meshes with weights. Asset GPU
+byte estimates use the same strides.
+
 ### `src/engine/assets/ModelImporter.*`
 
 Uses cgltf to parse `.gltf` and `.glb`, load buffers, validate the document, and
@@ -287,15 +300,32 @@ resource-limit, and validation failures return descriptive errors.
 ### `src/engine/assets/ImageDecoder.*`
 
 Uses stb_image to decode conventional external or embedded images and validates
-KTX2 containers. RGBA8 KTX2 has a CPU fallback; Basis data reports the optional
-transcoder requirement. GPU format policy and upload remain renderer-owned.
+KTX2 containers. RGBA8 KTX2 has a CPU fallback and BC5/BC7 KTX2 loads its
+stored mip chain; Basis data reports the optional transcoder requirement. GPU
+format policy and upload remain renderer-owned.
+
+### `src/engine/assets/CompressedTexture.*`
+
+Block-compressed texture layout (mip extents and sizes), the BC5/BC7 KTX2
+writer and reader, and the cooked-texture convention: a cooked entry is a
+`DerivedAssetCache` file keyed by the source image bytes and
+`cookedTextureRequest()` settings. `loadCookedTexture()` returns nothing for a
+missing entry so importers fall back to the source image.
+
+### `src/engine/assets/TextureCooker.*`
+
+Offline cooking used by `zenith_asset_build` and tests. Builds a full mip chain
+(sRGB-correct for color, renormalized for normals) and encodes BC7 for color and
+data or BC5 for normal maps, plus a CPU block decoder for validation.
 
 ### `src/engine/assets/ProductionAssetPipeline.*`
 
 Defines untrusted-content limits, isolated Meshopt/Draco decoder registration,
 KTX2 target-format choice, and deterministic derived assets keyed by source,
 settings, tool version, and target. Editor inspection and the
-`zenith_asset_build` command share this implementation.
+`zenith_asset_build` command share this implementation; the command also cooks
+single textures (`cook-texture`) or a model's external textures
+(`cook-model-textures`).
 
 ### `src/engine/platform/PlatformServices.*`
 
@@ -340,6 +370,7 @@ Renderer
    |- GPU mesh/texture/material caches
    |- shadow pass and main mesh pipeline
    `- PostProcessPass (HDR/history, motion, SSAO/SSR, and fullscreen pipelines)
+      `- BloomExposurePass (luminance histogram, exposure, bloom chain)
 ```
 
 ### `src/engine/graphics/Renderer.*`
@@ -392,8 +423,10 @@ for slots that changed. Released slots fall back to a default view.
 ### `src/engine/graphics/resources/GeometryArena.*`
 
 Suballocates meshes into shared vertex/index pages with VMA virtual blocks,
-opening a new page (sized to fit oversized meshes) when none has room. It owns
-no Vulkan buffers; the mesh pass creates one buffer pair per reported page.
+opening a new page (sized to fit oversized meshes) when none has room. Pages
+have a static or skinned layout so only skinned pages carry a skin stream. It
+owns no Vulkan buffers; the mesh pass creates one buffer per stream plus an
+index buffer for each reported page.
 
 ### `src/engine/graphics/passes/GpuDrivenPass.*`
 
@@ -436,11 +469,28 @@ influence boxes, blend distances, and priorities.
 ### `src/engine/graphics/passes/PostProcessPass.*`
 
 Owns one RGBA16F HDR scene target, motion/reactive target, SSAO target, and SSR
-target per frame slot, plus the view's `TemporalResolvePass`. With TAA selected
-the resolve runs first; separate GPU-scoped SSAO and SSR passes then feed the
-final fullscreen pass, which composes the resolved scene (or applies FXAA),
-bloom, the editor grid, and ACES tone mapping. Half-resolution effect tiers
-render into bounded sub-extents; SSR misses preserve probe and IBL lighting.
+target per frame slot, plus the view's `TemporalResolvePass` and
+`BloomExposurePass`. With TAA selected the resolve runs first and exposure and
+bloom read its output-resolution result; otherwise they read the HDR target.
+Separate GPU-scoped SSAO and SSR passes then feed the final fullscreen pass,
+which composes the resolved scene (or applies FXAA), the editor grid,
+exposure, the bloom mix, and tone mapping (AgX by default, AgX punchy or
+legacy ACES). Half-resolution effect tiers render into bounded sub-extents;
+SSR misses preserve probe and IBL lighting.
+
+### `src/engine/graphics/passes/BloomExposurePass.*`
+
+Compute passes over a generic HDR input (view, image extent, valid extent):
+a 256-bin log-luminance histogram and single-workgroup adaptation into one
+persistent exposure buffer per view, plus a six-level bloom chain (13-tap
+downsample with a Karis average on the first level, tent upsample). The chain
+and exposure buffer persist across frame slots and use push descriptors.
+
+### `src/engine/graphics/ToneMapping.*`
+
+CPU reference for the AgX/ACES display transform, histogram binning,
+percentile averaging, and frame-rate independent exposure adaptation. The
+shaders mirror it by hand; `tests/engine/ToneMappingTests.cpp` covers it.
 
 ### `src/engine/graphics/passes/TemporalResolvePass.*`
 
@@ -460,7 +510,11 @@ mirror is in `TemporalQuality.*`.
 | `shaders/mesh.frag` | Samples glTF materials, evaluates GGX lighting, shadows, occlusion, and emission. |
 | `shaders/shadow.vert` | Transforms geometry into directional-light depth space. |
 | `shaders/fullscreen.vert` | Generates a fullscreen triangle without a vertex buffer. |
-| `shaders/post.frag` | Combines HDR color into the tone-mapped output. |
+| `shaders/post.frag` | Combines HDR color into the exposed, bloomed, tone-mapped output. |
+| `shaders/luminance_histogram.comp` | Bins the valid HDR region into a 256-bin log2-luminance histogram. |
+| `shaders/exposure_adapt.comp` | Percentile-averages the histogram and adapts the persistent exposure. |
+| `shaders/bloom_downsample.comp` | 13-tap bloom downsample; Karis average on the first level. |
+| `shaders/bloom_upsample.comp` | 3x3 tent bloom upsample accumulated into the next larger level. |
 | `shaders/ssao.frag` | Estimates scalable screen-space ambient occlusion. |
 | `shaders/ssr.frag` | Traces scalable screen-space reflections with an explicit miss. |
 | `shaders/depth_pyramid.comp` | Reduces scene depth into a conservative min-depth (reversed-Z) pyramid. |

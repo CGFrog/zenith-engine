@@ -78,6 +78,7 @@ bool Engine::init(const PhysicsWorldConfig& physicsConfig, const AudioConfig& au
     if (!m_renderer.init(m_window, m_rendering, m_frameTasks)) {
         return false;
     }
+    m_assets.setTextureFormatCapabilities(m_renderer.textureFormatCapabilities());
     if (const PhysicsResult result = m_physics.init(physicsConfig); !result) {
         std::cerr << "Physics initialization failed: " << result.error << '\n';
         return false;

@@ -234,6 +234,29 @@ target_include_directories(cgltf INTERFACE "${cgltf_SOURCE_DIR}")
 add_library(stb INTERFACE)
 target_include_directories(stb INTERFACE "${stb_SOURCE_DIR}")
 
+# bc7enc_rdo supplies the offline BC7 (bc7enc) and BC5 (rgbcx) block encoders
+# and decoders used by texture cooking. Only the encoder sources are built; the
+# repository's own CMake project (a command-line tool) is skipped.
+FetchContent_Declare(
+    bc7enc_rdo
+    GIT_REPOSITORY https://github.com/richgel999/bc7enc_rdo.git
+    GIT_TAG b9438627eef73a1157e84201b6fa6eb2ffd6d9f0
+    SOURCE_SUBDIR zenith-sources-only
+)
+FetchContent_MakeAvailable(bc7enc_rdo)
+add_library(zenith_bc7enc STATIC
+    "${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp"
+    "${bc7enc_rdo_SOURCE_DIR}/bc7decomp.cpp"
+    "${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp"
+)
+target_include_directories(zenith_bc7enc SYSTEM PUBLIC "${bc7enc_rdo_SOURCE_DIR}")
+target_compile_definitions(zenith_bc7enc PUBLIC RGBCX_USE_SMALLER_TABLES=1)
+if(MSVC)
+    target_compile_options(zenith_bc7enc PRIVATE /W0)
+else()
+    target_compile_options(zenith_bc7enc PRIVATE -w)
+endif()
+
 add_library(zenith_engine STATIC
     src/engine/diagnostics/Benchmark.cpp
     src/engine/animation/AnimationSystem.cpp
@@ -245,18 +268,23 @@ add_library(zenith_engine STATIC
     src/engine/assets/ModelImporter.cpp
     src/engine/assets/ImageDecoder.cpp
     src/engine/assets/ProductionAssetPipeline.cpp
+    src/engine/assets/CompressedTexture.cpp
+    src/engine/assets/TextureCooker.cpp
     src/engine/assets/AssetStreaming.cpp
+    src/engine/assets/PackedVertexStreams.cpp
     src/engine/graphics/Renderer.cpp
     src/engine/graphics/Lighting.cpp
     src/engine/graphics/EnvironmentLighting.cpp
     src/engine/graphics/RenderConfiguration.cpp
     src/engine/graphics/RenderSubmission.cpp
     src/engine/graphics/TemporalQuality.cpp
+    src/engine/graphics/ToneMapping.cpp
     src/engine/graphics/graph/RenderGraph.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
     src/engine/graphics/passes/TemporalResolvePass.cpp
+    src/engine/graphics/passes/BloomExposurePass.cpp
     src/engine/graphics/passes/UiPass.cpp
     src/engine/graphics/pipeline/GraphicsPipeline.cpp
     src/engine/graphics/pipeline/ComputePipeline.cpp
@@ -395,6 +423,28 @@ add_custom_target(zenith_assets ALL
 )
 add_dependencies(zenith_engine zenith_assets)
 
+# Cook every shipped model's external textures to block-compressed KTX2 in the
+# derived-data cache the executables read from <resource root>/derived. Entries
+# are keyed by source bytes, so unchanged textures are skipped on rebuild.
+set(ZENITH_DERIVED_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/derived")
+file(GLOB ZENITH_COOKED_MODELS CONFIGURE_DEPENDS "${ZENITH_ASSET_SOURCE_DIR}/*.gltf")
+file(GLOB_RECURSE ZENITH_COOKED_TEXTURE_SOURCES CONFIGURE_DEPENDS "${ZENITH_ASSET_SOURCE_DIR}/textures/*")
+set(ZENITH_TEXTURE_COOK_COMMANDS)
+foreach(cooked_model IN LISTS ZENITH_COOKED_MODELS)
+    list(APPEND ZENITH_TEXTURE_COOK_COMMANDS
+        COMMAND $<TARGET_FILE:zenith_asset_build> cook-model-textures "${cooked_model}" "${ZENITH_DERIVED_BINARY_DIR}")
+endforeach()
+add_custom_command(
+    OUTPUT "${ZENITH_DERIVED_BINARY_DIR}/cooked-textures.stamp"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${ZENITH_DERIVED_BINARY_DIR}"
+    ${ZENITH_TEXTURE_COOK_COMMANDS}
+    COMMAND "${CMAKE_COMMAND}" -E touch "${ZENITH_DERIVED_BINARY_DIR}/cooked-textures.stamp"
+    DEPENDS zenith_asset_build ${ZENITH_COOKED_MODELS} ${ZENITH_COOKED_TEXTURE_SOURCES}
+    COMMENT "Cooking block-compressed textures"
+    VERBATIM
+)
+add_custom_target(zenith_cooked_textures ALL DEPENDS "${ZENITH_DERIVED_BINARY_DIR}/cooked-textures.stamp")
+
 target_include_directories(zenith_engine PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
@@ -421,6 +471,7 @@ target_link_libraries(zenith_engine PUBLIC
     shaderc
     imgui
 )
+target_link_libraries(zenith_engine PRIVATE zenith_bc7enc)
 
 if(MSVC)
     target_compile_options(zenith_engine PRIVATE /W4 /permissive- /FS)
@@ -443,6 +494,7 @@ install(TARGETS zenith zenith_asset_build
 )
 install(DIRECTORY "${ZENITH_ASSET_SOURCE_DIR}/" DESTINATION assets)
 install(DIRECTORY "${ZENITH_SHADER_BINARY_DIR}/" DESTINATION shaders FILES_MATCHING PATTERN "*.spv")
+install(DIRECTORY "${ZENITH_DERIVED_BINARY_DIR}/" DESTINATION derived FILES_MATCHING PATTERN "*.zderived")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/projects/demo.zenith-project" DESTINATION .)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/projects/scenes/demo.zenith-scene" DESTINATION scenes)
 if(UNIX AND NOT APPLE)
@@ -465,6 +517,7 @@ install(FILES "${spirv-headers_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME 
 install(FILES "${spirv-tools_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME SPIRV-Tools.txt)
 install(FILES "${nlohmann_json_SOURCE_DIR}/LICENSE.MIT" DESTINATION licenses RENAME nlohmann-json.txt)
 install(FILES "${imguizmo_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME ImGuizmo.txt)
+install(FILES "${bc7enc_rdo_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME bc7enc_rdo.txt)
 install(CODE "
     set(ZENITH_PACKAGE_ROOT \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}\")
     set(ZENITH_PACKAGE_VERSION \"${PROJECT_VERSION}\")
@@ -545,6 +598,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_asset_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_asset_scene COMMAND zenith_asset_tests)
+
+    add_executable(zenith_compressed_texture_tests tests/engine/CompressedTextureTests.cpp)
+    target_link_libraries(zenith_compressed_texture_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_compressed_texture_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_compressed_texture_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_compressed_texture COMMAND zenith_compressed_texture_tests)
 
     add_executable(zenith_animation_tests tests/engine/AnimationTests.cpp)
     target_link_libraries(zenith_animation_tests PRIVATE zenith_engine)
@@ -668,6 +730,10 @@ if(BUILD_TESTING)
     target_link_libraries(zenith_gpu_resource_table_tests PRIVATE zenith_engine)
     add_test(NAME zenith_gpu_resource_table COMMAND zenith_gpu_resource_table_tests)
 
+    add_executable(zenith_packed_vertex_stream_tests tests/engine/PackedVertexStreamTests.cpp)
+    target_link_libraries(zenith_packed_vertex_stream_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_packed_vertex_streams COMMAND zenith_packed_vertex_stream_tests)
+
     add_executable(zenith_frame_task_graph_tests tests/engine/FrameTaskGraphTests.cpp)
     target_link_libraries(zenith_frame_task_graph_tests PRIVATE zenith_engine)
     add_test(NAME zenith_frame_task_graph COMMAND zenith_frame_task_graph_tests)
@@ -679,6 +745,10 @@ if(BUILD_TESTING)
     add_executable(zenith_temporal_quality_tests tests/engine/TemporalQualityTests.cpp)
     target_link_libraries(zenith_temporal_quality_tests PRIVATE zenith_engine)
     add_test(NAME zenith_temporal_quality COMMAND zenith_temporal_quality_tests)
+
+    add_executable(zenith_tone_mapping_tests tests/engine/ToneMappingTests.cpp)
+    target_link_libraries(zenith_tone_mapping_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_tone_mapping COMMAND zenith_tone_mapping_tests)
 
     add_executable(zenith_asset_streaming_tests tests/engine/AssetStreamingTests.cpp)
     target_link_libraries(zenith_asset_streaming_tests PRIVATE zenith_engine)

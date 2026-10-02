@@ -74,6 +74,8 @@ int runApplication(int argc, char** argv) {
         engine.shutdown();
         return EXIT_FAILURE;
     }
+    // Cooked textures produced by zenith_asset_build live beside the packaged assets.
+    engine.assets().setCookedTextureRoot(resourceRoot() / "derived");
 
     DemoApplication application(std::move(project), userDataDirectory("Zenith", "Demo") / "game-settings.json");
     const bool success = engine.run(application);

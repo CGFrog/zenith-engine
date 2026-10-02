@@ -15,18 +15,22 @@ GeometryArena::~GeometryArena() {
     }
 }
 
-std::optional<GeometryAllocation> GeometryArena::allocate(uint32_t vertexCount, uint32_t indexCount) {
+std::optional<GeometryAllocation> GeometryArena::allocate(uint32_t vertexCount, uint32_t indexCount,
+                                                          GeometryLayout layout) {
     if (vertexCount == 0 || indexCount == 0) {
         return std::nullopt;
     }
     for (uint32_t page = 0; page < m_pages.size(); ++page) {
+        if (m_pages[page].layout != layout) {
+            continue;
+        }
         if (auto placed = allocateIn(page, vertexCount, indexCount)) {
             return placed;
         }
     }
     const GeometryPageCapacity capacity{std::max(m_defaultPage.vertices, vertexCount),
                                         std::max(m_defaultPage.indices, indexCount)};
-    if (!addPage(capacity)) {
+    if (!addPage(capacity, layout)) {
         return std::nullopt;
     }
     return allocateIn(static_cast<uint32_t>(m_pages.size() - 1), vertexCount, indexCount);
@@ -47,6 +51,10 @@ void GeometryArena::free(const GeometryAllocation& allocation) {
 
 GeometryPageCapacity GeometryArena::pageCapacity(uint32_t page) const {
     return page < m_pages.size() ? m_pages[page].capacity : GeometryPageCapacity{};
+}
+
+GeometryLayout GeometryArena::pageLayout(uint32_t page) const {
+    return page < m_pages.size() ? m_pages[page].layout : GeometryLayout::Static;
 }
 
 std::optional<GeometryAllocation> GeometryArena::allocateIn(uint32_t pageIndex, uint32_t vertexCount,
@@ -70,8 +78,8 @@ std::optional<GeometryAllocation> GeometryArena::allocateIn(uint32_t pageIndex, 
     return result;
 }
 
-bool GeometryArena::addPage(GeometryPageCapacity capacity) {
-    Page page{.capacity = capacity};
+bool GeometryArena::addPage(GeometryPageCapacity capacity, GeometryLayout layout) {
+    Page page{.capacity = capacity, .layout = layout};
     VmaVirtualBlockCreateInfo vertexInfo{.size = capacity.vertices};
     VmaVirtualBlockCreateInfo indexInfo{.size = capacity.indices};
     if (vmaCreateVirtualBlock(&vertexInfo, &page.vertices) != VK_SUCCESS) {

@@ -1,29 +1,99 @@
 #include "GraphicsPipeline.hpp"
-#include "../../assets/Assets.hpp"
+#include "../../assets/PackedVertexStreams.hpp"
 #include "../DepthConvention.hpp"
 #include "../vulkan/VulkanCheck.hpp"
 #include <array>
+#include <cstddef>
 #include <iterator>
 
 namespace {
 constexpr float rasterLineWidth = 1.0f;
 constexpr const char* shaderEntryPoint = "main";
 
+// Shader locations: 0 position, 1 octahedral normal, 2 UV, 3 octahedral
+// tangent with folded sign, 4 joints, 5 weights. See PackedVertexStreams.hpp.
+constexpr std::array<VkVertexInputAttributeDescription, 6> meshVertexAttributes{
+    {{.location = 0, .binding = mesh_vertex_binding::position, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = 0},
+     {.location = 1,
+      .binding = mesh_vertex_binding::attributes,
+      .format = VK_FORMAT_R16G16_SNORM,
+      .offset = offsetof(PackedVertexAttributes, normal)},
+     {.location = 2,
+      .binding = mesh_vertex_binding::attributes,
+      .format = VK_FORMAT_R32G32_SFLOAT,
+      .offset = offsetof(PackedVertexAttributes, texCoord)},
+     {.location = 3,
+      .binding = mesh_vertex_binding::attributes,
+      .format = VK_FORMAT_R16G16_SNORM,
+      .offset = offsetof(PackedVertexAttributes, tangent)},
+     {.location = 4,
+      .binding = mesh_vertex_binding::skin,
+      .format = VK_FORMAT_R16G16B16A16_UINT,
+      .offset = offsetof(PackedSkinInfluence, joints)},
+     {.location = 5,
+      .binding = mesh_vertex_binding::skin,
+      .format = VK_FORMAT_R8G8B8A8_UNORM,
+      .offset = offsetof(PackedSkinInfluence, weights)}}};
+
+constexpr std::array<VkVertexInputBindingDescription, mesh_vertex_binding::count> meshVertexBindings{
+    {{.binding = mesh_vertex_binding::position,
+      .stride = vertex_packing::positionStride,
+      .inputRate = VK_VERTEX_INPUT_RATE_VERTEX},
+     {.binding = mesh_vertex_binding::attributes,
+      .stride = vertex_packing::attributeStride,
+      .inputRate = VK_VERTEX_INPUT_RATE_VERTEX},
+     {.binding = mesh_vertex_binding::skin,
+      .stride = vertex_packing::skinStride,
+      .inputRate = VK_VERTEX_INPUT_RATE_VERTEX}}};
+
+// Which shader inputs a mesh pipeline reads; depth-style passes skip the
+// shading attributes so they fetch only the streams they need.
+enum class MeshVertexInputs : uint8_t {
+    Shaded,
+    PositionTexCoordSkin,
+    PositionSkin,
+};
+
+bool readsLocation(MeshVertexInputs inputs, uint32_t location) {
+    switch (inputs) {
+    case MeshVertexInputs::Shaded:
+        return true;
+    case MeshVertexInputs::PositionTexCoordSkin:
+        return location == 0 || location == 2 || location >= 4;
+    case MeshVertexInputs::PositionSkin:
+        return location == 0 || location >= 4;
+    }
+    return false;
+}
+
 struct FixedFunctionState {
-    VkVertexInputBindingDescription vertexBinding{
-        .binding = 0, .stride = sizeof(Vertex), .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
-    std::array<VkVertexInputAttributeDescription, 6> vertexAttributes{
-        {{.location = 0, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = offsetof(Vertex, position)},
-         {.location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32_SFLOAT, .offset = offsetof(Vertex, normal)},
-         {.location = 2, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = offsetof(Vertex, texCoord)},
-         {.location = 3, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = offsetof(Vertex, tangent)},
-         {.location = 4, .binding = 0, .format = VK_FORMAT_R32G32B32A32_UINT, .offset = offsetof(Vertex, joints)},
-         {.location = 5, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = offsetof(Vertex, weights)}}};
+    explicit FixedFunctionState(MeshVertexInputs inputs) {
+        std::array<bool, mesh_vertex_binding::count> usedBindings{};
+        uint32_t attributeCount = 0;
+        for (const VkVertexInputAttributeDescription& attribute : meshVertexAttributes) {
+            if (readsLocation(inputs, attribute.location)) {
+                vertexAttributes[attributeCount++] = attribute;
+                usedBindings[attribute.binding] = true;
+            }
+        }
+        uint32_t bindingCount = 0;
+        for (const VkVertexInputBindingDescription& binding : meshVertexBindings) {
+            if (usedBindings[binding.binding]) {
+                vertexBindings[bindingCount++] = binding;
+            }
+        }
+        vertexInput.vertexBindingDescriptionCount = bindingCount;
+        vertexInput.vertexAttributeDescriptionCount = attributeCount;
+    }
+
+    // The create-info members point into this object.
+    FixedFunctionState(const FixedFunctionState&) = delete;
+    FixedFunctionState& operator=(const FixedFunctionState&) = delete;
+
+    std::array<VkVertexInputBindingDescription, mesh_vertex_binding::count> vertexBindings{};
+    std::array<VkVertexInputAttributeDescription, meshVertexAttributes.size()> vertexAttributes{};
     VkPipelineVertexInputStateCreateInfo vertexInput{.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-                                                     .vertexBindingDescriptionCount = 1,
-                                                     .pVertexBindingDescriptions = &vertexBinding,
-                                                     .vertexAttributeDescriptionCount =
-                                                         static_cast<uint32_t>(vertexAttributes.size()),
+                                                     .pVertexBindingDescriptions = vertexBindings.data(),
                                                      .pVertexAttributeDescriptions = vertexAttributes.data()};
     VkPipelineInputAssemblyStateCreateInfo assembly{.sType =
                                                         VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
@@ -48,7 +118,8 @@ struct FixedFunctionState {
     VkPipelineColorBlendStateCreateInfo blend{.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
                                               .attachmentCount = 1,
                                               .pAttachments = &colorAttachment};
-    static constexpr VkDynamicState dynamicStates[]{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    static constexpr VkDynamicState dynamicStates[]{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                                                    VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE};
     VkPipelineDynamicStateCreateInfo dynamic{.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
                                              .dynamicStateCount = static_cast<uint32_t>(std::size(dynamicStates)),
                                              .pDynamicStates = dynamicStates};
@@ -98,7 +169,7 @@ bool GraphicsPipeline::initGraphicsPipeline(VkDevice device, VkFormat colorForma
                                             .colorAttachmentCount = 2,
                                             .pColorAttachmentFormats = colorFormats,
                                             .depthAttachmentFormat = depthFormat};
-    FixedFunctionState state{};
+    FixedFunctionState state{MeshVertexInputs::Shaded};
     state.raster.cullMode = doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
     state.depth.depthCompareOp = scene_depth::compareOp;
     if (blending) {
@@ -158,11 +229,12 @@ bool GraphicsPipeline::initShadowPipeline(VkDevice device, VkFormat depthFormat,
                                                    shaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, fragment)};
     VkPipelineRenderingCreateInfo rendering{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
                                             .depthAttachmentFormat = depthFormat};
-    FixedFunctionState state{};
+    FixedFunctionState state{MeshVertexInputs::PositionTexCoordSkin};
     state.raster.cullMode = VK_CULL_MODE_BACK_BIT;
     state.raster.depthBiasEnable = VK_TRUE;
     const VkDynamicState shadowDynamicStates[]{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
-                                               VK_DYNAMIC_STATE_DEPTH_BIAS, VK_DYNAMIC_STATE_CULL_MODE};
+                                               VK_DYNAMIC_STATE_DEPTH_BIAS, VK_DYNAMIC_STATE_CULL_MODE,
+                                               VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE};
     state.dynamic.dynamicStateCount = static_cast<uint32_t>(std::size(shadowDynamicStates));
     state.dynamic.pDynamicStates = shadowDynamicStates;
     state.blend.attachmentCount = 0;
@@ -198,7 +270,7 @@ bool GraphicsPipeline::initOutlinePipeline(VkDevice device, VkFormat colorFormat
                                             .colorAttachmentCount = 2,
                                             .pColorAttachmentFormats = colorFormats,
                                             .depthAttachmentFormat = depthFormat};
-    FixedFunctionState state{};
+    FixedFunctionState state{MeshVertexInputs::PositionSkin};
     state.depth.depthWriteEnable = VK_FALSE;
     state.depth.depthCompareOp = scene_depth::compareOrEqualOp;
     state.colorAttachment.blendEnable = VK_TRUE;
@@ -240,7 +312,7 @@ bool GraphicsPipeline::initSelectionMaskPipeline(VkDevice device, VkFormat color
                                             .colorAttachmentCount = 2,
                                             .pColorAttachmentFormats = colorFormats,
                                             .depthAttachmentFormat = depthFormat};
-    FixedFunctionState state{};
+    FixedFunctionState state{MeshVertexInputs::PositionSkin};
     state.depth.depthTestEnable = VK_FALSE;
     state.depth.depthWriteEnable = VK_FALSE;
     state.colorAttachment.colorWriteMask = VK_COLOR_COMPONENT_A_BIT;

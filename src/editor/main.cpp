@@ -17,6 +17,8 @@ int main(int argc, char** argv) {
         engine.shutdown();
         return EXIT_FAILURE;
     }
+    // Cooked textures produced by zenith_asset_build live beside the packaged assets.
+    engine.assets().setCookedTextureRoot(resourceRoot() / "derived");
 
     ProjectConfig project{.displayName = "Zenith Demo",
                           .assetRoot = assetRoot(),

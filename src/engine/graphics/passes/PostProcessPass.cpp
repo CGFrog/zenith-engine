@@ -23,6 +23,9 @@ struct PostSettings {
     float temporalHistoryValid;
     float ambientOcclusionMode;
     float reflectionMode;
+    float tonemapOperator;
+    glm::vec2 bloomUvScale;
+    glm::vec2 bloomUvLimit;
 };
 
 void imageBarrier(VkCommandBuffer commandBuffer, VkImage image, VkImageAspectFlags aspect, VkImageLayout oldLayout,
@@ -56,7 +59,7 @@ bool PostProcessPass::init(const VulkanContext& context, VkFormat outputFormat, 
     m_pipelineCache = context.pipelineCache();
     m_allocator = context.vmaAllocator();
     m_targets.resize(frameCount);
-    return createDescriptors(frameCount) && createPipeline(outputFormat) &&
+    return m_bloomExposure.init(context) && createDescriptors(frameCount) && createPipeline(outputFormat) &&
            createEffectPipeline(shaderRoot() / "ssao.frag.spv", ambientOcclusionFormat, m_ambientOcclusionPipeline) &&
            createEffectPipeline(shaderRoot() / "ssr.frag.spv", sceneFormat, m_reflectionPipeline) &&
            m_temporalResolve.init(context, frameCount, extent) && createTargets(context, extent, depthView);
@@ -90,6 +93,14 @@ bool PostProcessPass::createDescriptors(uint32_t frameCount) {
                                                   {.binding = 6,
                                                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                                    .descriptorCount = 1,
+                                                   .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+                                                  {.binding = 7,
+                                                   .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                                   .descriptorCount = 1,
+                                                   .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+                                                  {.binding = 8,
+                                                   .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                   .descriptorCount = 1,
                                                    .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
     VkDescriptorSetLayoutCreateInfo layout{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
                                            .bindingCount = static_cast<uint32_t>(std::size(bindings)),
@@ -98,11 +109,13 @@ bool PostProcessPass::createDescriptors(uint32_t frameCount) {
                      "Create post-process descriptor layout")) {
         return false;
     }
-    VkDescriptorPoolSize poolSize{.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = frameCount * 7};
+    const VkDescriptorPoolSize poolSizes[]{
+        {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = frameCount * 8},
+        {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = frameCount}};
     VkDescriptorPoolCreateInfo pool{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                                     .maxSets = frameCount,
-                                    .poolSizeCount = 1,
-                                    .pPoolSizes = &poolSize};
+                                    .poolSizeCount = static_cast<uint32_t>(std::size(poolSizes)),
+                                    .pPoolSizes = poolSizes};
     if (!checkVulkan(vkCreateDescriptorPool(m_device, &pool, nullptr, &m_pool),
                      "Create post-process descriptor pool")) {
         return false;
@@ -264,18 +277,19 @@ bool PostProcessPass::createEffectPipeline(const std::filesystem::path& fragment
 
 bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D extent, VkImageView depthView) {
     m_extent = extent;
+    if (!m_bloomExposure.createChain(context, extent)) {
+        return false;
+    }
     for (Target& target : m_targets) {
-        target.mipLevels = 1 + static_cast<uint32_t>(std::floor(std::log2(std::max(extent.width, extent.height))));
         VkImageCreateInfo image{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
                                 .imageType = VK_IMAGE_TYPE_2D,
                                 .format = sceneFormat,
                                 .extent = {.width = extent.width, .height = extent.height, .depth = 1},
-                                .mipLevels = target.mipLevels,
+                                .mipLevels = 1,
                                 .arrayLayers = 1,
                                 .samples = VK_SAMPLE_COUNT_1_BIT,
                                 .tiling = VK_IMAGE_TILING_OPTIMAL,
-                                .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                                         VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                 .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
         VmaAllocationCreateInfo allocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
         if (!checkVulkan(
@@ -289,7 +303,7 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
                                    .format = sceneFormat,
                                    .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                                                         .baseMipLevel = 0,
-                                                        .levelCount = target.mipLevels,
+                                                        .levelCount = 1,
                                                         .baseArrayLayer = 0,
                                                         .layerCount = 1}};
         if (!checkVulkan(vkCreateImageView(context.device(), &view, nullptr, &target.view), "Create HDR scene view")) {
@@ -297,7 +311,6 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
         }
         VkImageCreateInfo motionImage = image;
         motionImage.format = motionFormat;
-        motionImage.mipLevels = 1;
         motionImage.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
         if (!checkVulkan(vmaCreateImage(context.vmaAllocator(), &motionImage, &allocation, &target.motionImage,
                                         &target.motionAllocation, nullptr),
@@ -306,7 +319,6 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
         }
         view.image = target.motionImage;
         view.format = motionFormat;
-        view.subresourceRange.levelCount = 1;
         if (!checkVulkan(vkCreateImageView(context.device(), &view, nullptr, &target.motionView),
                          "Create motion-vector view")) {
             return false;
@@ -361,7 +373,13 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
             // The previous frame's motion target; its alpha holds that frame's depth.
             {.sampler = m_colorSampler,
              .imageView = history.motionView,
-             .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+             .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            // The bloom chain stays in GENERAL for compute writes.
+            {.sampler = m_colorSampler,
+             .imageView = m_bloomExposure.bloomView(),
+             .imageLayout = VK_IMAGE_LAYOUT_GENERAL}};
+        const VkDescriptorBufferInfo exposure{
+            .buffer = m_bloomExposure.exposureBuffer(), .offset = 0, .range = BloomExposurePass::exposureBufferSize};
         const VkWriteDescriptorSet writes[]{{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                                              .dstSet = target.descriptor,
                                              .dstBinding = 0,
@@ -403,13 +421,26 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
                                              .dstBinding = 6,
                                              .descriptorCount = 1,
                                              .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                             .pImageInfo = &images[6]}};
+                                             .pImageInfo = &images[6]},
+                                            {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                             .dstSet = target.descriptor,
+                                             .dstBinding = 7,
+                                             .descriptorCount = 1,
+                                             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                             .pImageInfo = &images[7]},
+                                            {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                             .dstSet = target.descriptor,
+                                             .dstBinding = 8,
+                                             .descriptorCount = 1,
+                                             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                             .pBufferInfo = &exposure}};
         vkUpdateDescriptorSets(context.device(), static_cast<uint32_t>(std::size(writes)), writes, 0, nullptr);
     }
     return true;
 }
 
 void PostProcessPass::destroyTargets(const VulkanContext& context) {
+    m_bloomExposure.destroyChain(context);
     for (Target& target : m_targets) {
         if (target.view) {
             vkDestroyImageView(context.device(), target.view, nullptr);
@@ -439,7 +470,6 @@ void PostProcessPass::destroyTargets(const VulkanContext& context) {
         target.view = VK_NULL_HANDLE;
         target.allocation = VK_NULL_HANDLE;
         target.initialized = false;
-        target.mipsInitialized = false;
         target.motionImage = VK_NULL_HANDLE;
         target.motionView = VK_NULL_HANDLE;
         target.motionAllocation = VK_NULL_HANDLE;
@@ -463,8 +493,9 @@ bool PostProcessPass::resize(const VulkanContext& context, VkExtent2D extent, Vk
 
 void PostProcessPass::prepareScene(VkCommandBuffer commandBuffer, uint32_t frameIndex) {
     Target& target = m_targets[frameIndex];
-    // Earlier frames sampled these targets from fragment shaders and from the
-    // temporal resolve (which also reads the previous frame's motion target).
+    // Earlier frames sampled these targets from fragment shaders and from
+    // compute: bloom, exposure and the temporal resolve (which also reads the
+    // previous frame's motion target).
     constexpr VkPipelineStageFlags2 sampledStages =
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     imageBarrier(commandBuffer, target.image, VK_IMAGE_ASPECT_COLOR_BIT,
@@ -489,85 +520,36 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
                              const glm::vec3& cameraPosition, const std::optional<GridOverlay>& gridOverlay,
                              VkQueryPool timestampQueries, double& bloomCpuMilliseconds,
                              VkImageLayout outputOldLayout) {
-    const auto bloomStart = std::chrono::steady_clock::now();
-    if (timestampQueries) {
-        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 6);
-    }
     Target& target = m_targets[frameIndex];
-    if (settings.bloom != BloomQuality::Off && target.mipLevels > 1) {
-        imageBarrier(commandBuffer, target.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                     VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                     VK_ACCESS_2_TRANSFER_READ_BIT);
-        uint32_t sourceWidth = internalExtent.width;
-        uint32_t sourceHeight = internalExtent.height;
-        for (uint32_t mip = 1; mip < target.mipLevels; ++mip) {
-            imageBarrier(
-                commandBuffer, target.image, VK_IMAGE_ASPECT_COLOR_BIT,
-                target.mipsInitialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
-                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                target.mipsInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-                VK_PIPELINE_STAGE_2_TRANSFER_BIT, target.mipsInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
-                VK_ACCESS_2_TRANSFER_WRITE_BIT, mip);
-            const uint32_t destinationWidth = std::max(sourceWidth / 2, 1u);
-            const uint32_t destinationHeight = std::max(sourceHeight / 2, 1u);
-            VkImageBlit blit{
-                .srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                   .mipLevel = mip - 1,
-                                   .baseArrayLayer = 0,
-                                   .layerCount = 1},
-                .srcOffsets = {{0, 0, 0}, {static_cast<int32_t>(sourceWidth), static_cast<int32_t>(sourceHeight), 1}},
-                .dstSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                   .mipLevel = mip,
-                                   .baseArrayLayer = 0,
-                                   .layerCount = 1},
-                .dstOffsets = {{0, 0, 0},
-                               {static_cast<int32_t>(destinationWidth), static_cast<int32_t>(destinationHeight), 1}}};
-            vkCmdBlitImage(commandBuffer, target.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target.image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
-            imageBarrier(commandBuffer, target.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
-                         VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, mip - 1);
-            imageBarrier(
-                commandBuffer, target.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                mip + 1 < target.mipLevels ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
-                                           : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                mip + 1 < target.mipLevels ? VK_PIPELINE_STAGE_2_TRANSFER_BIT : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                mip + 1 < target.mipLevels ? VK_ACCESS_2_TRANSFER_READ_BIT : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, mip);
-            sourceWidth = destinationWidth;
-            sourceHeight = destinationHeight;
-        }
-        target.mipsInitialized = true;
-    } else {
-        imageBarrier(commandBuffer, target.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-    }
-    if (timestampQueries) {
-        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 7);
-    }
-    bloomCpuMilliseconds =
-        settings.bloom == BloomQuality::Off
-            ? 0.0
-            : std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - bloomStart).count();
+    constexpr VkPipelineStageFlags2 sampledStages =
+        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    imageBarrier(commandBuffer, target.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 sampledStages, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
     target.initialized = true;
     imageBarrier(commandBuffer, target.motionImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+                 sampledStages, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
     target.motionInitialized = true;
     imageBarrier(commandBuffer, depthImage, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
                  VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-    if (!resolveTemporal(commandBuffer, frameIndex, internalExtent, settings.antialiasing == AntialiasingMode::Taa,
-                         temporal, timestampQueries)) {
+    const bool temporalEnabled = settings.antialiasing == AntialiasingMode::Taa;
+    if (!resolveTemporal(commandBuffer, frameIndex, internalExtent, temporalEnabled, temporal, timestampQueries)) {
         return false;
     }
+    // With TAA, exposure and bloom read the resolved output-resolution scene;
+    // otherwise the raw HDR target within its render extent.
+    const BloomExposureInput bloomInput =
+        temporalEnabled
+            ? BloomExposureInput{.view = m_temporalResolve.resolvedView(),
+                                 .imageExtent = m_extent,
+                                 .validExtent = m_extent,
+                                 .layout = TemporalResolvePass::resolvedLayout}
+            : BloomExposureInput{.view = target.view, .imageExtent = m_extent, .validExtent = internalExtent};
+    recordBloomAndExposure(commandBuffer, bloomInput, settings, timestampQueries, bloomCpuMilliseconds);
+    const BloomSampling bloomSampling = m_bloomExposure.bloomSampling(bloomInput.validExtent);
     const PostSettings postSettings{
         .inverseViewProjection = inverseViewProjection,
         .previousViewProjection = previousViewProjection,
@@ -577,11 +559,14 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
         .inverseResolution = {1.0f / extent.width, 1.0f / extent.height},
         .sceneScale = {static_cast<float>(internalExtent.width) / extent.width,
                        static_cast<float>(internalExtent.height) / extent.height},
-        .bloomStrength = settings.bloom == BloomQuality::Off ? 0.0f : 0.10f,
+        .bloomStrength = settings.bloom == BloomQuality::Off ? 0.0f : settings.bloomIntensity,
         .antialiasingMode = static_cast<float>(settings.antialiasing),
         .temporalHistoryValid = temporal.historyValid ? 1.0f : 0.0f,
         .ambientOcclusionMode = static_cast<float>(settings.ambientOcclusion),
         .reflectionMode = static_cast<float>(settings.reflections),
+        .tonemapOperator = static_cast<float>(settings.tonemap),
+        .bloomUvScale = bloomSampling.uvScale,
+        .bloomUvLimit = bloomSampling.uvLimit,
     };
     const auto recordEffect = [&](VkImage image, VkImageView view, VkPipeline pipeline, VkExtent2D effectExtent,
                                   bool enabled, float disabledClearValue, uint32_t firstTimestamp,
@@ -700,7 +685,7 @@ bool PostProcessPass::resolveTemporal(VkCommandBuffer commandBuffer, uint32_t fr
                                       VkQueryPool timestampQueries) {
     const Target& target = m_targets[frameIndex];
     if (timestampQueries) {
-        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestampQueries, 17);
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestampQueries, 19);
     }
     if (enabled) {
         // With a single frame slot the previous motion target was just
@@ -721,7 +706,7 @@ bool PostProcessPass::resolveTemporal(VkCommandBuffer commandBuffer, uint32_t fr
         }
     }
     if (timestampQueries) {
-        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 18);
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 20);
     }
     // The post set is not yet bound in this command buffer, and its frame slot's
     // previous submission has retired, so it may be rewritten here. Without a
@@ -739,6 +724,46 @@ bool PostProcessPass::resolveTemporal(VkCommandBuffer commandBuffer, uint32_t fr
                                      .pImageInfo = &resolved};
     vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
     return true;
+}
+
+void PostProcessPass::recordBloomAndExposure(VkCommandBuffer commandBuffer, const BloomExposureInput& input,
+                                             const RenderSettings& settings, VkQueryPool timestampQueries,
+                                             double& bloomCpuMilliseconds) {
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestampQueries, 17);
+    }
+    m_bloomExposure.recordExposure(commandBuffer, input, settings.exposure, exposureDeltaSeconds());
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 18);
+    }
+    const auto bloomStart = std::chrono::steady_clock::now();
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestampQueries, 6);
+    }
+    if (settings.bloom != BloomQuality::Off) {
+        m_bloomExposure.recordBloom(commandBuffer, input, settings.bloomFilterRadius);
+    } else {
+        m_bloomExposure.initializeBloomLayout(commandBuffer);
+    }
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 7);
+    }
+    bloomCpuMilliseconds =
+        settings.bloom == BloomQuality::Off
+            ? 0.0
+            : std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - bloomStart).count();
+}
+
+// Exposure adapts in wall-clock time between recorded frames, independent of
+// the simulation step (which is zero in render-only benchmarks). Long stalls
+// are clamped so a hitch does not snap exposure.
+float PostProcessPass::exposureDeltaSeconds() {
+    constexpr float maximumDeltaSeconds = 0.25f;
+    const auto now = std::chrono::steady_clock::now();
+    const float delta =
+        m_previousExposureTime ? std::chrono::duration<float>(now - *m_previousExposureTime).count() : 0.0f;
+    m_previousExposureTime = now;
+    return std::clamp(delta, 0.0f, maximumDeltaSeconds);
 }
 
 VkImage PostProcessPass::sceneImage(uint32_t frameIndex) const {
@@ -760,6 +785,8 @@ VkImageView PostProcessPass::motionView(uint32_t frameIndex) const {
 void PostProcessPass::shutdown(const VulkanContext& context) {
     destroyTargets(context);
     m_temporalResolve.shutdown();
+    m_bloomExposure.shutdown(context);
+    m_previousExposureTime.reset();
     if (m_pipeline) {
         vkDestroyPipeline(context.device(), m_pipeline, nullptr);
     }

@@ -186,7 +186,9 @@ void main() {
     vec3 normal = geometricNormal;
     tangent = normalize(tangent - normal * dot(normal, tangent));
     vec3 bitangent = cross(normal, tangent) * worldTangent.w;
-    vec3 mappedNormal = sampleMaterialTexture(material.textures.y, texCoord).xyz * 2.0 - 1.0;
+    // Normal maps may be two-channel (BC5), so Z is rebuilt from unit length.
+    vec2 mappedNormalXY = sampleMaterialTexture(material.textures.y, texCoord).xy * 2.0 - 1.0;
+    vec3 mappedNormal = vec3(mappedNormalXY, sqrt(clamp(1.0 - dot(mappedNormalXY, mappedNormalXY), 0.0, 1.0)));
     mappedNormal.xy *= material.factors.z;
     normal = normalize(mat3(tangent, bitangent, normal) * mappedNormal);
 

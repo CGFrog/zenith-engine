@@ -1,5 +1,6 @@
 #define CGLTF_IMPLEMENTATION
 #include "ModelImporter.hpp"
+#include "CompressedTexture.hpp"
 #include "ImageDecoder.hpp"
 
 #include <algorithm>
@@ -142,6 +143,74 @@ BoundingSphere calculateBounds(const std::vector<Vertex>& vertices) {
     return {.center = center, .radius = std::sqrt(radiusSquared)};
 }
 
+struct ImageUsage {
+    TextureUsage usage{TextureUsage::Color};
+    // False when the image's references disagree in a way one cooked format
+    // cannot serve (a normal map also used as color or data), so every slot
+    // keeps the full RGBA8 source.
+    bool cookable{true};
+};
+
+// Derives each image's channel meaning from the material slots referencing it.
+// Color wins over data because BC7 serves both, selecting sRGB per slot.
+std::vector<ImageUsage> imageUsages(const cgltf_data& data) {
+    constexpr uint32_t colorBit = 1u;
+    constexpr uint32_t normalBit = 2u;
+    constexpr uint32_t dataBit = 4u;
+    std::vector<uint32_t> references(data.images_count, 0u);
+    const auto reference = [&](const cgltf_texture_view& view, uint32_t usageBit) {
+        if (!view.texture || !view.texture->image) {
+            return;
+        }
+        const cgltf_size index = static_cast<cgltf_size>(view.texture->image - data.images);
+        if (index < references.size()) {
+            references[index] |= usageBit;
+        }
+    };
+    for (cgltf_size materialIndex = 0; materialIndex < data.materials_count; ++materialIndex) {
+        const cgltf_material& material = data.materials[materialIndex];
+        if (material.has_pbr_metallic_roughness) {
+            reference(material.pbr_metallic_roughness.base_color_texture, colorBit);
+            reference(material.pbr_metallic_roughness.metallic_roughness_texture, dataBit);
+        }
+        reference(material.emissive_texture, colorBit);
+        reference(material.normal_texture, normalBit);
+        reference(material.occlusion_texture, dataBit);
+    }
+    std::vector<ImageUsage> usages(data.images_count);
+    for (size_t index = 0; index < references.size(); ++index) {
+        const uint32_t used = references[index];
+        if (used == normalBit) {
+            usages[index].usage = TextureUsage::Normal;
+        } else if (used == dataBit) {
+            usages[index].usage = TextureUsage::Data;
+        }
+        usages[index].cookable = (used & normalBit) == 0 || used == normalBit;
+    }
+    return usages;
+}
+
+bool isExternalImageFile(const cgltf_image& image) {
+    return !image.buffer_view && image.uri && std::strncmp(image.uri, "data:", 5) != 0;
+}
+
+// Prefers a cooked block-compressed texture the renderer can sample, falling
+// back to decoding the source image.
+ImageDecodeResult decodeExternalImage(const AssetManager& assets, const std::filesystem::path& source,
+                                      TextureUsage usage) {
+    if (!assets.cookedTextureRoot().empty() &&
+        textureFormatSupported(cookedTextureFormat(usage), assets.textureFormatCapabilities())) {
+        CookedTextureLookup cooked = loadCookedTexture(assets.cookedTextureRoot(), source, usage);
+        if (cooked.texture) {
+            return {.texture = std::move(*cooked.texture)};
+        }
+        if (!cooked.error.empty()) {
+            std::cerr << cooked.error << "; decoding the source image instead\n";
+        }
+    }
+    return decodeImageFile(source);
+}
+
 TextureHandle textureHandle(const cgltf_texture_view& view, const cgltf_data& data,
                             const std::vector<TextureHandle>& images) {
     if (!view.texture || !view.texture->image) {
@@ -186,6 +255,7 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
         return {.error = "Invalid glTF " + path.string() + ": " + resultMessage(result)};
     }
 
+    const std::vector<ImageUsage> usages = imageUsages(*data);
     std::vector<TextureHandle> images(data->images_count);
     for (cgltf_size i = 0; i < data->images_count; ++i) {
         const cgltf_image& image = data->images[i];
@@ -198,8 +268,10 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
                 static_cast<const uint8_t*>(image.buffer_view->buffer->data) + image.buffer_view->offset;
             decoded =
                 decodeImageMemory(bytes, image.buffer_view->size, image.name ? image.name : "embedded glTF image");
-        } else if (image.uri && std::strncmp(image.uri, "data:", 5) != 0) {
-            decoded = decodeImageFile(path.parent_path() / image.uri);
+        } else if (isExternalImageFile(image)) {
+            decoded = usages[i].cookable
+                          ? decodeExternalImage(m_assets, path.parent_path() / image.uri, usages[i].usage)
+                          : decodeImageFile(path.parent_path() / image.uri);
         } else if (image.uri) {
             const char* comma = std::strchr(image.uri, ',');
             void* bytes = nullptr;
@@ -215,6 +287,7 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
         if (!decoded) {
             return {.error = decoded.error};
         }
+        decoded.texture.usage = usages[i].usage;
         images[i] = m_assets.addTexture(std::move(decoded.texture));
     }
 
@@ -553,4 +626,22 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
     }
 
     return {.handle = m_assets.addModel(std::move(model), path)};
+}
+
+ModelTextureSourcesResult collectModelTextureSources(const std::filesystem::path& modelPath) {
+    cgltf_options options{};
+    cgltf_data* raw = nullptr;
+    const cgltf_result result = cgltf_parse_file(&options, modelPath.string().c_str(), &raw);
+    if (result != cgltf_result_success) {
+        return {.error = "Cannot parse " + modelPath.string() + ": " + resultMessage(result)};
+    }
+    std::unique_ptr<cgltf_data, CgltfDeleter> data(raw);
+    const std::vector<ImageUsage> usages = imageUsages(*data);
+    ModelTextureSourcesResult collected;
+    for (cgltf_size index = 0; index < data->images_count; ++index) {
+        if (isExternalImageFile(data->images[index]) && usages[index].cookable) {
+            collected.sources.push_back({modelPath.parent_path() / data->images[index].uri, usages[index].usage});
+        }
+    }
+    return collected;
 }

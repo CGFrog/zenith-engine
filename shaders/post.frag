@@ -7,6 +7,15 @@ layout(set = 0, binding = 1) uniform sampler2D sceneDepth;
 layout(set = 0, binding = 2) uniform sampler2D resolvedScene;
 layout(set = 0, binding = 4) uniform sampler2D ambientOcclusion;
 layout(set = 0, binding = 5) uniform sampler2D screenSpaceReflections;
+// Mip 0 of the bloom chain (BloomExposurePass); covers the valid scene region.
+layout(set = 0, binding = 7) uniform sampler2D bloomChain;
+// Adapted exposure written by exposure_adapt.comp.
+layout(std430, set = 0, binding = 8) readonly buffer ExposureState {
+    float exposure;
+    float averageLogLuminance;
+    float targetExposure;
+    float padding;
+} exposureState;
 
 layout(push_constant) uniform PostSettings {
     mat4 inverseViewProjection;
@@ -20,6 +29,9 @@ layout(push_constant) uniform PostSettings {
     float temporalHistoryValid;
     float ambientOcclusionMode;
     float reflectionMode;
+    float tonemapOperator;
+    vec2 bloomUvScale;
+    vec2 bloomUvLimit;
 } settings;
 
 layout(location = 0) in vec2 texCoord;
@@ -34,6 +46,42 @@ vec3 acesToneMap(vec3 color) {
     const float d = 0.59;
     const float e = 0.14;
     return clamp((color * (a * color + b)) / (color * (c * color + d) + e), 0.0, 1.0);
+}
+
+// AgX (Troy Sobotka) with the polynomial fit of Blender's sigmoid. Mirrors
+// toneMap in engine/graphics/ToneMapping.cpp. The output target is an sRGB
+// format, so AgX's display-encoded result is decoded to linear with its 2.2
+// reference exponent and the hardware re-encodes it on store.
+vec3 agxContrast(vec3 x) {
+    vec3 x2 = x * x;
+    vec3 x4 = x2 * x2;
+    return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232;
+}
+
+vec3 agxToneMap(vec3 color, bool punchy) {
+    const mat3 inset = mat3(0.842479062253094, 0.0423282422610123, 0.0423756549057051,
+                            0.0784335999999992, 0.878468636469772, 0.0784336,
+                            0.0792237451477643, 0.0791661274605434, 0.879142973793104);
+    const mat3 outset = mat3(1.19687900512017, -0.0528968517574562, -0.0529716355144438,
+                             -0.0980208811401368, 1.15190312990417, -0.0980434501171241,
+                             -0.0990297440797205, -0.0989611768448433, 1.15107367264116);
+    const float minimumEv = -12.47393;
+    const float maximumEv = 4.026069;
+    vec3 encoded = inset * max(color, vec3(0.0));
+    encoded = clamp(log2(max(encoded, vec3(1e-10))), minimumEv, maximumEv);
+    encoded = agxContrast((encoded - minimumEv) / (maximumEv - minimumEv));
+    if (punchy) {
+        float luma = luminance(encoded);
+        encoded = luma + 1.4 * (pow(max(encoded, vec3(0.0)), vec3(1.35)) - luma);
+    }
+    return pow(clamp(outset * encoded, 0.0, 1.0), vec3(2.2));
+}
+
+vec3 toneMap(vec3 color) {
+    if (settings.tonemapOperator < 0.5) {
+        return acesToneMap(color);
+    }
+    return agxToneMap(color, settings.tonemapOperator > 1.5);
 }
 
 vec4 editorGrid(vec2 uv) {
@@ -96,12 +144,8 @@ void main() {
     vec4 reflection = texture(screenSpaceReflections, reflectionUv);
     center = mix(center, reflection.rgb, reflection.a);
     vec4 grid = editorGrid(texCoord);
-    center = mix(center, grid.rgb, grid.a);
-    vec3 bloom = vec3(0.0);
-    if (settings.bloomStrength > 0.0) {
-        vec3 downsampled = textureLod(hdrScene, sceneTexCoord, 2.0).rgb;
-        bloom = max(downsampled - vec3(1.0), vec3(0.0)) * settings.bloomStrength;
-    }
+    // Grid colors are display-referred; pre-divide so exposure leaves them unchanged.
+    center = mix(center, grid.rgb / max(exposureState.exposure, 1e-6), grid.a);
 
     vec3 antialiased = center;
     if (settings.antialiasingMode > 0.5 && settings.antialiasingMode < 1.5) {
@@ -125,5 +169,11 @@ void main() {
             }
         }
     }
-    outColor = vec4(acesToneMap(antialiased + bloom), 1.0);
+    // Exposure scales the scene and bloom alike; bloom is an energy-conserving mix.
+    vec3 exposed = antialiased * exposureState.exposure;
+    if (settings.bloomStrength > 0.0) {
+        vec3 bloom = texture(bloomChain, min(texCoord * settings.bloomUvScale, settings.bloomUvLimit)).rgb;
+        exposed = mix(exposed, bloom * exposureState.exposure, settings.bloomStrength);
+    }
+    outColor = vec4(toneMap(exposed), 1.0);
 }

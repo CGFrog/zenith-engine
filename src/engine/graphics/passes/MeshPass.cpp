@@ -2,6 +2,8 @@
 #include "../DepthConvention.hpp"
 #include "../Lighting.hpp"
 
+#include "engine/assets/CompressedTexture.hpp"
+#include "engine/assets/PackedVertexStreams.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 
 #include "../shader/ShaderModule.hpp"
@@ -18,6 +20,7 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <string>
 
 namespace {
 constexpr uint32_t shadowResolution = 1448;
@@ -175,6 +178,7 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     m_device = context.device();
     m_pipelineCache = context.pipelineCache();
     m_allocator = context.vmaAllocator();
+    m_blockCompressionSupported = context.blockCompressionSupported();
     m_packetCachingEnabled = SDL_getenv("ZENITH_DISABLE_RENDER_PACKET_CACHE") == nullptr;
     m_renderItems.reserve(maximumObjectsPerFrame);
     m_visibleItems.reserve(maximumObjectsPerFrame);
@@ -195,8 +199,9 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     TextureAsset white{.width = 1, .height = 1, .rgba = {255, 255, 255, 255}};
     TextureAsset normal{.width = 1, .height = 1, .rgba = {128, 128, 255, 255}};
     m_geometry = std::make_unique<GeometryArena>(defaultGeometryPage);
-    if (!uploadTexture(white, m_whiteTexture) || !uploadTexture(normal, m_normalTexture) ||
-        !createBindlessDescriptors(context, frameCount) || !createShadowResources(depthFormat) ||
+    if (!createZeroSkinInfluence() || !uploadTexture(white, m_whiteTexture) ||
+        !uploadTexture(normal, m_normalTexture) || !createBindlessDescriptors(context, frameCount) ||
+        !createShadowResources(depthFormat) ||
         !m_postProcess.init(context, colorFormat, depthFormat, frameCount, extent, depthView) ||
         !createPipeline(PostProcessPass::sceneFormat, depthFormat)) {
         return false;
@@ -679,16 +684,32 @@ bool MeshPass::createShadowResources(VkFormat depthFormat) {
     return true;
 }
 
-bool MeshPass::uploadToBuffer(const void* data, VkDeviceSize size, VkBuffer destination,
-                              VkDeviceSize destinationOffset) {
+bool MeshPass::uploadBufferRegions(std::span<const BufferUploadRegion> regions) {
     const auto uploadBegin = std::chrono::steady_clock::now();
-    const VkBuffer staging = m_uploadContext.stage(data, size);
+    constexpr VkDeviceSize stagingAlignment = 16;
+    std::vector<VkDeviceSize> stagingOffsets;
+    stagingOffsets.reserve(regions.size());
+    VkDeviceSize stagingBytes = 0;
+    for (const BufferUploadRegion& region : regions) {
+        stagingOffsets.push_back(stagingBytes);
+        stagingBytes += (region.size + stagingAlignment - 1) / stagingAlignment * stagingAlignment;
+    }
+    std::vector<std::byte> stagingData(static_cast<size_t>(stagingBytes));
+    for (size_t index = 0; index < regions.size(); ++index) {
+        std::memcpy(stagingData.data() + stagingOffsets[index], regions[index].source,
+                    static_cast<size_t>(regions[index].size));
+    }
+    const VkBuffer staging = m_uploadContext.stage(stagingData.data(), stagingBytes);
     if (!staging) {
         return false;
     }
     const bool submitted = m_uploadContext.submit([&](VkCommandBuffer command) {
-        VkBufferCopy copy{.dstOffset = destinationOffset, .size = size};
-        vkCmdCopyBuffer(command, staging, destination, 1, &copy);
+        for (size_t index = 0; index < regions.size(); ++index) {
+            const VkBufferCopy copy{.srcOffset = stagingOffsets[index],
+                                    .dstOffset = regions[index].destinationOffset,
+                                    .size = regions[index].size};
+            vkCmdCopyBuffer(command, staging, regions[index].destination, 1, &copy);
+        }
     });
     if (submitted) {
         m_uploadGpuMilliseconds += m_uploadContext.lastGpuMilliseconds();
@@ -698,30 +719,46 @@ bool MeshPass::uploadToBuffer(const void* data, VkDeviceSize size, VkBuffer dest
     return submitted;
 }
 
+bool MeshPass::createGeometryBuffer(VkDeviceSize size, VkBufferUsageFlags usage, GpuBuffer& output) {
+    VkBufferCreateInfo info{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = size, .usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+    const std::span<const uint32_t> queueFamilies = m_uploadContext.sharingQueueFamilies();
+    if (queueFamilies.size() > 1) {
+        info.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        info.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilies.size());
+        info.pQueueFamilyIndices = queueFamilies.data();
+    }
+    VmaAllocationCreateInfo allocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    return checkVulkan(vmaCreateBuffer(m_allocator, &info, &allocation, &output.buffer, &output.allocation, nullptr),
+                       "Create geometry buffer");
+}
+
+bool MeshPass::createZeroSkinInfluence() {
+    const PackedSkinInfluence zero{};
+    if (!createGeometryBuffer(sizeof(zero), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, m_zeroSkinInfluence)) {
+        return false;
+    }
+    const BufferUploadRegion region{.source = &zero, .size = sizeof(zero), .destination = m_zeroSkinInfluence.buffer};
+    return uploadBufferRegions({&region, 1});
+}
+
 bool MeshPass::ensureGeometryPage(uint32_t page) {
     while (m_geometryPages.size() <= page) {
-        const GeometryPageCapacity capacity = m_geometry->pageCapacity(static_cast<uint32_t>(m_geometryPages.size()));
-        GeometryPage created;
-        const auto createBuffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, GpuBuffer& output) {
-            VkBufferCreateInfo info{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-                                    .size = size,
-                                    .usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
-            const std::span<const uint32_t> queueFamilies = m_uploadContext.sharingQueueFamilies();
-            if (queueFamilies.size() > 1) {
-                info.sharingMode = VK_SHARING_MODE_CONCURRENT;
-                info.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilies.size());
-                info.pQueueFamilyIndices = queueFamilies.data();
-            }
-            VmaAllocationCreateInfo allocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
-            return checkVulkan(
-                vmaCreateBuffer(m_allocator, &info, &allocation, &output.buffer, &output.allocation, nullptr),
-                "Create geometry page");
-        };
-        if (!createBuffer(sizeof(Vertex) * capacity.vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, created.vertices)) {
-            return false;
-        }
-        if (!createBuffer(sizeof(uint32_t) * capacity.indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, created.indices)) {
-            vmaDestroyBuffer(m_allocator, created.vertices.buffer, created.vertices.allocation);
+        const uint32_t pageIndex = static_cast<uint32_t>(m_geometryPages.size());
+        const VkDeviceSize vertices = m_geometry->pageCapacity(pageIndex).vertices;
+        const VkDeviceSize indices = m_geometry->pageCapacity(pageIndex).indices;
+        GeometryPage created{.layout = m_geometry->pageLayout(pageIndex)};
+        const bool skinned = created.layout == GeometryLayout::Skinned;
+        const bool allocated =
+            createGeometryBuffer(vertex_packing::positionStride * vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                 created.positions) &&
+            createGeometryBuffer(vertex_packing::attributeStride * vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                 created.attributes) &&
+            (!skinned || createGeometryBuffer(vertex_packing::skinStride * vertices, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                              created.skin)) &&
+            createGeometryBuffer(sizeof(uint32_t) * indices, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, created.indices);
+        if (!allocated) {
+            destroyGeometryPage(created);
             return false;
         }
         m_geometryPages.push_back(created);
@@ -729,7 +766,18 @@ bool MeshPass::ensureGeometryPage(uint32_t page) {
     return true;
 }
 
+void MeshPass::destroyGeometryPage(const GeometryPage& page) {
+    for (const GpuBuffer* buffer : {&page.positions, &page.attributes, &page.skin, &page.indices}) {
+        if (buffer->buffer) {
+            vmaDestroyBuffer(m_allocator, buffer->buffer, buffer->allocation);
+        }
+    }
+}
+
 bool MeshPass::uploadTexture(const TextureAsset& texture, GpuTexture& output) {
+    if (texture.blockCompressed()) {
+        return uploadBlockCompressedTexture(texture, output);
+    }
     const auto uploadBegin = std::chrono::steady_clock::now();
     if (texture.width == 0 || texture.height == 0 ||
         texture.rgba.size() != static_cast<size_t>(texture.width) * texture.height * 4) {
@@ -865,27 +913,178 @@ bool MeshPass::uploadTexture(const TextureAsset& texture, GpuTexture& output) {
     return created;
 }
 
+// Cooked textures carry their full mip chain, so every level is copied as-is.
+// BC7 gets UNORM and sRGB views; BC5 has no sRGB variant and gets one view.
+bool MeshPass::uploadBlockCompressedTexture(const TextureAsset& texture, GpuTexture& output) {
+    const auto uploadBegin = std::chrono::steady_clock::now();
+    if (!m_blockCompressionSupported) {
+        std::cerr << "Block-compressed texture skipped: the device cannot sample BC formats\n";
+        return false;
+    }
+    if (const AssetPipelineResult valid = validateBlockCompressedTexture(texture); !valid) {
+        std::cerr << "Block-compressed texture rejected: " << valid.error << '\n';
+        return false;
+    }
+    const bool bc7 = texture.format == TextureFormat::Bc7;
+    const uint32_t mipLevels = static_cast<uint32_t>(texture.mips.size());
+    VkImageCreateInfo imageInfo{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                                .flags = bc7 ? VkImageCreateFlags{VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT} : 0u,
+                                .imageType = VK_IMAGE_TYPE_2D,
+                                .format = bc7 ? VK_FORMAT_BC7_UNORM_BLOCK : VK_FORMAT_BC5_UNORM_BLOCK,
+                                .extent = {.width = texture.width, .height = texture.height, .depth = 1},
+                                .mipLevels = mipLevels,
+                                .arrayLayers = 1,
+                                .samples = VK_SAMPLE_COUNT_1_BIT,
+                                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+    const std::span<const uint32_t> queueFamilies = m_textureUploadContext.sharingQueueFamilies();
+    if (queueFamilies.size() > 1) {
+        imageInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        imageInfo.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilies.size());
+        imageInfo.pQueueFamilyIndices = queueFamilies.data();
+    }
+    VmaAllocationCreateInfo imageAllocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    if (!checkVulkan(
+            vmaCreateImage(m_allocator, &imageInfo, &imageAllocation, &output.image, &output.allocation, nullptr),
+            "Create block-compressed material texture")) {
+        output = {};
+        return false;
+    }
+    // Nothing references the image until this returns, so failures release it directly.
+    const auto fail = [&] {
+        destroyTexture(output);
+        output = {};
+        return false;
+    };
+    // Stage only after the image exists: a staged slot must be submitted.
+    const VkBuffer staging = m_textureUploadContext.stage(texture.compressed.data(), texture.compressed.size());
+    if (!staging) {
+        return fail();
+    }
+
+    std::vector<VkBufferImageCopy> copies;
+    copies.reserve(mipLevels);
+    for (uint32_t level = 0; level < mipLevels; ++level) {
+        const TextureMipLevel& mip = texture.mips[level];
+        copies.push_back({.bufferOffset = mip.offset,
+                          .imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                               .mipLevel = level,
+                                               .baseArrayLayer = 0,
+                                               .layerCount = 1},
+                          .imageExtent = {.width = mip.width, .height = mip.height, .depth = 1}});
+    }
+    const VkImageSubresourceRange allLevels{.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                            .baseMipLevel = 0,
+                                            .levelCount = mipLevels,
+                                            .baseArrayLayer = 0,
+                                            .layerCount = 1};
+    const bool dedicatedQueue = m_textureUploadContext.usesDedicatedQueue();
+    const bool uploaded = m_textureUploadContext.submit([&](VkCommandBuffer command) {
+        const auto transition = [&](VkImageLayout oldLayout, VkImageLayout newLayout, VkPipelineStageFlags2 sourceStage,
+                                    VkPipelineStageFlags2 destinationStage, VkAccessFlags2 sourceAccess,
+                                    VkAccessFlags2 destinationAccess) {
+            const VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                                .srcStageMask = sourceStage,
+                                                .srcAccessMask = sourceAccess,
+                                                .dstStageMask = destinationStage,
+                                                .dstAccessMask = destinationAccess,
+                                                .oldLayout = oldLayout,
+                                                .newLayout = newLayout,
+                                                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                                .image = output.image,
+                                                .subresourceRange = allLevels};
+            const VkDependencyInfo dependency{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                              .imageMemoryBarrierCount = 1,
+                                              .pImageMemoryBarriers = &barrier};
+            vkCmdPipelineBarrier2(command, &dependency);
+        };
+        transition(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                   VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        vkCmdCopyBufferToImage(command, staging, output.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               static_cast<uint32_t>(copies.size()), copies.data());
+        // Matches the RGBA8 path: graphics-queue consumers wait on the upload
+        // timeline semaphore when the copy ran on a dedicated transfer queue.
+        transition(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                   VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                   dedicatedQueue ? VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                   VK_ACCESS_2_TRANSFER_WRITE_BIT, dedicatedQueue ? 0 : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    });
+    if (!uploaded) {
+        return fail();
+    }
+    m_uploadGpuMilliseconds += m_textureUploadContext.lastGpuMilliseconds();
+
+    // The copy may still be in flight from here on, so view failures keep the
+    // image alive rather than destroying it under the transfer queue.
+    VkImageViewCreateInfo view{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                               .image = output.image,
+                               .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                               .format = imageInfo.format,
+                               .subresourceRange = allLevels};
+    if (!checkVulkan(vkCreateImageView(m_device, &view, nullptr, &output.view),
+                     "Create block-compressed texture view")) {
+        return false;
+    }
+    bool created = true;
+    if (bc7) {
+        view.format = VK_FORMAT_BC7_SRGB_BLOCK;
+        created = checkVulkan(vkCreateImageView(m_device, &view, nullptr, &output.srgbView),
+                              "Create sRGB block-compressed texture view");
+    }
+    m_uploadMilliseconds +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - uploadBegin).count();
+    return created;
+}
+
 const MeshPass::GpuMesh* MeshPass::ensureMesh(MeshHandle handle, const AssetManager& assets) {
     const uint64_t key = handleKey(handle);
     if (const auto found = m_meshes.find(key); found != m_meshes.end()) {
         return &found->second;
     }
     const MeshAsset* mesh = assets.mesh(handle);
-    if (!mesh || mesh->vertices.empty() || mesh->indices.empty()) {
+    if (!mesh || mesh->vertices.empty() || mesh->indices.empty() || m_unpackableMeshes.contains(key)) {
+        return nullptr;
+    }
+    std::string packError;
+    const std::optional<PackedVertexStreams> streams = vertex_packing::packVertexStreams(mesh->vertices, packError);
+    if (!streams) {
+        std::cerr << "Mesh vertices cannot be packed for upload: " << packError << '\n';
+        m_unpackableMeshes.insert(key);
         return nullptr;
     }
     const auto geometry =
-        m_geometry->allocate(static_cast<uint32_t>(mesh->vertices.size()), static_cast<uint32_t>(mesh->indices.size()));
+        m_geometry->allocate(static_cast<uint32_t>(mesh->vertices.size()), static_cast<uint32_t>(mesh->indices.size()),
+                             streams->skinned() ? GeometryLayout::Skinned : GeometryLayout::Static);
     if (!geometry) {
         std::cerr << "Geometry arena could not place a mesh\n";
         return nullptr;
     }
-    const bool uploaded =
-        ensureGeometryPage(geometry->page) &&
-        uploadToBuffer(mesh->vertices.data(), mesh->vertices.size() * sizeof(Vertex),
-                       m_geometryPages[geometry->page].vertices.buffer, sizeof(Vertex) * geometry->vertexOffset) &&
-        uploadToBuffer(mesh->indices.data(), mesh->indices.size() * sizeof(uint32_t),
-                       m_geometryPages[geometry->page].indices.buffer, sizeof(uint32_t) * geometry->firstIndex);
+    bool uploaded = ensureGeometryPage(geometry->page);
+    if (uploaded) {
+        const GeometryPage& page = m_geometryPages[geometry->page];
+        const auto firstVertex = static_cast<VkDeviceSize>(geometry->vertexOffset);
+        std::vector<BufferUploadRegion> regions{{.source = streams->positions.data(),
+                                                 .size = streams->positions.size() * sizeof(glm::vec3),
+                                                 .destination = page.positions.buffer,
+                                                 .destinationOffset = vertex_packing::positionStride * firstVertex},
+                                                {.source = streams->attributes.data(),
+                                                 .size = streams->attributes.size() * sizeof(PackedVertexAttributes),
+                                                 .destination = page.attributes.buffer,
+                                                 .destinationOffset = vertex_packing::attributeStride * firstVertex},
+                                                {.source = mesh->indices.data(),
+                                                 .size = mesh->indices.size() * sizeof(uint32_t),
+                                                 .destination = page.indices.buffer,
+                                                 .destinationOffset = sizeof(uint32_t) * geometry->firstIndex}};
+        if (streams->skinned()) {
+            regions.push_back({.source = streams->skin.data(),
+                               .size = streams->skin.size() * sizeof(PackedSkinInfluence),
+                               .destination = page.skin.buffer,
+                               .destinationOffset = vertex_packing::skinStride * firstVertex});
+        }
+        uploaded = uploadBufferRegions(regions);
+    }
     if (!uploaded) {
         m_geometry->free(*geometry);
         return nullptr;
@@ -916,6 +1115,12 @@ const MeshPass::GpuTexture* MeshPass::ensureTexture(TextureHandle handle, const 
 
 bool MeshPass::assignTextureSlots(GpuTexture& texture) {
     const auto linear = m_textureTable->acquire(texture.view);
+    if (linear && !texture.srgbView) {
+        // Formats without an sRGB variant (BC5) sample linearly in every slot.
+        texture.linearSlot = *linear;
+        texture.srgbSlot = *linear;
+        return true;
+    }
     const auto srgb = linear ? m_textureTable->acquire(texture.srgbView) : std::nullopt;
     if (!linear || !srgb) {
         if (linear) {
@@ -933,7 +1138,9 @@ void MeshPass::retireTexture(const GpuTexture& texture) {
     // The slot is rewritten in every frame set before that set is bound again;
     // the views die only after all frames that could still bind them retire.
     m_textureTable->release(texture.linearSlot);
-    m_textureTable->release(texture.srgbSlot);
+    if (texture.srgbSlot != texture.linearSlot) {
+        m_textureTable->release(texture.srgbSlot);
+    }
     m_releaseQueue.defer(m_frameSerial, [this, texture] { destroyTexture(texture); });
 }
 
@@ -1043,11 +1250,26 @@ void MeshPass::bindGeometry(VkCommandBuffer commandBuffer, const GpuMesh& mesh,
     if (boundPage == mesh.geometry.page) {
         return;
     }
-    const GeometryPage& page = m_geometryPages[mesh.geometry.page];
-    const VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(commandBuffer, 0, 1, &page.vertices.buffer, &offset);
-    vkCmdBindIndexBuffer(commandBuffer, page.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+    bindGeometryPage(commandBuffer, mesh.geometry.page);
     boundPage = mesh.geometry.page;
+}
+
+void MeshPass::bindGeometryPage(VkCommandBuffer commandBuffer, uint32_t pageIndex) const {
+    static_assert(mesh_vertex_binding::position == 0 && mesh_vertex_binding::attributes == 1 &&
+                      mesh_vertex_binding::skin == 2,
+                  "stream buffers are bound in binding order");
+    const GeometryPage& page = m_geometryPages[pageIndex];
+    const bool skinned = page.layout == GeometryLayout::Skinned;
+    const std::array<VkBuffer, mesh_vertex_binding::count> buffers{
+        page.positions.buffer, page.attributes.buffer, skinned ? page.skin.buffer : m_zeroSkinInfluence.buffer};
+    const std::array<VkDeviceSize, mesh_vertex_binding::count> offsets{};
+    // Static pages repeat one zero influence for every vertex, so the shaders'
+    // zero-weight path leaves them unskinned.
+    const std::array<VkDeviceSize, mesh_vertex_binding::count> strides{
+        vertex_packing::positionStride, vertex_packing::attributeStride, skinned ? vertex_packing::skinStride : 0u};
+    vkCmdBindVertexBuffers2(commandBuffer, 0, mesh_vertex_binding::count, buffers.data(), offsets.data(), nullptr,
+                            strides.data());
+    vkCmdBindIndexBuffer(commandBuffer, page.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
 }
 
 void MeshPass::beginRendering(VkCommandBuffer commandBuffer, VkImageView colorView, VkImageView motionView,
@@ -1883,10 +2105,7 @@ void MeshPass::recordGpuDrivenGroups(const DrawContext& draw, GpuCullPhase phase
                                     static_cast<uint32_t>(std::size(sets)), sets, 0, nullptr);
             boundPipeline = &pipeline;
         }
-        const GeometryPage& page = m_geometryPages[drawGroup.geometryPage];
-        const VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(draw.commandBuffer, 0, 1, &page.vertices.buffer, &offset);
-        vkCmdBindIndexBuffer(draw.commandBuffer, page.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+        bindGeometryPage(draw.commandBuffer, drawGroup.geometryPage);
         m_gpuDrivenPass.drawGroup(draw.commandBuffer, phase, group, drawGroup.firstBatch, drawGroup.batchCount);
         ++draw.stats->drawCalls;
     }
@@ -2093,6 +2312,8 @@ void MeshPass::pruneUnusedAssets(const AssetManager& assets) {
         m_geometry->free(entry.second.geometry);
         return true;
     });
+    std::erase_if(m_unpackableMeshes,
+                  [&](uint64_t key) { return assets.mesh(handleFromKey<MeshHandle>(key)) == nullptr; });
     std::erase_if(m_textures, [&](const auto& entry) {
         if (assets.texture(handleFromKey<TextureHandle>(entry.first)) != nullptr) {
             return false;
@@ -2138,11 +2359,15 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_outlinePipeline.shutdown(context.device());
     m_postProcess.shutdown(context);
     m_meshes.clear();
-    for (GeometryPage& page : m_geometryPages) {
-        vmaDestroyBuffer(context.vmaAllocator(), page.vertices.buffer, page.vertices.allocation);
-        vmaDestroyBuffer(context.vmaAllocator(), page.indices.buffer, page.indices.allocation);
+    m_unpackableMeshes.clear();
+    for (const GeometryPage& page : m_geometryPages) {
+        destroyGeometryPage(page);
     }
     m_geometryPages.clear();
+    if (m_zeroSkinInfluence.buffer) {
+        vmaDestroyBuffer(context.vmaAllocator(), m_zeroSkinInfluence.buffer, m_zeroSkinInfluence.allocation);
+    }
+    m_zeroSkinInfluence = {};
     m_geometry.reset();
     // Shutdown runs after the device is idle, so deferred releases may run now.
     m_releaseQueue.collect(std::numeric_limits<uint64_t>::max());

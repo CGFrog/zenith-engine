@@ -281,6 +281,18 @@ or RGBA8 from renderer capabilities, and provides the RGBA8 CPU fallback.
 tool version, and target platform under the project's `.zenith/derived`
 directory. The editor inspector and `zenith_asset_build` use that same contract.
 
+Textures are cooked offline. `zenith_asset_build cook-model-textures` derives
+each external image's usage from its material slots (normal, color, or data),
+builds a full mip chain, and stores BC5 (normals) or BC7 (color as sRGB, data
+as linear) KTX2 in a derived cache keyed by the source bytes and cook settings.
+The build cooks the shipped models into `build/derived`, and executables point
+`AssetManager::setCookedTextureRoot` at `<resource root>/derived`. `Engine`
+publishes the device's BC capability to the asset manager; when a format is
+unsupported, or no current cooked entry exists, import decodes the RGBA8 source
+and the renderer generates mips as before. Cooked textures upload every stored
+level directly. BC7 images get UNORM and sRGB views; BC5 has a single linear
+view, and shaders reconstruct normal Z from X and Y for every normal map.
+
 Localization, accessibility, and platform services stay below game policy.
 Stable message IDs select runtime locales and plural forms; UTF-8 shaping emits
 fallback-font glyph runs. Game UI applies text/UI scaling and high-contrast
@@ -329,8 +341,10 @@ Temporal resolve (TAA only, compute)
   -> next output-resolution history image (the resolved scene)
 
 Post-process pass
-  resolved scene (or HDR target) + depth
-  -> scalable SSAO/SSR + FXAA (non-TAA) + bloom + ACES tone mapping
+  resolved scene with TAA (else HDR target within its render extent) + depth
+  -> compute: luminance histogram -> adapted exposure buffer (persistent)
+  -> compute: bloom downsample/upsample chain (when enabled)
+  -> scalable SSAO/SSR + FXAA (non-TAA) + exposure + bloom mix + AgX tone mapping
   -> swapchain image
 
 Game UI pass
@@ -346,7 +360,11 @@ rewritten after that slot's previous submission retires, so no descriptor is
 updated while in use. Every object record carries its material index, so draws
 of one primitive batch across materials and need no per-draw binding; missing
 maps use default slots. Meshes are suballocated into shared vertex/index pages
-and drawn by offset.
+and drawn by offset. Vertices upload as quantized split streams (position,
+attributes, and skin for skinned pages only); depth-style pipelines fetch only
+position, skin, and, for alpha-tested shadows, UVs. Static pages bind one zero
+skin influence with a dynamic stride of 0, so every mesh pipeline shares one
+vertex layout.
 
 GPU-driven submission is opt-in and uses two-phase occlusion culling. Objects
 visible last frame are drawn first; a min-depth pyramid built from that depth
