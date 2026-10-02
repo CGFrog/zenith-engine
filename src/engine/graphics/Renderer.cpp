@@ -86,7 +86,6 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
     rendering.m_capabilities = detectRenderCapabilities(m_context.pDevice());
     rendering.m_capabilities.imageBasedLighting = true;
     rendering.m_capabilities.reflectionProbes = true;
-    rendering.m_capabilities.maximumLocalLightsPerTile = 64;
     rendering.m_capabilities.dedicatedTransferQueue = m_context.hasDedicatedTransferQueue();
     rendering.m_capabilities.timelineTransfers = m_context.timelineSemaphoreSupported();
     if (!createSwapchainResources(window)) {
@@ -109,6 +108,7 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pipelineCreationBegin).count();
     m_prewarmedPipelineCount = m_meshPass.prewarmedPipelineCount();
     rendering.m_capabilities.gpuDrivenPath = m_meshPass.gpuDrivenSupported();
+    rendering.m_capabilities.maximumLocalLights = m_meshPass.localLightCapacity();
     m_currentFrame = 0;
     m_submittedFrames = 0;
     VkPhysicalDeviceProperties properties{};

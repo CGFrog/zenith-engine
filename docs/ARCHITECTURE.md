@@ -423,8 +423,12 @@ capabilities and reports each explicit fallback. The compatible instanced draw
 path remains the default; GPU-driven submission cannot be selected unless a
 measured supported implementation is exposed by the renderer.
 
-Point and spot lights are gathered by stable entity ID and reduced through a
-bounded tiled selection. Image-based lighting consumes deterministic cached
+Point and spot lights are gathered by stable entity ID, capped at the configured
+`maximumLocalLights` (nearest to the camera kept), and uploaded to a per-frame
+storage buffer. A compute pass assigns them to a 16x9x24 cluster grid
+(exponential, reversed-Z-aware depth slices over the internal render extent)
+before the scene pass, and mesh.frag loops only its cluster's list. Older
+settings that chose 32- or 64-light tiles load as clustered. Image-based lighting consumes deterministic cached
 diffuse and roughness-prefiltered specular data. Reflection probes use authored
 box volumes, blend distances, and priorities; deterministic probe preprocessing
 and bake-file policy live in editor tooling. Benchmark JSON contains timestamp

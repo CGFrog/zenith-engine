@@ -28,6 +28,7 @@ constexpr uint32_t maximumShadowCascades = 3;
 constexpr uint32_t maximumObjectsPerFrame = 16384;
 constexpr uint32_t maximumSkinMatricesPerFrame = 65536;
 constexpr uint32_t maximumMaterials = 4096;
+constexpr uint32_t maximumLocalLights = 4096;
 // Two slots (linear and sRGB view) per texture.
 constexpr uint32_t maximumBindlessTextures = 8192;
 // Slots kept free for the other sampled images bound alongside the array.
@@ -55,11 +56,13 @@ struct CameraData {
     glm::vec4 cascadeSplits{1000.0f};
     glm::vec4 renderingSettings{0.0f};
     std::array<glm::vec4, 6> environmentSpecular{};
-    std::array<glm::vec4, 64> localLightPositionRange{};
-    std::array<glm::vec4, 64> localLightDirectionType{};
-    std::array<glm::vec4, 64> localLightColorIntensity{};
-    std::array<glm::vec4, 64> localLightCone{};
-    glm::uvec4 localLightCount{0};
+    // Clustered local lighting (see ClusterGrid in Lighting.hpp). x, y: slice
+    // log scale and bias; z, w: view depth = z / (fragment depth + w).
+    glm::vec4 clusterDepth{0.0f};
+    // xy: cluster columns and rows per render-extent pixel.
+    glm::vec4 clusterTileScale{0.0f};
+    // Columns, rows, depth slices, uploaded local-light count.
+    glm::uvec4 clusterGrid{0u};
 };
 
 // Mirrors MaterialRecord in shaders/mesh.frag and shaders/shadow.frag (std430).
@@ -188,9 +191,11 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     m_gpuDrivenCandidates.reserve(maximumObjectsPerFrame);
     m_gpuDrivenKeys.reserve(maximumObjectsPerFrame);
     if (!m_uploadContext.init(context, true) || !m_textureUploadContext.init(context, false) ||
-        !createDescriptors(context, frameCount)) {
+        !createDescriptors(context, frameCount) ||
+        !m_clusteredLighting.init(context, frameCount, ClusterGridConfiguration{}, maximumLocalLights)) {
         return false;
     }
+    writeClusteredLightingDescriptors();
     TextureAsset white{.width = 1, .height = 1, .rgba = {255, 255, 255, 255}};
     TextureAsset normal{.width = 1, .height = 1, .rgba = {128, 128, 255, 255}};
     m_geometry = std::make_unique<GeometryArena>(defaultGeometryPage);
@@ -231,8 +236,8 @@ bool MeshPass::createGpuDrivenDescriptors() {
         CameraBuffer& camera = m_cameras[frame];
         camera.gpuDrivenDescriptor = sets[frame];
         // Everything except the object buffer matches the CPU-submission set.
-        std::array<VkCopyDescriptorSet, 4> copies{};
-        const uint32_t sharedBindings[]{0, 1, 3, 4};
+        std::array<VkCopyDescriptorSet, 7> copies{};
+        const uint32_t sharedBindings[]{0, 1, 3, 4, 9, 10, 11};
         for (size_t index = 0; index < copies.size(); ++index) {
             copies[index] = {.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET,
                              .srcSet = camera.descriptor,
@@ -250,6 +255,26 @@ bool MeshPass::createGpuDrivenDescriptors() {
         vkUpdateDescriptorSets(m_device, 1, &write, static_cast<uint32_t>(copies.size()), copies.data());
     }
     return true;
+}
+
+void MeshPass::writeClusteredLightingDescriptors() {
+    for (uint32_t frame = 0; frame < m_cameras.size(); ++frame) {
+        const ClusteredLightingPass::FrameBuffers buffers = m_clusteredLighting.frameBuffers(frame);
+        // Bindings 9-11: local lights, per-cluster ranges, cluster light indices.
+        const std::array<VkDescriptorBufferInfo, 3> infos{{{.buffer = buffers.lights, .range = VK_WHOLE_SIZE},
+                                                           {.buffer = buffers.clusterRanges, .range = VK_WHOLE_SIZE},
+                                                           {.buffer = buffers.lightIndices, .range = VK_WHOLE_SIZE}}};
+        std::array<VkWriteDescriptorSet, 3> writes{};
+        for (uint32_t index = 0; index < writes.size(); ++index) {
+            writes[index] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                             .dstSet = m_cameras[frame].descriptor,
+                             .dstBinding = 9 + index,
+                             .descriptorCount = 1,
+                             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                             .pBufferInfo = &infos[index]};
+        }
+        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
 }
 
 bool MeshPass::resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView) {
@@ -281,6 +306,19 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         {.binding = 4,
          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        // Clustered local lighting: lights, per-cluster ranges, light indices.
+        {.binding = 9,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        {.binding = 10,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        {.binding = 11,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1,
          .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
     VkDescriptorSetLayoutCreateInfo layoutInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -297,7 +335,7 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
     // instances from the culling output instead of the host object buffer.
     const VkDescriptorPoolSize poolSizes[]{
         {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = frameCount * 2},
-        {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = frameCount * 6},
+        {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = frameCount * 12},
         {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = frameCount * 2}};
     VkDescriptorPoolCreateInfo poolInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -1723,10 +1761,11 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     for (size_t level = 0; level < environmentSpecular.size(); ++level) {
         cameraData.environmentSpecular[level] = {glm::max(environmentSpecular[level], glm::vec3(0.0f)), 1.0f};
     }
-    std::vector<LocalLight> localLights = gatherLocalLights(scene);
-    const uint32_t perTile = rendering.settings().localLights == LocalLightingQuality::Tiled64 ? 64u : 32u;
-    LightTileGrid lightGrid;
-    std::vector<uint32_t> selectedLights;
+    const uint32_t localLightLimit =
+        rendering.settings().localLights == LocalLightingQuality::Disabled
+            ? 0u
+            : std::min(rendering.settings().maximumLocalLights, m_clusteredLighting.lightCapacity());
+    std::vector<LocalLight> selectedLights;
 
     uint64_t outlineRevision = 0;
     for (RenderObjectId outlined : rendering.m_outlinedObjects) {
@@ -1779,16 +1818,14 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
                                  rendering.capabilities().descriptorIndexing &&
                                  rendering.capabilities().multiDrawIndirect;
     const FrameResourceUse lightResources[]{{"scene.lights", FrameResourceAccess::Read},
-                                            {"frame.light_grid", FrameResourceAccess::Write}};
+                                            {"frame.light_list", FrameResourceAccess::Write}};
     const FrameResourceUse visibilityResources[]{{"renderer.persistent_scene", FrameResourceAccess::Read},
                                                  {"frame.visibility", FrameResourceAccess::Write}};
     FrameTaskGraph taskGraph(++m_taskGeneration);
-    taskGraph.add("light-grid", lightResources, [&](const FrameTaskContext&) {
-        lightGrid = rendering.settings().localLights == LocalLightingQuality::Disabled
-                        ? LightTileGrid{}
-                        : selectTiledLights(localLights, cameraData.viewProjection, renderExtent.width,
-                                            renderExtent.height, 16, perTile);
-        selectedLights = selectTiledLightSet(lightGrid, localLights, perTile);
+    taskGraph.add("light-selection", lightResources, [&](const FrameTaskContext&) {
+        if (localLightLimit > 0) {
+            selectedLights = selectLocalLights(gatherLocalLights(scene), cameraPosition, localLightLimit);
+        }
     });
     taskGraph.add("render-visibility", visibilityResources, [&](const FrameTaskContext&) {
         m_gpuScene.buildVisibility({.viewProjection = cameraData.viewProjection, .depthHistoryValid = false},
@@ -1800,15 +1837,17 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         return false;
     }
     m_gpuScene.retireDeltas();
-    const uint32_t localLightCount = static_cast<uint32_t>(selectedLights.size());
-    for (uint32_t index = 0; index < localLightCount; ++index) {
-        const LocalLight& local = localLights[selectedLights[index]];
-        cameraData.localLightPositionRange[index] = {local.position, local.range};
-        cameraData.localLightDirectionType[index] = {local.direction, local.type == LocalLightType::Spot ? 1.0f : 0.0f};
-        cameraData.localLightColorIntensity[index] = {local.color, local.intensity};
-        cameraData.localLightCone[index] = {local.innerConeCosine, local.outerConeCosine, 0.0f, 0.0f};
-    }
-    cameraData.localLightCount.x = localLightCount;
+    ClusterLightStatistics clusterStatistics;
+    const uint32_t localLightCount = m_clusteredLighting.beginFrame(frameIndex, selectedLights, clusterStatistics);
+    const ClusterGrid clusterGrid = makeClusterGrid(m_clusteredLighting.configuration(), projection,
+                                                    {renderExtent.width, renderExtent.height}, nearPlane, farPlane);
+    const glm::vec2 sliceScaleBias = clusterGrid.sliceScaleBias();
+    cameraData.clusterDepth = {sliceScaleBias, projection[3][2], projection[2][2]};
+    cameraData.clusterTileScale = {glm::vec2(clusterGrid.configuration.columns, clusterGrid.configuration.rows) /
+                                       clusterGrid.renderExtent,
+                                   0.0f, 0.0f};
+    cameraData.clusterGrid = {clusterGrid.configuration.columns, clusterGrid.configuration.rows,
+                              clusterGrid.configuration.depthSlices, localLightCount};
     std::memcpy(m_cameras[frameIndex].mapped, &cameraData, sizeof(cameraData));
     vmaFlushAllocation(m_allocator, m_cameras[frameIndex].buffer.allocation, 0, sizeof(cameraData));
     RenderStats& stats = rendering.m_stats;
@@ -1826,8 +1865,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.scannedRenderables = scannedRenderables;
     stats.updatedObjectRecords = updatedObjectRecords;
     stats.mainThreadAllocations = allocationCount;
-    stats.localLightCount = static_cast<uint32_t>(localLights.size());
-    stats.discardedLightAssignments = lightGrid.discardedAssignments;
+    stats.localLightCount = localLightCount;
+    stats.discardedLightAssignments = clusterStatistics.discardedAssignments;
+    stats.maximumLightsPerCluster = clusterStatistics.maximumLightsInCluster;
     stats.taskQueueDepth = taskResult.stats.maximumQueueDepth;
     stats.taskStolenJobs = taskResult.stats.stolenJobs;
     stats.taskWorkerUtilization = taskResult.stats.workerUtilization;
@@ -1934,6 +1974,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     uploadCpuSubmittedObjects(frameIndex);
     stats.culledCount += m_visibility.frustumCulled + (gpuDrivenActive ? 0u : m_visibility.occlusionCulled);
 
+    m_clusteredLighting.record(commandBuffer, frameIndex, clusterGrid, view);
     m_postProcess.prepareScene(commandBuffer, frameIndex);
     const VkImageView sceneView = m_postProcess.sceneView(frameIndex);
     const VkImageView motionView = m_postProcess.motionView(frameIndex);
@@ -2302,6 +2343,7 @@ void MeshPass::shutdown(const VulkanContext& context) {
         m_gpuDrivenPass.shutdown(context);
     }
     m_gpuDrivenSupported = false;
+    m_clusteredLighting.shutdown();
     m_uploadContext.shutdown();
     m_textureUploadContext.shutdown();
     for (auto& [variant, pipelines] : m_meshPipelines) {

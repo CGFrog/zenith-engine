@@ -1,0 +1,150 @@
+#version 450
+
+// Assigns local lights to view clusters: one invocation per cluster, lights
+// staged through shared memory in batches. Lights are tested in ascending
+// order, so every cluster's list is sorted and deterministic. Mirrors
+// assignLightsToClusters and ClusterGrid in src/engine/graphics/Lighting.cpp.
+
+const uint WORKGROUP_SIZE = 64;
+// Mirrors maximumLightsPerCluster in Lighting.hpp.
+const uint MAXIMUM_LIGHTS_PER_CLUSTER = 128;
+
+layout(local_size_x = 64) in;
+
+// Mirrors GpuLocalLight in ClusteredLightingPass.hpp (std430).
+struct LocalLight {
+    vec4 positionRange;
+    vec4 colorIntensity;
+    vec4 directionType;
+    vec4 spotCone;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer Lights {
+    LocalLight values[];
+} lights;
+
+// Per cluster: x = first entry in the index list, y = light count.
+layout(std430, set = 0, binding = 1) writeonly buffer ClusterRanges {
+    uvec2 values[];
+} clusterRanges;
+
+layout(std430, set = 0, binding = 2) writeonly buffer LightIndices {
+    uint values[];
+} lightIndices;
+
+layout(std430, set = 0, binding = 3) buffer Statistics {
+    uint maximumLightsInCluster;
+    uint discardedAssignments;
+} statistics;
+
+layout(push_constant) uniform ClusterSettings {
+    mat4 view;
+    // For NDC (x, y): view.x / depth = (x + offset.x) / scale.x; xy scale, zw offset.
+    vec4 projection;
+    // x: near depth, y: end of exponential slicing, z: far depth.
+    vec4 depth;
+    // x: columns, y: rows, z: depth slices, w: light count.
+    uvec4 grid;
+} settings;
+
+// View-space light: position and range, then axis and outer cone cosine
+// (cosine <= 0 skips the cone test, as for point lights).
+shared vec4 sharedPositionRange[WORKGROUP_SIZE];
+shared vec4 sharedAxisCone[WORKGROUP_SIZE];
+
+float sliceStart(uint slice) {
+    if (slice >= settings.grid.z) {
+        return settings.depth.z;
+    }
+    return settings.depth.x * pow(settings.depth.y / settings.depth.x, float(slice) / float(settings.grid.z));
+}
+
+void clusterBounds(uvec3 cluster, out vec3 minimum, out vec3 maximum) {
+    vec2 tileSize = vec2(2.0) / vec2(settings.grid.xy);
+    vec2 ndcMinimum = vec2(cluster.xy) * tileSize - 1.0;
+    float depths[2] = float[2](sliceStart(cluster.z), sliceStart(cluster.z + 1));
+    minimum = vec3(3.4e38);
+    maximum = vec3(-3.4e38);
+    for (uint corner = 0; corner < 4; ++corner) {
+        vec2 ndc = ndcMinimum + vec2(corner & 1u, corner >> 1u) * tileSize;
+        vec2 ray = (ndc + settings.projection.zw) / settings.projection.xy;
+        for (int index = 0; index < 2; ++index) {
+            vec3 point = vec3(ray * depths[index], -depths[index]);
+            minimum = min(minimum, point);
+            maximum = max(maximum, point);
+        }
+    }
+}
+
+bool lightAffectsCluster(vec4 positionRange, vec4 axisCone, vec3 minimum, vec3 maximum) {
+    vec3 offset = clamp(positionRange.xyz, minimum, maximum) - positionRange.xyz;
+    if (dot(offset, offset) > positionRange.w * positionRange.w) {
+        return false;
+    }
+    float coneCosine = axisCone.w;
+    if (coneCosine <= 0.0) {
+        return true;
+    }
+    vec3 center = (minimum + maximum) * 0.5;
+    float radius = length(maximum - minimum) * 0.5;
+    vec3 toCenter = center - positionRange.xyz;
+    float alongAxis = dot(toCenter, axisCone.xyz);
+    float acrossAxis = sqrt(max(dot(toCenter, toCenter) - alongAxis * alongAxis, 0.0));
+    float coneSine = sqrt(max(1.0 - coneCosine * coneCosine, 0.0));
+    float coneDistance = coneCosine * acrossAxis - alongAxis * coneSine;
+    return coneDistance <= radius && alongAxis >= -radius;
+}
+
+void main() {
+    uint clusterCount = settings.grid.x * settings.grid.y * settings.grid.z;
+    uint clusterIndex = gl_GlobalInvocationID.x;
+    bool activeCluster = clusterIndex < clusterCount;
+    uvec3 cluster = uvec3(clusterIndex % settings.grid.x, (clusterIndex / settings.grid.x) % settings.grid.y,
+                          clusterIndex / (settings.grid.x * settings.grid.y));
+    vec3 minimum = vec3(0.0);
+    vec3 maximum = vec3(0.0);
+    if (activeCluster) {
+        clusterBounds(cluster, minimum, maximum);
+    }
+
+    uint first = clusterIndex * MAXIMUM_LIGHTS_PER_CLUSTER;
+    uint affecting = 0;
+    uint lightCount = settings.grid.w;
+    for (uint batchStart = 0; batchStart < lightCount; batchStart += WORKGROUP_SIZE) {
+        uint loadIndex = batchStart + gl_LocalInvocationID.x;
+        if (loadIndex < lightCount) {
+            LocalLight light = lights.values[loadIndex];
+            vec3 position = (settings.view * vec4(light.positionRange.xyz, 1.0)).xyz;
+            vec3 axis = mat3(settings.view) * light.directionType.xyz;
+            bool spot = light.directionType.w > 0.5;
+            sharedPositionRange[gl_LocalInvocationID.x] = vec4(position, light.positionRange.w);
+            sharedAxisCone[gl_LocalInvocationID.x] = vec4(axis, spot ? light.spotCone.y : -1.0);
+        }
+        barrier();
+        uint batchCount = min(WORKGROUP_SIZE, lightCount - batchStart);
+        if (activeCluster) {
+            for (uint local = 0; local < batchCount; ++local) {
+                if (!lightAffectsCluster(sharedPositionRange[local], sharedAxisCone[local], minimum, maximum)) {
+                    continue;
+                }
+                if (affecting < MAXIMUM_LIGHTS_PER_CLUSTER) {
+                    lightIndices.values[first + affecting] = batchStart + local;
+                }
+                ++affecting;
+            }
+        }
+        barrier();
+    }
+
+    if (!activeCluster) {
+        return;
+    }
+    uint stored = min(affecting, MAXIMUM_LIGHTS_PER_CLUSTER);
+    clusterRanges.values[clusterIndex] = uvec2(first, stored);
+    if (affecting > 0) {
+        atomicMax(statistics.maximumLightsInCluster, affecting);
+    }
+    if (affecting > stored) {
+        atomicAdd(statistics.discardedAssignments, affecting - stored);
+    }
+}

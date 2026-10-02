@@ -12,6 +12,7 @@
 #include "../resources/GeometryArena.hpp"
 #include "../resources/UploadContext.hpp"
 #include "../vulkan/VulkanContext.hpp"
+#include "ClusteredLightingPass.hpp"
 #include "GpuDrivenPass.hpp"
 #include "PostProcessPass.hpp"
 #include "engine/resources/DeferredReleaseQueue.hpp"
@@ -40,7 +41,12 @@ class MeshPass {
     }
 
     uint32_t prewarmedPipelineCount() const {
-        return 10u + (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
+        // Ten graphics pipelines plus the light-cluster assignment.
+        return 11u + (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
+    }
+
+    uint32_t localLightCapacity() const {
+        return m_clusteredLighting.lightCapacity();
     }
 
     VkSemaphore uploadTimelineSemaphore() const {
@@ -159,6 +165,7 @@ class MeshPass {
     bool uploadBufferRegions(std::span<const BufferUploadRegion> regions);
     bool createGeometryBuffer(VkDeviceSize size, VkBufferUsageFlags usage, GpuBuffer& output);
     bool createZeroSkinInfluence();
+    void writeClusteredLightingDescriptors();
     bool ensureGeometryPage(uint32_t page);
     void destroyGeometryPage(const GeometryPage& page);
     void bindGeometryPage(VkCommandBuffer commandBuffer, uint32_t page) const;
@@ -285,6 +292,7 @@ class MeshPass {
     GraphicsPipeline m_outlinePipeline;
     PostProcessPass m_postProcess;
     GpuDrivenPass m_gpuDrivenPass;
+    ClusteredLightingPass m_clusteredLighting;
     bool m_gpuDrivenSupported{false};
     std::vector<const RenderItem*> m_gpuDrivenCandidates;
     std::vector<IndirectDrawKey> m_gpuDrivenKeys;

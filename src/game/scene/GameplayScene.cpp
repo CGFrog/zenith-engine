@@ -7,18 +7,30 @@
 #include <SDL3/SDL_stdinc.h>
 #include <charconv>
 #include <glm/gtc/matrix_transform.hpp>
+#include <optional>
 #include <string_view>
 
 namespace {
-uint32_t benchmarkObjectCount() {
-    const char* value = SDL_getenv("ZENITH_BENCHMARK_OBJECTS");
+std::optional<uint32_t> environmentCount(const char* name, uint32_t maximum) {
+    const char* value = SDL_getenv(name);
     if (!value) {
-        return 0;
+        return std::nullopt;
     }
     uint32_t count = 0;
     const char* end = value + std::string_view(value).size();
     const auto [position, error] = std::from_chars(value, end, count);
-    return error == std::errc{} && position == end ? std::min(count, 10000u) : 0;
+    return error == std::errc{} && position == end ? std::min(count, maximum) : 0u;
+}
+
+uint32_t benchmarkObjectCount() {
+    return environmentCount("ZENITH_BENCHMARK_OBJECTS", 10000).value_or(0);
+}
+
+// Object benchmarks bring 96 local lights unless ZENITH_BENCHMARK_LIGHTS
+// sets the count, which also works without benchmark objects.
+uint32_t benchmarkLightCount(uint32_t objectCount) {
+    constexpr uint32_t objectBenchmarkLights = 96;
+    return environmentCount("ZENITH_BENCHMARK_LIGHTS", 8192).value_or(objectCount > 0 ? objectBenchmarkLights : 0);
 }
 } // namespace
 
@@ -39,7 +51,10 @@ SceneResult GameplayScene::load(ApplicationContext& context) {
             return {.error = result.error};
         }
     } else {
-        if (const SceneResult result = populateDemoScene(scene, context.assets, benchmarkObjectCount()); !result) {
+        const uint32_t objectCount = benchmarkObjectCount();
+        if (const SceneResult result =
+                populateDemoScene(scene, context.assets, objectCount, benchmarkLightCount(objectCount));
+            !result) {
             return result;
         }
     }
