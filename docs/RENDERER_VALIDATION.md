@@ -56,6 +56,63 @@ fallback and still filters the linear HDR scene before tone mapping in
 `post.frag`; edges are therefore judged on scene luminance rather than display
 values.
 
+## Upscaling
+
+`RenderSettings::upscaler` selects how a frame rendered below output resolution
+reaches it (`UpscalerMode`, serialized as `upscaler.mode`):
+
+| Mode | Value | Behavior |
+| --- | ---: | --- |
+| Off | 0 | Historical behavior and the fallback: the internal resolution follows `dynamicResolution` alone, and TAA upsamples whatever it renders. Older documents without the key load as Off, so `antialiasing` 2 with dynamic resolution still means TAAU. |
+| TAAU | 1 | Renders at the preset's scale and reconstructs with `TemporalResolvePass`. Requires TAA; validation enables it. |
+| FSR 1 | 2 | Renders at the preset's scale, anti-aliases at render resolution (FXAA, or TAA resolving at render resolution), exposes, blooms, and tone maps there, then upsamples with AMD FidelityFX Super Resolution 1 EASU and sharpens with RCAS (`SpatialUpscalePass`). |
+
+`upscaler.quality` picks the per-axis ratio: Quality 1.5x (0), Balanced 1.7x
+(1), Performance 2x (2). `upscaler.sharpness` in [0, 1] sets RCAS: 1 is AMD's
+maximum (0 stops) and each 0.5 below it halves the sharpening (default 0.9,
+AMD's suggested 0.2 stops). With dynamic resolution enabled, its scale range
+applies relative to the preset (both bounds are multiplied by the preset's
+render scale), so the preset is the unloaded resolution; the internal extent
+still varies inside fixed output-sized targets.
+
+FSR 1 filters perceptual values, so it runs after tone mapping: `post.frag`
+composites into the top-left render extent of an output-sized input target in
+the output format (sRGB, which stores display values with 8-bit perceptual
+precision), `fsr_easu.comp` gamma-2 encodes the display-linear values it reads,
+upsamples, and stores them in an RGBA8 image, and `fsr_rcas.frag` sharpens that
+encoding and decodes it in the fullscreen draw into the output. RCAS is a
+fragment pass rather than compute so the swapchain needs no storage usage. HDR
+values never reach EASU, so bright highlights cannot ring. The EASU taps are
+fetched individually and clamped to the render extent, because texels beyond
+it are stale under dynamic resolution. The editor grid composites at render
+resolution and is upscaled with the scene.
+
+The capability check (`RenderCapabilities::spatialUpscaling`) requires RGBA8
+storage images and a sampled, renderable output format. Without it validation
+falls back to TAAU where TAA is available and to native resolution otherwise,
+each with a `fallbacks` message. A vendor upscaler such as DLSS would be
+another `UpscalerMode` behind its own capability check; it needs a proprietary
+SDK and is not included.
+
+GPU scopes are `gpu.fsr_easu` (timestamps 47/48) and `gpu.fsr_rcas` (49/50);
+`gpu.spatial_upscale` is their sum, checked against
+`RenderPassBudgets::spatialUpscale` (serialized as `spatialUpscale`).
+`render.spatial_upscale_bytes` reports the two targets once allocated. Both
+scopes report zero unless the frame used FSR 1. `ZENITH_FORCE_UPSCALER` and
+`ZENITH_FORCE_UPSCALER_QUALITY` select a mode and preset for diagnostics, and
+`zenith_spatial_upscale` covers the presets, EASU constants and reconstruction,
+RCAS, serialization, and fallbacks on the CPU.
+
+Release measurement (2026-10-02, showcase project, 1920x1080, Performance 2x,
+`ZENITH_BENCHMARK_MODE=render`, 300 frames, medians of three runs each with
+spreads under 1%):
+
+| Upscaler | `gpu.frame` | `gpu.fsr_easu` | `gpu.fsr_rcas` | `gpu.post` |
+| --- | ---: | ---: | ---: | ---: |
+| Off (native, TAA) | 3.29 ms | 0 | 0 | 0.104 ms |
+| TAAU | 1.54 ms | 0 | 0 | 0.064 ms |
+| FSR 1 (TAA at render resolution) | 1.31 ms | 0.175 ms | 0.051 ms | 0.025 ms |
+
 ## Frame capture and reference images
 
 Visual checks do not need RenderDoc or window focus. `ZENITH_CAPTURE_FRAME=N`
@@ -182,7 +239,7 @@ The `vulkan;validation` CTest label runs every combination of
 | --- | --- |
 | Content | demo (`zenith`), showcase (`zenith --project projects/showcase.zenith-project`) |
 | Submission | CPU, `ZENITH_FORCE_GPU_DRIVEN=1` |
-| Quality | project default, `ZENITH_FORCE_HIGH_QUALITY=1` + `ZENITH_FORCE_DYNAMIC_RESOLUTION=1` |
+| Quality | project default, `ZENITH_FORCE_HIGH_QUALITY=1` + `ZENITH_FORCE_DYNAMIC_RESOLUTION=1`, the same plus `ZENITH_FORCE_UPSCALER=fsr1` + `ZENITH_FORCE_UPSCALER_QUALITY=performance` (`fsr1_dynamic`) |
 
 for 120 frames each, plus the scripted editor smoke
 (`zenith_validation_editor`), all with `ZENITH_VALIDATION_STRICT=1`:
@@ -222,6 +279,8 @@ decisions from.
 | `ZENITH_DISABLE_MOTION_BLUR` | Forces motion blur Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
 | `ZENITH_FORCE_TAA` | Temporal anti-aliasing. |
 | `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
+| `ZENITH_FORCE_UPSCALER=off\|taau\|fsr1` | Sets `RenderSettings::upscaler.mode` (`native` is an alias of `off`); `taau` also forces TAA. Unknown values are ignored. Forced FSR 1 on a device without support renders at native resolution. |
+| `ZENITH_FORCE_UPSCALER_QUALITY=quality\|balanced\|performance` | Sets the upscaler preset (1.5x, 1.7x, 2x per axis). |
 | `ZENITH_FORCE_GPU_DRIVEN` | GPU-driven submission (two-phase occlusion culling and indirect draws) when the device supports it. Shadow cascades are then culled on the GPU too. |
 | `ZENITH_DISABLE_GPU_SHADOW_CULLING` | Keeps CPU shadow-cascade culling while GPU-driven submission is active (A/B baseline). |
 | `ZENITH_DISABLE_SHADOW_CACHE` | Redraws every shadow cascade each frame, so shadow culling and rendering can be measured on a static scene. |

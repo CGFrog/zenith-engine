@@ -9,6 +9,7 @@
 #include "ColorGradePass.hpp"
 #include "SceneGeometryViews.hpp"
 #include "ScreenSpaceReflectionPass.hpp"
+#include "SpatialUpscalePass.hpp"
 #include "TemporalResolvePass.hpp"
 #include <chrono>
 #include <filesystem>
@@ -101,6 +102,20 @@ class PostProcessPass {
         return m_temporalResolve.historyBytes();
     }
 
+    // Whether UpscalerMode::Fsr1 can run; record() otherwise composites at
+    // output resolution as if the upscaler were Off.
+    bool spatialUpscaleSupported() const {
+        return m_spatialUpscale.supported();
+    }
+
+    uint32_t spatialUpscalePipelineCount() const {
+        return m_spatialUpscale.supported() ? SpatialUpscalePass::pipelineCount : 0u;
+    }
+
+    uint64_t spatialUpscaleBytes() const {
+        return m_spatialUpscale.targetBytes();
+    }
+
     // The reflection target plus every allocated prepass specular target.
     uint64_t reflectionBytes() const;
 
@@ -151,10 +166,12 @@ class PostProcessPass {
         VkExtent2D validExtent{};
     };
 
-    // Runs the temporal resolve when enabled. Records timestamps 19 and 20
-    // either way.
-    bool resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent, bool enabled,
-                         const TemporalResolveFrame& temporal, VkQueryPool timestampQueries);
+    // Runs the temporal resolve when enabled, filling resolveExtent of the
+    // history (the output extent, or the render extent ahead of FSR 1).
+    // Records timestamps 19 and 20 either way.
+    bool resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent,
+                         VkExtent2D resolveExtent, bool enabled, const TemporalResolveFrame& temporal,
+                         VkQueryPool timestampQueries);
     // Runs depth of field over the scene when enabled and returns the scene
     // later passes read. Writes the depth-of-field timestamp pair only when
     // the pass runs.
@@ -174,6 +191,11 @@ class PostProcessPass {
     bool recordMotionBlur(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent,
                           const RenderSettings& settings, const TemporalResolveFrame& temporal,
                           OptionalPassTimestamps& passTimestamps, SceneColor& scene);
+    // FSR 1 after the composite: EASU, then RCAS into rcasTarget (in
+    // COLOR_ATTACHMENT_OPTIMAL, of rcasFormat: the output or the colour-grade
+    // display target). Records timestamps 47 to 50.
+    void recordSpatialUpscale(VkCommandBuffer commandBuffer, VkExtent2D internalExtent, VkImageView rcasTarget,
+                              VkFormat rcasFormat, const RenderSettings& settings, VkQueryPool timestampQueries);
     void recordBloomAndExposure(VkCommandBuffer commandBuffer, const BloomExposureInput& input,
                                 const RenderSettings& settings, VkQueryPool timestampQueries,
                                 double& bloomCpuMilliseconds);
@@ -189,6 +211,7 @@ class PostProcessPass {
                        VkPipeline pipeline, VkExtent2D extent, const void* postSettings);
 
     VkDevice m_device{VK_NULL_HANDLE};
+    VkFormat m_outputFormat{VK_FORMAT_UNDEFINED};
     VkPipelineCache m_pipelineCache{VK_NULL_HANDLE};
     VmaAllocator m_allocator{VK_NULL_HANDLE};
     VkDescriptorSetLayout m_layout{VK_NULL_HANDLE};
@@ -203,6 +226,7 @@ class PostProcessPass {
     VkExtent2D m_extent{};
     std::vector<Target> m_targets;
     TemporalResolvePass m_temporalResolve;
+    SpatialUpscalePass m_spatialUpscale;
     ScreenSpaceReflectionPass m_reflections;
     DepthOfFieldPass m_depthOfField;
     // The most recently recorded frame slot and its render extent; that slot's

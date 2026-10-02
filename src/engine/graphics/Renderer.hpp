@@ -49,6 +49,8 @@ struct RenderGraphShape {
     // Any colour-grade effect requested (ColorGradePass); a LUT whose file
     // fails to load still counts, so the model may show an idle grade pass.
     bool colorGrade{false};
+    // FSR 1: the composite renders into the upscaler's input, then EASU and RCAS.
+    bool spatialUpscale{false};
 
     bool operator==(const RenderGraphShape&) const = default;
 };

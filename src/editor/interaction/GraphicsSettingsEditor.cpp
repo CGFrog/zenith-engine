@@ -69,6 +69,24 @@ bool drawAntialiasingAndResolution(RenderSettings& settings, const RenderCapabil
     bool changed =
         enumCombo("Anti-aliasing", settings.antialiasing,
                   std::array<EnumOption, 3>{{{"Off"}, {"FXAA"}, {"TAA", capabilities.temporalAntialiasing}}});
+    UpscalerSettings& upscaler = settings.upscaler;
+    if (enumCombo("Upscaler", upscaler.mode,
+                  std::array<EnumOption, 3>{{{"Off"},
+                                             {"TAA upsampling", capabilities.temporalAntialiasing},
+                                             {"FSR 1", capabilities.spatialUpscaling}}})) {
+        // TAA upsampling reconstructs with TAA; validation would enable it too.
+        if (upscaler.mode == UpscalerMode::Taau) {
+            settings.antialiasing = AntialiasingMode::Taa;
+        }
+        changed = true;
+    }
+    ImGui::BeginDisabled(upscaler.mode == UpscalerMode::Off);
+    changed |= enumCombo("Upscaler quality", upscaler.quality,
+                         std::array<EnumOption, 3>{{{"Quality (1.5x)"}, {"Balanced (1.7x)"}, {"Performance (2x)"}}});
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(upscaler.mode != UpscalerMode::Fsr1);
+    changed |= ImGui::SliderFloat("FSR sharpness", &upscaler.sharpness, 0.0f, 1.0f, "%.2f");
+    ImGui::EndDisabled();
     DynamicResolutionSettings& dynamic = settings.dynamicResolution;
     changed |= ImGui::Checkbox("Dynamic resolution", &dynamic.enabled);
     ImGui::BeginDisabled(!dynamic.enabled);
@@ -298,6 +316,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Motion blur", budgets.motionBlur);
     changed |= drawBudget("Depth of field", budgets.depthOfField);
     changed |= drawBudget("Colour grading", budgets.colorGrade);
+    changed |= drawBudget("FSR upscale", budgets.spatialUpscale);
     return changed;
 }
 
@@ -339,6 +358,8 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
             {"Bloom", stats.gpuBloomMilliseconds},
             {"Post-process", stats.gpuPostMilliseconds},
             {"Colour grading", stats.gpuColorGradeMilliseconds},
+            {"FSR upsample (EASU)", stats.gpuFsrEasuMilliseconds},
+            {"FSR sharpen (RCAS)", stats.gpuFsrRcasMilliseconds},
             {"UI", stats.gpuUiMilliseconds},
             {"Frame", stats.gpuFrameMilliseconds}};
 }
@@ -360,6 +381,7 @@ void clampToDocumentRanges(RenderSettings& settings) {
     settings.vignette.roundness = std::clamp(settings.vignette.roundness, 0.0f, 1.0f);
     settings.filmGrain.intensity = std::clamp(settings.filmGrain.intensity, 0.0f, maximumFilmGrainIntensity);
     settings.filmGrain.size = std::clamp(settings.filmGrain.size, minimumFilmGrainSize, maximumFilmGrainSize);
+    settings.upscaler.sharpness = std::clamp(settings.upscaler.sharpness, 0.0f, 1.0f);
 
     DynamicResolutionSettings& dynamic = settings.dynamicResolution;
     dynamic.minimumScale = std::clamp(dynamic.minimumScale, minimumDynamicScale, 1.0f);
@@ -402,7 +424,8 @@ void clampToDocumentRanges(RenderSettings& settings) {
                                      &budgets.irradianceVolume,
                                      &budgets.motionBlur,
                                      &budgets.depthOfField,
-                                     &budgets.colorGrade}) {
+                                     &budgets.colorGrade,
+                                     &budgets.spatialUpscale}) {
         clampBudget(*budget);
     }
 

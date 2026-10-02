@@ -13,9 +13,12 @@ constexpr uint32_t sampledInputCount = 4;
 // Mirrors ResolveSettings in shaders/taa_resolve.comp.
 struct ResolveSettings {
     glm::mat4 currentToPreviousClip{1.0f};
+    // The region this frame resolves.
     glm::vec4 outputSize{0.0f};
     glm::vec4 renderSize{0.0f};
-    glm::vec4 sceneScale{0.0f};
+    // xy: the previous frame's resolved region / history image extent,
+    // zw: the previous render extent / scene image extent.
+    glm::vec4 regionScale{0.0f};
     glm::vec2 jitterPixels{0.0f};
     float historyValid{0.0f};
     float previousDepthValid{0.0f};
@@ -170,6 +173,7 @@ void TemporalResolvePass::destroyHistory() {
         history = {};
     }
     m_latest = 0;
+    m_latestExtent = {};
     m_historyWritten = false;
 }
 
@@ -259,20 +263,25 @@ bool TemporalResolvePass::record(VkCommandBuffer commandBuffer, uint32_t frameIn
                                   .pImageMemoryBarriers = history};
     vkCmdPipelineBarrier2(commandBuffer, &before);
 
-    const ResolveSettings settings{
-        .currentToPreviousClip = frame.currentToPreviousClip,
-        .outputSize = sizeAndReciprocal(m_extent),
-        .renderSize = sizeAndReciprocal(images.renderExtent),
-        .sceneScale = {regionScale(images.renderExtent, m_extent), regionScale(images.previousRenderExtent, m_extent)},
-        .jitterPixels = frame.jitterPixels,
-        .historyValid = frame.historyValid && m_historyWritten ? 1.0f : 0.0f,
-        .previousDepthValid = images.previousMotionValid ? 1.0f : 0.0f};
+    const VkExtent2D resolveExtent = images.resolveExtent.width == 0 || images.resolveExtent.height == 0
+                                         ? m_extent
+                                         : VkExtent2D{std::clamp(images.resolveExtent.width, 1u, m_extent.width),
+                                                      std::clamp(images.resolveExtent.height, 1u, m_extent.height)};
+    const bool historyValid = frame.historyValid && m_historyWritten;
+    const ResolveSettings settings{.currentToPreviousClip = frame.currentToPreviousClip,
+                                   .outputSize = sizeAndReciprocal(resolveExtent),
+                                   .renderSize = sizeAndReciprocal(images.renderExtent),
+                                   .regionScale = {regionScale(historyValid ? m_latestExtent : resolveExtent, m_extent),
+                                                   regionScale(images.previousRenderExtent, m_extent)},
+                                   .jitterPixels = frame.jitterPixels,
+                                   .historyValid = historyValid ? 1.0f : 0.0f,
+                                   .previousDepthValid = images.previousMotionValid ? 1.0f : 0.0f};
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline.handle());
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline.layout(), 0, 1, &descriptor, 0,
                             nullptr);
     vkCmdPushConstants(commandBuffer, m_pipeline.layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(settings), &settings);
-    vkCmdDispatch(commandBuffer, (m_extent.width + workgroupSize - 1) / workgroupSize,
-                  (m_extent.height + workgroupSize - 1) / workgroupSize, 1);
+    vkCmdDispatch(commandBuffer, (resolveExtent.width + workgroupSize - 1) / workgroupSize,
+                  (resolveExtent.height + workgroupSize - 1) / workgroupSize, 1);
 
     const VkImageMemoryBarrier2 resolved =
         historyBarrier(m_history[writeIndex].image, resolvedLayout, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -283,6 +292,7 @@ bool TemporalResolvePass::record(VkCommandBuffer commandBuffer, uint32_t frameIn
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &resolved};
     vkCmdPipelineBarrier2(commandBuffer, &after);
     m_latest = writeIndex;
+    m_latestExtent = resolveExtent;
     m_historyWritten = true;
     return true;
 }

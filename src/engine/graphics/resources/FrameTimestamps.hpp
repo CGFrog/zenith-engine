@@ -46,7 +46,16 @@ inline constexpr uint32_t motionBlurEnd = 44;
 // Display-referred LUT grade, vignette and film grain after tone mapping.
 inline constexpr uint32_t colorGradeBegin = 45;
 inline constexpr uint32_t colorGradeEnd = 46;
-inline constexpr uint32_t count = 47;
+// Raw post-process pairs: PostProcessPass writes every slot each frame (back
+// to back when the pass is skipped), so closeSkippedPasses leaves them alone.
+// FSR 1 upsampling (EASU) and sharpening (RCAS); see SpatialUpscalePass.
+inline constexpr uint32_t fsrEasuBegin = 47;
+inline constexpr uint32_t fsrEasuEnd = 48;
+inline constexpr uint32_t fsrRcasBegin = 49;
+inline constexpr uint32_t fsrRcasEnd = 50;
+inline constexpr uint32_t firstPostProcessPass = fsrEasuBegin;
+inline constexpr uint32_t postProcessPassesEnd = fsrRcasEnd + 1;
+inline constexpr uint32_t count = 51;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot
@@ -68,8 +77,12 @@ class OptionalPassTimestamps {
         m_written |= bit;
     }
 
+    // Leaves the post-process pairs to PostProcessPass, which records later.
     void closeSkippedPasses() {
         for (uint32_t query = FrameTimestamp::firstOptionalPass; query < FrameTimestamp::count; ++query) {
+            if (query >= FrameTimestamp::firstPostProcessPass && query < FrameTimestamp::postProcessPassesEnd) {
+                continue;
+            }
             write(query, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
         }
     }

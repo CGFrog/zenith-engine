@@ -52,12 +52,14 @@ void imageBarrier(VkCommandBuffer commandBuffer, VkImage image, VkImageAspectFla
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier};
     vkCmdPipelineBarrier2(commandBuffer, &dependency);
 }
+
 } // namespace
 
 bool PostProcessPass::init(const VulkanContext& context, VkFormat outputFormat, VkFormat, uint32_t frameCount,
                            VkExtent2D extent, VkImageView depthView) {
     m_device = context.device();
     m_pipelineCache = context.pipelineCache();
+    m_outputFormat = outputFormat;
     m_allocator = context.vmaAllocator();
     m_targets.resize(frameCount);
     // The display pipeline tone-maps into the colour-grade stage's target
@@ -65,8 +67,10 @@ bool PostProcessPass::init(const VulkanContext& context, VkFormat outputFormat, 
     return m_bloomExposure.init(context) && createDescriptors(frameCount) && createPipelineLayout() &&
            createPipeline(outputFormat, m_pipeline) &&
            createPipeline(ColorGradePass::displayFormat, m_displayPipeline) &&
-           m_temporalResolve.init(context, frameCount, extent) && m_reflections.init(context, extent) &&
-           m_motionBlur.init(context, frameCount, extent) && m_depthOfField.init(context, frameCount, extent) &&
+           m_temporalResolve.init(context, frameCount, extent) &&
+           m_spatialUpscale.init(context, outputFormat, ColorGradePass::displayFormat, extent) &&
+           m_reflections.init(context, extent) && m_motionBlur.init(context, frameCount, extent) &&
+           m_depthOfField.init(context, frameCount, extent) &&
            m_colorGrade.init(context, outputFormat, frameCount, extent) && createTargets(context, extent, depthView);
 }
 
@@ -361,6 +365,7 @@ bool PostProcessPass::resize(const VulkanContext& context, VkExtent2D extent, Vk
     destroyTargets(context);
     m_previousFrameIndex.reset();
     m_temporalResolve.resize(extent);
+    m_spatialUpscale.resize(extent);
     m_reflections.resize(extent);
     m_motionBlur.resize(extent);
     m_depthOfField.resize(extent);
@@ -445,27 +450,36 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
     const bool temporalEnabled = settings.antialiasing == AntialiasingMode::Taa;
-    if (!resolveTemporal(commandBuffer, frameIndex, internalExtent, temporalEnabled, temporal, timestampQueries)) {
+    // FSR 1 composites (anti-aliases and tone maps) at render resolution and
+    // upsamples afterwards, so TAA resolves at render resolution too. Without
+    // support it composites at output resolution as if the upscaler were Off.
+    const bool spatialUpscale = settings.upscaler.mode == UpscalerMode::Fsr1 && m_spatialUpscale.supported();
+    const VkExtent2D resolveExtent = spatialUpscale ? internalExtent : m_extent;
+    if (!resolveTemporal(commandBuffer, frameIndex, internalExtent, resolveExtent, temporalEnabled, temporal,
+                         timestampQueries)) {
         return false;
     }
-    // With TAA, later passes read the resolved output-resolution scene;
-    // otherwise the raw HDR target within its render extent. Depth of field
-    // and motion blur, in that order, each replace it with their output.
+    // With TAA, later passes read the resolved scene (output resolution, or
+    // render resolution ahead of FSR 1); otherwise the raw HDR target within
+    // its render extent. Depth of field and motion blur, in that order, each
+    // replace it with their output.
     const SceneColor resolved = temporalEnabled ? SceneColor{.view = m_temporalResolve.resolvedView(),
                                                              .layout = TemporalResolvePass::resolvedLayout,
-                                                             .validExtent = m_extent}
+                                                             .validExtent = m_temporalResolve.resolvedExtent()}
                                                 : SceneColor{.view = target.view,
                                                              .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                                              .validExtent = internalExtent};
     std::optional<SceneColor> scene = focusScene(commandBuffer, frameIndex, resolved, internalExtent,
-                                                       settings.depthOfField, depthOfFieldCamera, frame.timestamps);
+                                                 settings.depthOfField, depthOfFieldCamera, frame.timestamps);
     if (!scene) {
         return false;
     }
     if (!recordMotionBlur(commandBuffer, frameIndex, internalExtent, settings, temporal, frame.timestamps, *scene)) {
         return false;
     }
-    bindSceneColor(frameIndex, *scene, temporalEnabled);
+    // A render-resolution resolve reaches the composite through binding 0,
+    // like an unfiltered scene (see PostSettings::antialiasingMode below).
+    bindSceneColor(frameIndex, *scene, temporalEnabled && !spatialUpscale);
     const BloomExposureInput bloomInput{
         .view = scene->view, .imageExtent = m_extent, .validExtent = scene->validExtent, .layout = scene->layout};
     recordBloomAndExposure(commandBuffer, bloomInput, settings, timestampQueries, bloomCpuMilliseconds);
@@ -480,7 +494,10 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
         .sceneScale = {static_cast<float>(internalExtent.width) / extent.width,
                        static_cast<float>(internalExtent.height) / extent.height},
         .bloomStrength = settings.bloom == BloomQuality::Off ? 0.0f : settings.bloomIntensity,
-        .antialiasingMode = static_cast<float>(settings.antialiasing),
+        // A render-resolution resolve reaches the composite through binding 0
+        // (bindCompositeScene), so it reads it like an unfiltered scene.
+        .antialiasingMode = temporalEnabled && spatialUpscale ? static_cast<float>(AntialiasingMode::Off)
+                                                              : static_cast<float>(settings.antialiasing),
         .temporalHistoryValid = temporal.historyValid ? 1.0f : 0.0f,
         .ambientOcclusionMode = static_cast<float>(settings.ambientOcclusion),
         .reflectionMode = static_cast<float>(settings.reflections),
@@ -492,20 +509,45 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
     if (!m_colorGrade.prepare(commandBuffer, frame.serial, settings, frame.assetRoot, grading)) {
         return false;
     }
-    // With a grade effect active, tone mapping writes the grade's display
-    // target and the grade writes the output.
-    if (grading) {
+    // Tone mapping writes the output; with FSR 1 the top-left render extent of
+    // the upscaler's input target instead, or with a grade effect the grade's
+    // display target. FSR then sharpens into whichever of those two the grade
+    // leaves, and the grade writes the output last.
+    VkImageView toneMapView = outputView;
+    VkExtent2D toneMapExtent = extent;
+    VkPipeline toneMapPipeline = m_pipeline;
+    if (spatialUpscale) {
+        toneMapView = m_spatialUpscale.prepareInput(commandBuffer);
+        toneMapExtent = internalExtent;
+        if (toneMapView == VK_NULL_HANDLE) {
+            return false;
+        }
+    } else if (grading) {
         m_colorGrade.beginDisplayTarget(commandBuffer);
+        toneMapView = m_colorGrade.displayView();
+        toneMapPipeline = m_displayPipeline;
     } else {
         transitionOutput(commandBuffer, outputImage, outputOldLayout);
     }
     if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestampQueries, 14);
     }
-    recordToneMap(commandBuffer, target.descriptor, grading ? m_colorGrade.displayView() : outputView,
-                  grading ? m_displayPipeline : m_pipeline, extent, &postSettings);
+    recordToneMap(commandBuffer, target.descriptor, toneMapView, toneMapPipeline, toneMapExtent, &postSettings);
     if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 15);
+    }
+    if (spatialUpscale) {
+        if (grading) {
+            m_colorGrade.beginDisplayTarget(commandBuffer);
+            recordSpatialUpscale(commandBuffer, internalExtent, m_colorGrade.displayView(),
+                                 ColorGradePass::displayFormat, settings, timestampQueries);
+        } else {
+            transitionOutput(commandBuffer, outputImage, outputOldLayout);
+            recordSpatialUpscale(commandBuffer, internalExtent, outputView, m_outputFormat, settings,
+                                 timestampQueries);
+        }
+    } else {
+        SpatialUpscalePass::writeSkippedTimestamps(commandBuffer, timestampQueries);
     }
     frame.timestamps.write(FrameTimestamp::colorGradeBegin, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
     if (grading) {
@@ -563,8 +605,15 @@ void PostProcessPass::recordToneMap(VkCommandBuffer commandBuffer, VkDescriptorS
     vkCmdEndRendering(commandBuffer);
 }
 
+void PostProcessPass::recordSpatialUpscale(VkCommandBuffer commandBuffer, VkExtent2D internalExtent,
+                                           VkImageView rcasTarget, VkFormat rcasFormat, const RenderSettings& settings,
+                                           VkQueryPool timestampQueries) {
+    m_spatialUpscale.recordEasu(commandBuffer, internalExtent, timestampQueries);
+    m_spatialUpscale.recordRcas(commandBuffer, rcasTarget, rcasFormat, settings.upscaler.sharpness, timestampQueries);
+}
+
 bool PostProcessPass::resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent,
-                                      bool enabled, const TemporalResolveFrame& temporal,
+                                      VkExtent2D resolveExtent, bool enabled, const TemporalResolveFrame& temporal,
                                       VkQueryPool timestampQueries) {
     const Target& target = m_targets[frameIndex];
     if (timestampQueries) {
@@ -583,6 +632,7 @@ bool PostProcessPass::resolveTemporal(VkCommandBuffer commandBuffer, uint32_t fr
                  .previousMotion = previous.motionView,
                  .renderExtent = internalExtent,
                  .previousRenderExtent = previousAvailable ? m_previousRenderExtent : internalExtent,
+                 .resolveExtent = resolveExtent,
                  .previousMotionValid = previousAvailable},
                 temporal)) {
             return false;
@@ -847,6 +897,7 @@ uint64_t PostProcessPass::reflectionBytes() const {
 void PostProcessPass::shutdown(const VulkanContext& context) {
     destroyTargets(context);
     m_temporalResolve.shutdown();
+    m_spatialUpscale.shutdown();
     m_reflections.shutdown();
     m_motionBlur.shutdown();
     m_depthOfField.shutdown();

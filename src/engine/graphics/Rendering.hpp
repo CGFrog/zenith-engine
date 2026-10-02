@@ -246,6 +246,8 @@ struct RenderPassBudgets {
     RenderPassBudget depthOfField;
     // Display-referred LUT grade, vignette and film grain.
     RenderPassBudget colorGrade;
+    // FSR 1 EASU upsample plus RCAS sharpen.
+    RenderPassBudget spatialUpscale;
 };
 
 struct DynamicResolutionSettings {
@@ -257,8 +259,42 @@ struct DynamicResolutionSettings {
     uint32_t quantization{16};
 };
 
+// How the frame reaches output resolution when it renders below it. Off keeps
+// the historical behavior: the internal resolution follows dynamicResolution
+// alone (1.0 when it is disabled), and TAA upsamples whatever it renders.
+// Taau renders at the preset's scale and reconstructs with temporal
+// anti-aliasing (which it requires). Fsr1 renders at the preset's scale,
+// anti-aliases at render resolution (FXAA, or TAA resolving at render
+// resolution), tone maps, then upsamples with AMD FSR 1 EASU and sharpens with
+// RCAS (SpatialUpscalePass). With dynamic resolution enabled, an upscaler's
+// scale range applies relative to its preset (upscaledDynamicResolution in
+// SpatialUpscale.hpp). A vendor upscaler such as DLSS would be another value
+// here behind its own capability check. Serialized by value.
+enum class UpscalerMode : uint8_t {
+    Off,
+    Taau,
+    Fsr1,
+};
+
+// Output-to-render ratio per axis: Quality 1.5x, Balanced 1.7x, Performance
+// 2x (AMD's FSR 1 presets). See upscalerScaleFactor in SpatialUpscale.hpp.
+enum class UpscalerQuality : uint8_t {
+    Quality,
+    Balanced,
+    Performance,
+};
+
+struct UpscalerSettings {
+    UpscalerMode mode{UpscalerMode::Off};
+    UpscalerQuality quality{UpscalerQuality::Quality};
+    // RCAS sharpening in [0, 1]; 1 is AMD's maximum (0 stops of attenuation)
+    // and each 0.5 below it halves the sharpening. Used by Fsr1 only.
+    float sharpness{0.9f};
+};
+
 struct RenderSettings {
     AntialiasingMode antialiasing{AntialiasingMode::Fxaa};
+    UpscalerSettings upscaler;
     ShadowQuality shadows{ShadowQuality::Single};
     LightingQuality lighting{LightingQuality::PhysicallyBased};
     BloomQuality bloom{BloomQuality::Off};
@@ -338,6 +374,8 @@ struct RenderCapabilities {
     bool motionBlur{true};
     // Needs RGBA16F storage images.
     bool depthOfField{true};
+    // FSR 1: RGBA8 storage images and a sampled, renderable output format.
+    bool spatialUpscaling{false};
     bool meshShaders{false};
     bool rayTracing{false};
     bool dedicatedTransferQueue{false};
@@ -454,6 +492,9 @@ struct RenderStats {
     double gpuMotionBlurMilliseconds{0.0};
     // Circle of confusion, half-resolution gather, and composite; zero when Off.
     double gpuDepthOfFieldMilliseconds{0.0};
+    // FSR 1 upsample and sharpen; zero unless the frame used UpscalerMode::Fsr1.
+    double gpuFsrEasuMilliseconds{0.0};
+    double gpuFsrRcasMilliseconds{0.0};
     // Probes in the bound irradiance volume; zero when none is bound.
     uint32_t irradianceVolumeProbes{0};
     // Device memory of the irradiance-volume probe buffer.
@@ -461,6 +502,8 @@ struct RenderStats {
     // LUT grade, vignette and film grain; zero when every effect is off.
     double gpuColorGradeMilliseconds{0.0};
     uint64_t temporalHistoryBytes{0};
+    // FSR 1 input and upscaled targets; zero until the upscaler first runs.
+    uint64_t spatialUpscaleBytes{0};
     uint64_t motionVectorBytes{0};
     uint64_t ambientOcclusionBytes{0};
     uint64_t reflectionBytes{0};

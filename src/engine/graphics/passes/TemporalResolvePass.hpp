@@ -24,19 +24,26 @@ struct TemporalResolveFrame {
 // SHADER_READ_ONLY_OPTIMAL. previousMotion is the previous frame's motion
 // target, filled within previousRenderExtent; when no distinct previous target
 // exists, pass the current one and clear previousMotionValid.
+// resolveExtent is the top-left region of the history images the resolve
+// fills: the output extent for temporal upsampling (TAAU), or the render
+// extent when a later pass upscales (FSR 1). Zero means the output extent.
 struct TemporalResolveImages {
     VkImageView sceneColor{VK_NULL_HANDLE};
     VkImageView motion{VK_NULL_HANDLE};
     VkImageView previousMotion{VK_NULL_HANDLE};
     VkExtent2D renderExtent{};
     VkExtent2D previousRenderExtent{};
+    VkExtent2D resolveExtent{};
     bool previousMotionValid{false};
 };
 
 // Temporal anti-aliasing and upsampling (shaders/taa_resolve.comp). Owns the
 // accumulated history for one view: two output-resolution images used
 // ping-pong, so each frame reads the previous frame's result and writes the
-// other image. History is not per frame in flight: consecutive frames are
+// other image. A frame fills the top-left resolveExtent of its image and
+// reprojects the previous frame's region by UV, so the region may change
+// between frames (dynamic resolution, switching upscalers) without
+// invalidating history. History is not per frame in flight: consecutive frames are
 // submitted in order on one queue, and the barriers recorded here order each
 // frame's history accesses after the previous frame's. The images are
 // allocated on the first resolve after init or resize, stay in
@@ -66,6 +73,11 @@ class TemporalResolvePass {
         return m_historyWritten ? m_history[m_latest].view : VK_NULL_HANDLE;
     }
 
+    // The region of resolvedView() the latest resolve filled.
+    VkExtent2D resolvedExtent() const {
+        return m_latestExtent;
+    }
+
     uint64_t historyBytes() const;
 
   private:
@@ -92,6 +104,8 @@ class TemporalResolvePass {
     ComputePipeline m_pipeline;
     std::array<HistoryImage, 2> m_history{};
     VkExtent2D m_extent{};
+    // Region of m_history[m_latest] holding the latest resolved frame.
+    VkExtent2D m_latestExtent{};
     uint32_t m_latest{0};
     // True once m_latest holds a resolved frame at the current extent.
     bool m_historyWritten{false};

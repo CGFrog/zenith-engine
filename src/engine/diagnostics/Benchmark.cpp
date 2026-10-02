@@ -106,6 +106,7 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("render.internal_height", s.internalRenderHeight, "pixels");
     sample("render.internal_scale", s.internalResolutionScale, "ratio");
     sample("render.temporal_history_bytes", static_cast<double>(s.temporalHistoryBytes), "bytes");
+    sample("render.spatial_upscale_bytes", static_cast<double>(s.spatialUpscaleBytes), "bytes");
     sample("render.motion_vector_bytes", static_cast<double>(s.motionVectorBytes), "bytes");
     sample("render.ambient_occlusion_bytes", static_cast<double>(s.ambientOcclusionBytes), "bytes");
     sample("render.reflection_bytes", static_cast<double>(s.reflectionBytes), "bytes");
@@ -178,6 +179,10 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
     sample("gpu.color_grade", s.gpuColorGradeMilliseconds, "ms", budgets.colorGrade.gpuMilliseconds);
     sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
+    sample("gpu.fsr_easu", s.gpuFsrEasuMilliseconds);
+    sample("gpu.fsr_rcas", s.gpuFsrRcasMilliseconds);
+    sample("gpu.spatial_upscale", s.gpuFsrEasuMilliseconds + s.gpuFsrRcasMilliseconds, "ms",
+           budgets.spatialUpscale.gpuMilliseconds);
     sample("gpu.ui", s.gpuUiMilliseconds, "ms", budgets.ui.gpuMilliseconds);
 }
 
