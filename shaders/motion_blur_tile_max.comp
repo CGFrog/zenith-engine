@@ -1,0 +1,82 @@
+#version 450
+
+// Motion blur, step 1 of 3: the largest blur velocity of each square tile of
+// the colour region (McGuire et al. 2012, "TileMax"). One workgroup reduces
+// one tile. src/engine/graphics/MotionBlur.hpp documents the units; the
+// velocity math mirrors motion_blur::blurVelocity.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// Unused here; the three motion blur shaders share one descriptor layout.
+layout(set = 0, binding = 0) uniform sampler2D sceneColor;
+// xy: unjittered UV motion, z: reactive mask, w: reversed-Z depth. The top-left
+// motionRegion texels hold this frame.
+layout(set = 0, binding = 1) uniform sampler2D motionVectors;
+layout(set = 0, binding = 2, rgba16f) uniform writeonly image2D tileMax;
+
+// Mirrors MotionBlurSettings in MotionBlurPass.cpp and the other motion blur shaders.
+layout(push_constant) uniform MotionBlurSettings {
+    // Unjittered current clip space to the previous frame's unjittered clip
+    // space; reprojects pixels that no surface wrote motion for.
+    mat4 currentToPreviousClip;
+    vec4 colorRegion; // width, height, 1 / width, 1 / height
+    vec2 motionRegion; // motion texels holding this frame
+    float velocityScale;
+    float radiusPixels;
+    ivec2 tileCount;
+    int tileSize;
+    int sampleCount;
+} settings;
+
+// Blur velocity (xy, colour-region pixels) and relative view distance (z).
+vec3 velocityAndDistance(ivec2 pixel) {
+    vec2 uv = (vec2(pixel) + 0.5) * settings.colorRegion.zw;
+    ivec2 motionTexel = clamp(ivec2(uv * settings.motionRegion), ivec2(0), ivec2(settings.motionRegion) - 1);
+    vec4 motionDepth = texelFetch(motionVectors, motionTexel, 0);
+    vec2 motion = motionDepth.xy;
+    if (motionDepth.w <= 0.0) {
+        // No surface wrote motion here; the far plane moves with the camera.
+        vec4 previousClip = settings.currentToPreviousClip * vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+        motion = previousClip.w > 0.0 ? uv - (previousClip.xy / previousClip.w * 0.5 + 0.5) : vec2(0.0);
+    }
+    vec2 velocity = 0.5 * motion * settings.colorRegion.xy * settings.velocityScale;
+    float velocityLength = length(velocity);
+    if (velocityLength > settings.radiusPixels) {
+        velocity *= settings.radiusPixels / velocityLength;
+    }
+    // Reversed-Z depth is proportional to 1 / view distance.
+    return vec3(velocity, 1.0 / max(motionDepth.w, 1e-7));
+}
+
+shared vec3 groupLargest[64];
+
+void main() {
+    ivec2 region = ivec2(settings.colorRegion.xy);
+    ivec2 origin = ivec2(gl_WorkGroupID.xy) * settings.tileSize;
+    int steps = settings.tileSize / 8;
+    vec3 largest = vec3(0.0); // xy: velocity, z: squared length
+    for (int y = 0; y < steps; ++y) {
+        for (int x = 0; x < steps; ++x) {
+            ivec2 pixel = origin + ivec2(x, y) * 8 + ivec2(gl_LocalInvocationID.xy);
+            if (all(lessThan(pixel, region))) {
+                vec2 velocity = velocityAndDistance(pixel).xy;
+                float squaredLength = dot(velocity, velocity);
+                if (squaredLength > largest.z) {
+                    largest = vec3(velocity, squaredLength);
+                }
+            }
+        }
+    }
+    uint lane = gl_LocalInvocationIndex;
+    groupLargest[lane] = largest;
+    barrier();
+    for (uint stride = 32u; stride > 0u; stride >>= 1u) {
+        if (lane < stride && groupLargest[lane + stride].z > groupLargest[lane].z) {
+            groupLargest[lane] = groupLargest[lane + stride];
+        }
+        barrier();
+    }
+    if (lane == 0u) {
+        imageStore(tileMax, ivec2(gl_WorkGroupID.xy), vec4(groupLargest[0].xy, 0.0, 0.0));
+    }
+}

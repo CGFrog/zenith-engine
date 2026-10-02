@@ -176,6 +176,7 @@ bool FrameResources::collectTimings(VkDevice device, GpuFrameTimings& timings) {
     timings.volumetricFogMilliseconds = elapsed(FrameTimestamp::volumetricFogBegin, FrameTimestamp::volumetricFogEnd);
     timings.irradianceVolumeMilliseconds =
         elapsed(FrameTimestamp::irradianceVolumeBegin, FrameTimestamp::irradianceVolumeEnd);
+    timings.motionBlurMilliseconds = elapsed(FrameTimestamp::motionBlurBegin, FrameTimestamp::motionBlurEnd);
     return true;
 }
 

@@ -421,6 +421,7 @@ Renderer
    |- VolumetricFogPass (froxel fog injection, reprojection, and integration)
    `- PostProcessPass (HDR/history, motion, prepass normals, and fullscreen pipelines)
       |- ScreenSpaceReflectionPass (Hi-Z reflection trace and in-place composite)
+      |- MotionBlurPass (velocity tiles and reconstruction gather after TAA)
       `- BloomExposurePass (luminance histogram, exposure, bloom chain)
 ```
 
@@ -659,8 +660,10 @@ target (A2B10G10R10) per frame slot, plus the view's `ScreenSpaceReflectionPass`
 `TemporalResolvePass`, and `BloomExposurePass`. `recordReflections()` runs
 inside the scene pass, between opaque and blended surfaces, and blends
 screen-space reflections into the HDR target when enabled and the depth prepass
-ran. With TAA selected the resolve runs first and exposure and bloom read its
-output-resolution result; otherwise they read the HDR target. The final
+ran. With TAA selected the resolve runs first and later effects read its
+output-resolution result; otherwise they read the HDR target. Motion blur
+(`recordMotionBlur()`) then replaces that scene with its blurred copy, and
+`bindPostScene()` points the fullscreen pass at the final one. The final
 fullscreen pass composes the resolved scene (or applies FXAA), the editor grid,
 exposure, the bloom mix, and tone mapping (AgX by default, AgX punchy or
 legacy ACES). Half-resolution effect tiers render into bounded sub-extents.
@@ -696,6 +699,26 @@ and exposure buffer persist across frame slots and use push descriptors.
 CPU reference for the AgX/ACES display transform, histogram binning,
 percentile averaging, and frame-rate independent exposure adaptation. The
 shaders mirror it by hand; `tests/engine/ToneMappingTests.cpp` covers it.
+
+### `src/engine/graphics/passes/MotionBlurPass.*`
+
+Camera and object motion blur from the motion vectors, after the temporal
+resolve and before exposure and bloom (`shaders/motion_blur_tile_max.comp`,
+`motion_blur_neighbor_max.comp`, `motion_blur_reconstruct.comp`). Owns an
+output-resolution RGBA16F blurred scene and two tile-velocity images per view
+(not per frame slot), allocated on the first blurred frame after creation or
+resize. Each frame reduces the per-pixel blur velocity to its tile's largest,
+takes the largest of each 3x3 tile neighbourhood, and gathers 8 (Low) or 16
+(High) depth-weighted samples along it (McGuire et al. 2012). Pixels without
+geometry reproject the far plane, so camera rotation blurs the sky.
+
+### `src/engine/graphics/MotionBlur.*`
+
+CPU mirror of the motion blur plan: sample counts, the frame-rate independent
+velocity scale (shutter fraction of a 60 Hz frame over the real frame time),
+radius scaling for dynamic resolution, tile size and count, and the clamped
+per-pixel blur velocity; `tests/engine/MotionBlurTests.cpp` covers it with the
+settings round trip and fallback.
 
 ### `src/engine/graphics/passes/TemporalResolvePass.*`
 
@@ -734,6 +757,9 @@ mirror is in `TemporalQuality.*`.
 | `shaders/gpu_visibility.comp` | Runs early/late two-phase frustum and occlusion culling. |
 | `shaders/compact_draws.comp` | Packs non-empty batches into indirect-count draw commands. |
 | `shaders/taa_resolve.comp` | Temporal anti-aliasing and upsampling into output-resolution history. |
+| `shaders/motion_blur_tile_max.comp` | Reduces per-pixel motion blur velocity to each tile's largest. |
+| `shaders/motion_blur_neighbor_max.comp` | Largest tile velocity in each 3x3 tile neighbourhood. |
+| `shaders/motion_blur_reconstruct.comp` | Depth-aware motion blur gather along the neighbourhood velocity. |
 | `shaders/env_equirect_to_cube.comp` | Resamples an equirectangular radiance map into an environment cube. |
 | `shaders/env_procedural_sky.comp` | Writes the analytic sky cube used when no environment map is loaded. |
 | `shaders/env_prefilter_specular.comp` | GGX-prefilters one specular cube mip with mip-filtered importance sampling. |

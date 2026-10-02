@@ -134,6 +134,15 @@ enum class IndirectDiffuseMode : uint8_t {
     ProbeVolume,
 };
 
+// Camera and object motion blur (MotionBlurPass) reconstructed from the
+// motion vectors on the HDR scene after the temporal resolve: Low gathers 8
+// samples per blurred pixel, High 16. Off records no work.
+enum class MotionBlurQuality : uint8_t {
+    Off,
+    Low,
+    High,
+};
+
 struct RenderPassBudget {
     double cpuMilliseconds{0.0};
     double gpuMilliseconds{0.0};
@@ -164,6 +173,8 @@ struct RenderPassBudgets {
     RenderPassBudget volumetricFog;
     // Irradiance-volume probe upload (sampling is part of opaque shading).
     RenderPassBudget irradianceVolume;
+    // Velocity tiles and the reconstruction gather.
+    RenderPassBudget motionBlur;
 };
 
 struct DynamicResolutionSettings {
@@ -212,6 +223,13 @@ struct RenderSettings {
     AmbientOcclusionQuality ambientOcclusion{AmbientOcclusionQuality::Off};
     ReflectionQuality reflections{ReflectionQuality::ProbesOnly};
     VolumetricFogQuality volumetricFog{VolumetricFogQuality::Off};
+    MotionBlurQuality motionBlur{MotionBlurQuality::Off};
+    // Exposure time as a fraction of a 60 Hz frame (a 180 degree shutter is
+    // 0.5). Blur length follows on-screen speed, not the frame rate: motion
+    // vectors are rescaled by the real frame time (see motion_blur::velocityScale).
+    float motionBlurShutterFraction{0.5f};
+    // Longest blur, in output pixels, on either side of a pixel.
+    float motionBlurMaximumRadiusPixels{32.0f};
     // Zero disables enforcement for that processor/pass pair.
     RenderPassBudgets budgets;
 
@@ -235,6 +253,8 @@ struct RenderCapabilities {
     bool screenSpaceReflections{true};
     // Needs RGBA16F 3D storage images.
     bool volumetricFog{true};
+    // Needs RGBA16F storage images and the motion-vector target.
+    bool motionBlur{true};
     bool meshShaders{false};
     bool rayTracing{false};
     bool dedicatedTransferQueue{false};
@@ -347,6 +367,8 @@ struct RenderStats {
     // Irradiance-volume probe upload; zero on frames whose bound volume did
     // not change.
     double gpuIrradianceVolumeMilliseconds{0.0};
+    // Velocity tiles plus reconstruction; zero when motion blur is Off.
+    double gpuMotionBlurMilliseconds{0.0};
     // Probes in the bound irradiance volume; zero when none is bound.
     uint32_t irradianceVolumeProbes{0};
     // Device memory of the irradiance-volume probe buffer.
@@ -358,6 +380,8 @@ struct RenderStats {
     uint64_t shadowCacheBytes{0};
     // Froxel volumes owned by the volumetric fog pass.
     uint64_t volumetricFogBytes{0};
+    // Blurred scene and velocity tiles; allocated on the first blurred frame.
+    uint64_t motionBlurBytes{0};
     uint64_t streamingDecodedBytes{0};
     uint64_t streamingUploadedBytes{0};
     uint64_t streamingDecodeBacklogBytes{0};

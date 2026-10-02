@@ -1,8 +1,10 @@
 #pragma once
 
 #include "../Rendering.hpp"
+#include "../resources/FrameTimestamps.hpp"
 #include "../vulkan/VulkanContext.hpp"
 #include "BloomExposurePass.hpp"
+#include "MotionBlurPass.hpp"
 #include "SceneGeometryViews.hpp"
 #include "ScreenSpaceReflectionPass.hpp"
 #include "TemporalResolvePass.hpp"
@@ -44,7 +46,8 @@ class PostProcessPass {
                 const glm::mat4& inverseViewProjection, const glm::mat4& previousViewProjection,
                 const TemporalResolveFrame& temporal, const glm::vec3& cameraPosition,
                 const std::optional<GridOverlay>& gridOverlay, VkQueryPool timestampQueries,
-                double& bloomCpuMilliseconds, VkImageLayout outputOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
+                OptionalPassTimestamps& passTimestamps, double& bloomCpuMilliseconds,
+                VkImageLayout outputOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
     void shutdown(const VulkanContext& context);
 
     // Advances exposure adaptation by this many seconds per recorded frame
@@ -82,6 +85,10 @@ class PostProcessPass {
     // The reflection target plus every allocated prepass specular target.
     uint64_t reflectionBytes() const;
 
+    uint64_t motionBlurBytes() const {
+        return m_motionBlur.targetBytes();
+    }
+
   private:
     struct Target {
         VkImage image{VK_NULL_HANDLE};
@@ -115,10 +122,23 @@ class PostProcessPass {
     // as the post pass's binding 2. Records timestamps 19 and 20 either way.
     bool resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent, bool enabled,
                          const TemporalResolveFrame& temporal, VkQueryPool timestampQueries);
+    // Blurs the HDR scene by its motion vectors when motion blur is enabled
+    // and replaces scene with the blurred image. Records the motion blur
+    // timestamps only when it blurs. Fails only if the blur targets cannot be
+    // allocated.
+    bool recordMotionBlur(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent,
+                          const RenderSettings& settings, const TemporalResolveFrame& temporal,
+                          OptionalPassTimestamps& passTimestamps, BloomExposureInput& scene);
+    // Binds the final HDR scene where post.frag reads it: binding 2 with TAA,
+    // otherwise binding 0.
+    void bindPostScene(uint32_t frameIndex, const BloomExposureInput& scene, bool temporalEnabled);
     void recordBloomAndExposure(VkCommandBuffer commandBuffer, const BloomExposureInput& input,
                                 const RenderSettings& settings, VkQueryPool timestampQueries,
                                 double& bloomCpuMilliseconds);
     float exposureDeltaSeconds();
+    // Seconds since the previous call with the same clock (which it advances),
+    // or the fixed frame time; zero on the first call.
+    float recordedFrameSeconds(std::optional<std::chrono::steady_clock::time_point>& previousTime) const;
 
     VkDevice m_device{VK_NULL_HANDLE};
     VkPipelineCache m_pipelineCache{VK_NULL_HANDLE};
@@ -138,6 +158,8 @@ class PostProcessPass {
     std::optional<uint32_t> m_previousFrameIndex;
     VkExtent2D m_previousRenderExtent{};
     BloomExposurePass m_bloomExposure;
+    MotionBlurPass m_motionBlur;
     std::optional<std::chrono::steady_clock::time_point> m_previousExposureTime;
+    std::optional<std::chrono::steady_clock::time_point> m_previousMotionBlurTime;
     std::optional<float> m_fixedFrameSeconds;
 };

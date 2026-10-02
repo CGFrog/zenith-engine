@@ -211,8 +211,9 @@ or at the decision point named below, after capability validation.
 
 | Variable | Effect |
 | --- | --- |
-| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, per-pixel reflection probe blending, probe-volume indirect diffuse, clustered local lights with high-quality local shadows, depth prepass on, cascaded (high) shadows, bloom, and High volumetric fog. |
+| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, per-pixel reflection probe blending, probe-volume indirect diffuse, clustered local lights with high-quality local shadows, depth prepass on, cascaded (high) shadows, bloom, High volumetric fog, and High motion blur. |
 | `ZENITH_DISABLE_VOLUMETRIC_FOG` | Forces volumetric fog Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
+| `ZENITH_DISABLE_MOTION_BLUR` | Forces motion blur Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
 | `ZENITH_FORCE_TAA` | Temporal anti-aliasing. |
 | `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
 | `ZENITH_FORCE_GPU_DRIVEN` | GPU-driven submission (two-phase occlusion culling and indirect draws) when the device supports it. Shadow cascades are then culled on the GPU too. |
@@ -259,8 +260,10 @@ injection, reprojection, and integration) runs inside `gpu.opaque` after
 irradiance-volume probe upload, which records work only on frames whose bound
 volume changed and also falls inside `gpu.shadow`; sampling the volume is part
 of opaque and blended shading, so its per-pixel cost shows up in `gpu.opaque`
-(compare against `indirectDiffuse` set to Environment, the Off fallback). The
-editor's Graphics panel shows the same table live.
+(compare against `indirectDiffuse` set to Environment, the Off fallback).
+`gpu.motion_blur` runs after `gpu.temporal_resolve` and before `gpu.exposure`
+and reports zero when motion blur is Off. The editor's Graphics panel shows the
+same table live.
 
 ### GPU-culled shadow cascades
 
@@ -362,6 +365,43 @@ over the per-frame matrix capacity, materials over the material capacity, and
 GPU-driven instance/group overflows. Each logs every frame it occurs. An
 environment map texture without usable pixels still falls back to the analytic
 sky without a message.
+
+### Motion blur
+
+`RenderSettings::motionBlur` (`MotionBlurQuality`: Off, Low, High; JSON
+`motionBlur` 0-2) blurs the HDR scene by the existing motion vectors after the
+temporal resolve and before exposure, bloom, and tone mapping, so camera and
+object motion (including skinned meshes) blur alike. Off is the default and the
+fallback: no work is recorded, no images are allocated, and the post pass reads
+the resolved (or raw HDR) scene as before; validation also selects it, with a
+fallback message, when `RenderCapabilities::motionBlur` is false.
+`motionBlurShutterFraction` (0-1, default 0.5) is the exposure as a fraction of
+a 60 Hz frame; velocities are rescaled by the real frame time
+(`motion_blur::velocityScale`), so the blur length follows on-screen speed, not
+the frame rate. `motionBlurMaximumRadiusPixels` (1-64 output pixels, default 32)
+caps the blur on either side of a pixel and sets the tile size. All three keys
+are optional in the render-settings document.
+
+The pass reduces blur velocities to tiles (`motion_blur_tile_max.comp`), takes
+each tile's 3x3 neighbourhood maximum (`motion_blur_neighbor_max.comp`), and
+gathers 8 (Low) or 16 (High) depth-weighted samples along it
+(`motion_blur_reconstruct.comp`); pixels whose neighbourhood moves less than
+half a pixel are copied. The scope is `gpu.motion_blur` (timestamps 43-44) with
+the `motionBlur` budget; `render.motion_blur_bytes` reports the blurred scene
+and tile images (17 MB at 1920x1080). `zenith_motion_blur` covers velocity
+scaling, radius and tile math, and the settings round trip and fallback.
+
+Release measurement, 2026-10-02, RTX 2070 SUPER, showcase project with TAA,
+fixed frame time, capture camera at `0,1.6,-6,0,0`, 120 warm-up and 600
+measured frames (measured while other GPU work ran on the machine, so treat as
+an upper bound):
+
+| Resolution | Quality | Camera | `gpu.motion_blur` median | p95 |
+| --- | --- | --- | ---: | ---: |
+| 1920x1080 | High | yaw 90 deg/s (whole frame blurs) | 0.645 ms | 0.667 ms |
+| 1920x1080 | Low | yaw 90 deg/s | 0.387 ms | 0.399 ms |
+| 1280x720 | High | yaw 90 deg/s | 0.293 ms | 0.302 ms |
+| 1920x1080 | High | static (early-out copy) | 0.105 ms | 0.106 ms |
 
 ### Local-light shadows
 
