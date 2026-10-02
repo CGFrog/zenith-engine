@@ -295,6 +295,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/passes/GpuDrivenPass.cpp
     src/engine/graphics/passes/ClusteredLightingPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
+    src/engine/graphics/passes/TemporalResolvePass.cpp
     src/engine/graphics/passes/BloomExposurePass.cpp
     src/engine/graphics/passes/UiPass.cpp
     src/engine/graphics/pipeline/GraphicsPipeline.cpp

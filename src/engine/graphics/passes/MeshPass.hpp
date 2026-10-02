@@ -119,6 +119,8 @@ class MeshPass {
         void* objectsMapped{nullptr};
         GpuBuffer skinPalettes;
         void* skinPalettesMapped{nullptr};
+        GpuBuffer previousSkinPalettes;
+        void* previousSkinPalettesMapped{nullptr};
         GpuBuffer materials;
         void* materialsMapped{nullptr};
         // Each frame in flight owns a bindless set, rewritten only after the
@@ -147,6 +149,8 @@ class MeshPass {
         float boundsRadius{0.0f};
         bool outlined{false};
         std::vector<glm::mat4> jointPalette;
+        // The palette the previous frame rendered with; empty until one was.
+        std::vector<glm::mat4> previousJointPalette;
         uint32_t skinPaletteOffset{0};
     };
 
@@ -315,6 +319,8 @@ class MeshPass {
     glm::vec3 m_previousCameraPosition{0.0f};
     glm::vec3 m_previousCameraForward{0.0f, 0.0f, -1.0f};
     glm::mat4 m_previousViewProjection{1.0f};
+    glm::mat4 m_previousUnjitteredViewProjection{1.0f};
+    glm::vec2 m_previousJitterNdc{0.0f};
     bool m_cameraHistoryValid{false};
     TemporalQualityController m_temporalQuality;
     EnvironmentLightingCache m_environmentCache;

@@ -258,8 +258,7 @@ void BloomExposurePass::recordExposure(VkCommandBuffer commandBuffer, const Bloo
         memoryBarrier(commandBuffer, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                       VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-        const VkDescriptorImageInfo image{
-            .sampler = m_sampler, .imageView = input.view, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo image{.sampler = m_sampler, .imageView = input.view, .imageLayout = input.layout};
         const VkDescriptorBufferInfo histogram{.buffer = m_histogram.buffer, .offset = 0, .range = VK_WHOLE_SIZE};
         const VkWriteDescriptorSet writes[]{{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
                                              .dstBinding = 0,
@@ -382,8 +381,7 @@ void BloomExposurePass::recordBloom(VkCommandBuffer commandBuffer, const BloomEx
         const VkExtent2D sourceValid = fromScene ? input.validExtent : validMipExtent(input.validExtent, mip - 1);
         const VkExtent2D destinationValid = validMipExtent(input.validExtent, mip);
         pushSampledAndStorage(commandBuffer, m_downsamplePipeline, fromScene ? input.view : m_mipViews[mip - 1],
-                              fromScene ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL,
-                              m_mipViews[mip]);
+                              fromScene ? input.layout : VK_IMAGE_LAYOUT_GENERAL, m_mipViews[mip]);
         const DownsampleSettings downsample{.sourceTexelSize = texelSize(sourceAllocated),
                                             .sourceUvLimit = uvLimit(sourceValid, sourceAllocated),
                                             .destinationExtent = {destinationValid.width, destinationValid.height},

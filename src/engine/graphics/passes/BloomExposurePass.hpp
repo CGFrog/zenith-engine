@@ -8,13 +8,14 @@
 #include <glm/glm.hpp>
 
 // HDR input shared by the exposure and bloom computations. The image must be in
-// VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL and visible to compute shaders. Only
-// the top-left validExtent of the imageExtent-sized image holds this frame's
-// pixels (dynamic resolution renders into a sub-rectangle).
+// `layout` and visible to compute shaders. Only the top-left validExtent of the
+// imageExtent-sized image holds this frame's pixels (dynamic resolution renders
+// into a sub-rectangle).
 struct BloomExposureInput {
     VkImageView view{VK_NULL_HANDLE};
     VkExtent2D imageExtent{};
     VkExtent2D validExtent{};
+    VkImageLayout layout{VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
 };
 
 // Maps a [0, 1] coordinate across the input's valid region to the bloom result:

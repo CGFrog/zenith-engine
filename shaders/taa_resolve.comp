@@ -1,0 +1,195 @@
+#version 450
+
+// Temporal anti-aliasing and upsampling. Reconstructs the jittered
+// internal-resolution scene at output resolution, reprojects the accumulated
+// output-resolution history with the motion vectors, clips it against the
+// current neighborhood, and blends the two. The CPU mirror of the clip and
+// blend math lives in src/engine/graphics/TemporalQuality.cpp; keep them in sync.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// Scene color and motion are output-sized images whose top-left renderSize
+// texels hold this frame; previousMotionDepth holds the previous frame within
+// its own (possibly different) render extent.
+layout(set = 0, binding = 0) uniform sampler2D sceneColor;
+// xy: unjittered UV motion, z: reactive mask, w: reversed-Z depth.
+layout(set = 0, binding = 1) uniform sampler2D motionReactive;
+layout(set = 0, binding = 2) uniform sampler2D previousMotionDepth;
+layout(set = 0, binding = 3) uniform sampler2D history;
+layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D resolvedOutput;
+
+// Mirrors ResolveSettings in TemporalResolvePass.cpp.
+layout(push_constant) uniform ResolveSettings {
+    // Unjittered current clip space to the previous frame's unjittered clip space.
+    mat4 currentToPreviousClip;
+    vec4 outputSize; // width, height, 1 / width, 1 / height
+    vec4 renderSize; // internal width, height, 1 / width, 1 / height
+    // xy: current render extent / output extent, zw: the previous frame's.
+    vec4 sceneScale;
+    // Offset of this frame's samples from internal texel centers, in internal pixels.
+    vec2 jitterPixels;
+    float historyValid;
+    // Zero when no distinct previous motion target exists to test disocclusion.
+    float previousDepthValid;
+} settings;
+
+float luminance(vec3 color) { return dot(color, vec3(0.2126, 0.7152, 0.0722)); }
+
+vec3 rgbToYCoCg(vec3 color) {
+    return vec3(dot(color, vec3(0.25, 0.5, 0.25)), dot(color, vec3(0.5, 0.0, -0.5)),
+                dot(color, vec3(-0.25, 0.5, -0.25)));
+}
+
+vec3 yCoCgToRgb(vec3 color) {
+    return vec3(color.x + color.y - color.z, color.x + color.z, color.x - color.y - color.z);
+}
+
+// Gaussian fit of the Blackman-Harris window; offset in internal pixels.
+float reconstructionWeight(vec2 offset) { return exp(-2.29 * dot(offset, offset)); }
+
+float clipGamma(float motionPixels) { return mix(1.25, 1.0, clamp(motionPixels / 8.0, 0.0, 1.0)); }
+
+vec3 clipHistory(vec3 historyColor, vec3 mean, vec3 standardDeviation, float gamma) {
+    vec3 extent = max(standardDeviation * gamma, vec3(0.0001));
+    vec3 offset = rgbToYCoCg(historyColor) - mean;
+    vec3 units = abs(offset / extent);
+    float largestUnit = max(units.x, max(units.y, units.z));
+    return largestUnit > 1.0 ? yCoCgToRgb(mean + offset / largestUnit) : historyColor;
+}
+
+float historyWeight(float sampleConfidence, float motionPixels, float reactive) {
+    float currentWeight = 0.1 * clamp(sampleConfidence, 0.0, 1.0);
+    currentWeight = mix(currentWeight, 0.5, clamp(motionPixels / 32.0, 0.0, 1.0));
+    currentWeight = mix(currentWeight, 1.0, clamp(reactive, 0.0, 1.0));
+    return 1.0 - currentWeight;
+}
+
+// Five bilinear taps approximating a 4x4 Catmull-Rom filter, which keeps
+// history sharp across repeated reprojection.
+vec3 sampleHistory(vec2 uv) {
+    vec2 position = uv * settings.outputSize.xy;
+    vec2 center = floor(position - 0.5) + 0.5;
+    vec2 fraction = position - center;
+    vec2 weight0 = fraction * (-0.5 + fraction * (1.0 - 0.5 * fraction));
+    vec2 weight1 = 1.0 + fraction * fraction * (-2.5 + 1.5 * fraction);
+    vec2 weight2 = fraction * (0.5 + fraction * (2.0 - 1.5 * fraction));
+    vec2 weight3 = fraction * fraction * (-0.5 + 0.5 * fraction);
+    vec2 weight12 = weight1 + weight2;
+    vec2 uv0 = (center - 1.0) * settings.outputSize.zw;
+    vec2 uv3 = (center + 2.0) * settings.outputSize.zw;
+    vec2 uv12 = (center + weight2 / weight12) * settings.outputSize.zw;
+    vec3 color = textureLod(history, vec2(uv12.x, uv0.y), 0.0).rgb * (weight12.x * weight0.y) +
+                 textureLod(history, vec2(uv0.x, uv12.y), 0.0).rgb * (weight0.x * weight12.y) +
+                 textureLod(history, uv12, 0.0).rgb * (weight12.x * weight12.y) +
+                 textureLod(history, vec2(uv3.x, uv12.y), 0.0).rgb * (weight3.x * weight12.y) +
+                 textureLod(history, vec2(uv12.x, uv3.y), 0.0).rgb * (weight12.x * weight3.y);
+    float totalWeight = weight12.x * weight0.y + weight0.x * weight12.y + weight12.x * weight12.y +
+                        weight3.x * weight12.y + weight12.x * weight3.y;
+    return max(color / totalWeight, vec3(0.0));
+}
+
+// True when the surface now at sampleUv was hidden behind nearer geometry in
+// the previous frame, so its history belongs to a different surface. Only
+// camera motion is reprojected; samples whose motion shows their own movement
+// rely on the neighborhood clip.
+bool disoccluded(vec2 sampleUv, float depth, vec2 motion) {
+    vec4 previousClip = settings.currentToPreviousClip * vec4(sampleUv * 2.0 - 1.0, depth, 1.0);
+    if (previousClip.w <= 0.0) {
+        return true;
+    }
+    vec2 cameraPreviousUv = previousClip.xy / previousClip.w * 0.5 + 0.5;
+    vec2 objectMotionPixels = (sampleUv - motion - cameraPreviousUv) * settings.renderSize.xy;
+    if (dot(objectMotionPixels, objectMotionPixels) > 0.25) {
+        return false;
+    }
+    float expectedDepth = previousClip.z / previousClip.w;
+    vec2 previousTexel = 1.0 / vec2(textureSize(previousMotionDepth, 0));
+    vec2 previousRegion = settings.sceneScale.zw;
+    vec2 gatherUv = clamp((sampleUv - motion) * previousRegion, previousTexel, previousRegion - previousTexel);
+    vec4 previousDepths = textureGather(previousMotionDepth, gatherUv, 3);
+    float nearestPrevious = max(max(previousDepths.x, previousDepths.y), max(previousDepths.z, previousDepths.w));
+    // Reversed-Z depth is proportional to 1 / view distance, so this tolerance is
+    // a 2% relative distance regardless of range.
+    return nearestPrevious > expectedDepth * 1.02;
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, ivec2(settings.outputSize.xy)))) {
+        return;
+    }
+    vec2 outputUv = (vec2(pixel) + 0.5) * settings.outputSize.zw;
+    // The output pixel center in internal pixels, and the internal texel whose
+    // jittered sample lies nearest to it.
+    vec2 renderPosition = outputUv * settings.renderSize.xy;
+    ivec2 nearestTexel = ivec2(floor(renderPosition - settings.jitterPixels));
+    ivec2 lastTexel = ivec2(settings.renderSize.xy) - 1;
+
+    vec3 current = vec3(0.0);
+    float totalWeight = 0.0;
+    float peakWeight = 0.0;
+    vec3 firstMoment = vec3(0.0);
+    vec3 secondMoment = vec3(0.0);
+    float closestDepth = -1.0;
+    ivec2 closestTexel = clamp(nearestTexel, ivec2(0), lastTexel);
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            ivec2 texel = nearestTexel + ivec2(x, y);
+            ivec2 clampedTexel = clamp(texel, ivec2(0), lastTexel);
+            vec3 color = max(texelFetch(sceneColor, clampedTexel, 0).rgb, vec3(0.0));
+            float weight = reconstructionWeight(vec2(texel) + 0.5 + settings.jitterPixels - renderPosition);
+            current += color * weight;
+            totalWeight += weight;
+            peakWeight = max(peakWeight, weight);
+            vec3 yCoCg = rgbToYCoCg(color);
+            firstMoment += yCoCg;
+            secondMoment += yCoCg * yCoCg;
+            // Reversed Z: the nearest surface has the largest depth. Taking its
+            // motion keeps foreground edges from dragging background history.
+            float depth = texelFetch(motionReactive, clampedTexel, 0).w;
+            if (depth > closestDepth) {
+                closestDepth = depth;
+                closestTexel = clampedTexel;
+            }
+        }
+    }
+    current /= max(totalWeight, 0.00001);
+
+    vec3 result = current;
+    if (settings.historyValid > 0.5) {
+        vec4 closestMotion = texelFetch(motionReactive, closestTexel, 0);
+        vec2 motion = closestMotion.xy;
+        float reactive = closestMotion.z;
+        // Unjittered UV of the closest sample, where its depth was measured.
+        vec2 sampleUv = (vec2(closestTexel) + 0.5 + settings.jitterPixels) * settings.renderSize.zw;
+        bool rejected = reactive >= 1.0;
+        if (closestDepth <= 0.0) {
+            // No geometry wrote motion here; reproject the far plane instead.
+            vec4 previousClip = settings.currentToPreviousClip * vec4(outputUv * 2.0 - 1.0, 0.0, 1.0);
+            motion = previousClip.w > 0.0 ? outputUv - (previousClip.xy / previousClip.w * 0.5 + 0.5) : vec2(0.0);
+            reactive = 0.0;
+            rejected = previousClip.w <= 0.0;
+        } else {
+            rejected = rejected || (settings.previousDepthValid > 0.5 && disoccluded(sampleUv, closestDepth, motion));
+        }
+        vec2 previousUv = outputUv - motion;
+        rejected = rejected || any(lessThan(previousUv, vec2(0.0))) || any(greaterThan(previousUv, vec2(1.0)));
+        if (!rejected) {
+            float motionPixels = length(motion * settings.outputSize.xy);
+            vec3 mean = firstMoment / 9.0;
+            vec3 standardDeviation = sqrt(max(secondMoment / 9.0 - mean * mean, vec3(0.0)));
+            vec3 clipped = clipHistory(sampleHistory(previousUv), mean, standardDeviation, clipGamma(motionPixels));
+            float accumulated = historyWeight(peakWeight, motionPixels, reactive);
+            // Weighting by 1 / (1 + luma) blends in a tonemapped-like space, so
+            // single bright samples cannot dominate the accumulated result.
+            float currentLumaWeight = (1.0 - accumulated) / (1.0 + luminance(current));
+            float historyLumaWeight = accumulated / (1.0 + luminance(clipped));
+            result = (current * currentLumaWeight + clipped * historyLumaWeight) /
+                     max(currentLumaWeight + historyLumaWeight, 0.00001);
+        }
+    }
+    if (any(isnan(result)) || any(isinf(result))) {
+        result = current;
+    }
+    imageStore(resolvedOutput, pixel, vec4(result, 1.0));
+}
