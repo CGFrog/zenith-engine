@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+class AssetDatabase;
 class AssetManager;
 class ComponentTypeRegistry;
 
@@ -19,6 +20,13 @@ struct SceneDocumentOptions {
     // Component types the document reads and writes. Null uses the built-in
     // engine types; games that add their own pass a registry extending them.
     std::shared_ptr<const ComponentTypeRegistry> componentTypes;
+    // Identifies assets by GUID. Saving records each referenced asset's GUID
+    // beside its path; loading resolves a reference by GUID first, so a scene
+    // keeps working after its assets are renamed or moved. The database may
+    // cover the asset root or any directory containing it. Null writes
+    // path-only references, which load by path. The caller keeps the database
+    // current (rescanned) and must not mutate it during a document call.
+    std::shared_ptr<const AssetDatabase> assetDatabase;
 };
 
 struct SceneDocumentResult {
@@ -61,9 +69,19 @@ enum class SceneChangeDirection {
     Backward,
 };
 
+// Scene document format history. Each version above 1 has a document-level
+// migration that upgrades the raw JSON of the previous version before it is
+// validated, so older files load unchanged in behavior and save as the current
+// version. Newer versions are rejected.
+//
+//   1  Asset references are project-relative path strings, or `{"path": ...}`
+//      inside model, mesh, and skin components.
+//   2  Every asset reference is an object holding its project-relative `path`
+//      and, when an asset database knows the asset, its `guid`. An empty
+//      string still means "no asset".
 class SceneDocument {
   public:
-    static constexpr uint32_t currentVersion = 1;
+    static constexpr uint32_t currentVersion = 2;
 
     static SceneDocumentResult serialize(const Scene& scene, const AssetManager& assets,
                                          const SceneDocumentOptions& options, std::string& output);

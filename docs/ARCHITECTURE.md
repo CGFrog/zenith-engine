@@ -184,6 +184,10 @@ contributes its document key, codec, validation, and schema migrations, so the
 document format, the editor inspector, and game-defined components share one
 description. Unknown component keys are preserved rather than dropped, so
 loading a scene without the module that defines a component never loses data.
+The document itself is versioned too: document-level migrations upgrade older
+files on load, and version 2 records each asset reference as a project-relative
+path plus, when an `AssetDatabase` is supplied, the asset's GUID, which wins
+over the path on load so references survive renames and moves.
 
 `SceneDocument::parse` produces an immutable validated scene description.
 `SceneDocument::commit` performs the main-thread ECS and asset operations, so a

@@ -53,9 +53,9 @@ int main() {
     size_t modified = 0;
     size_t removed = 0;
     for (const AssetCatalogChange& change : refresh.changes) {
-        added += change.kind == AssetChangeKind::Added;
-        modified += change.kind == AssetChangeKind::Modified;
-        removed += change.kind == AssetChangeKind::Removed;
+        added += change.kind == AssetCatalogChangeKind::Added;
+        modified += change.kind == AssetCatalogChangeKind::Modified;
+        removed += change.kind == AssetCatalogChangeKind::Removed;
     }
     expect(refresh.success && added == 1 && modified == 1 && removed == 1,
            "catalog refresh should distinguish added, modified, and removed assets");

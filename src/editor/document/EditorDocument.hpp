@@ -3,6 +3,7 @@
 #include "engine/scene/SceneDocument.hpp"
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -16,6 +17,13 @@ class EditorDocument {
     SceneDocumentResult open(const std::filesystem::path& path, Scene& scene, AssetManager& assets);
     SceneDocumentResult save(const Scene& scene, const AssetManager& assets);
     SceneDocumentResult saveAs(const std::filesystem::path& path, const Scene& scene, const AssetManager& assets);
+
+    // The open scene's file was renamed or moved outside the document.
+    void relocate(std::filesystem::path path);
+    // The open scene's file is gone; the document becomes untitled and dirty.
+    void detach();
+    // Lets references resolve by GUID and records GUIDs on save.
+    void setAssetDatabase(std::shared_ptr<const AssetDatabase> database);
 
     void markDirty();
     void setDirty(bool dirty);

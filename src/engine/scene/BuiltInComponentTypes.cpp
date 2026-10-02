@@ -58,10 +58,19 @@ SceneDocumentResult modelReference(const AssetManager& assets, ModelHandle handl
     return projectRelativeAssetPath(source->path, options, output);
 }
 
+// Resolves a reference object (by GUID, then path) to an existing asset file.
+SceneDocumentResult resolveAssetReference(const Json& json, const ComponentLoadContext& context,
+                                          std::filesystem::path& path) {
+    std::string reference;
+    if (SceneDocumentResult result = readAssetReference(json, context.options, reference); !result) {
+        return result;
+    }
+    return resolveProjectAssetPath(reference, context.options, path);
+}
+
 SceneDocumentResult loadModelReference(const Json& json, const ComponentLoadContext& context, ModelHandle& output) {
     std::filesystem::path path;
-    if (SceneDocumentResult result = resolveProjectAssetPath(json.at("path").get<std::string>(), context.options, path);
-        !result) {
+    if (SceneDocumentResult result = resolveAssetReference(json, context, path); !result) {
         return result;
     }
     const AssetLoadResult<ModelHandle> loaded = context.assets.loadModel(path);
@@ -82,14 +91,14 @@ SceneDocumentResult meshReference(const AssetManager& assets, MeshHandle handle,
     if (SceneDocumentResult result = projectRelativeAssetPath(source->path, options, relative); !result) {
         return result;
     }
-    output = {{"path", relative}, {"mesh", source->meshIndex}};
+    output = {{"mesh", source->meshIndex}};
+    writeAssetReference(relative, options, output);
     return {.success = true};
 }
 
 SceneDocumentResult readMesh(const Json& json, const ComponentLoadContext& context, MeshHandle& output) {
     std::filesystem::path path;
-    if (SceneDocumentResult result = resolveProjectAssetPath(json.at("path").get<std::string>(), context.options, path);
-        !result) {
+    if (SceneDocumentResult result = resolveAssetReference(json, context, path); !result) {
         return result;
     }
     const AssetLoadResult<MeshHandle> loaded = context.assets.loadMesh(path, json.at("mesh").get<uint32_t>());
@@ -112,7 +121,8 @@ ComponentType modelType() {
                     !result) {
                     return result;
                 }
-                output = {{"path", relative}};
+                output = Json::object();
+                writeAssetReference(relative, context.options, output);
                 return SceneDocumentResult{.success = true};
             },
             [](const Json& input, ModelComponent& model, const ComponentLoadContext& context) {
@@ -133,7 +143,8 @@ ComponentType modelNodeType() {
                     !result) {
                     return result;
                 }
-                output = {{"path", relative}, {"instance_root", node.instanceRoot.value}, {"node", node.nodeIndex}};
+                output = {{"instance_root", node.instanceRoot.value}, {"node", node.nodeIndex}};
+                writeAssetReference(relative, context.options, output);
                 return SceneDocumentResult{.success = true};
             },
             [](const Json& input, ModelNodeComponent& node, const ComponentLoadContext& context) {
@@ -207,7 +218,8 @@ ComponentType skinType() {
                     !result) {
                     return result;
                 }
-                output = {{"path", relative}, {"instance_root", skin.instanceRoot.value}, {"skin", skin.skinIndex}};
+                output = {{"instance_root", skin.instanceRoot.value}, {"skin", skin.skinIndex}};
+                writeAssetReference(relative, context.options, output);
                 return SceneDocumentResult{.success = true};
             },
             [](const Json& input, SkinComponent& skin, const ComponentLoadContext& context) {
@@ -665,6 +677,7 @@ ComponentType irradianceVolumeType() {
             }
             return std::string{};
         })
+        .assetReference(&C::bakeAsset)
         .afterLoad(loadIrradianceBake)
         .build();
 }

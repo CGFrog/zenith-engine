@@ -75,6 +75,7 @@ explicit, so a file move must update `CMakeLists.txt` as well as include sites.
 | `zenith_bc7enc` | Static library | The bc7enc_rdo BC7/BC5 block encoders and decoders, linked privately into the engine for texture cooking. |
 | `zenith_asset_tests` | Test executable | Asset importing and scene hierarchy behavior. |
 | `zenith_game_module_tests` | Test executable | Loads, reloads, and unloads the `zenith_test_*_module` libraries: registration, system order and modes, shadow copies, and refused modules. |
+| `zenith_asset_reference_workflow_tests` | Test executable | Editor end-to-end GUID references: version 2 scene saves, browser and external renames and moves followed by the watcher, the open scene following its file, automatic model reloads, and every checked-in scene loading through migration. |
 | `zenith_asset_database_tests` | Test executable | Content hashing, asset GUIDs, `.meta` sidecars, and asset database scans, moves, external changes, and dependencies on real temporary directories. |
 | `zenith_physics_tests` | Test executable | Rigid bodies, contacts, impulses, raycasts, mesh collision, and cleanup. |
 | `zenith_application_tests` | Test executable | Lifecycle ordering, deferred switching, failed-load cleanup, demo composition, controls, and reload behavior. |
@@ -222,6 +223,26 @@ two serialized documents, and `SceneDocument::applyChanges` patches those
 entities in place toward either side atomically, leaving every other entity,
 its EnTT handle, and its child order untouched.
 `SceneAssetReferences.*` converts project-relative asset references for codecs.
+
+Scene documents are versioned (`SceneDocument::currentVersion`, now 2).
+`parse` runs ordered document-level migrations (`fromVersion` to
+`fromVersion + 1`, on the raw JSON) before validating, so older files load
+unchanged in behavior and save as the current version; a newer version is
+rejected with a message naming the supported one. Version 1 wrote asset
+references as bare path strings (`environment_asset`, `texture_asset`,
+`albedo_asset`, `normal_asset`, `bake_asset`) or `{"path": ...}` objects
+(model, model node, skin, mesh renderer, triangle-mesh collider). Version 2
+writes every reference as an object holding the project-relative `path` and,
+when `SceneDocumentOptions::assetDatabase` knows the asset, its `guid`; an
+empty string still means "no asset". Loading resolves a GUID through the
+database first, so a scene keeps working after its assets are renamed or
+moved, and falls back to the path without a database or for unknown GUIDs.
+Component structs keep path strings at runtime; GUIDs live only at the
+document boundary. Texture paths (`ComponentTypeBuilder::texture`) and other
+`assetReference` fields are converted after component migrations run. Inside
+component JSON the key `path` is reserved for asset references, which lets
+`relocateSceneAssetReferences` rewrite references to moved files generically.
+Prefab documents (`Prefab.*`) still reference models by path.
 
 ### `src/engine/scene/Prefab.*`
 
@@ -383,12 +404,28 @@ and type filters. Models drag out as `ZENITH_MODEL_ASSET` payloads and scenes
 open on double-click. `drawBrowser` draws everything from diagnostics and a
 small `AssetBrowserActions` set, so tests drive it in a headless ImGui frame.
 All file-system knowledge stays behind `project/AssetCatalog` (asset records
-plus every folder, empty ones included) so a later asset database can replace
-it locally. `project/ProjectFileOperations` creates folders and empty scenes,
-renames (keeping file extensions), duplicates, moves items to the OS trash
-(Recycle Bin through `IFileOperation`, or the XDG home trash; never a silent permanent
-delete), and reveals items in Explorer or via `xdg-open`; none of them
-overwrite an existing item. `settings/AssetBrowserSettings` persists the view
+plus every folder, empty ones included). The catalog owns one `AssetDatabase`
+per root (a scene root inside the asset root shares the asset root's) and a
+`FileWatcher` per root: `poll()` rescans only the roots whose watcher saw a
+change, and reports added, modified, removed, and moved assets plus every
+moved or removed file. Roots that cannot be watched fall back to a rescan once
+a second. The browser acts on the changes: modified models are reloaded
+through `AssetManager::reloadModel` with a diagnostic, modified textures get
+fresh thumbnails and an informational note (there is no texture reload API
+yet), and moves and removals go to `EditorSessionActions::projectFilesMoved`
+and `projectFilesRemoved`. The session then relocates the open document when
+its own file moved (or detaches it, untitled and dirty, when it was removed)
+and points the edited scene's asset references at moved assets
+(`project/AssetRelocation`, which rebuilds only the affected entities). The
+asset root's database is shared with `EditorDocument`'s scene options, so
+saved scenes record GUIDs. `project/ProjectFileOperations` creates folders and
+empty scenes, renames (keeping file extensions) and moves items through the
+database so `.meta` sidecars travel and GUIDs persist, duplicates (copied
+sidecars get fresh GUIDs and keep their import settings), moves items and
+their sidecars to the OS trash (Recycle Bin through `IFileOperation`, or the
+XDG home trash; never a silent permanent delete), and reveals items in
+Explorer or via `xdg-open`; none of them overwrite an existing item. Any item
+drags onto a folder in the tree or contents to move it within its root. `settings/AssetBrowserSettings` persists the view
 mode, favourites, and last folder in `asset-browser.json` in the editor's
 settings directory, falling back to defaults with a warning when the file is
 invalid.

@@ -1,11 +1,13 @@
 #include "ProjectFileOperations.hpp"
 
+#include "engine/assets/AssetMeta.hpp"
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <iterator>
 #include <system_error>
 
 #if defined(_WIN32)
@@ -302,6 +304,111 @@ bool existsOrFails(const std::filesystem::path& path, ProjectFileResult& result)
     }
     return exists || error;
 }
+
+std::string genericUtf8(const std::filesystem::path& path) {
+    const std::u8string text = path.generic_u8string();
+    return {text.begin(), text.end()};
+}
+
+// path relative to the database root, as the database spells it, or empty
+// when path lies outside it or is the root itself.
+std::string databasePath(const AssetDatabase& database, const std::filesystem::path& path) {
+    std::error_code error;
+    const std::filesystem::path root = std::filesystem::absolute(database.root(), error).lexically_normal();
+    const std::filesystem::path absolute = std::filesystem::absolute(path, error).lexically_normal();
+    const std::filesystem::path relative = absolute.lexically_relative(root);
+    if (error || relative.empty() || relative == "." || *relative.begin() == "..") {
+        return {};
+    }
+    return genericUtf8(relative);
+}
+
+void appendDatabaseResult(AssetDatabaseResult&& database, ProjectFileResult& result) {
+    std::ranges::move(database.changes, std::back_inserter(result.assetChanges));
+    std::ranges::move(database.warnings, std::back_inserter(result.warnings));
+}
+
+// Moves an item through the database that tracks it, so its sidecar travels
+// and the database records the move. A file the database has not seen yet is
+// reconciled first.
+ProjectFileResult moveTrackedItem(AssetDatabase& database, const std::filesystem::path& source,
+                                  const std::filesystem::path& destination, std::string_view verb) {
+    const std::string from = databasePath(database, source);
+    const std::string to = databasePath(database, destination);
+    if (from.empty() || to.empty()) {
+        return failure("Cannot " + std::string(verb) + " " + quoted(source) + ": it is outside the project.");
+    }
+    ProjectFileResult result = succeeded(destination);
+    std::error_code error;
+    if (!std::filesystem::is_directory(source, error) && !database.guidForPath(from)) {
+        AssetDatabaseResult scanned = database.rescan();
+        if (!scanned) {
+            return failure("Could not " + std::string(verb) + " " + quoted(source) + ": " + scanned.error);
+        }
+        appendDatabaseResult(std::move(scanned), result);
+    }
+    AssetDatabaseResult moved = database.move(from, to);
+    if (!moved) {
+        return failure("Could not " + std::string(verb) + " " + quoted(source) + ": " + moved.error);
+    }
+    appendDatabaseResult(std::move(moved), result);
+    return result;
+}
+
+// Moves an item that no database tracks, taking a file's sidecar along.
+ProjectFileResult moveUntrackedItem(const std::filesystem::path& source, const std::filesystem::path& destination,
+                                    std::string_view verb) {
+    if (const std::error_code moved = moveWithoutReplacing(source, destination)) {
+        return failure("Could not " + std::string(verb) + " " + quoted(source) + ": " + moved.message());
+    }
+    ProjectFileResult result = succeeded(destination);
+    std::error_code error;
+    const std::filesystem::path sidecar = assetMetaPath(source);
+    if (!std::filesystem::is_directory(destination, error) && std::filesystem::exists(sidecar, error)) {
+        if (const std::error_code moved = moveWithoutReplacing(sidecar, assetMetaPath(destination))) {
+            result.warnings.push_back("Could not move the sidecar " + quoted(sidecar) + ": " + moved.message());
+        }
+    }
+    return result;
+}
+
+// Gives a copied sidecar a fresh GUID, keeping its import settings. A sidecar
+// that cannot be read is removed so the database creates a new one.
+void reidentifyCopiedSidecar(const std::filesystem::path& sidecar, AssetGuidGenerator& generator,
+                             ProjectFileResult& result) {
+    AssetMeta meta;
+    std::error_code error;
+    if (!readAssetMeta(sidecar, meta)) {
+        std::filesystem::remove(sidecar, error);
+        return;
+    }
+    meta.guid = generator.next();
+    if (const AssetMetaResult written = writeAssetMeta(sidecar, meta); !written) {
+        result.warnings.push_back("Could not give the copy " + quoted(sidecar) + " a new identity: " + written.error);
+        std::filesystem::remove(sidecar, error);
+    }
+}
+
+void reidentifyCopiedSidecars(const std::filesystem::path& copy, ProjectFileResult& result) {
+    AssetGuidGenerator generator;
+    std::error_code error;
+    if (!std::filesystem::is_directory(copy, error)) {
+        if (std::filesystem::exists(assetMetaPath(copy), error)) {
+            reidentifyCopiedSidecar(assetMetaPath(copy), generator, result);
+        }
+        return;
+    }
+    std::vector<std::filesystem::path> sidecars;
+    for (std::filesystem::recursive_directory_iterator entry(copy, error), end; !error && entry != end;
+         entry.increment(error)) {
+        if (entry->is_regular_file(error) && entry->path().extension() == assetMetaExtension) {
+            sidecars.push_back(entry->path());
+        }
+    }
+    for (const std::filesystem::path& sidecar : sidecars) {
+        reidentifyCopiedSidecar(sidecar, generator, result);
+    }
+}
 } // namespace
 
 std::string utf8PathText(const std::filesystem::path& path) {
@@ -387,7 +494,8 @@ ProjectFileResult createProjectScene(const std::filesystem::path& folder, const 
     return target;
 }
 
-ProjectFileResult renameProjectItem(const std::filesystem::path& source, std::string_view utf8NewName) {
+ProjectFileResult renameProjectItem(const std::filesystem::path& source, std::string_view utf8NewName,
+                                    AssetDatabase* database) {
     if (const std::string reason = invalidFileNameReason(utf8NewName); !reason.empty()) {
         return failure("Cannot rename " + quoted(source) + ": " + reason);
     }
@@ -416,10 +524,41 @@ ProjectFileResult renameProjectItem(const std::filesystem::path& source, std::st
                        : inspected;
         }
     }
-    if (const std::error_code moved = moveWithoutReplacing(source, destination)) {
-        return failure("Could not rename " + quoted(source) + ": " + moved.message());
+    if (database != nullptr) {
+        return moveTrackedItem(*database, source, destination, "rename");
     }
-    return succeeded(destination);
+    return moveUntrackedItem(source, destination, "rename");
+}
+
+ProjectFileResult moveProjectItem(const std::filesystem::path& source, const std::filesystem::path& destinationFolder,
+                                  AssetDatabase* database) {
+    std::error_code error;
+    const std::filesystem::path from = std::filesystem::absolute(source, error).lexically_normal();
+    const std::filesystem::path folder = std::filesystem::absolute(destinationFolder, error).lexically_normal();
+    if (error || !std::filesystem::exists(from, error)) {
+        return failure("Cannot move " + quoted(source) + ": it no longer exists.");
+    }
+    if (!std::filesystem::is_directory(folder, error)) {
+        return failure("Cannot move " + quoted(source) + ": " + quoted(destinationFolder) + " is not a folder.");
+    }
+    if (from.parent_path() == folder) {
+        return succeeded(from);
+    }
+    const std::filesystem::path inside = folder.lexically_relative(from);
+    if (!inside.empty() && *inside.begin() != "..") {
+        return failure("Cannot move " + quoted(source) + " into itself.");
+    }
+    const std::filesystem::path destination = folder / from.filename();
+    ProjectFileResult inspected;
+    if (existsOrFails(destination, inspected)) {
+        return inspected.error.empty()
+                   ? failure("Cannot move " + quoted(source) + ": " + quoted(destination) + " already exists.")
+                   : inspected;
+    }
+    if (database != nullptr) {
+        return moveTrackedItem(*database, from, destination, "move");
+    }
+    return moveUntrackedItem(from, destination, "move");
 }
 
 ProjectFileResult duplicateProjectItem(const std::filesystem::path& source) {
@@ -450,22 +589,52 @@ ProjectFileResult duplicateProjectItem(const std::filesystem::path& source) {
     if (error) {
         return failure("Could not duplicate " + quoted(source) + ": " + error.message());
     }
+    if (!isFolder && std::filesystem::exists(assetMetaPath(source), error)) {
+        std::filesystem::copy_file(assetMetaPath(source), assetMetaPath(target.path),
+                                   std::filesystem::copy_options::none, error);
+    }
+    reidentifyCopiedSidecars(target.path, target);
     return target;
 }
 
-ProjectFileResult moveProjectItemToTrash(const std::filesystem::path& target) {
-    std::error_code error;
-    const std::filesystem::path absolute = std::filesystem::absolute(target, error).lexically_normal();
-    if (error || !std::filesystem::exists(absolute, error) || error) {
-        return failure("Cannot delete " + quoted(target) + ": it does not exist.");
-    }
+namespace {
+ProjectFileResult moveToTrash(const std::filesystem::path& absolute) {
 #if defined(_WIN32)
     return moveToRecycleBin(absolute);
 #elif defined(__linux__)
     return moveToXdgTrash(absolute);
 #else
-    return failure("Moving " + quoted(target) + " to the trash is not supported on this platform.");
+    return failure("Moving " + quoted(absolute) + " to the trash is not supported on this platform.");
 #endif
+}
+} // namespace
+
+ProjectFileResult moveProjectItemToTrash(const std::filesystem::path& target, AssetDatabase* database) {
+    std::error_code error;
+    const std::filesystem::path absolute = std::filesystem::absolute(target, error).lexically_normal();
+    if (error || !std::filesystem::exists(absolute, error) || error) {
+        return failure("Cannot delete " + quoted(target) + ": it does not exist.");
+    }
+    const bool isFolder = std::filesystem::is_directory(absolute, error);
+    ProjectFileResult result = moveToTrash(absolute);
+    if (!result) {
+        return result;
+    }
+    if (const std::filesystem::path sidecar = assetMetaPath(absolute);
+        !isFolder && std::filesystem::exists(sidecar, error)) {
+        if (const ProjectFileResult trashed = moveToTrash(sidecar); !trashed) {
+            result.warnings.push_back(trashed.error);
+        }
+    }
+    if (database != nullptr) {
+        AssetDatabaseResult scanned = database->rescan();
+        if (!scanned) {
+            result.warnings.push_back("Could not update the asset database: " + scanned.error);
+        } else {
+            appendDatabaseResult(std::move(scanned), result);
+        }
+    }
+    return result;
 }
 
 ProjectFileResult revealInFileBrowser(const std::filesystem::path& target) {

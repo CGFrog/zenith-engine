@@ -85,6 +85,8 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     if (const OperatorRegistrationResult result = registerObjectOperators(m_operators); !result) {
         m_diagnostics.reportError(result.error);
     }
+    // Scene references resolve through the browser's asset database by GUID.
+    m_document.setAssetDatabase(m_assetBrowser.assetDatabase());
 }
 
 SceneEditing EditorSession::editing(ApplicationContext& context) {
@@ -862,6 +864,40 @@ void EditorSession::requestOpenScene(ApplicationContext& context, std::filesyste
         m_openUnsavedDialog = true;
     } else {
         finishPendingAction(context);
+    }
+}
+
+void EditorSession::projectFilesMoved(ApplicationContext& context, std::span<const ProjectFileMove> moves) {
+    if (m_document.path()) {
+        if (std::optional<std::filesystem::path> moved =
+                relocatedProjectPath(normalizedCatalogPath(*m_document.path()), moves)) {
+            m_diagnostics.add(EditorDiagnosticSeverity::Info, "Editor",
+                              "The open scene now lives at '" + moved->string() + "'.");
+            m_document.relocate(std::move(*moved));
+        }
+    }
+    // Play mode runs on a copy; the edit scene it restores resolves moved
+    // assets by GUID.
+    if (m_playMode.mode() != EditorMode::Edit) {
+        return;
+    }
+    size_t relocated = 0;
+    if (const SceneDocumentResult result =
+            relocateSceneAssets(context.scene, context.assets, m_document.options(), moves, relocated);
+        !result) {
+        m_diagnostics.reportError("Could not follow moved assets in the open scene: " + result.error);
+    } else if (relocated > 0) {
+        // The file on disk may name the old paths without GUIDs (version 1,
+        // or saved without a database), so the new paths need saving.
+        m_document.markDirty();
+    }
+}
+
+void EditorSession::projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path> removed) {
+    if (m_document.path() && isRemovedProjectPath(normalizedCatalogPath(*m_document.path()), removed)) {
+        m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Editor",
+                          "The open scene's file was removed; save it to keep the scene.");
+        m_document.detach();
     }
 }
 
