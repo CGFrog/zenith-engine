@@ -110,6 +110,11 @@ struct RenderPassBudgets {
     RenderPassBudget ambientOcclusion;
     RenderPassBudget reflections;
     RenderPassBudget exposure;
+    RenderPassBudget depthPrepass;
+    RenderPassBudget depthPyramid;
+    RenderPassBudget lightClusters;
+    // Environment precompute (only when its inputs change) plus the skybox.
+    RenderPassBudget environment;
 };
 
 struct DynamicResolutionSettings {
@@ -246,6 +251,15 @@ struct RenderStats {
     double gpuAmbientOcclusionMilliseconds{0.0};
     double gpuReflectionsMilliseconds{0.0};
     double gpuExposureMilliseconds{0.0};
+    // Zero when the retired frame skipped the pass. The prepass includes the
+    // GPU-driven late cull between its phases; the pyramid is the final build
+    // screen-space effects read (or the occlusion build without a prepass).
+    double gpuDepthPrepassMilliseconds{0.0};
+    double gpuDepthPyramidMilliseconds{0.0};
+    double gpuLightClusterMilliseconds{0.0};
+    // Precompute runs only on frames whose environment inputs changed.
+    double gpuEnvironmentPrecomputeMilliseconds{0.0};
+    double gpuSkyboxMilliseconds{0.0};
     uint64_t temporalHistoryBytes{0};
     uint64_t motionVectorBytes{0};
     uint64_t ambientOcclusionBytes{0};

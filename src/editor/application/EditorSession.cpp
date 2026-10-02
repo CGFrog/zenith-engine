@@ -2,6 +2,7 @@
 
 #include "editor/document/SceneFragment.hpp"
 #include "editor/interaction/ComponentEditors.hpp"
+#include "editor/interaction/GraphicsSettingsEditor.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -18,13 +19,15 @@
 #include <utility>
 
 namespace {
-constexpr uint32_t currentLayoutVersion = 1;
-}
+// Layouts older than version 3 lack the Graphics panel below the Inspector.
+constexpr uint32_t currentLayoutVersion = 3;
+} // namespace
 
 EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::filesystem::path assetRoot,
-                             std::filesystem::path sceneRoot,
+                             std::filesystem::path sceneRoot, EditorRenderSettings renderSettings,
                              std::function<SceneResult(ApplicationContext&)> initialSceneLoader)
     : m_settings(settingsDirectory / "settings.ini")
+    , m_renderSettings(std::move(renderSettings))
     , m_document(assetRoot)
     , m_recovery(settingsDirectory / "recovery.zenith-scene")
     , m_assetCatalog(std::move(assetRoot), std::move(sceneRoot))
@@ -46,6 +49,10 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     if (const EditorSettingsResult result = m_settings.load(); !result) {
         reportDiagnostic(result.error);
     }
+    if (const EditorRenderSettingsResult result = m_renderSettings.load(); !result) {
+        reportDiagnostic(result.error);
+    }
+    applyRenderSettings(context);
     refreshAssetCatalog();
     m_openRecoveryDialog = m_recovery.available();
     m_smokeScenario = SDL_getenv("ZENITH_EDITOR_SMOKE") != nullptr;
@@ -231,10 +238,13 @@ void EditorSession::initializeDefaultLayout(uint32_t dockspaceId) {
     const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
     const ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.25f, nullptr, &center);
     const ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.25f, nullptr, &center);
+    ImGuiID inspector = right;
+    const ImGuiID graphics = ImGui::DockBuilderSplitNode(inspector, ImGuiDir_Down, 0.70f, nullptr, &inspector);
 
     ImGui::DockBuilderDockWindow("Viewport", center);
     ImGui::DockBuilderDockWindow("Hierarchy", left);
-    ImGui::DockBuilderDockWindow("Inspector", right);
+    ImGui::DockBuilderDockWindow("Inspector", inspector);
+    ImGui::DockBuilderDockWindow("Graphics", graphics);
     ImGui::DockBuilderDockWindow("Diagnostics", bottom);
     ImGui::DockBuilderDockWindow("Render Statistics", bottom);
     ImGui::DockBuilderFinish(dockspaceId);
@@ -387,6 +397,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         ImGui::MenuItem("Diagnostics", nullptr, &panels.diagnostics);
         ImGui::MenuItem("Render Statistics", nullptr, &panels.renderStatistics);
         ImGui::MenuItem("Asset Browser", nullptr, &panels.assetBrowser);
+        ImGui::MenuItem("Graphics", nullptr, &panels.graphics);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Play")) {
@@ -585,6 +596,51 @@ void EditorSession::drawPanels(ApplicationContext& context) {
             drawAssetBrowser(context);
         }
         ImGui::End();
+    }
+    if (panels.graphics) {
+        if (ImGui::Begin("Graphics", &panels.graphics)) {
+            drawGraphicsPanel(context);
+        }
+        ImGui::End();
+    }
+}
+
+void EditorSession::applyRenderSettings(ApplicationContext& context) {
+    m_renderSettingFallbacks = m_renderSettings.apply(context.rendering);
+}
+
+void EditorSession::drawGraphicsPanel(ApplicationContext& context) {
+    ImGui::BeginDisabled(!m_renderSettings.unsaved());
+    if (ImGui::Button("Save")) {
+        if (const EditorRenderSettingsResult result = m_renderSettings.save(); !result) {
+            reportDiagnostic(result.error);
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert")) {
+        if (const EditorRenderSettingsResult result = m_renderSettings.load(); !result) {
+            reportDiagnostic(result.error);
+        }
+        applyRenderSettings(context);
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s %s", m_renderSettings.savesToProject() ? "Project:" : "Editor:",
+                        m_renderSettings.storagePath().filename().string().c_str());
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", m_renderSettings.storagePath().string().c_str());
+    }
+    for (const std::string& fallback : m_renderSettingFallbacks) {
+        ImGui::TextWrapped("Fallback: %s", fallback.c_str());
+    }
+
+    if (ImGui::CollapsingHeader("GPU pass timings", ImGuiTreeNodeFlags_DefaultOpen)) {
+        GraphicsSettingsEditor::drawPassTimings(context.rendering.stats());
+    }
+    RenderSettings edited = m_renderSettings.requested();
+    if (GraphicsSettingsEditor::drawSettings(edited, context.rendering.capabilities())) {
+        m_renderSettings.request(edited);
+        applyRenderSettings(context);
     }
 }
 

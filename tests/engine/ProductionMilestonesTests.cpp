@@ -609,6 +609,10 @@ void testLightingAndConfiguration() {
     requested.budgets.temporalResolve = {0.0, 0.4};
     requested.budgets.ambientOcclusion = {0.0, 0.6};
     requested.budgets.reflections = {0.0, 0.8};
+    requested.budgets.depthPrepass = {0.0, 0.3};
+    requested.budgets.depthPyramid = {0.0, 0.1};
+    requested.budgets.lightClusters = {0.0, 0.2};
+    requested.budgets.environment = {0.0, 0.5};
     const ValidatedRenderSettings validated = validateRenderSettings(requested, {});
     expect(validated.settings.environment == EnvironmentQuality::Hemisphere &&
                validated.settings.localLights == LocalLightingQuality::Clustered &&
@@ -628,6 +632,10 @@ void testLightingAndConfiguration() {
                decoded.budgets.ambientOcclusion.gpuMilliseconds == 0.6 &&
                decoded.budgets.reflections.gpuMilliseconds == 0.8,
            "render quality settings and per-pass CPU/GPU budgets round trip");
+    expect(decoded.budgets.depthPrepass.gpuMilliseconds == 0.3 && decoded.budgets.depthPyramid.gpuMilliseconds == 0.1 &&
+               decoded.budgets.lightClusters.gpuMilliseconds == 0.2 &&
+               decoded.budgets.environment.gpuMilliseconds == 0.5,
+           "new-pass budgets round trip");
 
     TextureAsset environment;
     environment.width = 2;

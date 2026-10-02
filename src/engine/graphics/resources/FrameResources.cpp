@@ -1,5 +1,6 @@
 #include "FrameResources.hpp"
 #include "../vulkan/VulkanCheck.hpp"
+#include "FrameTimestamps.hpp"
 #include "engine/diagnostics/Timestamp.hpp"
 #include <limits>
 
@@ -8,9 +9,9 @@ constexpr uint64_t frameFenceTimeout = std::numeric_limits<uint64_t>::max();
 }
 
 namespace {
-// Pairs are listed in collectTimings; 17 -> 18 brackets exposure and
-// 19 -> 20 the temporal resolve.
-constexpr uint32_t timestampQueryCount = 21;
+// Pairs are listed in collectTimings; 17 -> 18 brackets exposure, 19 -> 20 the
+// temporal resolve, and FrameTimestamp names the optional passes after them.
+constexpr uint32_t timestampQueryCount = FrameTimestamp::count;
 } // namespace
 
 bool FrameResources::init(VkDevice device, uint32_t queueFamily, float timestampPeriod, uint32_t timestampValidBits) {
@@ -159,6 +160,12 @@ bool FrameResources::collectTimings(VkDevice device, GpuFrameTimings& timings) {
     timings.reflectionsMilliseconds = m_reflectionsEnabled ? elapsed(12, 13) : 0.0;
     timings.uploadWaitMilliseconds = m_uploadWaitEnabled ? elapsed(0, 16) : 0.0;
     timings.exposureMilliseconds = elapsed(17, 18);
+    timings.depthPrepassMilliseconds = elapsed(FrameTimestamp::depthPrepassBegin, FrameTimestamp::depthPrepassEnd);
+    timings.depthPyramidMilliseconds = elapsed(FrameTimestamp::depthPyramidBegin, FrameTimestamp::depthPyramidEnd);
+    timings.lightClusterMilliseconds = elapsed(FrameTimestamp::lightClustersBegin, FrameTimestamp::lightClustersEnd);
+    timings.environmentPrecomputeMilliseconds =
+        elapsed(FrameTimestamp::environmentPrecomputeBegin, FrameTimestamp::environmentPrecomputeEnd);
+    timings.skyboxMilliseconds = elapsed(FrameTimestamp::skyboxBegin, FrameTimestamp::skyboxEnd);
     return true;
 }
 

@@ -18,6 +18,12 @@ struct GpuFrameTimings {
     double exposureMilliseconds{0.0};
     double uiMilliseconds{0.0};
     double cullingMilliseconds{0.0};
+    // Zero when the frame skipped the pass (FrameTimestamps.hpp).
+    double depthPrepassMilliseconds{0.0};
+    double depthPyramidMilliseconds{0.0};
+    double lightClusterMilliseconds{0.0};
+    double environmentPrecomputeMilliseconds{0.0};
+    double skyboxMilliseconds{0.0};
 };
 
 // Owns the resources reused for one frame of CPU work.

@@ -13,11 +13,17 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
     if (SDL_getenv("ZENITH_FORCE_TAA") != nullptr) {
         settings.antialiasing = AntialiasingMode::Taa;
     }
+    // Every renderer feature at its highest quality; documented with the other
+    // diagnostic variables in docs/RENDERER_VALIDATION.md.
     if (SDL_getenv("ZENITH_FORCE_HIGH_QUALITY") != nullptr) {
         settings.antialiasing = AntialiasingMode::Taa;
         settings.ambientOcclusion = AmbientOcclusionQuality::FullResolution;
         settings.reflections = ReflectionQuality::ScreenSpaceFullResolution;
         settings.environment = EnvironmentQuality::ImageBasedHigh;
+        settings.localLights = LocalLightingQuality::Clustered;
+        settings.depthPrepass = true;
+        settings.shadows = ShadowQuality::CascadedHigh;
+        settings.bloom = BloomQuality::Downsampled;
     }
     if (SDL_getenv("ZENITH_FORCE_DYNAMIC_RESOLUTION") != nullptr) {
         settings.dynamicResolution.enabled = true;
@@ -60,15 +66,34 @@ RenderCapabilities detectRenderCapabilities(VkPhysicalDevice device) {
             .gpuDrivenPath = false};
 }
 
-uint64_t renderGraphSignature(VkExtent2D extent, bool viewport, const RenderSettings& settings) {
-    uint64_t value = (static_cast<uint64_t>(extent.width) << 32u) | extent.height;
-    value ^= static_cast<uint64_t>(viewport) << 63u;
-    value ^= static_cast<uint64_t>(settings.bloom) << 4u;
-    value ^= static_cast<uint64_t>(settings.antialiasing) << 8u;
-    value ^= static_cast<uint64_t>(settings.ambientOcclusion) << 12u;
-    value ^= static_cast<uint64_t>(settings.reflections) << 16u;
-    value ^= static_cast<uint64_t>(settings.exposure.mode) << 20u;
-    return value;
+// Mirrors the depth-prepass decision in MeshPass::record.
+bool depthPrepassActive(const RenderSettings& settings) {
+    return settings.depthPrepass && SDL_getenv("ZENITH_DISABLE_DEPTH_PREPASS") == nullptr;
+}
+
+// Mirrors the submission-path decision in MeshPass::record.
+bool gpuDrivenSubmissionActive(const RenderSettings& settings, const RenderCapabilities& capabilities) {
+    const bool requested = settings.preferGpuDrivenSubmission || SDL_getenv("ZENITH_FORCE_GPU_DRIVEN") != nullptr;
+    return requested && capabilities.gpuDrivenPath && capabilities.descriptorIndexing && capabilities.multiDrawIndirect;
+}
+
+RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const RenderSettings& settings,
+                                  const RenderCapabilities& capabilities) {
+    const bool imageBasedLighting = settings.environment != EnvironmentQuality::Hemisphere;
+    return {.width = extent.width,
+            .height = extent.height,
+            .viewport = viewport,
+            .antialiasing = settings.antialiasing,
+            .ambientOcclusion = settings.ambientOcclusion,
+            .reflections = settings.reflections,
+            .bloom = settings.bloom,
+            .exposure = settings.exposure.mode,
+            .shadows = settings.shadows != ShadowQuality::Off,
+            .imageBasedLighting = imageBasedLighting,
+            .environmentBackground = imageBasedLighting && settings.environmentBackground,
+            .localLights = settings.localLights != LocalLightingQuality::Disabled,
+            .depthPrepass = depthPrepassActive(settings),
+            .gpuDriven = gpuDrivenSubmissionActive(settings, capabilities)};
 }
 } // namespace
 
@@ -250,6 +275,11 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuAmbientOcclusionMilliseconds = gpuTimings.ambientOcclusionMilliseconds;
     stats.gpuReflectionsMilliseconds = gpuTimings.reflectionsMilliseconds;
     stats.gpuExposureMilliseconds = gpuTimings.exposureMilliseconds;
+    stats.gpuDepthPrepassMilliseconds = gpuTimings.depthPrepassMilliseconds;
+    stats.gpuDepthPyramidMilliseconds = gpuTimings.depthPyramidMilliseconds;
+    stats.gpuLightClusterMilliseconds = gpuTimings.lightClusterMilliseconds;
+    stats.gpuEnvironmentPrecomputeMilliseconds = gpuTimings.environmentPrecomputeMilliseconds;
+    stats.gpuSkyboxMilliseconds = gpuTimings.skyboxMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;
@@ -404,8 +434,9 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
 }
 
 bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
-    const uint64_t signature = renderGraphSignature(extent, useViewport, m_rendering->settings());
-    if (signature != m_renderGraphSignature) {
+    const RenderGraphShape shape =
+        renderGraphShape(extent, useViewport, m_rendering->settings(), m_rendering->capabilities());
+    if (shape != m_renderGraphShape) {
         RenderGraph graph;
         const uint64_t pixels = static_cast<uint64_t>(extent.width) * extent.height;
         const auto image = [&](uint32_t format, uint64_t usage, uint64_t bytes) {
@@ -436,6 +467,16 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             graph.importBuffer("mesh asset buffers", {.size = 0, .usage = 1, .alignment = 256}, uploadQueue);
         const auto textureAssets = graph.importImage("texture asset images", image(VK_FORMAT_R8G8B8A8_UNORM, 5, 0),
                                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, uploadQueue);
+        // Persistent renderer resources the scene passes exchange. Their sizes
+        // are owned by the passes, so the model records zero bytes for them.
+        const auto environmentMaps = graph.importImage("environment maps", image(PostProcessPass::sceneFormat, 5, 0),
+                                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        const auto lightClusters = graph.importBuffer("light clusters", {.size = 0, .usage = 1, .alignment = 256});
+        const auto gpuDrivenDraws = graph.importBuffer("GPU-driven draws", {.size = 0, .usage = 1, .alignment = 256});
+        const auto normals =
+            graph.importImage("scene normals", image(PostProcessPass::normalFormat, 5, 0), VK_IMAGE_LAYOUT_UNDEFINED);
+        const auto depthPyramid =
+            graph.importImage("depth pyramid", image(DepthPyramid::format, 5, 0), VK_IMAGE_LAYOUT_GENERAL);
         const auto hdr = graph.createTransientImage(
             "HDR scene", image(PostProcessPass::sceneFormat, 7, pixels * sizeof(uint16_t) * 4));
         const auto motion = graph.createTransientImage(
@@ -450,31 +491,126 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             {textureAssets, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
              VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}};
         graph.addPass("asset uploads", uploadQueue, uploadAccesses);
-        const RenderGraphAccess shadowAccesses[]{
-            {shadow, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
-             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL},
-            {meshAssets, RenderGraphAccessMode::Read,
-             VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
-             VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
-        graph.addPass("directional shadows", RenderGraphQueue::Graphics, shadowAccesses);
-        const RenderGraphAccess opaqueAccesses[]{
-            {shadow, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+        constexpr uint64_t geometryStages = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT;
+        constexpr uint64_t geometryAccess = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT;
+        constexpr uint64_t computeReadWrite =
+            VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        if (shape.imageBasedLighting) {
+            // Records work only on frames whose environment inputs changed.
+            const RenderGraphAccess environmentAccesses[]{
+                {environmentMaps, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL},
+                {textureAssets, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+            graph.addPass("environment precompute", RenderGraphQueue::Graphics, environmentAccesses);
+        }
+        if (shape.shadows) {
+            const RenderGraphAccess shadowAccesses[]{
+                {shadow, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL},
+                {meshAssets, RenderGraphAccessMode::Read, geometryStages, geometryAccess, VK_IMAGE_LAYOUT_UNDEFINED}};
+            graph.addPass("directional shadows", RenderGraphQueue::Graphics, shadowAccesses);
+        }
+        if (shape.gpuDriven) {
+            // The early phase emits last frame's visible set; it binds the
+            // pyramid statically but only the late phase samples it.
+            const RenderGraphAccess earlyCullAccesses[]{
+                {gpuDrivenDraws, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
+            graph.addPass("GPU culling (early)", RenderGraphQueue::Graphics, earlyCullAccesses);
+        }
+        if (shape.localLights) {
+            const RenderGraphAccess clusterAccesses[]{
+                {lightClusters, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
+            graph.addPass("light cluster assignment", RenderGraphQueue::Graphics, clusterAccesses);
+        }
+        const auto addDepthPyramidBuild = [&](const char* name) {
+            const RenderGraphAccess pyramidAccesses[]{
+                {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+                {depthPyramid, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL}};
+            graph.addPass(name, RenderGraphQueue::Graphics, pyramidAccesses);
+        };
+        const auto addLateCull = [&] {
+            const RenderGraphAccess lateCullAccesses[]{
+                {depthPyramid, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL},
+                {gpuDrivenDraws, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 computeReadWrite, VK_IMAGE_LAYOUT_UNDEFINED}};
+            graph.addPass("GPU culling (late)", RenderGraphQueue::Graphics, lateCullAccesses);
+        };
+        const RenderGraphAccess indirectDrawRead{gpuDrivenDraws, RenderGraphAccessMode::Read,
+                                                 VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
+                                                 VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED};
+        if (shape.depthPrepass) {
+            std::vector<RenderGraphAccess> prepassAccesses{
+                {depth, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL},
+                {normals, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                {meshAssets, RenderGraphAccessMode::Read, geometryStages, geometryAccess, VK_IMAGE_LAYOUT_UNDEFINED}};
+            if (shape.gpuDriven) {
+                prepassAccesses.push_back(indirectDrawRead);
+            }
+            graph.addPass("depth and normal prepass", RenderGraphQueue::Graphics, prepassAccesses);
+            if (shape.gpuDriven) {
+                // Two-phase occlusion culling runs inside the prepass.
+                addDepthPyramidBuild("occlusion depth pyramid");
+                addLateCull();
+                graph.addPass("depth and normal prepass (late phase)", RenderGraphQueue::Graphics, prepassAccesses);
+            }
+            // Screen-space effects read this pyramid of the complete opaque depth.
+            addDepthPyramidBuild("depth pyramid");
+        }
+        std::vector<RenderGraphAccess> opaqueAccesses{
             {hdr, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
             {motion, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-            {depth, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL},
-            {meshAssets, RenderGraphAccessMode::Read,
-             VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT,
-             VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED},
+            {meshAssets, RenderGraphAccessMode::Read, geometryStages, geometryAccess, VK_IMAGE_LAYOUT_UNDEFINED},
             {textureAssets, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             {probeCache, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+        // After a prepass, shading tests the finished opaque depth; blended
+        // surfaces and outlines still test it in the same pass.
+        opaqueAccesses.push_back(shape.depthPrepass ? RenderGraphAccess{depth, RenderGraphAccessMode::Read,
+                                                                        VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                                                                            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                                                                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+                                                                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}
+                                                    : RenderGraphAccess{depth, RenderGraphAccessMode::Write,
+                                                                        VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                                                                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                                                                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL});
+        if (shape.shadows) {
+            opaqueAccesses.push_back({shadow, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL});
+        }
+        if (shape.imageBasedLighting) {
+            // Shading and the skybox sample the prefiltered maps.
+            opaqueAccesses.push_back({environmentMaps, RenderGraphAccessMode::Read,
+                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        }
+        if (shape.localLights) {
+            opaqueAccesses.push_back({lightClusters, RenderGraphAccessMode::Read,
+                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                      VK_IMAGE_LAYOUT_UNDEFINED});
+        }
+        if (shape.gpuDriven) {
+            opaqueAccesses.push_back(indirectDrawRead);
+        }
+        if (shape.gpuDriven && !shape.depthPrepass) {
+            // Without a prepass two-phase culling splits the shading pass.
+            graph.addPass("opaque scene (early phase)", RenderGraphQueue::Graphics, opaqueAccesses);
+            addDepthPyramidBuild("occlusion depth pyramid");
+            addLateCull();
+        }
         graph.addPass("opaque and blended scene", RenderGraphQueue::Graphics, opaqueAccesses);
-        const bool temporalResolve = m_rendering->settings().antialiasing == AntialiasingMode::Taa;
+        const bool temporalResolve = shape.antialiasing == AntialiasingMode::Taa;
         if (temporalResolve) {
             // Also reads the previous frame's motion target, which is outside
             // this frame's transient lifetimes.
@@ -575,7 +711,7 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
                 m_swapchainToUiBarrier = barrier;
             }
         }
-        m_renderGraphSignature = signature;
+        m_renderGraphShape = shape;
     }
     RenderStats& stats = m_rendering->m_stats;
     stats.renderGraphBarrierCount = m_renderGraphStatistics.barrierCount;

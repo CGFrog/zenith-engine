@@ -248,6 +248,22 @@ command history; `interaction/` owns camera, picking, gizmos, and component
 widgets; and `settings/` owns persisted editor preferences. The editor depends
 on the engine, while neither the engine nor demo depends on editor code.
 
+### `src/editor/settings/EditorRenderSettings.*`
+
+Owns the render settings the editor requests and their persistent home: the
+loaded project file, or `render-settings.json` in the editor's settings
+directory when no project file was given. `apply` hands the renderer the
+capability-validated settings and returns the fallbacks; the request itself
+keeps what the user chose.
+
+### `src/editor/interaction/GraphicsSettingsEditor.*`
+
+ImGui controls for every `RenderSettings` field (options a device cannot run
+stay visible but disabled), clamping into the ranges the render-settings
+document accepts, and the live per-pass GPU timing table built from
+`RenderStats`. `EditorSession` hosts them in the dockable Graphics panel with
+Save and Revert.
+
 ## Assets
 
 ### `src/engine/assets/Assets.*`
@@ -417,7 +433,15 @@ and a VMA-backed depth image/view. FIFO is the portable fallback.
 Owns one frame slot's command pool, command buffer, image-acquired semaphore,
 completion fence, and timestamp queries. Three instances prevent reuse while
 the GPU is working. Timeline waits are attached only to stages that consume
-uploaded buffers or textures.
+uploaded buffers or textures. `collectTimings` decodes each timestamp pair into
+`GpuFrameTimings`.
+
+### `src/engine/graphics/resources/FrameTimestamps.hpp`
+
+Names the timestamp slots of passes a frame may skip (depth prepass, depth
+pyramid, light clusters, environment precompute, skybox).
+`OptionalPassTimestamps` writes each slot at most once and closes skipped pairs
+back to back, so every query becomes available and skipped passes read zero.
 
 ### `src/engine/graphics/resources/UploadContext.*`
 
@@ -607,7 +631,7 @@ The source directory is copied as a whole to `build/assets/` for runtime use.
 | Path | Coverage |
 | --- | --- |
 | `tests/engine/` | Audio, asset importing, scene documents/hierarchy, and physics contracts. |
-| `tests/editor/` | Settings, document state, command history, camera behavior, and component editing helpers. |
+| `tests/editor/` | Settings, render-settings persistence and graphics-panel helpers, document state, command history, camera behavior, and component editing helpers. |
 | `tests/game/` | Application callback order, scene changes, cleanup, demo composition, controls, and reload behavior. |
 
 The executables return a nonzero status on failed expectations so CTest can

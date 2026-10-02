@@ -70,6 +70,8 @@ EditorSettingsResult EditorSettings::load() {
             destination = &loaded.renderStatistics;
         } else if (key == "panel.asset_browser") {
             destination = &loaded.assetBrowser;
+        } else if (key == "panel.graphics") {
+            destination = &loaded.graphics;
         } else {
             continue;
         }
@@ -107,7 +109,8 @@ EditorSettingsResult EditorSettings::save() const {
            << "panel.inspector=" << (m_panels.inspector ? "true" : "false") << '\n'
            << "panel.diagnostics=" << (m_panels.diagnostics ? "true" : "false") << '\n'
            << "panel.render_statistics=" << (m_panels.renderStatistics ? "true" : "false") << '\n'
-           << "panel.asset_browser=" << (m_panels.assetBrowser ? "true" : "false") << '\n';
+           << "panel.asset_browser=" << (m_panels.assetBrowser ? "true" : "false") << '\n'
+           << "panel.graphics=" << (m_panels.graphics ? "true" : "false") << '\n';
     if (!output) {
         return {.error = "Could not finish writing editor settings: " + m_path.string()};
     }

@@ -46,10 +46,15 @@ The UI capture covers the post-tone-map ordering and expected output color
 space. On failure it writes the candidate PPM images to the system temporary
 directory for inspection.
 
-The public anti-aliasing choices remain **Off** and **FXAA**. Temporal AA is
-deliberately not exposed: adding it requires motion vectors plus automated
-disocclusion, static-camera stability, and moving-camera ghosting captures.
-This gate prevents an FXAA implementation from being mislabeled as TAA.
+The public anti-aliasing choices are **Off**, **FXAA**, and **TAA**
+(`AntialiasingMode`). TAA is the temporal upscaling resolve
+(`TemporalResolvePass`): it reprojects history with per-pixel motion vectors,
+rejects disoccluded and reactive pixels, and resolves the jittered internal
+resolution to the output. `zenith_temporal_quality` covers jitter, history
+invalidation, and dynamic-resolution policy on the CPU. FXAA remains a cheap
+fallback and still filters the linear HDR scene before tone mapping in
+`post.frag`; edges are therefore judged on scene luminance rather than display
+values.
 
 ## Vulkan smoke
 
@@ -57,3 +62,47 @@ The `zenith_editor_vulkan_smoke` CTest runs a bounded editor scenario that
 resizes the offscreen viewport twice and exercises Play, Pause, Single Step,
 and Stop. It is labeled `vulkan;smoke` so headless CI can exclude it while a
 Vulkan-capable workstation runs it explicitly.
+
+## Diagnostic environment variables
+
+Every variable is read at runtime; unset means off. Presence is enough for the
+`ZENITH_FORCE_*` and `ZENITH_DISABLE_*` switches, which override the requested
+`RenderSettings` on every frame (`applyDiagnosticOverrides` in `Renderer.cpp`)
+or at the decision point named below, after capability validation.
+
+| Variable | Effect |
+| --- | --- |
+| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, clustered local lights, depth prepass on, cascaded (high) shadows, and bloom. |
+| `ZENITH_FORCE_TAA` | Temporal anti-aliasing. |
+| `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
+| `ZENITH_FORCE_GPU_DRIVEN` | GPU-driven submission (two-phase occlusion culling and indirect draws) when the device supports it. |
+| `ZENITH_DISABLE_DEPTH_PREPASS` | Skips the depth/normal prepass even when `RenderSettings::depthPrepass` is set. |
+| `ZENITH_DISABLE_RENDER_PACKET_CACHE` | Rebuilds render packets every frame (packet-cache baseline). |
+| `ZENITH_SMOKE_FRAMES=N` | Quits after N presented frames; used by bounded smoke runs and CTest. |
+| `ZENITH_EDITOR_SMOKE` | Runs the scripted editor scenario (viewport resizes, play-mode transitions, streamed layer). |
+| `ZENITH_BENCHMARK_FRAMES=N` | Measures N frames and prints the benchmark JSON report to stdout, then quits. |
+| `ZENITH_BENCHMARK_WARMUP_FRAMES=N` | Frames rendered before measuring (default 120). |
+| `ZENITH_BENCHMARK_MODE=render` | Measures rendering only (no simulation); any other value measures the full runtime. |
+| `ZENITH_BENCHMARK_OBJECTS=N` | Demo scene spawns N benchmark objects (at most 10,000) and 96 local lights. |
+| `ZENITH_BENCHMARK_LIGHTS=N` | Overrides the benchmark local-light count (at most 8,192); also works without objects. |
+| `ZENITH_BENCHMARK_FRAME_BUDGET_MS=X` | CPU frame budget counted in `cpu.frame.over_budget`. |
+| `ZENITH_BENCHMARK_SAMPLES=1` | Includes every raw sample in the report. |
+| `ZENITH_FRAME_WORKERS`, `ZENITH_FRAME_GRAIN`, `ZENITH_FRAME_DETERMINISTIC` | Frame task-graph worker count, minimum grain size, and deterministic scheduling. |
+| `ZENITH_RESOURCE_ROOT` | Overrides the directory assets, shaders, and derived data load from. |
+
+### GPU pass metrics
+
+Each frame's timestamp pool brackets every pass; `RenderStats` exposes the
+retired frame's durations and the benchmark reports them as `gpu.*` metrics.
+Passes a frame skips report zero. `gpu.shadow` runs from the frame start, so it
+also includes `gpu.environment_precompute` (which records work only when the
+environment changes), the early-phase `gpu.culling`, and any upload wait. `gpu.opaque` spans
+`gpu.light_clusters`, `gpu.depth_prepass` (which includes the GPU-driven late
+cull), `gpu.depth_pyramid`, and shading. `gpu.blended` includes `gpu.skybox`.
+`gpu.environment` is precompute plus skybox. The editor's Graphics panel shows
+the same table live.
+
+`gpu_visibility_mismatches` counts retired GPU-driven frames whose culling kept
+more objects than the CPU frustum reference. The GPU sphere test uses the
+reference's exact x/y planes and tighter depth planes, so any nonzero value is a
+culling defect.

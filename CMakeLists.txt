@@ -368,10 +368,12 @@ add_library(zenith_editor_app STATIC
     src/editor/document/SceneFragment.cpp
     src/editor/interaction/ComponentEditors.cpp
     src/editor/interaction/EditorCamera.cpp
+    src/editor/interaction/GraphicsSettingsEditor.cpp
     src/editor/project/AssetCatalog.cpp
     src/editor/project/DerivedAssetInspector.cpp
     src/editor/project/ReflectionProbeBaker.cpp
     src/editor/project/ThumbnailCache.cpp
+    src/editor/settings/EditorRenderSettings.cpp
     src/editor/settings/EditorSettings.cpp
 )
 target_link_libraries(zenith_editor_app PUBLIC zenith_engine)
@@ -868,6 +870,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_editor_hardening_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_editor_hardening COMMAND zenith_editor_hardening_tests)
+
+    add_executable(zenith_editor_render_settings_tests tests/editor/EditorRenderSettingsTests.cpp)
+    target_link_libraries(zenith_editor_render_settings_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_editor_render_settings_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_editor_render_settings_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_editor_render_settings COMMAND zenith_editor_render_settings_tests)
 
     add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
     set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES
