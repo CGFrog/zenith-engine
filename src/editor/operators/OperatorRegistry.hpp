@@ -16,15 +16,17 @@ struct OperatorRegistrationResult {
     }
 };
 
-// The catalog of operators. The editor registers its own; game or tool
-// modules may add theirs later through the same call. Operators are kept in
-// registration order and never removed, so pointers from find() stay valid
-// for the registry's lifetime.
+// The catalog of operators. The editor registers its own; game modules add
+// theirs through the same call. Operators are kept in registration order.
+// Pointers from find() stay valid until that operator is removed, which only
+// a game module host does, before unloading the code the operator runs.
 class OperatorRegistry {
   public:
     // Rejects an empty or duplicate id, a missing label or execute function,
     // and property fields that do not describe their struct.
     OperatorRegistrationResult add(Operator op);
+    // Returns whether an operator with id was registered.
+    bool remove(std::string_view id);
     const Operator* find(std::string_view id) const;
     // Registration order, which is also the F3 search order for equal scores.
     std::vector<const Operator*> operators() const;

@@ -456,6 +456,7 @@ endif()
 add_library(zenith_editor_app STATIC
     src/editor/application/EditorApplication.cpp
     src/editor/application/EditorDiagnostics.cpp
+    src/editor/application/EditorModuleCommands.cpp
     src/editor/application/EditorObjectCommands.cpp
     src/editor/application/EditorPlayMode.cpp
     src/editor/application/EditorTheme.cpp
@@ -475,6 +476,7 @@ add_library(zenith_editor_app STATIC
     src/editor/interaction/GraphicsSettingsEditor.cpp
     src/editor/interaction/ReflectedFieldEditor.cpp
     src/editor/interaction/Selection.cpp
+    src/editor/modules/GameModuleHost.cpp
     src/editor/operators/DefaultKeymap.cpp
     src/editor/operators/Keymap.cpp
     src/editor/operators/KeymapEditor.cpp
@@ -1344,11 +1346,68 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_operators COMMAND zenith_operator_tests)
 
+    # Game modules with editor extensions for zenith_game_module_host_tests and
+    # the editor module smoke: one source built as two versions, so a test can
+    # hot reload one over the other. They link only the engine, as real game
+    # modules do.
+    add_library(zenith_editor_test_module MODULE tests/editor/modules/EditorTestModule.cpp)
+    add_library(zenith_editor_test_module_v2 MODULE tests/editor/modules/EditorTestModule.cpp)
+    target_compile_definitions(zenith_editor_test_module_v2 PRIVATE ZENITH_EDITOR_TEST_MODULE_V2)
+    add_executable(zenith_game_module_host_tests tests/editor/GameModuleHostTests.cpp)
+    target_link_libraries(zenith_game_module_host_tests PRIVATE zenith_editor_app)
+    target_compile_definitions(zenith_game_module_host_tests PRIVATE
+        ZENITH_EDITOR_TEST_MODULE_V1="$<TARGET_FILE:zenith_editor_test_module>"
+        ZENITH_EDITOR_TEST_MODULE_V2="$<TARGET_FILE:zenith_editor_test_module_v2>")
+    add_dependencies(zenith_game_module_host_tests zenith_editor_test_module zenith_editor_test_module_v2)
+    foreach(editor_module_target IN ITEMS zenith_editor_test_module zenith_editor_test_module_v2
+            zenith_game_module_host_tests)
+        if(NOT editor_module_target STREQUAL "zenith_game_module_host_tests")
+            target_link_libraries(${editor_module_target} PRIVATE zenith_engine)
+            target_include_directories(${editor_module_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        endif()
+        if(MSVC)
+            target_compile_options(${editor_module_target} PRIVATE /W4 /permissive-)
+        else()
+            target_compile_options(${editor_module_target} PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+    endforeach()
+    add_test(NAME zenith_game_module_host COMMAND zenith_game_module_host_tests)
+
     add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
     set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES
         ENVIRONMENT "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600"
         LABELS "vulkan;smoke"
         TIMEOUT 45
+        # Editor runs share the user settings directory and its smoke scene.
+        RESOURCE_LOCK zenith_editor_user_data
+    )
+
+    # The editor smoke on the demo scene with a game module, which the smoke
+    # scenario also hot reloads once.
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/projects/demo.zenith-project" ZENITH_DEMO_PROJECT_JSON)
+    string(JSON ZENITH_DEMO_RENDER_SETTINGS GET "${ZENITH_DEMO_PROJECT_JSON}" renderSettings)
+    # Project paths are relative to the project file.
+    file(RELATIVE_PATH ZENITH_MODULE_SMOKE_ASSET_ROOT "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+    file(RELATIVE_PATH ZENITH_MODULE_SMOKE_SCENE_ROOT "${CMAKE_CURRENT_BINARY_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/projects/scenes")
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/editor-module-smoke-$<CONFIG>.zenith-project" CONTENT
+"{
+  \"version\": 4,
+  \"displayName\": \"Zenith Editor Module Smoke\",
+  \"assetRoot\": \"${ZENITH_MODULE_SMOKE_ASSET_ROOT}\",
+  \"sceneRoot\": \"${ZENITH_MODULE_SMOKE_SCENE_ROOT}\",
+  \"startupScene\": \"demo.zenith-scene\",
+  \"gameModule\": \"$<PATH:RELATIVE_PATH,$<TARGET_FILE:zenith_editor_test_module>,${CMAKE_CURRENT_BINARY_DIR}>\",
+  \"renderSettings\": ${ZENITH_DEMO_RENDER_SETTINGS}
+}
+")
+    add_test(NAME zenith_editor_module_smoke
+        COMMAND zenith_editor "${CMAKE_CURRENT_BINARY_DIR}/editor-module-smoke-$<CONFIG>.zenith-project")
+    set_tests_properties(zenith_editor_module_smoke PROPERTIES
+        ENVIRONMENT "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600"
+        LABELS "vulkan;smoke"
+        TIMEOUT 60
+        RESOURCE_LOCK zenith_editor_user_data
     )
 
     add_executable(zenith_graphics_validation_tests tests/engine/GraphicsValidationTests.cpp)
@@ -1402,4 +1461,5 @@ if(BUILD_TESTING)
         COMMAND zenith_editor
         ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=600
     )
+    set_tests_properties(zenith_validation_editor PROPERTIES RESOURCE_LOCK zenith_editor_user_data)
 endif()

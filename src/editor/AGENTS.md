@@ -10,6 +10,7 @@ depend on this subtree.
 | `main.cpp` | Editor executable composition root. |
 | `application/` | Editor application lifecycle and the UI/session coordinator. |
 | `document/` | Scene document state, persistence workflow, and undo/redo history. |
+| `modules/` | Game module hosting: loading the project's module, running its systems, hot reload, and the header-only editor extension API modules implement. |
 | `interaction/` | Editor camera, picking, selection, gizmos, and component editing widgets. |
 | `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object operators, the per-region keymap with `keymap.json` overrides, F3 search, and the keymap editor. |
 | `panels/` | One class per dockable window, drawn from an `EditorContext`. |
@@ -38,3 +39,8 @@ depend on this subtree.
 - A new window is an `EditorPanel` in `panels/`. Panels receive everything
   through `EditorContext`, record scene changes through `SceneEditing` so they
   are undoable, and never reach into other panels.
+- Never cache a game module's `ComponentType` pointers or registries across
+  frames: read them from `EditorDocument::options()`. Before a module unloads,
+  `GameModuleHost` releases its registries, systems, operators, and panels and
+  replaces (never clears) the scene registry; a new holder of module code must
+  be released there too.

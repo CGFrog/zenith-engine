@@ -13,6 +13,20 @@
 #include <string_view>
 
 namespace {
+// Loads the project's startup scene with the editor's document options, which
+// carry the game module's component types when the project has a module.
+SceneResult loadStartupScene(const ProjectConfig& project, const SceneDocumentOptions& options, AssetManager& assets,
+                             Scene& scene) {
+    std::filesystem::path scenePath;
+    if (const ProjectConfigResult resolved =
+            resolveProjectScene(project, project.startupScene.lexically_relative(project.sceneRoot), scenePath);
+        !resolved) {
+        return {.error = resolved.error};
+    }
+    const SceneDocumentResult loaded = SceneDocument::load(scenePath, assets, options, scene);
+    return {.success = loaded.success, .error = loaded.error};
+}
+
 // `zenith_editor <project> --bake-irradiance-volumes` bakes every irradiance
 // volume in the project's startup scene and saves the scene, without a window.
 int bakeIrradianceVolumes(const ProjectConfig& project) {
@@ -75,11 +89,10 @@ int main(int argc, char** argv) {
         projectLoaded = true;
     }
     // Without a startup scene the editor opens its default scene.
-    std::function<SceneResult(ApplicationContext&)> initialSceneLoader;
+    EditorApplication::SceneLoader initialSceneLoader;
     if (projectLoaded && !project.startupScene.empty()) {
-        initialSceneLoader = [project](ApplicationContext& context) -> SceneResult {
-            const ProjectConfigResult result = loadProjectStartupScene(project, context.assets, context.scene);
-            return SceneResult{.success = result.success, .error = result.error};
+        initialSceneLoader = [project](ApplicationContext& context, const SceneDocumentOptions& options) {
+            return loadStartupScene(project, options, context.assets, context.scene);
         };
     }
     EditorApplication application(userDataDirectory("Zenith", "Editor"),

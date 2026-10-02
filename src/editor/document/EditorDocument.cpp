@@ -73,3 +73,7 @@ std::string EditorDocument::displayName() const {
 const SceneDocumentOptions& EditorDocument::options() const {
     return m_options;
 }
+
+void EditorDocument::setComponentTypes(std::shared_ptr<const ComponentTypeRegistry> componentTypes) {
+    m_options.componentTypes = std::move(componentTypes);
+}

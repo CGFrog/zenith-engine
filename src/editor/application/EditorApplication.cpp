@@ -9,8 +9,7 @@ constexpr SceneKey editorSessionKey{0};
 }
 
 EditorApplication::EditorApplication(std::filesystem::path settingsDirectory, std::filesystem::path fontPath,
-                                     ProjectConfig project,
-                                     std::function<SceneResult(ApplicationContext&)> initialSceneLoader)
+                                     ProjectConfig project, SceneLoader initialSceneLoader)
     : m_settingsDirectory(std::move(settingsDirectory))
     , m_fontPath(std::move(fontPath))
     , m_project(std::move(project))
@@ -32,5 +31,5 @@ std::unique_ptr<ApplicationScene> EditorApplication::createScene(SceneKey scene)
     // own settings.
     EditorRenderSettings renderSettings(m_project, m_settingsDirectory / "render-settings.json");
     return std::make_unique<EditorSession>(m_settingsDirectory, m_project.assetRoot, m_project.sceneRoot, m_fontPath,
-                                           std::move(renderSettings), m_initialSceneLoader);
+                                           std::move(renderSettings), m_initialSceneLoader, m_project.gameModule);
 }

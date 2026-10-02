@@ -137,3 +137,7 @@ std::shared_ptr<const SystemRegistry> GameModule::systems() const {
 bool GameModule::registriesShared() const {
     return m_componentTypes.use_count() > 1 || m_systems.use_count() > 1;
 }
+
+void* GameModule::findSymbol(const char* name) const {
+    return m_library.symbol(name);
+}

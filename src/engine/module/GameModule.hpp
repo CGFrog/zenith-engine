@@ -74,6 +74,12 @@ class GameModule {
     // Whether anything outside this object still shares the registries.
     bool registriesShared() const;
 
+    // The address of an optional entry point the module exports beyond the
+    // module API (for example a host-specific extension), or null when it
+    // exports none. Like the registries, the address is valid only while this
+    // object lives.
+    void* findSymbol(const char* name) const;
+
   private:
     GameModule() = default;
 
