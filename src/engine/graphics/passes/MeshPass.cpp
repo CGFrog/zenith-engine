@@ -1244,7 +1244,9 @@ const MeshPass::GpuMesh* MeshPass::ensureMesh(MeshHandle handle, const AssetMana
         uploaded = uploadBufferRegions(regions);
     }
     if (!uploaded) {
+        // Staging was full; the packets are rebuilt until this mesh lands.
         m_geometry->free(*geometry);
+        m_renderItemsIncomplete = true;
         return nullptr;
     }
     return &m_meshes.emplace(key, GpuMesh{*geometry}).first->second;
@@ -1965,13 +1967,15 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const SceneRevisions& revisions = scene.revisions();
     const bool rebuildPackets = !m_packetCachingEnabled || revisions.renderable != m_sceneRevisions.renderable ||
                                 revisions.material != m_sceneRevisions.material ||
-                                assets.revision() != m_assetRevision || outlineRevision != m_outlineRevision;
+                                assets.revision() != m_assetRevision || outlineRevision != m_outlineRevision ||
+                                m_renderItemsIncomplete;
     const auto packetBuildStart = std::chrono::steady_clock::now();
     uint32_t scannedRenderables = 0;
     uint32_t updatedObjectRecords = 0;
     uint32_t allocationCount = 0;
     if (rebuildPackets) {
         m_renderItems.clear();
+        m_renderItemsIncomplete = false;
         const size_t previousCapacity = m_renderItems.capacity();
         if (!buildRenderItems(scene, assets, rendering.m_outlinedObjects, m_renderItems)) {
             return false;

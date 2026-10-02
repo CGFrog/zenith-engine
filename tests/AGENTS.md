@@ -7,6 +7,8 @@ Tests mirror the production dependency boundary:
 | `engine/` | Reusable subsystem contracts and scene/asset integration. |
 | `editor/` | Authoring documents, history, settings, camera, and widgets. |
 | `game/` | Demo application lifecycle and gameplay control integration. |
+| `capture/` | Reference capture driver that renders manifest views and compares them with checked-in images. |
+| `references/` | Capture manifests and reference PNGs; regenerate them as `docs/RENDERER_VALIDATION.md` describes. |
 
 Prefer public behavior, deterministic inputs, and CPU-only execution when GPU
 access is not intrinsic. Every test executable is listed explicitly in the root

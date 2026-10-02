@@ -76,6 +76,11 @@ class MeshPass {
         return m_textureUploadContext.requiredTimelineValue();
     }
 
+    // See PostProcessPass::setFixedFrameSeconds.
+    void setFixedFrameSeconds(std::optional<float> seconds) {
+        m_postProcess.setFixedFrameSeconds(seconds);
+    }
+
     void shutdown(const VulkanContext& context);
 
   private:
@@ -329,6 +334,9 @@ class MeshPass {
     uint64_t m_assetRevision{0};
     uint64_t m_outlineRevision{0};
     bool m_packetCachingEnabled{true};
+    // Set when the last packet build skipped a mesh whose upload could not be
+    // staged; the packets are rebuilt every frame until it lands.
+    bool m_renderItemsIncomplete{false};
     std::vector<const RenderItem*> m_visibleItems;
     std::vector<const RenderItem*> m_shadowVisibleItems;
     GpuTexture m_whiteTexture;

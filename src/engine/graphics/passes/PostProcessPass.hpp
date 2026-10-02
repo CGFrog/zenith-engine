@@ -43,6 +43,12 @@ class PostProcessPass {
                 double& bloomCpuMilliseconds, VkImageLayout outputOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
     void shutdown(const VulkanContext& context);
 
+    // Advances exposure adaptation by this many seconds per recorded frame
+    // instead of by wall-clock time; nullopt restores wall-clock adaptation.
+    void setFixedFrameSeconds(std::optional<float> seconds) {
+        m_fixedFrameSeconds = seconds;
+    }
+
     VkImage sceneImage(uint32_t frameIndex) const;
     VkImageView sceneView(uint32_t frameIndex) const;
     VkImage motionImage(uint32_t frameIndex) const;
@@ -112,4 +118,5 @@ class PostProcessPass {
     VkExtent2D m_previousRenderExtent{};
     BloomExposurePass m_bloomExposure;
     std::optional<std::chrono::steady_clock::time_point> m_previousExposureTime;
+    std::optional<float> m_fixedFrameSeconds;
 };

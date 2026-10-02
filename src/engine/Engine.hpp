@@ -4,6 +4,7 @@
 #include "application/Application.hpp"
 #include "assets/Assets.hpp"
 #include "audio/AudioSystem.hpp"
+#include "diagnostics/FrameCaptureConfig.hpp"
 #include "graphics/Renderer.hpp"
 #include "input/InputManager.hpp"
 #include "jobs/FrameTaskGraph.hpp"
@@ -27,7 +28,10 @@ class Engine {
 
   private:
     static uint64_t readFrameLimit();
+    // Takes the requested capture from the frame just drawn and writes it.
+    bool writeFrameCapture(const FrameCaptureRequest& request);
 
+    FrameCaptureConfig m_captureConfig;
     Window m_window;
     InputManager m_input;
     FrameTaskExecutor m_frameTasks;

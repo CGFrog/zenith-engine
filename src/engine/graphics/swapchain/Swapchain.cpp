@@ -20,17 +20,26 @@ VkCompositeAlphaFlagBitsKHR selectCompositeAlpha(const VkSurfaceCapabilitiesKHR&
 }
 } // namespace
 
-bool Swapchain::initSwapchain(const Window& window, const Surface& surface, const VulkanContext& context) {
+bool Swapchain::initSwapchain(const Window& window, const Surface& surface, const VulkanContext& context,
+                              const SwapchainOptions& options) {
     const VkSurfaceCapabilitiesKHR caps = surface.capabilities(context.pDevice());
     if (!selectExtent(window, caps)) {
         return false;
+    }
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    if (options.transferSource) {
+        if ((caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) == 0) {
+            std::cerr << "The presentation surface does not support copying swapchain images (frame capture)\n";
+            return false;
+        }
+        usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     }
     VkSurfaceFormatKHR format{};
     if (!selectFormat(surface, context.pDevice(), format)) {
         return false;
     }
     selectPresentMode(surface, context.pDevice());
-    if (!createHandle(context.device(), surface.handle(), caps, format)) {
+    if (!createHandle(context.device(), surface.handle(), caps, format, usage)) {
         return false;
     }
     if (!createImageViews(context.device())) {
@@ -113,7 +122,7 @@ const char* Swapchain::presentModeName() const {
 }
 
 bool Swapchain::createHandle(VkDevice device, VkSurfaceKHR surface, const VkSurfaceCapabilitiesKHR& caps,
-                             VkSurfaceFormatKHR format) {
+                             VkSurfaceFormatKHR format, VkImageUsageFlags usage) {
     uint32_t imageCount = caps.minImageCount + extraSwapchainImages;
     if (caps.maxImageCount != 0) {
         imageCount = std::min(imageCount, caps.maxImageCount);
@@ -125,7 +134,7 @@ bool Swapchain::createHandle(VkDevice device, VkSurfaceKHR surface, const VkSurf
                                   .imageColorSpace = format.colorSpace,
                                   .imageExtent = m_extent,
                                   .imageArrayLayers = 1,
-                                  .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                                  .imageUsage = usage,
                                   .preTransform = caps.currentTransform,
                                   .compositeAlpha = selectCompositeAlpha(caps),
                                   .presentMode = m_presentMode,

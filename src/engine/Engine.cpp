@@ -1,10 +1,12 @@
 #include "Engine.hpp"
 #include "diagnostics/Benchmark.hpp"
+#include "diagnostics/RgbaImage.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <string_view>
 
 namespace {
@@ -68,14 +70,27 @@ FrameTaskGraphConfig frameTaskConfiguration() {
 } // namespace
 
 Engine::Engine()
-    : m_frameTasks(frameTaskConfiguration()) {}
+    : m_captureConfig(frameCaptureConfigFromEnvironment())
+    , m_frameTasks(frameTaskConfiguration()) {}
 
 bool Engine::init(const PhysicsWorldConfig& physicsConfig, const AudioConfig& audioConfig) {
+    if (!m_captureConfig) {
+        std::cerr << "Invalid frame capture configuration: " << m_captureConfig.error << '\n';
+        return false;
+    }
+    if (m_captureConfig.windowSize) {
+        m_window.width = m_captureConfig.windowSize->width;
+        m_window.height = m_captureConfig.windowSize->height;
+    }
     if (!m_window.init()) {
         return false;
     }
 
-    if (!m_renderer.init(m_window, m_rendering, m_frameTasks)) {
+    const RendererOptions rendererOptions{.frameCapture = m_captureConfig.capture.has_value(),
+                                          .fixedFrameSeconds = m_captureConfig.fixedFrameTime
+                                                                   ? std::optional<float>(physicsConfig.fixedTimeStep)
+                                                                   : std::nullopt};
+    if (!m_renderer.init(m_window, m_rendering, m_frameTasks, rendererOptions)) {
         return false;
     }
     m_assets.setTextureFormatCapabilities(m_renderer.textureFormatCapabilities());
@@ -96,7 +111,18 @@ bool Engine::run(Application& application) {
     uint64_t renderedFrames = 0;
     const BenchmarkConfiguration benchmark = benchmarkConfiguration();
     const bool benchmarkEnabled = benchmark.mode != BenchmarkMode::Disabled;
-    const uint64_t frameLimit = benchmarkEnabled ? benchmark.warmupFrames + benchmark.frames : readFrameLimit();
+    uint64_t frameLimit = benchmarkEnabled ? benchmark.warmupFrames + benchmark.frames : readFrameLimit();
+    const std::optional<FrameCaptureRequest>& capture = m_captureConfig.capture;
+    if (capture) {
+        // Without another limit the run ends with the captured frame.
+        if (frameLimit == 0) {
+            frameLimit = capture->frame;
+        } else if (frameLimit < capture->frame) {
+            std::cerr << "ZENITH_CAPTURE_FRAME " << capture->frame << " is beyond the " << frameLimit
+                      << "-frame run limit\n";
+            return false;
+        }
+    }
     BenchmarkReport benchmarkReport;
     addBuildMetadata(benchmarkReport);
 
@@ -137,7 +163,7 @@ bool Engine::run(Application& application) {
         double physicsMilliseconds = 0.0;
         FrameTaskGraphStats animationTaskStats;
         if (benchmark.mode != BenchmarkMode::RenderOnly) {
-            if (benchmark.mode == BenchmarkMode::FullRuntime) {
+            if (benchmark.mode == BenchmarkMode::FullRuntime || m_captureConfig.fixedFrameTime) {
                 deltaSeconds = m_physics.config().fixedTimeStep;
             } else {
                 const uint64_t now = SDL_GetTicksNS();
@@ -210,8 +236,17 @@ bool Engine::run(Application& application) {
         applicationSession.drawUi();
         m_renderer.drawGameUi(m_gameUi, m_assets);
         const double uiBuildMilliseconds = elapsedMilliseconds(uiBegin);
+        const bool captureThisFrame = capture && renderedFrames + 1 == capture->frame;
+        if (captureThisFrame) {
+            m_renderer.requestFrameCapture();
+        }
         const auto renderBegin = std::chrono::steady_clock::now();
         if (!m_renderer.drawFrame(m_window, m_scene, m_assets)) {
+            runSucceeded = false;
+            running = false;
+            break;
+        }
+        if (captureThisFrame && !writeFrameCapture(*capture)) {
             runSucceeded = false;
             running = false;
             break;
@@ -332,6 +367,34 @@ AudioSystem& Engine::audio() {
 
 RenderRuntime& Engine::rendering() {
     return m_rendering;
+}
+
+bool Engine::writeFrameCapture(const FrameCaptureRequest& request) {
+    const FrameCaptureResult result = m_renderer.takeFrameCapture();
+    if (!result.error.empty()) {
+        std::cerr << "Frame capture failed: " << result.error << '\n';
+        return false;
+    }
+    if (!result.image) {
+        std::cerr << "Frame " << request.frame << " was not rendered (minimized window or out-of-date swapchain)\n";
+        return false;
+    }
+    // A capture taken while content is still arriving would not be repeatable.
+    const RenderStats& stats = m_rendering.stats();
+    const uint64_t pendingBytes =
+        stats.uploadBytes + stats.streamingUploadBacklogBytes + stats.streamingDecodeBacklogBytes;
+    if (pendingBytes != 0) {
+        std::cerr << "Frame " << request.frame << " was captured while " << pendingBytes
+                  << " bytes of assets were still uploading; capture a later frame\n";
+        return false;
+    }
+    if (const ImageFileResult written = writePng(request.outputPath, *result.image); !written) {
+        std::cerr << "Frame capture failed: " << written.error << '\n';
+        return false;
+    }
+    std::cout << "Captured frame " << request.frame << " (" << result.image->width << 'x' << result.image->height
+              << ") to " << request.outputPath.string() << '\n';
+    return true;
 }
 
 uint64_t Engine::readFrameLimit() {

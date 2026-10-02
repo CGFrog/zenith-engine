@@ -650,10 +650,14 @@ void PostProcessPass::recordBloomAndExposure(VkCommandBuffer commandBuffer, cons
 }
 
 // Exposure adapts in wall-clock time between recorded frames, independent of
-// the simulation step (which is zero in render-only benchmarks). Long stalls
-// are clamped so a hitch does not snap exposure.
+// the simulation step (which is zero in render-only benchmarks), unless a fixed
+// frame time makes it deterministic. Long stalls are clamped so a hitch does
+// not snap exposure.
 float PostProcessPass::exposureDeltaSeconds() {
     constexpr float maximumDeltaSeconds = 0.25f;
+    if (m_fixedFrameSeconds) {
+        return std::clamp(*m_fixedFrameSeconds, 0.0f, maximumDeltaSeconds);
+    }
     const auto now = std::chrono::steady_clock::now();
     const float delta =
         m_previousExposureTime ? std::chrono::duration<float>(now - *m_previousExposureTime).count() : 0.0f;

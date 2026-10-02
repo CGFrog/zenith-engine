@@ -10,6 +10,7 @@
 #include "passes/MeshPass.hpp"
 #include "passes/UiPass.hpp"
 #include "resources/FrameResources.hpp"
+#include "resources/ImageReadback.hpp"
 #include "resources/ViewportTarget.hpp"
 #include "surface/Surface.hpp"
 #include "swapchain/Swapchain.hpp"
@@ -40,10 +41,39 @@ struct RenderGraphShape {
     bool operator==(const RenderGraphShape&) const = default;
 };
 
+// Diagnostic options fixed for the renderer's lifetime.
+struct RendererOptions {
+    // Creates the swapchain with TRANSFER_SRC usage so requestFrameCapture()
+    // can copy presented images.
+    bool frameCapture{false};
+    // See PostProcessPass::setFixedFrameSeconds.
+    std::optional<float> fixedFrameSeconds;
+};
+
+// Outcome of a requested frame capture: an image or an error. Neither is set
+// when the frame was skipped before recording (minimized window or an out of
+// date swapchain).
+struct FrameCaptureResult {
+    std::optional<RgbaImage> image;
+    std::string error;
+};
+
 class Renderer {
   public:
-    bool init(const Window& window, RenderRuntime& rendering, FrameTaskExecutor& frameTasks);
+    bool init(const Window& window, RenderRuntime& rendering, FrameTaskExecutor& frameTasks,
+              const RendererOptions& options = {});
     bool drawFrame(const Window& window, Scene& scene, const AssetManager& assets);
+
+    // Copies the swapchain image the next drawFrame presents, after every pass
+    // including UI, and waits for it before presenting. Requires
+    // RendererOptions::frameCapture.
+    void requestFrameCapture() {
+        m_captureRequested = true;
+    }
+
+    // Returns and clears the result of the capture requested before the latest
+    // drawFrame.
+    FrameCaptureResult takeFrameCapture();
     void processUiEvent(const SDL_Event& event);
     void beginUiFrame(const AssetManager& assets);
     void drawGameUi(const GameUiContext& gameUi, const AssetManager& assets);
@@ -92,6 +122,8 @@ class Renderer {
     FrameStatus acquireImage(const FrameResources& frame, uint32_t& imageIndex);
     bool recordFrame(const FrameResources& frame, uint32_t imageIndex, const Scene& scene, const AssetManager& assets);
     bool presentFrame(uint32_t imageIndex);
+    void prepareCapture();
+    void finishCapture(const FrameResources& frame);
     void pruneUnusedUiTextures(const AssetManager& assets);
     bool updateRenderGraphPlan(VkExtent2D extent, bool useViewport);
 
@@ -123,4 +155,11 @@ class Renderer {
     uint32_t m_prewarmedPipelineCount{0};
     bool m_pipelineCacheWarm{false};
     bool m_pipelineFirstUsePending{true};
+    RendererOptions m_options;
+    ImageReadback m_readback;
+    FrameCaptureResult m_capture;
+    bool m_captureRequested{false};
+    // Set between a successful prepareCapture and finishCapture; recordFrame
+    // then records the copy.
+    bool m_capturePrepared{false};
 };

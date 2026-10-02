@@ -4,6 +4,7 @@
 #include "engine/project/ProjectConfig.hpp"
 #include "game/application/GameSettings.hpp"
 #include "game/input/DemoInput.hpp"
+#include "game/scene/CaptureCamera.hpp"
 
 #include <optional>
 
@@ -17,8 +18,12 @@ constexpr SceneKey demoSceneKey(DemoSceneId scene) {
 
 class DemoApplication final : public Application {
   public:
+    // A capture camera replaces the player and makes the run independent of
+    // the persisted game settings: the project's render settings apply
+    // unchanged and nothing is loaded from or saved to settingsPath.
     explicit DemoApplication(std::optional<ProjectConfig> project = std::nullopt,
-                             std::filesystem::path settingsPath = {});
+                             std::filesystem::path settingsPath = {},
+                             std::optional<CaptureCameraPath> captureCamera = std::nullopt);
 
     SceneResult onStart(ApplicationContext& context) override;
     SceneKey initialScene() const override;
@@ -32,4 +37,5 @@ class DemoApplication final : public Application {
     std::shared_ptr<GameSettings> m_settings;
     std::filesystem::path m_settingsPath;
     std::optional<ProjectConfig> m_project;
+    std::optional<CaptureCameraPath> m_captureCamera;
 };

@@ -7,11 +7,13 @@
 #include <filesystem>
 #include <iostream>
 
-DemoApplication::DemoApplication(std::optional<ProjectConfig> project, std::filesystem::path settingsPath)
+DemoApplication::DemoApplication(std::optional<ProjectConfig> project, std::filesystem::path settingsPath,
+                                 std::optional<CaptureCameraPath> captureCamera)
     : m_inputActions(createDemoInputMap())
     , m_settings(std::make_shared<GameSettings>())
-    , m_settingsPath(std::move(settingsPath))
-    , m_project(std::move(project)) {}
+    , m_settingsPath(captureCamera ? std::filesystem::path{} : std::move(settingsPath))
+    , m_project(std::move(project))
+    , m_captureCamera(captureCamera) {}
 
 SceneResult DemoApplication::onStart(ApplicationContext& context) {
     if (!m_settingsPath.empty() && std::filesystem::exists(m_settingsPath)) {
@@ -20,8 +22,10 @@ SceneResult DemoApplication::onStart(ApplicationContext& context) {
         }
     }
     RenderSettings renderSettings = m_project ? m_project->renderSettings : context.rendering.settings();
-    renderSettings.antialiasing = m_settings->antialiasing;
-    renderSettings.bloom = m_settings->bloom;
+    if (!m_captureCamera) {
+        renderSettings.antialiasing = m_settings->antialiasing;
+        renderSettings.bloom = m_settings->bloom;
+    }
     ValidatedRenderSettings validated = validateRenderSettings(renderSettings, context.rendering.capabilities());
     for (const std::string& fallback : validated.fallbacks) {
         std::cerr << "Render setting fallback: " << fallback << '\n';
@@ -67,7 +71,7 @@ SceneKey DemoApplication::initialScene() const {
 std::unique_ptr<ApplicationScene> DemoApplication::createScene(SceneKey scene) {
     if (scene == demoSceneKey(DemoSceneId::Gameplay)) {
         return std::make_unique<GameplayScene>(m_interactionSound, m_inputActions, m_settings, m_settingsPath,
-                                               m_project);
+                                               m_project, m_captureCamera);
     }
 
     return nullptr;

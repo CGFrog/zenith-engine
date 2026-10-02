@@ -4,6 +4,12 @@
 #include "../vulkan/VulkanContext.hpp"
 #include <volk.h>
 
+struct SwapchainOptions {
+    // Adds TRANSFER_SRC usage so presented images can be copied to host memory
+    // (frame capture). Creation fails when the surface does not support it.
+    bool transferSource{false};
+};
+
 class Swapchain {
   public:
     static constexpr VkFormat swapchainFormat = VK_FORMAT_B8G8R8A8_SRGB;
@@ -13,7 +19,8 @@ class Swapchain {
     Swapchain(const Swapchain&) = delete;
     Swapchain& operator=(const Swapchain&) = delete;
 
-    bool initSwapchain(const Window& window, const Surface& surface, const VulkanContext& context);
+    bool initSwapchain(const Window& window, const Surface& surface, const VulkanContext& context,
+                       const SwapchainOptions& options = {});
     void destroySwapchain(const VulkanContext& context);
     VkResult acquire(VkDevice device, VkSemaphore imageAcquired, uint32_t& imageIndex) const;
     VkResult present(VkQueue queue, uint32_t imageIndex) const;
@@ -65,7 +72,7 @@ class Swapchain {
     bool selectFormat(const Surface& surface, VkPhysicalDevice device, VkSurfaceFormatKHR& format);
     void selectPresentMode(const Surface& surface, VkPhysicalDevice device);
     bool createHandle(VkDevice device, VkSurfaceKHR surface, const VkSurfaceCapabilitiesKHR& caps,
-                      VkSurfaceFormatKHR format);
+                      VkSurfaceFormatKHR format, VkImageUsageFlags usage);
     bool createImageViews(VkDevice device);
     bool createPresentationSemaphores(VkDevice device);
     bool createDepthResources(const VulkanContext& context);
