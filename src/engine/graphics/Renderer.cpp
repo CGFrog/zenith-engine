@@ -481,8 +481,10 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             "HDR scene", image(PostProcessPass::sceneFormat, 7, pixels * sizeof(uint16_t) * 4));
         const auto motion = graph.createTransientImage(
             "motion and reactive mask", image(PostProcessPass::motionFormat, 5, pixels * sizeof(uint16_t) * 4));
+        // Persistent per frame slot; AmbientOcclusionPass keeps it in GENERAL.
         const auto ambientOcclusion =
-            graph.createTransientImage("ambient occlusion", image(PostProcessPass::ambientOcclusionFormat, 5, pixels));
+            graph.importImage("ambient occlusion", image(AmbientOcclusionPass::occlusionFormat, 5, 0),
+                              AmbientOcclusionPass::occlusionLayout);
         const auto reflections = graph.createTransientImage(
             "screen-space reflections", image(PostProcessPass::sceneFormat, 5, pixels * sizeof(uint16_t) * 4));
         const RenderGraphAccess uploadAccesses[]{
@@ -564,7 +566,23 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             // Screen-space effects read this pyramid of the complete opaque depth.
             addDepthPyramidBuild("depth pyramid");
         }
+        // GTAO runs between the depth prepass and shading. It always records:
+        // without the prepass or with AO off it writes unoccluded values.
+        std::vector<RenderGraphAccess> ambientOcclusionAccesses{
+            {ambientOcclusion, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, AmbientOcclusionPass::occlusionLayout}};
+        if (shape.depthPrepass && shape.ambientOcclusion != AmbientOcclusionQuality::Off) {
+            ambientOcclusionAccesses.push_back(
+                {normals, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+            ambientOcclusionAccesses.push_back({depthPyramid, RenderGraphAccessMode::Read,
+                                                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL});
+        }
+        graph.addPass("ambient occlusion", RenderGraphQueue::Graphics, ambientOcclusionAccesses);
         std::vector<RenderGraphAccess> opaqueAccesses{
+            {ambientOcclusion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, AmbientOcclusionPass::occlusionLayout},
             {hdr, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
             {motion, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
@@ -639,12 +657,6 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
         if (m_rendering->settings().bloom != BloomQuality::Off) {
             graph.addPass("bloom chain", RenderGraphQueue::Graphics, sceneComputeRead);
         }
-        const RenderGraphAccess ambientOcclusionAccesses[]{
-            {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
-            {ambientOcclusion, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
-        graph.addPass("ambient occlusion", RenderGraphQueue::Graphics, ambientOcclusionAccesses);
         const RenderGraphAccess reflectionAccesses[]{
             {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
@@ -661,8 +673,6 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             {history, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, TemporalResolvePass::resolvedLayout},
             {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            {ambientOcclusion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             {reflections, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},

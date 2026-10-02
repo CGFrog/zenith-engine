@@ -1,0 +1,55 @@
+#version 450
+
+// Depth-aware 5x5 blur of gtao.comp's raw visibility. The window covers the 4x4
+// noise tile with equal weight per phase, so on flat regions every slice
+// rotation contributes equally to each texel; neighbours
+// across depth edges are rejected (mirrors denoiseDepthWeight in
+// src/engine/graphics/AmbientOcclusion.cpp). Temporal accumulation is left to
+// the temporal resolve.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// r = visibility, g = positive view depth (65504 for the sky).
+layout(set = 0, binding = 0) uniform sampler2D rawOcclusion;
+layout(set = 0, binding = 1, r8) uniform writeonly image2D occlusion;
+
+// Mirrors DenoiseSettings in AmbientOcclusionPass.cpp.
+layout(push_constant) uniform Settings {
+    ivec2 dispatchExtent; // texels written by gtao.comp and by this pass
+} settings;
+
+const float DEPTH_TOLERANCE = 0.1;
+const float SKY_DEPTH = 65504.0;
+
+float depthWeight(float centerDepth, float sampleDepth) {
+    float tolerance = max(centerDepth * DEPTH_TOLERANCE, 1e-4);
+    return clamp(1.0 - abs(sampleDepth - centerDepth) / tolerance, 0.0, 1.0);
+}
+
+void main() {
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(texel, settings.dispatchExtent))) {
+        return;
+    }
+    vec2 center = texelFetch(rawOcclusion, texel, 0).rg;
+    if (center.g >= SKY_DEPTH) {
+        imageStore(occlusion, texel, vec4(1.0));
+        return;
+    }
+    // Offsets -2 and +2 share a noise phase, so halving them gives every phase
+    // of the 4x4 tile equal weight; mirrors denoiseSpatialWeight.
+    const float spatialWeights[3] = float[3](1.0, 1.0, 0.5);
+    float weightedVisibility = 0.0;
+    float totalWeight = 0.0;
+    for (int y = -2; y <= 2; ++y) {
+        for (int x = -2; x <= 2; ++x) {
+            ivec2 neighbour = clamp(texel + ivec2(x, y), ivec2(0), settings.dispatchExtent - 1);
+            vec2 sampled = texelFetch(rawOcclusion, neighbour, 0).rg;
+            float weight = spatialWeights[abs(x)] * spatialWeights[abs(y)] * depthWeight(center.g, sampled.g);
+            weightedVisibility += sampled.r * weight;
+            totalWeight += weight;
+        }
+    }
+    // The center always has weight 1, so totalWeight > 0.
+    imageStore(occlusion, texel, vec4(weightedVisibility / totalWeight));
+}

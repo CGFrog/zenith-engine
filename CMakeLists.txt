@@ -290,10 +290,12 @@ add_library(zenith_engine STATIC
     src/engine/graphics/MeshLodSelection.cpp
     src/engine/graphics/TemporalQuality.cpp
     src/engine/graphics/ToneMapping.cpp
+    src/engine/graphics/AmbientOcclusion.cpp
     src/engine/graphics/graph/RenderGraph.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
     src/engine/graphics/passes/DepthPyramid.cpp
+    src/engine/graphics/passes/AmbientOcclusionPass.cpp
     src/engine/graphics/passes/ClusteredLightingPass.cpp
     src/engine/graphics/passes/EnvironmentPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
@@ -759,6 +761,10 @@ if(BUILD_TESTING)
     add_executable(zenith_depth_prepass_tests tests/engine/DepthPrepassTests.cpp)
     target_link_libraries(zenith_depth_prepass_tests PRIVATE zenith_engine)
     add_test(NAME zenith_depth_prepass COMMAND zenith_depth_prepass_tests)
+
+    add_executable(zenith_ambient_occlusion_tests tests/engine/AmbientOcclusionTests.cpp)
+    target_link_libraries(zenith_ambient_occlusion_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_ambient_occlusion COMMAND zenith_ambient_occlusion_tests)
 
     add_executable(zenith_clustered_lighting_tests tests/engine/ClusteredLightingTests.cpp)
     target_link_libraries(zenith_clustered_lighting_tests PRIVATE zenith_engine)

@@ -98,7 +98,7 @@ Passes a frame skips report zero. `gpu.shadow` runs from the frame start, so it
 also includes `gpu.environment_precompute` (which records work only when the
 environment changes), the early-phase `gpu.culling`, and any upload wait. `gpu.opaque` spans
 `gpu.light_clusters`, `gpu.depth_prepass` (which includes the GPU-driven late
-cull), `gpu.depth_pyramid`, and shading. `gpu.blended` includes `gpu.skybox`.
+cull), `gpu.depth_pyramid`, `gpu.ambient_occlusion`, and shading. `gpu.blended` includes `gpu.skybox`.
 `gpu.environment` is precompute plus skybox. The editor's Graphics panel shows
 the same table live.
 

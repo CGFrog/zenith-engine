@@ -208,7 +208,7 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
     }
     // Shadow time runs from the frame start through the early GPU cull, so it
     // also covers the environment precompute; opaque time spans the clusters,
-    // prepass and pyramid; blended time spans the skybox before blended surfaces.
+    // prepass, pyramid and ambient occlusion; blended time spans the skybox.
     return {{"Shadows", stats.gpuShadowMilliseconds},
             {"Environment precompute", stats.gpuEnvironmentPrecomputeMilliseconds, true},
             {"GPU culling", stats.gpuCullingMilliseconds, true},
@@ -216,9 +216,9 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
             {"Light clusters", stats.gpuLightClusterMilliseconds, true},
             {"Depth prepass", stats.gpuDepthPrepassMilliseconds, true},
             {"Depth pyramid", stats.gpuDepthPyramidMilliseconds, true},
+            {"Ambient occlusion", stats.gpuAmbientOcclusionMilliseconds, true},
             {"Blended", stats.gpuBlendedMilliseconds},
             {"Skybox", stats.gpuSkyboxMilliseconds, true},
-            {"Ambient occlusion", stats.gpuAmbientOcclusionMilliseconds},
             {"Reflections", stats.gpuReflectionsMilliseconds},
             {"Temporal resolve", stats.gpuTemporalMilliseconds},
             {"Exposure", stats.gpuExposureMilliseconds},

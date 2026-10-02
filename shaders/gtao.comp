@@ -1,0 +1,151 @@
+#version 450
+
+// Ground-truth ambient occlusion (Jimenez et al. 2016) from the depth prepass.
+// src/engine/graphics/AmbientOcclusion.cpp mirrors the integration on the CPU;
+// keep the two in sync. Writes raw visibility (r) and positive view depth (g)
+// for gtao_denoise.comp. Occlusion texel t is evaluated at render pixel
+// floor(t / resolutionScale); its depth and normal come from that pixel and its
+// horizon samples from full-resolution depth.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// Depth pyramid level 0 (reversed Z, near = 1, far = 0), GENERAL layout.
+layout(set = 0, binding = 0) uniform sampler2D depthPyramid;
+// Prepass normals: rg octahedral view-space normal in [0, 1], a = coverage.
+layout(set = 0, binding = 1) uniform sampler2D sceneNormals;
+layout(set = 0, binding = 2, rg16f) uniform writeonly image2D rawOcclusion;
+
+// Mirrors GtaoSettings in AmbientOcclusionPass.cpp.
+layout(push_constant) uniform Settings {
+    mat4 inverseProjection; // of the jittered projection that produced the depth
+    ivec2 dispatchExtent;   // occlusion texels to write
+    ivec2 renderExtent;     // valid region of the depth and normal targets
+    float resolutionScale;  // occlusion texels per render pixel
+    float radius;           // view-space search radius
+    float falloffFraction;  // part of the radius over which occluders fade out
+    float projectionScale;  // render pixels per view unit at view distance 1
+    uint noiseFrame;        // advances the noise each frame when temporally resolved
+    uint sliceCount;
+    uint stepsPerSide;
+    float occlusionPower;
+} settings;
+
+const float PI = 3.14159265359;
+// Stored for the sky and other uncovered texels; the largest finite half float.
+const float SKY_DEPTH = 65504.0;
+
+vec3 decodeOctahedral(vec2 encoded) {
+    vec3 normal = vec3(encoded, 1.0 - abs(encoded.x) - abs(encoded.y));
+    float fold = max(-normal.z, 0.0);
+    normal.x += normal.x >= 0.0 ? -fold : fold;
+    normal.y += normal.y >= 0.0 ? -fold : fold;
+    return normalize(normal);
+}
+
+vec3 viewPosition(ivec2 pixel, float depth) {
+    vec2 ndc = (vec2(pixel) + 0.5) / vec2(settings.renderExtent) * 2.0 - 1.0;
+    vec4 view = settings.inverseProjection * vec4(ndc, depth, 1.0);
+    return view.xyz / view.w;
+}
+
+// 4x4 ordered dither: the denoiser's 5x5 window sees every rotation.
+float bayer4(ivec2 texel) {
+    const float pattern[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
+                                        3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+    ivec2 cell = texel & 3;
+    return (pattern[cell.y * 4 + cell.x] + 0.5) / 16.0;
+}
+
+// Highest horizon cosine along one side of a slice; mirrors sideHorizonCosine.
+float sideHorizonCosine(vec3 center, vec3 viewVector, vec2 centerPixel, vec2 screenDirection, float radiusPixels,
+                        float stepNoise, float lowCosine) {
+    float falloffRange = max(settings.falloffFraction * settings.radius, 1e-4);
+    float falloffMultiply = -1.0 / falloffRange;
+    float falloffAdd = (settings.radius - falloffRange) / falloffRange + 1.0;
+    float horizon = lowCosine;
+    for (uint step = 0u; step < settings.stepsPerSide; ++step) {
+        float distance = (float(step) + stepNoise) / float(settings.stepsPerSide);
+        float offsetPixels = max(distance * distance * radiusPixels, 1.0);
+        ivec2 pixel = ivec2(floor(centerPixel + screenDirection * offsetPixels));
+        if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, settings.renderExtent))) {
+            continue;
+        }
+        float depth = texelFetch(depthPyramid, pixel, 0).r;
+        if (depth <= 0.0) {
+            continue;
+        }
+        vec3 delta = viewPosition(pixel, depth) - center;
+        float sampleLength = length(delta);
+        if (sampleLength <= 1e-6) {
+            continue;
+        }
+        float weight = clamp(sampleLength * falloffMultiply + falloffAdd, 0.0, 1.0);
+        float sampleCosine = dot(delta / sampleLength, viewVector);
+        horizon = max(horizon, mix(lowCosine, sampleCosine, weight));
+    }
+    return horizon;
+}
+
+void main() {
+    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(texel, settings.dispatchExtent))) {
+        return;
+    }
+    ivec2 pixel = clamp(ivec2(floor(vec2(texel) / settings.resolutionScale)), ivec2(0), settings.renderExtent - 1);
+    float depth = texelFetch(depthPyramid, pixel, 0).r;
+    vec4 normalCoverage = texelFetch(sceneNormals, pixel, 0);
+    if (depth <= 0.0 || normalCoverage.a < 0.5) {
+        imageStore(rawOcclusion, texel, vec4(1.0, SKY_DEPTH, 0.0, 0.0));
+        return;
+    }
+    vec3 center = viewPosition(pixel, depth);
+    float viewDistance = -center.z;
+    float radiusPixels = settings.radius * settings.projectionScale / max(viewDistance, 1e-4);
+    if (viewDistance <= 0.0 || radiusPixels < 1.0) {
+        imageStore(rawOcclusion, texel, vec4(1.0, max(viewDistance, 0.0), 0.0, 0.0));
+        return;
+    }
+    vec3 viewVector = normalize(-center);
+    vec3 normal = decodeOctahedral(normalCoverage.rg * 2.0 - 1.0);
+    vec2 centerPixel = vec2(pixel) + 0.5;
+    // The golden ratio spreads successive frames' rotations for the temporal resolve.
+    float temporalOffset = fract(float(settings.noiseFrame) * 0.61803398875);
+    float sliceNoise = fract(bayer4(texel) + temporalOffset);
+    float stepNoise = fract(bayer4(texel.yx + ivec2(2, 1)) + temporalOffset * 1.61803398875);
+
+    float visibility = 0.0;
+    for (uint slice = 0u; slice < settings.sliceCount; ++slice) {
+        float angle = (float(slice) + sliceNoise) * PI / float(settings.sliceCount);
+        // Screen space points down, view space up.
+        vec2 screenDirection = vec2(cos(angle), sin(angle));
+        vec3 direction = vec3(screenDirection.x, -screenDirection.y, 0.0);
+        vec3 orthogonalDirection = direction - viewVector * dot(direction, viewVector);
+        vec3 axis = normalize(cross(direction, viewVector));
+        vec3 projectedNormal = normal - axis * dot(normal, axis);
+        float projectedLength = length(projectedNormal);
+        if (projectedLength <= 1e-6) {
+            continue;
+        }
+        // Angles are measured from the view vector, positive towards +direction.
+        float cosN = clamp(dot(projectedNormal, viewVector) / projectedLength, 0.0, 1.0);
+        float n = (dot(projectedNormal, orthogonalDirection) < 0.0 ? -1.0 : 1.0) * acos(cosN);
+        float positiveCosine = sideHorizonCosine(center, viewVector, centerPixel, screenDirection, radiusPixels,
+                                                 stepNoise, cos(n + 0.5 * PI));
+        float negativeCosine = sideHorizonCosine(center, viewVector, centerPixel, -screenDirection, radiusPixels,
+                                                 stepNoise, cos(n - 0.5 * PI));
+        float h1 = acos(clamp(positiveCosine, -1.0, 1.0));
+        float h0 = -acos(clamp(negativeCosine, -1.0, 1.0));
+        h0 = n + max(h0 - n, -0.5 * PI);
+        h1 = n + min(h1 - n, 0.5 * PI);
+        float sinN = sin(n);
+        float arc = 0.25 * (-cos(2.0 * h0 - n) + cosN + 2.0 * h0 * sinN) +
+                    0.25 * (-cos(2.0 * h1 - n) + cosN + 2.0 * h1 * sinN);
+        // Screen-uniform slices are unevenly spaced around an off-axis view
+        // vector; see ambient_occlusion::sliceDensityWeight.
+        float alignment = dot(direction, viewVector);
+        float sliceDensity = abs(viewVector.z) / max(1.0 - alignment * alignment, 1e-4);
+        visibility += sliceDensity * projectedLength * arc;
+    }
+    visibility = clamp(visibility / float(max(settings.sliceCount, 1u)), 0.0, 1.0);
+    imageStore(rawOcclusion, texel, vec4(pow(visibility, settings.occlusionPower), viewDistance, 0.0, 0.0));
+}

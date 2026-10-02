@@ -60,7 +60,6 @@ bool PostProcessPass::init(const VulkanContext& context, VkFormat outputFormat, 
     m_allocator = context.vmaAllocator();
     m_targets.resize(frameCount);
     return m_bloomExposure.init(context) && createDescriptors(frameCount) && createPipeline(outputFormat) &&
-           createEffectPipeline(shaderRoot() / "ssao.frag.spv", ambientOcclusionFormat, m_ambientOcclusionPipeline) &&
            createEffectPipeline(shaderRoot() / "ssr.frag.spv", sceneFormat, m_reflectionPipeline) &&
            m_temporalResolve.init(context, frameCount, extent) && createTargets(context, extent, depthView);
 }
@@ -324,18 +323,6 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
             return false;
         }
         VkImageCreateInfo effectImage = motionImage;
-        effectImage.format = ambientOcclusionFormat;
-        if (!checkVulkan(vmaCreateImage(context.vmaAllocator(), &effectImage, &allocation,
-                                        &target.ambientOcclusionImage, &target.ambientOcclusionAllocation, nullptr),
-                         "Create ambient-occlusion target")) {
-            return false;
-        }
-        view.image = target.ambientOcclusionImage;
-        view.format = ambientOcclusionFormat;
-        if (!checkVulkan(vkCreateImageView(context.device(), &view, nullptr, &target.ambientOcclusionView),
-                         "Create ambient-occlusion view")) {
-            return false;
-        }
         effectImage.format = sceneFormat;
         if (!checkVulkan(vmaCreateImage(context.vmaAllocator(), &effectImage, &allocation, &target.reflectionImage,
                                         &target.reflectionAllocation, nullptr),
@@ -376,8 +363,11 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
             {.sampler = m_colorSampler,
              .imageView = target.motionView,
              .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            // Unused: ambient occlusion moved into the shading pass
+            // (AmbientOcclusionPass). The binding stays in the shared layout and
+            // holds the scene target as a valid placeholder.
             {.sampler = m_colorSampler,
-             .imageView = target.ambientOcclusionView,
+             .imageView = target.view,
              .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             {.sampler = m_colorSampler,
              .imageView = target.reflectionView,
@@ -466,12 +456,6 @@ void PostProcessPass::destroyTargets(const VulkanContext& context) {
         if (target.motionImage) {
             vmaDestroyImage(context.vmaAllocator(), target.motionImage, target.motionAllocation);
         }
-        if (target.ambientOcclusionView) {
-            vkDestroyImageView(context.device(), target.ambientOcclusionView, nullptr);
-        }
-        if (target.ambientOcclusionImage) {
-            vmaDestroyImage(context.vmaAllocator(), target.ambientOcclusionImage, target.ambientOcclusionAllocation);
-        }
         if (target.reflectionView) {
             vkDestroyImageView(context.device(), target.reflectionView, nullptr);
         }
@@ -492,9 +476,6 @@ void PostProcessPass::destroyTargets(const VulkanContext& context) {
         target.motionView = VK_NULL_HANDLE;
         target.motionAllocation = VK_NULL_HANDLE;
         target.motionInitialized = false;
-        target.ambientOcclusionImage = VK_NULL_HANDLE;
-        target.ambientOcclusionView = VK_NULL_HANDLE;
-        target.ambientOcclusionAllocation = VK_NULL_HANDLE;
         target.reflectionImage = VK_NULL_HANDLE;
         target.reflectionView = VK_NULL_HANDLE;
         target.reflectionAllocation = VK_NULL_HANDLE;
@@ -650,9 +631,6 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
                    ? VkExtent2D{std::max(1u, internalExtent.width / 2), std::max(1u, internalExtent.height / 2)}
                    : internalExtent;
     };
-    recordEffect(target.ambientOcclusionImage, target.ambientOcclusionView, m_ambientOcclusionPipeline,
-                 scaledEffectExtent(settings.ambientOcclusion == AmbientOcclusionQuality::HalfResolution),
-                 settings.ambientOcclusion != AmbientOcclusionQuality::Off, 1.0f, 10, 11);
     recordEffect(target.reflectionImage, target.reflectionView, m_reflectionPipeline,
                  scaledEffectExtent(settings.reflections == ReflectionQuality::ScreenSpaceHalfResolution),
                  settings.reflections != ReflectionQuality::ProbesOnly, 0.0f, 12, 13);
@@ -838,9 +816,6 @@ void PostProcessPass::shutdown(const VulkanContext& context) {
     if (m_pipeline) {
         vkDestroyPipeline(context.device(), m_pipeline, nullptr);
     }
-    if (m_ambientOcclusionPipeline) {
-        vkDestroyPipeline(context.device(), m_ambientOcclusionPipeline, nullptr);
-    }
     if (m_reflectionPipeline) {
         vkDestroyPipeline(context.device(), m_reflectionPipeline, nullptr);
     }
@@ -860,7 +835,6 @@ void PostProcessPass::shutdown(const VulkanContext& context) {
         vkDestroyDescriptorSetLayout(context.device(), m_layout, nullptr);
     }
     m_pipeline = VK_NULL_HANDLE;
-    m_ambientOcclusionPipeline = VK_NULL_HANDLE;
     m_reflectionPipeline = VK_NULL_HANDLE;
     m_pipelineLayout = VK_NULL_HANDLE;
     m_colorSampler = VK_NULL_HANDLE;
