@@ -446,8 +446,9 @@ add_dependencies(zenith_engine zenith_assets)
 # derived-data cache the executables read from <resource root>/derived. Entries
 # are keyed by source bytes, so unchanged textures are skipped on rebuild.
 set(ZENITH_DERIVED_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/derived")
-file(GLOB ZENITH_COOKED_MODELS CONFIGURE_DEPENDS "${ZENITH_ASSET_SOURCE_DIR}/*.gltf")
-file(GLOB_RECURSE ZENITH_COOKED_TEXTURE_SOURCES CONFIGURE_DEPENDS "${ZENITH_ASSET_SOURCE_DIR}/textures/*")
+file(GLOB_RECURSE ZENITH_COOKED_MODELS CONFIGURE_DEPENDS "${ZENITH_ASSET_SOURCE_DIR}/*.gltf")
+file(GLOB_RECURSE ZENITH_COOKED_TEXTURE_SOURCES CONFIGURE_DEPENDS "${ZENITH_ASSET_SOURCE_DIR}/*.png"
+    "${ZENITH_ASSET_SOURCE_DIR}/*.jpg")
 set(ZENITH_TEXTURE_COOK_COMMANDS)
 foreach(cooked_model IN LISTS ZENITH_COOKED_MODELS)
     list(APPEND ZENITH_TEXTURE_COOK_COMMANDS

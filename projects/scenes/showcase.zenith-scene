@@ -1,0 +1,4233 @@
+{
+ "version": 1,
+ "entities": [
+  {
+   "id": 1,
+   "name": "Sun",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "directional_light": {
+     "direction": [
+      0.44666245579719543,
+      0.8436958193778992,
+      0.297775000333786
+     ],
+     "color": [
+      1.0,
+      0.92,
+      0.8
+     ],
+     "intensity": 6.0,
+     "primary": true,
+     "shadows": {
+      "enabled": true,
+      "half_extent": 14.0,
+      "focus_distance": 6.0,
+      "depth_range": 60.0,
+      "constant_bias": 0.5,
+      "slope_bias": 1.5,
+      "normal_bias": 0.02
+     }
+    }
+   }
+  },
+  {
+   "id": 2,
+   "name": "Environment",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "environment_light": {
+     "sky_color": [
+      0.2,
+      0.24,
+      0.34
+     ],
+     "ground_color": [
+      0.08,
+      0.065,
+      0.05
+     ],
+     "diffuse_intensity": 1.0,
+     "specular_intensity": 1.0,
+     "primary": true,
+     "environment_asset": "showcase/sky.hdr"
+    }
+   }
+  },
+  {
+   "id": 3,
+   "name": "Floor",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    -0.10000000149011612,
+    -3.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 0
+    }
+   }
+  },
+  {
+   "id": 4,
+   "name": "WallBack",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    2.0,
+    -9.149999618530273,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 1
+    }
+   }
+  },
+  {
+   "id": 5,
+   "name": "WallLeft",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -8.149999618530273,
+    2.0,
+    -3.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 2
+    }
+   }
+  },
+  {
+   "id": 6,
+   "name": "WallRight",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    8.149999618530273,
+    2.0,
+    -3.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 3
+    }
+   }
+  },
+  {
+   "id": 7,
+   "name": "Pedestal0",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -3.0,
+    0.30000001192092896,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 4
+    }
+   }
+  },
+  {
+   "id": 8,
+   "name": "TexturedSphere0",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -3.0,
+    1.0,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 5
+    },
+    "collider": {
+     "type": "sphere",
+     "radius": 0.4
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 9,
+   "name": "Pedestal1",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -1.0,
+    0.30000001192092896,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 6
+    }
+   }
+  },
+  {
+   "id": 10,
+   "name": "TexturedSphere1",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -1.0,
+    1.0,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 7
+    },
+    "collider": {
+     "type": "sphere",
+     "radius": 0.4
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 11,
+   "name": "Pedestal2",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    1.0,
+    0.30000001192092896,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 8
+    }
+   }
+  },
+  {
+   "id": 12,
+   "name": "TexturedSphere2",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    1.0,
+    1.0,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 9
+    },
+    "collider": {
+     "type": "sphere",
+     "radius": 0.4
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 13,
+   "name": "Pedestal3",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    0.30000001192092896,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 10
+    }
+   }
+  },
+  {
+   "id": 14,
+   "name": "TexturedSphere3",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    1.0,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 11
+    },
+    "collider": {
+     "type": "sphere",
+     "radius": 0.4
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 15,
+   "name": "SphereChrome",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -3.75,
+    0.44999998807907104,
+    -5.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 12
+    },
+    "collider": {
+     "type": "sphere",
+     "radius": 0.45
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 16,
+   "name": "SphereGold",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -2.25,
+    0.44999998807907104,
+    -5.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 13
+    },
+    "collider": {
+     "type": "sphere",
+     "radius": 0.45
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 17,
+   "name": "SphereCopper",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -0.75,
+    0.44999998807907104,
+    -5.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 14
+    },
+    "collider": {
+     "type": "sphere",
+     "radius": 0.45
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 18,
+   "name": "SphereRedPlastic",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.75,
+    0.44999998807907104,
+    -5.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 15
+    },
+    "collider": {
+     "type": "sphere",
+     "radius": 0.45
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 19,
+   "name": "SphereWhitePlastic",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    2.25,
+    0.44999998807907104,
+    -5.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 16
+    },
+    "collider": {
+     "type": "sphere",
+     "radius": 0.45
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 20,
+   "name": "SphereRubber",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.75,
+    0.44999998807907104,
+    -5.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 17
+    },
+    "collider": {
+     "type": "sphere",
+     "radius": 0.45
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 21,
+   "name": "StripEmissiveCyan",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -4.0,
+    0.25,
+    -8.899999618530273,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 18
+    }
+   }
+  },
+  {
+   "id": 22,
+   "name": "PillarEmissiveCyan",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -6.5,
+    1.2000000476837158,
+    -7.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 19
+    }
+   }
+  },
+  {
+   "id": 23,
+   "name": "StripEmissiveOrange",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    4.0,
+    0.25,
+    -8.899999618530273,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 20
+    }
+   }
+  },
+  {
+   "id": 24,
+   "name": "PillarEmissiveOrange",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    6.5,
+    1.2000000476837158,
+    -7.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 21
+    }
+   }
+  },
+  {
+   "id": 25,
+   "name": "GlassPane",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    2.799999952316284,
+    0.8999999761581421,
+    -6.599999904632568,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 22
+    }
+   }
+  },
+  {
+   "id": 26,
+   "name": "GraniteRock",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -5.5,
+    0.0,
+    -5.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 23
+    }
+   }
+  },
+  {
+   "id": 27,
+   "name": "Floor Collider",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    -0.10000000149011612,
+    -3.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "collider": {
+     "type": "box",
+     "half_extents": [
+      10.0,
+      0.1,
+      9.0
+     ]
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 28,
+   "name": "Back Wall Collider",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    2.0,
+    -9.149999618530273,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "collider": {
+     "type": "box",
+     "half_extents": [
+      8.3,
+      2.0,
+      0.15
+     ]
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 29,
+   "name": "Left Wall Collider",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -8.149999618530273,
+    2.0,
+    -3.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "collider": {
+     "type": "box",
+     "half_extents": [
+      0.15,
+      2.0,
+      5.5
+     ]
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 30,
+   "name": "Right Wall Collider",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    8.149999618530273,
+    2.0,
+    -3.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "collider": {
+     "type": "box",
+     "half_extents": [
+      0.15,
+      2.0,
+      5.5
+     ]
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 31,
+   "name": "Pedestal Collider 0",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -3.0,
+    0.30000001192092896,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "collider": {
+     "type": "box",
+     "half_extents": [
+      0.4,
+      0.3,
+      0.4
+     ]
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 32,
+   "name": "Pedestal Collider 1",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -1.0,
+    0.30000001192092896,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "collider": {
+     "type": "box",
+     "half_extents": [
+      0.4,
+      0.3,
+      0.4
+     ]
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 33,
+   "name": "Pedestal Collider 2",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    1.0,
+    0.30000001192092896,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "collider": {
+     "type": "box",
+     "half_extents": [
+      0.4,
+      0.3,
+      0.4
+     ]
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 34,
+   "name": "Pedestal Collider 3",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    0.30000001192092896,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "collider": {
+     "type": "box",
+     "half_extents": [
+      0.4,
+      0.3,
+      0.4
+     ]
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 35,
+   "name": "Rock Collider",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -5.5,
+    0.4000000059604645,
+    -5.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "collider": {
+     "type": "box",
+     "half_extents": [
+      0.9,
+      0.4,
+      0.9
+     ]
+    },
+    "rigid_body": {
+     "motion_type": 0,
+     "layer": 0,
+     "mass": 1.0,
+     "friction": 0.6,
+     "restitution": 0.0,
+     "linear_damping": 0.05,
+     "angular_damping": 0.05,
+     "gravity_factor": 1.0,
+     "sensor": false,
+     "allow_sleeping": true,
+     "continuous_collision": false,
+     "lock_rotation": false
+    }
+   }
+  },
+  {
+   "id": 36,
+   "name": "Foliage 1",
+   "local_transform": [
+    -0.9013254642486572,
+    0.0,
+    0.10492905974388123,
+    0.0,
+    0.0,
+    0.9074126482009888,
+    0.0,
+    0.0,
+    -0.10492905974388123,
+    0.0,
+    -0.9013254642486572,
+    0.0,
+    5.8492817878723145,
+    0.0,
+    -2.806730270385742,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 24
+    }
+   }
+  },
+  {
+   "id": 37,
+   "name": "Foliage 2",
+   "local_transform": [
+    0.06701469421386719,
+    0.0,
+    0.7392234206199646,
+    0.0,
+    0.0,
+    0.7422548532485962,
+    0.0,
+    0.0,
+    -0.7392234206199646,
+    0.0,
+    0.06701469421386719,
+    0.0,
+    5.903229236602783,
+    0.0,
+    -1.7746607065200806,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 38,
+   "name": "Foliage 3",
+   "local_transform": [
+    -1.0683276653289795,
+    0.0,
+    -0.4786379933357239,
+    0.0,
+    0.0,
+    1.1706486940383911,
+    0.0,
+    0.0,
+    0.4786379933357239,
+    0.0,
+    -1.0683276653289795,
+    0.0,
+    6.33671760559082,
+    0.0,
+    -1.5178955793380737,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 39,
+   "name": "Foliage 4",
+   "local_transform": [
+    1.1007084846496582,
+    0.0,
+    -0.6932875514030457,
+    0.0,
+    0.0,
+    1.3008484840393066,
+    0.0,
+    0.0,
+    0.6932875514030457,
+    0.0,
+    1.1007084846496582,
+    0.0,
+    7.15530252456665,
+    0.0,
+    -6.468838214874268,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 24
+    }
+   }
+  },
+  {
+   "id": 40,
+   "name": "Foliage 5",
+   "local_transform": [
+    -0.5810746550559998,
+    0.0,
+    -0.45249900221824646,
+    0.0,
+    0.0,
+    0.7364802360534668,
+    0.0,
+    0.0,
+    0.45249900221824646,
+    0.0,
+    -0.5810746550559998,
+    0.0,
+    4.683055877685547,
+    0.0,
+    -8.228901863098145,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 41,
+   "name": "Foliage 6",
+   "local_transform": [
+    0.9908337593078613,
+    0.0,
+    0.22415032982826233,
+    0.0,
+    0.0,
+    1.015871524810791,
+    0.0,
+    0.0,
+    -0.22415032982826233,
+    0.0,
+    0.9908337593078613,
+    0.0,
+    5.490052223205566,
+    0.0,
+    -2.2878851890563965,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 42,
+   "name": "Foliage 7",
+   "local_transform": [
+    -1.2539300918579102,
+    0.0,
+    -0.3116772174835205,
+    0.0,
+    0.0,
+    1.2920849323272705,
+    0.0,
+    0.0,
+    0.3116772174835205,
+    0.0,
+    -1.2539300918579102,
+    0.0,
+    5.067755699157715,
+    0.0,
+    -2.034205675125122,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 24
+    }
+   }
+  },
+  {
+   "id": 43,
+   "name": "Foliage 8",
+   "local_transform": [
+    0.8483126163482666,
+    0.0,
+    0.9693207144737244,
+    0.0,
+    0.0,
+    1.2881059646606445,
+    0.0,
+    0.0,
+    -0.9693207144737244,
+    0.0,
+    0.8483126163482666,
+    0.0,
+    4.663057804107666,
+    0.0,
+    -1.4762574434280396,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 44,
+   "name": "Foliage 9",
+   "local_transform": [
+    -0.3043871819972992,
+    0.0,
+    0.907193660736084,
+    0.0,
+    0.0,
+    0.9568970203399658,
+    0.0,
+    0.0,
+    -0.907193660736084,
+    0.0,
+    -0.3043871819972992,
+    0.0,
+    5.806519985198975,
+    0.0,
+    -6.984078407287598,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 45,
+   "name": "Foliage 10",
+   "local_transform": [
+    0.04366975277662277,
+    0.0,
+    -0.7111202478408813,
+    0.0,
+    0.0,
+    0.7124598622322083,
+    0.0,
+    0.0,
+    0.7111202478408813,
+    0.0,
+    0.04366975277662277,
+    0.0,
+    6.572673797607422,
+    0.0,
+    -2.774799346923828,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 24
+    }
+   }
+  },
+  {
+   "id": 46,
+   "name": "Foliage 11",
+   "local_transform": [
+    0.5421467423439026,
+    0.0,
+    -0.5938835740089417,
+    0.0,
+    0.0,
+    0.8041273355484009,
+    0.0,
+    0.0,
+    0.5938835740089417,
+    0.0,
+    0.5421467423439026,
+    0.0,
+    6.9299235343933105,
+    0.0,
+    -7.087639331817627,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 47,
+   "name": "Foliage 12",
+   "local_transform": [
+    0.6028232574462891,
+    0.0,
+    0.7492424249649048,
+    0.0,
+    0.0,
+    0.9616444706916809,
+    0.0,
+    0.0,
+    -0.7492424249649048,
+    0.0,
+    0.6028232574462891,
+    0.0,
+    6.255113124847412,
+    0.0,
+    -2.557548761367798,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 48,
+   "name": "Foliage 13",
+   "local_transform": [
+    -0.37927380204200745,
+    0.0,
+    0.768638551235199,
+    0.0,
+    0.0,
+    0.8571195006370544,
+    0.0,
+    0.0,
+    -0.768638551235199,
+    0.0,
+    -0.37927380204200745,
+    0.0,
+    5.177620887756348,
+    0.0,
+    -2.205457925796509,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 24
+    }
+   }
+  },
+  {
+   "id": 49,
+   "name": "Foliage 14",
+   "local_transform": [
+    -0.9319531321525574,
+    0.0,
+    -0.8050631284713745,
+    0.0,
+    0.0,
+    1.231528878211975,
+    0.0,
+    0.0,
+    0.8050631284713745,
+    0.0,
+    -0.9319531321525574,
+    0.0,
+    4.860611915588379,
+    0.0,
+    -2.2330241203308105,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 50,
+   "name": "Foliage 15",
+   "local_transform": [
+    0.3615359365940094,
+    0.0,
+    -0.7539860606193542,
+    0.0,
+    0.0,
+    0.8361837267875671,
+    0.0,
+    0.0,
+    0.7539860606193542,
+    0.0,
+    0.3615359365940094,
+    0.0,
+    5.151546955108643,
+    0.0,
+    -5.529418468475342,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 51,
+   "name": "Foliage 16",
+   "local_transform": [
+    1.0493234395980835,
+    0.0,
+    -0.13077424466609955,
+    0.0,
+    0.0,
+    1.0574411153793335,
+    0.0,
+    0.0,
+    0.13077424466609955,
+    0.0,
+    1.0493234395980835,
+    0.0,
+    6.620999813079834,
+    0.0,
+    -3.25495982170105,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 24
+    }
+   }
+  },
+  {
+   "id": 52,
+   "name": "Foliage 17",
+   "local_transform": [
+    -0.8760409951210022,
+    0.0,
+    -0.5052538514137268,
+    0.0,
+    0.0,
+    1.011300802230835,
+    0.0,
+    0.0,
+    0.5052538514137268,
+    0.0,
+    -0.8760409951210022,
+    0.0,
+    4.978557109832764,
+    0.0,
+    -1.4338780641555786,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 53,
+   "name": "Foliage 18",
+   "local_transform": [
+    -0.765743613243103,
+    0.0,
+    -0.6803404092788696,
+    0.0,
+    0.0,
+    1.0243175029754639,
+    0.0,
+    0.0,
+    0.6803404092788696,
+    0.0,
+    -0.765743613243103,
+    0.0,
+    5.180176734924316,
+    0.0,
+    -6.66053581237793,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 54,
+   "name": "Foliage 19",
+   "local_transform": [
+    0.05694340169429779,
+    0.0,
+    -0.7214487791061401,
+    0.0,
+    0.0,
+    0.7236925363540649,
+    0.0,
+    0.0,
+    0.7214487791061401,
+    0.0,
+    0.05694340169429779,
+    0.0,
+    6.3033905029296875,
+    0.0,
+    -3.9867305755615234,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 24
+    }
+   }
+  },
+  {
+   "id": 55,
+   "name": "Foliage 20",
+   "local_transform": [
+    1.2333612442016602,
+    0.0,
+    -0.0481744185090065,
+    0.0,
+    0.0,
+    1.2343016862869263,
+    0.0,
+    0.0,
+    0.0481744185090065,
+    0.0,
+    1.2333612442016602,
+    0.0,
+    6.975438117980957,
+    0.0,
+    -2.1128482818603516,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 56,
+   "name": "Foliage 21",
+   "local_transform": [
+    0.5872744917869568,
+    0.0,
+    -0.3962312638759613,
+    0.0,
+    0.0,
+    0.7084423303604126,
+    0.0,
+    0.0,
+    0.3962312638759613,
+    0.0,
+    0.5872744917869568,
+    0.0,
+    6.241894245147705,
+    0.0,
+    -4.2629547119140625,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 57,
+   "name": "Foliage 22",
+   "local_transform": [
+    0.37188470363616943,
+    0.0,
+    1.135544776916504,
+    0.0,
+    0.0,
+    1.1948891878128052,
+    0.0,
+    0.0,
+    -1.135544776916504,
+    0.0,
+    0.37188470363616943,
+    0.0,
+    7.459677219390869,
+    0.0,
+    -5.866165637969971,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 24
+    }
+   }
+  },
+  {
+   "id": 58,
+   "name": "Foliage 23",
+   "local_transform": [
+    -1.2083226442337036,
+    0.0,
+    -0.44390004873275757,
+    0.0,
+    0.0,
+    1.2872804403305054,
+    0.0,
+    0.0,
+    0.44390004873275757,
+    0.0,
+    -1.2083226442337036,
+    0.0,
+    5.141411781311035,
+    0.0,
+    -4.443004131317139,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 59,
+   "name": "Foliage 24",
+   "local_transform": [
+    -0.30034640431404114,
+    0.0,
+    0.6420693397521973,
+    0.0,
+    0.0,
+    0.7088448405265808,
+    0.0,
+    0.0,
+    -0.6420693397521973,
+    0.0,
+    -0.30034640431404114,
+    0.0,
+    7.401070594787598,
+    0.0,
+    -3.6456313133239746,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 60,
+   "name": "Foliage 25",
+   "local_transform": [
+    0.5309551954269409,
+    0.0,
+    0.5088314414024353,
+    0.0,
+    0.0,
+    0.7354066371917725,
+    0.0,
+    0.0,
+    -0.5088314414024353,
+    0.0,
+    0.5309551954269409,
+    0.0,
+    5.664793014526367,
+    0.0,
+    -6.947343826293945,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 24
+    }
+   }
+  },
+  {
+   "id": 61,
+   "name": "Foliage 26",
+   "local_transform": [
+    -0.5855785608291626,
+    0.0,
+    -0.8490934371948242,
+    0.0,
+    0.0,
+    1.031436800956726,
+    0.0,
+    0.0,
+    0.8490934371948242,
+    0.0,
+    -0.5855785608291626,
+    0.0,
+    6.3291096687316895,
+    0.0,
+    -8.48741340637207,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 62,
+   "name": "Foliage 27",
+   "local_transform": [
+    -1.3623647689819336,
+    0.0,
+    -0.1804613620042801,
+    0.0,
+    0.0,
+    1.3742649555206299,
+    0.0,
+    0.0,
+    0.1804613620042801,
+    0.0,
+    -1.3623647689819336,
+    0.0,
+    6.362902641296387,
+    0.0,
+    -5.087307929992676,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 63,
+   "name": "Foliage 28",
+   "local_transform": [
+    0.025439143180847168,
+    0.0,
+    0.9907105565071106,
+    0.0,
+    0.0,
+    0.9910370707511902,
+    0.0,
+    0.0,
+    -0.9907105565071106,
+    0.0,
+    0.025439143180847168,
+    0.0,
+    6.897765636444092,
+    0.0,
+    -4.755034446716309,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 24
+    }
+   }
+  },
+  {
+   "id": 64,
+   "name": "Foliage 29",
+   "local_transform": [
+    0.2893912196159363,
+    0.0,
+    1.1322797536849976,
+    0.0,
+    0.0,
+    1.168676495552063,
+    0.0,
+    0.0,
+    -1.1322797536849976,
+    0.0,
+    0.2893912196159363,
+    0.0,
+    5.445424556732178,
+    0.0,
+    -7.931674957275391,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 65,
+   "name": "Foliage 30",
+   "local_transform": [
+    -0.19863949716091156,
+    0.0,
+    1.1202367544174194,
+    0.0,
+    0.0,
+    1.137711763381958,
+    0.0,
+    0.0,
+    -1.1202367544174194,
+    0.0,
+    -0.19863949716091156,
+    0.0,
+    6.471541404724121,
+    0.0,
+    -1.033506155014038,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 66,
+   "name": "Foliage 31",
+   "local_transform": [
+    0.9103710055351257,
+    0.0,
+    -0.7984707355499268,
+    0.0,
+    0.0,
+    1.2109215259552002,
+    0.0,
+    0.0,
+    0.7984707355499268,
+    0.0,
+    0.9103710055351257,
+    0.0,
+    4.243462085723877,
+    0.0,
+    -4.657614231109619,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 24
+    }
+   }
+  },
+  {
+   "id": 67,
+   "name": "Foliage 32",
+   "local_transform": [
+    0.777446448802948,
+    0.0,
+    -0.1690511405467987,
+    0.0,
+    0.0,
+    0.7956137657165527,
+    0.0,
+    0.0,
+    0.1690511405467987,
+    0.0,
+    0.777446448802948,
+    0.0,
+    5.350390434265137,
+    0.0,
+    -1.4148814678192139,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 68,
+   "name": "Foliage 33",
+   "local_transform": [
+    0.2467464804649353,
+    0.0,
+    -1.1313626766204834,
+    0.0,
+    0.0,
+    1.1579574346542358,
+    0.0,
+    0.0,
+    1.1313626766204834,
+    0.0,
+    0.2467464804649353,
+    0.0,
+    5.797603607177734,
+    0.0,
+    -4.960136890411377,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 69,
+   "name": "Foliage 34",
+   "local_transform": [
+    0.3514336943626404,
+    0.0,
+    -1.1738187074661255,
+    0.0,
+    0.0,
+    1.225298285484314,
+    0.0,
+    0.0,
+    1.1738187074661255,
+    0.0,
+    0.3514336943626404,
+    0.0,
+    4.584913730621338,
+    0.0,
+    -4.6903181076049805,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 24
+    }
+   }
+  },
+  {
+   "id": 70,
+   "name": "Foliage 35",
+   "local_transform": [
+    0.3105408251285553,
+    0.0,
+    -1.080520749092102,
+    0.0,
+    0.0,
+    1.1242600679397583,
+    0.0,
+    0.0,
+    1.080520749092102,
+    0.0,
+    0.3105408251285553,
+    0.0,
+    5.773178577423096,
+    0.0,
+    -1.181572675704956,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 71,
+   "name": "Foliage 36",
+   "local_transform": [
+    -0.6376404166221619,
+    0.0,
+    0.8685094118118286,
+    0.0,
+    0.0,
+    1.0774478912353516,
+    0.0,
+    0.0,
+    -0.8685094118118286,
+    0.0,
+    -0.6376404166221619,
+    0.0,
+    4.5026726722717285,
+    0.0,
+    -5.4481587409973145,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/showcase.gltf",
+     "mesh": 25
+    }
+   }
+  },
+  {
+   "id": 72,
+   "name": "Floor Light 1",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -6.5,
+    0.3499999940395355,
+    1.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.3,
+      0.12
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 73,
+   "name": "Floor Light 2",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -5.318181991577148,
+    0.3499999940395355,
+    1.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.85,
+      0.35
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 74,
+   "name": "Floor Light 3",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -4.136363506317139,
+    0.3499999940395355,
+    1.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.4,
+      1.0
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 75,
+   "name": "Floor Light 4",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -2.954545497894287,
+    0.3499999940395355,
+    1.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.85,
+      0.4
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 76,
+   "name": "Floor Light 5",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -1.7727272510528564,
+    0.3499999940395355,
+    1.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.3,
+      0.12
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 77,
+   "name": "Floor Light 6",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -0.5909090638160706,
+    0.3499999940395355,
+    1.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.85,
+      0.35
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 78,
+   "name": "Floor Light 7",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.5909090638160706,
+    0.3499999940395355,
+    1.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.4,
+      1.0
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 79,
+   "name": "Floor Light 8",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    1.7727272510528564,
+    0.3499999940395355,
+    1.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.85,
+      0.4
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 80,
+   "name": "Floor Light 9",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    2.954545497894287,
+    0.3499999940395355,
+    1.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.3,
+      0.12
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 81,
+   "name": "Floor Light 10",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    4.136363506317139,
+    0.3499999940395355,
+    1.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.85,
+      0.35
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 82,
+   "name": "Floor Light 11",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    5.318181991577148,
+    0.3499999940395355,
+    1.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.4,
+      1.0
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 83,
+   "name": "Floor Light 12",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    6.5,
+    0.3499999940395355,
+    1.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.85,
+      0.4
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 84,
+   "name": "Floor Light 13",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -6.5,
+    0.3499999940395355,
+    -1.100000023841858,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.3,
+      0.12
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 85,
+   "name": "Floor Light 14",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -5.318181991577148,
+    0.3499999940395355,
+    -1.100000023841858,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.85,
+      0.35
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 86,
+   "name": "Floor Light 15",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -4.136363506317139,
+    0.3499999940395355,
+    -1.100000023841858,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.4,
+      1.0
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 87,
+   "name": "Floor Light 16",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -2.954545497894287,
+    0.3499999940395355,
+    -1.100000023841858,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.85,
+      0.4
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 88,
+   "name": "Floor Light 17",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -1.7727272510528564,
+    0.3499999940395355,
+    -1.100000023841858,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.3,
+      0.12
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 89,
+   "name": "Floor Light 18",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -0.5909090638160706,
+    0.3499999940395355,
+    -1.100000023841858,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.85,
+      0.35
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 90,
+   "name": "Floor Light 19",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.5909090638160706,
+    0.3499999940395355,
+    -1.100000023841858,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.4,
+      1.0
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 91,
+   "name": "Floor Light 20",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    1.7727272510528564,
+    0.3499999940395355,
+    -1.100000023841858,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.85,
+      0.4
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 92,
+   "name": "Floor Light 21",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    2.954545497894287,
+    0.3499999940395355,
+    -1.100000023841858,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.3,
+      0.12
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 93,
+   "name": "Floor Light 22",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    4.136363506317139,
+    0.3499999940395355,
+    -1.100000023841858,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.85,
+      0.35
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 94,
+   "name": "Floor Light 23",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    5.318181991577148,
+    0.3499999940395355,
+    -1.100000023841858,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.4,
+      1.0
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 95,
+   "name": "Floor Light 24",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    6.5,
+    0.3499999940395355,
+    -1.100000023841858,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.85,
+      0.4
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 96,
+   "name": "Floor Light 25",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -6.5,
+    0.3499999940395355,
+    -3.700000047683716,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.3,
+      0.12
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 97,
+   "name": "Floor Light 26",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -5.318181991577148,
+    0.3499999940395355,
+    -3.700000047683716,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.85,
+      0.35
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 98,
+   "name": "Floor Light 27",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -4.136363506317139,
+    0.3499999940395355,
+    -3.700000047683716,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.4,
+      1.0
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 99,
+   "name": "Floor Light 28",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -2.954545497894287,
+    0.3499999940395355,
+    -3.700000047683716,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.85,
+      0.4
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 100,
+   "name": "Floor Light 29",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -1.7727272510528564,
+    0.3499999940395355,
+    -3.700000047683716,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.3,
+      0.12
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 101,
+   "name": "Floor Light 30",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -0.5909090638160706,
+    0.3499999940395355,
+    -3.700000047683716,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.85,
+      0.35
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 102,
+   "name": "Floor Light 31",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.5909090638160706,
+    0.3499999940395355,
+    -3.700000047683716,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.4,
+      1.0
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 103,
+   "name": "Floor Light 32",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    1.7727272510528564,
+    0.3499999940395355,
+    -3.700000047683716,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.85,
+      0.4
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 104,
+   "name": "Floor Light 33",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    2.954545497894287,
+    0.3499999940395355,
+    -3.700000047683716,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.3,
+      0.12
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 105,
+   "name": "Floor Light 34",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    4.136363506317139,
+    0.3499999940395355,
+    -3.700000047683716,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.85,
+      0.35
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 106,
+   "name": "Floor Light 35",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    5.318181991577148,
+    0.3499999940395355,
+    -3.700000047683716,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.4,
+      1.0
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 107,
+   "name": "Floor Light 36",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    6.5,
+    0.3499999940395355,
+    -3.700000047683716,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.85,
+      0.4
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 108,
+   "name": "Floor Light 37",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -6.5,
+    0.3499999940395355,
+    -6.300000190734863,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.3,
+      0.12
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 109,
+   "name": "Floor Light 38",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -5.318181991577148,
+    0.3499999940395355,
+    -6.300000190734863,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.85,
+      0.35
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 110,
+   "name": "Floor Light 39",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -4.136363506317139,
+    0.3499999940395355,
+    -6.300000190734863,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.4,
+      1.0
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 111,
+   "name": "Floor Light 40",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -2.954545497894287,
+    0.3499999940395355,
+    -6.300000190734863,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.85,
+      0.4
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 112,
+   "name": "Floor Light 41",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -1.7727272510528564,
+    0.3499999940395355,
+    -6.300000190734863,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.3,
+      0.12
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 113,
+   "name": "Floor Light 42",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -0.5909090638160706,
+    0.3499999940395355,
+    -6.300000190734863,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.85,
+      0.35
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 114,
+   "name": "Floor Light 43",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.5909090638160706,
+    0.3499999940395355,
+    -6.300000190734863,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.4,
+      1.0
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 115,
+   "name": "Floor Light 44",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    1.7727272510528564,
+    0.3499999940395355,
+    -6.300000190734863,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.85,
+      0.4
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 116,
+   "name": "Floor Light 45",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    2.954545497894287,
+    0.3499999940395355,
+    -6.300000190734863,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.3,
+      0.12
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 117,
+   "name": "Floor Light 46",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    4.136363506317139,
+    0.3499999940395355,
+    -6.300000190734863,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.85,
+      0.35
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 118,
+   "name": "Floor Light 47",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    5.318181991577148,
+    0.3499999940395355,
+    -6.300000190734863,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      0.2,
+      0.4,
+      1.0
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 119,
+   "name": "Floor Light 48",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    6.5,
+    0.3499999940395355,
+    -6.300000190734863,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "point_light": {
+     "color": [
+      1.0,
+      0.85,
+      0.4
+     ],
+     "intensity": 3.0,
+     "range": 2.5
+    }
+   }
+  },
+  {
+   "id": 120,
+   "name": "Sphere Spot 1",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -3.0,
+    3.5999999046325684,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "spot_light": {
+     "direction": [
+      0.0,
+      -1.0,
+      0.0
+     ],
+     "color": [
+      1.0,
+      0.95,
+      0.9
+     ],
+     "intensity": 25.0,
+     "range": 6.0,
+     "inner_cone": 0.25,
+     "outer_cone": 0.45
+    }
+   }
+  },
+  {
+   "id": 121,
+   "name": "Sphere Spot 2",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -1.0,
+    3.5999999046325684,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "spot_light": {
+     "direction": [
+      0.0,
+      -1.0,
+      0.0
+     ],
+     "color": [
+      1.0,
+      0.95,
+      0.9
+     ],
+     "intensity": 25.0,
+     "range": 6.0,
+     "inner_cone": 0.25,
+     "outer_cone": 0.45
+    }
+   }
+  },
+  {
+   "id": 122,
+   "name": "Sphere Spot 3",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    1.0,
+    3.5999999046325684,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "spot_light": {
+     "direction": [
+      0.0,
+      -1.0,
+      0.0
+     ],
+     "color": [
+      1.0,
+      0.95,
+      0.9
+     ],
+     "intensity": 25.0,
+     "range": 6.0,
+     "inner_cone": 0.25,
+     "outer_cone": 0.45
+    }
+   }
+  },
+  {
+   "id": 123,
+   "name": "Sphere Spot 4",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    3.5999999046325684,
+    -2.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "spot_light": {
+     "direction": [
+      0.0,
+      -1.0,
+      0.0
+     ],
+     "color": [
+      1.0,
+      0.95,
+      0.9
+     ],
+     "intensity": 25.0,
+     "range": 6.0,
+     "inner_cone": 0.25,
+     "outer_cone": 0.45
+    }
+   }
+  }
+ ]
+}
