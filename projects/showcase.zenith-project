@@ -16,6 +16,7 @@
     "localLights": 1,
     "maximumLocalLights": 1024,
     "reflectionProbes": true,
+    "reflectionProbeBlending": 1,
     "preferGpuDrivenSubmission": false,
     "depthPrepass": true,
     "lodErrorThresholdPixels": 1.0,

@@ -34,6 +34,7 @@ struct RenderGraphShape {
     bool imageBasedLighting{false};
     bool environmentBackground{false};
     bool localLights{false};
+    bool perPixelReflectionProbes{false};
     bool depthPrepass{false};
     bool gpuDriven{false};
 

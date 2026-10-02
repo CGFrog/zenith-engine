@@ -20,6 +20,8 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
         settings.ambientOcclusion = AmbientOcclusionQuality::FullResolution;
         settings.reflections = ReflectionQuality::ScreenSpaceFullResolution;
         settings.environment = EnvironmentQuality::ImageBasedHigh;
+        settings.reflectionProbes = true;
+        settings.reflectionProbeBlending = ReflectionProbeBlending::PerPixel;
         settings.localLights = LocalLightingQuality::Clustered;
         settings.depthPrepass = true;
         settings.shadows = ShadowQuality::CascadedHigh;
@@ -92,6 +94,10 @@ RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const Render
             .imageBasedLighting = imageBasedLighting,
             .environmentBackground = imageBasedLighting && settings.environmentBackground,
             .localLights = settings.localLights != LocalLightingQuality::Disabled,
+            // Mirrors perPixelReflectionProbes in MeshPass.cpp; the pass also
+            // skips frames whose scene has no resident probe.
+            .perPixelReflectionProbes = imageBasedLighting && settings.reflectionProbes &&
+                                        settings.reflectionProbeBlending == ReflectionProbeBlending::PerPixel,
             .depthPrepass = depthPrepassActive(settings),
             .gpuDriven = gpuDrivenSubmissionActive(settings, capabilities)};
 }
@@ -112,6 +118,8 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
     rendering.m_capabilities = detectRenderCapabilities(m_context.pDevice());
     rendering.m_capabilities.imageBasedLighting = true;
     rendering.m_capabilities.reflectionProbes = true;
+    // The probe cube array needs imageCubeArray, which device selection requires.
+    rendering.m_capabilities.perPixelReflectionProbes = true;
     rendering.m_capabilities.dedicatedTransferQueue = m_context.hasDedicatedTransferQueue();
     rendering.m_capabilities.timelineTransfers = m_context.timelineSemaphoreSupported();
     if (!createSwapchainResources(window)) {
@@ -280,6 +288,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuLightClusterMilliseconds = gpuTimings.lightClusterMilliseconds;
     stats.gpuEnvironmentPrecomputeMilliseconds = gpuTimings.environmentPrecomputeMilliseconds;
     stats.gpuSkyboxMilliseconds = gpuTimings.skyboxMilliseconds;
+    stats.gpuReflectionProbeClusterMilliseconds = gpuTimings.reflectionProbeClusterMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;
@@ -472,6 +481,8 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
         const auto environmentMaps = graph.importImage("environment maps", image(PostProcessPass::sceneFormat, 5, 0),
                                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         const auto lightClusters = graph.importBuffer("light clusters", {.size = 0, .usage = 1, .alignment = 256});
+        const auto probeClusters =
+            graph.importBuffer("reflection probe clusters", {.size = 0, .usage = 1, .alignment = 256});
         const auto gpuDrivenDraws = graph.importBuffer("GPU-driven draws", {.size = 0, .usage = 1, .alignment = 256});
         const auto normals =
             graph.importImage("scene normals", image(PostProcessPass::normalFormat, 5, 0), VK_IMAGE_LAYOUT_UNDEFINED);
@@ -507,6 +518,15 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
                 {textureAssets, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
             graph.addPass("environment precompute", RenderGraphQueue::Graphics, environmentAccesses);
+            if (shape.perPixelReflectionProbes) {
+                // Copies newly resident probes into the probe cache slots.
+                const RenderGraphAccess residencyAccesses[]{
+                    {environmentMaps, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                     VK_ACCESS_2_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL},
+                    {probeCache, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                     VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL}};
+                graph.addPass("reflection probe residency", RenderGraphQueue::Graphics, residencyAccesses);
+            }
         }
         if (shape.shadows) {
             const RenderGraphAccess shadowAccesses[]{
@@ -528,6 +548,12 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
                 {lightClusters, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                  VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
             graph.addPass("light cluster assignment", RenderGraphQueue::Graphics, clusterAccesses);
+        }
+        if (shape.perPixelReflectionProbes) {
+            const RenderGraphAccess probeClusterAccesses[]{
+                {probeClusters, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
+            graph.addPass("reflection probe cluster assignment", RenderGraphQueue::Graphics, probeClusterAccesses);
         }
         const auto addDepthPyramidBuild = [&](const char* name) {
             const RenderGraphAccess pyramidAccesses[]{
@@ -617,6 +643,11 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
         }
         if (shape.localLights) {
             opaqueAccesses.push_back({lightClusters, RenderGraphAccessMode::Read,
+                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                      VK_IMAGE_LAYOUT_UNDEFINED});
+        }
+        if (shape.perPixelReflectionProbes) {
+            opaqueAccesses.push_back({probeClusters, RenderGraphAccessMode::Read,
                                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
                                       VK_IMAGE_LAYOUT_UNDEFINED});
         }

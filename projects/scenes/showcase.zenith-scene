@@ -4228,6 +4228,76 @@
      "outer_cone": 0.45
     }
    }
+  },
+  {
+   "id": 124,
+   "name": "Reflection Probe West",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -4.0,
+    2.0,
+    -3.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "reflection_probe": {
+     "half_extents": [
+      4.0,
+      2.0,
+      6.0
+     ],
+     "blend_distance": 1.5,
+     "priority": 0,
+     "environment_asset": "showcase/probe_cool.hdr"
+    }
+   }
+  },
+  {
+   "id": 125,
+   "name": "Reflection Probe East",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    4.0,
+    2.0,
+    -3.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "reflection_probe": {
+     "half_extents": [
+      4.0,
+      2.0,
+      6.0
+     ],
+     "blend_distance": 1.5,
+     "priority": 0,
+     "environment_asset": "showcase/probe_warm.hdr"
+    }
+   }
   }
  ]
 }

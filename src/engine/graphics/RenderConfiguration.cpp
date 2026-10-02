@@ -118,6 +118,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"localLights", settings.localLights},
                            {"maximumLocalLights", settings.maximumLocalLights},
                            {"reflectionProbes", settings.reflectionProbes},
+                           {"reflectionProbeBlending", settings.reflectionProbeBlending},
                            {"preferGpuDrivenSubmission", settings.preferGpuDrivenSubmission},
                            {"depthPrepass", settings.depthPrepass},
                            {"lodErrorThresholdPixels", settings.lodErrorThresholdPixels},
@@ -147,7 +148,8 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"depthPrepass", budget(settings.budgets.depthPrepass)},
                              {"depthPyramid", budget(settings.budgets.depthPyramid)},
                              {"lightClusters", budget(settings.budgets.lightClusters)},
-                             {"environment", budget(settings.budgets.environment)}}}};
+                             {"environment", budget(settings.budgets.environment)},
+                             {"reflectionProbeClusters", budget(settings.budgets.reflectionProbeClusters)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -176,6 +178,11 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
             loaded.maximumLocalLights = maximumLights->get<uint32_t>();
         }
         loaded.reflectionProbes = document.value("reflectionProbes", true);
+        if (document.contains("reflectionProbeBlending") &&
+            !readEnum(document, "reflectionProbeBlending", ReflectionProbeBlending::PerPixel,
+                      loaded.reflectionProbeBlending)) {
+            return {.error = "Render settings contain an unknown reflection-probe blending mode"};
+        }
         loaded.preferGpuDrivenSubmission = document.value("preferGpuDrivenSubmission", false);
         loaded.depthPrepass = document.value("depthPrepass", true);
         loaded.lodErrorThresholdPixels = document.value("lodErrorThresholdPixels", 1.0f);
@@ -231,7 +238,8 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "depthPrepass", loaded.budgets.depthPrepass) ||
                 !readOptionalBudget(*budgets, "depthPyramid", loaded.budgets.depthPyramid) ||
                 !readOptionalBudget(*budgets, "lightClusters", loaded.budgets.lightClusters) ||
-                !readOptionalBudget(*budgets, "environment", loaded.budgets.environment)) {
+                !readOptionalBudget(*budgets, "environment", loaded.budgets.environment) ||
+                !readOptionalBudget(*budgets, "reflectionProbeClusters", loaded.budgets.reflectionProbeClusters)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }
@@ -261,6 +269,13 @@ ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
     if (result.settings.reflectionProbes && !capabilities.reflectionProbes) {
         result.settings.reflectionProbes = false;
         result.fallbacks.emplace_back("Reflection probes are unsupported and were disabled");
+    }
+    if (result.settings.reflectionProbes &&
+        result.settings.reflectionProbeBlending == ReflectionProbeBlending::PerPixel &&
+        !capabilities.perPixelReflectionProbes) {
+        result.settings.reflectionProbeBlending = ReflectionProbeBlending::CameraOnly;
+        result.fallbacks.emplace_back(
+            "Per-pixel reflection probe blending is unsupported; blending the dominant probe at the camera");
     }
     if (result.settings.localLights != LocalLightingQuality::Disabled && capabilities.maximumLocalLights == 0) {
         result.settings.localLights = LocalLightingQuality::Disabled;

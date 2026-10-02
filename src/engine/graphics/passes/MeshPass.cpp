@@ -1,6 +1,7 @@
 #include "MeshPass.hpp"
 #include "../DepthConvention.hpp"
 #include "../Lighting.hpp"
+#include "../ReflectionProbes.hpp"
 
 #include "engine/assets/CompressedTexture.hpp"
 #include "engine/assets/PackedVertexStreams.hpp"
@@ -74,6 +75,9 @@ struct CameraData {
     // z: prefiltered specular mip holding roughness 1, w: ambient-occlusion
     // texels per render pixel (see ambient_occlusion::occlusionUv).
     glm::vec4 environmentParams{0.0f};
+    // Reflection probes (U9): x: 1 when per-pixel probe blending is active,
+    // y: resident probe count.
+    glm::vec4 reflectionProbeParams{0.0f};
     // Temporal resolve: NDC jitter of the current (xy) and previous (zw)
     // projections, removed from motion vectors in mesh.frag. Keep last.
     glm::vec4 temporalJitter{0.0f};
@@ -193,11 +197,43 @@ EnvironmentSource environmentSource(TextureHandle map, const AssetManager& asset
             .groundColor = environment.groundColor};
 }
 
-// Image-based lighting uses the primary environment plus the dominant reflection
-// probe at the camera; hemisphere lighting keeps only the analytic sky bound.
+bool perPixelReflectionProbes(const RenderSettings& settings) {
+    return settings.environment != EnvironmentQuality::Hemisphere && settings.reflectionProbes &&
+           settings.reflectionProbeBlending == ReflectionProbeBlending::PerPixel;
+}
+
+// Probes to keep resident for per-pixel blending: those with a loaded map,
+// nearest the camera first, returned in entity order with their sources.
+std::vector<ReflectionProbeVolume> selectPerPixelProbes(const Scene& scene, const AssetManager& assets,
+                                                        const EnvironmentLightComponent& environment,
+                                                        const glm::vec3& cameraPosition,
+                                                        std::vector<EnvironmentSource>& sources) {
+    std::vector<ReflectionProbeVolume> mapped;
+    std::vector<EnvironmentSource> mappedSources;
+    for (const ReflectionProbeVolume& probe : gatherReflectionProbes(scene)) {
+        const auto& component = scene.registry().get<ReflectionProbeComponent>(probe.entity);
+        const EnvironmentSource source = environmentSource(component.environmentMap, assets, environment);
+        if (source.mapAsset) {
+            mapped.push_back(probe);
+            mappedSources.push_back(source);
+        }
+    }
+    std::vector<ReflectionProbeVolume> selected;
+    sources.clear();
+    for (uint32_t index : selectResidentReflectionProbes(mapped, cameraPosition, maximumResidentReflectionProbes)) {
+        selected.push_back(mapped[index]);
+        sources.push_back(mappedSources[index]);
+    }
+    return selected;
+}
+
+// Image-based lighting uses the primary environment plus either the dominant
+// reflection probe at the camera or, for per-pixel blending, the given
+// resident probe sources; hemisphere lighting keeps only the analytic sky bound.
 EnvironmentFrameRequest environmentRequest(const Scene& scene, const AssetManager& assets,
                                            const EnvironmentLightComponent& environment, const RenderSettings& settings,
-                                           const glm::vec3& cameraPosition) {
+                                           const glm::vec3& cameraPosition,
+                                           std::vector<EnvironmentSource> residentProbes) {
     EnvironmentFrameRequest request{.quality = settings.environment};
     if (settings.environment == EnvironmentQuality::Hemisphere) {
         // Never sampled; fixed colors keep color edits from rebuilding the maps.
@@ -207,6 +243,10 @@ EnvironmentFrameRequest environmentRequest(const Scene& scene, const AssetManage
     }
     request.primary = environmentSource(environment.environmentMap, assets, environment);
     if (!settings.reflectionProbes) {
+        return request;
+    }
+    if (perPixelReflectionProbes(settings)) {
+        request.residentProbes = std::move(residentProbes);
         return request;
     }
     // Probes arrive ordered by priority, then weight. Only the first with a loaded
@@ -245,10 +285,12 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     m_gpuDrivenKeys.reserve(maximumObjectsPerFrame);
     if (!m_uploadContext.init(context, true) || !m_textureUploadContext.init(context, false) ||
         !createDescriptors(context, frameCount) ||
-        !m_clusteredLighting.init(context, frameCount, ClusterGridConfiguration{}, maximumLocalLights)) {
+        !m_clusteredLighting.init(context, frameCount, ClusterGridConfiguration{}, maximumLocalLights) ||
+        !m_reflectionProbeClusters.init(context, frameCount, m_clusteredLighting.configuration())) {
         return false;
     }
     writeClusteredLightingDescriptors();
+    writeReflectionProbeDescriptors();
     TextureAsset white{.width = 1, .height = 1, .rgba = {255, 255, 255, 255}};
     TextureAsset normal{.width = 1, .height = 1, .rgba = {128, 128, 255, 255}};
     m_geometry = std::make_unique<GeometryArena>(defaultGeometryPage);
@@ -294,8 +336,9 @@ bool MeshPass::createGpuDrivenDescriptors() {
         CameraBuffer& camera = m_cameras[frame];
         camera.gpuDrivenDescriptor = sets[frame];
         // Everything except the object buffer matches the CPU-submission set.
-        std::array<VkCopyDescriptorSet, 8> copies{};
-        const uint32_t sharedBindings[]{0, 1, 3, 4, 9, 10, 11, previousSkinPaletteBinding};
+        std::array<VkCopyDescriptorSet, 9> copies{};
+        const uint32_t sharedBindings[]{
+            0, 1, 3, 4, 9, 10, 11, previousSkinPaletteBinding, ReflectionProbeClusterPass::cameraBinding};
         for (size_t index = 0; index < copies.size(); ++index) {
             copies[index] = {.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET,
                              .srcSet = camera.descriptor,
@@ -332,6 +375,20 @@ void MeshPass::writeClusteredLightingDescriptors() {
                              .pBufferInfo = &infos[index]};
         }
         vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
+}
+
+void MeshPass::writeReflectionProbeDescriptors() {
+    for (uint32_t frame = 0; frame < m_cameras.size(); ++frame) {
+        const VkDescriptorBufferInfo probes{.buffer = m_reflectionProbeClusters.frameBuffer(frame),
+                                            .range = VK_WHOLE_SIZE};
+        const VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                         .dstSet = m_cameras[frame].descriptor,
+                                         .dstBinding = ReflectionProbeClusterPass::cameraBinding,
+                                         .descriptorCount = 1,
+                                         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                         .pBufferInfo = &probes};
+        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
     }
 }
 
@@ -431,6 +488,16 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         {.binding = ambientOcclusionBinding,
          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
          .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        // Per-pixel reflection probes: the resident probe cube array, written
+        // by EnvironmentPass, and the frame's probe buffer.
+        {.binding = EnvironmentPass::probeSpecularBinding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        {.binding = ReflectionProbeClusterPass::cameraBinding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1,
          .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
     VkDescriptorSetLayoutCreateInfo layoutInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -448,9 +515,9 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
     const VkDescriptorPoolSize poolSizes[]{
         {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = frameCount * 2},
         {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = frameCount * 2 * (7 + EnvironmentPass::environmentSlots)},
+         .descriptorCount = frameCount * 2 * (8 + EnvironmentPass::environmentSlots)},
         {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         .descriptorCount = frameCount * 2 * (3 + EnvironmentPass::environmentSlots)}};
+         .descriptorCount = frameCount * 2 * (4 + EnvironmentPass::environmentSlots)}};
     VkDescriptorPoolCreateInfo poolInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = frameCount * 2,
@@ -1934,16 +2001,31 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const bool imageBasedLighting = rendering.settings().environment != EnvironmentQuality::Hemisphere;
     const CameraBuffer& frameCamera = m_cameras[frameIndex];
     const std::array<VkDescriptorSet, 2> environmentSets{frameCamera.descriptor, frameCamera.gpuDrivenDescriptor};
+    std::vector<EnvironmentSource> residentProbeSources;
+    const std::vector<ReflectionProbeVolume> residentProbes =
+        perPixelReflectionProbes(rendering.settings())
+            ? selectPerPixelProbes(scene, assets, environment, cameraPosition, residentProbeSources)
+            : std::vector<ReflectionProbeVolume>{};
     OptionalPassTimestamps passTimestamps(commandBuffer, timestampQueries);
     passTimestamps.write(FrameTimestamp::environmentPrecomputeBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     const std::optional<EnvironmentFrameState> environmentState =
         m_environmentPass.prepare(commandBuffer, frameIndex, m_frameSerial,
-                                  environmentRequest(scene, assets, environment, rendering.settings(), cameraPosition),
+                                  environmentRequest(scene, assets, environment, rendering.settings(), cameraPosition,
+                                                     std::move(residentProbeSources)),
                                   std::span(environmentSets.data(), frameCamera.gpuDrivenDescriptor ? 2u : 1u));
     passTimestamps.write(FrameTimestamp::environmentPrecomputeEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     if (!environmentState) {
         return false;
     }
+    // Probes still waiting for their maps to build are left out this frame.
+    std::vector<GpuReflectionProbe> probeRecords;
+    for (size_t index = 0; index < residentProbes.size() && index < environmentState->probeSlots.size(); ++index) {
+        if (const int32_t slot = environmentState->probeSlots[index]; slot >= 0) {
+            probeRecords.push_back(packReflectionProbe(residentProbes[index], static_cast<uint32_t>(slot), view));
+        }
+    }
+    cameraData.reflectionProbeParams = {probeRecords.empty() ? 0.0f : 1.0f, static_cast<float>(probeRecords.size()),
+                                        0.0f, 0.0f};
     // GTAO needs the prepass normals; without them the occlusion target is
     // cleared to unoccluded and any scale samples it correctly.
     const AmbientOcclusionQuality ambientOcclusion =
@@ -2056,6 +2138,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.updatedObjectRecords = updatedObjectRecords;
     stats.mainThreadAllocations = allocationCount;
     stats.localLightCount = localLightCount;
+    stats.reflectionProbeCount = static_cast<uint32_t>(probeRecords.size());
     stats.discardedLightAssignments = clusterStatistics.discardedAssignments;
     stats.maximumLightsPerCluster = clusterStatistics.maximumLightsInCluster;
     stats.taskQueueDepth = taskResult.stats.maximumQueueDepth;
@@ -2183,6 +2266,12 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     passTimestamps.write(FrameTimestamp::lightClustersBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     m_clusteredLighting.record(commandBuffer, frameIndex, clusterGrid, view);
     passTimestamps.write(FrameTimestamp::lightClustersEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    if (!probeRecords.empty()) {
+        passTimestamps.write(FrameTimestamp::reflectionProbeClustersBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+        m_reflectionProbeClusters.record(commandBuffer, frameIndex, probeRecords,
+                                         m_environmentPass.probeIrradianceBuffer(), clusterGrid);
+        passTimestamps.write(FrameTimestamp::reflectionProbeClustersEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    }
     const auto opaqueCpuBegin = std::chrono::steady_clock::now();
     if (depthPrepass) {
         passTimestamps.write(FrameTimestamp::depthPrepassBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
@@ -2802,6 +2891,7 @@ void MeshPass::shutdown(const VulkanContext& context) {
     }
     m_gpuDrivenSupported = false;
     m_clusteredLighting.shutdown();
+    m_reflectionProbeClusters.shutdown();
     m_uploadContext.shutdown();
     m_textureUploadContext.shutdown();
     for (auto& [variant, pipelines] : m_meshPipelines) {

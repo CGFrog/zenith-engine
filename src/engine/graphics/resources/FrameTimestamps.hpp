@@ -21,7 +21,10 @@ inline constexpr uint32_t environmentPrecomputeBegin = 27;
 inline constexpr uint32_t environmentPrecomputeEnd = 28;
 inline constexpr uint32_t skyboxBegin = 29;
 inline constexpr uint32_t skyboxEnd = 30;
-inline constexpr uint32_t count = 31;
+// Per-pixel reflection probe upload and cluster assignment.
+inline constexpr uint32_t reflectionProbeClustersBegin = 31;
+inline constexpr uint32_t reflectionProbeClustersEnd = 32;
+inline constexpr uint32_t count = 33;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot

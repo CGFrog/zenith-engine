@@ -82,8 +82,9 @@ bool supportsRenderingFeatures(VkPhysicalDevice device) {
                                   indexingFeatures.descriptorBindingPartiallyBound &&
                                   indexingFeatures.descriptorBindingVariableDescriptorCount &&
                                   indexingFeatures.shaderSampledImageArrayNonUniformIndexing;
+    // Resident reflection probes are sampled from one cube-map array.
     return renderingFeatures.dynamicRendering && renderingFeatures.synchronization2 &&
-           features.features.samplerAnisotropy && bindlessTextures;
+           features.features.samplerAnisotropy && features.features.imageCubeArray && bindlessTextures;
 }
 
 uint32_t findGraphicsQueueFamily(VkPhysicalDevice device, const Surface& surface) {
@@ -251,7 +252,8 @@ bool VulkanContext::initDevice() {
                                               .dynamicRendering = VK_TRUE};
     // BC sampling is optional: without it, textures stay on the RGBA8 path.
     m_blockCompressionSupported = supported.features.textureCompressionBC == VK_TRUE;
-    VkPhysicalDeviceFeatures enabledFeatures{.multiDrawIndirect = supported.features.multiDrawIndirect,
+    VkPhysicalDeviceFeatures enabledFeatures{.imageCubeArray = VK_TRUE,
+                                             .multiDrawIndirect = supported.features.multiDrawIndirect,
                                              .samplerAnisotropy = VK_TRUE,
                                              .textureCompressionBC = supported.features.textureCompressionBC};
     const char* swapchainExtension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;

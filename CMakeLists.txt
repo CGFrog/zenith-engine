@@ -292,6 +292,7 @@ add_library(zenith_engine STATIC
     src/engine/assets/PackedVertexStreams.cpp
     src/engine/graphics/Renderer.cpp
     src/engine/graphics/Lighting.cpp
+    src/engine/graphics/ReflectionProbes.cpp
     src/engine/graphics/EnvironmentLighting.cpp
     src/engine/graphics/RenderConfiguration.cpp
     src/engine/graphics/RenderSubmission.cpp
@@ -305,6 +306,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/passes/DepthPyramid.cpp
     src/engine/graphics/passes/AmbientOcclusionPass.cpp
     src/engine/graphics/passes/ClusteredLightingPass.cpp
+    src/engine/graphics/passes/ReflectionProbeClusterPass.cpp
     src/engine/graphics/passes/EnvironmentPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
     src/engine/graphics/passes/ScreenSpaceReflectionPass.cpp
@@ -817,6 +819,10 @@ if(BUILD_TESTING)
     add_executable(zenith_tone_mapping_tests tests/engine/ToneMappingTests.cpp)
     target_link_libraries(zenith_tone_mapping_tests PRIVATE zenith_engine)
     add_test(NAME zenith_tone_mapping COMMAND zenith_tone_mapping_tests)
+
+    add_executable(zenith_reflection_probe_tests tests/engine/ReflectionProbeTests.cpp)
+    target_link_libraries(zenith_reflection_probe_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_reflection_probes COMMAND zenith_reflection_probe_tests)
 
     add_executable(zenith_environment_lighting_tests tests/engine/EnvironmentLightingTests.cpp)
     target_link_libraries(zenith_environment_lighting_tests PRIVATE zenith_engine)
