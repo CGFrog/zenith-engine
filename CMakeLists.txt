@@ -292,6 +292,7 @@ add_library(zenith_engine STATIC
     src/engine/assets/PackedVertexStreams.cpp
     src/engine/graphics/Renderer.cpp
     src/engine/graphics/Lighting.cpp
+    src/engine/graphics/DeferredUploadTracker.cpp
     src/engine/graphics/EnvironmentLighting.cpp
     src/engine/graphics/RenderConfiguration.cpp
     src/engine/graphics/RenderSubmission.cpp
@@ -781,6 +782,10 @@ if(BUILD_TESTING)
     add_executable(zenith_mesh_lod_tests tests/engine/MeshLodTests.cpp)
     target_link_libraries(zenith_mesh_lod_tests PRIVATE zenith_engine)
     add_test(NAME zenith_mesh_lod COMMAND zenith_mesh_lod_tests)
+
+    add_executable(zenith_deferred_upload_tracker_tests tests/engine/DeferredUploadTrackerTests.cpp)
+    target_link_libraries(zenith_deferred_upload_tracker_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_deferred_upload_tracker COMMAND zenith_deferred_upload_tracker_tests)
 
     add_executable(zenith_packed_vertex_stream_tests tests/engine/PackedVertexStreamTests.cpp)
     target_link_libraries(zenith_packed_vertex_stream_tests PRIVATE zenith_engine)

@@ -107,3 +107,41 @@ the same table live.
 more objects than the CPU frustum reference. The GPU sphere test uses the
 reference's exact x/y planes and tighter depth planes, so any nonzero value is a
 culling defect.
+
+## Silent-fallback audit
+
+Renderer paths that keep a frame alive by substituting or dropping content must
+be observable. Upload deferrals are counted in `RenderStats` and exported by the
+benchmark; asset-level failures are logged once rather than every frame.
+
+| Fallback | Observable as |
+| --- | --- |
+| Mesh upload deferred (staging backpressure, geometry arena full); its draws are skipped | `RenderStats::deferredMeshUploads`, `upload.deferred_meshes` |
+| Texture upload deferred (staging backpressure, bindless table full); materials sample the white/flat-normal fallback slot | `RenderStats::deferredTextureUploads`, `upload.deferred_textures` |
+| Any mesh or texture deferred for more than `RenderSettings::deferredUploadWarningFrames` consecutive frames (default 120; zero disables) | One warning per asset per deferral episode (`DeferredUploadTracker`) |
+| Texture that can never upload (BC on a device without BC sampling, invalid BC data, RGBA8 size mismatch, larger than one 64 MiB staging slot) | Logged once, then skipped until the asset unloads; samples the fallback |
+| Mesh larger than one staging slot | Logged once, then skipped until the asset unloads (previously retried every frame) |
+| Geometry arena or bindless texture table full | Logged once per episode (reset when an allocation succeeds), and counted as a deferral |
+| Scene local lights over the effective local-light limit (nearest kept) | `RenderStats::droppedLocalLights`, `lights.dropped` |
+| Cluster light assignments over the per-cluster capacity | `RenderStats::discardedLightAssignments` (existing) |
+| Staging-ring backpressure | `RenderStats::uploadBackpressureEvents` (existing) |
+| Unsupported capabilities (IBL, probes, TAA, SSAO, SSR, GPU-driven, local lights) | `ValidatedRenderSettings::fallbacks`, reported by the application (existing) |
+| Environment map that cannot be built; ambient occlusion formats unsupported | Logged once (existing) |
+
+`DeferredUploadTracker` ages an asset once per frame however many draws request
+it, forgets it when its upload lands or when a frame passes without a request
+(released or no longer drawn), so its memory is bounded by the assets deferred
+in the current frame. While a mesh is deferred, render packets are rebuilt every
+frame so the cached-packet path retries the upload; before this audit a mesh
+deferred on the last packet rebuild stayed invisible until an unrelated scene or
+asset revision forced another rebuild.
+
+Both counters are briefly nonzero while a large scene streams in and must be
+zero at steady state; a nonzero steady-state value means content is missing.
+
+Not changed by this audit, because they fail the whole frame loudly rather than
+degrading silently: renderables over `maximumObjectsPerFrame`, skin palettes
+over the per-frame matrix capacity, materials over the material capacity, and
+GPU-driven instance/group overflows. Each logs every frame it occurs. An
+environment map texture without usable pixels still falls back to the analytic
+sky without a message.

@@ -1074,15 +1074,8 @@ bool MeshPass::uploadTexture(const TextureAsset& texture, GpuTexture& output) {
 // Cooked textures carry their full mip chain, so every level is copied as-is.
 // BC7 gets UNORM and sRGB views; BC5 has no sRGB variant and gets one view.
 bool MeshPass::uploadBlockCompressedTexture(const TextureAsset& texture, GpuTexture& output) {
+    // ensureTexture already rejected unsupported or invalid encodings.
     const auto uploadBegin = std::chrono::steady_clock::now();
-    if (!m_blockCompressionSupported) {
-        std::cerr << "Block-compressed texture skipped: the device cannot sample BC formats\n";
-        return false;
-    }
-    if (const AssetPipelineResult valid = validateBlockCompressedTexture(texture); !valid) {
-        std::cerr << "Block-compressed texture rejected: " << valid.error << '\n';
-        return false;
-    }
     const bool bc7 = texture.format == TextureFormat::Bc7;
     const uint32_t mipLevels = static_cast<uint32_t>(texture.mips.size());
     VkImageCreateInfo imageInfo{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -1212,13 +1205,32 @@ const MeshPass::GpuMesh* MeshPass::ensureMesh(MeshHandle handle, const AssetMana
         m_unpackableMeshes.insert(key);
         return nullptr;
     }
+    // Matches uploadBufferRegions' 16-byte region alignment. A mesh larger than
+    // one staging slot can never upload, so it is not retried as a deferral.
+    const auto alignedBytes = [](size_t bytes) { return (static_cast<VkDeviceSize>(bytes) + 15) / 16 * 16; };
+    const VkDeviceSize stagingBytes = alignedBytes(streams->positions.size() * sizeof(glm::vec3)) +
+                                      alignedBytes(streams->attributes.size() * sizeof(PackedVertexAttributes)) +
+                                      alignedBytes(mesh->indices.size() * sizeof(uint32_t)) +
+                                      alignedBytes(streams->skin.size() * sizeof(PackedSkinInfluence));
+    if (stagingBytes > UploadContext::maximumSlotBytes) {
+        std::cerr << "Mesh rejected: " << stagingBytes << " bytes exceed the " << UploadContext::maximumSlotBytes
+                  << "-byte upload limit\n";
+        m_unpackableMeshes.insert(key);
+        return nullptr;
+    }
     const auto geometry =
         m_geometry->allocate(static_cast<uint32_t>(mesh->vertices.size()), static_cast<uint32_t>(mesh->indices.size()),
                              streams->skinned() ? GeometryLayout::Skinned : GeometryLayout::Static);
     if (!geometry) {
-        std::cerr << "Geometry arena could not place a mesh\n";
+        // Retried every frame while the arena is full; logged once per episode.
+        if (!m_geometryArenaFullReported) {
+            std::cerr << "Geometry arena could not place a mesh; its draws are deferred until space frees\n";
+            m_geometryArenaFullReported = true;
+        }
+        m_deferredUploads.markDeferred(DeferredUploadKind::Mesh, key);
         return nullptr;
     }
+    m_geometryArenaFullReported = false;
     bool uploaded = ensureGeometryPage(geometry->page);
     if (uploaded) {
         const GeometryPage& page = m_geometryPages[geometry->page];
@@ -1244,10 +1256,37 @@ const MeshPass::GpuMesh* MeshPass::ensureMesh(MeshHandle handle, const AssetMana
         uploaded = uploadBufferRegions(regions);
     }
     if (!uploaded) {
+        // Typically staging backpressure while a scene loads; retried next frame.
         m_geometry->free(*geometry);
+        m_deferredUploads.markDeferred(DeferredUploadKind::Mesh, key);
         return nullptr;
     }
+    m_deferredUploads.markUploaded(DeferredUploadKind::Mesh, key);
     return &m_meshes.emplace(key, GpuMesh{*geometry}).first->second;
+}
+
+std::string MeshPass::textureRejectionReason(const TextureAsset& texture) const {
+    const auto exceedsStaging = [](size_t bytes) { return bytes > UploadContext::maximumSlotBytes; };
+    if (texture.blockCompressed()) {
+        if (!m_blockCompressionSupported) {
+            return "the device cannot sample BC formats";
+        }
+        if (const AssetPipelineResult valid = validateBlockCompressedTexture(texture); !valid) {
+            return valid.error;
+        }
+        if (exceedsStaging(texture.compressed.size())) {
+            return "compressed data exceeds the upload limit";
+        }
+        return {};
+    }
+    if (texture.width == 0 || texture.height == 0 ||
+        texture.rgba.size() != static_cast<size_t>(texture.width) * texture.height * 4) {
+        return "RGBA8 pixel data does not match the texture dimensions";
+    }
+    if (exceedsStaging(texture.rgba.size())) {
+        return "RGBA8 pixel data exceeds the upload limit";
+    }
+    return {};
 }
 
 const MeshPass::GpuTexture* MeshPass::ensureTexture(TextureHandle handle, const AssetManager& assets) {
@@ -1256,18 +1295,28 @@ const MeshPass::GpuTexture* MeshPass::ensureTexture(TextureHandle handle, const 
         return &found->second;
     }
     const TextureAsset* texture = assets.texture(handle);
-    if (!texture) {
+    if (!texture || m_rejectedTextures.contains(key)) {
+        return nullptr;
+    }
+    // Permanent failures are remembered so they are neither retried nor
+    // logged every frame; only retryable failures count as deferred.
+    if (const std::string reason = textureRejectionReason(*texture); !reason.empty()) {
+        std::cerr << "Texture rejected: " << reason << "; materials sample a fallback texture\n";
+        m_rejectedTextures.insert(key);
         return nullptr;
     }
     GpuTexture gpu;
     if (!uploadTexture(*texture, gpu)) {
+        m_deferredUploads.markDeferred(DeferredUploadKind::Texture, key);
         return nullptr;
     }
     if (!assignTextureSlots(gpu)) {
         // Nothing has referenced the slots or views yet, so release directly.
         destroyTexture(gpu);
+        m_deferredUploads.markDeferred(DeferredUploadKind::Texture, key);
         return nullptr;
     }
+    m_deferredUploads.markUploaded(DeferredUploadKind::Texture, key);
     return &m_textures.emplace(key, gpu).first->second;
 }
 
@@ -1277,6 +1326,7 @@ bool MeshPass::assignTextureSlots(GpuTexture& texture) {
         // Formats without an sRGB variant (BC5) sample linearly in every slot.
         texture.linearSlot = *linear;
         texture.srgbSlot = *linear;
+        m_textureTableFullReported = false;
         return true;
     }
     const auto srgb = linear ? m_textureTable->acquire(texture.srgbView) : std::nullopt;
@@ -1284,9 +1334,15 @@ bool MeshPass::assignTextureSlots(GpuTexture& texture) {
         if (linear) {
             m_textureTable->release(*linear);
         }
-        std::cerr << "Bindless texture table is full (" << m_textureTable->capacity() << " slots)\n";
+        // Retried every frame while the table is full; logged once per episode.
+        if (!m_textureTableFullReported) {
+            std::cerr << "Bindless texture table is full (" << m_textureTable->capacity()
+                      << " slots); textures are deferred until slots free\n";
+            m_textureTableFullReported = true;
+        }
         return false;
     }
+    m_textureTableFullReported = false;
     texture.linearSlot = *linear;
     texture.srgbSlot = *srgb;
     return true;
@@ -1526,6 +1582,7 @@ void MeshPass::setSceneViewport(const DrawContext& draw) const {
 
 bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
                                 const std::vector<RenderObjectId>& outlinedObjects, std::vector<RenderItem>& items) {
+    m_meshUploadsPending = false;
     const auto renderables = scene.registry().view<const TransformComponent, const MeshRendererComponent>();
     for (Entity entity : renderables) {
         const RenderObjectId objectId = static_cast<RenderObjectId>(entt::to_integral(entity));
@@ -1536,9 +1593,12 @@ bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
             return false;
         }
         // A mesh whose upload could not be staged this frame (the staging ring is
-        // full while a scene loads) is skipped and retried on the next frame.
+        // full while a scene loads) is skipped and retried on the next frame;
+        // the pending flag forces that rebuild even when nothing else changed.
         const GpuMesh* gpuMesh = ensureMesh(meshHandle, assets);
         if (!gpuMesh) {
+            m_meshUploadsPending = m_meshUploadsPending ||
+                                   m_deferredUploads.deferredThisFrame(DeferredUploadKind::Mesh, handleKey(meshHandle));
             continue;
         }
         const glm::mat4 world = renderables.get<const TransformComponent>(entity).world;
@@ -1956,6 +2016,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             ? 0u
             : std::min(rendering.settings().maximumLocalLights, m_clusteredLighting.lightCapacity());
     std::vector<LocalLight> selectedLights;
+    size_t sceneLightCount = 0;
 
     uint64_t outlineRevision = 0;
     for (RenderObjectId outlined : rendering.m_outlinedObjects) {
@@ -1963,7 +2024,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             static_cast<uint64_t>(outlined) + 0x9e3779b97f4a7c15ull + (outlineRevision << 6) + (outlineRevision >> 2);
     }
     const SceneRevisions& revisions = scene.revisions();
-    const bool rebuildPackets = !m_packetCachingEnabled || revisions.renderable != m_sceneRevisions.renderable ||
+    const bool rebuildPackets = !m_packetCachingEnabled || m_meshUploadsPending ||
+                                revisions.renderable != m_sceneRevisions.renderable ||
                                 revisions.material != m_sceneRevisions.material ||
                                 assets.revision() != m_assetRevision || outlineRevision != m_outlineRevision;
     const auto packetBuildStart = std::chrono::steady_clock::now();
@@ -2014,7 +2076,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     FrameTaskGraph taskGraph(++m_taskGeneration);
     taskGraph.add("light-selection", lightResources, [&](const FrameTaskContext&) {
         if (localLightLimit > 0) {
-            selectedLights = selectLocalLights(gatherLocalLights(scene), cameraPosition, localLightLimit);
+            const std::vector<LocalLight> sceneLights = gatherLocalLights(scene);
+            sceneLightCount = sceneLights.size();
+            selectedLights = selectLocalLights(sceneLights, cameraPosition, localLightLimit);
         }
     });
     taskGraph.add("render-visibility", visibilityResources, [&](const FrameTaskContext&) {
@@ -2058,6 +2122,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.localLightCount = localLightCount;
     stats.discardedLightAssignments = clusterStatistics.discardedAssignments;
     stats.maximumLightsPerCluster = clusterStatistics.maximumLightsInCluster;
+    stats.droppedLocalLights =
+        sceneLightCount > localLightCount ? static_cast<uint32_t>(sceneLightCount - localLightCount) : 0u;
+    recordDeferredUploads(rendering.settings(), stats);
     stats.taskQueueDepth = taskResult.stats.maximumQueueDepth;
     stats.taskStolenJobs = taskResult.stats.stolenJobs;
     stats.taskWorkerUtilization = taskResult.stats.workerUtilization;
@@ -2758,6 +2825,16 @@ void MeshPass::recordOutlines(const DrawContext& draw) {
     }
 }
 
+void MeshPass::recordDeferredUploads(const RenderSettings& settings, RenderStats& stats) {
+    m_deferredUploads.setConfiguration({.warningFrames = settings.deferredUploadWarningFrames});
+    const DeferredUploadFrameSummary deferred = m_deferredUploads.endFrame();
+    stats.deferredMeshUploads = deferred.deferredMeshes;
+    stats.deferredTextureUploads = deferred.deferredTextures;
+    for (const DeferredUploadWarning& warning : deferred.overdue) {
+        std::cerr << describeDeferredUpload(warning) << '\n';
+    }
+}
+
 void MeshPass::pruneUnusedAssets(const AssetManager& assets) {
     // Asset leases keep an asset alive until every frame that drew it retired,
     // so geometry ranges and material indices can be reused immediately.
@@ -2770,6 +2847,8 @@ void MeshPass::pruneUnusedAssets(const AssetManager& assets) {
     });
     std::erase_if(m_unpackableMeshes,
                   [&](uint64_t key) { return assets.mesh(handleFromKey<MeshHandle>(key)) == nullptr; });
+    std::erase_if(m_rejectedTextures,
+                  [&](uint64_t key) { return assets.texture(handleFromKey<TextureHandle>(key)) == nullptr; });
     std::erase_if(m_textures, [&](const auto& entry) {
         if (assets.texture(handleFromKey<TextureHandle>(entry.first)) != nullptr) {
             return false;
@@ -2823,6 +2902,9 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_depthPrepassFrame.reset();
     m_meshes.clear();
     m_unpackableMeshes.clear();
+    m_rejectedTextures.clear();
+    m_deferredUploads = DeferredUploadTracker{};
+    m_meshUploadsPending = false;
     for (const GeometryPage& page : m_geometryPages) {
         destroyGeometryPage(page);
     }

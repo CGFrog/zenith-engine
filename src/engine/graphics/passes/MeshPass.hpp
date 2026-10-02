@@ -3,6 +3,7 @@
 #include "../../assets/Assets.hpp"
 #include "../../jobs/FrameTaskGraph.hpp"
 #include "../../scene/Scene.hpp"
+#include "../DeferredUploadTracker.hpp"
 #include "../MeshLodSelection.hpp"
 #include "../RenderSubmission.hpp"
 #include "../Rendering.hpp"
@@ -26,6 +27,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -193,6 +195,8 @@ class MeshPass {
     void bindGeometryPage(VkCommandBuffer commandBuffer, uint32_t page) const;
     bool uploadTexture(const TextureAsset& texture, GpuTexture& output);
     bool uploadBlockCompressedTexture(const TextureAsset& texture, GpuTexture& output);
+    // Why the texture can never upload on this device; empty when it can.
+    std::string textureRejectionReason(const TextureAsset& texture) const;
     bool assignTextureSlots(GpuTexture& texture);
     void retireTexture(const GpuTexture& texture);
     void destroyTexture(const GpuTexture& texture);
@@ -203,6 +207,9 @@ class MeshPass {
     const GpuTexture* ensureTexture(TextureHandle handle, const AssetManager& assets);
     const GpuMaterial* ensureMaterial(MaterialHandle handle, const AssetManager& assets);
     void pruneUnusedAssets(const AssetManager& assets);
+    // Closes the frame's deferred-upload bookkeeping: fills the stats counters
+    // and logs assets that just stayed deferred past the configured bound.
+    void recordDeferredUploads(const RenderSettings& settings, RenderStats& stats);
 
     // Quality choices compiled into mesh.frag as specialization constants, so
     // disabled lighting and shadow paths cost nothing per pixel.
@@ -309,9 +316,22 @@ class MeshPass {
     // A single zero skin influence, bound with stride 0 for static pages.
     GpuBuffer m_zeroSkinInfluence;
     std::unordered_map<uint64_t, GpuMesh> m_meshes;
-    // Meshes whose vertices cannot be packed; skipped until the asset unloads.
+    // Meshes whose vertices cannot be packed or that exceed the staging limit;
+    // skipped until the asset unloads.
     std::unordered_set<uint64_t> m_unpackableMeshes;
     std::unordered_map<uint64_t, GpuTexture> m_textures;
+    // Textures this device can never sample (unsupported or invalid encoding);
+    // skipped with one log line until the asset unloads.
+    std::unordered_set<uint64_t> m_rejectedTextures;
+    // Mesh and texture uploads retried on later frames, with one warning per
+    // asset that stays deferred past RenderSettings::deferredUploadWarningFrames.
+    DeferredUploadTracker m_deferredUploads;
+    // Set when the last packet build skipped a mesh whose upload was deferred,
+    // so packets are rebuilt (and the upload retried) until every mesh lands.
+    bool m_meshUploadsPending{false};
+    // Capacity failures retried every frame are logged once per episode.
+    bool m_geometryArenaFullReported{false};
+    bool m_textureTableFullReported{false};
     std::unordered_map<uint64_t, GpuMaterial> m_materials;
     std::vector<uint32_t> m_freeMaterialIndices;
     uint32_t m_nextMaterialIndex{0};

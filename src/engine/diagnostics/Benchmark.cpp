@@ -121,6 +121,10 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("pipeline.creation_time", s.pipelineCreationMilliseconds);
     sample("pipeline.first_use_events", s.pipelineFirstUseEvents, "count");
     sample("pipeline.first_use_time", s.pipelineFirstUseMilliseconds);
+    // Silent-fallback audit: nonzero at steady state means content is missing.
+    sample("upload.deferred_meshes", s.deferredMeshUploads, "count");
+    sample("upload.deferred_textures", s.deferredTextureUploads, "count");
+    sample("lights.dropped", s.droppedLocalLights, "count");
 }
 
 void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& budgets, uint64_t firstFrame,
