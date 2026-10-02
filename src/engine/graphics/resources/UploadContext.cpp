@@ -25,6 +25,12 @@ bool UploadContext::init(const VulkanContext& context, bool preferDedicatedTrans
     std::vector<VkQueueFamilyProperties> families(familyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(context.pDevice(), &familyCount, families.data());
     m_timestampValidBits = families[m_queueFamily].timestampValidBits;
+    m_hostQueryReset = context.hostQueryResetSupported();
+    if (usesDedicatedQueue() && !m_hostQueryReset) {
+        // Transfer-only queues cannot record vkCmdResetQueryPool, so upload
+        // timing is unavailable without host query reset.
+        m_timestampValidBits = 0;
+    }
 
     VkCommandPoolCreateInfo pool{.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                                  .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
@@ -134,13 +140,20 @@ bool UploadContext::submit(const std::function<void(VkCommandBuffer)>& record) {
         !checkVulkan(vkResetCommandBuffer(slot.command, 0), "Reset upload-ring command")) {
         return false;
     }
+    // The slot's previous submission has retired (stage() only selects idle
+    // slots), so its queries are safe to reset from the host.
+    if (m_timestampQueries && m_hostQueryReset) {
+        vkResetQueryPool(m_device, m_timestampQueries, slotIndex * 2, 2);
+    }
     VkCommandBufferBeginInfo begin{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
                                    .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
     if (!checkVulkan(vkBeginCommandBuffer(slot.command, &begin), "Begin resource upload")) {
         return false;
     }
     if (m_timestampQueries) {
-        vkCmdResetQueryPool(slot.command, m_timestampQueries, slotIndex * 2, 2);
+        if (!m_hostQueryReset) {
+            vkCmdResetQueryPool(slot.command, m_timestampQueries, slotIndex * 2, 2);
+        }
         vkCmdWriteTimestamp2(slot.command,
                              usesDedicatedQueue() ? VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT
                                                   : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,

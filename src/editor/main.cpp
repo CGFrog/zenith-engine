@@ -15,7 +15,7 @@ int main(int argc, char** argv) {
     if (!engine.init()) {
         std::cerr << "Zenith Editor initialization failed. SDL: " << SDL_GetError() << '\n';
         engine.shutdown();
-        return EXIT_FAILURE;
+        return validationExitCode(engine.graphicsValidation(), EXIT_FAILURE);
     }
     // Cooked textures produced by zenith_asset_build live beside the packaged assets.
     engine.assets().setCookedTextureRoot(resourceRoot() / "derived");
@@ -48,5 +48,5 @@ int main(int argc, char** argv) {
                                   std::move(initialSceneLoader));
     const bool success = engine.run(application);
     engine.shutdown();
-    return success ? EXIT_SUCCESS : EXIT_FAILURE;
+    return validationExitCode(engine.graphicsValidation(), success ? EXIT_SUCCESS : EXIT_FAILURE);
 }

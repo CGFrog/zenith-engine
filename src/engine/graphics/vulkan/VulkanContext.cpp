@@ -12,37 +12,34 @@ constexpr uint32_t invalidQueueFamily = UINT32_MAX;
 constexpr uint32_t graphicsQueueIndex = 0;
 constexpr float graphicsQueuePriority = 1.0f;
 
-VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-                                             VkDebugUtilsMessageTypeFlagsEXT,
-                                             const VkDebugUtilsMessengerCallbackDataEXT* data, void*) {
-    if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
-        std::cerr << data->pMessage << '\n';
-    }
-    return VK_FALSE;
-}
-
-VkDebugUtilsMessengerCreateInfoEXT debugMessengerInfo() {
-    return {.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-            .messageSeverity =
-                VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-            .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT |
-                           VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT,
-            .pfnUserCallback = debugCallback};
-}
-
-std::vector<const char*> requestedValidationLayers() {
+bool validationLayerAvailable() {
     uint32_t count = 0;
     vkEnumerateInstanceLayerProperties(&count, nullptr);
     std::vector<VkLayerProperties> layers(count);
     vkEnumerateInstanceLayerProperties(&count, layers.data());
     for (const VkLayerProperties& layer : layers) {
         if (std::strcmp(layer.layerName, validationLayer) == 0) {
-            std::cerr << "Vulkan validation enabled.\n";
-            return {validationLayer};
+            return true;
         }
     }
-    std::cerr << "Validation layer unavailable; continuing without validation.\n";
-    return {};
+    return false;
+}
+
+bool layerProvidesExtension(const char* layer, const char* extension) {
+    uint32_t count = 0;
+    vkEnumerateInstanceExtensionProperties(layer, &count, nullptr);
+    std::vector<VkExtensionProperties> extensions(count);
+    vkEnumerateInstanceExtensionProperties(layer, &count, extensions.data());
+    for (const VkExtensionProperties& candidate : extensions) {
+        if (std::strcmp(candidate.extensionName, extension) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+const char* severityName(VkDebugUtilsMessageSeverityFlagBitsEXT severity) {
+    return severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ? "error" : "warning";
 }
 
 bool requestedInstanceExtensions(std::vector<const char*>& extensions) {
@@ -70,7 +67,9 @@ bool supportsSwapchainExtension(VkPhysicalDevice device) {
 }
 
 bool supportsRenderingFeatures(VkPhysicalDevice device) {
-    VkPhysicalDeviceVulkan12Features indexingFeatures{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceVulkan14Features vulkan14{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES};
+    VkPhysicalDeviceVulkan12Features indexingFeatures{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+                                                      .pNext = &vulkan14};
     VkPhysicalDeviceVulkan13Features renderingFeatures{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
                                                        .pNext = &indexingFeatures};
     VkPhysicalDeviceFeatures2 features{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
@@ -82,8 +81,13 @@ bool supportsRenderingFeatures(VkPhysicalDevice device) {
                                   indexingFeatures.descriptorBindingPartiallyBound &&
                                   indexingFeatures.descriptorBindingVariableDescriptorCount &&
                                   indexingFeatures.shaderSampledImageArrayNonUniformIndexing;
+    // Passes bind per-draw resources with push descriptors, write multiple
+    // color attachments with different blend states, and shaders compiled for
+    // SPIR-V 1.6 lower discard to demote-to-helper-invocation.
+    const bool pipelineFeatures = vulkan14.pushDescriptor && features.features.independentBlend &&
+                                  renderingFeatures.shaderDemoteToHelperInvocation;
     return renderingFeatures.dynamicRendering && renderingFeatures.synchronization2 &&
-           features.features.samplerAnisotropy && bindlessTextures;
+           features.features.samplerAnisotropy && bindlessTextures && pipelineFeatures;
 }
 
 uint32_t findGraphicsQueueFamily(VkPhysicalDevice device, const Surface& surface) {
@@ -137,17 +141,97 @@ std::vector<uint8_t> readPipelineCache(const std::filesystem::path& path) {
 }
 } // namespace
 
-bool VulkanContext::initInstance() {
+VKAPI_ATTR VkBool32 VKAPI_CALL VulkanContext::debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+                                                            VkDebugUtilsMessageTypeFlagsEXT types,
+                                                            const VkDebugUtilsMessengerCallbackDataEXT* message,
+                                                            void* counters) {
+    auto& validation = *static_cast<ValidationCounters*>(counters);
+    const bool performance = (types & VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT) != 0;
+    // The loader reports through the same messenger with this fixed ID, e.g.
+    // for unreadable implicit-layer manifests left by uninstalled overlays.
+    const bool loader =
+        message->pMessageIdName != nullptr && std::strcmp(message->pMessageIdName, "Loader Message") == 0;
+    if (loader) {
+        validation.loaderMessages.fetch_add(1, std::memory_order_relaxed);
+    } else if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+        validation.errors.fetch_add(1, std::memory_order_relaxed);
+    } else if (performance) {
+        validation.performanceWarnings.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        validation.warnings.fetch_add(1, std::memory_order_relaxed);
+    }
+    const char* messageId = message->pMessageIdName != nullptr ? message->pMessageIdName : "unnamed";
+    std::cerr << "[Vulkan "
+              << (loader        ? "loader "
+                  : performance ? "performance "
+                                : "")
+              << severityName(severity) << "] " << messageId << ": " << message->pMessage << '\n';
+    return VK_FALSE;
+}
+
+GraphicsValidationReport VulkanContext::validationReport() const {
+    return {.strict = m_validationStrict,
+            .layerActive = m_validationLayerActive,
+            .synchronizationValidation = m_synchronizationValidation,
+            .errorCount = m_validationCounters.errors.load(std::memory_order_relaxed),
+            .warningCount = m_validationCounters.warnings.load(std::memory_order_relaxed),
+            .performanceWarningCount = m_validationCounters.performanceWarnings.load(std::memory_order_relaxed),
+            .loaderMessageCount = m_validationCounters.loaderMessages.load(std::memory_order_relaxed)};
+}
+
+bool VulkanContext::initInstance(const GraphicsValidationOptions& validation) {
+    // Record strict mode before anything can fail so a missing loader or layer
+    // still reports as a skipped strict run.
+    m_validationStrict = validation.strict;
+    if (!checkVulkan(volkInitialize(), "volkInitialize")) {
+        return false;
+    }
     std::vector<const char*> extensions;
     if (!requestedInstanceExtensions(extensions)) {
         return false;
     }
-    const std::vector<const char*> layers = requestedValidationLayers();
-    VkDebugUtilsMessengerCreateInfoEXT debugInfo = debugMessengerInfo();
+    std::vector<const char*> layers;
+    m_validationLayerActive = validationLayerAvailable();
+    if (m_validationLayerActive) {
+        layers.push_back(validationLayer);
+        std::cerr << "Vulkan validation enabled.\n";
+    } else if (validation.strict) {
+        std::cerr << "Strict validation requires " << validationLayer << ", which is not installed.\n";
+        return false;
+    } else {
+        std::cerr << "Validation layer unavailable; continuing without validation.\n";
+    }
+    VkDebugUtilsMessengerCreateInfoEXT debugInfo{.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+                                                 .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                                                    VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+                                                 .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT |
+                                                                VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                                                VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT,
+                                                 .pfnUserCallback = debugCallback,
+                                                 .pUserData = &m_validationCounters};
+    // Synchronization validation reports hazards that core validation cannot
+    // see (missing or too-narrow barriers). It is slow, so only strict runs pay.
+    const VkValidationFeatureEnableEXT synchronizationFeature =
+        VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
+    VkValidationFeaturesEXT validationFeatures{.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT,
+                                               .pNext = &debugInfo,
+                                               .enabledValidationFeatureCount = 1,
+                                               .pEnabledValidationFeatures = &synchronizationFeature};
+    m_synchronizationValidation = false;
+    if (validation.strict) {
+        if (!layerProvidesExtension(validationLayer, VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME)) {
+            std::cerr << "Strict validation requires " << VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME << ".\n";
+            return false;
+        }
+        extensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+        m_synchronizationValidation = true;
+    }
     VkApplicationInfo application{
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "Zenith", .apiVersion = VulkanVersion};
     VkInstanceCreateInfo instanceInfo{.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-                                      .pNext = &debugInfo,
+                                      .pNext = m_synchronizationValidation
+                                                   ? static_cast<const void*>(&validationFeatures)
+                                                   : static_cast<const void*>(&debugInfo),
                                       .pApplicationInfo = &application,
                                       .enabledLayerCount = static_cast<uint32_t>(layers.size()),
                                       .ppEnabledLayerNames = layers.data(),
@@ -204,7 +288,8 @@ bool VulkanContext::initPhysicalDevice(const Surface& surface) {
     }
     if (!m_pDevice) {
         std::cerr << "No suitable Vulkan 1.4 graphics/presentation device with dynamic rendering, "
-                     "synchronization2, and bindless texture support.\n";
+                     "synchronization2, push descriptor, independent blend, demote-to-helper, and bindless "
+                     "texture support.\n";
         return false;
     }
     return true;
@@ -231,10 +316,13 @@ bool VulkanContext::initDevice() {
                           .pQueuePriorities = &graphicsQueuePriority});
     }
     VkPhysicalDeviceVulkan12Features supported12{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDeviceVulkan14Features vulkan14{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
+                                              .pushDescriptor = VK_TRUE};
     VkPhysicalDeviceFeatures2 supported{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &supported12};
     vkGetPhysicalDeviceFeatures2(m_pDevice, &supported);
     VkPhysicalDeviceVulkan12Features vulkan12{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .pNext = &vulkan14,
         .drawIndirectCount = supported12.drawIndirectCount,
         .descriptorIndexing = supported12.descriptorIndexing,
         .shaderSampledImageArrayNonUniformIndexing = supported12.shaderSampledImageArrayNonUniformIndexing,
@@ -242,16 +330,20 @@ bool VulkanContext::initDevice() {
         .descriptorBindingPartiallyBound = supported12.descriptorBindingPartiallyBound,
         .descriptorBindingVariableDescriptorCount = supported12.descriptorBindingVariableDescriptorCount,
         .runtimeDescriptorArray = supported12.runtimeDescriptorArray,
+        .hostQueryReset = supported12.hostQueryReset,
         .timelineSemaphore = supported12.timelineSemaphore,
     };
     m_timelineSemaphoreSupported = supported12.timelineSemaphore == VK_TRUE;
+    m_hostQueryResetSupported = supported12.hostQueryReset == VK_TRUE;
     VkPhysicalDeviceVulkan13Features vulkan13{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
                                               .pNext = &vulkan12,
+                                              .shaderDemoteToHelperInvocation = VK_TRUE,
                                               .synchronization2 = VK_TRUE,
                                               .dynamicRendering = VK_TRUE};
     // BC sampling is optional: without it, textures stay on the RGBA8 path.
     m_blockCompressionSupported = supported.features.textureCompressionBC == VK_TRUE;
-    VkPhysicalDeviceFeatures enabledFeatures{.multiDrawIndirect = supported.features.multiDrawIndirect,
+    VkPhysicalDeviceFeatures enabledFeatures{.independentBlend = VK_TRUE,
+                                             .multiDrawIndirect = supported.features.multiDrawIndirect,
                                              .samplerAnisotropy = VK_TRUE,
                                              .textureCompressionBC = supported.features.textureCompressionBC};
     const char* swapchainExtension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
@@ -329,6 +421,7 @@ void VulkanContext::closeDevice() {
     m_gfxQueue = VK_NULL_HANDLE;
     m_transferQueue = VK_NULL_HANDLE;
     m_timelineSemaphoreSupported = false;
+    m_hostQueryResetSupported = false;
 }
 
 void VulkanContext::closeInstance() {

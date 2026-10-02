@@ -291,6 +291,7 @@ add_library(zenith_engine STATIC
     src/engine/assets/AssetStreaming.cpp
     src/engine/assets/PackedVertexStreams.cpp
     src/engine/graphics/Renderer.cpp
+    src/engine/graphics/GraphicsValidation.cpp
     src/engine/graphics/Lighting.cpp
     src/engine/graphics/DeferredUploadTracker.cpp
     src/engine/graphics/EnvironmentLighting.cpp
@@ -959,5 +960,49 @@ if(BUILD_TESTING)
         ENVIRONMENT "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600"
         LABELS "vulkan;smoke"
         TIMEOUT 45
+    )
+
+    add_executable(zenith_graphics_validation_tests tests/engine/GraphicsValidationTests.cpp)
+    target_link_libraries(zenith_graphics_validation_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_graphics_validation COMMAND zenith_graphics_validation_tests)
+
+    # Strict validation smoke matrix (docs/RENDERER_VALIDATION.md). Any counted
+    # validation or synchronization message fails the run; exit code 77 marks it
+    # skipped when VK_LAYER_KHRONOS_validation is not installed.
+    function(zenith_add_validation_smoke test_name)
+        cmake_parse_arguments(SMOKE "" "" "COMMAND;ENVIRONMENT" ${ARGN})
+        add_test(NAME ${test_name} COMMAND ${SMOKE_COMMAND})
+        set_tests_properties(${test_name} PROPERTIES
+            ENVIRONMENT "ZENITH_VALIDATION_STRICT=1;${SMOKE_ENVIRONMENT}"
+            LABELS "vulkan;validation"
+            SKIP_RETURN_CODE 77
+            TIMEOUT 300
+        )
+    endfunction()
+
+    set(ZENITH_VALIDATION_SCENES demo showcase)
+    set(ZENITH_VALIDATION_COMMAND_demo zenith)
+    set(ZENITH_VALIDATION_COMMAND_showcase zenith --project "${CMAKE_CURRENT_SOURCE_DIR}/projects/showcase.zenith-project")
+    set(ZENITH_VALIDATION_SUBMISSIONS cpu gpu_driven)
+    set(ZENITH_VALIDATION_ENVIRONMENT_cpu "")
+    set(ZENITH_VALIDATION_ENVIRONMENT_gpu_driven "ZENITH_FORCE_GPU_DRIVEN=1")
+    set(ZENITH_VALIDATION_QUALITIES default high_dynamic)
+    set(ZENITH_VALIDATION_ENVIRONMENT_default "")
+    set(ZENITH_VALIDATION_ENVIRONMENT_high_dynamic "ZENITH_FORCE_HIGH_QUALITY=1;ZENITH_FORCE_DYNAMIC_RESOLUTION=1")
+    foreach(scene IN LISTS ZENITH_VALIDATION_SCENES)
+        foreach(submission IN LISTS ZENITH_VALIDATION_SUBMISSIONS)
+            foreach(quality IN LISTS ZENITH_VALIDATION_QUALITIES)
+                zenith_add_validation_smoke(zenith_validation_${scene}_${submission}_${quality}
+                    COMMAND ${ZENITH_VALIDATION_COMMAND_${scene}}
+                    ENVIRONMENT ZENITH_SMOKE_FRAMES=120
+                        ${ZENITH_VALIDATION_ENVIRONMENT_${submission}}
+                        ${ZENITH_VALIDATION_ENVIRONMENT_${quality}}
+                )
+            endforeach()
+        endforeach()
+    endforeach()
+    zenith_add_validation_smoke(zenith_validation_editor
+        COMMAND zenith_editor
+        ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=600
     )
 endif()

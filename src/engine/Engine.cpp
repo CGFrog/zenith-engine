@@ -71,11 +71,14 @@ Engine::Engine()
     : m_frameTasks(frameTaskConfiguration()) {}
 
 bool Engine::init(const PhysicsWorldConfig& physicsConfig, const AudioConfig& audioConfig) {
+    // Read before anything can fail so a strict run without a usable Vulkan
+    // loader still reports as skipped rather than failed.
+    m_graphicsValidation = graphicsValidationOptionsFromEnvironment();
     if (!m_window.init()) {
         return false;
     }
 
-    if (!m_renderer.init(m_window, m_rendering, m_frameTasks)) {
+    if (!m_renderer.init(m_window, m_rendering, m_frameTasks, m_graphicsValidation)) {
         return false;
     }
     m_assets.setTextureFormatCapabilities(m_renderer.textureFormatCapabilities());
@@ -332,6 +335,12 @@ AudioSystem& Engine::audio() {
 
 RenderRuntime& Engine::rendering() {
     return m_rendering;
+}
+
+GraphicsValidationReport Engine::graphicsValidation() const {
+    GraphicsValidationReport report = m_renderer.validationReport();
+    report.strict = m_graphicsValidation.strict;
+    return report;
 }
 
 uint64_t Engine::readFrameLimit() {

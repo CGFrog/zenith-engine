@@ -72,7 +72,7 @@ int runApplication(int argc, char** argv) {
     if (!engine.init()) {
         std::cerr << "Zenith initialization failed. SDL: " << SDL_GetError() << '\n';
         engine.shutdown();
-        return EXIT_FAILURE;
+        return validationExitCode(engine.graphicsValidation(), EXIT_FAILURE);
     }
     // Cooked textures produced by zenith_asset_build live beside the packaged assets.
     engine.assets().setCookedTextureRoot(resourceRoot() / "derived");
@@ -80,8 +80,7 @@ int runApplication(int argc, char** argv) {
     DemoApplication application(std::move(project), userDataDirectory("Zenith", "Demo") / "game-settings.json");
     const bool success = engine.run(application);
     engine.shutdown();
-
-    return success ? EXIT_SUCCESS : EXIT_FAILURE;
+    return validationExitCode(engine.graphicsValidation(), success ? EXIT_SUCCESS : EXIT_FAILURE);
 }
 } // namespace
 

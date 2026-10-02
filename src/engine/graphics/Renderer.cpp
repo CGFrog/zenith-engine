@@ -97,7 +97,8 @@ RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const Render
 }
 } // namespace
 
-bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExecutor& frameTasks) {
+bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExecutor& frameTasks,
+                    const GraphicsValidationOptions& validation) {
     m_rendering = &rendering;
     m_frameTasks = &frameTasks;
     m_pipelineCreationMilliseconds = 0.0;
@@ -106,7 +107,7 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
     m_pipelineCacheWarm = false;
     m_pipelineFirstUsePending = true;
     applyDiagnosticOverrides(rendering);
-    if (!initContext(window)) {
+    if (!initContext(window, validation)) {
         return false;
     }
     rendering.m_capabilities = detectRenderCapabilities(m_context.pDevice());
@@ -154,11 +155,8 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
     return true;
 }
 
-bool Renderer::initContext(const Window& window) {
-    if (!checkVulkan(volkInitialize(), "volkInitialize")) {
-        return false;
-    }
-    if (!m_context.initInstance()) {
+bool Renderer::initContext(const Window& window, const GraphicsValidationOptions& validation) {
+    if (!m_context.initInstance(validation)) {
         return false;
     }
     if (!m_surface.init(m_context.instance(), window.handle())) {
@@ -730,6 +728,12 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             }
             if (barrier.resource == swapchain) {
                 m_swapchainToUiBarrier = barrier;
+                // A first use of the freshly acquired image must start at the
+                // stage the frame waits on the acquire semaphore, or its layout
+                // transition races the presentation engine's read.
+                if (static_cast<VkImageLayout>(barrier.oldLayout) == VK_IMAGE_LAYOUT_UNDEFINED) {
+                    m_swapchainToUiBarrier->sourceStages |= VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+                }
             }
         }
         m_renderGraphShape = shape;
