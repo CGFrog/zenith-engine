@@ -8,6 +8,9 @@
 namespace {
 using Json = nlohmann::json;
 
+// Beyond this, simplified levels would be visibly wrong at any distance.
+constexpr float maximumLodErrorThresholdPixels = 64.0f;
+
 template <typename Enum> bool readEnum(const Json& document, const char* name, Enum maximum, Enum& value) {
     const auto found = document.find(name);
     if (found == document.end() || !found->is_number_unsigned()) {
@@ -114,6 +117,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"maximumLocalLights", settings.maximumLocalLights},
                            {"reflectionProbes", settings.reflectionProbes},
                            {"preferGpuDrivenSubmission", settings.preferGpuDrivenSubmission},
+                           {"lodErrorThresholdPixels", settings.lodErrorThresholdPixels},
                            {"cascadeSplitLambda", settings.cascadeSplitLambda},
                            {"cascadeBlendFraction", settings.cascadeBlendFraction},
                            {"visualizeShadowCascades", settings.visualizeShadowCascades},
@@ -165,6 +169,11 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
         }
         loaded.reflectionProbes = document.value("reflectionProbes", true);
         loaded.preferGpuDrivenSubmission = document.value("preferGpuDrivenSubmission", false);
+        loaded.lodErrorThresholdPixels = document.value("lodErrorThresholdPixels", 1.0f);
+        if (!(loaded.lodErrorThresholdPixels >= 0.0f &&
+              loaded.lodErrorThresholdPixels <= maximumLodErrorThresholdPixels)) {
+            return {.error = "Render settings contain an invalid LOD error threshold"};
+        }
         loaded.cascadeSplitLambda = document.value("cascadeSplitLambda", 0.65f);
         loaded.cascadeBlendFraction = document.value("cascadeBlendFraction", 0.10f);
         loaded.visualizeShadowCascades = document.value("visualizeShadowCascades", false);

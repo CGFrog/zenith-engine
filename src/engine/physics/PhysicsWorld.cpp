@@ -343,9 +343,19 @@ JPH::RefConst<JPH::Shape> createShape(const ColliderComponent& collider, const g
                     for (uint32_t i = 0; i + 2 < mesh->vertices.size(); i += 3) {
                         addTriangle(i, i + 1, i + 2);
                     }
-                } else {
+                } else if (mesh->primitives.empty()) {
                     for (size_t i = 0; i + 2 < mesh->indices.size(); i += 3) {
                         addTriangle(mesh->indices[i], mesh->indices[i + 1], mesh->indices[i + 2]);
+                    }
+                } else {
+                    // Only full-detail ranges collide; simplified LOD ranges
+                    // follow them in the same index buffer.
+                    for (const MeshPrimitive& primitive : mesh->primitives) {
+                        const size_t end = std::min<size_t>(
+                            static_cast<size_t>(primitive.firstIndex) + primitive.indexCount, mesh->indices.size());
+                        for (size_t i = primitive.firstIndex; i + 2 < end; i += 3) {
+                            addTriangle(mesh->indices[i], mesh->indices[i + 1], mesh->indices[i + 2]);
+                        }
                     }
                 }
                 if (triangles.empty()) {

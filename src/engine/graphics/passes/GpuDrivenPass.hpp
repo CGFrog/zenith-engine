@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../MeshLodSelection.hpp"
 #include "../pipeline/ComputePipeline.hpp"
 #include "../vulkan/VulkanContext.hpp"
 
@@ -13,7 +14,8 @@ struct GpuDrivenObjectRecord {
     // Last frame's transform; per-object motion vectors require it.
     glm::mat4 previousModel{1.0f};
     glm::vec4 bounds{0.0f};
-    // x: batch index, y: persistent visibility slot (stable across frames).
+    // x: LOD 0 batch index, y: persistent visibility slot (stable across
+    // frames), z: LOD level count (batches chained via nextLodBatch).
     glm::uvec4 draw{0u};
     // x: skin palette offset, y: joint count, z: material record index.
     glm::uvec4 skin{0u};
@@ -28,8 +30,10 @@ struct GpuDrivenBatch {
     uint32_t group{0};
     // Compacted commands for the batch's group start at this batch slot.
     uint32_t groupFirstBatch{0};
-    uint32_t reserved0{0};
-    uint32_t reserved1{0};
+    // Object-space geometric error of this batch's LOD level.
+    float lodGeometricError{0.0f};
+    // Batch of the next coarser level of the same primitive, when one exists.
+    uint32_t nextLodBatch{0};
 };
 
 enum class GpuCullPhase : uint32_t {
@@ -41,6 +45,9 @@ enum class GpuCullPhase : uint32_t {
 
 struct GpuDrivenLimits {
     uint32_t maximumObjects{0};
+    // Instance slots per cull phase. Batches reserve a slot for every object
+    // that may select them, so LOD chains need more slots than objects.
+    uint32_t maximumInstances{0};
     uint32_t maximumBatches{0};
     uint32_t maximumGroups{0};
 };
@@ -59,8 +66,10 @@ class GpuDrivenPass {
                  std::span<const GpuDrivenBatch> batches, uint32_t referenceVisibleCount);
     // Resets GPU counters and orders them after the previous frame's use.
     void beginFrame(VkCommandBuffer commandBuffer, uint32_t frameIndex);
+    // Each visible object is emitted into the batch of the LOD level the view
+    // selects; see MeshLodSelection.hpp.
     void cull(VkCommandBuffer commandBuffer, uint32_t frameIndex, GpuCullPhase phase, const glm::mat4& viewProjection,
-              VkExtent2D renderExtent);
+              VkExtent2D renderExtent, const MeshLodView& lodView);
     // Builds the min-depth pyramid; the scene depth must be in
     // DEPTH_READ_ONLY_OPTIMAL with its attachment writes made visible.
     void buildDepthPyramid(VkCommandBuffer commandBuffer);

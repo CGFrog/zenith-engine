@@ -189,6 +189,14 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
+# meshoptimizer reorders imported geometry for the GPU and builds LOD chains.
+FetchContent_Declare(
+    meshoptimizer
+    GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
+    GIT_TAG v1.3
+    GIT_SHALLOW TRUE
+)
+
 FetchContent_MakeAvailable(
     VulkanHeaders
     SPIRV-Headers
@@ -206,6 +214,7 @@ FetchContent_MakeAvailable(
     nlohmann_json
     JoltPhysics
     VulkanMemoryAllocator
+    meshoptimizer
 )
 
 add_library(imgui STATIC
@@ -266,6 +275,7 @@ add_library(zenith_engine STATIC
     src/engine/application/Application.cpp
     src/engine/assets/Assets.cpp
     src/engine/assets/ModelImporter.cpp
+    src/engine/assets/MeshOptimization.cpp
     src/engine/assets/ImageDecoder.cpp
     src/engine/assets/ProductionAssetPipeline.cpp
     src/engine/assets/CompressedTexture.cpp
@@ -277,6 +287,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/EnvironmentLighting.cpp
     src/engine/graphics/RenderConfiguration.cpp
     src/engine/graphics/RenderSubmission.cpp
+    src/engine/graphics/MeshLodSelection.cpp
     src/engine/graphics/TemporalQuality.cpp
     src/engine/graphics/ToneMapping.cpp
     src/engine/graphics/graph/RenderGraph.cpp
@@ -472,6 +483,7 @@ target_link_libraries(zenith_engine PUBLIC
     imgui
 )
 target_link_libraries(zenith_engine PRIVATE zenith_bc7enc)
+target_link_libraries(zenith_engine PRIVATE meshoptimizer)
 
 if(MSVC)
     target_compile_options(zenith_engine PRIVATE /W4 /permissive- /FS)
@@ -518,6 +530,7 @@ install(FILES "${spirv-tools_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME SP
 install(FILES "${nlohmann_json_SOURCE_DIR}/LICENSE.MIT" DESTINATION licenses RENAME nlohmann-json.txt)
 install(FILES "${imguizmo_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME ImGuizmo.txt)
 install(FILES "${bc7enc_rdo_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME bc7enc_rdo.txt)
+install(FILES "${meshoptimizer_SOURCE_DIR}/LICENSE.md" DESTINATION licenses RENAME meshoptimizer.md)
 install(CODE "
     set(ZENITH_PACKAGE_ROOT \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}\")
     set(ZENITH_PACKAGE_VERSION \"${PROJECT_VERSION}\")
@@ -729,6 +742,10 @@ if(BUILD_TESTING)
     add_executable(zenith_gpu_resource_table_tests tests/engine/GpuResourceTableTests.cpp)
     target_link_libraries(zenith_gpu_resource_table_tests PRIVATE zenith_engine)
     add_test(NAME zenith_gpu_resource_table COMMAND zenith_gpu_resource_table_tests)
+
+    add_executable(zenith_mesh_lod_tests tests/engine/MeshLodTests.cpp)
+    target_link_libraries(zenith_mesh_lod_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_mesh_lod COMMAND zenith_mesh_lod_tests)
 
     add_executable(zenith_packed_vertex_stream_tests tests/engine/PackedVertexStreamTests.cpp)
     target_link_libraries(zenith_packed_vertex_stream_tests PRIVATE zenith_engine)
