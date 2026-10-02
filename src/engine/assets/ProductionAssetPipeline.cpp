@@ -1,23 +1,11 @@
 #include "engine/assets/ProductionAssetPipeline.hpp"
 
+#include "engine/assets/ContentHash.hpp"
+
 #include <array>
 #include <fstream>
-#include <iomanip>
-#include <sstream>
 
 namespace {
-uint64_t fnv1a(uint64_t state, std::span<const uint8_t> bytes) {
-    for (uint8_t value : bytes) {
-        state ^= value;
-        state *= 1099511628211ull;
-    }
-    return state;
-}
-
-uint64_t hashText(uint64_t state, std::string_view text) {
-    return fnv1a(state, {reinterpret_cast<const uint8_t*>(text.data()), text.size()});
-}
-
 std::string codecName(CompressedMeshCodec codec) {
     return codec == CompressedMeshCodec::Meshopt ? "Meshopt" : "Draco";
 }
@@ -114,22 +102,14 @@ DerivedAssetCache::DerivedAssetCache(std::filesystem::path root)
     : m_root(std::move(root)) {}
 
 AssetPipelineResult DerivedAssetCache::key(const DerivedAssetRequest& request, std::string& output) const {
-    std::ifstream input(request.source, std::ios::binary);
-    if (!input) {
+    ContentHasher hasher;
+    if (!hasher.appendFile(request.source)) {
         return {.error = "could not open derived-asset source: " + request.source.string()};
     }
-    uint64_t hash = 14695981039346656037ull;
-    std::array<uint8_t, 64 * 1024> buffer{};
-    while (input) {
-        input.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
-        hash = fnv1a(hash, {buffer.data(), static_cast<size_t>(input.gcount())});
-    }
-    hash = hashText(hash, "\0" + request.importSettings);
-    hash = hashText(hash, "\0" + request.toolVersion);
-    hash = hashText(hash, "\0" + request.targetPlatform);
-    std::ostringstream encoded;
-    encoded << std::hex << std::setfill('0') << std::setw(16) << hash;
-    output = encoded.str();
+    // The fields are appended without separators. Existing cache entries are
+    // named by this exact byte sequence, so changing it invalidates them.
+    hasher.append(request.importSettings).append(request.toolVersion).append(request.targetPlatform);
+    output = hasher.hex();
     return {.success = true};
 }
 
