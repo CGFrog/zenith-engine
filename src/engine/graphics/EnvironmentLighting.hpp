@@ -73,6 +73,16 @@ glm::vec3 evaluateIrradiance(const IrradianceCoefficients& coefficients, const g
 // Roughness is perceptual (GGX alpha = roughness squared).
 glm::vec2 integrateEnvironmentBrdf(float nDotV, float roughness, uint32_t sampleCount);
 
+// Grid the sheen albedo integrates over: cos(theta) rows by azimuth columns.
+inline constexpr uint32_t sheenAlbedoCosineSteps = 16;
+inline constexpr uint32_t sheenAlbedoAzimuthSteps = 32;
+
+// Directional albedo of a white KHR_materials_sheen lobe (Charlie distribution
+// with the Estevez-Kulla visibility) for perceptual sheen roughness. Stored in
+// the environment BRDF table's blue channel; mesh.frag scales the base layer
+// by 1 - max(sheen color) * albedo and lights the sheen's ambient term with it.
+float integrateSheenAlbedo(float nDotV, float roughness);
+
 // Roughness assigned to a prefiltered specular mip; mip 0 is a mirror.
 float prefilteredMipRoughness(uint32_t mip, uint32_t mipCount);
 } // namespace environment_lighting

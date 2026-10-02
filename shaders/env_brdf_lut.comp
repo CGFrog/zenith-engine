@@ -1,8 +1,10 @@
 #version 450
 
 // Split-sum environment BRDF table: x = n.v, y = perceptual roughness, sampled at
-// texel centers. Stores (scale, bias) so specular = prefiltered * (F0 * scale + bias).
-// Mirrors environment_lighting::integrateEnvironmentBrdf.
+// texel centers. Stores (scale, bias) so specular = prefiltered * (F0 * scale + bias)
+// in rg (mirrors environment_lighting::integrateEnvironmentBrdf) and the
+// directional albedo of a white Charlie sheen lobe in b, with y read as sheen
+// roughness (mirrors environment_lighting::integrateSheenAlbedo).
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 1, rgba16f) uniform writeonly image2DArray table;
@@ -32,6 +34,57 @@ float smithGeometryIbl(float nDotV, float nDotL, float roughness) {
     return nDotV / (nDotV * (1.0 - k) + k) * (nDotL / (nDotL * (1.0 - k) + k));
 }
 
+// Charlie sheen distribution and visibility; mirror the functions of the same
+// names in EnvironmentLighting.cpp and mesh.frag.
+float charlieDistribution(float nDotH, float alpha) {
+    float inverseAlpha = 1.0 / alpha;
+    float sinSquared = max(1.0 - nDotH * nDotH, 0.0);
+    return (2.0 + inverseAlpha) * pow(sinSquared, 0.5 * inverseAlpha) / (2.0 * PI);
+}
+
+float sheenLambdaHelper(float x, float alpha) {
+    float oneMinusAlphaSquared = (1.0 - alpha) * (1.0 - alpha);
+    float a = mix(21.5473, 25.3245, oneMinusAlphaSquared);
+    float b = mix(3.82987, 3.32435, oneMinusAlphaSquared);
+    float c = mix(0.19823, 0.16801, oneMinusAlphaSquared);
+    float d = mix(-1.97760, -1.27393, oneMinusAlphaSquared);
+    float e = mix(-4.32054, -4.85967, oneMinusAlphaSquared);
+    return a / (1.0 + b * pow(x, c)) + d * x + e;
+}
+
+float sheenLambda(float cosine, float alpha) {
+    if (abs(cosine) < 0.5) {
+        return exp(sheenLambdaHelper(cosine, alpha));
+    }
+    return exp(2.0 * sheenLambdaHelper(0.5, alpha) - sheenLambdaHelper(1.0 - cosine, alpha));
+}
+
+float sheenVisibility(float nDotL, float nDotV, float alpha) {
+    float denominator = (1.0 + sheenLambda(nDotV, alpha) + sheenLambda(nDotL, alpha)) * (4.0 * nDotV * nDotL);
+    return clamp(1.0 / max(denominator, 1e-6), 0.0, 1.0);
+}
+
+// Mirrors sheenAlbedoCosineSteps and sheenAlbedoAzimuthSteps.
+const uint SHEEN_COSINE_STEPS = 16u;
+const uint SHEEN_AZIMUTH_STEPS = 32u;
+
+float integrateSheenAlbedo(float nDotV, float roughness) {
+    float alpha = max(roughness * roughness, 1e-6);
+    vec3 view = vec3(sqrt(1.0 - nDotV * nDotV), 0.0, nDotV);
+    float sum = 0.0;
+    for (uint row = 0u; row < SHEEN_COSINE_STEPS; ++row) {
+        float nDotL = (float(row) + 0.5) / float(SHEEN_COSINE_STEPS);
+        float sinTheta = sqrt(1.0 - nDotL * nDotL);
+        for (uint column = 0u; column < SHEEN_AZIMUTH_STEPS; ++column) {
+            float phi = 2.0 * PI * (float(column) + 0.5) / float(SHEEN_AZIMUTH_STEPS);
+            vec3 light = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, nDotL);
+            vec3 halfVector = normalize(view + light);
+            sum += charlieDistribution(halfVector.z, alpha) * sheenVisibility(nDotL, nDotV, alpha) * nDotL;
+        }
+    }
+    return sum * 2.0 * PI / float(SHEEN_COSINE_STEPS * SHEEN_AZIMUTH_STEPS);
+}
+
 void main() {
     uint size = settings.sizes.x;
     uvec2 texel = gl_GlobalInvocationID.xy;
@@ -56,5 +109,5 @@ void main() {
         float fresnel = pow(1.0 - vDotH, 5.0);
         result += vec2((1.0 - fresnel) * visibility, fresnel * visibility);
     }
-    imageStore(table, ivec3(texel, 0), vec4(result / float(sampleCount), 0.0, 1.0));
+    imageStore(table, ivec3(texel, 0), vec4(result / float(sampleCount), integrateSheenAlbedo(nDotV, roughness), 1.0));
 }

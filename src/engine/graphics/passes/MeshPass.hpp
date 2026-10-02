@@ -24,6 +24,7 @@
 #include "PostProcessPass.hpp"
 #include "ReflectionProbeClusterPass.hpp"
 #include "SceneGeometryViews.hpp"
+#include "TransmissionBackground.hpp"
 #include "VolumetricFogPass.hpp"
 #include "engine/resources/DeferredReleaseQueue.hpp"
 #include <array>
@@ -210,6 +211,8 @@ class MeshPass {
     // Binds the fog pass's integrated volume to camera binding 18 of the frame
     // slot's sets when the volume changed since they were last written.
     void writeVolumetricFogDescriptors(uint32_t frameIndex);
+    // Binds the transmission background to camera binding 24 of every set.
+    void writeTransmissionBackgroundDescriptors();
     bool ensureGeometryPage(uint32_t page);
     void destroyGeometryPage(const GeometryPage& page);
     void bindGeometryPage(VkCommandBuffer commandBuffer, uint32_t page) const;
@@ -350,6 +353,10 @@ class MeshPass {
     void recordSelectionMask(const DrawContext& draw);
     void recordShadedItems(const DrawContext& draw, ShadedItems selection);
     void recordOutlines(const DrawContext& draw);
+    // Inside the scene pass, after opaque surfaces, the background and
+    // screen-space reflections: when a transmissive surface will draw, ends
+    // the pass, copies the scene into the transmission background and resumes.
+    void recordTransmissionBackground(const DrawContext& draw, VkImage depthImage, VkImageView depthView);
 
     VkDevice m_device{VK_NULL_HANDLE};
     VkPipelineCache m_pipelineCache{VK_NULL_HANDLE};
@@ -435,6 +442,7 @@ class MeshPass {
     PostProcessPass m_postProcess;
     DepthPyramid m_depthPyramid;
     AmbientOcclusionPass m_ambientOcclusion;
+    TransmissionBackground m_transmissionBackground;
     // Frame slot whose latest record() ran the depth prepass, if any.
     std::optional<uint32_t> m_depthPrepassFrame;
     GpuDrivenPass m_gpuDrivenPass;

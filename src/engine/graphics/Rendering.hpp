@@ -347,6 +347,9 @@ struct RenderStats {
     // Irradiance-volume probe upload; zero on frames whose bound volume did
     // not change.
     double gpuIrradianceVolumeMilliseconds{0.0};
+    // Copy and mip chain of the opaque scene for transmissive surfaces
+    // (KHR_materials_transmission); zero on frames that draw none.
+    double gpuTransmissionBackgroundMilliseconds{0.0};
     // Probes in the bound irradiance volume; zero when none is bound.
     uint32_t irradianceVolumeProbes{0};
     // Device memory of the irradiance-volume probe buffer.

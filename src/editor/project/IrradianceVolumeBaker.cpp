@@ -497,7 +497,7 @@ void appendMeshTriangles(const Scene& scene, const AssetManager& assets, std::ve
             const MaterialAsset defaults;
             const MaterialAsset* found = assets.material(primitive.material);
             const MaterialAsset& material = found ? *found : defaults;
-            if (material.alphaMode == MaterialAlphaMode::Blend) {
+            if (material.translucent()) {
                 continue;
             }
             const glm::vec3 baseColor =

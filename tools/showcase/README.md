@@ -44,3 +44,13 @@ python tools/showcase/build_coverage.py --repo .
 
 `build_showcase.py` imports the same entity layout, so a full Blender rebuild
 keeps them.
+
+The KHR material extension gallery under `assets/showcase/materials/` (car
+paint clearcoat, sheen fabrics, clear/frosted/tinted glass, a tinted specular
+dielectric and an ior ladder in front of a checkered backdrop) is also
+procedural Python 3. It only writes the asset; place it with a
+`mesh_renderer` entity for `showcase/materials/material_gallery.gltf`, mesh 0:
+
+```powershell
+python tools/showcase/build_materials.py --repo .
+```

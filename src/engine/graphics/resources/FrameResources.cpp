@@ -150,9 +150,12 @@ bool FrameResources::collectTimings(VkDevice device, GpuFrameTimings& timings) {
     timings.frameMilliseconds = elapsed(0, 5);
     timings.shadowMilliseconds = elapsed(0, 1);
     timings.opaqueMilliseconds = elapsed(1, 2);
-    // Screen-space reflections (12-13) run inside the 2-3 span, between opaque
-    // and blended surfaces.
-    timings.blendedMilliseconds = std::max(elapsed(2, 3) - elapsed(12, 13), 0.0);
+    // Screen-space reflections (12-13) and the transmission background copy
+    // run inside the 2-3 span, between opaque and blended surfaces.
+    const double transmissionBackground =
+        elapsed(FrameTimestamp::transmissionBackgroundBegin, FrameTimestamp::transmissionBackgroundEnd);
+    timings.blendedMilliseconds = std::max(elapsed(2, 3) - elapsed(12, 13) - transmissionBackground, 0.0);
+    timings.transmissionBackgroundMilliseconds = transmissionBackground;
     timings.sceneMilliseconds = elapsed(1, 3);
     timings.bloomMilliseconds = m_bloomEnabled ? elapsed(6, 7) : 0.0;
     timings.postMilliseconds = elapsed(14, 15);

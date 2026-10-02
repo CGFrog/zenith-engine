@@ -6,6 +6,7 @@
 
 #include "engine/assets/CompressedTexture.hpp"
 #include "engine/assets/PackedVertexStreams.hpp"
+#include "engine/graphics/MaterialRecord.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 
 #include "../shader/ShaderModule.hpp"
@@ -56,6 +57,8 @@ constexpr uint32_t previousSkinPaletteBinding = 12;
 constexpr uint32_t ambientOcclusionBinding = 13;
 // Camera-set binding of the integrated volumetric fog (mesh.frag, skybox.frag).
 constexpr uint32_t volumetricFogBinding = 18;
+// Camera-set binding of the transmission background (mesh.frag).
+constexpr uint32_t transmissionBackgroundBinding = 24;
 
 struct CameraData {
     glm::mat4 viewProjection{1.0f};
@@ -88,7 +91,8 @@ struct CameraData {
     // integrated fog volume; y, z: froxel slice = log(view depth) * y + z;
     // w: froxel depth slices.
     glm::vec4 fogVolume{0.0f};
-    // xy: integrated-volume uv per render pixel (1 / internal render extent).
+    // xy: 1 / internal render extent, the uv per render pixel of the fog volume
+    // and the transmission background.
     glm::vec4 fogScreen{0.0f};
     // Irradiance volume (U6); see irradiance_volume in IrradianceVolume.hpp.
     // xyz: world-space minimum corner of the baked box, w: intensity.
@@ -102,16 +106,6 @@ struct CameraData {
     // Temporal resolve: NDC jitter of the current (xy) and previous (zw)
     // projections, removed from motion vectors in mesh.frag. Keep last.
     glm::vec4 temporalJitter{0.0f};
-};
-
-// Mirrors MaterialRecord in shaders/mesh.frag and shaders/shadow.frag (std430).
-struct MaterialRecord {
-    glm::vec4 baseColor{1.0f};
-    glm::vec4 factors{1.0f}; // metallic, roughness, normal scale, occlusion strength
-    glm::vec4 emissive{0.0f};
-    glm::vec4 surface{0.5f, 0.0f, 0.0f, 0.0f}; // alpha cutoff, alpha mode
-    glm::uvec4 textures{0u};                   // base color, normal, metallic-roughness, occlusion
-    glm::uvec4 extraTextures{0u};              // emissive
 };
 
 // Mirrors RenderObject in the mesh, shadow, outline, and selection shaders.
@@ -317,7 +311,7 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
         !m_localShadows.init(context, frameCount, depthFormat, m_cameraLayout, m_bindlessLayout) ||
         !m_postProcess.init(context, colorFormat, depthFormat, frameCount, extent, depthView) ||
         !m_depthPyramid.init(context, extent, depthView) || !m_ambientOcclusion.init(context, frameCount, extent) ||
-        !createPipeline(PostProcessPass::sceneFormat, depthFormat) ||
+        !m_transmissionBackground.init(context, extent) || !createPipeline(PostProcessPass::sceneFormat, depthFormat) ||
         !m_environmentPass.init(context, m_cameraLayout, PostProcessPass::sceneFormat, PostProcessPass::motionFormat,
                                 depthFormat, frameCount)) {
         return false;
@@ -340,6 +334,7 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
         return false;
     }
     writeAmbientOcclusionDescriptors();
+    writeTransmissionBackgroundDescriptors();
     if (!m_irradianceVolume.init(context, frameCount)) {
         return false;
     }
@@ -456,6 +451,28 @@ void MeshPass::writeAmbientOcclusionDescriptors() {
     }
 }
 
+void MeshPass::writeTransmissionBackgroundDescriptors() {
+    const VkDescriptorImageInfo background{.sampler = m_transmissionBackground.sampler(),
+                                           .imageView = m_transmissionBackground.view(),
+                                           .imageLayout = TransmissionBackground::readLayout};
+    for (CameraBuffer& camera : m_cameras) {
+        std::array<VkWriteDescriptorSet, 2> writes{};
+        uint32_t writeCount = 0;
+        for (VkDescriptorSet set : {camera.descriptor, camera.gpuDrivenDescriptor}) {
+            if (set == VK_NULL_HANDLE) {
+                continue;
+            }
+            writes[writeCount++] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                    .dstSet = set,
+                                    .dstBinding = transmissionBackgroundBinding,
+                                    .descriptorCount = 1,
+                                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                    .pImageInfo = &background};
+        }
+        vkUpdateDescriptorSets(m_device, writeCount, writes.data(), 0, nullptr);
+    }
+}
+
 void MeshPass::writeVolumetricFogDescriptors(uint32_t frameIndex) {
     if (m_fogDescriptorGenerations[frameIndex] == m_volumetricFog.generation()) {
         return;
@@ -487,10 +504,11 @@ bool MeshPass::resize(const VulkanContext& context, VkExtent2D extent, VkImageVi
     m_temporalQuality.invalidateHistory();
     m_depthPrepassFrame.reset();
     if (!m_postProcess.resize(context, extent, depthView) || !m_depthPyramid.resize(extent, depthView) ||
-        !m_ambientOcclusion.resize(extent)) {
+        !m_ambientOcclusion.resize(extent) || !m_transmissionBackground.resize(extent)) {
         return false;
     }
     writeAmbientOcclusionDescriptors();
+    writeTransmissionBackgroundDescriptors();
     if (m_gpuDrivenSupported) {
         m_gpuDrivenPass.bindDepthPyramid(m_depthPyramid);
     }
@@ -582,6 +600,11 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         {.binding = volumetricFogBinding,
          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
          .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        // Opaque scene copy refracted by transmissive surfaces.
+        {.binding = transmissionBackgroundBinding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         .descriptorCount = 1,
          .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
     VkDescriptorSetLayoutCreateInfo layoutInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -601,7 +624,9 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          .descriptorCount = frameCount * 2 * (8 + EnvironmentPass::environmentSlots + 1 /* irradiance volume */)},
         {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         .descriptorCount = frameCount * 2 * (4 + EnvironmentPass::environmentSlots)}};
+         // Shadow map, BRDF table, occlusion, local-shadow atlas, probe cube
+         // array, fog volume, transmission background, and the environments.
+         .descriptorCount = frameCount * 2 * (7 + EnvironmentPass::environmentSlots)}};
     VkDescriptorPoolCreateInfo poolInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = frameCount * 2,
@@ -1541,9 +1566,7 @@ const MeshPass::GpuMaterial* MeshPass::ensureMaterial(MaterialHandle handle, con
         return nullptr;
     }
     // Upload referenced textures now so frame recording only resolves slots.
-    for (const TextureHandle texture :
-         {material->baseColorTexture, material->normalTexture, material->metallicRoughnessTexture,
-          material->occlusionTexture, material->emissiveTexture}) {
+    for (const TextureHandle texture : material->textures()) {
         if (texture) {
             ensureTexture(texture, assets);
         }
@@ -1574,16 +1597,20 @@ void MeshPass::writeMaterialRecords(uint32_t frameIndex, const AssetManager& ass
         }
         // Rewritten every frame so edits to factors or texture bindings apply
         // without invalidating anything the GPU might still be reading.
-        records[gpu.index] = {
-            .baseColor = material->baseColor,
-            .factors = {material->metallic, material->roughness, material->normalScale, material->occlusionStrength},
-            .emissive = {material->emissive * material->emissiveStrength, 0.0f},
-            .surface = {material->alphaCutoff, static_cast<float>(material->alphaMode), 0.0f, 0.0f},
-            .textures = {slotFor(material->baseColorTexture, true, m_whiteSrgbSlot),
-                         slotFor(material->normalTexture, false, m_normalSlot),
-                         slotFor(material->metallicRoughnessTexture, false, m_whiteSlot),
-                         slotFor(material->occlusionTexture, false, m_whiteSlot)},
-            .extraTextures = {slotFor(material->emissiveTexture, true, m_whiteSrgbSlot), 0u, 0u, 0u}};
+        records[gpu.index] = packMaterialRecord(
+            *material, {.baseColor = slotFor(material->baseColorTexture, true, m_whiteSrgbSlot),
+                        .normal = slotFor(material->normalTexture, false, m_normalSlot),
+                        .metallicRoughness = slotFor(material->metallicRoughnessTexture, false, m_whiteSlot),
+                        .occlusion = slotFor(material->occlusionTexture, false, m_whiteSlot),
+                        .emissive = slotFor(material->emissiveTexture, true, m_whiteSrgbSlot),
+                        .clearcoat = slotFor(material->clearcoat.texture, false, m_whiteSlot),
+                        .clearcoatRoughness = slotFor(material->clearcoat.roughnessTexture, false, m_whiteSlot),
+                        .clearcoatNormal = slotFor(material->clearcoat.normalTexture, false, m_normalSlot),
+                        .sheenColor = slotFor(material->sheen.colorTexture, true, m_whiteSrgbSlot),
+                        .sheenRoughness = slotFor(material->sheen.roughnessTexture, false, m_whiteSlot),
+                        .specular = slotFor(material->specular.texture, false, m_whiteSlot),
+                        .specularColor = slotFor(material->specular.colorTexture, true, m_whiteSrgbSlot),
+                        .transmission = slotFor(material->transmission.texture, false, m_whiteSlot)});
         highestIndex = std::max(highestIndex, gpu.index + 1);
     }
     if (highestIndex > 0) {
@@ -1916,7 +1943,7 @@ void MeshPass::recordLocalShadows(VkCommandBuffer commandBuffer, uint32_t frameI
 void MeshPass::collectShadowCasterChanges(const Scene& scene) {
     m_changedShadowCasters.clear();
     const auto addCaster = [&](const RenderItem& item) {
-        if (item.material->alphaMode == MaterialAlphaMode::Blend) {
+        if (item.material->translucent()) {
             return;
         }
         // updateRenderItems kept the previous transform, so both the vacated
@@ -1951,8 +1978,7 @@ bool MeshPass::drawLocalShadowCasters(VkCommandBuffer commandBuffer, uint32_t fr
     const std::array<glm::vec4, 6> frustum = clipVolumePlanes(viewProjection);
     m_shadowVisibleItems.clear();
     for (const RenderItem& item : m_renderItems) {
-        if (item.material->alphaMode != MaterialAlphaMode::Blend &&
-            sphereReachesClipVolume(frustum, item.boundsCenter, item.boundsRadius)) {
+        if (!item.material->translucent() && sphereReachesClipVolume(frustum, item.boundsCenter, item.boundsRadius)) {
             m_shadowVisibleItems.push_back(&item);
         }
     }
@@ -2090,7 +2116,7 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
         m_shadowVisibleItems.clear();
         m_shadowVisibleItems.reserve(items.size());
         for (const RenderItem& item : items) {
-            if (light.shadows.enabled && item.material->alphaMode != MaterialAlphaMode::Blend &&
+            if (light.shadows.enabled && !item.material->translucent() &&
                 sphereReachesClipVolume(shadowFrustum, item.boundsCenter, item.boundsRadius)) {
                 m_shadowVisibleItems.push_back(&item);
             }
@@ -2489,9 +2515,11 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         volumetric_fog::makeFroxelGrid(clusterGrid, m_volumetricFog.subdivision());
     if (fogActive) {
         cameraData.fogVolume = {1.0f, froxelGrid.sliceScaleBias(), static_cast<float>(froxelGrid.dimensions().z)};
-        cameraData.fogScreen = {1.0f / static_cast<float>(renderExtent.width),
-                                1.0f / static_cast<float>(renderExtent.height), 0.0f, 0.0f};
     }
+    // Written every frame: transmissive surfaces map fragments to the
+    // transmission background with it too.
+    cameraData.fogScreen = {1.0f / static_cast<float>(renderExtent.width),
+                            1.0f / static_cast<float>(renderExtent.height), 0.0f, 0.0f};
     std::memcpy(m_cameras[frameIndex].mapped, &cameraData, sizeof(cameraData));
     vmaFlushAllocation(m_allocator, m_cameras[frameIndex].buffer.allocation, 0, sizeof(cameraData));
     RenderStats& stats = rendering.m_stats;
@@ -2712,6 +2740,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     recordAmbientOcclusion(draw, ambientOcclusion, projection,
                            rendering.settings().antialiasing == AntialiasingMode::Taa);
     m_postProcess.prepareScene(commandBuffer, frameIndex);
+    // Shading pipelines statically reference the transmission background.
+    m_transmissionBackground.prepareFirstUse(commandBuffer);
     const VkImageView sceneView = m_postProcess.sceneView(frameIndex);
     const VkImageView motionView = m_postProcess.motionView(frameIndex);
     beginRendering(commandBuffer, sceneView, motionView, depthImage, depthView, renderExtent,
@@ -2783,6 +2813,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         return false;
     }
     stats.reflectionBytes = m_postProcess.reflectionBytes();
+    recordTransmissionBackground(draw, depthImage, depthView);
     recordShadedItems(draw, ShadedItems::BlendedOnly);
     recordOutlines(draw);
 
@@ -2837,7 +2868,7 @@ bool MeshPass::prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lod
     // coarser batches and their reserved instance slots.
     const bool lodEnabled = lodView.errorScale > 0.0f;
     for (const RenderItem& item : m_renderItems) {
-        if (item.material->alphaMode == MaterialAlphaMode::Blend) {
+        if (item.material->translucent()) {
             continue;
         }
         const GeometryAllocation& geometry = item.gpuMesh->geometry;
@@ -2994,7 +3025,7 @@ void MeshPass::recordDepthNormalItems(const DrawContext& draw) {
     // Opaque items precede blended ones (collectCpuSubmittedItems).
     for (size_t itemIndex = 0; itemIndex < m_visibleItems.size();) {
         const RenderItem& item = *m_visibleItems[itemIndex];
-        if (item.material->alphaMode == MaterialAlphaMode::Blend) {
+        if (item.material->translucent()) {
             break;
         }
         size_t batchEnd = itemIndex + 1;
@@ -3002,8 +3033,7 @@ void MeshPass::recordDepthNormalItems(const DrawContext& draw) {
             const RenderItem& candidate = *m_visibleItems[batchEnd];
             // The shading pass must test EQUAL against the same LOD's depth.
             if (candidate.gpuMesh != item.gpuMesh || candidate.lod.firstIndex != item.lod.firstIndex ||
-                candidate.lod.indexCount != item.lod.indexCount ||
-                candidate.material->alphaMode == MaterialAlphaMode::Blend ||
+                candidate.lod.indexCount != item.lod.indexCount || candidate.material->translucent() ||
                 candidate.material->doubleSided != item.material->doubleSided) {
                 break;
             }
@@ -3057,6 +3087,37 @@ bool MeshPass::recordScreenSpaceReflections(const DrawContext& draw, VkImage dep
         setSceneViewport(draw);
     }
     return true;
+}
+
+void MeshPass::recordTransmissionBackground(const DrawContext& draw, VkImage depthImage, VkImageView depthView) {
+    const bool transmissive = std::ranges::any_of(
+        m_visibleItems, [](const RenderItem* item) { return item->material->transmission.factor > 0.0f; });
+    if (!transmissive) {
+        return;
+    }
+    draw.passTimestamps->write(FrameTimestamp::transmissionBackgroundBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    vkCmdEndRendering(draw.commandBuffer);
+    m_transmissionBackground.capture(draw.commandBuffer, m_postProcess.sceneImage(draw.frameIndex), draw.renderExtent);
+    // The resumed pass loads the motion and depth attachments stored above;
+    // capture() ordered the HDR target itself.
+    const VkMemoryBarrier2 attachments{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+        .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                        VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+        .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                        VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+        .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
+                         VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                         VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT};
+    const VkDependencyInfo dependency{
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &attachments};
+    vkCmdPipelineBarrier2(draw.commandBuffer, &dependency);
+    beginRendering(draw.commandBuffer, m_postProcess.sceneView(draw.frameIndex),
+                   m_postProcess.motionView(draw.frameIndex), depthImage, depthView, draw.renderExtent,
+                   SceneAttachments::Preserve);
+    setSceneViewport(draw);
+    draw.passTimestamps->write(FrameTimestamp::transmissionBackgroundEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
 }
 
 SceneGeometryViews MeshPass::sceneGeometry(uint32_t frameIndex) const {
@@ -3152,15 +3213,15 @@ bool MeshPass::collectCpuSubmittedItems(bool gpuDrivenActive, const glm::vec3& c
         const RenderItem& item = m_renderItems[found->second];
         // With GPU culling the CPU only submits what the indirect path cannot:
         // blended surfaces and the editor's outline passes.
-        if (gpuDrivenActive && item.material->alphaMode != MaterialAlphaMode::Blend && !item.outlined) {
+        if (gpuDrivenActive && !item.material->translucent() && !item.outlined) {
             continue;
         }
         m_visibleItems.push_back(&item);
     }
     std::stable_sort(m_visibleItems.begin(), m_visibleItems.end(),
                      [&cameraPosition](const RenderItem* first, const RenderItem* second) {
-                         const bool firstBlended = first->material->alphaMode == MaterialAlphaMode::Blend;
-                         const bool secondBlended = second->material->alphaMode == MaterialAlphaMode::Blend;
+                         const bool firstBlended = first->material->translucent();
+                         const bool secondBlended = second->material->translucent();
                          if (firstBlended != secondBlended) {
                              return !firstBlended;
                          }
@@ -3231,7 +3292,7 @@ void MeshPass::recordShadedItems(const DrawContext& draw, ShadedItems selection)
     bool opaqueFinished = blendedOnly;
     for (size_t itemIndex = 0; itemIndex < m_visibleItems.size();) {
         const RenderItem& item = *m_visibleItems[itemIndex];
-        const bool blended = item.material->alphaMode == MaterialAlphaMode::Blend;
+        const bool blended = item.material->translucent();
         if ((blendedOnly && !blended) || (opaqueOnly && blended)) {
             ++itemIndex;
             continue;
@@ -3252,6 +3313,7 @@ void MeshPass::recordShadedItems(const DrawContext& draw, ShadedItems selection)
             if (candidate.gpuMesh != item.gpuMesh || candidate.lod.firstIndex != item.lod.firstIndex ||
                 candidate.lod.indexCount != item.lod.indexCount ||
                 candidate.material->alphaMode != item.material->alphaMode ||
+                candidate.material->translucent() != item.material->translucent() ||
                 candidate.material->doubleSided != item.material->doubleSided) {
                 break;
             }
@@ -3390,6 +3452,7 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_postProcess.shutdown(context);
     m_depthPyramid.shutdown();
     m_ambientOcclusion.shutdown();
+    m_transmissionBackground.shutdown();
     m_volumetricFog.shutdown();
     m_fogDescriptorGenerations.clear();
     m_depthPrepassFrame.reset();

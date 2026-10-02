@@ -9,20 +9,36 @@
 //   a:  1 for a written opaque surface (the clear value is 0)
 // and the specular target (PostProcessPass::specularFormat, R8G8B8A8_SRGB);
 // src/engine/graphics/SceneSpecularEncoding.hpp mirrors it:
-//   rgb: linear F0, mix(0.04, base color, metallic) as mesh.frag computes it
+//   rgb: linear F0, mix(dielectric F0, base color, metallic) as mesh.frag
+//        computes it, with the dielectric F0 from KHR_materials_ior and
+//        KHR_materials_specular (0.04 without them) scaled by the specular
+//        weight
 //   a:   1 for a written opaque surface (the clear value is 0)
 // The specular attachment is VK_NULL_HANDLE on frames without screen-space
 // reflections, which discards that output.
 
-// Mirrors MaterialRecord in MeshPass.cpp (std430).
+// Mirrors MaterialRecord in engine/graphics/MaterialRecord.hpp (std430).
 struct MaterialRecord {
     vec4 baseColor;
     vec4 factors;  // metallic, roughness, normal scale, occlusion strength
     vec4 emissive; // rgb radiance; w unused
-    vec4 surface;  // alpha cutoff, alpha mode (0 opaque, 1 mask, 2 blend)
+    vec4 surface;  // alpha cutoff, alpha mode (0 opaque, 1 mask, 2 blend), ior, transmission
     uvec4 textures; // bindless slots: base color, normal, metallic-roughness, occlusion
-    uvec4 extraTextures; // bindless slots: emissive
+    uvec4 extraTextures; // emissive slot, lobe flags (LOBE_*), transmission slot, unused
+    vec4 clearcoat; // factor, perceptual roughness, normal scale, unused
+    vec4 sheen;     // linear rgb color, perceptual roughness
+    vec4 specular;  // linear rgb color, factor
+    vec4 volume;    // attenuation coefficient per world unit (rgb), thickness
+    uvec4 lobeTextures;  // bindless slots: clearcoat, clearcoat roughness, clearcoat normal, sheen color
+    uvec4 layerTextures; // bindless slots: sheen roughness, specular, specular color; w unused
 };
+
+// Mirror the material_lobes bits in MaterialRecord.hpp.
+const uint LOBE_CLEARCOAT = 1u;
+const uint LOBE_SHEEN = 2u;
+const uint LOBE_TRANSMISSION = 4u;
+const uint LOBE_SPECULAR_TEXTURES = 8u;
+const uint LOBE_VOLUME = 16u;
 
 layout(std430, set = 0, binding = 4) readonly buffer Materials {
     MaterialRecord values[];
@@ -42,6 +58,19 @@ layout(location = 2) in vec4 viewTangent;
 layout(location = 3) flat in uint materialIndex;
 layout(location = 0) out vec4 outNormalRoughness;
 layout(location = 1) out vec4 outSpecular;
+
+// Mirrors dielectricSpecular in mesh.frag.
+vec4 dielectricSpecular(MaterialRecord material, vec2 uv) {
+    float ior = material.surface.z;
+    float reflectance = (ior - 1.0) / (ior + 1.0);
+    vec3 color = material.specular.rgb;
+    float weight = material.specular.w;
+    if ((material.extraTextures.y & LOBE_SPECULAR_TEXTURES) != 0u) {
+        weight *= sampleMaterialTexture(material.layerTextures.y, uv).a;
+        color *= sampleMaterialTexture(material.layerTextures.z, uv).rgb;
+    }
+    return vec4(min(vec3(reflectance * reflectance) * color, vec3(1.0)), weight);
+}
 
 vec2 signNotZero(vec2 value) {
     return vec2(value.x >= 0.0 ? 1.0 : -1.0, value.y >= 0.0 ? 1.0 : -1.0);
@@ -84,5 +113,6 @@ void main() {
     float roughness = clamp(orm.g * material.factors.y, 0.045, 1.0);
     float metallic = clamp(orm.b * material.factors.x, 0.0, 1.0);
     outNormalRoughness = vec4(encodeOctahedral(normal) * 0.5 + 0.5, roughness, 1.0);
-    outSpecular = vec4(mix(vec3(0.04), sampledBase.rgb * material.baseColor.rgb, metallic), 1.0);
+    vec4 dielectric = dielectricSpecular(material, texCoord);
+    outSpecular = vec4(mix(dielectric.rgb * dielectric.a, sampledBase.rgb * material.baseColor.rgb, metallic), 1.0);
 }

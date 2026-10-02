@@ -34,6 +34,12 @@ Meshroom photoscan `Granite Pond Rock 2`: decimated to about 60k triangles,
 laid flat, cropped to the boulder and its immediate surroundings, and scaled
 to 1.8 m.
 
+## Material gallery (`materials/`)
+
+`material_gallery.gltf`, `material_gallery.bin` and `gallery_checker.png` are
+generated procedurally by `tools/showcase/build_materials.py` (no external
+sources).
+
 ## Coverage content (`coverage/`)
 
 `tentacle.gltf`, `gold_mirror.gltf`, their `.bin` buffers and
