@@ -137,6 +137,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"ambientOcclusion", settings.ambientOcclusion},
                            {"reflections", settings.reflections},
                            {"volumetricFog", settings.volumetricFog},
+                           {"decals", settings.decals},
                            {"budgets",
                             {{"shadow", budget(settings.budgets.shadow)},
                              {"opaque", budget(settings.budgets.opaque)},
@@ -156,7 +157,8 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"shadowCulling", budget(settings.budgets.shadowCulling)},
                              {"reflectionProbeClusters", budget(settings.budgets.reflectionProbeClusters)},
                              {"volumetricFog", budget(settings.budgets.volumetricFog)},
-                             {"irradianceVolume", budget(settings.budgets.irradianceVolume)}}}};
+                             {"irradianceVolume", budget(settings.budgets.irradianceVolume)},
+                             {"decalClusters", budget(settings.budgets.decalClusters)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -244,6 +246,10 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
             !readEnum(document, "volumetricFog", VolumetricFogQuality::High, loaded.volumetricFog)) {
             return {.error = "Render settings contain an unknown volumetric-fog quality"};
         }
+        // Documents written before clustered decals keep the default.
+        if (document.contains("decals") && !readEnum(document, "decals", DecalQuality::On, loaded.decals)) {
+            return {.error = "Render settings contain an unknown decal quality"};
+        }
         if (const auto budgets = document.find("budgets"); budgets != document.end()) {
             if (!budgets->is_object() || !readBudget(*budgets, "shadow", loaded.budgets.shadow) ||
                 !readBudget(*budgets, "opaque", loaded.budgets.opaque) ||
@@ -263,7 +269,8 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "shadowCulling", loaded.budgets.shadowCulling) ||
                 !readOptionalBudget(*budgets, "reflectionProbeClusters", loaded.budgets.reflectionProbeClusters) ||
                 !readOptionalBudget(*budgets, "volumetricFog", loaded.budgets.volumetricFog) ||
-                !readOptionalBudget(*budgets, "irradianceVolume", loaded.budgets.irradianceVolume)) {
+                !readOptionalBudget(*budgets, "irradianceVolume", loaded.budgets.irradianceVolume) ||
+                !readOptionalBudget(*budgets, "decalClusters", loaded.budgets.decalClusters)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }
@@ -340,6 +347,10 @@ ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
     if (result.settings.volumetricFog != VolumetricFogQuality::Off && !capabilities.volumetricFog) {
         result.settings.volumetricFog = VolumetricFogQuality::Off;
         result.fallbacks.emplace_back("Volumetric fog needs RGBA16F 3D storage images and was disabled");
+    }
+    if (result.settings.decals != DecalQuality::Off && !capabilities.decals) {
+        result.settings.decals = DecalQuality::Off;
+        result.fallbacks.emplace_back("Clustered decals are unsupported and were disabled");
     }
     return result;
 }

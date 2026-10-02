@@ -3,6 +3,7 @@
 #include "../assets/Assets.hpp"
 #include "../assets/IrradianceVolumeAsset.hpp"
 
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <nlohmann/json.hpp>
 
@@ -129,6 +130,99 @@ SceneDocumentResult meshReference(const AssetManager& assets, MeshHandle handle,
     }
     output = {{"path", relative}, {"mesh", source->meshIndex}};
     return {.success = true};
+}
+
+// The project-relative path of an optional texture: the loaded handle's source
+// when there is one, else the authored path (which may name a missing file).
+SceneDocumentResult textureReference(const AssetManager& assets, TextureHandle handle, const std::string& authored,
+                                     const SceneDocumentOptions& options, std::string& output) {
+    output = authored;
+    if (!handle) {
+        return {.success = true};
+    }
+    const auto source = assets.textureSource(handle);
+    if (!source) {
+        return {.error = "Cannot save a texture reference with an unknown runtime handle"};
+    }
+    return projectRelativePath(source->path, options, output);
+}
+
+// Loads the texture a component names by project-relative path; an empty path
+// leaves the handle empty.
+SceneDocumentResult loadTextureReference(const std::string& reference, AssetManager& assets,
+                                         const SceneDocumentOptions& options, TextureHandle& output) {
+    output = {};
+    if (reference.empty()) {
+        return {.success = true};
+    }
+    std::filesystem::path path;
+    if (SceneDocumentResult result = resolveAssetPath(reference, options, path); !result) {
+        return result;
+    }
+    const AssetLoadResult<TextureHandle> loaded = assets.loadTexture(path);
+    if (!loaded) {
+        return {.error = loaded.error};
+    }
+    output = loaded.handle;
+    return {.success = true};
+}
+
+Json decalDocument(const DecalComponent& decal, std::string albedoAsset, std::string normalAsset) {
+    return {{"half_extents", vector3(decal.halfExtents)},
+            {"albedo_asset", std::move(albedoAsset)},
+            {"normal_asset", std::move(normalAsset)},
+            {"tint", vector3(decal.tint)},
+            {"opacity", decal.opacity},
+            {"base_color_strength", decal.baseColorStrength},
+            {"normal_strength", decal.normalStrength},
+            {"roughness", decal.roughness},
+            {"roughness_strength", decal.roughnessStrength},
+            {"metallic", decal.metallic},
+            {"metallic_strength", decal.metallicStrength},
+            {"angle_fade_start", decal.angleFadeStartRadians},
+            {"angle_fade_end", decal.angleFadeEndRadians},
+            {"sort_order", decal.sortOrder}};
+}
+
+// Every field but half_extents is optional and defaults as in DecalComponent.
+SceneDocumentResult readDecal(const Json& json, AssetManager& assets, const SceneDocumentOptions& options,
+                              DecalComponent& decal) {
+    if (!readVector3(json.at("half_extents"), decal.halfExtents)) {
+        return {.error = "Decal half extents must contain three numbers"};
+    }
+    if (const auto tint = json.find("tint"); tint != json.end() && !readVector3(*tint, decal.tint)) {
+        return {.error = "Decal tint must contain three numbers"};
+    }
+    decal.albedoAsset = json.value("albedo_asset", std::string{});
+    decal.normalAsset = json.value("normal_asset", std::string{});
+    decal.opacity = json.value("opacity", decal.opacity);
+    decal.baseColorStrength = json.value("base_color_strength", decal.baseColorStrength);
+    decal.normalStrength = json.value("normal_strength", decal.normalStrength);
+    decal.roughness = json.value("roughness", decal.roughness);
+    decal.roughnessStrength = json.value("roughness_strength", decal.roughnessStrength);
+    decal.metallic = json.value("metallic", decal.metallic);
+    decal.metallicStrength = json.value("metallic_strength", decal.metallicStrength);
+    decal.angleFadeStartRadians = json.value("angle_fade_start", decal.angleFadeStartRadians);
+    decal.angleFadeEndRadians = json.value("angle_fade_end", decal.angleFadeEndRadians);
+    decal.sortOrder = json.value("sort_order", decal.sortOrder);
+    const auto unit = [](float value) { return value >= 0.0f && value <= 1.0f; };
+    const auto finitePositive = [](float value) { return std::isfinite(value) && value > 0.0f; };
+    const auto finiteNonNegative = [](float value) { return std::isfinite(value) && value >= 0.0f; };
+    const bool validFade = decal.angleFadeStartRadians >= 0.0f &&
+                           decal.angleFadeStartRadians <= decal.angleFadeEndRadians &&
+                           decal.angleFadeEndRadians <= glm::pi<float>();
+    if (!finitePositive(decal.halfExtents.x) || !finitePositive(decal.halfExtents.y) ||
+        !finitePositive(decal.halfExtents.z) || !finiteNonNegative(decal.tint.r) || !finiteNonNegative(decal.tint.g) ||
+        !finiteNonNegative(decal.tint.b) || !unit(decal.opacity) || !unit(decal.baseColorStrength) ||
+        !unit(decal.normalStrength) || !unit(decal.roughness) || !unit(decal.roughnessStrength) ||
+        !unit(decal.metallic) || !unit(decal.metallicStrength) || !validFade) {
+        return {.error = "Decal parameters are invalid"};
+    }
+    if (SceneDocumentResult result = loadTextureReference(decal.albedoAsset, assets, options, decal.albedoTexture);
+        !result) {
+        return result;
+    }
+    return loadTextureReference(decal.normalAsset, assets, options, decal.normalTexture);
 }
 
 SceneDocumentResult serializeEntity(const Scene& scene, Entity entity, const AssetManager& assets,
@@ -276,6 +370,21 @@ SceneDocumentResult serializeEntity(const Scene& scene, Entity entity, const Ass
                                           {"blend_distance", probe->blendDistance},
                                           {"priority", probe->priority},
                                           {"environment_asset", environmentAsset}};
+    }
+    if (const auto* decal = registry.try_get<DecalComponent>(entity)) {
+        std::string albedoAsset;
+        std::string normalAsset;
+        if (SceneDocumentResult result =
+                textureReference(assets, decal->albedoTexture, decal->albedoAsset, options, albedoAsset);
+            !result) {
+            return result;
+        }
+        if (SceneDocumentResult result =
+                textureReference(assets, decal->normalTexture, decal->normalAsset, options, normalAsset);
+            !result) {
+            return result;
+        }
+        components["decal"] = decalDocument(*decal, std::move(albedoAsset), std::move(normalAsset));
     }
     if (const auto* volume = registry.try_get<IrradianceVolumeComponent>(entity)) {
         components["irradiance_volume"] = {
@@ -587,6 +696,13 @@ SceneDocumentResult deserializeComponents(const Json& components, Entity entity,
             return {.error = "Reflection probe volume is invalid"};
         }
         registry.emplace<ReflectionProbeComponent>(entity, probe);
+    }
+    if (const auto found = components.find("decal"); found != components.end()) {
+        DecalComponent decal;
+        if (SceneDocumentResult result = readDecal(*found, assets, options, decal); !result) {
+            return result;
+        }
+        registry.emplace<DecalComponent>(entity, std::move(decal));
     }
     if (const auto found = components.find("irradiance_volume"); found != components.end()) {
         IrradianceVolumeComponent volume;

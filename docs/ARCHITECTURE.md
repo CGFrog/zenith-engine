@@ -341,6 +341,8 @@ GPU culling, early phase (GPU-driven only, compute)
   objects visible last frame -> compacted indirect draws
 Light cluster assignment (compute, local lights enabled)
   selected point/spot lights -> 16x9x24 cluster light lists
+Decal cluster assignment (compute, decals on and the scene has decals)
+  nearest 1024 decal boxes -> per-cluster decal lists, applied in mesh.frag
 Depth/normal prepass (default on)
   opaque + masked depth and view-space normals
   GPU-driven: early draws -> occlusion depth pyramid -> late cull -> late draws

@@ -37,7 +37,10 @@ inline constexpr uint32_t volumetricFogEnd = 38;
 // volume changes. Probe sampling is part of opaque shading.
 inline constexpr uint32_t irradianceVolumeBegin = 39;
 inline constexpr uint32_t irradianceVolumeEnd = 40;
-inline constexpr uint32_t count = 41;
+// Decal cluster assignment; skipped when the frame has no decal.
+inline constexpr uint32_t decalClustersBegin = 51;
+inline constexpr uint32_t decalClustersEnd = 52;
+inline constexpr uint32_t count = 53;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot

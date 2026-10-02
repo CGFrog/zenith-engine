@@ -211,7 +211,7 @@ or at the decision point named below, after capability validation.
 
 | Variable | Effect |
 | --- | --- |
-| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, per-pixel reflection probe blending, probe-volume indirect diffuse, clustered local lights with high-quality local shadows, depth prepass on, cascaded (high) shadows, bloom, and High volumetric fog. |
+| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, per-pixel reflection probe blending, probe-volume indirect diffuse, clustered local lights with high-quality local shadows, depth prepass on, cascaded (high) shadows, bloom, High volumetric fog, and clustered decals. |
 | `ZENITH_DISABLE_VOLUMETRIC_FOG` | Forces volumetric fog Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
 | `ZENITH_FORCE_TAA` | Temporal anti-aliasing. |
 | `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
@@ -248,7 +248,7 @@ environment changes or a reflection probe becomes resident), `gpu.local_shadows`
 (zero on frames that reuse every cached atlas tile), `gpu.shadow_culling`
 (GPU-driven only; zero on frames whose cascades were all cached), the
 early-phase `gpu.culling`, and any upload wait. `gpu.opaque` spans
-`gpu.light_clusters`, `gpu.reflection_probe_clusters`, `gpu.depth_prepass` (which includes the GPU-driven late
+`gpu.light_clusters`, `gpu.reflection_probe_clusters`, `gpu.decal_clusters`, `gpu.depth_prepass` (which includes the GPU-driven late
 cull), `gpu.depth_pyramid`, `gpu.ambient_occlusion`, and shading. `gpu.blended` includes `gpu.skybox`;
 `gpu.reflections` runs between them inside the scene pass and is subtracted from `gpu.blended`.
 `gpu.environment` is precompute plus skybox. `gpu.volumetric_fog` (fog
@@ -320,6 +320,66 @@ selection, and conservative cluster assignment against brute-force frustum
 samples. The showcase project's west and east halves carry two overlapping
 probes with distinct environments (`tools/showcase/build_probe_environments.py`).
 
+## Clustered decals
+
+`DecalComponent` is an oriented box projector: the entity's world transform
+applied to `[-halfExtents, halfExtents]`, projecting along its local -Y (an
+unrotated decal lands on floors; pitch it 90 degrees for a wall), with u along
+local +X and v along local +Z. It carries an optional albedo texture (sRGB; its
+alpha masks every effect), an optional tangent-space normal texture (+Y up),
+a linear tint and opacity, per-property strengths for base color, normal
+(without a normal texture it flattens the surface toward its geometric normal,
+as paint or standing water fills bumps), roughness and metallic overrides, an angle fade (full coverage up to
+`angleFadeStartRadians` between the surface's geometric normal and the
+projector axis, none past `angleFadeEndRadians`, so walls next to a floor decal
+and back faces stay clean), and a sort order. Decals also fade across the outer
+quarter of the box depth. Scene documents store it as the optional `decal`
+component; only `half_extents` is required.
+
+`RenderSettings::decals` (`DecalQuality`, serialized as `decals` by value) is
+On by default; Off is the fallback and records no work. Each frame
+`MeshPass::prepareDecals` gathers decals in application order (ascending sort
+order, then stable scene id), keeps the 1024 nearest the camera, resolves their textures
+to bindless slots, and packs them with conservative view-space bounds.
+`DecalClusterPass` uploads the records (camera binding 19) and
+`decal_clusters.comp` lists up to 31 decals per light-cluster froxel in
+application order (binding 20). `applyDecals` in `mesh.frag` walks the
+fragment's cluster list before lighting and blends each decal into base color,
+the (material-mapped) normal, roughness and metallic of opaque and masked
+surfaces; textures filter with explicit gradients from the world-position
+derivatives. Decals do not change the depth prepass normals, so GTAO and
+screen-space reflections see the undecorated surface.
+
+The GPU scope is `gpu.decal_clusters` (timestamp slots 51/52) with the
+`decalClusters` budget; the benchmark also reports `decals.count`,
+`decals.dropped`, `decals.discarded_assignments`, `decals.maximum_per_cluster`
+and `render.decal_bytes` (records and cluster lists, about 0.6 MB per frame in
+flight). `zenith_decals` covers decal-space projection, the angle
+and depth fades, ordering and nearest selection, conservative cluster
+assignment with overflow counting against a brute-force test, GPU packing,
+scene-document round trips with the shipped textures, and the setting's
+serialization and fallback. `tools/showcase/build_decal_textures.py` writes the
+showcase textures under `assets/showcase/decals/`.
+
+The 2026-10-02 Release measurement (RTX 2070 SUPER, 1280x720, showcase project
+with the decals added, `ZENITH_BENCHMARK_MODE=render`, camera
+`0,1.7,4.5,0,-14`, 120 warm-up and 600 measured frames, median of three runs)
+compared `decals` Off and On with five showcase-sized decals (stencil, arrow,
+puddle, a normal-mapped wall plate and a corner test) and with 256 decals
+(1.2 m boxes scattered over the floor; the busiest cluster touched 32 against
+a capacity of 31, so one assignment was discarded):
+
+| Scene | `decals` | `gpu.decal_clusters` | `gpu.opaque` | `gpu.frame` |
+| --- | --- | ---: | ---: | ---: |
+| 5 decals | Off | 0 | 1.227 ms | 2.114 ms |
+| 5 decals | On | 0.017 ms | 1.265 ms | 2.152 ms |
+| 256 decals | Off | 0 | 1.228 ms | 2.116 ms |
+| 256 decals | On | 0.036 ms | 1.401 ms | 2.287 ms |
+
+Assignment stays under 0.04 ms; shading (the rest of the `gpu.opaque`
+difference) costs about 0.02 ms for the five decals and 0.14 ms when most floor
+pixels walk a list of several decals.
+
 `gpu_visibility_mismatches` counts retired GPU-driven frames whose culling kept
 more objects than the CPU frustum reference. The GPU sphere test uses the
 reference's exact x/y planes and tighter depth planes, so any nonzero value is a
@@ -340,6 +400,8 @@ benchmark; asset-level failures are logged once rather than every frame.
 | Mesh larger than one staging slot | Logged once, then skipped until the asset unloads (previously retried every frame) |
 | Geometry arena or bindless texture table full | Logged once per episode (reset when an allocation succeeds), and counted as a deferral |
 | Scene local lights over the effective local-light limit (nearest kept) | `RenderStats::droppedLocalLights`, `lights.dropped` |
+| Scene decals over `maximumDecals` (1024; nearest kept) | `RenderStats::droppedDecals`, `decals.dropped` |
+| Cluster decal assignments over the per-cluster capacity (31; the decals applied last are dropped) | `RenderStats::discardedDecalAssignments`, `decals.discarded_assignments` |
 | Cluster light assignments over the per-cluster capacity | `RenderStats::discardedLightAssignments` (existing) |
 | Staging-ring backpressure | `RenderStats::uploadBackpressureEvents` (existing) |
 | Unsupported capabilities (IBL, probes, TAA, SSAO, SSR, GPU-driven, local lights) | `ValidatedRenderSettings::fallbacks`, reported by the application (existing) |

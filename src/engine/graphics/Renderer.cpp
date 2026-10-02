@@ -30,6 +30,7 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
         settings.bloom = BloomQuality::Downsampled;
         settings.volumetricFog = VolumetricFogQuality::High;
         settings.indirectDiffuse = IndirectDiffuseMode::ProbeVolume;
+        settings.decals = DecalQuality::On;
     }
     if (SDL_getenv("ZENITH_DISABLE_VOLUMETRIC_FOG") != nullptr) {
         settings.volumetricFog = VolumetricFogQuality::Off;
@@ -110,7 +111,8 @@ RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const Render
             .depthPrepass = depthPrepassActive(settings),
             .gpuDriven = gpuDrivenSubmissionActive(settings, capabilities),
             .volumetricFog = settings.volumetricFog != VolumetricFogQuality::Off,
-            .irradianceVolume = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume};
+            .irradianceVolume = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume,
+            .decals = settings.decals != DecalQuality::Off};
 }
 } // namespace
 
@@ -312,6 +314,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuReflectionProbeClusterMilliseconds = gpuTimings.reflectionProbeClusterMilliseconds;
     stats.gpuVolumetricFogMilliseconds = gpuTimings.volumetricFogMilliseconds;
     stats.gpuIrradianceVolumeMilliseconds = gpuTimings.irradianceVolumeMilliseconds;
+    stats.gpuDecalClusterMilliseconds = gpuTimings.decalClusterMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;
@@ -512,6 +515,7 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
                                                         VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
         const auto probeClusters =
             graph.importBuffer("reflection probe clusters", {.size = 0, .usage = 1, .alignment = 256});
+        const auto decalClusters = graph.importBuffer("decal clusters", {.size = 0, .usage = 1, .alignment = 256});
         const auto gpuDrivenDraws = graph.importBuffer("GPU-driven draws", {.size = 0, .usage = 1, .alignment = 256});
         const auto normals =
             graph.importImage("scene normals", image(PostProcessPass::normalFormat, 5, 0), VK_IMAGE_LAYOUT_UNDEFINED);
@@ -622,6 +626,13 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
                 {probeClusters, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                  VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
             graph.addPass("reflection probe cluster assignment", RenderGraphQueue::Graphics, probeClusterAccesses);
+        }
+        if (shape.decals) {
+            // Skipped on frames whose scene has no decal.
+            const RenderGraphAccess decalClusterAccesses[]{
+                {decalClusters, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
+            graph.addPass("decal cluster assignment", RenderGraphQueue::Graphics, decalClusterAccesses);
         }
         if (shape.volumetricFog) {
             // Injects the medium lit by the shadowed sun and clustered lights,
@@ -749,6 +760,11 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
         }
         if (shape.perPixelReflectionProbes) {
             opaqueAccesses.push_back({probeClusters, RenderGraphAccessMode::Read,
+                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                      VK_IMAGE_LAYOUT_UNDEFINED});
+        }
+        if (shape.decals) {
+            opaqueAccesses.push_back({decalClusters, RenderGraphAccessMode::Read,
                                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
                                       VK_IMAGE_LAYOUT_UNDEFINED});
         }

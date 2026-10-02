@@ -132,6 +132,7 @@ bool drawLighting(RenderSettings& settings, const RenderCapabilities& capabiliti
     if (settings.volumetricFog != VolumetricFogQuality::Off) {
         ImGui::TextDisabled("Add a Volumetric Fog component to the scene to author the medium.");
     }
+    changed |= enumCombo("Decals", settings.decals, std::array<EnumOption, 2>{{{"Off"}, {"On", capabilities.decals}}});
     return changed;
 }
 
@@ -215,6 +216,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Probe clusters", budgets.reflectionProbeClusters);
     changed |= drawBudget("Volumetric fog", budgets.volumetricFog);
     changed |= drawBudget("Irradiance volume", budgets.irradianceVolume);
+    changed |= drawBudget("Decal clusters", budgets.decalClusters);
     return changed;
 }
 
@@ -242,6 +244,7 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
             {"Opaque", stats.gpuOpaqueMilliseconds},
             {"Light clusters", stats.gpuLightClusterMilliseconds, true},
             {"Probe clusters", stats.gpuReflectionProbeClusterMilliseconds, true},
+            {"Decal clusters", stats.gpuDecalClusterMilliseconds, true},
             {"Volumetric fog", stats.gpuVolumetricFogMilliseconds, true},
             {"Depth prepass", stats.gpuDepthPrepassMilliseconds, true},
             {"Depth pyramid", stats.gpuDepthPyramidMilliseconds, true},
@@ -285,12 +288,26 @@ void clampToDocumentRanges(RenderSettings& settings) {
     exposure.highPercentile = std::clamp(exposure.highPercentile, exposure.lowPercentile + minimumPercentileGap, 1.0f);
 
     RenderPassBudgets& budgets = settings.budgets;
-    for (RenderPassBudget* budget :
-         {&budgets.shadow, &budgets.opaque, &budgets.blended, &budgets.bloom, &budgets.ui, &budgets.upload,
-          &budgets.temporalResolve, &budgets.ambientOcclusion, &budgets.reflections, &budgets.exposure,
-          &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment,
-          &budgets.localShadows, &budgets.shadowCulling, &budgets.reflectionProbeClusters, &budgets.volumetricFog,
-          &budgets.irradianceVolume}) {
+    for (RenderPassBudget* budget : {&budgets.shadow,
+                                     &budgets.opaque,
+                                     &budgets.blended,
+                                     &budgets.bloom,
+                                     &budgets.ui,
+                                     &budgets.upload,
+                                     &budgets.temporalResolve,
+                                     &budgets.ambientOcclusion,
+                                     &budgets.reflections,
+                                     &budgets.exposure,
+                                     &budgets.depthPrepass,
+                                     &budgets.depthPyramid,
+                                     &budgets.lightClusters,
+                                     &budgets.environment,
+                                     &budgets.localShadows,
+                                     &budgets.shadowCulling,
+                                     &budgets.reflectionProbeClusters,
+                                     &budgets.volumetricFog,
+                                     &budgets.irradianceVolume,
+                                     &budgets.decalClusters}) {
         clampBudget(*budget);
     }
 }

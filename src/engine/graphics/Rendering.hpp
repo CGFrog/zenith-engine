@@ -134,6 +134,14 @@ enum class IndirectDiffuseMode : uint8_t {
     ProbeVolume,
 };
 
+// Clustered decals (DecalComponent): On assigns the scene's decals to the
+// light-cluster grid and blends them into opaque and masked surfaces before
+// lighting; Off (the fallback) skips both. Serialized by value.
+enum class DecalQuality : uint8_t {
+    Off,
+    On,
+};
+
 struct RenderPassBudget {
     double cpuMilliseconds{0.0};
     double gpuMilliseconds{0.0};
@@ -164,6 +172,8 @@ struct RenderPassBudgets {
     RenderPassBudget volumetricFog;
     // Irradiance-volume probe upload (sampling is part of opaque shading).
     RenderPassBudget irradianceVolume;
+    // Decal cluster assignment (blending is part of opaque shading).
+    RenderPassBudget decalClusters;
 };
 
 struct DynamicResolutionSettings {
@@ -212,6 +222,7 @@ struct RenderSettings {
     AmbientOcclusionQuality ambientOcclusion{AmbientOcclusionQuality::Off};
     ReflectionQuality reflections{ReflectionQuality::ProbesOnly};
     VolumetricFogQuality volumetricFog{VolumetricFogQuality::Off};
+    DecalQuality decals{DecalQuality::On};
     // Zero disables enforcement for that processor/pass pair.
     RenderPassBudgets budgets;
 
@@ -235,6 +246,7 @@ struct RenderCapabilities {
     bool screenSpaceReflections{true};
     // Needs RGBA16F 3D storage images.
     bool volumetricFog{true};
+    bool decals{true};
     bool meshShaders{false};
     bool rayTracing{false};
     bool dedicatedTransferQueue{false};
@@ -351,6 +363,18 @@ struct RenderStats {
     uint32_t irradianceVolumeProbes{0};
     // Device memory of the irradiance-volume probe buffer.
     uint64_t irradianceVolumeBytes{0};
+    // Decal cluster assignment of the retired frame; zero when it had no decal.
+    double gpuDecalClusterMilliseconds{0.0};
+    // Decals uploaded this submission, and scene decals left out: beyond
+    // maximumDecals (the nearest are kept) or waiting for a texture upload.
+    uint32_t decalCount{0};
+    uint32_t droppedDecals{0};
+    // Retired-frame cluster statistics (GPU-assigned): assignments beyond the
+    // per-cluster capacity, and the most decals touching one cluster.
+    uint32_t discardedDecalAssignments{0};
+    uint32_t maximumDecalsPerCluster{0};
+    // Device memory of the decal records and cluster lists of every frame.
+    uint64_t decalBytes{0};
     uint64_t temporalHistoryBytes{0};
     uint64_t motionVectorBytes{0};
     uint64_t ambientOcclusionBytes{0};

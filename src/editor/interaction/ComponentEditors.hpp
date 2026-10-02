@@ -31,4 +31,7 @@ bool drawMorphWeights(MorphWeightsComponent& component);
 // Returns whether counts changed.
 bool clampIrradianceProbeCounts(const glm::ivec3& requested, glm::uvec3& counts);
 bool drawIrradianceVolume(IrradianceVolumeComponent& component);
+// Keeps every field in the range the scene document accepts; texture paths are
+// shown but chosen in the scene document.
+bool drawDecal(DecalComponent& component);
 } // namespace ComponentEditors

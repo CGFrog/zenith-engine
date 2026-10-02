@@ -16,6 +16,7 @@
 #include "../vulkan/VulkanContext.hpp"
 #include "AmbientOcclusionPass.hpp"
 #include "ClusteredLightingPass.hpp"
+#include "DecalClusterPass.hpp"
 #include "DepthPyramid.hpp"
 #include "EnvironmentPass.hpp"
 #include "GpuDrivenPass.hpp"
@@ -205,6 +206,11 @@ class MeshPass {
     void writeClusteredLightingDescriptors();
     // Binds each frame slot's probe buffer to camera binding 17.
     void writeReflectionProbeDescriptors();
+    void writeDecalDescriptors();
+    // Decals to apply this frame, packed for upload; empty when decals are off.
+    std::vector<GpuDecal> prepareDecals(const Scene& scene, const AssetManager& assets, const RenderSettings& settings,
+                                        const glm::vec3& cameraPosition, const glm::mat4& view,
+                                        uint32_t& sceneDecalCount);
     // Binds each frame slot's occlusion image to camera binding 13 of both sets.
     void writeAmbientOcclusionDescriptors();
     // Binds the fog pass's integrated volume to camera binding 18 of the frame
@@ -440,6 +446,7 @@ class MeshPass {
     GpuDrivenPass m_gpuDrivenPass;
     ClusteredLightingPass m_clusteredLighting;
     ReflectionProbeClusterPass m_reflectionProbeClusters;
+    DecalClusterPass m_decalClusters;
     VolumetricFogPass m_volumetricFog;
     // Fog volume generation each frame slot's camera sets reference.
     std::vector<uint64_t> m_fogDescriptorGenerations;
