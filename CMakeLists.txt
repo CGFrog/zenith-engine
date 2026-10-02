@@ -647,6 +647,19 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_asset_scene COMMAND zenith_asset_tests)
 
+    add_executable(zenith_showcase_content_tests tests/engine/ShowcaseContentTests.cpp)
+    target_compile_definitions(zenith_showcase_content_tests PRIVATE
+        ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}"
+        ZENITH_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/projects")
+    add_dependencies(zenith_showcase_content_tests zenith_assets)
+    target_link_libraries(zenith_showcase_content_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_showcase_content_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_showcase_content_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_showcase_content COMMAND zenith_showcase_content_tests)
+
     add_executable(zenith_compressed_texture_tests tests/engine/CompressedTextureTests.cpp)
     target_link_libraries(zenith_compressed_texture_tests PRIVATE zenith_engine)
     if(MSVC)

@@ -4228,6 +4228,292 @@
      "outer_cone": 0.45
     }
    }
+  },
+  {
+   "id": 124,
+   "name": "Skinned Tentacle",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.02,
+    -1.15,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "model": {
+     "path": "showcase/coverage/tentacle.gltf"
+    },
+    "animation": {
+     "clip": 0,
+     "time": 0.0,
+     "speed": 1.0,
+     "looping": true,
+     "playing": true,
+     "blend_clip": null,
+     "blend_time": 0.0,
+     "blend_duration": 0.0
+    }
+   }
+  },
+  {
+   "id": 125,
+   "name": "TentacleMesh",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "parent": 124,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 124,
+     "node": 0
+    },
+    "skin": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 124,
+     "skin": 0
+    },
+    "mesh_renderer": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "mesh": 0
+    }
+   }
+  },
+  {
+   "id": 126,
+   "name": "Joint0",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "parent": 124,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 124,
+     "node": 1
+    }
+   }
+  },
+  {
+   "id": 127,
+   "name": "Joint1",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3,
+    0.0,
+    1.0
+   ],
+   "parent": 126,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 124,
+     "node": 2
+    }
+   }
+  },
+  {
+   "id": 128,
+   "name": "Joint2",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3,
+    0.0,
+    1.0
+   ],
+   "parent": 127,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 124,
+     "node": 3
+    }
+   }
+  },
+  {
+   "id": 129,
+   "name": "Joint3",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3,
+    0.0,
+    1.0
+   ],
+   "parent": 128,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 124,
+     "node": 4
+    }
+   }
+  },
+  {
+   "id": 130,
+   "name": "Joint4",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3,
+    0.0,
+    1.0
+   ],
+   "parent": 129,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 124,
+     "node": 5
+    }
+   }
+  },
+  {
+   "id": 131,
+   "name": "Joint5",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3,
+    0.0,
+    1.0
+   ],
+   "parent": 130,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 124,
+     "node": 6
+    }
+   }
+  },
+  {
+   "id": 132,
+   "name": "Gold Mirror",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.01,
+    -0.7,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/coverage/gold_mirror.gltf",
+     "mesh": 0
+    }
+   }
   }
  ]
 }
