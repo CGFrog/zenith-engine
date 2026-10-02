@@ -113,6 +113,8 @@ bool drawLighting(RenderSettings& settings, const RenderCapabilities& capabiliti
         settings.maximumLocalLights = static_cast<uint32_t>(maximumLights);
         changed = true;
     }
+    changed |= enumCombo("Local light shadows", settings.localShadows,
+                         std::array<EnumOption, 4>{{{"Off"}, {"Low"}, {"Medium"}, {"High"}}});
     ImGui::EndDisabled();
     return changed;
 }
@@ -193,6 +195,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Light clusters", budgets.lightClusters);
     changed |= drawBudget("Environment", budgets.environment);
     changed |= drawBudget("Shadow culling", budgets.shadowCulling);
+    changed |= drawBudget("Local shadows", budgets.localShadows);
     return changed;
 }
 
@@ -208,10 +211,11 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
         return {};
     }
     // Shadow time runs from the frame start through the early GPU cull, so it
-    // also covers the environment precompute and GPU shadow-cascade culling;
-    // opaque time spans the clusters, prepass, pyramid and ambient occlusion;
-    // blended time spans the skybox.
+    // also covers the environment precompute, local shadows and GPU
+    // shadow-cascade culling; opaque time spans the clusters, prepass, pyramid
+    // and ambient occlusion; blended time spans the skybox.
     return {{"Shadows", stats.gpuShadowMilliseconds},
+            {"Local shadows", stats.gpuLocalShadowMilliseconds, true},
             {"Environment precompute", stats.gpuEnvironmentPrecomputeMilliseconds, true},
             {"Shadow culling", stats.gpuShadowCullingMilliseconds, true},
             {"GPU culling", stats.gpuCullingMilliseconds, true},
@@ -263,7 +267,7 @@ void clampToDocumentRanges(RenderSettings& settings) {
          {&budgets.shadow, &budgets.opaque, &budgets.blended, &budgets.bloom, &budgets.ui, &budgets.upload,
           &budgets.temporalResolve, &budgets.ambientOcclusion, &budgets.reflections, &budgets.exposure,
           &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment,
-          &budgets.shadowCulling}) {
+          &budgets.localShadows, &budgets.shadowCulling}) {
         clampBudget(*budget);
     }
 }

@@ -13,7 +13,10 @@ struct GpuLocalLight {
     glm::vec4 positionRange{0.0f};  // world position, range
     glm::vec4 colorIntensity{0.0f}; // linear color, intensity
     glm::vec4 directionType{0.0f};  // world direction, type (0 point, 1 spot)
-    glm::vec4 spotCone{0.0f};       // inner and outer cone cosines
+    // x, y: inner and outer cone cosines (spot lights). z: index of the
+    // light's first record in the local shadow tile buffer (camera binding 15,
+    // see LocalShadowPass), or -1 when the light is unshadowed this frame.
+    glm::vec4 spotCone{0.0f};
 };
 
 // Cluster statistics a frame's assignment produced, read once it retired.
@@ -42,6 +45,10 @@ class ClusteredLightingPass {
     // Reads the slot's retired statistics, resets them, and uploads up to
     // lightCapacity() world-space lights. Returns the number uploaded.
     uint32_t beginFrame(uint32_t frameIndex, std::span<const LocalLight> lights, ClusterLightStatistics& retired);
+    // Sets each uploaded light's shadow tile (GpuLocalLight::spotCone.z) from
+    // the entry with the same index; negative entries mean unshadowed. Lights
+    // start unshadowed in beginFrame. Must precede the frame's submission.
+    void assignShadowTiles(uint32_t frameIndex, std::span<const int32_t> firstShadowTiles);
     // Assigns the uploaded lights to clusters and makes the lists visible to
     // fragment shaders. Records nothing when no lights were uploaded. The grid
     // must come from makeClusterGrid with configuration().

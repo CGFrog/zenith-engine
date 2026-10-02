@@ -170,6 +170,7 @@ bool FrameResources::collectTimings(VkDevice device, GpuFrameTimings& timings) {
         elapsed(FrameTimestamp::environmentPrecomputeBegin, FrameTimestamp::environmentPrecomputeEnd);
     timings.skyboxMilliseconds = elapsed(FrameTimestamp::skyboxBegin, FrameTimestamp::skyboxEnd);
     timings.shadowCullingMilliseconds = elapsed(FrameTimestamp::shadowCullBegin, FrameTimestamp::shadowCullEnd);
+    timings.localShadowMilliseconds = elapsed(FrameTimestamp::localShadowsBegin, FrameTimestamp::localShadowsEnd);
     return true;
 }
 

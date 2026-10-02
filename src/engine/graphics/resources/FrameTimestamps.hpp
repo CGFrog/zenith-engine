@@ -21,10 +21,13 @@ inline constexpr uint32_t environmentPrecomputeBegin = 27;
 inline constexpr uint32_t environmentPrecomputeEnd = 28;
 inline constexpr uint32_t skyboxBegin = 29;
 inline constexpr uint32_t skyboxEnd = 30;
+// Local-light shadow tiles; skipped when every tile reused its cached depth.
+inline constexpr uint32_t localShadowsBegin = 31;
+inline constexpr uint32_t localShadowsEnd = 32;
 // GPU culling of the dirty directional shadow cascades (GPU-driven path only).
-inline constexpr uint32_t shadowCullBegin = 31;
-inline constexpr uint32_t shadowCullEnd = 32;
-inline constexpr uint32_t count = 33;
+inline constexpr uint32_t shadowCullBegin = 33;
+inline constexpr uint32_t shadowCullEnd = 34;
+inline constexpr uint32_t count = 35;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot

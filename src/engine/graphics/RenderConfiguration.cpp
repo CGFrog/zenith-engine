@@ -117,6 +117,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"environmentBackground", settings.environmentBackground},
                            {"localLights", settings.localLights},
                            {"maximumLocalLights", settings.maximumLocalLights},
+                           {"localShadows", settings.localShadows},
                            {"reflectionProbes", settings.reflectionProbes},
                            {"preferGpuDrivenSubmission", settings.preferGpuDrivenSubmission},
                            {"depthPrepass", settings.depthPrepass},
@@ -148,6 +149,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"depthPyramid", budget(settings.budgets.depthPyramid)},
                              {"lightClusters", budget(settings.budgets.lightClusters)},
                              {"environment", budget(settings.budgets.environment)},
+                             {"localShadows", budget(settings.budgets.localShadows)},
                              {"shadowCulling", budget(settings.budgets.shadowCulling)}}}};
     output = document.dump(2);
     return {.success = true};
@@ -175,6 +177,11 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 return {.error = "Render settings contain an invalid local-light limit"};
             }
             loaded.maximumLocalLights = maximumLights->get<uint32_t>();
+        }
+        // Documents written before local-light shadows keep the default.
+        if (document.contains("localShadows") &&
+            !readEnum(document, "localShadows", LocalShadowQuality::High, loaded.localShadows)) {
+            return {.error = "Render settings contain an unknown local-shadow quality"};
         }
         loaded.reflectionProbes = document.value("reflectionProbes", true);
         loaded.preferGpuDrivenSubmission = document.value("preferGpuDrivenSubmission", false);
@@ -233,6 +240,7 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "depthPyramid", loaded.budgets.depthPyramid) ||
                 !readOptionalBudget(*budgets, "lightClusters", loaded.budgets.lightClusters) ||
                 !readOptionalBudget(*budgets, "environment", loaded.budgets.environment) ||
+                !readOptionalBudget(*budgets, "localShadows", loaded.budgets.localShadows) ||
                 !readOptionalBudget(*budgets, "shadowCulling", loaded.budgets.shadowCulling)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
@@ -270,6 +278,11 @@ ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
     } else if (result.settings.maximumLocalLights > capabilities.maximumLocalLights) {
         result.settings.maximumLocalLights = capabilities.maximumLocalLights;
         result.fallbacks.emplace_back("The local-light limit exceeds the renderer's capacity and was reduced");
+    }
+    if (result.settings.localShadows != LocalShadowQuality::Off &&
+        result.settings.localLights == LocalLightingQuality::Disabled) {
+        result.settings.localShadows = LocalShadowQuality::Off;
+        result.fallbacks.emplace_back("Local-light shadows need clustered local lighting and were disabled");
     }
     if (result.settings.preferGpuDrivenSubmission && !capabilities.gpuDrivenPath) {
         result.settings.preferGpuDrivenSubmission = false;

@@ -94,6 +94,17 @@ enum class LocalLightingQuality : uint8_t {
     Clustered,
 };
 
+// Shadows of point and spot lights that opt in (castsShadows), rendered into
+// one depth atlas. Higher levels raise the atlas size, the tile resolution,
+// the number of shadowed lights, and the tiles re-rendered per frame; see
+// localShadowProfile in LocalShadows.hpp. Off leaves local lights unshadowed.
+enum class LocalShadowQuality : uint8_t {
+    Off,
+    Low,
+    Medium,
+    High,
+};
+
 struct RenderPassBudget {
     double cpuMilliseconds{0.0};
     double gpuMilliseconds{0.0};
@@ -117,6 +128,8 @@ struct RenderPassBudgets {
     RenderPassBudget environment;
     // GPU culling of the redrawn shadow cascades (GPU-driven path).
     RenderPassBudget shadowCulling;
+    // Local-light shadow atlas tiles re-rendered this frame.
+    RenderPassBudget localShadows;
 };
 
 struct DynamicResolutionSettings {
@@ -145,6 +158,8 @@ struct RenderSettings {
     LocalLightingQuality localLights{LocalLightingQuality::Clustered};
     // Lights uploaded per frame; the nearest are kept when a scene has more.
     uint32_t maximumLocalLights{1024};
+    // Requires clustered local lighting; validation turns it Off otherwise.
+    LocalShadowQuality localShadows{LocalShadowQuality::Medium};
     bool reflectionProbes{true};
     bool preferGpuDrivenSubmission{false};
     // Opaque depth and view-space normals are drawn before shading, so opaque
@@ -269,6 +284,18 @@ struct RenderStats {
     double gpuSkyboxMilliseconds{0.0};
     // GPU culling of the redrawn shadow cascades; within gpuShadowMilliseconds.
     double gpuShadowCullingMilliseconds{0.0};
+    // Zero when the retired frame re-rendered no local shadow tile.
+    double gpuLocalShadowMilliseconds{0.0};
+    // Local-light shadow atlas work of this submission: tiles drawn, tiles
+    // whose cached contents were reused, tiles still waiting for the per-frame
+    // update budget, and shadow-casting lights that found no atlas space.
+    uint32_t localShadowTilesRendered{0};
+    uint32_t localShadowTilesCached{0};
+    uint32_t localShadowTilesPending{0};
+    uint32_t localShadowLightsRejected{0};
+    uint32_t localShadowCasterCount{0};
+    double cpuLocalShadowMilliseconds{0.0};
+    uint64_t localShadowAtlasBytes{0};
     uint64_t temporalHistoryBytes{0};
     uint64_t motionVectorBytes{0};
     uint64_t ambientOcclusionBytes{0};

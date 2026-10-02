@@ -15,6 +15,7 @@
     "environmentBackground": true,
     "localLights": 1,
     "maximumLocalLights": 1024,
+    "localShadows": 2,
     "reflectionProbes": true,
     "preferGpuDrivenSubmission": false,
     "depthPrepass": true,

@@ -66,7 +66,10 @@ std::vector<LocalLight> gatherLocalLights(const Scene& scene) {
                           std::max(source.range, 0.001f),
                           1.0f,
                           0.0f,
-                          scene.id(entity).value});
+                          scene.id(entity).value,
+                          source.castsShadows,
+                          source.shadowResolution,
+                          source.shadowPriority});
     }
     const auto spots = scene.registry().view<const SpotLightComponent, const TransformComponent>();
     for (Entity entity : spots) {
@@ -79,7 +82,8 @@ std::vector<LocalLight> gatherLocalLights(const Scene& scene) {
         result.push_back({LocalLightType::Spot, glm::vec3(transform.world[3]), glm::normalize(direction),
                           glm::max(source.color, glm::vec3(0.0f)), std::max(source.intensity, 0.0f),
                           std::max(source.range, 0.001f), std::cos(source.innerConeRadians),
-                          std::cos(source.outerConeRadians), scene.id(entity).value});
+                          std::cos(source.outerConeRadians), scene.id(entity).value, source.castsShadows,
+                          source.shadowResolution, source.shadowPriority});
     }
     std::ranges::sort(result,
                       [](const LocalLight& left, const LocalLight& right) { return left.stableId < right.stableId; });

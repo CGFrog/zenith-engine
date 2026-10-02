@@ -298,6 +298,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/GraphicsValidation.cpp
     src/engine/graphics/Lighting.cpp
     src/engine/graphics/DeferredUploadTracker.cpp
+    src/engine/graphics/LocalShadows.cpp
     src/engine/graphics/EnvironmentLighting.cpp
     src/engine/graphics/RenderConfiguration.cpp
     src/engine/graphics/RenderSubmission.cpp
@@ -312,6 +313,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/passes/DepthPyramid.cpp
     src/engine/graphics/passes/AmbientOcclusionPass.cpp
     src/engine/graphics/passes/ClusteredLightingPass.cpp
+    src/engine/graphics/passes/LocalShadowPass.cpp
     src/engine/graphics/passes/EnvironmentPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
     src/engine/graphics/passes/ScreenSpaceReflectionPass.cpp
@@ -819,6 +821,10 @@ if(BUILD_TESTING)
     add_executable(zenith_clustered_lighting_tests tests/engine/ClusteredLightingTests.cpp)
     target_link_libraries(zenith_clustered_lighting_tests PRIVATE zenith_engine)
     add_test(NAME zenith_clustered_lighting COMMAND zenith_clustered_lighting_tests)
+
+    add_executable(zenith_local_shadow_tests tests/engine/LocalShadowTests.cpp)
+    target_link_libraries(zenith_local_shadow_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_local_shadows COMMAND zenith_local_shadow_tests)
 
     add_executable(zenith_frame_task_graph_tests tests/engine/FrameTaskGraphTests.cpp)
     target_link_libraries(zenith_frame_task_graph_tests PRIVATE zenith_engine)

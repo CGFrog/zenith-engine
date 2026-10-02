@@ -312,6 +312,9 @@ PrefabInstanceResult PrefabSystem::instantiateRecursive(const std::filesystem::p
                     light.color = {color[0].get<float>(), color[1].get<float>(), color[2].get<float>()};
                     light.intensity = component.at("intensity").get<float>();
                     light.range = component.at("range").get<float>();
+                    light.castsShadows = component.value("castsShadows", false);
+                    light.shadowResolution = component.value("shadowResolution", 0u);
+                    light.shadowPriority = component.value("shadowPriority", 0);
                     if (light.range <= 0.0f) {
                         result.success = false;
                         result.error = "Prefab pointLight range must be positive";
@@ -392,7 +395,10 @@ PrefabInstanceResult PrefabSystem::instantiateRecursive(const std::filesystem::p
                         const Json color = value.at("color");
                         PointLightComponent light{{color[0].get<float>(), color[1].get<float>(), color[2].get<float>()},
                                                   value.at("intensity").get<float>(),
-                                                  value.at("range").get<float>()};
+                                                  value.at("range").get<float>(),
+                                                  value.value("castsShadows", false),
+                                                  value.value("shadowResolution", 0u),
+                                                  value.value("shadowPriority", 0)};
                         if (light.range <= 0.0f) {
                             result.diagnostics.push_back("Invalid pointLight component override");
                         } else {

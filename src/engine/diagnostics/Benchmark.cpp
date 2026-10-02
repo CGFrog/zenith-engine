@@ -57,6 +57,7 @@ void BenchmarkReport::sample(const std::string& name, double value, std::string 
 void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& budgets) {
     sample("cpu.render_packet", s.cpuRenderPacketMilliseconds);
     sample("cpu.shadow", s.cpuShadowMilliseconds, "ms", budgets.shadow.cpuMilliseconds);
+    sample("cpu.local_shadows", s.cpuLocalShadowMilliseconds, "ms", budgets.localShadows.cpuMilliseconds);
     sample("cpu.opaque", s.cpuOpaqueMilliseconds, "ms", budgets.opaque.cpuMilliseconds);
     sample("cpu.blended", s.cpuBlendedMilliseconds, "ms", budgets.blended.cpuMilliseconds);
     sample("cpu.bloom_downsample", s.cpuBloomMilliseconds, "ms", budgets.bloom.cpuMilliseconds);
@@ -108,6 +109,11 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("render.ambient_occlusion_bytes", static_cast<double>(s.ambientOcclusionBytes), "bytes");
     sample("render.reflection_bytes", static_cast<double>(s.reflectionBytes), "bytes");
     sample("render.shadow_cache_bytes", static_cast<double>(s.shadowCacheBytes), "bytes");
+    sample("render.local_shadow_atlas_bytes", static_cast<double>(s.localShadowAtlasBytes), "bytes");
+    sample("local_shadows.tiles_rendered", s.localShadowTilesRendered, "count");
+    sample("local_shadows.tiles_cached", s.localShadowTilesCached, "count");
+    sample("local_shadows.tiles_pending", s.localShadowTilesPending, "count");
+    sample("local_shadows.lights_rejected", s.localShadowLightsRejected, "count");
     sample("streaming.decoded_bytes", static_cast<double>(s.streamingDecodedBytes), "bytes");
     sample("streaming.uploaded_bytes", static_cast<double>(s.streamingUploadedBytes), "bytes");
     sample("streaming.decode_backlog_bytes", static_cast<double>(s.streamingDecodeBacklogBytes), "bytes");
@@ -151,6 +157,7 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
     sample("gpu.environment_precompute", s.gpuEnvironmentPrecomputeMilliseconds);
     sample("gpu.skybox", s.gpuSkyboxMilliseconds);
     sample("gpu.shadow_culling", s.gpuShadowCullingMilliseconds, "ms", budgets.shadowCulling.gpuMilliseconds);
+    sample("gpu.local_shadows", s.gpuLocalShadowMilliseconds, "ms", budgets.localShadows.gpuMilliseconds);
     sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
     sample("gpu.ui", s.gpuUiMilliseconds, "ms", budgets.ui.gpuMilliseconds);
