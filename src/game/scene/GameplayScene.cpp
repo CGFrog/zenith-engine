@@ -36,12 +36,13 @@ uint32_t benchmarkLightCount(uint32_t objectCount) {
 
 GameplayScene::GameplayScene(AudioClipHandle interactionSound, std::shared_ptr<InputActionMap> inputActions,
                              std::shared_ptr<GameSettings> settings, std::filesystem::path settingsPath,
-                             std::optional<ProjectConfig> project)
+                             std::optional<ProjectConfig> project, std::optional<CaptureCameraPath> captureCamera)
     : m_interactionSound(interactionSound)
     , m_inputActions(std::move(inputActions))
     , m_settings(std::move(settings))
     , m_settingsPath(std::move(settingsPath))
-    , m_project(std::move(project)) {}
+    , m_project(std::move(project))
+    , m_captureCamera(captureCamera) {}
 
 SceneResult GameplayScene::load(ApplicationContext& context) {
     Scene& scene = context.scene;
@@ -59,6 +60,24 @@ SceneResult GameplayScene::load(ApplicationContext& context) {
         }
     }
 
+    if (m_captureCamera) {
+        spawnCaptureCamera(scene);
+    } else {
+        spawnPlayer(scene);
+    }
+    return {.success = true};
+}
+
+void GameplayScene::spawnCaptureCamera(Scene& scene) {
+    m_captureCameraEntity = scene.createEntity("Capture Camera");
+    m_captureElapsedSeconds = 0.0f;
+    scene.registry().get<TransformComponent>(m_captureCameraEntity).local = m_captureCamera->transformAt(0.0f);
+    scene.registry().emplace<CameraComponent>(m_captureCameraEntity);
+    scene.registry().emplace<AudioListenerComponent>(m_captureCameraEntity);
+    m_screen = Screen::Playing;
+}
+
+void GameplayScene::spawnPlayer(Scene& scene) {
     const Entity player = scene.createEntity("Player");
     scene.registry().get<TransformComponent>(player).local =
         glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.2f, 4.0f));
@@ -82,10 +101,18 @@ SceneResult GameplayScene::load(ApplicationContext& context) {
     scene.setParent(camera, player);
     scene.registry().get<TransformComponent>(camera).local =
         glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, controller.halfHeight + controller.radius, 0.0f));
-    return {.success = true};
 }
 
 void GameplayScene::update(ApplicationContext& context, const InputState& input, float deltaSeconds) {
+    if (m_captureCamera) {
+        // The path is sampled at the end of each frame's step, so frame N
+        // shows N * deltaSeconds of motion.
+        m_captureElapsedSeconds += deltaSeconds;
+        context.scene.registry().get<TransformComponent>(m_captureCameraEntity).local =
+            m_captureCamera->transformAt(m_captureElapsedSeconds);
+        context.scene.markTransformDirty(m_captureCameraEntity);
+        return;
+    }
     m_actions = m_inputActions->evaluate(input);
     if (m_actions.pressed(DemoAction::Pause)) {
         if (m_screen == Screen::Playing) {
@@ -115,6 +142,9 @@ void GameplayScene::update(ApplicationContext& context, const InputState& input,
 }
 
 void GameplayScene::fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) {
+    if (m_captureCamera) {
+        return;
+    }
     const InputActionState actions = m_inputActions->evaluate(input);
     m_firstPersonControllers.fixedUpdate(context.scene, context.physics,
                                          {.move = actions.axis2D(DemoAction::Move),
@@ -128,6 +158,9 @@ bool GameplayScene::fixedUpdatesEnabled() const {
 }
 
 void GameplayScene::drawUi(ApplicationContext& context) {
+    if (m_captureCamera) {
+        return;
+    }
     context.gameUi.setNavigation({.nextPressed = m_actions.pressed(DemoAction::MenuNext),
                                   .previousPressed = m_actions.pressed(DemoAction::MenuPrevious),
                                   .activatePressed = m_actions.pressed(DemoAction::MenuAccept)});

@@ -435,7 +435,9 @@ presentation modes, queue presentation support, and format support.
 
 Chooses extent, BGRA8 sRGB output, a supported depth format, and presentation
 mode. It owns the swapchain, image views, per-image render-complete semaphores,
-and a VMA-backed depth image/view. FIFO is the portable fallback.
+and a VMA-backed depth image/view. FIFO is the portable fallback. With
+`SwapchainOptions::transferSource` its images also allow copies for frame
+capture (`resources/ImageReadback.*`, written to PNG by `diagnostics/`).
 
 ### `src/engine/graphics/resources/FrameResources.*`
 
@@ -678,6 +680,7 @@ The source directory is copied as a whole to `build/assets/` for runtime use.
 | `tests/engine/` | Audio, asset importing, scene documents/hierarchy, and physics contracts. |
 | `tests/editor/` | Settings, render-settings persistence and graphics-panel helpers, document state, command history, camera behavior, and component editing helpers. |
 | `tests/game/` | Application callback order, scene changes, cleanup, demo composition, controls, and reload behavior. |
+| `tests/capture/`, `tests/references/` | Reference capture driver, showcase capture manifest, and reference PNGs (`docs/RENDERER_VALIDATION.md`). |
 
 The executables return a nonzero status on failed expectations so CTest can
 report failures without another test framework. Test sources and registrations

@@ -6,6 +6,7 @@
 #include "engine/resources/ResourceLocator.hpp"
 #include "engine/scene/Scene.hpp"
 #include "game/application/DemoApplication.hpp"
+#include "game/scene/CaptureCamera.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -67,6 +68,12 @@ int runApplication(int argc, char** argv) {
         return EXIT_SUCCESS;
     }
 
+    const CaptureCameraResult captureCamera = captureCameraFromEnvironment();
+    if (!captureCamera) {
+        std::cerr << captureCamera.error << '\n';
+        return EXIT_FAILURE;
+    }
+
     Engine engine;
 
     if (!engine.init()) {
@@ -77,7 +84,8 @@ int runApplication(int argc, char** argv) {
     // Cooked textures produced by zenith_asset_build live beside the packaged assets.
     engine.assets().setCookedTextureRoot(resourceRoot() / "derived");
 
-    DemoApplication application(std::move(project), userDataDirectory("Zenith", "Demo") / "game-settings.json");
+    DemoApplication application(std::move(project), userDataDirectory("Zenith", "Demo") / "game-settings.json",
+                                captureCamera.path);
     const bool success = engine.run(application);
     engine.shutdown();
     return validationExitCode(engine.graphicsValidation(), success ? EXIT_SUCCESS : EXIT_FAILURE);

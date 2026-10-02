@@ -276,6 +276,10 @@ endif()
 
 add_library(zenith_engine STATIC
     src/engine/diagnostics/Benchmark.cpp
+    src/engine/diagnostics/FrameCaptureConfig.cpp
+    src/engine/diagnostics/ImageComparison.cpp
+    src/engine/diagnostics/RgbaImage.cpp
+    src/engine/diagnostics/StbImageWrite.cpp
     src/engine/animation/AnimationSystem.cpp
     src/engine/audio/AudioSystem.cpp
     src/engine/audio/StbVorbis.cpp
@@ -319,6 +323,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/resources/UploadContext.cpp
     src/engine/graphics/resources/BindlessTextureTable.cpp
     src/engine/graphics/resources/GeometryArena.cpp
+    src/engine/graphics/resources/ImageReadback.cpp
     src/engine/graphics/resources/ViewportTarget.cpp
     src/engine/graphics/shader/ShaderModule.cpp
     src/engine/graphics/surface/Surface.cpp
@@ -346,6 +351,7 @@ add_library(zenith_engine STATIC
 
 if(MSVC)
     set_source_files_properties(src/engine/audio/StbVorbis.cpp PROPERTIES COMPILE_OPTIONS /W0)
+    set_source_files_properties(src/engine/diagnostics/StbImageWrite.cpp PROPERTIES COMPILE_OPTIONS /W0)
 endif()
 
 add_library(zenith_demo STATIC
@@ -353,6 +359,7 @@ add_library(zenith_demo STATIC
     src/game/application/GameSettings.cpp
     src/game/input/DemoInput.cpp
     src/game/player/FirstPersonController.cpp
+    src/game/scene/CaptureCamera.cpp
     src/game/scene/DemoScene.cpp
     src/game/scene/GameplayScene.cpp
 )
@@ -834,6 +841,39 @@ if(BUILD_TESTING)
 
     add_executable(zenith_render_regression_tests tests/engine/RenderRegressionTests.cpp)
     add_test(NAME zenith_render_regression COMMAND zenith_render_regression_tests)
+
+    add_executable(zenith_frame_capture_tests tests/engine/FrameCaptureTests.cpp)
+    target_link_libraries(zenith_frame_capture_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_frame_capture COMMAND zenith_frame_capture_tests)
+
+    add_executable(zenith_capture_camera_tests tests/game/CaptureCameraTests.cpp)
+    target_link_libraries(zenith_capture_camera_tests PRIVATE zenith_demo)
+    add_test(NAME zenith_capture_camera COMMAND zenith_capture_camera_tests)
+
+    # Renders the showcase reference views and compares them with
+    # tests/references/showcase (docs/RENDERER_VALIDATION.md). Skips without a
+    # hardware Vulkan device; the update target regenerates the references.
+    add_executable(zenith_reference_capture tests/capture/ReferenceCaptureDriver.cpp)
+    target_link_libraries(zenith_reference_capture PRIVATE zenith_engine)
+    # Captures sample the cooked BC7/BC5 textures, so they must be current.
+    add_dependencies(zenith_reference_capture zenith zenith_cooked_textures)
+    set(ZENITH_SHOWCASE_CAPTURE_ARGUMENTS
+        --executable "$<TARGET_FILE:zenith>"
+        --manifest "${CMAKE_CURRENT_SOURCE_DIR}/tests/references/showcase/captures.json"
+        --output "${CMAKE_CURRENT_BINARY_DIR}/captures/showcase")
+    add_test(NAME zenith_showcase_reference_captures
+        COMMAND zenith_reference_capture ${ZENITH_SHOWCASE_CAPTURE_ARGUMENTS})
+    set_tests_properties(zenith_showcase_reference_captures PROPERTIES
+        LABELS "vulkan;capture"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 900
+    )
+    add_custom_target(zenith_update_showcase_references
+        COMMAND zenith_reference_capture ${ZENITH_SHOWCASE_CAPTURE_ARGUMENTS} --update
+        DEPENDS zenith_reference_capture zenith zenith_cooked_textures
+        COMMENT "Regenerating showcase reference captures"
+        VERBATIM
+    )
 
     add_executable(zenith_render_packet_benchmark tests/engine/RenderPacketBenchmarkTests.cpp)
     target_link_libraries(zenith_render_packet_benchmark PRIVATE zenith_engine)

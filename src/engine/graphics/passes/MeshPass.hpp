@@ -78,6 +78,11 @@ class MeshPass {
         return m_textureUploadContext.requiredTimelineValue();
     }
 
+    // See PostProcessPass::setFixedFrameSeconds.
+    void setFixedFrameSeconds(std::optional<float> seconds) {
+        m_postProcess.setFixedFrameSeconds(seconds);
+    }
+
     void shutdown(const VulkanContext& context);
 
   private:

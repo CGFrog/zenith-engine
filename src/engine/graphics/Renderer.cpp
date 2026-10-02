@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -98,16 +99,17 @@ RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const Render
 } // namespace
 
 bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExecutor& frameTasks,
-                    const GraphicsValidationOptions& validation) {
+                    const RendererOptions& options) {
     m_rendering = &rendering;
     m_frameTasks = &frameTasks;
+    m_options = options;
     m_pipelineCreationMilliseconds = 0.0;
     m_pipelineFirstUseMilliseconds = 0.0;
     m_prewarmedPipelineCount = 0;
     m_pipelineCacheWarm = false;
     m_pipelineFirstUsePending = true;
     applyDiagnosticOverrides(rendering);
-    if (!initContext(window, validation)) {
+    if (!initContext(window, options.validation)) {
         return false;
     }
     rendering.m_capabilities = detectRenderCapabilities(m_context.pDevice());
@@ -134,6 +136,7 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
     m_pipelineCreationMilliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pipelineCreationBegin).count();
     m_prewarmedPipelineCount = m_meshPass.prewarmedPipelineCount();
+    m_meshPass.setFixedFrameSeconds(options.fixedFrameSeconds);
     rendering.m_capabilities.gpuDrivenPath = m_meshPass.gpuDrivenSupported();
     rendering.m_capabilities.maximumLocalLights = m_meshPass.localLightCapacity();
     m_currentFrame = 0;
@@ -175,7 +178,7 @@ bool Renderer::initContext(const Window& window, const GraphicsValidationOptions
 }
 
 bool Renderer::createSwapchainResources(const Window& window) {
-    return m_swapchain.initSwapchain(window, m_surface, m_context);
+    return m_swapchain.initSwapchain(window, m_surface, m_context, {.transferSource = m_options.frameCapture});
 }
 
 void Renderer::destroySwapchainResources() {
@@ -226,6 +229,9 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
         m_uiPass.cancelFrame();
         return acquireStatus == FrameStatus::Skipped;
     }
+    if (m_captureRequested) {
+        prepareCapture();
+    }
     const auto recordBegin = std::chrono::steady_clock::now();
     if (!recordFrame(frame, imageIndex, scene, assets)) {
         m_uiPass.cancelFrame();
@@ -248,6 +254,9 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
                         m_rendering->m_settings.ambientOcclusion != AmbientOcclusionQuality::Off,
                         m_rendering->m_settings.reflections != ReflectionQuality::ProbesOnly,
                         m_rendering->m_stats.uploadBytes != 0);
+    if (m_capturePrepared) {
+        finishCapture(frame);
+    }
     const auto presentBegin = std::chrono::steady_clock::now();
     const bool presented = presentFrame(imageIndex);
     const double presentMilliseconds =
@@ -427,6 +436,9 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
     }
     m_rendering->m_stats.cpuUiMilliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - uiCpuBegin).count();
+    if (m_capturePrepared) {
+        m_readback.record(frame.commandBuffer(), image);
+    }
     frame.writeTimestamp(5, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     return frame.endRecording();
 }
@@ -819,6 +831,39 @@ InputCapture Renderer::uiInputCapture() const {
             .mouse = m_uiPass.wantsMouseCapture() && !viewportInput};
 }
 
+FrameCaptureResult Renderer::takeFrameCapture() {
+    m_captureRequested = false;
+    return std::exchange(m_capture, {});
+}
+
+void Renderer::prepareCapture() {
+    m_captureRequested = false;
+    if (!m_options.frameCapture) {
+        m_capture.error = "Frame capture was requested but the renderer was created without it";
+        return;
+    }
+    if (const ImageFileResult result = m_readback.prepare(m_context, m_swapchain.extent(), m_swapchain.format());
+        !result) {
+        m_capture.error = result.error;
+        return;
+    }
+    m_capturePrepared = true;
+}
+
+// Waiting for the frame's fence here stalls only the captured frame.
+void Renderer::finishCapture(const FrameResources& frame) {
+    m_capturePrepared = false;
+    RgbaImage image;
+    if (!frame.waitUntilAvailable(m_context.device())) {
+        m_capture.error = "Waiting for the captured frame failed";
+    } else if (const ImageFileResult result = m_readback.read(image); !result) {
+        m_capture.error = result.error;
+    } else {
+        m_capture.image = std::move(image);
+    }
+    m_readback.release();
+}
+
 bool Renderer::presentFrame(uint32_t imageIndex) {
     const VkResult result = m_swapchain.present(m_context.gfxQueue(), imageIndex);
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
@@ -837,6 +882,7 @@ void Renderer::shutdown() {
             m_uiPass.removeTexture(texture);
         }
         m_gameUiTextures.clear();
+        m_readback.release();
         for (FrameResources& frame : m_frames) {
             frame.shutdown(device);
         }

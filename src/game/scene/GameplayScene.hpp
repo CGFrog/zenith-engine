@@ -5,6 +5,7 @@
 #include "game/application/GameSettings.hpp"
 #include "game/input/DemoInput.hpp"
 #include "game/player/FirstPersonController.hpp"
+#include "game/scene/CaptureCamera.hpp"
 
 #include <optional>
 
@@ -12,7 +13,8 @@ class GameplayScene final : public ApplicationScene {
   public:
     GameplayScene(AudioClipHandle interactionSound, std::shared_ptr<InputActionMap> inputActions,
                   std::shared_ptr<GameSettings> settings, std::filesystem::path settingsPath,
-                  std::optional<ProjectConfig> project = std::nullopt);
+                  std::optional<ProjectConfig> project = std::nullopt,
+                  std::optional<CaptureCameraPath> captureCamera = std::nullopt);
     SceneResult load(ApplicationContext& context) override;
     void update(ApplicationContext& context, const InputState& input, float deltaSeconds) override;
     void fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) override;
@@ -33,6 +35,8 @@ class GameplayScene final : public ApplicationScene {
     void drawPause(ApplicationContext& context);
     void drawSettings(ApplicationContext& context);
     void persistSettings() const;
+    void spawnPlayer(Scene& scene);
+    void spawnCaptureCamera(Scene& scene);
 
     FirstPersonControllerSystem m_firstPersonControllers;
     AudioClipHandle m_interactionSound;
@@ -43,4 +47,9 @@ class GameplayScene final : public ApplicationScene {
     InputActionState m_actions;
     Screen m_screen{Screen::Title};
     Screen m_settingsReturnScreen{Screen::Title};
+    // When set, a scripted camera replaces the player: input, menus, and the
+    // HUD are ignored so captures see only the scene.
+    std::optional<CaptureCameraPath> m_captureCamera;
+    Entity m_captureCameraEntity{entt::null};
+    float m_captureElapsedSeconds{0.0f};
 };

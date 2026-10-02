@@ -56,6 +56,80 @@ fallback and still filters the linear HDR scene before tone mapping in
 `post.frag`; edges are therefore judged on scene luminance rather than display
 values.
 
+## Frame capture and reference images
+
+Visual checks do not need RenderDoc or window focus. `ZENITH_CAPTURE_FRAME=N`
+with `ZENITH_CAPTURE_PATH=file.png` copies the swapchain image of the Nth
+frame, after every pass including UI, to an 8-bit RGBA PNG (sRGB-encoded, as
+presented) and ends the run with that frame unless `ZENITH_SMOKE_FRAMES` asks for
+more. The swapchain is then created with `TRANSFER_SRC` usage; the copy waits for
+that one frame before presenting it. A capture also fixes the frame time (see
+`ZENITH_FIXED_FRAME_TIME`) and fails, rather than writing a misleading image, if
+assets were still uploading on the captured frame.
+
+The demo game layer adds a scripted camera for repeatable views:
+`ZENITH_CAPTURE_CAMERA=x,y,z,yaw,pitch` replaces the player with a camera at that
+world position (meters; yaw turns left from looking down -Z, pitch looks up, both
+in degrees), and `ZENITH_CAPTURE_CAMERA_MOTION=vx,vy,vz,yawRate,pitchRate` moves
+it linearly per second of simulated time. Input, menus, the HUD, and the persisted
+game settings are ignored, so the project's render settings apply unchanged.
+
+```powershell
+$env:ZENITH_WINDOW_SIZE='640x360'
+$env:ZENITH_CAPTURE_CAMERA='0,1.7,4,0,-8'
+$env:ZENITH_CAPTURE_FRAME='300'
+$env:ZENITH_CAPTURE_PATH='build\captures\overview.png'
+build\Debug\zenith.exe --project projects\showcase.zenith-project
+```
+
+### Showcase references
+
+`tests/references/showcase/captures.json` lists deterministic showcase views
+with the feature each covers: converged and adapting auto exposure, TAAU
+ghosting during a lateral pan, alpha-tested foliage edges through the depth
+prepass, GTAO contact occlusion, screen-space reflections, and bloom. Each view
+names a capture frame, a camera pose and optional motion, optional extra
+environment variables, and optional per-view tolerances. The checked-in PNGs
+beside it are the references.
+
+`zenith_reference_capture` renders every view with `zenith`, a clean
+environment (benchmark, smoke, and `ZENITH_FORCE_*` switches removed), the
+manifest's window size, and `ZENITH_FRAME_DETERMINISTIC=1`, then compares each
+capture with its reference in `engine/diagnostics/ImageComparison`. Differences
+are per RGB channel in 8-bit units: a pixel differs when any channel exceeds
+`channelTolerance`, and a view fails when the RMSE, the largest channel
+difference, or the fraction of differing pixels exceeds its limit. A failure
+writes `<view>.diff.png` (amplified absolute difference) beside the capture in
+`build/captures/showcase/`. Consecutive runs on one machine differ by at most a
+few 8-bit steps in a handful of pixels; the default limits (3 per channel, RMSE
+1.5, 0.1% of pixels) leave room for that and nothing larger.
+
+The CTest `zenith_showcase_reference_captures` (labels `vulkan;capture`) runs the
+comparison and returns 77, reported as skipped, when the machine has no
+hardware Vulkan device. CI runs it in the Vulkan-labelled step only.
+
+**Regenerate the references** after an intentional visual change, a showcase
+content change, or a driver/GPU change, then review the PNG diff before
+committing:
+
+```powershell
+cmake --build build --config Debug --target zenith_update_showcase_references
+```
+
+To check stability, or to work on one view, run the driver directly;
+`--repeat 2` captures each view twice and compares the runs with each other
+before comparing with the reference:
+
+```powershell
+build\Debug\zenith_reference_capture.exe --executable build\Debug\zenith.exe `
+    --manifest tests\references\showcase\captures.json --output build\captures\showcase `
+    --repeat 2 --view taau_ghosting
+```
+
+References depend on the GPU and driver that produced them; the current set was
+captured on the development workstation's GPU. A runner with a different GPU
+should regenerate its own set rather than loosen the tolerances.
+
 ## Vulkan smoke
 
 The `zenith_editor_vulkan_smoke` CTest runs a bounded editor scenario that
@@ -146,6 +220,11 @@ or at the decision point named below, after capability validation.
 | `ZENITH_BENCHMARK_FRAME_BUDGET_MS=X` | CPU frame budget counted in `cpu.frame.over_budget`. |
 | `ZENITH_BENCHMARK_SAMPLES=1` | Includes every raw sample in the report. |
 | `ZENITH_FRAME_WORKERS`, `ZENITH_FRAME_GRAIN`, `ZENITH_FRAME_DETERMINISTIC` | Frame task-graph worker count, minimum grain size, and deterministic scheduling. |
+| `ZENITH_CAPTURE_FRAME=N`, `ZENITH_CAPTURE_PATH=file.png` | Writes the presented image of frame N (1-based) to a PNG and ends the run there unless `ZENITH_SMOKE_FRAMES` is larger. Both are required together. |
+| `ZENITH_FIXED_FRAME_TIME=1` | Advances simulation, animation, and auto-exposure adaptation by the physics fixed step each frame instead of wall-clock time. Implied by a capture. |
+| `ZENITH_WINDOW_SIZE=WxH` | Initial window size (16 to 16,384 per side); equals the capture size without display scaling. |
+| `ZENITH_CAPTURE_CAMERA=x,y,z,yaw,pitch` | Demo game: replaces the player with a fixed camera and ignores input, menus, the HUD, and persisted game settings. |
+| `ZENITH_CAPTURE_CAMERA_MOTION=vx,vy,vz,yawRate,pitchRate` | Demo game: moves the capture camera linearly per simulated second. |
 | `ZENITH_RESOURCE_ROOT` | Overrides the directory assets, shaders, and derived data load from. |
 
 ### GPU pass metrics
