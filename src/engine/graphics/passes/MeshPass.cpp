@@ -404,7 +404,9 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
                                    .pBufferInfo = &descriptorBuffer};
         vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
 
+        // Binding 3 is a storage buffer in the layout and the shaders.
         buffer.size = sizeof(glm::mat4) * maximumSkinMatricesPerFrame;
+        buffer.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
         if (!checkVulkan(vmaCreateBuffer(m_allocator, &buffer, &allocation, &m_cameras[i].skinPalettes.buffer,
                                          &m_cameras[i].skinPalettes.allocation, &info),
                          "Create per-frame skin palette buffer")) {
@@ -414,13 +416,11 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         VkDescriptorBufferInfo skinDescriptor{
             .buffer = m_cameras[i].skinPalettes.buffer, .offset = 0, .range = VK_WHOLE_SIZE};
         write.dstBinding = 3;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         write.pBufferInfo = &skinDescriptor;
         vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
 
-        VkBufferCreateInfo previousSkinBuffer = buffer;
-        previousSkinBuffer.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-        if (!checkVulkan(vmaCreateBuffer(m_allocator, &previousSkinBuffer, &allocation,
-                                         &m_cameras[i].previousSkinPalettes.buffer,
+        if (!checkVulkan(vmaCreateBuffer(m_allocator, &buffer, &allocation, &m_cameras[i].previousSkinPalettes.buffer,
                                          &m_cameras[i].previousSkinPalettes.allocation, &info),
                          "Create per-frame previous skin palette buffer")) {
             return false;
