@@ -532,11 +532,11 @@ Exit criteria:
 
 ## Milestone 24: post-processing, materials, and effects
 
-- [ ] Add depth of field, motion blur (from the existing motion vectors), colour
+- [x] Add depth of field, motion blur (from the existing motion vectors), colour
       grading LUTs, vignette, and film grain as individually selectable passes.
-- [ ] Offer FSR or DLSS behind capability checks alongside TAAU.
-- [ ] Support `KHR_materials_clearcoat`, `transmission`, `sheen`, and `specular`.
-- [ ] Add clustered decals and a GPU particle system with sorting and lighting.
+- [x] Offer FSR or DLSS behind capability checks alongside TAAU.
+- [x] Support `KHR_materials_clearcoat`, `transmission`, `sheen`, and `specular`.
+- [x] Add clustered decals and a GPU particle system with sorting and lighting.
 
 Exit criteria:
 
@@ -548,16 +548,16 @@ Exit criteria:
 Tracked against `PERFORMANCE_ROADMAP.md`, whose GPU-driven visibility and
 image-quality steps are now largely implemented.
 
-- [ ] Replace the per-mip depth-pyramid dispatches with a single-pass
+- [x] Replace the per-mip depth-pyramid dispatches with a single-pass
       downsampler, and build the pyramid once per frame on the GPU-driven path.
-- [ ] Reduce GTAO cost (0.6 ms at full resolution on the reference GPU): default
+- [x] Reduce GTAO cost (0.6 ms at full resolution on the reference GPU): default
       to half resolution or adopt a cheaper sampling pattern.
-- [ ] Decide whether GPU-driven submission becomes the default using the
+- [x] Decide whether GPU-driven submission becomes the default using the
       showcase and a large draw-call-heavy scene; it is currently slower on both
       small test scenes.
-- [ ] Stream texture mip ranges through the derived-asset cache and evaluate
+- [x] Stream texture mip ranges through the derived-asset cache and evaluate
       asynchronous compute for clustering, pyramid, and bloom.
-- [ ] Clean up: deduplicate the mip-chain blit code in `EnvironmentPass` and
+- [x] Clean up: deduplicate the mip-chain blit code in `EnvironmentPass` and
       `MeshPass`, remove the unused post-process descriptor bindings 3–6, stop
       `Renderer.cpp` from mirroring `MeshPass` decisions for the render-graph
       model, and make FXAA read the composited image.
