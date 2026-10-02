@@ -1,5 +1,7 @@
 #include "EditorSession.hpp"
 
+#include "editor/application/EditorTheme.hpp"
+#include "editor/document/DefaultScene.hpp"
 #include "editor/document/SceneFragment.hpp"
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/GraphicsSettingsEditor.hpp"
@@ -10,6 +12,7 @@
 
 #include <ImGuizmo.h>
 #include <SDL3/SDL_stdinc.h>
+#include <SDL3/SDL_video.h>
 
 #include <algorithm>
 #include <cctype>
@@ -21,23 +24,54 @@
 namespace {
 // Layouts older than version 3 lack the Graphics panel below the Inspector.
 constexpr uint32_t currentLayoutVersion = 3;
+constexpr const char* sceneExtension = ".zenith-scene";
+constexpr float editorFontPixelSize = 15.0f;
+
+// Native dialogs need an existing absolute folder to start in. A trailing
+// separator marks the location as a folder with no suggested file name.
+// Editor commands are registered outside any panel, so they must route
+// globally; focus routing would drop them whenever a panel has focus. Global
+// routes rank below focused widgets, so text fields keep their own Ctrl+Z.
+bool editorShortcut(ImGuiKeyChord chord) {
+    return ImGui::Shortcut(chord, ImGuiInputFlags_RouteGlobal);
+}
+
+std::filesystem::path dialogStartLocation(const std::optional<std::filesystem::path>& documentPath,
+                                          const std::filesystem::path& sceneRoot) {
+    std::error_code error;
+    if (documentPath) {
+        std::filesystem::path absolute = std::filesystem::absolute(*documentPath, error);
+        if (!error && std::filesystem::is_directory(absolute.parent_path(), error)) {
+            return absolute.make_preferred();
+        }
+    }
+    std::filesystem::path folder = std::filesystem::absolute(sceneRoot, error);
+    if (error || !std::filesystem::is_directory(folder, error)) {
+        return {};
+    }
+    return (folder / "").make_preferred();
+}
 } // namespace
 
 EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::filesystem::path assetRoot,
-                             std::filesystem::path sceneRoot, EditorRenderSettings renderSettings,
+                             std::filesystem::path sceneRoot, std::filesystem::path fontPath,
+                             EditorRenderSettings renderSettings,
                              std::function<SceneResult(ApplicationContext&)> initialSceneLoader)
     : m_settings(settingsDirectory / "settings.ini")
     , m_renderSettings(std::move(renderSettings))
     , m_document(assetRoot)
-    , m_recovery(settingsDirectory / "recovery.zenith-scene")
-    , m_assetCatalog(std::move(assetRoot), std::move(sceneRoot))
+    , m_recovery(settingsDirectory / (std::string("recovery") + sceneExtension))
+    , m_assetCatalog(std::move(assetRoot), sceneRoot)
+    , m_fileDialog("Zenith scene", sceneExtension)
+    , m_sceneRoot(std::move(sceneRoot))
+    , m_fontPath(std::move(fontPath))
     , m_initialSceneLoader(std::move(initialSceneLoader))
     , m_layoutPath((settingsDirectory / "layout.ini").string())
-    , m_smokeScenePath(settingsDirectory / "streaming-smoke.zenith-scene") {
+    , m_smokeScenePath(settingsDirectory / (std::string("streaming-smoke") + sceneExtension)) {
     const std::pair<const char*, const char*> bindings[]{
-        {"New", "Ctrl+N"},  {"Open", "Ctrl+O"}, {"Save", "Ctrl+S"},  {"Save As", "Ctrl+Shift+S"}, {"Undo", "Ctrl+Z"},
-        {"Redo", "Ctrl+Y"}, {"Copy", "Ctrl+C"}, {"Paste", "Ctrl+V"}, {"Duplicate", "Ctrl+D"},     {"Play", "F5"},
-        {"Pause", "F6"},    {"Step", "F7"},     {"Stop", "Shift+F5"}};
+        {"New", "Ctrl+N"},  {"Open", "Ctrl+O"},       {"Save", "Ctrl+S"},  {"Save As", "Ctrl+Shift+S"},
+        {"Undo", "Ctrl+Z"}, {"Redo", "Ctrl+Shift+Z"}, {"Quit", "Ctrl+Q"},  {"Play", "F5"},
+        {"Pause", "F6"},    {"Step", "F7"},           {"Stop", "Shift+F5"}};
     for (const auto& [action, chord] : bindings) {
         if (const EditorShortcutResult result = m_shortcuts.bind(action, chord); !result) {
             reportDiagnostic(result.error);
@@ -58,6 +92,17 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     m_smokeScenario = SDL_getenv("ZENITH_EDITOR_SMOKE") != nullptr;
 
     ImGuiIO& io = ImGui::GetIO();
+    // Size the UI for the display's scale factor so text stays crisp on
+    // high-DPI monitors instead of being stretched.
+    float contentScale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+    if (contentScale <= 0.0f) {
+        contentScale = 1.0f;
+    }
+    applyEditorTheme(ImGui::GetStyle());
+    ImGui::GetStyle().ScaleAllSizes(contentScale);
+    if (const EditorFontResult result = loadEditorFont(io, m_fontPath, editorFontPixelSize * contentScale); !result) {
+        reportDiagnostic(result.error);
+    }
     io.IniFilename = m_layoutPath.c_str();
     ImGui::LoadIniSettingsFromDisk(io.IniFilename);
     m_initializeLayout = m_settings.layoutVersion() < currentLayoutVersion;
@@ -65,6 +110,10 @@ SceneResult EditorSession::load(ApplicationContext& context) {
         if (SceneResult result = m_initialSceneLoader(context); !result) {
             return result;
         }
+    } else if (const SceneResult result =
+                   populateDefaultScene(context.scene, context.assets, m_document.options().assetRoot);
+               !result) {
+        reportDiagnostic(result.error);
     }
     if (m_smokeScenario) {
         Scene streamingFixture;
@@ -151,24 +200,13 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
         m_assetRefreshElapsed = 0.0f;
         refreshAssetCatalog();
     }
-    m_viewportNavigating = m_viewportInputActive &&
-                           (input.mouseButtonDown(MouseButton::Middle) || input.mouseButtonDown(MouseButton::Right));
-    m_camera.update(input, deltaSeconds, m_viewportInputActive);
-
-    if (m_viewportInputActive && !input.mouseButtonDown(MouseButton::Right)) {
-        if (input.keyPressed(Key::Q)) {
-            m_gizmoMode = GizmoMode::Select;
-        } else if (input.keyPressed(Key::W)) {
-            m_gizmoMode = GizmoMode::Translate;
-        } else if (input.keyPressed(Key::E)) {
-            m_gizmoMode = GizmoMode::Rotate;
-        } else if (input.keyPressed(Key::R)) {
-            m_gizmoMode = GizmoMode::Scale;
-        }
-        if (input.keyPressed(Key::F) && !m_selection.empty()) {
-            focusOnSelection(context);
-        }
+    if (m_suppressCameraUntilRelease && !input.mouseButtonDown(MouseButton::Right)) {
+        m_suppressCameraUntilRelease = false;
     }
+    const bool cameraInputActive = m_viewportInputActive && !m_activeTransform && !m_suppressCameraUntilRelease;
+    m_viewportNavigating =
+        cameraInputActive && (input.mouseButtonDown(MouseButton::Middle) || input.mouseButtonDown(MouseButton::Right));
+    m_camera.update(input, deltaSeconds, cameraInputActive);
 
     context.rendering.setViewOverride(m_camera.renderView());
     if (m_showGrid) {
@@ -222,10 +260,12 @@ void EditorSession::drawUi(ApplicationContext& context) {
         initializeDefaultLayout(dockspaceId);
     }
     drawMainMenu(context);
+    pollFileDialog(context);
     drawPathDialog(context);
     drawUnsavedChangesDialog(context);
     drawRecoveryDialog(context);
     drawPanels(context);
+    drawObjectPopups(context);
     drawStatusBar(context.rendering.stats());
 }
 
@@ -279,19 +319,20 @@ void EditorSession::unload(ApplicationContext& context) {
 }
 
 void EditorSession::drawMainMenu(ApplicationContext& context) {
-    if (!ImGui::GetIO().WantTextInput && m_playMode.mode() == EditorMode::Edit) {
-        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_N)) {
+    if (!ImGui::GetIO().WantTextInput && m_playMode.mode() == EditorMode::Edit && !m_fileDialog.pending() &&
+        !m_activeTransform) {
+        if (editorShortcut(ImGuiMod_Ctrl | ImGuiKey_N)) {
             requestNew(context);
         }
-        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O)) {
+        if (editorShortcut(ImGuiMod_Ctrl | ImGuiKey_O)) {
             requestOpen(context);
         }
-        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S)) {
-            requestPathDialog(true);
-        } else if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S)) {
+        if (editorShortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S)) {
+            requestFileDialog(FileDialogKind::Save);
+        } else if (editorShortcut(ImGuiMod_Ctrl | ImGuiKey_S)) {
             saveDocument(context);
         }
-        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z) && m_history.canUndo()) {
+        if (editorShortcut(ImGuiMod_Ctrl | ImGuiKey_Z) && m_history.canUndo()) {
             EditorCommandContext command = commandContext(context);
             if (const EditorCommandResult result = m_history.undo(command); !result) {
                 reportDiagnostic(result.error);
@@ -299,7 +340,10 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             syncDocumentDirtyState();
             removeInvalidSelection(context.scene);
         }
-        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y) && m_history.canRedo()) {
+        // Blender redoes with Ctrl Shift Z; Ctrl Y is kept as the Windows alias.
+        if ((editorShortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z) ||
+             editorShortcut(ImGuiMod_Ctrl | ImGuiKey_Y)) &&
+            m_history.canRedo()) {
             EditorCommandContext command = commandContext(context);
             if (const EditorCommandResult result = m_history.redo(command); !result) {
                 reportDiagnostic(result.error);
@@ -307,28 +351,22 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             syncDocumentDirtyState();
             removeInvalidSelection(context.scene);
         }
-        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_C)) {
-            copySelection(context);
-        }
-        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_V)) {
-            pasteClipboard(context);
-        }
-        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_D)) {
-            duplicateSelection(context);
+        if (editorShortcut(ImGuiMod_Ctrl | ImGuiKey_Q)) {
+            requestClose(context);
         }
     }
     if (!ImGui::GetIO().WantTextInput) {
-        if (m_playMode.mode() == EditorMode::Edit && ImGui::Shortcut(ImGuiKey_F5)) {
+        if (m_playMode.mode() == EditorMode::Edit && editorShortcut(ImGuiKey_F5)) {
             enterPlayMode(context);
-        } else if (m_playMode.mode() != EditorMode::Edit && ImGui::Shortcut(ImGuiMod_Shift | ImGuiKey_F5)) {
+        } else if (m_playMode.mode() != EditorMode::Edit && editorShortcut(ImGuiMod_Shift | ImGuiKey_F5)) {
             stopPlayMode(context);
         }
-        if (m_playMode.mode() == EditorMode::Play && ImGui::Shortcut(ImGuiKey_F6)) {
+        if (m_playMode.mode() == EditorMode::Play && editorShortcut(ImGuiKey_F6)) {
             m_playMode.pause();
-        } else if (m_playMode.mode() == EditorMode::Paused && ImGui::Shortcut(ImGuiKey_F6)) {
+        } else if (m_playMode.mode() == EditorMode::Paused && editorShortcut(ImGuiKey_F6)) {
             m_playMode.resume();
         }
-        if (m_playMode.mode() == EditorMode::Paused && ImGui::Shortcut(ImGuiKey_F7)) {
+        if (m_playMode.mode() == EditorMode::Paused && editorShortcut(ImGuiKey_F7)) {
             m_playMode.requestSingleStep();
         }
     }
@@ -337,7 +375,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
     }
 
     if (ImGui::BeginMenu("File")) {
-        ImGui::BeginDisabled(m_playMode.mode() != EditorMode::Edit);
+        ImGui::BeginDisabled(m_playMode.mode() != EditorMode::Edit || m_fileDialog.pending());
         if (ImGui::MenuItem("New", m_shortcuts.chord("New").c_str())) {
             requestNew(context);
         }
@@ -348,11 +386,11 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             saveDocument(context);
         }
         if (ImGui::MenuItem("Save As...", m_shortcuts.chord("Save As").c_str())) {
-            requestPathDialog(true);
+            requestFileDialog(FileDialogKind::Save);
         }
         ImGui::EndDisabled();
         ImGui::Separator();
-        if (ImGui::MenuItem("Exit")) {
+        if (ImGui::MenuItem("Quit", m_shortcuts.chord("Quit").c_str())) {
             requestClose(context);
         }
         ImGui::EndMenu();
@@ -367,7 +405,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             syncDocumentDirtyState();
             removeInvalidSelection(context.scene);
         }
-        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, editing && m_history.canRedo())) {
+        if (ImGui::MenuItem("Redo", m_shortcuts.chord("Redo").c_str(), false, editing && m_history.canRedo())) {
             EditorCommandContext command = commandContext(context);
             if (const EditorCommandResult result = m_history.redo(command); !result) {
                 reportDiagnostic(result.error);
@@ -376,16 +414,58 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             removeInvalidSelection(context.scene);
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Copy", m_shortcuts.chord("Copy").c_str(), false, editing && !m_selection.empty())) {
+        if (ImGui::MenuItem("Copy", objectCommandLabel(ObjectCommand::Copy), false, editing && !m_selection.empty())) {
             copySelection(context);
         }
-        if (ImGui::MenuItem("Paste", m_shortcuts.chord("Paste").c_str(), false,
+        if (ImGui::MenuItem("Paste", objectCommandLabel(ObjectCommand::Paste), false,
                             editing && !m_clipboardFragment.empty())) {
             pasteClipboard(context);
         }
-        if (ImGui::MenuItem("Duplicate", m_shortcuts.chord("Duplicate").c_str(), false,
+        if (ImGui::MenuItem("Duplicate", objectCommandLabel(ObjectCommand::Duplicate), false,
                             editing && !m_selection.empty())) {
             duplicateSelection(context);
+        }
+        if (ImGui::MenuItem("Delete", objectCommandLabel(ObjectCommand::Delete), false,
+                            editing && !m_selection.empty())) {
+            deleteSelection(context);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Select All", objectCommandLabel(ObjectCommand::SelectAll), false, editing)) {
+            selectAll(context.scene);
+        }
+        if (ImGui::MenuItem("Deselect All", objectCommandLabel(ObjectCommand::DeselectAll), false, editing)) {
+            m_selection.clear();
+        }
+        if (ImGui::MenuItem("Invert Selection", objectCommandLabel(ObjectCommand::InvertSelection), false, editing)) {
+            invertSelection(context.scene);
+        }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Clear", editing && !m_selection.empty())) {
+            if (ImGui::MenuItem("Location", objectCommandLabel(ObjectCommand::ClearLocation))) {
+                clearSelectedTransforms(context, TransformPart::Location);
+            }
+            if (ImGui::MenuItem("Rotation", objectCommandLabel(ObjectCommand::ClearRotation))) {
+                clearSelectedTransforms(context, TransformPart::Rotation);
+            }
+            if (ImGui::MenuItem("Scale", objectCommandLabel(ObjectCommand::ClearScale))) {
+                clearSelectedTransforms(context, TransformPart::Scale);
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Add", editing)) {
+            if (ImGui::MenuItem("Cube")) {
+                addObject(context, AddableObject::Cube);
+            }
+            if (ImGui::MenuItem("Sun")) {
+                addObject(context, AddableObject::Sun);
+            }
+            if (ImGui::MenuItem("Environment")) {
+                addObject(context, AddableObject::Environment);
+            }
+            if (ImGui::MenuItem("Empty")) {
+                addObject(context, AddableObject::Empty);
+            }
+            ImGui::EndMenu();
         }
         ImGui::EndMenu();
     }
@@ -398,6 +478,26 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         ImGui::MenuItem("Render Statistics", nullptr, &panels.renderStatistics);
         ImGui::MenuItem("Asset Browser", nullptr, &panels.assetBrowser);
         ImGui::MenuItem("Graphics", nullptr, &panels.graphics);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Frame Selected", objectCommandLabel(ObjectCommand::FrameSelected), false,
+                            !m_selection.empty())) {
+            frameEntities(context, m_selection);
+        }
+        if (ImGui::MenuItem("Frame All", objectCommandLabel(ObjectCommand::FrameAll))) {
+            frameAll(context);
+        }
+        if (ImGui::BeginMenu("Viewpoint")) {
+            constexpr std::pair<const char*, ObjectCommand> viewpoints[]{
+                {"Front", ObjectCommand::ViewFront}, {"Back", ObjectCommand::ViewBack},
+                {"Right", ObjectCommand::ViewRight}, {"Left", ObjectCommand::ViewLeft},
+                {"Top", ObjectCommand::ViewTop},     {"Bottom", ObjectCommand::ViewBottom}};
+            for (const auto& [name, command] : viewpoints) {
+                if (ImGui::MenuItem(name, objectCommandLabel(command))) {
+                    runObjectCommand(context, command, KeymapRegion::Viewport);
+                }
+            }
+            ImGui::EndMenu();
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Play")) {
@@ -745,15 +845,25 @@ void EditorSession::drawViewport(ApplicationContext& context) {
         const bool imageClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
         const ImVec2 mouse = ImGui::GetMousePos();
         m_viewportInputActive = imageHovered || m_viewportNavigating;
-        context.rendering.setViewportInputActive(m_viewportInputActive);
+        context.rendering.setViewportInputActive(m_viewportInputActive && !m_activeTransform &&
+                                                 !m_suppressCameraUntilRelease);
 
         const glm::vec2 viewportPosition{imagePosition.x, imagePosition.y};
         const glm::vec2 viewportSize{static_cast<float>(width), static_cast<float>(height)};
+        m_viewportPosition = viewportPosition;
+        m_viewportSize = viewportSize;
         const bool toolbarBlocksPicking = drawViewportToolbar(viewportPosition, viewportSize);
+        if (m_activeTransform) {
+            updateModalTransform(context);
+            return;
+        }
 
         const bool gizmoBlocksPicking = drawGizmo(context, {imagePosition.x, imagePosition.y},
                                                   {static_cast<float>(width), static_cast<float>(height)});
-        if (imageClicked && !toolbarBlocksPicking && !gizmoBlocksPicking) {
+        if (imageHovered) {
+            handleObjectKeys(context, KeymapRegion::Viewport);
+        }
+        if (imageClicked && !toolbarBlocksPicking && !gizmoBlocksPicking && !m_activeTransform) {
             const glm::vec2 normalized{(mouse.x - imagePosition.x) / static_cast<float>(width),
                                        (mouse.y - imagePosition.y) / static_cast<float>(height)};
             context.scene.updateWorldTransforms();
@@ -762,7 +872,7 @@ void EditorSession::drawViewport(ApplicationContext& context) {
             if (picked == entt::null) {
                 m_selection.clear();
             } else {
-                select(context.scene.id(picked), ImGui::GetIO().KeyCtrl);
+                selectFromClick(context.scene.id(picked), ImGui::GetIO().KeyShift);
             }
         }
         if (!m_selection.empty()) {
@@ -789,7 +899,7 @@ bool EditorSession::drawViewportToolbar(glm::vec2 viewportPos, glm::vec2 viewpor
     ImGui::SetCursorScreenPos({viewportPos.x + viewportSize.x * 0.5f - 200.0f, viewportPos.y + 8.0f});
     ImGui::BeginGroup();
 
-    const char* modeNames[] = {"Select (Q)", "Move (W)", "Rotate (E)", "Scale (R)"};
+    const char* modeNames[] = {"Tweak", "Move", "Rotate", "Scale"};
     GizmoMode modes[] = {GizmoMode::Select, GizmoMode::Translate, GizmoMode::Rotate, GizmoMode::Scale};
 
     for (int i = 0; i < 4; ++i) {
@@ -898,6 +1008,9 @@ bool EditorSession::drawGizmo(ApplicationContext& context, glm::vec2 position, g
 
 void EditorSession::drawHierarchy(ApplicationContext& context) {
     removeInvalidSelection(context.scene);
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+        handleObjectKeys(context, KeymapRegion::Outliner);
+    }
 
     ImGui::SetNextItemWidth(-1);
     ImGui::InputTextWithHint("##HierarchyFilter", "Search...", &m_hierarchyFilter);
@@ -925,17 +1038,7 @@ void EditorSession::drawHierarchy(ApplicationContext& context) {
     }
     ImGui::SameLine();
     if (ImGui::Button("Delete") && !m_selection.empty()) {
-        const std::vector<SceneEntityId> selection = m_selection;
-        performMutation(context, "Delete Entities", {}, [&] {
-            for (SceneEntityId id : selection) {
-                const Entity entity = context.scene.findEntity(id);
-                if (entity != entt::null) {
-                    context.scene.destroyEntity(entity);
-                }
-            }
-            return SceneResult{.success = true};
-        });
-        m_selection.clear();
+        deleteSelection(context);
     }
     ImGui::SameLine();
     ImGui::Checkbox("Preserve world", &m_preserveWorldOnReparent);
@@ -996,7 +1099,7 @@ void EditorSession::drawHierarchyEntity(ApplicationContext& context, Entity enti
     const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<uintptr_t>(entityId.value)), flags, "%s",
                                         name.empty() ? "Unnamed Entity" : name.c_str());
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-        select(entityId, ImGui::GetIO().KeyCtrl);
+        selectFromClick(entityId, ImGui::GetIO().KeyCtrl);
     }
     if (ImGui::BeginDragDropSource()) {
         ImGui::SetDragDropPayload("ZENITH_SCENE_ENTITY", &entityId.value, sizeof(entityId.value));
@@ -1040,10 +1143,10 @@ void EditorSession::drawHierarchyEntity(ApplicationContext& context, Entity enti
             }
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, true)) {
+        if (ImGui::MenuItem("Duplicate", objectCommandLabel(ObjectCommand::Duplicate), false, true)) {
             duplicateSelection(context);
         }
-        if (ImGui::MenuItem("Delete", "Del", false, true)) {
+        if (ImGui::MenuItem("Delete", objectCommandLabel(ObjectCommand::Delete), false, true)) {
             performMutation(context, "Delete Entity", {}, [&] {
                 context.scene.destroyEntity(entity);
                 return SceneResult{.success = true};
@@ -1314,23 +1417,8 @@ void EditorSession::drawPathDialog(ApplicationContext& context) {
     ImGui::InputText("Path", m_pathBuffer.data(), m_pathBuffer.size());
     if (ImGui::Button(m_pathDialogSaves ? "Save" : "Open")) {
         const std::filesystem::path path(m_pathBuffer.data());
-        const SceneDocumentResult result = m_pathDialogSaves ? m_document.saveAs(path, context.scene, context.assets)
-                                                             : m_document.open(path, context.scene, context.assets);
-        if (!result) {
-            reportDiagnostic(result.error);
-        } else {
-            if (!m_pathDialogSaves) {
-                m_history.crossBoundary(CommandHistoryBoundary::OpenDocument);
-                m_selection.clear();
-            } else {
-                m_history.crossBoundary(CommandHistoryBoundary::SaveDocument);
-            }
-            syncDocumentDirtyState();
-            m_diagnostic.clear();
-            std::string recoveryError;
-            if (!m_recovery.discard(recoveryError)) {
-                reportDiagnostic(recoveryError);
-            }
+        const bool completed = m_pathDialogSaves ? completeSaveAs(context, path) : completeOpen(context, path);
+        if (completed) {
             ImGui::CloseCurrentPopup();
             if (m_pathDialogSaves && m_continuePendingAfterSaveAs) {
                 m_continuePendingAfterSaveAs = false;
@@ -1340,9 +1428,67 @@ void EditorSession::drawPathDialog(ApplicationContext& context) {
     }
     ImGui::SameLine();
     if (ImGui::Button("Cancel")) {
+        m_continuePendingAfterSaveAs = false;
+        m_pendingAction = PendingAction::None;
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
+}
+
+void EditorSession::pollFileDialog(ApplicationContext& context) {
+    const std::optional<FileDialogOutcome> outcome = m_fileDialog.poll();
+    if (!outcome) {
+        return;
+    }
+    if (outcome->status == FileDialogStatus::Failed) {
+        // The typed-path prompt still works when the platform has no dialog.
+        reportDiagnostic(outcome->error);
+        openPathDialog(outcome->kind);
+        return;
+    }
+    if (outcome->status == FileDialogStatus::Cancelled) {
+        m_continuePendingAfterSaveAs = false;
+        m_pendingAction = PendingAction::None;
+        return;
+    }
+    if (outcome->kind == FileDialogKind::Open) {
+        completeOpen(context, outcome->path);
+        return;
+    }
+    if (completeSaveAs(context, outcome->path) && m_continuePendingAfterSaveAs) {
+        m_continuePendingAfterSaveAs = false;
+        finishPendingAction(context);
+    }
+}
+
+bool EditorSession::completeOpen(ApplicationContext& context, const std::filesystem::path& path) {
+    if (const SceneDocumentResult result = m_document.open(path, context.scene, context.assets); !result) {
+        reportDiagnostic(result.error);
+        return false;
+    }
+    m_history.crossBoundary(CommandHistoryBoundary::OpenDocument);
+    m_selection.clear();
+    onDocumentPathCommitted();
+    return true;
+}
+
+bool EditorSession::completeSaveAs(ApplicationContext& context, const std::filesystem::path& path) {
+    if (const SceneDocumentResult result = m_document.saveAs(path, context.scene, context.assets); !result) {
+        reportDiagnostic(result.error);
+        return false;
+    }
+    m_history.crossBoundary(CommandHistoryBoundary::SaveDocument);
+    onDocumentPathCommitted();
+    return true;
+}
+
+void EditorSession::onDocumentPathCommitted() {
+    syncDocumentDirtyState();
+    m_diagnostic.clear();
+    std::string recoveryError;
+    if (!m_recovery.discard(recoveryError)) {
+        reportDiagnostic(recoveryError);
+    }
 }
 
 void EditorSession::drawUnsavedChangesDialog(ApplicationContext& context) {
@@ -1362,7 +1508,7 @@ void EditorSession::drawUnsavedChangesDialog(ApplicationContext& context) {
             }
         } else {
             m_continuePendingAfterSaveAs = true;
-            requestPathDialog(true);
+            requestFileDialog(FileDialogKind::Save);
             ImGui::CloseCurrentPopup();
         }
     }
@@ -1414,8 +1560,12 @@ void EditorSession::drawRecoveryDialog(ApplicationContext& context) {
     ImGui::EndPopup();
 }
 
-void EditorSession::requestPathDialog(bool saveAs) {
-    m_pathDialogSaves = saveAs;
+void EditorSession::requestFileDialog(FileDialogKind kind) {
+    m_fileDialog.request(kind, dialogStartLocation(m_document.path(), m_sceneRoot));
+}
+
+void EditorSession::openPathDialog(FileDialogKind kind) {
+    m_pathDialogSaves = kind == FileDialogKind::Save;
     m_pathBuffer.fill('\0');
     if (m_document.path()) {
         const std::string path = m_document.path()->string();
@@ -1473,18 +1623,23 @@ void EditorSession::finishPendingAction(ApplicationContext& context) {
     m_pendingAction = PendingAction::None;
     if (action == PendingAction::NewDocument) {
         m_document.createNew(context.scene);
+        if (const SceneResult result =
+                populateDefaultScene(context.scene, context.assets, m_document.options().assetRoot);
+            !result) {
+            reportDiagnostic(result.error);
+        }
         m_history.crossBoundary(CommandHistoryBoundary::NewDocument);
         m_selection.clear();
         std::string ignored;
         m_recovery.discard(ignored);
     } else if (action == PendingAction::OpenDocument) {
-        requestPathDialog(false);
         if (m_pendingOpenPath) {
-            m_pathBuffer.fill('\0');
-            const std::string path = m_pendingOpenPath->string();
-            const size_t count = std::min(path.size(), m_pathBuffer.size() - 1);
-            std::copy_n(path.data(), count, m_pathBuffer.data());
+            // A scene chosen in the asset browser opens without a dialog.
+            const std::filesystem::path path = std::move(*m_pendingOpenPath);
             m_pendingOpenPath.reset();
+            completeOpen(context, path);
+        } else {
+            requestFileDialog(FileDialogKind::Open);
         }
     } else if (action == PendingAction::CloseEditor) {
         context.control.requestQuit();
@@ -1493,7 +1648,7 @@ void EditorSession::finishPendingAction(ApplicationContext& context) {
 
 bool EditorSession::saveDocument(ApplicationContext& context) {
     if (!m_document.path()) {
-        requestPathDialog(true);
+        requestFileDialog(FileDialogKind::Save);
         return false;
     }
     if (const SceneDocumentResult result = m_document.save(context.scene, context.assets); !result) {
@@ -1545,19 +1700,25 @@ void EditorSession::pasteClipboard(ApplicationContext& context) {
 }
 
 void EditorSession::duplicateSelection(ApplicationContext& context) {
+    std::string before;
+    if (duplicateSelectionUncommitted(context, before)) {
+        commitMutation(context, "Duplicate Objects", {}, std::move(before));
+    }
+}
+
+bool EditorSession::duplicateSelectionUncommitted(ApplicationContext& context, std::string& before) {
     if (m_selection.empty()) {
-        return;
+        return false;
     }
     std::string fragment;
     if (const SceneDocumentResult result =
             SceneFragment::copy(context.scene, context.assets, m_document.options(), m_selection, fragment);
         !result) {
         reportDiagnostic("Duplicate failed: " + result.error);
-        return;
+        return false;
     }
-    std::string before;
     if (!captureSnapshot(context, before)) {
-        return;
+        return false;
     }
     std::vector<SceneEntityId> duplicates;
     Entity duplicateParent = entt::null;
@@ -1571,10 +1732,10 @@ void EditorSession::duplicateSelection(ApplicationContext& context) {
                                                                 m_document.options(), duplicateParent, duplicates);
         !result) {
         reportDiagnostic("Duplicate failed: " + result.error);
-        return;
+        return false;
     }
-    commitMutation(context, "Duplicate Entities", {}, std::move(before));
     m_selection = std::move(duplicates);
+    return true;
 }
 
 bool EditorSession::captureSnapshot(ApplicationContext& context, std::string& snapshot) {
@@ -1713,32 +1874,4 @@ void EditorSession::stopPlayMode(ApplicationContext& context) {
     m_playMode.stop(context.scene, m_selection);
     m_history.crossBoundary(CommandHistoryBoundary::LeavePlayMode);
     syncDocumentDirtyState();
-}
-
-void EditorSession::focusOnSelection(ApplicationContext& context) {
-    if (m_selection.empty()) {
-        return;
-    }
-    const Entity entity = context.scene.findEntity(m_selection.front());
-    if (entity == entt::null) {
-        return;
-    }
-
-    context.scene.updateWorldTransforms();
-    const auto& transform = context.scene.registry().get<TransformComponent>(entity);
-    const glm::vec3 position = glm::vec3(transform.world[3]);
-
-    // Calculate bounds radius from mesh if available
-    float radius = 1.0f;
-    if (const auto* meshRenderer = context.scene.registry().try_get<MeshRendererComponent>(entity)) {
-        const MeshAsset* mesh = context.assets.mesh(meshRenderer->mesh);
-        if (mesh) {
-            const float scale =
-                std::max({glm::length(glm::vec3(transform.world[0])), glm::length(glm::vec3(transform.world[1])),
-                          glm::length(glm::vec3(transform.world[2]))});
-            radius = mesh->bounds.radius * scale;
-        }
-    }
-
-    m_camera.focusOnBounds(position, radius);
 }

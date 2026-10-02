@@ -3,10 +3,13 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/EditorPlayMode.hpp"
 #include "editor/application/EditorShortcuts.hpp"
+#include "editor/application/NativeFileDialog.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/EditorRecovery.hpp"
 #include "editor/interaction/EditorCamera.hpp"
+#include "editor/interaction/ModalTransform.hpp"
+#include "editor/interaction/ObjectKeymap.hpp"
 #include "editor/project/AssetCatalog.hpp"
 #include "editor/project/ThumbnailCache.hpp"
 #include "editor/settings/EditorRenderSettings.hpp"
@@ -28,7 +31,7 @@
 class EditorSession final : public ApplicationScene {
   public:
     EditorSession(std::filesystem::path settingsDirectory, std::filesystem::path assetRoot,
-                  std::filesystem::path sceneRoot, EditorRenderSettings renderSettings,
+                  std::filesystem::path sceneRoot, std::filesystem::path fontPath, EditorRenderSettings renderSettings,
                   std::function<SceneResult(ApplicationContext&)> initialSceneLoader = {});
 
     SceneResult load(ApplicationContext& context) override;
@@ -70,7 +73,12 @@ class EditorSession final : public ApplicationScene {
     void drawUnsavedChangesDialog(ApplicationContext& context);
     void drawRecoveryDialog(ApplicationContext& context);
     void initializeDefaultLayout(uint32_t dockspaceId);
-    void requestPathDialog(bool saveAs);
+    void requestFileDialog(FileDialogKind kind);
+    void openPathDialog(FileDialogKind kind);
+    void pollFileDialog(ApplicationContext& context);
+    bool completeOpen(ApplicationContext& context, const std::filesystem::path& path);
+    bool completeSaveAs(ApplicationContext& context, const std::filesystem::path& path);
+    void onDocumentPathCommitted();
     void reportDiagnostic(std::string message);
     bool selected(SceneEntityId id) const;
     void select(SceneEntityId id, bool additive);
@@ -81,7 +89,6 @@ class EditorSession final : public ApplicationScene {
                          const std::function<SceneResult()>& mutation);
     EditorCommandContext commandContext(ApplicationContext& context);
     void syncDocumentDirtyState();
-    void focusOnSelection(ApplicationContext& context);
     void refreshAssetCatalog();
     void instantiateModelAsset(ApplicationContext& context, const std::filesystem::path& path, Entity parent);
     void enterPlayMode(ApplicationContext& context);
@@ -95,6 +102,36 @@ class EditorSession final : public ApplicationScene {
     void copySelection(ApplicationContext& context);
     void pasteClipboard(ApplicationContext& context);
     void duplicateSelection(ApplicationContext& context);
+    // Pastes a copy of the selection without recording undo; before receives
+    // the scene snapshot taken first. Returns false when nothing was duplicated.
+    bool duplicateSelectionUncommitted(ApplicationContext& context, std::string& before);
+
+    // Blender object-mode commands (EditorObjectCommands.cpp).
+    enum class AddableObject {
+        Cube,
+        Sun,
+        Environment,
+        Empty,
+    };
+    void handleObjectKeys(ApplicationContext& context, KeymapRegion region);
+    void runObjectCommand(ApplicationContext& context, ObjectCommand command, KeymapRegion region);
+    void drawObjectPopups(ApplicationContext& context);
+    void selectFromClick(SceneEntityId id, bool extend);
+    void selectAll(const Scene& scene);
+    void invertSelection(const Scene& scene);
+    void deleteSelection(ApplicationContext& context);
+    void clearSelectedTransforms(ApplicationContext& context, TransformPart part);
+    void addObject(ApplicationContext& context, AddableObject object);
+    void frameEntities(ApplicationContext& context, const std::vector<SceneEntityId>& entities);
+    void frameAll(ApplicationContext& context);
+    // Selected entities whose ancestors are not also selected, so a parent and
+    // child moved together are not transformed twice.
+    std::vector<SceneEntityId> transformRoots(const Scene& scene) const;
+    bool beginModalTransform(ApplicationContext& context, TransformOperation operation, std::string commandName,
+                             std::string before, bool commitOnCancel);
+    void updateModalTransform(ApplicationContext& context);
+    void finishModalTransform(ApplicationContext& context, bool confirm);
+    void drawModalTransformOverlay(const ModalTransformResult& result) const;
 
     enum class PendingAction {
         None,
@@ -116,6 +153,9 @@ class EditorSession final : public ApplicationScene {
     CommandHistory m_history;
     EditorCamera m_camera;
     EditorPlayMode m_playMode;
+    NativeFileDialog m_fileDialog;
+    std::filesystem::path m_sceneRoot;
+    std::filesystem::path m_fontPath;
     std::function<SceneResult(ApplicationContext&)> m_initialSceneLoader;
     std::string m_layoutPath;
     std::string m_diagnostic;
@@ -136,11 +176,12 @@ class EditorSession final : public ApplicationScene {
     bool m_viewportInputActive{false};
     bool m_viewportNavigating{false};
     bool m_showGrid{true};
-    GizmoMode m_gizmoMode{GizmoMode::Translate};
+    // Blender starts with the selection tool, which shows no gizmo.
+    GizmoMode m_gizmoMode{GizmoMode::Select};
     TransformSpace m_transformSpace{TransformSpace::Global};
     bool m_gizmoSnapping{false};
-    float m_translationSnap{0.5f};
-    float m_rotationSnap{15.0f};
+    float m_translationSnap{1.0f};
+    float m_rotationSnap{5.0f};
     float m_scaleSnap{0.1f};
     bool m_gizmoWasUsing{false};
     std::string m_gizmoBefore;
@@ -162,4 +203,27 @@ class EditorSession final : public ApplicationScene {
     std::unique_ptr<AdditiveSceneManager> m_smokeLayers;
     std::optional<SceneInstanceId> m_smokeStreamInstance;
     bool m_smokeStreamCompleted{false};
+
+    struct ActiveTransform {
+        ModalTransform transform;
+        std::vector<SceneEntityId> entities;
+        std::vector<glm::mat4> startLocal;
+        // Scene snapshot from before the command, for undo.
+        std::string before;
+        std::string commandName;
+        // Shift D keeps the duplicate even when its move is cancelled.
+        bool commitOnCancel{false};
+    };
+
+    std::optional<ActiveTransform> m_activeTransform;
+    glm::vec2 m_viewportPosition{0.0f};
+    glm::vec2 m_viewportSize{1.0f};
+    // A right-click that cancels a transform must not start fly navigation.
+    bool m_suppressCameraUntilRelease{false};
+    double m_lastSelectAllTime{-1.0};
+    bool m_openAddMenu{false};
+    bool m_openDeleteMenu{false};
+    bool m_openRenamePopup{false};
+    bool m_focusRenameField{false};
+    std::string m_renameBuffer;
 };

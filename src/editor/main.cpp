@@ -3,10 +3,10 @@
 #include "engine/platform/PlatformServices.hpp"
 #include "engine/project/ProjectConfig.hpp"
 #include "engine/resources/ResourceLocator.hpp"
-#include "game/scene/DemoScene.hpp"
 
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 
 int main(int argc, char** argv) {
@@ -20,9 +20,12 @@ int main(int argc, char** argv) {
     // Cooked textures produced by zenith_asset_build live beside the packaged assets.
     engine.assets().setCookedTextureRoot(resourceRoot() / "derived");
 
+    // Image-based lighting draws the environment's procedural sky behind the
+    // default scene; capability checks fall back to hemisphere lighting.
     ProjectConfig project{.displayName = "Zenith Demo",
                           .assetRoot = assetRoot(),
-                          .sceneRoot = std::filesystem::current_path() / "scenes"};
+                          .sceneRoot = std::filesystem::current_path() / "scenes",
+                          .renderSettings = RenderSettings{.environment = EnvironmentQuality::ImageBasedLow}};
     bool projectLoaded = false;
     if (argc > 1) {
         if (const ProjectConfigResult result = loadProjectConfig(argv[1], project); !result) {
@@ -32,18 +35,16 @@ int main(int argc, char** argv) {
         }
         projectLoaded = true;
     }
-    auto initialSceneLoader =
-        projectLoaded
-            ? std::function<SceneResult(ApplicationContext&)>{[project](ApplicationContext& context) -> SceneResult {
-                  if (project.startupScene.empty()) {
-                      return {.success = true};
-                  }
-                  const ProjectConfigResult result = loadProjectStartupScene(project, context.assets, context.scene);
-                  return SceneResult{.success = result.success, .error = result.error};
-              }}
-            : std::function<SceneResult(ApplicationContext&)>{
-                  [](ApplicationContext& context) { return populateDemoScene(context.scene, context.assets); }};
-    EditorApplication application(userDataDirectory("Zenith", "Editor"), std::move(project),
+    // Without a startup scene the editor opens its default scene.
+    std::function<SceneResult(ApplicationContext&)> initialSceneLoader;
+    if (projectLoaded && !project.startupScene.empty()) {
+        initialSceneLoader = [project](ApplicationContext& context) -> SceneResult {
+            const ProjectConfigResult result = loadProjectStartupScene(project, context.assets, context.scene);
+            return SceneResult{.success = result.success, .error = result.error};
+        };
+    }
+    EditorApplication application(userDataDirectory("Zenith", "Editor"),
+                                  resourceRoot() / "editor" / "fonts" / "Inter-Regular.ttf", std::move(project),
                                   std::move(initialSceneLoader));
     const bool success = engine.run(application);
     engine.shutdown();

@@ -40,6 +40,12 @@ class EditorCamera {
     void setDistance(float distance);
     const glm::vec3& pivot() const;
     void setPivot(const glm::vec3& pivot);
+    // Yaw 0 and pitch 0 look along -Z (Blender's front view); positive yaw
+    // turns toward +X and positive pitch looks up. Both keep the pivot fixed.
+    float yaw() const;
+    float pitch() const;
+    void setViewAngles(float yawRadians, float pitchRadians);
+    void orbitAroundPivot(float deltaYawRadians, float deltaPitchRadians);
 
   private:
     glm::vec3 forward() const;

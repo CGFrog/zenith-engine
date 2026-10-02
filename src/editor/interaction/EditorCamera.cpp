@@ -222,6 +222,25 @@ void EditorCamera::setPivot(const glm::vec3& pivot) {
     m_position = m_pivot - forward() * m_distance;
 }
 
+float EditorCamera::yaw() const {
+    return m_yawRadians;
+}
+
+float EditorCamera::pitch() const {
+    return m_pitchRadians;
+}
+
+void EditorCamera::setViewAngles(float yawRadians, float pitchRadians) {
+    m_yawRadians = yawRadians;
+    m_pitchRadians =
+        std::clamp(pitchRadians, -m_configuration.maximumPitchRadians, m_configuration.maximumPitchRadians);
+    m_position = m_pivot - forward() * m_distance;
+}
+
+void EditorCamera::orbitAroundPivot(float deltaYawRadians, float deltaPitchRadians) {
+    orbit(deltaYawRadians, deltaPitchRadians);
+}
+
 glm::vec3 EditorCamera::forward() const {
     return glm::normalize(glm::vec3(std::sin(m_yawRadians) * std::cos(m_pitchRadians), std::sin(m_pitchRadians),
                                     -std::cos(m_yawRadians) * std::cos(m_pitchRadians)));

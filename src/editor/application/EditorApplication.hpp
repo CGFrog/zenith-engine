@@ -8,7 +8,7 @@
 
 class EditorApplication final : public Application {
   public:
-    EditorApplication(std::filesystem::path settingsDirectory, ProjectConfig project,
+    EditorApplication(std::filesystem::path settingsDirectory, std::filesystem::path fontPath, ProjectConfig project,
                       std::function<SceneResult(ApplicationContext&)> initialSceneLoader = {});
 
     MouseCapturePolicy mouseCapturePolicy() const override;
@@ -17,6 +17,7 @@ class EditorApplication final : public Application {
 
   private:
     std::filesystem::path m_settingsDirectory;
+    std::filesystem::path m_fontPath;
     ProjectConfig m_project;
     std::function<SceneResult(ApplicationContext&)> m_initialSceneLoader;
 };

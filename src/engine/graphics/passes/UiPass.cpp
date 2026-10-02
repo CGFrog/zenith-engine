@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <iostream>
 #include <vector>
 
@@ -15,6 +16,40 @@ namespace {
 void reportVulkanError(VkResult result) {
     if (result != VK_SUCCESS) {
         std::cerr << "Dear ImGui Vulkan error: " << result << '\n';
+    }
+}
+
+bool isSrgbFormat(VkFormat format) {
+    switch (format) {
+    case VK_FORMAT_R8G8B8A8_SRGB:
+    case VK_FORMAT_B8G8R8A8_SRGB:
+    case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Converts ImGui's sRGB vertex colors to linear so that the hardware sRGB
+// encode on write reproduces the authored color. Alpha is already linear.
+void linearizeVertexColors(ImDrawData& drawData) {
+    static const std::array<uint8_t, 256> toLinear = [] {
+        std::array<uint8_t, 256> table{};
+        for (size_t index = 0; index < table.size(); ++index) {
+            const float encoded = static_cast<float>(index) / 255.0f;
+            const float linear = encoded <= 0.04045f ? encoded / 12.92f : std::pow((encoded + 0.055f) / 1.055f, 2.4f);
+            table[index] = static_cast<uint8_t>(std::lround(linear * 255.0f));
+        }
+        return table;
+    }();
+    for (ImDrawList* list : drawData.CmdLists) {
+        for (ImDrawVert& vertex : list->VtxBuffer) {
+            const ImU32 color = vertex.col;
+            vertex.col = (static_cast<ImU32>(toLinear[(color >> IM_COL32_R_SHIFT) & 0xffu]) << IM_COL32_R_SHIFT) |
+                         (static_cast<ImU32>(toLinear[(color >> IM_COL32_G_SHIFT) & 0xffu]) << IM_COL32_G_SHIFT) |
+                         (static_cast<ImU32>(toLinear[(color >> IM_COL32_B_SHIFT) & 0xffu]) << IM_COL32_B_SHIFT) |
+                         (color & IM_COL32_A_MASK);
+        }
     }
 }
 
@@ -42,6 +77,7 @@ void transitionToPresent(VkCommandBuffer commandBuffer, VkImage image) {
 
 bool UiPass::init(const VulkanContext& context, const Window& window, VkFormat colorFormat, uint32_t imageCount) {
     m_device = context.device();
+    m_linearizeVertexColors = isSrgbFormat(colorFormat);
     constexpr std::array<VkDescriptorPoolSize, 1> poolSizes{{
         {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1024},
     }};
@@ -219,6 +255,9 @@ bool UiPass::record(VkCommandBuffer commandBuffer, VkImage image, VkImageView im
     }
     ImGui::Render();
     m_frameActive = false;
+    if (m_linearizeVertexColors) {
+        linearizeVertexColors(*ImGui::GetDrawData());
+    }
     VkRenderingAttachmentInfo color{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                                     .imageView = imageView,
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,

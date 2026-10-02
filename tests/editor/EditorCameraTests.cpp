@@ -23,7 +23,7 @@ bool near(glm::vec3 left, glm::vec3 right, float tolerance = 0.0001f) {
 } // namespace
 
 int main() {
-    EditorApplication editor({}, {});
+    EditorApplication editor({}, {}, {});
     expect(editor.mouseCapturePolicy() == MouseCapturePolicy::WhileRightMouseDown,
            "the editor should only capture the cursor during right-button freelook");
 

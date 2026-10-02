@@ -127,6 +127,13 @@ FetchContent_Declare(
     URL_HASH SHA256=a467155ee60a262430478a06c6534ab56fe62b053b896308581f5aa7057f5094
 )
 
+# Inter is the editor UI font (SIL Open Font License); only its TTF files are used.
+FetchContent_Declare(
+    inter
+    URL https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
+    URL_HASH SHA256=9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e
+)
+
 FetchContent_Declare(
     cgltf
     GIT_REPOSITORY https://github.com/jkuhlmann/cgltf.git
@@ -208,6 +215,7 @@ FetchContent_MakeAvailable(
     SDL
     imgui
     imguizmo
+    inter
     cgltf
     stb
     EnTT
@@ -361,16 +369,22 @@ endif()
 add_library(zenith_editor_app STATIC
     src/editor/application/EditorApplication.cpp
     src/editor/application/EditorDiagnostics.cpp
+    src/editor/application/EditorObjectCommands.cpp
     src/editor/application/EditorPlayMode.cpp
     src/editor/application/EditorShortcuts.cpp
+    src/editor/application/EditorTheme.cpp
+    src/editor/application/NativeFileDialog.cpp
     src/editor/application/EditorSession.cpp
     src/editor/document/CommandHistory.cpp
+    src/editor/document/DefaultScene.cpp
     src/editor/document/EditorDocument.cpp
     src/editor/document/EditorRecovery.cpp
     src/editor/document/PrefabAuthoring.cpp
     src/editor/document/SceneFragment.cpp
     src/editor/interaction/ComponentEditors.cpp
     src/editor/interaction/EditorCamera.cpp
+    src/editor/interaction/ModalTransform.cpp
+    src/editor/interaction/ObjectKeymap.cpp
     src/editor/interaction/GraphicsSettingsEditor.cpp
     src/editor/project/AssetCatalog.cpp
     src/editor/project/DerivedAssetInspector.cpp
@@ -384,7 +398,19 @@ target_link_libraries(zenith_editor_app PUBLIC imguizmo::imguizmo)
 target_compile_definitions(zenith_editor_app PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
 add_executable(zenith_editor src/editor/main.cpp)
-target_link_libraries(zenith_editor PRIVATE zenith_editor_app zenith_demo)
+target_link_libraries(zenith_editor PRIVATE zenith_editor_app)
+
+# Editor-only runtime resources live beside assets/ under <resource root>/editor.
+set(ZENITH_EDITOR_FONT_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/editor/fonts")
+add_custom_target(zenith_editor_resources
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${ZENITH_EDITOR_FONT_BINARY_DIR}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${inter_SOURCE_DIR}/extras/ttf/Inter-Regular.ttf"
+        "${inter_SOURCE_DIR}/LICENSE.txt"
+        "${ZENITH_EDITOR_FONT_BINARY_DIR}"
+    COMMENT "Copying Zenith editor resources"
+)
+add_dependencies(zenith_editor zenith_editor_resources)
 
 add_executable(zenith_asset_build src/asset_build_main.cpp)
 target_link_libraries(zenith_asset_build PRIVATE zenith_engine)
@@ -891,6 +917,37 @@ if(BUILD_TESTING)
         target_compile_options(zenith_editor_render_settings_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_editor_render_settings COMMAND zenith_editor_render_settings_tests)
+
+    add_executable(zenith_native_file_dialog_tests tests/editor/NativeFileDialogTests.cpp)
+    target_link_libraries(zenith_native_file_dialog_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_native_file_dialog_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_native_file_dialog_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_native_file_dialog COMMAND zenith_native_file_dialog_tests)
+
+    add_executable(zenith_default_scene_tests tests/editor/DefaultSceneTests.cpp)
+    target_compile_definitions(zenith_default_scene_tests PRIVATE
+        ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}"
+    )
+    add_dependencies(zenith_default_scene_tests zenith_assets)
+    target_link_libraries(zenith_default_scene_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_default_scene_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_default_scene_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_default_scene COMMAND zenith_default_scene_tests)
+
+    add_executable(zenith_modal_transform_tests tests/editor/ModalTransformTests.cpp)
+    target_link_libraries(zenith_modal_transform_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_modal_transform_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_modal_transform_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_modal_transform COMMAND zenith_modal_transform_tests)
 
     add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
     set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES

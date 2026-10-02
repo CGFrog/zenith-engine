@@ -31,5 +31,7 @@ class UiPass {
     VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
     bool m_initialized{false};
     bool m_frameActive{false};
+    // ImGui colors are sRGB-encoded; an sRGB target would encode them again.
+    bool m_linearizeVertexColors{false};
     std::unordered_map<uint64_t, void*> m_fonts;
 };
