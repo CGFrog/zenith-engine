@@ -225,7 +225,7 @@ void Scene::destroyEntity(Entity entity) {
     const bool renderable = m_registry.any_of<MeshRendererComponent>(entity);
     const bool light =
         m_registry.any_of<DirectionalLightComponent, EnvironmentLightComponent, PointLightComponent, SpotLightComponent,
-                          ReflectionProbeComponent, IrradianceVolumeComponent>(entity);
+                          ReflectionProbeComponent, IrradianceVolumeComponent, DecalComponent>(entity);
     const bool camera = m_registry.any_of<CameraComponent>(entity);
     const bool skin = m_registry.any_of<SkinComponent, MorphWeightsComponent>(entity);
     setParent(entity, entt::null);
@@ -488,6 +488,7 @@ Entity Scene::cloneBranch(Entity source, Entity parent, bool appendCopySuffix) {
     copy.operator()<SpotLightComponent>();
     copy.operator()<ReflectionProbeComponent>();
     copy.operator()<IrradianceVolumeComponent>();
+    copy.operator()<DecalComponent>();
     copy.operator()<ColliderComponent>();
     copy.operator()<RigidBodyComponent>();
     copy.operator()<AudioListenerComponent>();

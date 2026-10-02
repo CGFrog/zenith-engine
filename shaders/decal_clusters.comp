@@ -1,0 +1,129 @@
+#version 450
+
+// Assigns decals to view clusters: one invocation per cluster, decal view
+// bounds staged through shared memory in batches. Decals are tested in
+// ascending (application) order, so every cluster's list is sorted and the
+// decals applied last are the ones dropped when a cluster overflows. Mirrors
+// assignDecalsToClusters in src/engine/graphics/Decals.cpp and the cluster
+// bounds of ClusterGrid in Lighting.cpp (also used by light_clusters.comp).
+
+const uint WORKGROUP_SIZE = 64;
+// Mirror maximumDecals and maximumDecalsPerCluster in Decals.hpp.
+const uint MAXIMUM_DECALS = 1024;
+const uint MAXIMUM_DECALS_PER_CLUSTER = 31;
+// Per cluster: a count followed by MAXIMUM_DECALS_PER_CLUSTER indices.
+const uint DECAL_CLUSTER_STRIDE = MAXIMUM_DECALS_PER_CLUSTER + 1;
+
+layout(local_size_x = 64) in;
+
+// Mirrors GpuDecal in DecalClusterPass.hpp (std430).
+struct DecalRecord {
+    vec4 worldToDecal[3];
+    vec4 tintOpacity;
+    vec4 surface;
+    vec4 blend;
+    uvec4 textures;
+    vec4 viewMinimum;
+    vec4 viewMaximum;
+};
+
+// Same layout as Decals in mesh.frag.
+layout(std430, set = 0, binding = 0) readonly buffer Decals {
+    uvec4 header;
+    DecalRecord records[MAXIMUM_DECALS];
+} decals;
+
+layout(std430, set = 0, binding = 1) writeonly buffer DecalClusterLists {
+    uint values[];
+} clusterLists;
+
+layout(std430, set = 0, binding = 2) buffer Statistics {
+    uint maximumDecalsInCluster;
+    uint discardedAssignments;
+} statistics;
+
+layout(push_constant) uniform DecalClusterSettings {
+    // For NDC (x, y): view.x / depth = (x + offset.x) / scale.x; xy scale, zw offset.
+    vec4 projection;
+    // x: near depth, y: end of exponential slicing, z: far depth.
+    vec4 depth;
+    // x: columns, y: rows, z: depth slices, w: decal count.
+    uvec4 grid;
+} settings;
+
+shared vec3 sharedMinimum[WORKGROUP_SIZE];
+shared vec3 sharedMaximum[WORKGROUP_SIZE];
+
+float sliceStart(uint slice) {
+    if (slice >= settings.grid.z) {
+        return settings.depth.z;
+    }
+    return settings.depth.x * pow(settings.depth.y / settings.depth.x, float(slice) / float(settings.grid.z));
+}
+
+void clusterBounds(uvec3 cluster, out vec3 minimum, out vec3 maximum) {
+    vec2 tileSize = vec2(2.0) / vec2(settings.grid.xy);
+    vec2 ndcMinimum = vec2(cluster.xy) * tileSize - 1.0;
+    float depths[2] = float[2](sliceStart(cluster.z), sliceStart(cluster.z + 1));
+    minimum = vec3(3.4e38);
+    maximum = vec3(-3.4e38);
+    for (uint corner = 0; corner < 4; ++corner) {
+        vec2 ndc = ndcMinimum + vec2(corner & 1u, corner >> 1u) * tileSize;
+        vec2 ray = (ndc + settings.projection.zw) / settings.projection.xy;
+        for (int index = 0; index < 2; ++index) {
+            vec3 point = vec3(ray * depths[index], -depths[index]);
+            minimum = min(minimum, point);
+            maximum = max(maximum, point);
+        }
+    }
+}
+
+void main() {
+    uint clusterCount = settings.grid.x * settings.grid.y * settings.grid.z;
+    uint clusterIndex = gl_GlobalInvocationID.x;
+    bool activeCluster = clusterIndex < clusterCount;
+    uvec3 cluster = uvec3(clusterIndex % settings.grid.x, (clusterIndex / settings.grid.x) % settings.grid.y,
+                          clusterIndex / (settings.grid.x * settings.grid.y));
+    vec3 minimum = vec3(0.0);
+    vec3 maximum = vec3(0.0);
+    if (activeCluster) {
+        clusterBounds(cluster, minimum, maximum);
+    }
+
+    uint first = clusterIndex * DECAL_CLUSTER_STRIDE + 1;
+    uint affecting = 0;
+    uint decalCount = min(settings.grid.w, MAXIMUM_DECALS);
+    for (uint batchStart = 0; batchStart < decalCount; batchStart += WORKGROUP_SIZE) {
+        uint loadIndex = batchStart + gl_LocalInvocationID.x;
+        if (loadIndex < decalCount) {
+            sharedMinimum[gl_LocalInvocationID.x] = decals.records[loadIndex].viewMinimum.xyz;
+            sharedMaximum[gl_LocalInvocationID.x] = decals.records[loadIndex].viewMaximum.xyz;
+        }
+        barrier();
+        uint batchCount = min(WORKGROUP_SIZE, decalCount - batchStart);
+        if (activeCluster) {
+            for (uint local = 0; local < batchCount; ++local) {
+                if (any(greaterThan(sharedMinimum[local], maximum)) || any(greaterThan(minimum, sharedMaximum[local]))) {
+                    continue;
+                }
+                if (affecting < MAXIMUM_DECALS_PER_CLUSTER) {
+                    clusterLists.values[first + affecting] = batchStart + local;
+                }
+                ++affecting;
+            }
+        }
+        barrier();
+    }
+
+    if (!activeCluster) {
+        return;
+    }
+    uint stored = min(affecting, MAXIMUM_DECALS_PER_CLUSTER);
+    clusterLists.values[clusterIndex * DECAL_CLUSTER_STRIDE] = stored;
+    if (affecting > 0) {
+        atomicMax(statistics.maximumDecalsInCluster, affecting);
+    }
+    if (affecting > stored) {
+        atomicAdd(statistics.discardedAssignments, affecting - stored);
+    }
+}

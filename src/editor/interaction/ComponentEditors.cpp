@@ -242,4 +242,43 @@ bool drawIrradianceVolume(IrradianceVolumeComponent& component) {
     }
     return changed;
 }
+
+bool drawDecal(DecalComponent& component) {
+    bool changed = ImGui::DragFloat3("Half extents", &component.halfExtents.x, 0.01f, 0.01f, 10000.0f);
+    changed |= ImGui::ColorEdit3("Tint", &component.tint.x, ImGuiColorEditFlags_Float);
+    changed |= ImGui::SliderFloat("Opacity", &component.opacity, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("Base color strength", &component.baseColorStrength, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("Normal strength", &component.normalStrength, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("Roughness", &component.roughness, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("Roughness strength", &component.roughnessStrength, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("Metallic", &component.metallic, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("Metallic strength", &component.metallicStrength, 0.0f, 1.0f);
+    float fadeDegrees[2]{glm::degrees(component.angleFadeStartRadians), glm::degrees(component.angleFadeEndRadians)};
+    if (ImGui::DragFloat2("Angle fade (deg)", fadeDegrees, 0.25f, 0.0f, 180.0f, "%.1f")) {
+        const float start = std::clamp(fadeDegrees[0], 0.0f, 180.0f);
+        component.angleFadeStartRadians = glm::radians(start);
+        component.angleFadeEndRadians = glm::radians(std::clamp(fadeDegrees[1], start, 180.0f));
+        changed = true;
+    }
+    changed |= ImGui::DragInt("Sort order", &component.sortOrder, 0.1f);
+    component.halfExtents = glm::max(component.halfExtents, glm::vec3(0.01f));
+    component.tint = glm::max(component.tint, glm::vec3(0.0f));
+    for (float* unit :
+         {&component.opacity, &component.baseColorStrength, &component.normalStrength, &component.roughness,
+          &component.roughnessStrength, &component.metallic, &component.metallicStrength}) {
+        *unit = std::clamp(*unit, 0.0f, 1.0f);
+    }
+    const auto drawTexture = [](const char* label, const std::string& path, TextureHandle handle) {
+        if (path.empty()) {
+            ImGui::TextDisabled("%s: (none)", label);
+        } else if (!handle) {
+            ImGui::TextColored({1.0f, 0.35f, 0.35f, 1.0f}, "%s missing: %s", label, path.c_str());
+        } else {
+            ImGui::TextDisabled("%s: %s", label, path.c_str());
+        }
+    };
+    drawTexture("Albedo", component.albedoAsset, component.albedoTexture);
+    drawTexture("Normal", component.normalAsset, component.normalTexture);
+    return changed;
+}
 } // namespace ComponentEditors

@@ -159,6 +159,7 @@ bool drawLighting(RenderSettings& settings, const RenderCapabilities& capabiliti
     if (settings.volumetricFog != VolumetricFogQuality::Off) {
         ImGui::TextDisabled("Add a Volumetric Fog component to the scene to author the medium.");
     }
+    changed |= enumCombo("Decals", settings.decals, std::array<EnumOption, 2>{{{"Off"}, {"On", capabilities.decals}}});
     return changed;
 }
 
@@ -317,6 +318,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Depth of field", budgets.depthOfField);
     changed |= drawBudget("Colour grading", budgets.colorGrade);
     changed |= drawBudget("FSR upscale", budgets.spatialUpscale);
+    changed |= drawBudget("Decal clusters", budgets.decalClusters);
     return changed;
 }
 
@@ -344,6 +346,7 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
             {"Opaque", stats.gpuOpaqueMilliseconds},
             {"Light clusters", stats.gpuLightClusterMilliseconds, true},
             {"Probe clusters", stats.gpuReflectionProbeClusterMilliseconds, true},
+            {"Decal clusters", stats.gpuDecalClusterMilliseconds, true},
             {"Volumetric fog", stats.gpuVolumetricFogMilliseconds, true},
             {"Depth prepass", stats.gpuDepthPrepassMilliseconds, true},
             {"Depth pyramid", stats.gpuDepthPyramidMilliseconds, true},
@@ -425,7 +428,8 @@ void clampToDocumentRanges(RenderSettings& settings) {
                                      &budgets.motionBlur,
                                      &budgets.depthOfField,
                                      &budgets.colorGrade,
-                                     &budgets.spatialUpscale}) {
+                                     &budgets.spatialUpscale,
+                                     &budgets.decalClusters}) {
         clampBudget(*budget);
     }
 

@@ -143,6 +143,11 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("upload.deferred_meshes", s.deferredMeshUploads, "count");
     sample("upload.deferred_textures", s.deferredTextureUploads, "count");
     sample("lights.dropped", s.droppedLocalLights, "count");
+    sample("decals.count", s.decalCount, "count");
+    sample("decals.dropped", s.droppedDecals, "count");
+    sample("decals.discarded_assignments", s.discardedDecalAssignments, "count");
+    sample("decals.maximum_per_cluster", s.maximumDecalsPerCluster, "count");
+    sample("render.decal_bytes", static_cast<double>(s.decalBytes), "bytes");
 }
 
 void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& budgets, uint64_t firstFrame,
@@ -177,6 +182,7 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
     sample("gpu.motion_blur", s.gpuMotionBlurMilliseconds, "ms", budgets.motionBlur.gpuMilliseconds);
     sample("gpu.depth_of_field", s.gpuDepthOfFieldMilliseconds, "ms", budgets.depthOfField.gpuMilliseconds);
     sample("gpu.color_grade", s.gpuColorGradeMilliseconds, "ms", budgets.colorGrade.gpuMilliseconds);
+    sample("gpu.decal_clusters", s.gpuDecalClusterMilliseconds, "ms", budgets.decalClusters.gpuMilliseconds);
     sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
     sample("gpu.fsr_easu", s.gpuFsrEasuMilliseconds);

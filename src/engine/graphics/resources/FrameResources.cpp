@@ -181,6 +181,7 @@ bool FrameResources::collectTimings(VkDevice device, GpuFrameTimings& timings) {
     timings.colorGradeMilliseconds = elapsed(FrameTimestamp::colorGradeBegin, FrameTimestamp::colorGradeEnd);
     timings.fsrEasuMilliseconds = elapsed(FrameTimestamp::fsrEasuBegin, FrameTimestamp::fsrEasuEnd);
     timings.fsrRcasMilliseconds = elapsed(FrameTimestamp::fsrRcasBegin, FrameTimestamp::fsrRcasEnd);
+    timings.decalClusterMilliseconds = elapsed(FrameTimestamp::decalClustersBegin, FrameTimestamp::decalClustersEnd);
     return true;
 }
 

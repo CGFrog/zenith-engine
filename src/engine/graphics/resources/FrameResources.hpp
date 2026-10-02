@@ -34,6 +34,7 @@ struct GpuFrameTimings {
     double colorGradeMilliseconds{0.0};
     double fsrEasuMilliseconds{0.0};
     double fsrRcasMilliseconds{0.0};
+    double decalClusterMilliseconds{0.0};
 };
 
 // Owns the resources reused for one frame of CPU work.

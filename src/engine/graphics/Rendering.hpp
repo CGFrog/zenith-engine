@@ -211,6 +211,14 @@ struct FilmGrainSettings {
     float size{1.5f};
 };
 
+// Clustered decals (DecalComponent): On assigns the scene's decals to the
+// light-cluster grid and blends them into opaque and masked surfaces before
+// lighting; Off (the fallback) skips both. Serialized by value.
+enum class DecalQuality : uint8_t {
+    Off,
+    On,
+};
+
 struct RenderPassBudget {
     double cpuMilliseconds{0.0};
     double gpuMilliseconds{0.0};
@@ -248,6 +256,8 @@ struct RenderPassBudgets {
     RenderPassBudget colorGrade;
     // FSR 1 EASU upsample plus RCAS sharpen.
     RenderPassBudget spatialUpscale;
+    // Decal cluster assignment (blending is part of opaque shading).
+    RenderPassBudget decalClusters;
 };
 
 struct DynamicResolutionSettings {
@@ -341,6 +351,7 @@ struct RenderSettings {
     ColorLutSettings colorLut;
     VignetteSettings vignette;
     FilmGrainSettings filmGrain;
+    DecalQuality decals{DecalQuality::On};
     // Zero disables enforcement for that processor/pass pair.
     RenderPassBudgets budgets;
 
@@ -376,6 +387,7 @@ struct RenderCapabilities {
     bool depthOfField{true};
     // FSR 1: RGBA8 storage images and a sampled, renderable output format.
     bool spatialUpscaling{false};
+    bool decals{true};
     bool meshShaders{false};
     bool rayTracing{false};
     bool dedicatedTransferQueue{false};
@@ -501,6 +513,18 @@ struct RenderStats {
     uint64_t irradianceVolumeBytes{0};
     // LUT grade, vignette and film grain; zero when every effect is off.
     double gpuColorGradeMilliseconds{0.0};
+    // Decal cluster assignment of the retired frame; zero when it had no decal.
+    double gpuDecalClusterMilliseconds{0.0};
+    // Decals uploaded this submission, and scene decals left out: beyond
+    // maximumDecals (the nearest are kept) or waiting for a texture upload.
+    uint32_t decalCount{0};
+    uint32_t droppedDecals{0};
+    // Retired-frame cluster statistics (GPU-assigned): assignments beyond the
+    // per-cluster capacity, and the most decals touching one cluster.
+    uint32_t discardedDecalAssignments{0};
+    uint32_t maximumDecalsPerCluster{0};
+    // Device memory of the decal records and cluster lists of every frame.
+    uint64_t decalBytes{0};
     uint64_t temporalHistoryBytes{0};
     // FSR 1 input and upscaled targets; zero until the upscaler first runs.
     uint64_t spatialUpscaleBytes{0};

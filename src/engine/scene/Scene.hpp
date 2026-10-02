@@ -207,6 +207,42 @@ struct ReflectionProbeComponent {
     TextureHandle environmentMap{};
 };
 
+// An oriented box projector that paints onto opaque and alpha-masked surfaces
+// inside it (see engine/graphics/Decals.hpp). The box is the entity's world
+// transform applied to [-halfExtents, halfExtents], so the transform's scale
+// also sizes it. The decal projects along the box's local -Y axis: an
+// unrotated decal lands on floors, and texture u runs along local +X and v
+// along local +Z. Colors are linear.
+struct DecalComponent {
+    glm::vec3 halfExtents{0.5f, 0.25f, 0.5f};
+    // Optional project-relative textures. The albedo alpha masks every effect
+    // of the decal; without an albedo texture the mask is one across the box.
+    std::string albedoAsset;
+    TextureHandle albedoTexture{};
+    std::string normalAsset;
+    TextureHandle normalTexture{};
+    glm::vec3 tint{1.0f};
+    // Scales the mask of every effect.
+    float opacity{1.0f};
+    // How strongly each surface property moves toward the decal's, in [0, 1].
+    // Without a normal texture, normalStrength flattens the surface toward its
+    // geometric normal (paint or water filling its bumps).
+    float baseColorStrength{1.0f};
+    float normalStrength{1.0f};
+    float roughness{0.5f};
+    float roughnessStrength{0.0f};
+    float metallic{0.0f};
+    float metallicStrength{0.0f};
+    // Surfaces facing the projector (normal along local +Y) receive the full
+    // decal up to angleFadeStart and none beyond angleFadeEnd, so walls next to
+    // a floor decal stay clean. Radians, 0 <= start <= end <= pi.
+    float angleFadeStartRadians{glm::radians(60.0f)};
+    float angleFadeEndRadians{glm::radians(80.0f)};
+    // Decals apply in ascending sort order (then stable scene id), later decals
+    // painting over earlier ones.
+    int32_t sortOrder{0};
+};
+
 struct IrradianceVolumeData;
 
 // A baked grid of irradiance probes that replaces environment lighting for

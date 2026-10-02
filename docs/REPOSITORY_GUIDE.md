@@ -437,6 +437,7 @@ Renderer
    |- DepthPyramid (min/max hierarchical depth for culling and screen-space effects)
    |- AmbientOcclusionPass (GTAO and denoise between the prepass and shading)
    |- VolumetricFogPass (froxel fog injection, reprojection, and integration)
+   |- DecalClusterPass (decal records and per-cluster decal lists)
    `- PostProcessPass (HDR/history, motion, prepass normals, and fullscreen pipelines)
       |- ScreenSpaceReflectionPass (Hi-Z reflection trace and in-place composite)
       |- TemporalResolvePass (TAA/TAAU history)
@@ -614,6 +615,20 @@ visibility-weighted mean radiance (`irradiance_volume::sampleMeanRadiance`), so
 fog in enclosed spaces is not lit like open sky;
 `volumetric_fog_integrate.comp` accumulates it front to back. `mesh.frag` and
 `skybox.frag` composite the integrated RGBA16F volume at camera binding 18.
+
+### `src/engine/graphics/Decals.*` and `src/engine/graphics/passes/DecalClusterPass.*`
+
+Clustered decals for scenes with `DecalComponent` box projectors when
+`RenderSettings::decals` is On. `Decals.*` is the CPU reference: projector
+construction from the entity transform and half extents (decal space is the
+unit cube; the decal projects along local -Y), application order (sort order,
+then stable scene id), nearest-first selection under `maximumDecals`, the decal-space
+and angle/depth fade math `mesh.frag` mirrors, conservative view-space bounds,
+and the cluster assignment `decal_clusters.comp` performs. `DecalClusterPass`
+owns each frame's records (camera binding 19), cluster lists (binding 20) and
+statistics readback; `MeshPass::prepareDecals` resolves decal textures to
+bindless slots and packs the records, and `applyDecals` in `mesh.frag` blends
+them before lighting.
 
 ### `src/engine/graphics/VolumetricFog.*`
 
@@ -867,6 +882,7 @@ the capability fallback.
 | `shaders/ssr_trace.comp` | Hi-Z screen-space reflection trace over the closest-depth pyramid. |
 | `shaders/ssr_composite.comp` | Blends traced reflections into the HDR scene before blended surfaces. |
 | `shaders/light_clusters.comp` | Assigns local lights to view clusters for clustered forward shading. |
+| `shaders/decal_clusters.comp` | Lists each view cluster's decals, in application order, for `mesh.frag`. |
 | `shaders/volumetric_fog_inject.comp` | Evaluates and lights the fog medium per froxel and reprojects history. |
 | `shaders/volumetric_fog_integrate.comp` | Integrates froxel fog front to back into scattering and transmittance. |
 | `shaders/depth_pyramid.comp` | Reduces scene depth into a conservative min-depth (reversed-Z) pyramid. |

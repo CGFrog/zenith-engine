@@ -485,6 +485,15 @@ AssetLeaseSet AssetManager::leaseSceneAssets(const Scene& scene) const {
             result.textures.push_back(std::move(value));
         }
     }
+    const auto decals = scene.registry().view<const DecalComponent>();
+    for (Entity entity : decals) {
+        const DecalComponent& decal = decals.get<const DecalComponent>(entity);
+        for (TextureHandle texture : {decal.albedoTexture, decal.normalTexture}) {
+            if (AssetLease<TextureHandle> value = lease(texture)) {
+                result.textures.push_back(std::move(value));
+            }
+        }
+    }
     return result;
 }
 

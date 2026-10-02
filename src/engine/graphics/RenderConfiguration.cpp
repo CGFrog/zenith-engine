@@ -293,6 +293,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"motionBlurMaximumRadiusPixels", settings.motionBlurMaximumRadiusPixels},
                            {"depthOfField", depthOfFieldDocument(settings.depthOfField)},
                            {"colorGrade", colorGradeDocument(settings)},
+                           {"decals", settings.decals},
                            {"budgets",
                             {{"shadow", budget(settings.budgets.shadow)},
                              {"opaque", budget(settings.budgets.opaque)},
@@ -316,7 +317,8 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"motionBlur", budget(settings.budgets.motionBlur)},
                              {"depthOfField", budget(settings.budgets.depthOfField)},
                              {"colorGrade", budget(settings.budgets.colorGrade)},
-                             {"spatialUpscale", budget(settings.budgets.spatialUpscale)}}}};
+                             {"spatialUpscale", budget(settings.budgets.spatialUpscale)},
+                             {"decalClusters", budget(settings.budgets.decalClusters)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -436,6 +438,10 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
         if (!validColorGrade(loaded)) {
             return {.error = "Render settings contain out-of-range colour-grading parameters"};
         }
+        // Documents written before clustered decals keep the default.
+        if (document.contains("decals") && !readEnum(document, "decals", DecalQuality::On, loaded.decals)) {
+            return {.error = "Render settings contain an unknown decal quality"};
+        }
         if (const auto budgets = document.find("budgets"); budgets != document.end()) {
             if (!budgets->is_object() || !readBudget(*budgets, "shadow", loaded.budgets.shadow) ||
                 !readBudget(*budgets, "opaque", loaded.budgets.opaque) ||
@@ -459,7 +465,8 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "motionBlur", loaded.budgets.motionBlur) ||
                 !readOptionalBudget(*budgets, "depthOfField", loaded.budgets.depthOfField) ||
                 !readOptionalBudget(*budgets, "colorGrade", loaded.budgets.colorGrade) ||
-                !readOptionalBudget(*budgets, "spatialUpscale", loaded.budgets.spatialUpscale)) {
+                !readOptionalBudget(*budgets, "spatialUpscale", loaded.budgets.spatialUpscale) ||
+                !readOptionalBudget(*budgets, "decalClusters", loaded.budgets.decalClusters)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }
@@ -551,6 +558,10 @@ ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
         !depth_of_field::validSettings(result.settings.depthOfField)) {
         result.settings.depthOfField.quality = DepthOfFieldQuality::Off;
         result.fallbacks.emplace_back("Depth of field lens settings are out of range; depth of field was disabled");
+    }
+    if (result.settings.decals != DecalQuality::Off && !capabilities.decals) {
+        result.settings.decals = DecalQuality::Off;
+        result.fallbacks.emplace_back("Clustered decals are unsupported and were disabled");
     }
     return result;
 }

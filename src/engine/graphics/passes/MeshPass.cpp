@@ -1,4 +1,5 @@
 #include "MeshPass.hpp"
+#include "../Decals.hpp"
 #include "../DepthConvention.hpp"
 #include "../IrradianceVolume.hpp"
 #include "../Lighting.hpp"
@@ -296,11 +297,13 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
         !createDescriptors(context, frameCount) ||
         !m_clusteredLighting.init(context, frameCount, ClusterGridConfiguration{}, maximumLocalLights) ||
         !m_reflectionProbeClusters.init(context, frameCount, m_clusteredLighting.configuration()) ||
+        !m_decalClusters.init(context, frameCount, m_clusteredLighting.configuration()) ||
         !m_volumetricFog.init(context, frameCount)) {
         return false;
     }
     writeClusteredLightingDescriptors();
     writeReflectionProbeDescriptors();
+    writeDecalDescriptors();
     // Written before the GPU-driven sets copy the shared bindings.
     m_fogDescriptorGenerations.assign(frameCount, 0);
     for (uint32_t frame = 0; frame < frameCount; ++frame) {
@@ -364,7 +367,7 @@ bool MeshPass::createGpuDrivenDescriptors() {
         CameraBuffer& camera = m_cameras[frame];
         camera.gpuDrivenDescriptor = sets[frame];
         // Everything except the object buffer matches the CPU-submission set.
-        std::array<VkCopyDescriptorSet, 12> copies{};
+        std::array<VkCopyDescriptorSet, 14> copies{};
         const uint32_t sharedBindings[]{0,
                                         1,
                                         3,
@@ -376,7 +379,9 @@ bool MeshPass::createGpuDrivenDescriptors() {
                                         LocalShadowPass::atlasBinding,
                                         LocalShadowPass::tileBinding,
                                         ReflectionProbeClusterPass::cameraBinding,
-                                        volumetricFogBinding};
+                                        volumetricFogBinding,
+                                        DecalClusterPass::recordsBinding,
+                                        DecalClusterPass::clusterListsBinding};
         for (size_t index = 0; index < copies.size(); ++index) {
             copies[index] = {.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET,
                              .srcSet = camera.descriptor,
@@ -428,6 +433,56 @@ void MeshPass::writeReflectionProbeDescriptors() {
                                          .pBufferInfo = &probes};
         vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
     }
+}
+
+void MeshPass::writeDecalDescriptors() {
+    for (uint32_t frame = 0; frame < m_cameras.size(); ++frame) {
+        const DecalClusterPass::FrameBuffers buffers = m_decalClusters.frameBuffers(frame);
+        const std::array<VkDescriptorBufferInfo, 2> infos{{{.buffer = buffers.records, .range = VK_WHOLE_SIZE},
+                                                           {.buffer = buffers.clusterLists, .range = VK_WHOLE_SIZE}}};
+        const std::array<uint32_t, 2> bindings{DecalClusterPass::recordsBinding, DecalClusterPass::clusterListsBinding};
+        std::array<VkWriteDescriptorSet, 2> writes{};
+        for (uint32_t index = 0; index < writes.size(); ++index) {
+            writes[index] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                             .dstSet = m_cameras[frame].descriptor,
+                             .dstBinding = bindings[index],
+                             .descriptorCount = 1,
+                             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                             .pBufferInfo = &infos[index]};
+        }
+        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
+}
+
+std::vector<GpuDecal> MeshPass::prepareDecals(const Scene& scene, const AssetManager& assets,
+                                              const RenderSettings& settings, const glm::vec3& cameraPosition,
+                                              const glm::mat4& view, uint32_t& sceneDecalCount) {
+    sceneDecalCount = 0;
+    if (settings.decals == DecalQuality::Off) {
+        return {};
+    }
+    const std::vector<DecalProjector> sceneDecals = gatherDecals(scene);
+    sceneDecalCount = static_cast<uint32_t>(sceneDecals.size());
+    // Textures resolve before the frame's bindless writes. A decal whose
+    // texture is still uploading (or was rejected) is left out until it lands,
+    // rather than drawing untextured.
+    const auto slotFor = [&](TextureHandle handle, bool srgb) -> std::optional<uint32_t> {
+        const GpuTexture* texture = handle ? ensureTexture(handle, assets) : nullptr;
+        if (!texture) {
+            return std::nullopt;
+        }
+        return srgb ? texture->srgbSlot : texture->linearSlot;
+    };
+    std::vector<GpuDecal> records;
+    for (const DecalProjector& decal : selectDecals(sceneDecals, cameraPosition, maximumDecals)) {
+        const DecalTextureSlots slots{.albedo = slotFor(decal.albedoTexture, true),
+                                      .normal = slotFor(decal.normalTexture, false)};
+        if ((decal.albedoTexture && !slots.albedo) || (decal.normalTexture && !slots.normal)) {
+            continue;
+        }
+        records.push_back(packDecal(decal, slots, view));
+    }
+    return records;
 }
 
 void MeshPass::writeAmbientOcclusionDescriptors() {
@@ -580,6 +635,16 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         {.binding = volumetricFogBinding,
          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
          .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        // Clustered decals: the frame's decal records and per-cluster decal
+        // lists, owned by DecalClusterPass.
+        {.binding = DecalClusterPass::recordsBinding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        {.binding = DecalClusterPass::clusterListsBinding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1,
          .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
     VkDescriptorSetLayoutCreateInfo layoutInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -597,7 +662,8 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
     const VkDescriptorPoolSize poolSizes[]{
         {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = frameCount * 2},
         {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = frameCount * 2 * (8 + EnvironmentPass::environmentSlots + 1 /* irradiance volume */)},
+         .descriptorCount =
+             frameCount * 2 * (8 + EnvironmentPass::environmentSlots + 1 /* irradiance volume */ + 2 /* decals */)},
         {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
          .descriptorCount = frameCount * 2 * (4 + EnvironmentPass::environmentSlots)}};
     VkDescriptorPoolCreateInfo poolInfo{
@@ -2629,6 +2695,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     m_sceneRevisions = revisions;
     m_assetRevision = assets.revision();
     m_outlineRevision = outlineRevision;
+    uint32_t sceneDecalCount = 0;
+    const std::vector<GpuDecal> decalRecords =
+        prepareDecals(scene, assets, rendering.settings(), cameraPosition, view, sceneDecalCount);
     writeMaterialRecords(frameIndex, assets);
     streamTextureMips(assets, cameraPosition);
     updateBindlessDescriptor(frameIndex);
@@ -2666,6 +2735,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     m_gpuScene.retireDeltas();
     ClusterLightStatistics clusterStatistics;
     const uint32_t localLightCount = m_clusteredLighting.beginFrame(frameIndex, selectedLights, clusterStatistics);
+    DecalClusterStatistics decalStatistics;
+    const uint32_t decalCount = m_decalClusters.beginFrame(frameIndex, decalRecords, decalStatistics);
     const ClusterGrid clusterGrid = makeClusterGrid(m_clusteredLighting.configuration(), projection,
                                                     {renderExtent.width, renderExtent.height}, nearPlane, farPlane);
     const glm::vec2 sliceScaleBias = clusterGrid.sliceScaleBias();
@@ -2713,6 +2784,11 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.maximumLightsPerCluster = clusterStatistics.maximumLightsInCluster;
     stats.droppedLocalLights =
         sceneLightCount > localLightCount ? static_cast<uint32_t>(sceneLightCount - localLightCount) : 0u;
+    stats.decalCount = decalCount;
+    stats.droppedDecals = sceneDecalCount > decalCount ? sceneDecalCount - decalCount : 0u;
+    stats.discardedDecalAssignments = decalStatistics.discardedAssignments;
+    stats.maximumDecalsPerCluster = decalStatistics.maximumDecalsInCluster;
+    stats.decalBytes = m_decalClusters.allocatedBytes();
     recordDeferredUploads(rendering.settings(), stats);
     recordTextureStreaming(assets, stats);
     stats.taskQueueDepth = taskResult.stats.maximumQueueDepth;
@@ -2865,6 +2941,11 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         m_reflectionProbeClusters.record(commandBuffer, frameIndex, probeRecords,
                                          m_environmentPass.probeIrradianceBuffer(), clusterGrid);
         passTimestamps.write(FrameTimestamp::reflectionProbeClustersEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    }
+    if (decalCount > 0) {
+        passTimestamps.write(FrameTimestamp::decalClustersBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+        m_decalClusters.record(commandBuffer, frameIndex, clusterGrid);
+        passTimestamps.write(FrameTimestamp::decalClustersEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     }
     if (fogActive) {
         const ClusteredLightingPass::FrameBuffers clusterBuffers = m_clusteredLighting.frameBuffers(frameIndex);
@@ -3587,6 +3668,7 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_gpuDrivenSupported = false;
     m_clusteredLighting.shutdown();
     m_reflectionProbeClusters.shutdown();
+    m_decalClusters.shutdown();
     m_uploadContext.shutdown();
     m_textureUploadContext.shutdown();
     for (auto& [variant, pipelines] : m_meshPipelines) {

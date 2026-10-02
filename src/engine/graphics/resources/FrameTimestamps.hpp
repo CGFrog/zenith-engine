@@ -55,7 +55,10 @@ inline constexpr uint32_t fsrRcasBegin = 49;
 inline constexpr uint32_t fsrRcasEnd = 50;
 inline constexpr uint32_t firstPostProcessPass = fsrEasuBegin;
 inline constexpr uint32_t postProcessPassesEnd = fsrRcasEnd + 1;
-inline constexpr uint32_t count = 51;
+// Decal cluster assignment; skipped when the frame has no decal.
+inline constexpr uint32_t decalClustersBegin = 51;
+inline constexpr uint32_t decalClustersEnd = 52;
+inline constexpr uint32_t count = 53;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot

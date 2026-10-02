@@ -303,6 +303,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/DeferredUploadTracker.cpp
     src/engine/graphics/LocalShadows.cpp
     src/engine/graphics/ReflectionProbes.cpp
+    src/engine/graphics/Decals.cpp
     src/engine/graphics/EnvironmentLighting.cpp
     src/engine/graphics/IrradianceVolume.cpp
     src/engine/graphics/RenderConfiguration.cpp
@@ -326,6 +327,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/passes/ClusteredLightingPass.cpp
     src/engine/graphics/passes/LocalShadowPass.cpp
     src/engine/graphics/passes/ReflectionProbeClusterPass.cpp
+    src/engine/graphics/passes/DecalClusterPass.cpp
     src/engine/graphics/passes/VolumetricFogPass.cpp
     src/engine/graphics/passes/MotionBlurPass.cpp
     src/engine/graphics/passes/EnvironmentPass.cpp
@@ -901,6 +903,14 @@ if(BUILD_TESTING)
     add_executable(zenith_reflection_probe_tests tests/engine/ReflectionProbeTests.cpp)
     target_link_libraries(zenith_reflection_probe_tests PRIVATE zenith_engine)
     add_test(NAME zenith_reflection_probes COMMAND zenith_reflection_probe_tests)
+
+    add_executable(zenith_decal_tests tests/engine/DecalTests.cpp)
+    target_compile_definitions(zenith_decal_tests PRIVATE
+        ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}"
+    )
+    add_dependencies(zenith_decal_tests zenith_assets)
+    target_link_libraries(zenith_decal_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_decals COMMAND zenith_decal_tests)
 
     add_executable(zenith_environment_lighting_tests tests/engine/EnvironmentLightingTests.cpp)
     target_link_libraries(zenith_environment_lighting_tests PRIVATE zenith_engine)
