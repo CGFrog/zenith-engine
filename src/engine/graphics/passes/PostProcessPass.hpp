@@ -6,6 +6,7 @@
 #include "BloomExposurePass.hpp"
 #include "MotionBlurPass.hpp"
 #include "DepthOfFieldPass.hpp"
+#include "ColorGradePass.hpp"
 #include "SceneGeometryViews.hpp"
 #include "ScreenSpaceReflectionPass.hpp"
 #include "TemporalResolvePass.hpp"
@@ -13,6 +14,19 @@
 #include <filesystem>
 #include <optional>
 #include <vector>
+
+// Per-frame inputs of the post chain beyond the camera and settings.
+struct PostProcessFrame {
+    // Increases by one per recorded frame; retires replaced resources and
+    // seeds film grain, so deterministic runs repeat the grain exactly.
+    uint64_t serial{0};
+    // Directory relative asset paths in the settings resolve against (see
+    // RenderRuntime::setAssetRoot); empty uses the packaged asset root.
+    const std::filesystem::path& assetRoot;
+    // Receives the colour-grade scope (FrameTimestamp::colorGradeBegin/End),
+    // written back to back when no grade effect is active.
+    OptionalPassTimestamps& timestamps;
+};
 
 class PostProcessPass {
   public:
@@ -51,7 +65,7 @@ class PostProcessPass {
                 const glm::mat4& inverseViewProjection, const glm::mat4& previousViewProjection,
                 const TemporalResolveFrame& temporal, const depth_of_field::CameraTerms& depthOfFieldCamera,
                 const glm::vec3& cameraPosition, const std::optional<GridOverlay>& gridOverlay,
-                VkQueryPool timestampQueries, OptionalPassTimestamps& passTimestamps, double& bloomCpuMilliseconds,
+                const PostProcessFrame& frame, VkQueryPool timestampQueries, double& bloomCpuMilliseconds,
                 VkImageLayout outputOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
     void shutdown(const VulkanContext& context);
 
@@ -123,7 +137,8 @@ class PostProcessPass {
     };
 
     bool createDescriptors(uint32_t frameCount);
-    bool createPipeline(VkFormat outputFormat);
+    bool createPipelineLayout();
+    bool createPipeline(VkFormat outputFormat, VkPipeline& output);
     bool createTargets(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
     void destroyTargets(const VulkanContext& context);
     bool ensureSpecularTarget(Target& target);
@@ -166,6 +181,12 @@ class PostProcessPass {
     // Seconds since the previous call with the same clock (which it advances),
     // or the fixed frame time; zero on the first call.
     float recordedFrameSeconds(std::optional<std::chrono::steady_clock::time_point>& previousTime) const;
+    void transitionOutput(VkCommandBuffer commandBuffer, VkImage outputImage, VkImageLayout outputOldLayout);
+    // Draws post.frag (scene composite, exposure, bloom, tone map) into target,
+    // which must be in COLOR_ATTACHMENT_OPTIMAL. postSettings points to the
+    // push-constant block.
+    void recordToneMap(VkCommandBuffer commandBuffer, VkDescriptorSet descriptor, VkImageView target,
+                       VkPipeline pipeline, VkExtent2D extent, const void* postSettings);
 
     VkDevice m_device{VK_NULL_HANDLE};
     VkPipelineCache m_pipelineCache{VK_NULL_HANDLE};
@@ -173,7 +194,10 @@ class PostProcessPass {
     VkDescriptorSetLayout m_layout{VK_NULL_HANDLE};
     VkDescriptorPool m_pool{VK_NULL_HANDLE};
     VkPipelineLayout m_pipelineLayout{VK_NULL_HANDLE};
+    // Tone-maps into the output format, or into the colour-grade display
+    // target when a grade effect is active.
     VkPipeline m_pipeline{VK_NULL_HANDLE};
+    VkPipeline m_displayPipeline{VK_NULL_HANDLE};
     VkSampler m_colorSampler{VK_NULL_HANDLE};
     VkSampler m_depthSampler{VK_NULL_HANDLE};
     VkExtent2D m_extent{};
@@ -187,6 +211,7 @@ class PostProcessPass {
     VkExtent2D m_previousRenderExtent{};
     BloomExposurePass m_bloomExposure;
     MotionBlurPass m_motionBlur;
+    ColorGradePass m_colorGrade;
     std::optional<std::chrono::steady_clock::time_point> m_previousExposureTime;
     std::optional<std::chrono::steady_clock::time_point> m_previousMotionBlurTime;
     std::optional<float> m_fixedFrameSeconds;

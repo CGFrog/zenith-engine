@@ -368,8 +368,12 @@ Motion blur (compute, when enabled)
 Exposure and bloom (compute)
   luminance histogram -> adapted exposure buffer; bloom down/upsample chain
 Post-process and tone mapping
-  blurred, else resolved, else HDR scene + bloom mix + exposure + FXAA (non-TAA)
-  + tone map
+  final scene (blurred, else focused, else resolved, else HDR) + editor grid,
+  FXAA (non-TAA) over that composite,
+  exposure + bloom mix + tone map
+  -> swapchain image or editor viewport, or the colour-grade display target
+Colour grade (only when a LUT, vignette or film grain is enabled)
+  display target -> 3D LUT (sRGB-encoded) -> vignette -> film grain
   -> swapchain image or editor viewport
 Game or editor UI
   -> swapchain image

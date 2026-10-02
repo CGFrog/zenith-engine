@@ -37,14 +37,16 @@ inline constexpr uint32_t volumetricFogEnd = 38;
 // volume changes. Probe sampling is part of opaque shading.
 inline constexpr uint32_t irradianceVolumeBegin = 39;
 inline constexpr uint32_t irradianceVolumeEnd = 40;
-// Motion blur velocity tiles and reconstruction, after the temporal resolve.
 // Depth of field (circle of confusion, half-resolution gather, composite).
 inline constexpr uint32_t depthOfFieldBegin = 41;
 inline constexpr uint32_t depthOfFieldEnd = 42;
 // Motion blur velocity tiles and reconstruction, after depth of field.
 inline constexpr uint32_t motionBlurBegin = 43;
 inline constexpr uint32_t motionBlurEnd = 44;
-inline constexpr uint32_t count = 45;
+// Display-referred LUT grade, vignette and film grain after tone mapping.
+inline constexpr uint32_t colorGradeBegin = 45;
+inline constexpr uint32_t colorGradeEnd = 46;
+inline constexpr uint32_t count = 47;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot

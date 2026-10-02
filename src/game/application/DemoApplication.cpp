@@ -31,6 +31,11 @@ SceneResult DemoApplication::onStart(ApplicationContext& context) {
         std::cerr << "Render setting fallback: " << fallback << '\n';
     }
     context.rendering.setSettings(validated.settings);
+    if (m_project) {
+        // Asset paths in the project's render settings (the colour-grading
+        // LUT) are relative to its asset root.
+        context.rendering.setAssetRoot(m_project->assetRoot);
+    }
     context.audio.setBusMuted(AudioBus::Master, m_settings->masterMuted);
     context.gameUi.setAccessibility(m_settings->accessibility);
 

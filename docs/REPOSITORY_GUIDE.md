@@ -23,6 +23,7 @@ objectives and their measurement gates are in
 | `tests/` | CPU-side subsystem and integration tests registered with CTest. |
 | `tools/showcase/` | Blender and Python scripts that regenerate the renderer showcase content. |
 | `tools/irradiance_room/` | Standard-library Python script that regenerates the irradiance-volume test interior. |
+| `tools/color_grading/` | Standard-library Python script that regenerates the example `.cube` colour grade. |
 | `projects/` | Project manifests and scene documents (`demo`, the renderer `showcase`, and the `irradiance_room` interior). |
 | `build/` | Generated configuration, dependencies, binaries, copied assets, and compiled shaders. Do not edit generated contents. |
 
@@ -374,6 +375,13 @@ settings, tool version, and target. Editor inspection and the
 single textures (`cook-texture`) or a model's external textures
 (`cook-model-textures`).
 
+### `src/engine/assets/ColorLut.*`
+
+Parses Adobe/Resolve `.cube` 3D lookup tables (size, domain, Resolve's input
+range, comments) into a renderer-independent `ColorLut`, rejecting 1D tables
+and malformed input with line-numbered errors. `ColorGradePass` owns the GPU
+texture.
+
 ### `src/engine/platform/PlatformServices.*`
 
 Resolves platform writable locations, performs atomic user-data writes and
@@ -423,7 +431,8 @@ Renderer
       |- ScreenSpaceReflectionPass (Hi-Z reflection trace and in-place composite)
       |- DepthOfFieldPass (thin-lens CoC, half-resolution bokeh gather, composite)
       |- MotionBlurPass (velocity tiles and reconstruction gather after TAA)
-      `- BloomExposurePass (luminance histogram, exposure, bloom chain)
+      |- BloomExposurePass (luminance histogram, exposure, bloom chain)
+      `- ColorGradePass (3D LUT, vignette and film grain after tone mapping)
 ```
 
 ### `src/engine/graphics/Renderer.*`
@@ -667,9 +676,30 @@ read the HDR target. Depth of field (`focusScene()`) and then motion blur
 (`recordMotionBlur()`) each replace that scene with their output when enabled,
 and `bindSceneColor()` binds the final one for the fullscreen pass (as the
 resolved scene with TAA, else as the HDR scene that FXAA samples). The final
-fullscreen pass composes the resolved scene (or applies FXAA), the editor grid,
-exposure, the bloom mix, and tone mapping (AgX by default, AgX punchy or
-legacy ACES). Half-resolution effect tiers render into bounded sub-extents.
+fullscreen pass composites the editor grid over the resolved scene (TAA) or the
+HDR target, applies FXAA to that composite when selected, then exposure, the
+bloom mix, and tone mapping (AgX by default, AgX punchy or legacy ACES). It
+writes the output, or the `ColorGradePass` display target when a grade effect
+is enabled. Its descriptor set is 0 HDR scene, 1 depth, 2 resolved scene,
+3 bloom mip 0, 4 exposure buffer. Half-resolution effect tiers render into
+bounded sub-extents.
+
+### `src/engine/graphics/passes/ColorGradePass.*`
+
+Display-referred finishing stage (`shaders/color_grade.frag`) after tone
+mapping: a 3D LUT grade applied to sRGB-encoded values with a blend strength,
+a vignette, and per-frame film grain seeded by the frame serial. Each effect is
+selected independently in `RenderSettings` (`colorLut`, `vignette`,
+`filmGrain`) and Off by default; with all off the pass records nothing and the
+post pass writes the output directly. Owns the output-sized RGBA16F display
+target and the RGBA16F LUT texture, which it loads from the settings' `.cube`
+path (relative to `RenderRuntime::assetRoot()`) only when the path changes.
+
+### `src/engine/graphics/ColorGrading.*`
+
+CPU reference for the grade: sRGB transfer functions, trilinear LUT sampling,
+the vignette falloff, and the integer-hash grain. `color_grade.frag` mirrors it
+by hand; `tests/engine/ColorGradingTests.cpp` covers it with the `.cube` parser.
 
 ### `src/engine/graphics/passes/ScreenSpaceReflectionPass.*`
 
@@ -765,7 +795,8 @@ the capability fallback.
 | `shaders/depth_normal.vert` / `.frag` | Depth prepass: invariant positions shared with `mesh.vert`, alpha masking, and encoded view-space normals plus roughness. |
 | `shaders/depth_pyramid.comp` | Reduces scene depth into the min/max depth pyramid one level per dispatch. |
 | `shaders/fullscreen.vert` | Generates a fullscreen triangle without a vertex buffer. |
-| `shaders/post.frag` | Combines HDR color into the exposed, bloomed, tone-mapped output. |
+| `shaders/post.frag` | Combines HDR color and the editor grid, applies FXAA, exposure, bloom and tone mapping. |
+| `shaders/color_grade.frag` | Applies the 3D LUT grade, vignette and film grain to the tone-mapped frame. |
 | `shaders/luminance_histogram.comp` | Bins the valid HDR region into a 256-bin log2-luminance histogram. |
 | `shaders/exposure_adapt.comp` | Percentile-averages the histogram and adapts the persistent exposure. |
 | `shaders/bloom_downsample.comp` | 13-tap bloom downsample; Karis average on the first level. |
@@ -809,6 +840,7 @@ Recognized shader extensions automatically produce matching
 | `assets/textures/SOURCE.md` | Texture provenance and channel/convention notes. |
 | `assets/showcase/*` | Renderer showcase glTF, textures and HDR sky; provenance in `assets/showcase/SOURCE.md`. |
 | `assets/irradiance_room/room.gltf` | Generated boxes of the irradiance-volume test interior (`tools/irradiance_room/`). |
+| `assets/color_grading/warm_cinematic.cube` | Example 17^3 warm cinematic grade for `RenderSettings::colorLut` (`tools/color_grading/`). |
 | `assets/baked/*` | Editor-baked derived lighting data, such as irradiance volumes (`.zvol`), grouped by scene. |
 
 The source directory is copied as a whole to `build/assets/` for runtime use.

@@ -107,6 +107,9 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     io.IniFilename = m_layoutPath.c_str();
     ImGui::LoadIniSettingsFromDisk(io.IniFilename);
     m_initializeLayout = m_settings.layoutVersion() < currentLayoutVersion;
+    // Asset paths in render settings (the colour-grading LUT) resolve against
+    // the edited project's assets.
+    context.rendering.setAssetRoot(m_document.options().assetRoot);
     if (m_initialSceneLoader) {
         if (SceneResult result = m_initialSceneLoader(context); !result) {
             return result;

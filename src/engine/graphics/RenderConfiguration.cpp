@@ -7,12 +7,18 @@
 #include <nlohmann/json.hpp>
 
 #include <limits>
+#include <utility>
 
 namespace {
 using Json = nlohmann::json;
 
 // Beyond this, simplified levels would be visibly wrong at any distance.
 constexpr float maximumLodErrorThresholdPixels = 64.0f;
+// Colour-grading ranges, documented on the settings in Rendering.hpp.
+constexpr float minimumVignetteSmoothness = 0.01f;
+constexpr float maximumFilmGrainIntensity = 0.5f;
+constexpr float minimumFilmGrainSize = 1.0f;
+constexpr float maximumFilmGrainSize = 8.0f;
 
 template <typename Enum> bool readEnum(const Json& document, const char* name, Enum maximum, Enum& value) {
     const auto found = document.find(name);
@@ -120,6 +126,69 @@ bool readDepthOfField(const Json& document, DepthOfFieldSettings& output) {
     return depth_of_field::validSettings(output);
 }
 
+Json colorGradeDocument(const RenderSettings& settings) {
+    return {{"colorLut",
+             {{"enabled", settings.colorLut.enabled},
+              {"path", settings.colorLut.path},
+              {"strength", settings.colorLut.strength}}},
+            {"vignette",
+             {{"enabled", settings.vignette.enabled},
+              {"intensity", settings.vignette.intensity},
+              {"smoothness", settings.vignette.smoothness},
+              {"roundness", settings.vignette.roundness}}},
+            {"filmGrain",
+             {{"enabled", settings.filmGrain.enabled},
+              {"intensity", settings.filmGrain.intensity},
+              {"size", settings.filmGrain.size}}}};
+}
+
+// Each colour-grading object and each of its fields is optional; missing ones
+// keep their defaults (every effect Off). Throws on mistyped fields.
+bool readColorGrade(const Json& document, RenderSettings& output) {
+    const auto object = [&](const char* name) -> const Json* {
+        const auto found = document.find(name);
+        return found == document.end() ? nullptr : &*found;
+    };
+    if (const Json* lut = object("colorLut")) {
+        if (!lut->is_object()) {
+            return false;
+        }
+        output.colorLut.enabled = lut->value("enabled", output.colorLut.enabled);
+        output.colorLut.path = lut->value("path", output.colorLut.path);
+        output.colorLut.strength = lut->value("strength", output.colorLut.strength);
+    }
+    if (const Json* vignette = object("vignette")) {
+        if (!vignette->is_object()) {
+            return false;
+        }
+        output.vignette.enabled = vignette->value("enabled", output.vignette.enabled);
+        output.vignette.intensity = vignette->value("intensity", output.vignette.intensity);
+        output.vignette.smoothness = vignette->value("smoothness", output.vignette.smoothness);
+        output.vignette.roundness = vignette->value("roundness", output.vignette.roundness);
+    }
+    if (const Json* grain = object("filmGrain")) {
+        if (!grain->is_object()) {
+            return false;
+        }
+        output.filmGrain.enabled = grain->value("enabled", output.filmGrain.enabled);
+        output.filmGrain.intensity = grain->value("intensity", output.filmGrain.intensity);
+        output.filmGrain.size = grain->value("size", output.filmGrain.size);
+    }
+    return true;
+}
+
+bool inRange(float value, float minimum, float maximum) {
+    return value >= minimum && value <= maximum;
+}
+
+bool validColorGrade(const RenderSettings& settings) {
+    return inRange(settings.colorLut.strength, 0.0f, 1.0f) && inRange(settings.vignette.intensity, 0.0f, 1.0f) &&
+           inRange(settings.vignette.smoothness, minimumVignetteSmoothness, 1.0f) &&
+           inRange(settings.vignette.roundness, 0.0f, 1.0f) &&
+           inRange(settings.filmGrain.intensity, 0.0f, maximumFilmGrainIntensity) &&
+           inRange(settings.filmGrain.size, minimumFilmGrainSize, maximumFilmGrainSize);
+}
+
 // Accepts the retired tiled modes (1: 32 lights, 2: 64 lights) as Clustered;
 // the light cap then comes from maximumLocalLights or its default.
 bool readLocalLighting(const Json& document, LocalLightingQuality& value) {
@@ -171,6 +240,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"motionBlurShutterFraction", settings.motionBlurShutterFraction},
                            {"motionBlurMaximumRadiusPixels", settings.motionBlurMaximumRadiusPixels},
                            {"depthOfField", depthOfFieldDocument(settings.depthOfField)},
+                           {"colorGrade", colorGradeDocument(settings)},
                            {"budgets",
                             {{"shadow", budget(settings.budgets.shadow)},
                              {"opaque", budget(settings.budgets.opaque)},
@@ -192,7 +262,8 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"volumetricFog", budget(settings.budgets.volumetricFog)},
                              {"irradianceVolume", budget(settings.budgets.irradianceVolume)},
                              {"motionBlur", budget(settings.budgets.motionBlur)},
-                             {"depthOfField", budget(settings.budgets.depthOfField)}}}};
+                             {"depthOfField", budget(settings.budgets.depthOfField)},
+                             {"colorGrade", budget(settings.budgets.colorGrade)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -295,6 +366,14 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
         if (!readDepthOfField(document, loaded.depthOfField)) {
             return {.error = "Render settings contain invalid depth of field settings"};
         }
+        if (const auto colorGrade = document.find("colorGrade"); colorGrade != document.end()) {
+            if (!colorGrade->is_object() || !readColorGrade(*colorGrade, loaded)) {
+                return {.error = "Render settings contain invalid colour-grading settings"};
+            }
+        }
+        if (!validColorGrade(loaded)) {
+            return {.error = "Render settings contain out-of-range colour-grading parameters"};
+        }
         if (const auto budgets = document.find("budgets"); budgets != document.end()) {
             if (!budgets->is_object() || !readBudget(*budgets, "shadow", loaded.budgets.shadow) ||
                 !readBudget(*budgets, "opaque", loaded.budgets.opaque) ||
@@ -316,7 +395,8 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "volumetricFog", loaded.budgets.volumetricFog) ||
                 !readOptionalBudget(*budgets, "irradianceVolume", loaded.budgets.irradianceVolume) ||
                 !readOptionalBudget(*budgets, "motionBlur", loaded.budgets.motionBlur) ||
-                !readOptionalBudget(*budgets, "depthOfField", loaded.budgets.depthOfField)) {
+                !readOptionalBudget(*budgets, "depthOfField", loaded.budgets.depthOfField) ||
+                !readOptionalBudget(*budgets, "colorGrade", loaded.budgets.colorGrade)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }
@@ -329,7 +409,7 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
             loaded.dynamicResolution.quantization > 256) {
             return {.error = "Render settings contain invalid cascade parameters"};
         }
-        settings = loaded;
+        settings = std::move(loaded);
         return {.success = true};
     } catch (const Json::exception& error) {
         return {.error = std::string("Could not parse render settings: ") + error.what()};

@@ -295,6 +295,7 @@ add_library(zenith_engine STATIC
     src/engine/assets/AssetStreaming.cpp
     src/engine/assets/PackedVertexStreams.cpp
     src/engine/assets/IrradianceVolumeAsset.cpp
+    src/engine/assets/ColorLut.cpp
     src/engine/graphics/Renderer.cpp
     src/engine/graphics/GraphicsValidation.cpp
     src/engine/graphics/Lighting.cpp
@@ -313,6 +314,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/VolumetricFog.cpp
     src/engine/graphics/MotionBlur.cpp
     src/engine/graphics/DepthOfField.cpp
+    src/engine/graphics/ColorGrading.cpp
     src/engine/graphics/graph/RenderGraph.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
@@ -330,6 +332,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/passes/TemporalResolvePass.cpp
     src/engine/graphics/passes/DepthOfFieldPass.cpp
     src/engine/graphics/passes/BloomExposurePass.cpp
+    src/engine/graphics/passes/ColorGradePass.cpp
     src/engine/graphics/passes/UiPass.cpp
     src/engine/graphics/pipeline/GraphicsPipeline.cpp
     src/engine/graphics/pipeline/ComputePipeline.cpp
@@ -860,6 +863,11 @@ if(BUILD_TESTING)
     add_executable(zenith_depth_of_field_tests tests/engine/DepthOfFieldTests.cpp)
     target_link_libraries(zenith_depth_of_field_tests PRIVATE zenith_engine)
     add_test(NAME zenith_depth_of_field COMMAND zenith_depth_of_field_tests)
+    add_executable(zenith_color_grading_tests tests/engine/ColorGradingTests.cpp)
+    target_compile_definitions(zenith_color_grading_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_color_grading_tests zenith_assets)
+    target_link_libraries(zenith_color_grading_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_color_grading COMMAND zenith_color_grading_tests)
 
     add_executable(zenith_frame_task_graph_tests tests/engine/FrameTaskGraphTests.cpp)
     target_link_libraries(zenith_frame_task_graph_tests PRIVATE zenith_engine)

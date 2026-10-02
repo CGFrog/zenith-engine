@@ -4,10 +4,12 @@
 #include "engine/graphics/DepthOfField.hpp"
 
 #include <imgui.h>
+#include <misc/cpp/imgui_stdlib.h>
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <string>
 
 namespace {
 // Upper bounds mirrored from deserializeRenderSettings (RenderConfiguration.cpp).
@@ -23,6 +25,10 @@ constexpr float maximumAdjustmentRate = 0.25f;
 constexpr uint32_t maximumQuantization = 256;
 constexpr float minimumBloomRadius = 0.05f;
 constexpr float maximumBloomRadius = 4.0f;
+constexpr float minimumVignetteSmoothness = 0.01f;
+constexpr float maximumFilmGrainIntensity = 0.5f;
+constexpr float minimumFilmGrainSize = 1.0f;
+constexpr float maximumFilmGrainSize = 8.0f;
 
 struct EnumOption {
     const char* label;
@@ -194,6 +200,35 @@ bool drawBloomAndToneMapping(RenderSettings& settings) {
     return changed;
 }
 
+bool drawColorGrading(RenderSettings& settings) {
+    ColorLutSettings& lut = settings.colorLut;
+    bool changed = ImGui::Checkbox("Colour LUT", &lut.enabled);
+    ImGui::BeginDisabled(!lut.enabled);
+    // Edits apply on Enter so a half-typed path is not loaded.
+    std::string path = lut.path;
+    if (ImGui::InputTextWithHint("LUT file", "relative to the asset root (.cube)", &path,
+                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
+        lut.path = path;
+        changed = true;
+    }
+    changed |= ImGui::SliderFloat("LUT strength", &lut.strength, 0.0f, 1.0f, "%.2f");
+    ImGui::EndDisabled();
+    VignetteSettings& vignette = settings.vignette;
+    changed |= ImGui::Checkbox("Vignette", &vignette.enabled);
+    ImGui::BeginDisabled(!vignette.enabled);
+    changed |= ImGui::SliderFloat("Vignette intensity", &vignette.intensity, 0.0f, 1.0f, "%.2f");
+    changed |= ImGui::SliderFloat("Vignette smoothness", &vignette.smoothness, minimumVignetteSmoothness, 1.0f, "%.2f");
+    changed |= ImGui::SliderFloat("Vignette roundness", &vignette.roundness, 0.0f, 1.0f, "%.2f");
+    ImGui::EndDisabled();
+    FilmGrainSettings& grain = settings.filmGrain;
+    changed |= ImGui::Checkbox("Film grain", &grain.enabled);
+    ImGui::BeginDisabled(!grain.enabled);
+    changed |= ImGui::SliderFloat("Grain intensity", &grain.intensity, 0.0f, maximumFilmGrainIntensity, "%.3f");
+    changed |= ImGui::SliderFloat("Grain size", &grain.size, minimumFilmGrainSize, maximumFilmGrainSize, "%.1f px");
+    ImGui::EndDisabled();
+    return changed;
+}
+
 bool drawExposure(ExposureSettings& exposure) {
     bool changed = enumCombo("Exposure mode", exposure.mode, std::array<EnumOption, 2>{{{"Automatic"}, {"Manual"}}});
     changed |= ImGui::SliderFloat("Compensation", &exposure.compensationEv, -maximumCompensationEv,
@@ -251,6 +286,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Irradiance volume", budgets.irradianceVolume);
     changed |= drawBudget("Motion blur", budgets.motionBlur);
     changed |= drawBudget("Depth of field", budgets.depthOfField);
+    changed |= drawBudget("Colour grading", budgets.colorGrade);
     return changed;
 }
 
@@ -291,6 +327,7 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
             {"Exposure", stats.gpuExposureMilliseconds},
             {"Bloom", stats.gpuBloomMilliseconds},
             {"Post-process", stats.gpuPostMilliseconds},
+            {"Colour grading", stats.gpuColorGradeMilliseconds},
             {"UI", stats.gpuUiMilliseconds},
             {"Frame", stats.gpuFrameMilliseconds}};
 }
@@ -306,6 +343,12 @@ void clampToDocumentRanges(RenderSettings& settings) {
         settings.motionBlurShutterFraction, motion_blur::minimumShutterFraction, motion_blur::maximumShutterFraction);
     settings.motionBlurMaximumRadiusPixels = std::clamp(
         settings.motionBlurMaximumRadiusPixels, motion_blur::minimumRadiusPixels, motion_blur::maximumRadiusPixels);
+    settings.colorLut.strength = std::clamp(settings.colorLut.strength, 0.0f, 1.0f);
+    settings.vignette.intensity = std::clamp(settings.vignette.intensity, 0.0f, 1.0f);
+    settings.vignette.smoothness = std::clamp(settings.vignette.smoothness, minimumVignetteSmoothness, 1.0f);
+    settings.vignette.roundness = std::clamp(settings.vignette.roundness, 0.0f, 1.0f);
+    settings.filmGrain.intensity = std::clamp(settings.filmGrain.intensity, 0.0f, maximumFilmGrainIntensity);
+    settings.filmGrain.size = std::clamp(settings.filmGrain.size, minimumFilmGrainSize, maximumFilmGrainSize);
 
     DynamicResolutionSettings& dynamic = settings.dynamicResolution;
     dynamic.minimumScale = std::clamp(dynamic.minimumScale, minimumDynamicScale, 1.0f);
@@ -347,7 +390,8 @@ void clampToDocumentRanges(RenderSettings& settings) {
                                      &budgets.volumetricFog,
                                      &budgets.irradianceVolume,
                                      &budgets.motionBlur,
-                                     &budgets.depthOfField}) {
+                                     &budgets.depthOfField,
+                                     &budgets.colorGrade}) {
         clampBudget(*budget);
     }
 
@@ -387,6 +431,9 @@ bool drawSettings(RenderSettings& settings, const RenderCapabilities& capabiliti
     }
     if (ImGui::CollapsingHeader("Exposure")) {
         changed |= drawExposure(settings.exposure);
+    }
+    if (ImGui::CollapsingHeader("Colour grading")) {
+        changed |= drawColorGrading(settings);
     }
     if (ImGui::CollapsingHeader("Geometry and submission")) {
         changed |= drawGeometryAndSubmission(settings, capabilities);

@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
 #include <glm/glm.hpp>
 #include <optional>
 #include <span>
+#include <string>
+#include <utility>
 #include <vector>
 
 using RenderObjectId = uint32_t;
@@ -173,6 +176,41 @@ struct DepthOfFieldSettings {
     float maximumCocRadiusPixels{12.0f};
 };
 
+// Display-referred finishing effects applied after tone mapping by
+// ColorGradePass, in this order: the LUT grade, the vignette, then film grain.
+// Each is selected independently and Off by default; the pass records no work
+// while all of them are off. ColorGrading.hpp holds the CPU reference math.
+struct ColorLutSettings {
+    bool enabled{false};
+    // A .cube file (see ColorLut.hpp), relative to the render asset root
+    // (RenderRuntime::setAssetRoot) or absolute. Empty applies no LUT; a file
+    // that cannot be loaded is reported once and also applies no LUT.
+    std::string path;
+    // Mix of the graded colour over the ungraded one, 0..1.
+    float strength{1.0f};
+};
+
+struct VignetteSettings {
+    bool enabled{false};
+    // Darkening at the frame corners, 0..1: corners keep (1 - intensity).
+    float intensity{0.3f};
+    // Width of the falloff toward the corners, as a fraction of the
+    // centre-to-corner distance, 0.01..1.
+    float smoothness{0.5f};
+    // 1 keeps the vignette circular on screen; 0 stretches it to the frame's
+    // aspect ratio.
+    float roundness{1.0f};
+};
+
+struct FilmGrainSettings {
+    bool enabled{false};
+    // Peak grain amplitude in display-encoded (sRGB) units, 0..0.5.
+    float intensity{0.05f};
+    // Grain cell edge in output pixels, 1..8. The pattern changes every frame,
+    // seeded by the frame serial, so deterministic runs repeat it exactly.
+    float size{1.5f};
+};
+
 struct RenderPassBudget {
     double cpuMilliseconds{0.0};
     double gpuMilliseconds{0.0};
@@ -206,6 +244,8 @@ struct RenderPassBudgets {
     // Velocity tiles and the reconstruction gather.
     RenderPassBudget motionBlur;
     RenderPassBudget depthOfField;
+    // Display-referred LUT grade, vignette and film grain.
+    RenderPassBudget colorGrade;
 };
 
 struct DynamicResolutionSettings {
@@ -262,6 +302,9 @@ struct RenderSettings {
     // Longest blur, in output pixels, on either side of a pixel.
     float motionBlurMaximumRadiusPixels{32.0f};
     DepthOfFieldSettings depthOfField;
+    ColorLutSettings colorLut;
+    VignetteSettings vignette;
+    FilmGrainSettings filmGrain;
     // Zero disables enforcement for that processor/pass pair.
     RenderPassBudgets budgets;
 
@@ -409,6 +452,8 @@ struct RenderStats {
     uint32_t irradianceVolumeProbes{0};
     // Device memory of the irradiance-volume probe buffer.
     uint64_t irradianceVolumeBytes{0};
+    // LUT grade, vignette and film grain; zero when every effect is off.
+    double gpuColorGradeMilliseconds{0.0};
     uint64_t temporalHistoryBytes{0};
     uint64_t motionVectorBytes{0};
     uint64_t ambientOcclusionBytes{0};
@@ -467,7 +512,17 @@ class RenderRuntime {
     }
 
     void setSettings(RenderSettings settings) {
-        m_settings = settings;
+        m_settings = std::move(settings);
+    }
+
+    // Directory that relative asset paths in RenderSettings (the colour-grading
+    // LUT) resolve against. Empty, the default, uses the packaged asset root.
+    void setAssetRoot(std::filesystem::path root) {
+        m_assetRoot = std::move(root);
+    }
+
+    const std::filesystem::path& assetRoot() const {
+        return m_assetRoot;
     }
 
     const RenderCapabilities& capabilities() const {
@@ -528,6 +583,7 @@ class RenderRuntime {
     friend class MeshPass;
 
     RenderSettings m_settings;
+    std::filesystem::path m_assetRoot;
     RenderCapabilities m_capabilities;
     RenderStats m_stats;
     UiTextureHandle m_viewportTexture;

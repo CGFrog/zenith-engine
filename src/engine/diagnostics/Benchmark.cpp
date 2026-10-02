@@ -170,6 +170,7 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
     sample("gpu.irradiance_volume", s.gpuIrradianceVolumeMilliseconds, "ms", budgets.irradianceVolume.gpuMilliseconds);
     sample("gpu.motion_blur", s.gpuMotionBlurMilliseconds, "ms", budgets.motionBlur.gpuMilliseconds);
     sample("gpu.depth_of_field", s.gpuDepthOfFieldMilliseconds, "ms", budgets.depthOfField.gpuMilliseconds);
+    sample("gpu.color_grade", s.gpuColorGradeMilliseconds, "ms", budgets.colorGrade.gpuMilliseconds);
     sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
     sample("gpu.ui", s.gpuUiMilliseconds, "ms", budgets.ui.gpuMilliseconds);

@@ -44,6 +44,9 @@ struct RenderGraphShape {
     bool irradianceVolume{false};
     bool motionBlur{false};
     bool depthOfField{false};
+    // Any colour-grade effect requested (ColorGradePass); a LUT whose file
+    // fails to load still counts, so the model may show an idle grade pass.
+    bool colorGrade{false};
 
     bool operator==(const RenderGraphShape&) const = default;
 };
