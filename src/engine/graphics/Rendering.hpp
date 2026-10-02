@@ -160,6 +160,11 @@ struct RenderSettings {
     ReflectionQuality reflections{ReflectionQuality::ProbesOnly};
     // Zero disables enforcement for that processor/pass pair.
     RenderPassBudgets budgets;
+
+    // Silent-fallback diagnostics. A mesh or texture whose upload stays
+    // deferred (skipped draws or fallback texture) for more than this many
+    // consecutive frames is logged once. Zero disables the warning.
+    uint32_t deferredUploadWarningFrames{120};
 };
 
 struct RenderCapabilities {
@@ -278,6 +283,15 @@ struct RenderStats {
     double pipelineCreationMilliseconds{0.0};
     uint32_t pipelineFirstUseEvents{0};
     double pipelineFirstUseMilliseconds{0.0};
+
+    // Silent-fallback audit. Distinct assets whose GPU upload was deferred to
+    // a later frame during this submission: deferred meshes are not drawn and
+    // deferred textures sample a fallback until the upload lands.
+    uint32_t deferredMeshUploads{0};
+    uint32_t deferredTextureUploads{0};
+    // Scene local lights left out this submission because the scene had more
+    // than the effective local-light limit (the nearest are kept).
+    uint32_t droppedLocalLights{0};
 };
 
 struct RenderView {

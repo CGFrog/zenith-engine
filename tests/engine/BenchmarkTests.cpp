@@ -47,6 +47,9 @@ int main() {
         stats.pipelineCreationMilliseconds = 3.5;
         stats.pipelineFirstUseEvents = 12;
         stats.pipelineFirstUseMilliseconds = 0.25;
+        stats.deferredMeshUploads = 3;
+        stats.deferredTextureUploads = 5;
+        stats.droppedLocalLights = 7;
         report.renderCpu(stats, budgets);
         report.renderGpu(stats, budgets, 40, 50);
         report.renderGpu(stats, budgets, 40, 50);
@@ -64,6 +67,10 @@ int main() {
                     output["metrics"]["pipeline.creation_events"]["max"] == 12 &&
                     output["metrics"]["pipeline.first_use_time"]["max"] == 0.25,
                 "pipeline cache and hitch diagnostics were not recorded");
+        require(output["metrics"]["upload.deferred_meshes"]["max"] == 3 &&
+                    output["metrics"]["upload.deferred_textures"]["max"] == 5 &&
+                    output["metrics"]["lights.dropped"]["max"] == 7,
+                "silent-fallback counters were not recorded");
     } catch (const std::exception& error) {
         std::cerr << "Benchmark test failed: " << error.what() << '\n';
         return 1;

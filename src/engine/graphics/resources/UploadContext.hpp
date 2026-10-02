@@ -12,6 +12,9 @@ class VulkanContext;
 // callers defer work when stage() reports backpressure.
 class UploadContext {
   public:
+    // Largest single stage() request; a larger upload can never succeed.
+    static constexpr VkDeviceSize maximumSlotBytes = 64ull * 1024ull * 1024ull;
+
     bool init(const VulkanContext& context, bool preferDedicatedTransferQueue = true);
     VkBuffer stage(const void* data, VkDeviceSize size);
     bool submit(const std::function<void(VkCommandBuffer)>& record);
@@ -55,7 +58,6 @@ class UploadContext {
 
   private:
     static constexpr uint32_t ringSize = 3;
-    static constexpr VkDeviceSize maximumSlotBytes = 64ull * 1024ull * 1024ull;
 
     struct Slot {
         VkCommandBuffer command{VK_NULL_HANDLE};
