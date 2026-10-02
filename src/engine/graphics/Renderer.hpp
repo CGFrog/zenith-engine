@@ -21,14 +21,14 @@
 #include <unordered_map>
 
 // Every input that changes the planned frame graph's passes. Settings that only
-// change pass parameters are deliberately absent.
+// change pass parameters are deliberately absent. Decisions MeshPass makes
+// while recording are copied from its MeshPassFramePlan, never re-derived.
 struct RenderGraphShape {
     uint32_t width{0};
     uint32_t height{0};
     bool viewport{false};
     AntialiasingMode antialiasing{AntialiasingMode::Off};
     AmbientOcclusionQuality ambientOcclusion{AmbientOcclusionQuality::Off};
-    ReflectionQuality reflections{ReflectionQuality::ProbesOnly};
     BloomQuality bloom{BloomQuality::Off};
     ExposureMode exposure{ExposureMode::Auto};
     bool shadows{false};
@@ -39,6 +39,8 @@ struct RenderGraphShape {
     bool perPixelReflectionProbes{false};
     bool depthPrepass{false};
     bool gpuDriven{false};
+    bool gpuShadowCulling{false};
+    bool screenSpaceReflections{false};
     bool volumetricFog{false};
     // Irradiance volume (U6)
     bool irradianceVolume{false};
@@ -137,7 +139,7 @@ class Renderer {
     void prepareCapture();
     void finishCapture(const FrameResources& frame);
     void pruneUnusedUiTextures(const AssetManager& assets);
-    bool updateRenderGraphPlan(VkExtent2D extent, bool useViewport);
+    bool updateRenderGraphPlan(VkExtent2D extent, bool useViewport, const MeshPassFramePlan& meshPassPlan);
 
     VulkanContext m_context;
     Surface m_surface;
