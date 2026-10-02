@@ -119,6 +119,7 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("render.irradiance_volume_probes", s.irradianceVolumeProbes, "count");
     sample("render.irradiance_volume_bytes", static_cast<double>(s.irradianceVolumeBytes), "bytes");
     sample("render.motion_blur_bytes", static_cast<double>(s.motionBlurBytes), "bytes");
+    sample("render.depth_of_field_bytes", static_cast<double>(s.depthOfFieldBytes), "bytes");
     sample("streaming.decoded_bytes", static_cast<double>(s.streamingDecodedBytes), "bytes");
     sample("streaming.uploaded_bytes", static_cast<double>(s.streamingUploadedBytes), "bytes");
     sample("streaming.decode_backlog_bytes", static_cast<double>(s.streamingDecodeBacklogBytes), "bytes");
@@ -168,6 +169,7 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
     sample("gpu.volumetric_fog", s.gpuVolumetricFogMilliseconds, "ms", budgets.volumetricFog.gpuMilliseconds);
     sample("gpu.irradiance_volume", s.gpuIrradianceVolumeMilliseconds, "ms", budgets.irradianceVolume.gpuMilliseconds);
     sample("gpu.motion_blur", s.gpuMotionBlurMilliseconds, "ms", budgets.motionBlur.gpuMilliseconds);
+    sample("gpu.depth_of_field", s.gpuDepthOfFieldMilliseconds, "ms", budgets.depthOfField.gpuMilliseconds);
     sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
     sample("gpu.ui", s.gpuUiMilliseconds, "ms", budgets.ui.gpuMilliseconds);

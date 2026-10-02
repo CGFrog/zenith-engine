@@ -211,8 +211,9 @@ or at the decision point named below, after capability validation.
 
 | Variable | Effect |
 | --- | --- |
-| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, per-pixel reflection probe blending, probe-volume indirect diffuse, clustered local lights with high-quality local shadows, depth prepass on, cascaded (high) shadows, bloom, High volumetric fog, and High motion blur. |
+| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, per-pixel reflection probe blending, probe-volume indirect diffuse, clustered local lights with high-quality local shadows, depth prepass on, cascaded (high) shadows, bloom, High volumetric fog, High depth of field, and High motion blur. |
 | `ZENITH_DISABLE_VOLUMETRIC_FOG` | Forces volumetric fog Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
+| `ZENITH_DISABLE_DEPTH_OF_FIELD` | Forces depth of field Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
 | `ZENITH_DISABLE_MOTION_BLUR` | Forces motion blur Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
 | `ZENITH_FORCE_TAA` | Temporal anti-aliasing. |
 | `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
@@ -422,3 +423,44 @@ previous depth and projection. The benchmark reports `gpu.local_shadows` and
 `lights_rejected` (no atlas space), and `render.local_shadow_atlas_bytes`.
 `zenith_local_shadows` covers request order, cache invalidation, budget
 selection, and the face projections on the CPU.
+
+## Depth of field
+
+`RenderSettings::depthOfField` (`DepthOfFieldSettings`, serialized as the
+optional `depthOfField` object) blurs the HDR scene with a thin-lens circle of
+confusion, after the temporal resolve and before exposure, bloom, and tone
+mapping. `quality` (`DepthOfFieldQuality`) is Off (the fallback: no work, no
+memory), Low, or High; both gather at half resolution, and Low spaces its
+golden-angle spiral twice as far apart (about half the samples). The lens is
+`focusDistance` (meters along the view axis), `fStop`, `sensorHeightMillimeters`
+(with the camera's vertical field of view it fixes the focal length), and
+`maximumCocRadiusPixels` (the blur radius limit in pixels of the blurred image,
+which bounds the gather cost). Deserialization rejects values outside the
+ranges in `DepthOfField.hpp`; validation turns depth of field Off with a
+fallback message when the device lacks the capability or settings set in code
+are out of range. `ZENITH_FORCE_HIGH_QUALITY` selects High and
+`ZENITH_DISABLE_DEPTH_OF_FIELD` forces Off.
+
+The GPU scope is `gpu.depth_of_field` (timestamps 41 and 42, zero when Off)
+against `RenderPassBudgets::depthOfField` (`depthOfField` in the budgets
+object); `render.depth_of_field_bytes` reports its targets (two half-resolution
+and one output-resolution RGBA16F image, allocated on first use).
+`zenith_depth_of_field` covers the CoC against the thin-lens formula, depth
+linearization, the gather sample count, the composite blend, settings
+serialization, and the fallbacks.
+
+The 2026-10-02 Release measurement (RTX 2070 SUPER, 1920x1080, render mode,
+showcase project with TAA, camera `0,1.7,4,0,-8`, focus 4 m at f/1.0 on a 36 mm
+sensor, maximum radius 16 px, 300 warm-up and 600 measured frames, three runs
+each; other GPU work may have been running on the machine) gave:
+
+| Quality | `gpu.depth_of_field` median | p95 | `gpu.frame` median |
+| --- | ---: | ---: | ---: |
+| Off | 0.001 ms | 0.002 ms | 3.94 ms |
+| Low | 0.284 ms | 0.288 ms | 4.25 ms |
+| High | 0.412 ms | 0.417 ms | 4.36 ms |
+| High with FXAA (no TAA) | 0.410 ms | 0.413 ms | 3.95 ms |
+
+The cost scales with the output area and with the square of
+`maximumCocRadiusPixels`; the default 12 px radius gathers about 40% fewer
+samples than the measured 16 px.

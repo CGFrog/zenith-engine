@@ -312,6 +312,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/AmbientOcclusion.cpp
     src/engine/graphics/VolumetricFog.cpp
     src/engine/graphics/MotionBlur.cpp
+    src/engine/graphics/DepthOfField.cpp
     src/engine/graphics/graph/RenderGraph.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
@@ -327,6 +328,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/passes/PostProcessPass.cpp
     src/engine/graphics/passes/ScreenSpaceReflectionPass.cpp
     src/engine/graphics/passes/TemporalResolvePass.cpp
+    src/engine/graphics/passes/DepthOfFieldPass.cpp
     src/engine/graphics/passes/BloomExposurePass.cpp
     src/engine/graphics/passes/UiPass.cpp
     src/engine/graphics/pipeline/GraphicsPipeline.cpp
@@ -855,6 +857,9 @@ if(BUILD_TESTING)
     add_executable(zenith_motion_blur_tests tests/engine/MotionBlurTests.cpp)
     target_link_libraries(zenith_motion_blur_tests PRIVATE zenith_engine)
     add_test(NAME zenith_motion_blur COMMAND zenith_motion_blur_tests)
+    add_executable(zenith_depth_of_field_tests tests/engine/DepthOfFieldTests.cpp)
+    target_link_libraries(zenith_depth_of_field_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_depth_of_field COMMAND zenith_depth_of_field_tests)
 
     add_executable(zenith_frame_task_graph_tests tests/engine/FrameTaskGraphTests.cpp)
     target_link_libraries(zenith_frame_task_graph_tests PRIVATE zenith_engine)

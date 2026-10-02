@@ -5,6 +5,7 @@
 #include "../vulkan/VulkanContext.hpp"
 #include "BloomExposurePass.hpp"
 #include "MotionBlurPass.hpp"
+#include "DepthOfFieldPass.hpp"
 #include "SceneGeometryViews.hpp"
 #include "ScreenSpaceReflectionPass.hpp"
 #include "TemporalResolvePass.hpp"
@@ -41,12 +42,16 @@ class PostProcessPass {
     bool recordReflections(VkCommandBuffer commandBuffer, uint32_t frameIndex, const SceneGeometryViews& geometry,
                            ReflectionQuality reflections, const ScreenSpaceReflectionCamera& camera,
                            VkQueryPool timestampQueries);
+    // Resolves, focuses (depth of field), exposes, blooms, and tone maps the
+    // frame into the output image. passTimestamps receives the optional
+    // depth-of-field pair (FrameTimestamp::depthOfFieldBegin/End); the caller
+    // closes skipped passes afterwards.
     bool record(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkImage outputImage, VkImageView outputView,
                 VkImage depthImage, VkExtent2D extent, VkExtent2D internalExtent, const RenderSettings& settings,
                 const glm::mat4& inverseViewProjection, const glm::mat4& previousViewProjection,
-                const TemporalResolveFrame& temporal, const glm::vec3& cameraPosition,
-                const std::optional<GridOverlay>& gridOverlay, VkQueryPool timestampQueries,
-                OptionalPassTimestamps& passTimestamps, double& bloomCpuMilliseconds,
+                const TemporalResolveFrame& temporal, const depth_of_field::CameraTerms& depthOfFieldCamera,
+                const glm::vec3& cameraPosition, const std::optional<GridOverlay>& gridOverlay,
+                VkQueryPool timestampQueries, OptionalPassTimestamps& passTimestamps, double& bloomCpuMilliseconds,
                 VkImageLayout outputOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
     void shutdown(const VulkanContext& context);
 
@@ -89,6 +94,10 @@ class PostProcessPass {
         return m_motionBlur.targetBytes();
     }
 
+    uint64_t depthOfFieldBytes() const {
+        return m_depthOfField.allocatedBytes();
+    }
+
   private:
     struct Target {
         VkImage image{VK_NULL_HANDLE};
@@ -118,20 +127,38 @@ class PostProcessPass {
     bool createTargets(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
     void destroyTargets(const VulkanContext& context);
     bool ensureSpecularTarget(Target& target);
-    // Runs the temporal resolve when enabled and binds the latest resolved image
-    // as the post pass's binding 2. Records timestamps 19 and 20 either way.
+
+    // The HDR scene the passes after the temporal resolve read: its image is
+    // output-sized and the top-left validExtent texels hold the frame.
+    struct SceneColor {
+        VkImageView view{VK_NULL_HANDLE};
+        VkImageLayout layout{VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkExtent2D validExtent{};
+    };
+
+    // Runs the temporal resolve when enabled. Records timestamps 19 and 20
+    // either way.
     bool resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent, bool enabled,
                          const TemporalResolveFrame& temporal, VkQueryPool timestampQueries);
+    // Runs depth of field over the scene when enabled and returns the scene
+    // later passes read. Writes the depth-of-field timestamp pair only when
+    // the pass runs.
+    std::optional<SceneColor> focusScene(VkCommandBuffer commandBuffer, uint32_t frameIndex, const SceneColor& scene,
+                                         VkExtent2D internalExtent, const DepthOfFieldSettings& settings,
+                                         const depth_of_field::CameraTerms& camera,
+                                         OptionalPassTimestamps& passTimestamps);
+    // Binds the scene as the post pass's binding 2 with TAA (the
+    // output-resolution scene) or binding 0 otherwise (the render-resolution
+    // scene, which FXAA also samples). The other binding keeps the frame's HDR
+    // target as a valid placeholder.
+    void bindSceneColor(uint32_t frameIndex, const SceneColor& scene, bool temporalEnabled);
     // Blurs the HDR scene by its motion vectors when motion blur is enabled
     // and replaces scene with the blurred image. Records the motion blur
     // timestamps only when it blurs. Fails only if the blur targets cannot be
     // allocated.
     bool recordMotionBlur(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent,
                           const RenderSettings& settings, const TemporalResolveFrame& temporal,
-                          OptionalPassTimestamps& passTimestamps, BloomExposureInput& scene);
-    // Binds the final HDR scene where post.frag reads it: binding 2 with TAA,
-    // otherwise binding 0.
-    void bindPostScene(uint32_t frameIndex, const BloomExposureInput& scene, bool temporalEnabled);
+                          OptionalPassTimestamps& passTimestamps, SceneColor& scene);
     void recordBloomAndExposure(VkCommandBuffer commandBuffer, const BloomExposureInput& input,
                                 const RenderSettings& settings, VkQueryPool timestampQueries,
                                 double& bloomCpuMilliseconds);
@@ -153,6 +180,7 @@ class PostProcessPass {
     std::vector<Target> m_targets;
     TemporalResolvePass m_temporalResolve;
     ScreenSpaceReflectionPass m_reflections;
+    DepthOfFieldPass m_depthOfField;
     // The most recently recorded frame slot and its render extent; that slot's
     // motion target supplies the previous frame's motion and depth.
     std::optional<uint32_t> m_previousFrameIndex;

@@ -2800,13 +2800,15 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
                                                .historyValid = temporal.historyValid};
     if (!m_postProcess.record(commandBuffer, frameIndex, colorImage, colorView, depthImage, extent, renderExtent,
                               rendering.settings(), glm::inverse(unjitteredViewProjection), m_previousViewProjection,
-                              temporalResolve, cameraPosition, rendering.m_gridOverlay, timestampQueries,
-                              passTimestamps, stats.cpuBloomMilliseconds, colorOldLayout)) {
+                              temporalResolve, depth_of_field::cameraFromProjection(projection), cameraPosition,
+                              rendering.m_gridOverlay, timestampQueries, passTimestamps, stats.cpuBloomMilliseconds,
+                              colorOldLayout)) {
         return false;
     }
-    // After post-processing, whose optional passes (motion blur) also write
-    // through passTimestamps.
+    // After post-processing, whose optional passes (depth of field, motion
+    // blur) also write through passTimestamps.
     passTimestamps.closeSkippedPasses();
+    stats.depthOfFieldBytes = m_postProcess.depthOfFieldBytes();
     stats.motionBlurBytes = m_postProcess.motionBlurBytes();
     m_previousViewProjection = cameraData.viewProjection;
     m_previousUnjitteredViewProjection = unjitteredViewProjection;

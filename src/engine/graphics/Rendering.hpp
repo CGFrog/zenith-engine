@@ -143,6 +143,36 @@ enum class MotionBlurQuality : uint8_t {
     High,
 };
 
+// Thin-lens depth of field on the HDR scene (DepthOfFieldPass), after the
+// temporal resolve and before exposure, bloom, and tone mapping. Both qualities
+// gather at half resolution and composite at full resolution; Low spaces its
+// gather rings twice as far apart as High (depth_of_field::gatherRingSpacing).
+// Off records no work.
+enum class DepthOfFieldQuality : uint8_t {
+    Off,
+    Low,
+    High,
+};
+
+// Physical camera that shapes the circle of confusion. DepthOfField.hpp holds
+// the math and the accepted ranges.
+struct DepthOfFieldSettings {
+    DepthOfFieldQuality quality{DepthOfFieldQuality::Off};
+    // Distance in meters, along the view axis, of the plane in perfect focus.
+    float focusDistance{5.0f};
+    // Aperture as an f-number (focal length / aperture diameter); smaller
+    // values blur more.
+    float fStop{2.8f};
+    // Film-back (sensor) height in millimeters. With the camera's vertical
+    // field of view it sets the focal length, so larger sensors blur more at
+    // equal framing.
+    float sensorHeightMillimeters{24.0f};
+    // Largest circle-of-confusion radius, in pixels of the blurred image
+    // (output resolution with TAA, render resolution otherwise). Bounds the
+    // gather cost.
+    float maximumCocRadiusPixels{12.0f};
+};
+
 struct RenderPassBudget {
     double cpuMilliseconds{0.0};
     double gpuMilliseconds{0.0};
@@ -175,6 +205,7 @@ struct RenderPassBudgets {
     RenderPassBudget irradianceVolume;
     // Velocity tiles and the reconstruction gather.
     RenderPassBudget motionBlur;
+    RenderPassBudget depthOfField;
 };
 
 struct DynamicResolutionSettings {
@@ -230,6 +261,7 @@ struct RenderSettings {
     float motionBlurShutterFraction{0.5f};
     // Longest blur, in output pixels, on either side of a pixel.
     float motionBlurMaximumRadiusPixels{32.0f};
+    DepthOfFieldSettings depthOfField;
     // Zero disables enforcement for that processor/pass pair.
     RenderPassBudgets budgets;
 
@@ -255,6 +287,8 @@ struct RenderCapabilities {
     bool volumetricFog{true};
     // Needs RGBA16F storage images and the motion-vector target.
     bool motionBlur{true};
+    // Needs RGBA16F storage images.
+    bool depthOfField{true};
     bool meshShaders{false};
     bool rayTracing{false};
     bool dedicatedTransferQueue{false};
@@ -369,6 +403,8 @@ struct RenderStats {
     double gpuIrradianceVolumeMilliseconds{0.0};
     // Velocity tiles plus reconstruction; zero when motion blur is Off.
     double gpuMotionBlurMilliseconds{0.0};
+    // Circle of confusion, half-resolution gather, and composite; zero when Off.
+    double gpuDepthOfFieldMilliseconds{0.0};
     // Probes in the bound irradiance volume; zero when none is bound.
     uint32_t irradianceVolumeProbes{0};
     // Device memory of the irradiance-volume probe buffer.
@@ -382,6 +418,9 @@ struct RenderStats {
     uint64_t volumetricFogBytes{0};
     // Blurred scene and velocity tiles; allocated on the first blurred frame.
     uint64_t motionBlurBytes{0};
+    // Half-resolution gather targets and the composited output of the depth
+    // of field pass; allocated on first use.
+    uint64_t depthOfFieldBytes{0};
     uint64_t streamingDecodedBytes{0};
     uint64_t streamingUploadedBytes{0};
     uint64_t streamingDecodeBacklogBytes{0};

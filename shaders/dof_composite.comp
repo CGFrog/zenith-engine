@@ -1,0 +1,54 @@
+#version 450
+
+// Depth of field, step 3 of 3: blends the upsampled half-resolution blur over
+// the sharp full-resolution scene. The blend follows the larger of the pixel's
+// own circle of confusion (from full-resolution depth, so in-focus edges stay
+// crisp) and the foreground blur the gather found covering it. The CoC and
+// blend math mirror src/engine/graphics/DepthOfField.cpp; keep them in sync.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0) uniform sampler2D sceneColor;
+// w: reversed-Z depth (near = 1, far = 0).
+layout(set = 0, binding = 1) uniform sampler2D motionDepth;
+// rgb: blurred color, a: covering foreground radius in half-resolution pixels.
+layout(set = 0, binding = 3) uniform sampler2D gathered;
+// Output-sized; the top-left fullSize texels receive this frame.
+layout(set = 0, binding = 6, rgba16f) uniform writeonly image2D focusedScene;
+
+// Mirrors DepthOfFieldSettings in DepthOfFieldPass.cpp.
+layout(push_constant) uniform DepthOfFieldSettings {
+    vec4 fullSize;
+    vec4 gatherSize;
+    vec2 gatherUvScale;
+    vec2 depthSize;
+    float cocScale;
+    float focusDistance;
+    float maximumRadius;
+    float depthScale;
+    float depthBias;
+    float ringSpacing;
+} settings;
+
+float circleOfConfusion(ivec2 pixel) {
+    vec2 uv = (vec2(pixel) + 0.5) * settings.fullSize.zw;
+    ivec2 depthTexel = clamp(ivec2(uv * settings.depthSize), ivec2(0), ivec2(settings.depthSize) - 1);
+    float depth = texelFetch(motionDepth, depthTexel, 0).w;
+    float viewDistance = settings.depthBias / (depth + settings.depthScale);
+    float radius = settings.cocScale * (1.0 - settings.focusDistance / max(viewDistance, 1e-6));
+    return clamp(radius, -settings.maximumRadius, settings.maximumRadius);
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, ivec2(settings.fullSize.xy)))) {
+        return;
+    }
+    vec3 sharp = texelFetch(sceneColor, pixel, 0).rgb;
+    // Full-resolution pixel centers in half-resolution pixel coordinates.
+    vec2 gatherPosition = clamp((vec2(pixel) + 0.5) * 0.5, vec2(0.5), settings.gatherSize.xy - 0.5);
+    vec4 blurred = textureLod(gathered, gatherPosition * settings.gatherSize.zw * settings.gatherUvScale, 0.0);
+    float effectiveRadius = max(abs(circleOfConfusion(pixel)), blurred.a * 2.0);
+    float blend = smoothstep(0.5, 2.0, effectiveRadius);
+    imageStore(focusedScene, pixel, vec4(mix(sharp, blurred.rgb, blend), 1.0));
+}
