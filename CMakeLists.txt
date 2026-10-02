@@ -328,6 +328,10 @@ add_library(zenith_engine SHARED
     src/engine/assets/PackedVertexStreams.cpp
     src/engine/assets/IrradianceVolumeAsset.cpp
     src/engine/assets/ColorLut.cpp
+    src/engine/assets/ContentHash.cpp
+    src/engine/assets/AssetGuid.cpp
+    src/engine/assets/AssetMeta.cpp
+    src/engine/assets/AssetDatabase.cpp
     src/engine/graphics/Renderer.cpp
     src/engine/graphics/GraphicsValidation.cpp
     src/engine/graphics/Lighting.cpp
@@ -759,6 +763,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_asset_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_asset_scene COMMAND zenith_asset_tests)
+
+    add_executable(zenith_asset_database_tests tests/engine/AssetDatabaseTests.cpp)
+    target_link_libraries(zenith_asset_database_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_asset_database_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_asset_database_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_asset_database COMMAND zenith_asset_database_tests)
 
     add_executable(zenith_showcase_content_tests tests/engine/ShowcaseContentTests.cpp)
     target_compile_definitions(zenith_showcase_content_tests PRIVATE

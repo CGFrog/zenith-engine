@@ -75,6 +75,7 @@ explicit, so a file move must update `CMakeLists.txt` as well as include sites.
 | `zenith_bc7enc` | Static library | The bc7enc_rdo BC7/BC5 block encoders and decoders, linked privately into the engine for texture cooking. |
 | `zenith_asset_tests` | Test executable | Asset importing and scene hierarchy behavior. |
 | `zenith_game_module_tests` | Test executable | Loads, reloads, and unloads the `zenith_test_*_module` libraries: registration, system order and modes, shadow copies, and refused modules. |
+| `zenith_asset_database_tests` | Test executable | Content hashing, asset GUIDs, `.meta` sidecars, and asset database scans, moves, external changes, and dependencies on real temporary directories. |
 | `zenith_physics_tests` | Test executable | Rigid bodies, contacts, impulses, raycasts, mesh collision, and cleanup. |
 | `zenith_application_tests` | Test executable | Lifecycle ordering, deferred switching, failed-load cleanup, demo composition, controls, and reload behavior. |
 
@@ -450,6 +451,38 @@ Parses Adobe/Resolve `.cube` 3D lookup tables (size, domain, Resolve's input
 range, comments) into a renderer-independent `ColorLut`, rejecting 1D tables
 and malformed input with line-numbered errors. `ColorGradePass` owns the GPU
 texture.
+
+### `src/engine/assets/ContentHash.*`
+
+Incremental 64-bit FNV-1a over bytes, text, and streamed files, with a
+sixteen-digit lowercase hex form. It is the single implementation behind
+`DerivedAssetCache` keys, whose byte sequence (source, settings, tool version,
+target, no separators) must not change without invalidating cached entries.
+
+### `src/engine/assets/AssetGuid.*` and `AssetMeta.*`
+
+`AssetGuid` is a 128-bit identifier written as 32 lowercase hex digits; the
+all-zero value is null. `AssetGuidGenerator` is owned by its user and seeds
+from `std::random_device` (or a fixed seed for tests). `AssetMeta` is the
+`<file>.meta` JSON sidecar (`version`, `guid`, importer-defined
+`importSettings` object), parsed strictly and written atomically through a
+`.tmp` replace.
+
+### `src/engine/assets/AssetDatabase.*`
+
+Tracks every regular file under a project root by the GUID in its sidecar,
+using project-relative UTF-8 forward-slash paths and path-ordered iteration.
+Hidden names, `*.tmp`, sidecars, and configured names/extensions are skipped;
+directories have no sidecar. `rescan()` creates missing sidecars and returns
+Added/Removed/Modified/Moved changes. Files moved outside the editor keep
+their GUID when the sidecar travels with them, or when exactly one vanished
+asset matches their size and timestamp. A duplicated GUID stays with its
+previous path (else the lexicographically first) and other copies are
+reassigned. Unreadable sidecars are never overwritten. Orphan sidecars are
+reported and kept or deleted per `OrphanMetaPolicy`. `move`, `rename`, and
+`remove` act on files or directories and carry sidecars along. An in-memory,
+GUID-keyed dependency graph answers direct and transitive dependents. It knows
+nothing about scenes or GPU resources.
 
 ### `src/engine/platform/PlatformServices.*`
 
