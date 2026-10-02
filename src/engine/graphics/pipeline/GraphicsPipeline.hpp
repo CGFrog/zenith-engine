@@ -58,6 +58,16 @@ class GraphicsPipeline {
                             VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout environmentLayout,
                             VkShaderModule vertex, VkShaderModule fragment, VkPipelineCache pipelineCache,
                             uint32_t fragmentPushConstantSize);
+    // Camera-facing particle quads pulled from storage buffers: no vertex
+    // input, depth tested without writing (the depth attachment is read-only),
+    // premultiplied blending of the scene color without touching its alpha,
+    // and a maximum blend of the reactive channel (blue) of the motion target.
+    // Set 0 is the camera set, set 1 particleLayout; the vertex stage takes
+    // vertexPushConstantSize bytes of push constants.
+    bool initParticlePipeline(VkDevice device, VkFormat colorFormat, VkFormat motionFormat, VkFormat depthFormat,
+                              VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout particleLayout,
+                              VkShaderModule vertex, VkShaderModule fragment, VkPipelineCache pipelineCache,
+                              uint32_t vertexPushConstantSize);
     void shutdown(VkDevice device);
 
     VkPipeline handle() const {

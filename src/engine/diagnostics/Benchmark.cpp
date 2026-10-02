@@ -121,6 +121,9 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("render.irradiance_volume_bytes", static_cast<double>(s.irradianceVolumeBytes), "bytes");
     sample("render.motion_blur_bytes", static_cast<double>(s.motionBlurBytes), "bytes");
     sample("render.depth_of_field_bytes", static_cast<double>(s.depthOfFieldBytes), "bytes");
+    sample("render.particle_emitters", s.particleEmitterCount, "count");
+    sample("render.particle_capacity", s.particleCapacity, "count");
+    sample("render.particle_bytes", static_cast<double>(s.particleBytes), "bytes");
     sample("streaming.decoded_bytes", static_cast<double>(s.streamingDecodedBytes), "bytes");
     sample("streaming.uploaded_bytes", static_cast<double>(s.streamingUploadedBytes), "bytes");
     sample("streaming.decode_backlog_bytes", static_cast<double>(s.streamingDecodeBacklogBytes), "bytes");
@@ -183,6 +186,9 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
     sample("gpu.depth_of_field", s.gpuDepthOfFieldMilliseconds, "ms", budgets.depthOfField.gpuMilliseconds);
     sample("gpu.color_grade", s.gpuColorGradeMilliseconds, "ms", budgets.colorGrade.gpuMilliseconds);
     sample("gpu.decal_clusters", s.gpuDecalClusterMilliseconds, "ms", budgets.decalClusters.gpuMilliseconds);
+    sample("gpu.particle_simulate", s.gpuParticleSimulationMilliseconds, "ms",
+           budgets.particleSimulation.gpuMilliseconds);
+    sample("gpu.particle_draw", s.gpuParticleDrawMilliseconds, "ms", budgets.particleDraw.gpuMilliseconds);
     sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
     sample("gpu.fsr_easu", s.gpuFsrEasuMilliseconds);

@@ -63,6 +63,7 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
         settings.motionBlur = MotionBlurQuality::High;
         settings.depthOfField.quality = DepthOfFieldQuality::High;
         settings.decals = DecalQuality::On;
+        settings.particles = ParticleQuality::High;
     }
     if (SDL_getenv("ZENITH_DISABLE_MOTION_BLUR") != nullptr) {
         settings.motionBlur = MotionBlurQuality::Off;
@@ -72,6 +73,9 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
     }
     if (SDL_getenv("ZENITH_DISABLE_DEPTH_OF_FIELD") != nullptr) {
         settings.depthOfField.quality = DepthOfFieldQuality::Off;
+    }
+    if (SDL_getenv("ZENITH_DISABLE_PARTICLES") != nullptr) {
+        settings.particles = ParticleQuality::Off;
     }
     if (SDL_getenv("ZENITH_FORCE_DYNAMIC_RESOLUTION") != nullptr) {
         settings.dynamicResolution.enabled = true;
@@ -148,7 +152,8 @@ RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const Render
                           color_grading::filmGrainActive(settings.filmGrain),
             // Mirrors the spatialUpscale decision in PostProcessPass::record.
             .spatialUpscale = settings.upscaler.mode == UpscalerMode::Fsr1 && capabilities.spatialUpscaling,
-            .decals = settings.decals != DecalQuality::Off};
+            .decals = settings.decals != DecalQuality::Off,
+            .particles = settings.particles != ParticleQuality::Off};
 }
 } // namespace
 
@@ -358,6 +363,8 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuFsrEasuMilliseconds = gpuTimings.fsrEasuMilliseconds;
     stats.gpuFsrRcasMilliseconds = gpuTimings.fsrRcasMilliseconds;
     stats.gpuDecalClusterMilliseconds = gpuTimings.decalClusterMilliseconds;
+    stats.gpuParticleSimulationMilliseconds = gpuTimings.particleSimulationMilliseconds;
+    stats.gpuParticleDrawMilliseconds = gpuTimings.particleDrawMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;
@@ -700,6 +707,33 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport, const 
             }
             graph.addPass("volumetric fog", RenderGraphQueue::Graphics, fogAccesses);
         }
+        // Persistent particle pool, sort keys, and indirect draw arguments owned
+        // by ParticlePass; the passes record work only when the scene has emitters.
+        const auto particlePool = graph.importBuffer("particle pool", {.size = 0, .usage = 1, .alignment = 256});
+        if (shape.particles) {
+            // Emits, simulates, lights (sun shadows, clustered lights, ambient
+            // probes), and sorts the particles.
+            std::vector<RenderGraphAccess> particleAccesses{
+                {particlePool, RenderGraphAccessMode::ReadWrite,
+                 VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_TRANSFER_WRITE_BIT | computeReadWrite, VK_IMAGE_LAYOUT_UNDEFINED}};
+            if (shape.shadows) {
+                particleAccesses.push_back({shadow, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                            VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL});
+            }
+            if (shape.localLights) {
+                particleAccesses.push_back({lightClusters, RenderGraphAccessMode::Read,
+                                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                            VK_IMAGE_LAYOUT_UNDEFINED});
+            }
+            if (shape.irradianceVolume) {
+                particleAccesses.push_back({irradianceProbes, RenderGraphAccessMode::Read,
+                                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                            VK_IMAGE_LAYOUT_UNDEFINED});
+            }
+            graph.addPass("particle simulation", RenderGraphQueue::Graphics, particleAccesses);
+        }
         const auto addDepthPyramidBuild = [&](const char* name) {
             const RenderGraphAccess pyramidAccesses[]{
                 {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -851,6 +885,35 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport, const 
                 {reflections, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL}};
             graph.addPass("screen-space reflections", RenderGraphQueue::Graphics, reflectionAccesses);
+        }
+        if (shape.particles) {
+            // Inside the scene pass after blended surfaces, in its own rendering
+            // scope: premultiplied quads over the HDR target, the reactive mask
+            // in the motion target, and the opaque depth read-only (tested and
+            // sampled for soft particles).
+            std::vector<RenderGraphAccess> particleDrawAccesses{
+                {particlePool, RenderGraphAccessMode::Read,
+                 VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                 VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                 VK_IMAGE_LAYOUT_UNDEFINED},
+                {hdr, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                {motion, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                {depth, RenderGraphAccessMode::Read,
+                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+                {textureAssets, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+            if (shape.volumetricFog) {
+                particleDrawAccesses.push_back({fogVolume, RenderGraphAccessMode::Read,
+                                                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL});
+            }
+            graph.addPass("particles", RenderGraphQueue::Graphics, particleDrawAccesses);
         }
         const bool temporalResolve = shape.antialiasing == AntialiasingMode::Taa;
         if (temporalResolve) {

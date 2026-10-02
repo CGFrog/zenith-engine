@@ -2,6 +2,7 @@
 
 #include "../assets/Assets.hpp"
 #include "../physics/PhysicsComponents.hpp"
+#include "ParticleEmitter.hpp"
 #include <compare>
 #include <cstdint>
 #include <entt/entt.hpp>
@@ -315,6 +316,10 @@ class Scene {
     std::span<const PhysicsLifecycleEvent> physicsLifecycleEvents() const;
     void retirePhysicsLifecycleEvents();
     uint64_t renderPacketRevision() const;
+    // Changes whenever the contents are replaced wholesale (clear, replaceWith,
+    // swap), so caches keyed by stable entity ids can tell a reloaded scene
+    // from edits to the same one.
+    uint64_t contentGeneration() const;
 
     entt::registry& registry();
     const entt::registry& registry() const;
@@ -342,4 +347,5 @@ class Scene {
     uint32_t m_transformAuditCountdown{0};
     std::vector<PhysicsLifecycleEvent> m_physicsLifecycleEvents;
     uint64_t m_renderPacketRevision{1};
+    uint64_t m_contentGeneration{1};
 };

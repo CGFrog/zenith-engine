@@ -129,6 +129,15 @@ enum class VolumetricFogQuality : uint8_t {
     High,
 };
 
+// GPU particles (ParticlePass): the total particle budget shared by every
+// emitter in the scene, Low 16384 and High 131072 (see
+// particles::particleBudget). Off records no particle work.
+enum class ParticleQuality : uint8_t {
+    Off,
+    Low,
+    High,
+};
+
 // Source of indirect diffuse light. Environment (the Off fallback) evaluates
 // the environment's spherical harmonics everywhere; ProbeVolume uses a baked
 // irradiance volume inside its box and the environment elsewhere.
@@ -258,6 +267,10 @@ struct RenderPassBudgets {
     RenderPassBudget spatialUpscale;
     // Decal cluster assignment (blending is part of opaque shading).
     RenderPassBudget decalClusters;
+    // Particle emission, simulation, lighting, and sorting.
+    RenderPassBudget particleSimulation;
+    // Particle billboards (within the blended scene time).
+    RenderPassBudget particleDraw;
 };
 
 struct DynamicResolutionSettings {
@@ -352,6 +365,7 @@ struct RenderSettings {
     VignetteSettings vignette;
     FilmGrainSettings filmGrain;
     DecalQuality decals{DecalQuality::On};
+    ParticleQuality particles{ParticleQuality::Low};
     // Zero disables enforcement for that processor/pass pair.
     RenderPassBudgets budgets;
 
@@ -388,6 +402,8 @@ struct RenderCapabilities {
     // FSR 1: RGBA8 storage images and a sampled, renderable output format.
     bool spatialUpscaling{false};
     bool decals{true};
+    // Needs the particle compute and draw pipelines.
+    bool particles{true};
     bool meshShaders{false};
     bool rayTracing{false};
     bool dedicatedTransferQueue{false};
@@ -507,6 +523,17 @@ struct RenderStats {
     // FSR 1 upsample and sharpen; zero unless the frame used UpscalerMode::Fsr1.
     double gpuFsrEasuMilliseconds{0.0};
     double gpuFsrRcasMilliseconds{0.0};
+    // Particle emission, simulation, lighting, and sorting; zero when Off or
+    // when the scene has no emitter.
+    double gpuParticleSimulationMilliseconds{0.0};
+    // Particle billboards; also inside gpuBlendedMilliseconds.
+    double gpuParticleDrawMilliseconds{0.0};
+    // Emitters simulated this submission and the particle slots they own
+    // (the most particles that can be alive).
+    uint32_t particleEmitterCount{0};
+    uint32_t particleCapacity{0};
+    // Device memory of the particle pool, sort keys, and per-frame uploads.
+    uint64_t particleBytes{0};
     // Probes in the bound irradiance volume; zero when none is bound.
     uint32_t irradianceVolumeProbes{0};
     // Device memory of the irradiance-volume probe buffer.

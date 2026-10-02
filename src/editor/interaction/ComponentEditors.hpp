@@ -22,6 +22,7 @@ bool drawEnvironmentLight(EnvironmentLightComponent& component);
 bool drawPointLight(PointLightComponent& component);
 bool drawSpotLight(SpotLightComponent& component);
 bool drawVolumetricFog(VolumetricFogComponent& component);
+bool drawParticleEmitter(ParticleEmitterComponent& component);
 bool drawCollider(ColliderComponent& component);
 bool drawRigidBody(RigidBodyComponent& component);
 bool drawAnimation(AnimationComponent& component, const ModelAsset* model);

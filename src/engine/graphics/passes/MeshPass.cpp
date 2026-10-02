@@ -320,7 +320,9 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
         !m_depthPyramid.init(context, extent, depthView) || !m_ambientOcclusion.init(context, frameCount, extent) ||
         !createPipeline(PostProcessPass::sceneFormat, depthFormat) ||
         !m_environmentPass.init(context, m_cameraLayout, PostProcessPass::sceneFormat, PostProcessPass::motionFormat,
-                                depthFormat, frameCount)) {
+                                depthFormat, frameCount) ||
+        !m_particles.init(context, frameCount, m_cameraLayout, PostProcessPass::sceneFormat,
+                          PostProcessPass::motionFormat, depthFormat)) {
         return false;
     }
     VkPhysicalDeviceVulkan12Features features12{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
@@ -2452,6 +2454,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     if (m_frameSerial > m_cameras.size()) {
         m_releaseQueue.collect(m_frameSerial - m_cameras.size());
         m_volumetricFog.collect(m_frameSerial - m_cameras.size());
+        m_particles.collect(m_frameSerial - m_cameras.size());
     }
     pruneUnusedAssets(assets);
     m_textureStreamingBytesPerFrame = rendering.settings().textureStreamingBytesPerFrame;
@@ -2808,6 +2811,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         static_cast<uint64_t>(extent.width) * extent.height * sizeof(uint16_t) * 4 * m_cameras.size();
     stats.ambientOcclusionBytes = m_ambientOcclusion.allocatedBytes();
     stats.volumetricFogBytes = m_volumetricFog.allocatedBytes();
+    stats.particleBytes = m_particles.allocatedBytes();
     stats.irradianceVolumeBytes = m_irradianceVolume.allocatedBytes();
     stats.irradianceVolumeProbes =
         irradianceVolume ? static_cast<uint32_t>(irradianceVolume->bakedData->probes.size()) : 0u;
@@ -2980,6 +2984,37 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     } else {
         recordVolumetricFog(draw, nullptr);
     }
+    {
+        const ClusteredLightingPass::FrameBuffers clusterBuffers = m_clusteredLighting.frameBuffers(frameIndex);
+        const ParticleSimulationFrame particleFrame{
+            .view = view,
+            .projection = projection,
+            .cameraPosition = cameraPosition,
+            .clusters = clusterGrid,
+            .localLightCount = localLightCount,
+            .lightDirection = lightDirection,
+            .lightRadiance = glm::vec3(cameraData.lightColor) * cameraData.lightDirection.w,
+            .shadowCascades = shadowsEnabled ? cascadeCount : 0u,
+            .lightViewProjections = cameraData.lightViewProjections,
+            .cascadeSplits = cameraData.cascadeSplits,
+            .ambientRadiance = (glm::vec3(cameraData.environmentSky) + glm::vec3(cameraData.environmentGround)) * 0.5f *
+                               cameraData.environmentSky.w,
+            .environmentIrradiance = imageBasedLighting,
+            .ambientScale = cameraData.environmentSky.w,
+            .irradianceVolumeMinimum = cameraData.irradianceVolumeMinimum,
+            .irradianceVolumeCellSize = cameraData.irradianceVolumeCellSize,
+            .irradianceVolumeCounts = cameraData.irradianceVolumeCounts,
+            .shadowMap = m_shadowTexture.view,
+            .shadowSampler = m_shadowSampler,
+            .localLights = clusterBuffers.lights,
+            .clusterRanges = clusterBuffers.clusterRanges,
+            .clusterLightIndices = clusterBuffers.lightIndices,
+            .environmentIrradianceBuffer = environmentState->primaryIrradiance,
+            .irradianceVolumeProbes = m_irradianceVolume.buffer()};
+        if (!recordParticleSimulation(draw, scene, assets, rendering.settings().particles, particleFrame)) {
+            return false;
+        }
+    }
     const auto opaqueCpuBegin = std::chrono::steady_clock::now();
     if (depthPrepass) {
         passTimestamps.write(FrameTimestamp::depthPrepassBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
@@ -3065,6 +3100,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     }
     stats.reflectionBytes = m_postProcess.reflectionBytes();
     recordShadedItems(draw, ShadedItems::BlendedOnly);
+    recordParticles(draw, depthImage, depthView);
     recordOutlines(draw);
 
     vkCmdEndRendering(commandBuffer);
@@ -3373,18 +3409,83 @@ void MeshPass::recordVolumetricFog(const DrawContext& draw, const VolumetricFogF
         m_volumetricFog.recordCleared(draw.commandBuffer);
         return;
     }
-    if (!m_shadowInitialized) {
-        // Fog binds the shadow map even when no cascade was ever rendered; it
-        // samples it only for rendered cascades.
-        imageBarrier(draw.commandBuffer, m_shadowTexture.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-                     VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_NONE,
-                     VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
-                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, maximumShadowCascades);
-        m_shadowInitialized = true;
-    }
+    prepareShadowMapForSampling(draw.commandBuffer);
     draw.passTimestamps->write(FrameTimestamp::volumetricFogBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     m_volumetricFog.record(draw.commandBuffer, draw.frameIndex, *frame);
     draw.passTimestamps->write(FrameTimestamp::volumetricFogEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+}
+
+void MeshPass::prepareShadowMapForSampling(VkCommandBuffer commandBuffer) {
+    if (m_shadowInitialized) {
+        return;
+    }
+    // Fog and particles bind the shadow map even when no cascade was ever
+    // rendered; they sample it only for rendered cascades.
+    imageBarrier(commandBuffer, m_shadowTexture.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                 VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_NONE,
+                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, maximumShadowCascades);
+    m_shadowInitialized = true;
+}
+
+bool MeshPass::recordParticleSimulation(const DrawContext& draw, const Scene& scene, const AssetManager& assets,
+                                        ParticleQuality quality, const ParticleSimulationFrame& frame) {
+    const std::vector<particles::EmitterSnapshot> emitters =
+        quality == ParticleQuality::Off ? std::vector<particles::EmitterSnapshot>{} : particles::gatherEmitters(scene);
+    // Sprite slot 0 is the procedural sprite; its view only keeps the
+    // descriptor array valid. Emitters share a slot per distinct texture.
+    m_particleSpriteViews.fill(m_whiteTexture.view);
+    uint32_t usedSlots = 1;
+    std::vector<uint32_t> textureSlots(emitters.size(), 0u);
+    for (size_t index = 0; index < emitters.size(); ++index) {
+        VkSampler sampler = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        const TextureHandle texture = emitters[index].emitter.texture;
+        if (!texture || !uiTexture(texture, assets, sampler, view)) {
+            continue;
+        }
+        const auto used = m_particleSpriteViews.begin() + usedSlots;
+        const auto found = std::find(m_particleSpriteViews.begin() + 1, used, view);
+        if (found != used) {
+            textureSlots[index] = static_cast<uint32_t>(found - m_particleSpriteViews.begin());
+        } else if (usedSlots < particles::maximumSpriteTextures) {
+            m_particleSpriteViews[usedSlots] = view;
+            textureSlots[index] = usedSlots++;
+        }
+    }
+    if (!emitters.empty()) {
+        prepareShadowMapForSampling(draw.commandBuffer);
+    }
+    draw.passTimestamps->write(FrameTimestamp::particleSimulationBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    const bool recorded = m_particles.recordSimulation(
+        draw.commandBuffer, draw.frameIndex, m_frameSerial, quality,
+        {.emitters = emitters, .textureSlots = textureSlots, .sceneGeneration = scene.contentGeneration()}, frame);
+    draw.passTimestamps->write(FrameTimestamp::particleSimulationEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    draw.stats->particleEmitterCount = m_particles.emitterCount();
+    draw.stats->particleCapacity = m_particles.capacity();
+    return recorded;
+}
+
+void MeshPass::recordParticles(const DrawContext& draw, VkImage depthImage, VkImageView depthView) {
+    if (!m_particles.drawPending()) {
+        return;
+    }
+    vkCmdEndRendering(draw.commandBuffer);
+    draw.passTimestamps->write(FrameTimestamp::particleDrawBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    m_particles.recordDraw(draw.commandBuffer, {.sceneColor = m_postProcess.sceneView(draw.frameIndex),
+                                                .motion = m_postProcess.motionView(draw.frameIndex),
+                                                .depthImage = depthImage,
+                                                .depthView = depthView,
+                                                .renderExtent = draw.renderExtent,
+                                                .cameraSet = m_cameras[draw.frameIndex].descriptor,
+                                                .view = draw.view,
+                                                .spriteViews = m_particleSpriteViews,
+                                                .spriteSampler = m_sampler});
+    draw.passTimestamps->write(FrameTimestamp::particleDrawEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    beginRendering(draw.commandBuffer, m_postProcess.sceneView(draw.frameIndex),
+                   m_postProcess.motionView(draw.frameIndex), depthImage, depthView, draw.renderExtent,
+                   SceneAttachments::Preserve);
+    setSceneViewport(draw);
 }
 
 void MeshPass::recordAmbientOcclusion(const DrawContext& draw, AmbientOcclusionQuality quality,
@@ -3690,6 +3791,8 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_ambientOcclusion.shutdown();
     m_volumetricFog.shutdown();
     m_fogDescriptorGenerations.clear();
+    m_particles.shutdown();
+    m_particleSpriteViews.fill(VK_NULL_HANDLE);
     m_depthPrepassFrame.reset();
     m_meshes.clear();
     m_unpackableMeshes.clear();

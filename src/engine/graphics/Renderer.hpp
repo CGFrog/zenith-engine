@@ -52,6 +52,7 @@ struct RenderGraphShape {
     // FSR 1: the composite renders into the upscaler's input, then EASU and RCAS.
     bool spatialUpscale{false};
     bool decals{false};
+    bool particles{false};
 
     bool operator==(const RenderGraphShape&) const = default;
 };

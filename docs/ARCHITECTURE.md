@@ -352,6 +352,9 @@ Light cluster assignment (compute, local lights enabled)
   selected point/spot lights -> 16x9x24 cluster light lists
 Decal cluster assignment (compute, decals on and the scene has decals)
   nearest 1024 decal boxes -> per-cluster decal lists, applied in mesh.frag
+Volumetric fog (compute, fog enabled and authored)
+Particle simulation (compute, particles enabled and the scene has emitters)
+  emit -> simulate, cull, and light -> bitonic sort back to front
 Depth/normal prepass (default on)
   opaque + masked depth and view-space normals
   GPU-driven: early draws -> occlusion depth pyramid -> late cull -> late draws
@@ -366,7 +369,8 @@ Scene shading
   -> screen-space reflections (compute, when enabled and the prepass ran):
      Hi-Z trace of the prepass normals and depth pyramid, blended into the HDR
      target in place
-  -> blended surfaces -> editor outlines
+  -> blended surfaces -> particles (own rendering scope, depth read-only)
+  -> editor outlines
 Temporal resolve (TAA only, compute)
   HDR + motion/reactive + output-resolution history -> resolved scene
 Depth of field (compute, when enabled)
@@ -539,6 +543,31 @@ homogeneous-slice integral. `mesh.frag` (opaque and blended) and
 binding 18; the skybox reads the last slice. Off records no fog work and
 keeps a cleared 1x1x1 volume bound. Local-light shadows in fog are a
 follow-up.
+
+GPU particles (`ParticlePass`) are authored per entity with a
+`ParticleEmitterComponent` (rate, bursts, lifetime, cone, speed, gravity, drag,
+size and color over life, emissive intensity, lit or unlit, alpha or additive,
+world or local space, soft distance, optional sprite); `ParticleQuality` (Off,
+Low, High) sets the total particle budget the emitters share. The CPU side
+(`particles::ParticleScheduler` in `Particles.hpp`) gives each emitter, in
+stable scene-id order, a ring of consecutive pool slots and decides each
+frame's spawn count, so the layout, spawn ordinals, and every random value
+(hashed from the emitter id and ordinal on the GPU) are reproducible under a
+fixed frame time. After light clustering and fog, `particle_emit.comp` writes
+the new particles into their rings, `particle_simulate.comp` ages and moves
+every live slot, frees expired ones, culls against the view, lights lit
+particles at their centers (sun with one shadow-cascade tap, clustered local
+lights, ambient from the environment SH or the irradiance volume) and appends
+the visible ones to the sort keys and the indirect draw count, and
+`particle_sort.comp` runs a bitonic network (shared-memory blocks of 1024 keys
+plus global merge steps) that orders them back to front. After blended
+surfaces the scene pass ends; `particle.vert` pulls one camera-facing quad per
+sorted key and `particle.frag` writes premultiplied HDR color (additive
+particles write zero coverage), fades against the opaque depth, which is bound
+read-only and sampled at the same time (soft particles), composites the
+volumetric fog in front of the particle, and raises the motion target's
+reactive channel by maximum blending so the temporal resolve trusts history
+less under particles. Off records no particle work.
 
 The primary directional and environment light components provide direct-light,
 shadow, sky, and ground settings. Material occlusion attenuates only indirect

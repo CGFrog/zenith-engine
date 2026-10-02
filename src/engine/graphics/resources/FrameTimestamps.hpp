@@ -58,7 +58,13 @@ inline constexpr uint32_t postProcessPassesEnd = fsrRcasEnd + 1;
 // Decal cluster assignment; skipped when the frame has no decal.
 inline constexpr uint32_t decalClustersBegin = 51;
 inline constexpr uint32_t decalClustersEnd = 52;
-inline constexpr uint32_t count = 53;
+// GPU particles: emission, simulation, lighting, and sorting, then the
+// billboard draw.
+inline constexpr uint32_t particleSimulationBegin = 53;
+inline constexpr uint32_t particleSimulationEnd = 54;
+inline constexpr uint32_t particleDrawBegin = 55;
+inline constexpr uint32_t particleDrawEnd = 56;
+inline constexpr uint32_t count = 57;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot

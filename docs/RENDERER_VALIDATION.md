@@ -277,6 +277,7 @@ decisions from.
 | `ZENITH_DISABLE_VOLUMETRIC_FOG` | Forces volumetric fog Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
 | `ZENITH_DISABLE_DEPTH_OF_FIELD` | Forces depth of field Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
 | `ZENITH_DISABLE_MOTION_BLUR` | Forces motion blur Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
+| `ZENITH_DISABLE_PARTICLES` | Forces GPU particles Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
 | `ZENITH_FORCE_TAA` | Temporal anti-aliasing. |
 | `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
 | `ZENITH_FORCE_UPSCALER=off\|taau\|fsr1` | Sets `RenderSettings::upscaler.mode` (`native` is an alias of `off`); `taau` also forces TAA. Unknown values are ignored. Forced FSR 1 on a device without support renders at native resolution. |
@@ -322,6 +323,12 @@ cull), `gpu.depth_pyramid`, `gpu.ambient_occlusion`, and shading. `gpu.blended` 
 injection, reprojection, and integration) runs inside `gpu.opaque` after
 `gpu.light_clusters` and reports zero when fog is Off or the scene has no
 `VolumetricFogComponent`; `render.volumetric_fog_bytes` reports its volumes.
+`gpu.particle_simulate` (particle emission, simulation, lighting, and sorting)
+also runs inside `gpu.opaque`, after the fog; `gpu.particle_draw` (the billboards)
+runs inside `gpu.blended`. Both report zero when particles are Off or the scene
+has no `ParticleEmitterComponent`; `render.particle_emitters`,
+`render.particle_capacity` (pool slots the emitters own), and
+`render.particle_bytes` describe the pool.
 `gpu.irradiance_volume` is the
 irradiance-volume probe upload, which records work only on frames whose bound
 volume changed and also falls inside `gpu.shadow`; sampling the volume is part
@@ -516,6 +523,39 @@ Moving the graph-shaping decisions into `MeshPassFramePlan` was checked
 against the previous build on the same matrix: `gpu.frame` medians matched
 within 0.01 ms (demo 0.481 to 0.478, showcase 1.483 to 1.483, 4,000 objects
 0.974 to 0.940 under load), and `cpu.opaque` did not regress.
+## GPU particles
+
+`ParticleEmitterComponent` (scene document `particle_emitter`, every field
+optional) authors an emitter; `RenderSettings::particles` (`particles` in render
+settings: 0 Off, 1 Low with 16,384 particles, 2 High with 131,072) sets the
+budget every emitter shares, and the editor's Graphics panel exposes it next to
+the volumetric fog. Emitters take their slots in scene-id order, so with too
+small a budget the last emitters get fewer slots or none; within its ring an
+emitter replaces its oldest particle once full. At most 64 emitters and eight
+sprite textures (one is the procedural round sprite) are used per frame.
+
+Captures are reproducible: with a fixed frame time (implied by
+`ZENITH_CAPTURE_FRAME`) spawn counts, pool slots, and random values depend only
+on the frame number and the emitters' scene ids, and the back-to-front sort
+breaks depth ties by slot. Two consecutive captures of a 2,400-particle ember
+and smoke scene differed by at most 2 8-bit steps (RMSE 0.13), the same noise
+as captures without particles.
+
+The 2026-10-02 Release measurement (RTX 2070 SUPER, 1280x720, showcase project
+with the High budget, `ZENITH_BENCHMARK_MODE=render`, 120 warm-up and 600
+measured frames, three runs, camera `0,1.0,4.2,0,-10`) of an ember
+(additive, unlit, 0.03 m) and smoke (alpha, lit, 0.25 to 1.1 m) emitter pair
+whose spawn rates keep their rings full:
+
+| Live particles | `gpu.particle_simulate` median | `gpu.particle_draw` median |
+| --- | ---: | ---: |
+| 10,000 (9,000 embers + 1,000 smoke) | 0.083 ms | 0.22 ms |
+| 100,000 (100,000 embers) | 0.29 ms | 0.43 ms |
+| 100,000 (98,000 embers + 2,000 smoke) | 0.29 ms | 0.96 to 1.43 ms |
+
+Simulation scales with the live particles (one thread per pool slot, then a
+bitonic sort over the next power of two of the live bound); the draw scales
+with covered pixels, so large soft smoke costs more than many small sparks.
 
 ## Reflection probe blending
 

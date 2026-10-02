@@ -187,6 +187,7 @@ Wraps an EnTT registry and defines the core ECS components:
 | `ModelComponent` | Records the model instantiated at a root entity. |
 | `MeshRendererComponent` | Refers to CPU mesh data through a `MeshHandle`. |
 | `CameraComponent` | Perspective projection settings and primary-camera selection. |
+| `ParticleEmitterComponent` | GPU particle emitter parameters (`ParticleEmitter.*`, with `validateParticleEmitter`). |
 
 `createEntity` always installs name, transform, and relationship components.
 `setParent` updates both sides of a relationship and rejects self-parenting and
@@ -438,6 +439,7 @@ Renderer
    |- AmbientOcclusionPass (GTAO and denoise between the prepass and shading)
    |- VolumetricFogPass (froxel fog injection, reprojection, and integration)
    |- DecalClusterPass (decal records and per-cluster decal lists)
+   |- ParticlePass (GPU particle emission, simulation, sorting, and drawing)
    `- PostProcessPass (HDR/history, motion, prepass normals, and fullscreen pipelines)
       |- ScreenSpaceReflectionPass (Hi-Z reflection trace and in-place composite)
       |- TemporalResolvePass (TAA/TAAU history)
@@ -629,6 +631,25 @@ owns each frame's records (camera binding 19), cluster lists (binding 20) and
 statistics readback; `MeshPass::prepareDecals` resolves decal textures to
 bindless slots and packs the records, and `applyDecals` in `mesh.frag` blends
 them before lighting.
+### `src/engine/graphics/passes/ParticlePass.*`
+
+GPU particles for scenes with `ParticleEmitterComponent`s when
+`RenderSettings::particles` is not Off. After the volumetric fog it records
+`particle_emit.comp` (new particles into each emitter's ring),
+`particle_simulate.comp` (integration, expiry, view culling, lighting from the
+shadowed sun, clustered local lights, and ambient probes, and appending visible
+particles to the sort keys and indirect draw), and `particle_sort.comp`
+(bitonic sort back to front). Between blended surfaces and editor outlines it
+draws `particle.vert`/`particle.frag` quads in its own rendering scope with the
+scene depth read-only, sampled for soft particles.
+
+### `src/engine/graphics/Particles.*`
+
+CPU side of the particle system: quality budgets, the emitter scheduler (pool
+layout and deterministic spawn counts), GPU struct layouts mirrored by the
+shaders, emitter packing, and the bitonic sort plan with a CPU reference of
+the network; `tests/engine/ParticleTests.cpp` covers it with the emitter
+validation and scene round trip of `engine/scene/ParticleEmitter.*`.
 
 ### `src/engine/graphics/VolumetricFog.*`
 
@@ -885,6 +906,10 @@ the capability fallback.
 | `shaders/decal_clusters.comp` | Lists each view cluster's decals, in application order, for `mesh.frag`. |
 | `shaders/volumetric_fog_inject.comp` | Evaluates and lights the fog medium per froxel and reprojects history. |
 | `shaders/volumetric_fog_integrate.comp` | Integrates froxel fog front to back into scattering and transmittance. |
+| `shaders/particle_emit.comp` | Writes each frame's new particles into their emitters' rings. |
+| `shaders/particle_simulate.comp` | Moves, expires, culls, and lights particles and appends the visible ones to the sort and draw. |
+| `shaders/particle_sort.comp` | One bitonic sorting-network dispatch over the particle sort keys. |
+| `shaders/particle.vert`, `shaders/particle.frag` | Camera-facing particle quads: premultiplied, soft, fogged, with the reactive mask. |
 | `shaders/depth_pyramid.comp` | Reduces scene depth into a conservative min-depth (reversed-Z) pyramid. |
 | `shaders/gpu_visibility.comp` | Runs early/late two-phase frustum and occlusion culling. |
 | `shaders/compact_draws.comp` | Packs non-empty batches into indirect-count draw commands. |

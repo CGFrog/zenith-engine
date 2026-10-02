@@ -319,6 +319,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/DepthOfField.cpp
     src/engine/graphics/ColorGrading.cpp
     src/engine/graphics/SpatialUpscale.cpp
+    src/engine/graphics/Particles.cpp
     src/engine/graphics/graph/RenderGraph.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
@@ -330,6 +331,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/passes/DecalClusterPass.cpp
     src/engine/graphics/passes/VolumetricFogPass.cpp
     src/engine/graphics/passes/MotionBlurPass.cpp
+    src/engine/graphics/passes/ParticlePass.cpp
     src/engine/graphics/passes/EnvironmentPass.cpp
     src/engine/graphics/passes/IrradianceVolumePass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
@@ -364,6 +366,7 @@ add_library(zenith_engine STATIC
     src/engine/resources/ResourceLocator.cpp
     src/engine/resources/ContentManifest.cpp
     src/engine/scene/Scene.cpp
+    src/engine/scene/ParticleEmitter.cpp
     src/engine/scene/SceneDocument.cpp
     src/engine/scene/AdditiveSceneManager.cpp
     src/engine/scene/Prefab.cpp
@@ -879,6 +882,11 @@ if(BUILD_TESTING)
     add_dependencies(zenith_color_grading_tests zenith_assets)
     target_link_libraries(zenith_color_grading_tests PRIVATE zenith_engine)
     add_test(NAME zenith_color_grading COMMAND zenith_color_grading_tests)
+    add_executable(zenith_particle_tests tests/engine/ParticleTests.cpp)
+    target_compile_definitions(zenith_particle_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_particle_tests zenith_assets)
+    target_link_libraries(zenith_particle_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_particles COMMAND zenith_particle_tests)
 
     add_executable(zenith_frame_task_graph_tests tests/engine/FrameTaskGraphTests.cpp)
     target_link_libraries(zenith_frame_task_graph_tests PRIVATE zenith_engine)

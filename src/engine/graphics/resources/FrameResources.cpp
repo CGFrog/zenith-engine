@@ -182,6 +182,9 @@ bool FrameResources::collectTimings(VkDevice device, GpuFrameTimings& timings) {
     timings.fsrEasuMilliseconds = elapsed(FrameTimestamp::fsrEasuBegin, FrameTimestamp::fsrEasuEnd);
     timings.fsrRcasMilliseconds = elapsed(FrameTimestamp::fsrRcasBegin, FrameTimestamp::fsrRcasEnd);
     timings.decalClusterMilliseconds = elapsed(FrameTimestamp::decalClustersBegin, FrameTimestamp::decalClustersEnd);
+    timings.particleSimulationMilliseconds =
+        elapsed(FrameTimestamp::particleSimulationBegin, FrameTimestamp::particleSimulationEnd);
+    timings.particleDrawMilliseconds = elapsed(FrameTimestamp::particleDrawBegin, FrameTimestamp::particleDrawEnd);
     return true;
 }
 

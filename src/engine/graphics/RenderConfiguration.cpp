@@ -294,6 +294,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"depthOfField", depthOfFieldDocument(settings.depthOfField)},
                            {"colorGrade", colorGradeDocument(settings)},
                            {"decals", settings.decals},
+                           {"particles", settings.particles},
                            {"budgets",
                             {{"shadow", budget(settings.budgets.shadow)},
                              {"opaque", budget(settings.budgets.opaque)},
@@ -318,7 +319,9 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"depthOfField", budget(settings.budgets.depthOfField)},
                              {"colorGrade", budget(settings.budgets.colorGrade)},
                              {"spatialUpscale", budget(settings.budgets.spatialUpscale)},
-                             {"decalClusters", budget(settings.budgets.decalClusters)}}}};
+                             {"decalClusters", budget(settings.budgets.decalClusters)},
+                             {"particleSimulation", budget(settings.budgets.particleSimulation)},
+                             {"particleDraw", budget(settings.budgets.particleDraw)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -442,6 +445,11 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
         if (document.contains("decals") && !readEnum(document, "decals", DecalQuality::On, loaded.decals)) {
             return {.error = "Render settings contain an unknown decal quality"};
         }
+        // Documents written before GPU particles keep the default.
+        if (document.contains("particles") &&
+            !readEnum(document, "particles", ParticleQuality::High, loaded.particles)) {
+            return {.error = "Render settings contain an unknown particle quality"};
+        }
         if (const auto budgets = document.find("budgets"); budgets != document.end()) {
             if (!budgets->is_object() || !readBudget(*budgets, "shadow", loaded.budgets.shadow) ||
                 !readBudget(*budgets, "opaque", loaded.budgets.opaque) ||
@@ -466,7 +474,9 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "depthOfField", loaded.budgets.depthOfField) ||
                 !readOptionalBudget(*budgets, "colorGrade", loaded.budgets.colorGrade) ||
                 !readOptionalBudget(*budgets, "spatialUpscale", loaded.budgets.spatialUpscale) ||
-                !readOptionalBudget(*budgets, "decalClusters", loaded.budgets.decalClusters)) {
+                !readOptionalBudget(*budgets, "decalClusters", loaded.budgets.decalClusters) ||
+                !readOptionalBudget(*budgets, "particleSimulation", loaded.budgets.particleSimulation) ||
+                !readOptionalBudget(*budgets, "particleDraw", loaded.budgets.particleDraw)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }
@@ -562,6 +572,10 @@ ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
     if (result.settings.decals != DecalQuality::Off && !capabilities.decals) {
         result.settings.decals = DecalQuality::Off;
         result.fallbacks.emplace_back("Clustered decals are unsupported and were disabled");
+    }
+    if (result.settings.particles != ParticleQuality::Off && !capabilities.particles) {
+        result.settings.particles = ParticleQuality::Off;
+        result.fallbacks.emplace_back("GPU particles are unsupported and were disabled");
     }
     return result;
 }

@@ -160,6 +160,10 @@ bool drawLighting(RenderSettings& settings, const RenderCapabilities& capabiliti
         ImGui::TextDisabled("Add a Volumetric Fog component to the scene to author the medium.");
     }
     changed |= enumCombo("Decals", settings.decals, std::array<EnumOption, 2>{{{"Off"}, {"On", capabilities.decals}}});
+    changed |= enumCombo("Particles", settings.particles,
+                         std::array<EnumOption, 3>{{{"Off"},
+                                                    {"Low (16k particles)", capabilities.particles},
+                                                    {"High (131k particles)", capabilities.particles}}});
     return changed;
 }
 
@@ -319,6 +323,8 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Colour grading", budgets.colorGrade);
     changed |= drawBudget("FSR upscale", budgets.spatialUpscale);
     changed |= drawBudget("Decal clusters", budgets.decalClusters);
+    changed |= drawBudget("Particle simulation", budgets.particleSimulation);
+    changed |= drawBudget("Particle draw", budgets.particleDraw);
     return changed;
 }
 
@@ -336,7 +342,8 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
     // Shadow time runs from the frame start through the early GPU cull, so it
     // also covers the environment precompute, local shadows and GPU
     // shadow-cascade culling; opaque time spans the clusters, prepass, pyramid,
-    // volumetric fog and ambient occlusion; blended time spans the skybox.
+    // volumetric fog, particle simulation and ambient occlusion; blended time
+    // spans the skybox and the particle draw.
     return {{"Shadows", stats.gpuShadowMilliseconds},
             {"Local shadows", stats.gpuLocalShadowMilliseconds, true},
             {"Environment precompute", stats.gpuEnvironmentPrecomputeMilliseconds, true},
@@ -348,11 +355,13 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
             {"Probe clusters", stats.gpuReflectionProbeClusterMilliseconds, true},
             {"Decal clusters", stats.gpuDecalClusterMilliseconds, true},
             {"Volumetric fog", stats.gpuVolumetricFogMilliseconds, true},
+            {"Particle simulation", stats.gpuParticleSimulationMilliseconds, true},
             {"Depth prepass", stats.gpuDepthPrepassMilliseconds, true},
             {"Depth pyramid", stats.gpuDepthPyramidMilliseconds, true},
             {"Ambient occlusion", stats.gpuAmbientOcclusionMilliseconds, true},
             {"Blended", stats.gpuBlendedMilliseconds},
             {"Skybox", stats.gpuSkyboxMilliseconds, true},
+            {"Particle draw", stats.gpuParticleDrawMilliseconds, true},
             {"Reflections", stats.gpuReflectionsMilliseconds},
             {"Temporal resolve", stats.gpuTemporalMilliseconds},
             {"Motion blur", stats.gpuMotionBlurMilliseconds},
@@ -429,7 +438,9 @@ void clampToDocumentRanges(RenderSettings& settings) {
                                      &budgets.depthOfField,
                                      &budgets.colorGrade,
                                      &budgets.spatialUpscale,
-                                     &budgets.decalClusters}) {
+                                     &budgets.decalClusters,
+                                     &budgets.particleSimulation,
+                                     &budgets.particleDraw}) {
         clampBudget(*budget);
     }
 
