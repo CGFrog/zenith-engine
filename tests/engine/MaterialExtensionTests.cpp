@@ -1,6 +1,7 @@
 // KHR material extensions (clearcoat, sheen, specular, transmission, volume,
 // ior): glTF import, texture slot usages, the GPU material record packing, the
-// sheen albedo table, and the generated material gallery content.
+// sheen albedo table, and the generated material gallery content. Also covers
+// textures embedded as base64 data URIs, which the gallery-style fixtures share.
 #include "engine/assets/Assets.hpp"
 #include "engine/assets/ModelImporter.hpp"
 #include "engine/graphics/EnvironmentLighting.hpp"
@@ -8,6 +9,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -193,6 +195,67 @@ void testImport() {
     std::filesystem::remove_all(root, error);
 }
 
+std::string base64(const unsigned char* bytes, size_t size) {
+    constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string encoded;
+    for (size_t index = 0; index < size; index += 3) {
+        const uint32_t group = (uint32_t{bytes[index]} << 16) |
+                               (index + 1 < size ? uint32_t{bytes[index + 1]} << 8 : 0u) |
+                               (index + 2 < size ? uint32_t{bytes[index + 2]} : 0u);
+        encoded += alphabet[(group >> 18) & 63];
+        encoded += alphabet[(group >> 12) & 63];
+        encoded += index + 1 < size ? alphabet[(group >> 6) & 63] : '=';
+        encoded += index + 2 < size ? alphabet[group & 63] : '=';
+    }
+    return encoded;
+}
+
+// A quad whose only material samples a PNG embedded as a data URI. Bytes past
+// the PNG's end chunk are ignored by the decoder but change the base64
+// padding, so trailingBytes selects the padding case.
+void testEmbeddedImage(size_t trailingBytes, std::string_view label) {
+    std::string png(reinterpret_cast<const char*>(pixelPng), sizeof(pixelPng));
+    png.append(trailingBytes, '\0');
+    const std::string uri =
+        "data:image/png;base64," + base64(reinterpret_cast<const unsigned char*>(png.data()), png.size());
+    const std::string model = R"({
+  "asset": { "version": "2.0" },
+  "scenes": [{ "nodes": [0] }],
+  "nodes": [{ "mesh": 0 }],
+  "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 }] }],
+  "materials": [{ "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } } }],
+  "images": [{ "uri": ")" + uri +
+                              R"(" }],
+  "textures": [{ "source": 0 }],
+  "buffers": [{ "byteLength": 72, "uri": "data:application/octet-stream;base64,AAAAAAAAgD8AAAAAAACAvwAAgL8AAIA/AACAPwAAgL8AAIA/AAAAAAAAgL8AAIC/AAABAAIAAAACAAMAAAADAAEAAQADAAIA" }],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0, "byteLength": 48 },
+    { "buffer": 0, "byteOffset": 48, "byteLength": 24 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3", "min": [-1, -1, -1], "max": [1, 1, 1] },
+    { "bufferView": 1, "componentType": 5123, "count": 12, "type": "SCALAR" }
+  ]
+})";
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith-embedded-image-tests";
+    std::error_code error;
+    std::filesystem::create_directories(root, error);
+    const std::filesystem::path path = root / ("embedded" + std::to_string(trailingBytes) + ".gltf");
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << model;
+    }
+    AssetManager assets;
+    const AssetLoadResult<ModelHandle> loaded = assets.loadModel(path);
+    const std::string prefix = "a data-URI image " + std::string(label);
+    expect(static_cast<bool>(loaded), prefix + " loads: " + loaded.error);
+    const MaterialAsset* material = loaded ? primitiveMaterial(assets, loaded.handle, 0) : nullptr;
+    const TextureAsset* texture = material ? assets.texture(material->baseColorTexture) : nullptr;
+    expect(texture != nullptr && texture->width == 1 && texture->height == 1,
+           prefix + " decodes to the embedded 1x1 texture");
+    std::filesystem::remove_all(root, error);
+}
+
 void testRecordPacking() {
     const MaterialAsset defaults;
     const MaterialRecord neutral = packMaterialRecord(defaults, {});
@@ -308,6 +371,9 @@ void testGallery() {
 
 int main() {
     testImport();
+    testEmbeddedImage(0, "without base64 padding");
+    testEmbeddedImage(1, "with two padding characters");
+    testEmbeddedImage(2, "with one padding character");
     testRecordPacking();
     testSheenAlbedo();
     testGallery();

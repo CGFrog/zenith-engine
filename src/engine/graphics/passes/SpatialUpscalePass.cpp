@@ -6,6 +6,8 @@
 #include "engine/graphics/vulkan/VulkanCheck.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 
+#include <SDL3/SDL_stdinc.h>
+
 #include <array>
 #include <iostream>
 
@@ -75,6 +77,13 @@ bool SpatialUpscalePass::init(const VulkanContext& context, VkFormat outputForma
                               VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
     if (!m_supported) {
         std::cerr << "FSR 1 upscaling disabled: the output or RGBA8 storage format lacks required features\n";
+        return true;
+    }
+    // ZENITH_DISABLE_SPATIAL_UPSCALING reports FSR 1 as unsupported, so the
+    // capability fallback can be validated on devices that have it.
+    if (SDL_getenv("ZENITH_DISABLE_SPATIAL_UPSCALING") != nullptr) {
+        m_supported = false;
+        std::cerr << "FSR 1 upscaling disabled by ZENITH_DISABLE_SPATIAL_UPSCALING\n";
         return true;
     }
     ShaderModule easu(m_device);
@@ -160,8 +169,7 @@ bool SpatialUpscalePass::createRcasPipelineLayout() {
     return true;
 }
 
-bool SpatialUpscalePass::createRcasPipeline(VkFormat targetFormat, VkPipelineCache pipelineCache,
-                                            VkPipeline& output) {
+bool SpatialUpscalePass::createRcasPipeline(VkFormat targetFormat, VkPipelineCache pipelineCache, VkPipeline& output) {
     ShaderModule vertex(m_device);
     ShaderModule fragment(m_device);
     if (!vertex.load(shaderRoot() / "fullscreen.vert.spv") || !fragment.load(shaderRoot() / "fsr_rcas.frag.spv")) {

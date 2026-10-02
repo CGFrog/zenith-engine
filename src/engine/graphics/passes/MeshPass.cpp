@@ -4,8 +4,9 @@
 #include "../IrradianceVolume.hpp"
 #include "../Lighting.hpp"
 #include "../ReflectionProbes.hpp"
-#include "../resources/MipChainBlit.hpp"
 #include "../SpatialUpscale.hpp"
+#include "../resources/DescriptorPoolSizes.hpp"
+#include "../resources/MipChainBlit.hpp"
 
 #include "engine/assets/CompressedTexture.hpp"
 #include "engine/assets/PackedVertexStreams.hpp"
@@ -684,20 +685,13 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
 
     // Each frame has a CPU-submission camera set and a GPU-driven one that reads
     // instances from the culling output instead of the host object buffer.
-    const VkDescriptorPoolSize poolSizes[]{
-        {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = frameCount * 2},
-        {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount =
-             frameCount * 2 * (8 + EnvironmentPass::environmentSlots + 1 /* irradiance volume */ + 2 /* decals */)},
-        {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         // Shadow map, BRDF table, occlusion, local-shadow atlas, probe cube
-         // array, fog volume, transmission background, and the environments.
-         .descriptorCount = frameCount * 2 * (7 + EnvironmentPass::environmentSlots)}};
+    const uint32_t cameraSetCount = frameCount * 2;
+    const std::vector<VkDescriptorPoolSize> poolSizes = descriptorPoolSizes(cameraBindings, cameraSetCount);
     VkDescriptorPoolCreateInfo poolInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets = frameCount * 2,
-        .poolSizeCount = static_cast<uint32_t>(std::size(poolSizes)),
-        .pPoolSizes = poolSizes,
+        .maxSets = cameraSetCount,
+        .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+        .pPoolSizes = poolSizes.data(),
     };
 
     if (!checkVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool),
@@ -839,15 +833,23 @@ bool MeshPass::createBindlessDescriptors(const VulkanContext& context, uint32_t 
     // Update-after-bind is never used to modify live sets. It is requested only
     // when the ordinary sampled-image limits cannot hold the full table, since
     // it raises those limits on some vendors but also restricts tooling such as
-    // frame capture.
+    // frame capture. ZENITH_FORCE_UPDATE_AFTER_BIND takes that path on any
+    // device that supports it, so it can be validated where it is not needed.
     const auto& limits = properties.properties.limits;
     const uint32_t ordinaryLimit =
         std::min(limits.maxPerStageDescriptorSampledImages, limits.maxDescriptorSetSampledImages);
     const uint32_t updateAfterBindLimit = std::min(properties12.maxPerStageDescriptorUpdateAfterBindSampledImages,
                                                    properties12.maxDescriptorSetUpdateAfterBindSampledImages);
-    const bool updateAfterBind = ordinaryLimit < maximumBindlessTextures + reservedSampledImages &&
-                                 features12.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE &&
-                                 updateAfterBindLimit > ordinaryLimit;
+    const bool forceUpdateAfterBind = SDL_getenv("ZENITH_FORCE_UPDATE_AFTER_BIND") != nullptr;
+    const bool updateAfterBind =
+        features12.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE &&
+        (forceUpdateAfterBind ||
+         (ordinaryLimit < maximumBindlessTextures + reservedSampledImages && updateAfterBindLimit > ordinaryLimit));
+    if (forceUpdateAfterBind) {
+        std::cerr << (updateAfterBind ? "Bindless materials use update-after-bind (ZENITH_FORCE_UPDATE_AFTER_BIND)\n"
+                                      : "ZENITH_FORCE_UPDATE_AFTER_BIND ignored: the device lacks sampled-image "
+                                        "update-after-bind\n");
+    }
     const uint32_t deviceLimit = updateAfterBind ? updateAfterBindLimit : ordinaryLimit;
     if (deviceLimit <= reservedSampledImages + 3) {
         std::cerr << "The device exposes too few sampled-image descriptors for bindless materials\n";

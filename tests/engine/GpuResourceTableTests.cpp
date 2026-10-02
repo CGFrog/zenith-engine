@@ -1,4 +1,5 @@
 #include "engine/graphics/resources/BindlessTextureTable.hpp"
+#include "engine/graphics/resources/DescriptorPoolSizes.hpp"
 #include "engine/graphics/resources/GeometryArena.hpp"
 #include "engine/graphics/resources/MipChainBlit.hpp"
 
@@ -140,7 +141,29 @@ void testMipChainBlitPlan() {
 }
 } // namespace
 
+void testDescriptorPoolSizes() {
+    const VkDescriptorSetLayoutBinding bindings[]{
+        {.binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = 1},
+        {.binding = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1},
+        {.binding = 2, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 1},
+        {.binding = 3, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 4},
+        {.binding = 4, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 2},
+        {.binding = 5, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = 0}};
+    const std::vector<VkDescriptorPoolSize> sizes = descriptorPoolSizes(bindings, 6);
+    const auto count = [&](VkDescriptorType type) {
+        const auto found = std::find_if(sizes.begin(), sizes.end(),
+                                        [&](const VkDescriptorPoolSize& size) { return size.type == type; });
+        return found == sizes.end() ? 0u : found->descriptorCount;
+    };
+    expect(sizes.size() == 3, "pool sizes hold one entry per used descriptor type");
+    expect(count(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) == 6, "single bindings scale by the set count");
+    expect(count(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) == 30, "bindings of one type sum their descriptor counts");
+    expect(count(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) == 18, "array bindings count every element");
+    expect(count(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE) == 0, "empty bindings reserve nothing");
+}
+
 int main() {
+    testDescriptorPoolSizes();
     testMipChainBlitPlan();
     testBindlessTable();
     testBindlessTableReplace();

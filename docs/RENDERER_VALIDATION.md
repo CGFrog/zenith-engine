@@ -172,7 +172,7 @@ beside it are the references.
 
 `zenith_reference_capture` renders every view with `zenith`, a clean
 environment (benchmark, smoke, and every `ZENITH_FORCE_*`, `ZENITH_DISABLE_*`
-and `ZENITH_DEPTH_PYRAMID_PER_LEVEL` switch removed before the view's own
+`ZENITH_DEPTH_PYRAMID_PER_LEVEL` and device-fallback switch removed before the view's own
 `environment` entries are applied), the
 manifest's window size, and `ZENITH_FRAME_DETERMINISTIC=1`, then compares each
 capture with its reference in `engine/diagnostics/ImageComparison`. Differences
@@ -255,7 +255,7 @@ The `vulkan;validation` CTest label runs every combination of
 | --- | --- |
 | Content | demo (`zenith`), showcase (`zenith --project projects/showcase.zenith-project`) |
 | Submission | CPU, `ZENITH_FORCE_GPU_DRIVEN=1` |
-| Quality | project default, `ZENITH_FORCE_HIGH_QUALITY=1` + `ZENITH_FORCE_DYNAMIC_RESOLUTION=1`, the same plus `ZENITH_FORCE_UPSCALER=fsr1` + `ZENITH_FORCE_UPSCALER_QUALITY=performance` (`fsr1_dynamic`) |
+| Quality | project default, `ZENITH_FORCE_HIGH_QUALITY=1` + `ZENITH_FORCE_DYNAMIC_RESOLUTION=1`, the same plus `ZENITH_FORCE_UPSCALER=fsr1` + `ZENITH_FORCE_UPSCALER_QUALITY=performance` (`fsr1_dynamic`), `ZENITH_FORCE_HIGH_QUALITY=1` with every device-fallback switch below and FSR 1 requested (`device_fallbacks`) |
 
 for 120 frames each, plus the scripted editor smoke
 (`zenith_validation_editor`), all with `ZENITH_VALIDATION_STRICT=1`:
@@ -303,6 +303,9 @@ decisions from.
 | `ZENITH_DISABLE_SHADOW_CACHE` | Redraws every shadow cascade each frame, so shadow culling and rendering can be measured on a static scene. |
 | `ZENITH_DISABLE_DEPTH_PREPASS` | Skips the depth/normal prepass even when `RenderSettings::depthPrepass` is set. |
 | `ZENITH_DISABLE_RENDER_PACKET_CACHE` | Rebuilds render packets every frame (packet-cache baseline). |
+| `ZENITH_DISABLE_BLOCK_COMPRESSION` | Device fallback: leaves BC sampling disabled on devices that support it, so textures upload as RGBA8 (the path of devices without `textureCompressionBC`). Logged once. |
+| `ZENITH_FORCE_UPDATE_AFTER_BIND` | Device fallback: builds the bindless material table with update-after-bind descriptors, the path taken by devices whose ordinary sampled-image limits cannot hold the table. Logged once; ignored without the feature. |
+| `ZENITH_DISABLE_SPATIAL_UPSCALING` | Device fallback: reports FSR 1 as unsupported, so a requested FSR 1 falls back to TAA upsampling (or native resolution). |
 | `ZENITH_DEPTH_PYRAMID_PER_LEVEL` | Builds the depth pyramid with one dispatch per level and always rebuilds it after the prepass (the pre-Milestone 25 behavior; A/B baseline for the single-pass build). |
 | `ZENITH_VALIDATION_STRICT=1` | Requires the validation layer, enables synchronization validation, and fails the process on any counted validation message (exit 77 when the layer is unavailable). Any value other than empty or `0` enables it. |
 | `ZENITH_SMOKE_FRAMES=N` | Quits after N presented frames; used by bounded smoke runs and CTest. |

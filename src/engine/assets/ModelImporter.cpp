@@ -8,10 +8,12 @@
 #include <cgltf.h>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <string_view>
 
 namespace {
 struct CgltfDeleter {
@@ -208,6 +210,20 @@ std::vector<ImageUsage> imageUsages(const cgltf_data& data) {
     return usages;
 }
 
+// Bytes encoded by base64 text (a data URI payload): three per four
+// characters, minus one per trailing '=' padding character. Zero for text
+// whose length is not a whole number of four-character groups.
+size_t base64DecodedSize(std::string_view encoded) {
+    if (encoded.empty() || encoded.size() % 4 != 0) {
+        return 0;
+    }
+    size_t padding = 0;
+    while (padding < 2 && encoded[encoded.size() - 1 - padding] == '=') {
+        ++padding;
+    }
+    return encoded.size() / 4 * 3 - padding;
+}
+
 bool isExternalImageFile(const cgltf_image& image) {
     return !image.buffer_view && image.uri && std::strncmp(image.uri, "data:", 5) != 0;
 }
@@ -341,10 +357,12 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
                           : decodeImageFile(path.parent_path() / image.uri);
         } else if (image.uri) {
             const char* comma = std::strchr(image.uri, ',');
+            const size_t decodedSize = comma ? base64DecodedSize(comma + 1) : 0;
             void* bytes = nullptr;
-            if (comma &&
-                cgltf_load_buffer_base64(&options, std::strlen(comma + 1), comma + 1, &bytes) == cgltf_result_success) {
-                const size_t decodedSize = (std::strlen(comma + 1) / 4) * 3;
+            // cgltf decodes exactly decodedSize bytes, so it must be the decoded
+            // length, not the length of the encoded text.
+            if (decodedSize > 0 &&
+                cgltf_load_buffer_base64(&options, decodedSize, comma + 1, &bytes) == cgltf_result_success) {
                 decoded = decodeImageMemory(bytes, decodedSize, image.name ? image.name : "data URI image");
                 std::free(bytes);
             } else {

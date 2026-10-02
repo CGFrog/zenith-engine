@@ -353,6 +353,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/resources/ImageReadback.cpp
     src/engine/graphics/resources/ViewportTarget.cpp
     src/engine/graphics/resources/MipChainBlit.cpp
+    src/engine/graphics/resources/DescriptorPoolSizes.cpp
     src/engine/graphics/shader/ShaderModule.cpp
     src/engine/graphics/surface/Surface.cpp
     src/engine/graphics/swapchain/Swapchain.cpp
@@ -1155,12 +1156,17 @@ if(BUILD_TESTING)
     set(ZENITH_VALIDATION_SUBMISSIONS cpu gpu_driven)
     set(ZENITH_VALIDATION_ENVIRONMENT_cpu "")
     set(ZENITH_VALIDATION_ENVIRONMENT_gpu_driven "ZENITH_FORCE_GPU_DRIVEN=1")
-    set(ZENITH_VALIDATION_QUALITIES default high_dynamic fsr1_dynamic)
+    set(ZENITH_VALIDATION_QUALITIES default high_dynamic fsr1_dynamic device_fallbacks)
     set(ZENITH_VALIDATION_ENVIRONMENT_default "")
     set(ZENITH_VALIDATION_ENVIRONMENT_high_dynamic "ZENITH_FORCE_HIGH_QUALITY=1;ZENITH_FORCE_DYNAMIC_RESOLUTION=1")
     # FSR 1 after a render-resolution TAA resolve, under dynamic resolution.
     set(ZENITH_VALIDATION_ENVIRONMENT_fsr1_dynamic
         "ZENITH_FORCE_HIGH_QUALITY=1;ZENITH_FORCE_DYNAMIC_RESOLUTION=1;ZENITH_FORCE_UPSCALER=fsr1;ZENITH_FORCE_UPSCALER_QUALITY=performance")
+    # Paths other vendors' devices take: RGBA8 instead of BC textures,
+    # update-after-bind bindless descriptors, the per-level depth pyramid, and
+    # FSR 1 requested without support (it falls back to TAA upsampling).
+    set(ZENITH_VALIDATION_ENVIRONMENT_device_fallbacks
+        "ZENITH_FORCE_HIGH_QUALITY=1;ZENITH_DISABLE_BLOCK_COMPRESSION=1;ZENITH_FORCE_UPDATE_AFTER_BIND=1;ZENITH_DEPTH_PYRAMID_PER_LEVEL=1;ZENITH_DISABLE_SPATIAL_UPSCALING=1;ZENITH_FORCE_UPSCALER=fsr1")
     foreach(scene IN LISTS ZENITH_VALIDATION_SCENES)
         foreach(submission IN LISTS ZENITH_VALIDATION_SUBMISSIONS)
             foreach(quality IN LISTS ZENITH_VALIDATION_QUALITIES)

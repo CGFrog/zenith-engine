@@ -2,6 +2,7 @@
 #include "VulkanContext.hpp"
 #include "VulkanCheck.hpp"
 #include "engine/platform/PlatformServices.hpp"
+#include <SDL3/SDL_stdinc.h>
 #include <SDL3/SDL_vulkan.h>
 #include <cstring>
 #include <fstream>
@@ -343,14 +344,20 @@ bool VulkanContext::initDevice() {
                                               .synchronization2 = VK_TRUE,
                                               .dynamicRendering = VK_TRUE};
     // BC sampling is optional: without it, textures stay on the RGBA8 path.
-    m_blockCompressionSupported = supported.features.textureCompressionBC == VK_TRUE;
+    // ZENITH_DISABLE_BLOCK_COMPRESSION leaves it off on devices that have it,
+    // so that path can be validated without such a device.
+    const bool blockCompressionDisabled = SDL_getenv("ZENITH_DISABLE_BLOCK_COMPRESSION") != nullptr;
+    m_blockCompressionSupported = supported.features.textureCompressionBC == VK_TRUE && !blockCompressionDisabled;
+    if (blockCompressionDisabled) {
+        std::cerr << "BC texture sampling disabled by ZENITH_DISABLE_BLOCK_COMPRESSION; textures use RGBA8\n";
+    }
     // Optional: the single-pass depth-pyramid build indexes its level array.
     m_storageImageArrayDynamicIndexingSupported = supported.features.shaderStorageImageArrayDynamicIndexing == VK_TRUE;
     VkPhysicalDeviceFeatures enabledFeatures{.imageCubeArray = VK_TRUE,
                                              .independentBlend = VK_TRUE,
                                              .multiDrawIndirect = supported.features.multiDrawIndirect,
                                              .samplerAnisotropy = VK_TRUE,
-                                             .textureCompressionBC = supported.features.textureCompressionBC,
+                                             .textureCompressionBC = m_blockCompressionSupported ? VK_TRUE : VK_FALSE,
                                              .shaderStorageImageArrayDynamicIndexing =
                                                  supported.features.shaderStorageImageArrayDynamicIndexing};
     const char* swapchainExtension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
