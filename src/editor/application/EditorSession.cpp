@@ -57,7 +57,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_document(assetRoot)
     , m_recovery(settingsDirectory / (std::string("recovery") + sceneExtension))
     , m_fileDialog("Zenith scene", sceneExtension)
-    , m_assetBrowser(std::move(assetRoot), sceneRoot)
+    , m_assetBrowser(std::move(assetRoot), sceneRoot, settingsDirectory / "asset-browser.json")
     , m_graphics(std::move(renderSettings))
     , m_panels{{{&m_viewport, &EditorPanelVisibility::viewport},
                 {&m_hierarchy, &EditorPanelVisibility::hierarchy},

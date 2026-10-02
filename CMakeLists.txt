@@ -492,12 +492,18 @@ add_library(zenith_editor_app STATIC
     src/editor/project/DerivedAssetInspector.cpp
     src/editor/project/ExternalEditor.cpp
     src/editor/project/IrradianceVolumeBaker.cpp
+    src/editor/project/ProjectFileOperations.cpp
     src/editor/project/ReflectionProbeBaker.cpp
     src/editor/project/ThumbnailCache.cpp
+    src/editor/settings/AssetBrowserSettings.cpp
     src/editor/settings/EditorRenderSettings.cpp
     src/editor/settings/EditorSettings.cpp
 )
 target_link_libraries(zenith_editor_app PUBLIC zenith_engine)
+if(WIN32)
+    # Shell file operations (Recycle Bin, Explorer) in ProjectFileOperations.
+    target_link_libraries(zenith_editor_app PRIVATE ole32 shell32)
+endif()
 target_compile_definitions(zenith_editor_app PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
 add_executable(zenith_editor src/editor/main.cpp)
@@ -1312,6 +1318,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_build_workflow_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_build_workflow COMMAND zenith_build_workflow_tests)
+
+    add_executable(zenith_asset_browser_tests tests/editor/AssetBrowserTests.cpp)
+    target_link_libraries(zenith_asset_browser_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_asset_browser_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_asset_browser_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_asset_browser COMMAND zenith_asset_browser_tests)
 
     add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
     set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES
