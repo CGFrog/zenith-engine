@@ -1350,11 +1350,14 @@ void MeshPass::writeMaterialRecords(uint32_t frameIndex, const AssetManager& ass
         if (!handle) {
             return fallback;
         }
-        const auto found = m_textures.find(handleKey(handle));
-        if (found == m_textures.end()) {
+        // A texture missing here failed its first upload, typically because the
+        // staging ring was full while a large batch of materials loaded. Retry it
+        // every frame until it lands; the fallback covers the frames in between.
+        const GpuTexture* texture = ensureTexture(handle, assets);
+        if (!texture) {
             return fallback;
         }
-        return srgb ? found->second.srgbSlot : found->second.linearSlot;
+        return srgb ? texture->srgbSlot : texture->linearSlot;
     };
     uint32_t highestIndex = 0;
     for (const auto& [key, gpu] : m_materials) {
@@ -1529,9 +1532,14 @@ bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
         const bool outlined = std::binary_search(outlinedObjects.begin(), outlinedObjects.end(), objectId);
         const MeshHandle meshHandle = renderables.get<const MeshRendererComponent>(entity).mesh;
         const MeshAsset* mesh = assets.mesh(meshHandle);
-        const GpuMesh* gpuMesh = ensureMesh(meshHandle, assets);
-        if (!mesh || !gpuMesh) {
+        if (!mesh) {
             return false;
+        }
+        // A mesh whose upload could not be staged this frame (the staging ring is
+        // full while a scene loads) is skipped and retried on the next frame.
+        const GpuMesh* gpuMesh = ensureMesh(meshHandle, assets);
+        if (!gpuMesh) {
+            continue;
         }
         const glm::mat4 world = renderables.get<const TransformComponent>(entity).world;
         const SkinComponent* skin = scene.registry().try_get<SkinComponent>(entity);
