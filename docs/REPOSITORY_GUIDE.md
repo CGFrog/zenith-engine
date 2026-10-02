@@ -382,7 +382,8 @@ Renderer
    |- GPU mesh/texture/material caches
    |- shadow pass, depth/normal prepass, and main mesh pipeline
    |- DepthPyramid (min/max hierarchical depth for culling and screen-space effects)
-   `- PostProcessPass (HDR/history, motion, prepass normals, SSAO/SSR, and fullscreen pipelines)
+   `- PostProcessPass (HDR/history, motion, prepass normals, SSAO, and fullscreen pipelines)
+      |- ScreenSpaceReflectionPass (Hi-Z reflection trace and in-place composite)
       `- BloomExposurePass (luminance histogram, exposure, bloom chain)
 ```
 
@@ -525,14 +526,32 @@ the camera is blended over the primary environment.
 ### `src/engine/graphics/passes/PostProcessPass.*`
 
 Owns one RGBA16F HDR scene target, motion/reactive target, prepass normal
-target (A2B10G10R10), SSAO target, and SSR target per frame slot, plus the view's `TemporalResolvePass` and
-`BloomExposurePass`. With TAA selected the resolve runs first and exposure and
-bloom read its output-resolution result; otherwise they read the HDR target.
-Separate GPU-scoped SSAO and SSR passes then feed the final fullscreen pass,
+target (A2B10G10R10), and SSAO target per frame slot, plus the view's
+`ScreenSpaceReflectionPass`, `TemporalResolvePass`, and `BloomExposurePass`.
+`finishScene()` ends the scene pass: it blends screen-space reflections into
+the HDR target (when enabled and the depth prepass ran) and makes it readable.
+With TAA selected the resolve runs next and exposure and bloom read its
+output-resolution result; otherwise they read the HDR target. A GPU-scoped
+SSAO pass then feeds the final fullscreen pass,
 which composes the resolved scene (or applies FXAA), the editor grid,
 exposure, the bloom mix, and tone mapping (AgX by default, AgX punchy or
-legacy ACES). Half-resolution effect tiers render into bounded sub-extents;
-SSR misses preserve probe and IBL lighting.
+legacy ACES). Half-resolution effect tiers render into bounded sub-extents.
+
+### `src/engine/graphics/passes/ScreenSpaceReflectionPass.*`
+
+Hi-Z screen-space reflections in compute (`shaders/ssr_trace.comp`,
+`shaders/ssr_composite.comp`), run on the HDR scene before the temporal
+resolve so TAA accumulates them. The trace reflects the view vector about the
+prepass normal (GGX-jittered per frame when TAA accumulates), walks the
+closest-depth channel of the depth pyramid, rejects hits that are too thick or
+face away from the ray, and samples the current frame's lit scene at the hit.
+It writes premultiplied radiance and confidence (screen-edge, reach, and
+iteration-budget fades) at half or full render resolution into one shared
+target. The composite mixes that radiance into the scene in place with a
+dielectric Fresnel weight and a roughness fade, replacing that share of the
+IBL/probe specular; misses leave the scene unchanged. Without the depth
+prepass, reflections are skipped. `ScreenSpaceReflectionTrace.hpp` is the CPU
+mirror covered by `tests/engine/ScreenSpaceReflectionTests.cpp`.
 
 ### `src/engine/graphics/passes/BloomExposurePass.*`
 
@@ -574,7 +593,8 @@ mirror is in `TemporalQuality.*`.
 | `shaders/bloom_downsample.comp` | 13-tap bloom downsample; Karis average on the first level. |
 | `shaders/bloom_upsample.comp` | 3x3 tent bloom upsample accumulated into the next larger level. |
 | `shaders/ssao.frag` | Estimates scalable screen-space ambient occlusion. |
-| `shaders/ssr.frag` | Traces scalable screen-space reflections with an explicit miss. |
+| `shaders/ssr_trace.comp` | Hi-Z screen-space reflection trace over the closest-depth pyramid. |
+| `shaders/ssr_composite.comp` | Blends traced reflections into the HDR scene before the temporal resolve. |
 | `shaders/light_clusters.comp` | Assigns local lights to view clusters for clustered forward shading. |
 | `shaders/depth_pyramid.comp` | Reduces scene depth into a conservative min-depth (reversed-Z) pyramid. |
 | `shaders/gpu_visibility.comp` | Runs early/late two-phase frustum and occlusion culling. |

@@ -1,0 +1,254 @@
+#version 450
+
+// Hierarchical (Hi-Z) screen-space reflection trace. For each traced texel it
+// reflects the view vector about the depth prepass normal, marches the
+// closest-depth pyramid, and stores the hit radiance premultiplied by its
+// confidence. Mirrors src/engine/graphics/ScreenSpaceReflectionTrace.hpp; keep
+// the two in sync. ScreenSpaceReflectionPass documents the bindings.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// This frame's lit HDR scene before reflections (GENERAL), output-sized with
+// the render extent at the top-left.
+layout(set = 0, binding = 0) uniform sampler2D sceneColor;
+// Depth prepass target: rg octahedral view normal, b roughness, a coverage.
+layout(set = 0, binding = 1) uniform sampler2D sceneNormals;
+// RG32F pyramid: r farthest, g closest (reversed Z). texelFetch only.
+layout(set = 0, binding = 2) uniform sampler2D depthPyramid;
+layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D reflectionTarget;
+
+// Mirrors TraceConstants in ScreenSpaceReflectionPass.cpp.
+layout(push_constant) uniform TraceConstants {
+    vec4 projection;      // xy: scale ([0][0], [1][1]); zw: offset ([2][0], [2][1])
+    vec4 depthTerms;      // x: [2][2], y: [3][2], z: maximum view distance, w: thickness
+    vec4 tuning;          // x: thickness per distance, y: edge fade fraction,
+                          // z: roughness cutoff, w: origin normal offset per distance
+    uvec4 extents;        // xy: render extent, zw: traced extent
+    uvec4 parameters;     // x: pyramid levels, y: maximum iterations, z: frame number, w: flags
+    vec2 inverseStorageExtent;
+    // Render pixel traced by texel 0 within each 2x2 block at half resolution.
+    uvec2 footprintOffset;
+} constants;
+
+const uint flagHalfResolution = 1u;
+const uint flagTemporalJitter = 2u;
+const float infinity = 3.402823e38;
+const float pi = 3.14159265358979;
+
+float viewZFromDepth(float depth) {
+    return -constants.depthTerms.y / (depth + constants.depthTerms.x);
+}
+
+vec3 viewPositionFromDepth(vec2 ndc, float depth) {
+    float viewZ = viewZFromDepth(depth);
+    return vec3(-viewZ * (ndc + constants.projection.zw) / constants.projection.xy, viewZ);
+}
+
+vec3 projectToScreen(vec3 viewPosition, vec2 renderExtent) {
+    float w = -viewPosition.z;
+    vec2 ndc = (constants.projection.xy * viewPosition.xy + constants.projection.zw * viewPosition.z) / w;
+    float depth = (constants.depthTerms.x * viewPosition.z + constants.depthTerms.y) / w;
+    return vec3((ndc * 0.5 + 0.5) * renderExtent, depth);
+}
+
+vec3 decodeOctahedral(vec2 encoded) {
+    vec3 normal = vec3(encoded, 1.0 - abs(encoded.x) - abs(encoded.y));
+    float fold = max(-normal.z, 0.0);
+    normal.x += normal.x >= 0.0 ? -fold : fold;
+    normal.y += normal.y >= 0.0 ? -fold : fold;
+    return normalize(normal);
+}
+
+uvec2 levelExtent(uint level) {
+    return max(constants.extents.xy >> level, uvec2(1u));
+}
+
+uvec2 pyramidCell(vec2 pixel, uint level) {
+    uvec2 basePixel = uvec2(max(pixel, vec2(0.0)));
+    return min(basePixel >> level, levelExtent(level) - 1u);
+}
+
+float cellExitT(vec3 origin, vec3 direction, uvec2 cell, uint level) {
+    uvec2 extent = levelExtent(level);
+    float exitT = infinity;
+    for (int axis = 0; axis < 2; ++axis) {
+        float begin = float(cell[axis] << level);
+        float end = cell[axis] + 1u == extent[axis] ? float(constants.extents[axis]) : float((cell[axis] + 1u) << level);
+        if (direction[axis] > 0.0) {
+            exitT = min(exitT, (end - origin[axis]) / direction[axis]);
+        } else if (direction[axis] < 0.0) {
+            exitT = min(exitT, (begin - origin[axis]) / direction[axis]);
+        }
+    }
+    return exitT;
+}
+
+// Level-0 surfaces must face the ray; this also rejects the reflecting
+// surface itself along grazing rays.
+bool acceptSurface(uvec2 texel, vec3 viewDirection) {
+    vec4 normalSample = texelFetch(sceneNormals, ivec2(texel), 0);
+    return normalSample.a > 0.5 && dot(decodeOctahedral(normalSample.rg * 2.0 - 1.0), viewDirection) < 0.0;
+}
+
+// Interleaved gradient noise (Jimenez), offset per frame so the temporal
+// resolve averages the jittered rays.
+float gradientNoise(vec2 pixel, uint frame) {
+    pixel += 5.588238 * float(frame & 63u);
+    return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+}
+
+// GGX-distributed half vector around the normal (alpha = roughness squared).
+vec3 sampleGgxHalfVector(vec3 normal, float roughness, vec2 random) {
+    float alpha = roughness * roughness;
+    float phi = 2.0 * pi * random.x;
+    float cosTheta = sqrt((1.0 - random.y) / (1.0 + (alpha * alpha - 1.0) * random.y));
+    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
+    vec3 helper = abs(normal.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    vec3 tangent = normalize(cross(helper, normal));
+    vec3 bitangent = cross(normal, tangent);
+    return normalize(tangent * (cos(phi) * sinTheta) + bitangent * (sin(phi) * sinTheta) + normal * cosTheta);
+}
+
+vec3 reflectionDirection(vec3 normal, vec3 toCamera, float roughness, ivec2 pixel) {
+    vec3 mirror = reflect(-toCamera, normal);
+    if ((constants.parameters.w & flagTemporalJitter) == 0u) {
+        return mirror;
+    }
+    vec2 random = vec2(gradientNoise(vec2(pixel), constants.parameters.z),
+                       gradientNoise(vec2(pixel.yx) + 17.0, constants.parameters.z));
+    vec3 jittered = reflect(-toCamera, sampleGgxHalfVector(normal, roughness, random));
+    return dot(jittered, normal) > 0.0 ? jittered : mirror;
+}
+
+float smoothFade(float x) {
+    x = clamp(x, 0.0, 1.0);
+    return x * x * (3.0 - 2.0 * x);
+}
+
+float screenEdgeFade(vec2 pixel, vec2 renderExtent) {
+    vec2 uv = pixel / renderExtent;
+    float border = min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y));
+    return smoothFade(border / max(constants.tuning.y, 1e-4));
+}
+
+// Returns rgb hit radiance and confidence in a; a = 0 on a miss.
+vec4 trace(ivec2 pixel) {
+    vec2 renderExtent = vec2(constants.extents.xy);
+    vec4 normalSample = texelFetch(sceneNormals, pixel, 0);
+    float roughness = normalSample.b;
+    if (normalSample.a < 0.5 || roughness >= constants.tuning.z) {
+        return vec4(0.0);
+    }
+    float depth = texelFetch(depthPyramid, pixel, 0).g;
+    if (depth <= 0.0) {
+        return vec4(0.0);
+    }
+    vec3 viewPosition = viewPositionFromDepth((vec2(pixel) + 0.5) / renderExtent * 2.0 - 1.0, depth);
+    vec3 normal = decodeOctahedral(normalSample.rg * 2.0 - 1.0);
+    vec3 toCamera = normalize(-viewPosition);
+    vec3 direction = reflectionDirection(normal, toCamera, roughness, pixel);
+    // Lift the origin off the surface so depth quantization cannot hit it.
+    viewPosition += normal * (constants.tuning.w * -viewPosition.z);
+
+    // Clip to the maximum distance and to just in front of the near plane.
+    float nearZ = viewZFromDepth(1.0);
+    float rayLength = constants.depthTerms.z;
+    if (direction.z > 1e-6) {
+        rayLength = min(rayLength, (nearZ - viewPosition.z) / direction.z * 0.99);
+    }
+    if (!(rayLength > 0.0)) {
+        return vec4(0.0);
+    }
+    vec3 origin = projectToScreen(viewPosition, renderExtent);
+    vec3 rayDirection = projectToScreen(viewPosition + direction * rayLength, renderExtent) - origin;
+    float maximumT = 1.0;
+    for (int axis = 0; axis < 2; ++axis) {
+        if (rayDirection[axis] > 0.0) {
+            maximumT = min(maximumT, (renderExtent[axis] - origin[axis]) / rayDirection[axis]);
+        } else if (rayDirection[axis] < 0.0) {
+            maximumT = min(maximumT, -origin[axis] / rayDirection[axis]);
+        }
+    }
+    if (rayDirection.z < 0.0) {
+        maximumT = min(maximumT, -origin.z / rayDirection.z);
+    }
+
+    float screenStep = max(abs(rayDirection.x), abs(rayDirection.y));
+    float crossT = screenStep > 0.0 ? 0.01 / screenStep : 0.0;
+    uint topLevel = max(constants.parameters.x, 1u) - 1u;
+    uint level = 0u;
+    float t = cellExitT(origin, rayDirection, pyramidCell(origin.xy, 0u), 0u) + crossT;
+    bool hit = false;
+    uint iterations = 0u;
+    for (; iterations < constants.parameters.y; ++iterations) {
+        if (!(t <= maximumT)) {
+            break;
+        }
+        vec3 position = origin + rayDirection * t;
+        uvec2 cell = pyramidCell(position.xy, level);
+        float closest = texelFetch(depthPyramid, ivec2(cell), int(level)).g;
+        float exitT = cellExitT(origin, rayDirection, cell, level);
+        if (position.z <= closest) {
+            if (level > 0u) {
+                --level;
+                continue;
+            }
+            float surfaceDistance = -viewZFromDepth(closest);
+            float thickness = max(constants.depthTerms.w, surfaceDistance * constants.tuning.x);
+            if (-viewZFromDepth(position.z) - surfaceDistance <= thickness && acceptSurface(cell, direction)) {
+                hit = true;
+                break;
+            }
+            t = exitT + crossT;
+            continue;
+        }
+        float surfaceT = rayDirection.z < 0.0 ? (closest - origin.z) / rayDirection.z : infinity;
+        if (surfaceT < exitT) {
+            t = max(t, surfaceT);
+            if (level > 0u) {
+                --level;
+                continue;
+            }
+            if (t <= maximumT && acceptSurface(cell, direction)) {
+                hit = true;
+                break;
+            }
+            t = exitT + crossT;
+            continue;
+        }
+        t = exitT + crossT;
+        level = min(level + 1u, topLevel);
+    }
+    if (!hit) {
+        return vec4(0.0);
+    }
+    vec3 hitPosition = origin + rayDirection * t;
+    vec2 hitPixel = clamp(hitPosition.xy, vec2(0.5), renderExtent - 0.5);
+    // Fade towards the screen border, the end of the ray's reach (in view
+    // distance; screen-space t is perspective-warped), and the iteration
+    // budget, so hits blend into misses instead of cutting off.
+    vec3 hitView = viewPositionFromDepth(hitPosition.xy / renderExtent * 2.0 - 1.0, hitPosition.z);
+    float travelled = distance(hitView, viewPosition) / max(constants.depthTerms.z, 1e-4);
+    float confidence = screenEdgeFade(hitPixel, renderExtent) * (1.0 - smoothFade((travelled - 0.75) / 0.25)) *
+                       (1.0 - smoothFade((float(iterations) / float(constants.parameters.y) - 0.7) / 0.3));
+    vec3 radiance = textureLod(sceneColor, hitPixel * constants.inverseStorageExtent, 0.0).rgb;
+    // Keep non-finite or overflowed texels out of the history; test before
+    // clamping, which may turn NaN into a finite value.
+    if (any(isnan(radiance)) || any(isinf(radiance))) {
+        return vec4(0.0);
+    }
+    return vec4(clamp(radiance, vec3(0.0), vec3(65000.0)), confidence);
+}
+
+void main() {
+    ivec2 traced = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(uvec2(traced), constants.extents.zw))) {
+        return;
+    }
+    ivec2 pixel = traced;
+    if ((constants.parameters.w & flagHalfResolution) != 0u) {
+        pixel = min(traced * 2 + ivec2(constants.footprintOffset), ivec2(constants.extents.xy) - 1);
+    }
+    vec4 reflection = trace(pixel);
+    // Premultiplied, so bilinear upsampling in the composite blends misses out.
+    imageStore(reflectionTarget, traced, vec4(reflection.rgb * reflection.a, reflection.a));
+}

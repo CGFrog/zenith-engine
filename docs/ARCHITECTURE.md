@@ -337,6 +337,10 @@ Main mesh pass
   scene meshes + camera + materials + scene lighting + shadow map
   -> per-frame RGBA16F HDR target + motion/reactive target + shared scene depth
 
+Screen-space reflections (compute, when enabled and the prepass ran)
+  prepass normals + depth pyramid + HDR target -> reflection target
+  -> blended into the HDR target in place
+
 Temporal resolve (TAA only, compute)
   HDR target + motion/reactive target + output-resolution history
   -> next output-resolution history image (the resolved scene)
@@ -345,7 +349,7 @@ Post-process pass
   resolved scene with TAA (else HDR target within its render extent) + depth
   -> compute: luminance histogram -> adapted exposure buffer (persistent)
   -> compute: bloom downsample/upsample chain (when enabled)
-  -> scalable SSAO/SSR + FXAA (non-TAA) + exposure + bloom mix + AgX tone mapping
+  -> scalable SSAO + FXAA (non-TAA) + exposure + bloom mix + AgX tone mapping
   -> swapchain image
 
 Game UI pass
@@ -396,8 +400,9 @@ After the prepass the depth pyramid is rebuilt from the complete opaque depth
 on both submission paths. With the prepass off, the main pass tests and writes
 depth as before and the outputs below are unavailable.
 
-Contract for screen-space consumers (`MeshPass::sceneGeometry`, valid for the
-frame being recorded only when the prepass ran):
+Contract for screen-space consumers (`MeshPass::sceneGeometry` returns
+`SceneGeometryViews`, valid for the frame being recorded only when the prepass
+ran):
 
 - Normals: `PostProcessPass::normalFormat` (`A2B10G10R10_UNORM`), in
   `SHADER_READ_ONLY_OPTIMAL`, output-sized with the render extent at the

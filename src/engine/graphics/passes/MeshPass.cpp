@@ -2022,8 +2022,6 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.motionVectorBytes =
         static_cast<uint64_t>(extent.width) * extent.height * sizeof(uint16_t) * 4 * m_cameras.size();
     stats.ambientOcclusionBytes = static_cast<uint64_t>(extent.width) * extent.height * m_cameras.size();
-    stats.reflectionBytes =
-        static_cast<uint64_t>(extent.width) * extent.height * sizeof(uint16_t) * 4 * m_cameras.size();
     stats.shadowCacheBytes =
         static_cast<uint64_t>(shadowResolution) * shadowResolution * sizeof(float) * maximumShadowCascades;
     DirectionalLightComponent shadowLight = light;
@@ -2189,6 +2187,17 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         m_environmentPass.recordSkybox(commandBuffer, frameIndex, frameCamera.descriptor, environment.specularIntensity,
                                        cameraData.temporalJitter);
     }
+    // Reflections of opaque surfaces and the background join the scene before
+    // blended surfaces and outlines composite over it, and before the temporal
+    // resolve accumulates it.
+    if (!recordScreenSpaceReflections(
+            draw, depthImage, depthView, rendering.settings(),
+            {.projection = projection,
+             .frameNumber = static_cast<uint32_t>(m_frameSerial),
+             .temporalAccumulation = rendering.settings().antialiasing == AntialiasingMode::Taa})) {
+        return false;
+    }
+    stats.reflectionBytes = m_postProcess.reflectionBytes();
     recordShadedItems(draw, ShadedItems::BlendedOnly);
     recordOutlines(draw);
 
@@ -2413,6 +2422,41 @@ void MeshPass::recordDepthNormalItems(const DrawContext& draw) {
         ++draw.stats->drawCalls;
         itemIndex = batchEnd;
     }
+}
+
+bool MeshPass::recordScreenSpaceReflections(const DrawContext& draw, VkImage depthImage, VkImageView depthView,
+                                            const RenderSettings& settings, const ScreenSpaceReflectionCamera& camera) {
+    const SceneGeometryViews geometry = sceneGeometry(draw.frameIndex);
+    const bool traces = PostProcessPass::tracesReflections(geometry, settings.reflections);
+    if (traces) {
+        vkCmdEndRendering(draw.commandBuffer);
+    }
+    if (!m_postProcess.recordReflections(draw.commandBuffer, draw.frameIndex, geometry, settings.reflections, camera,
+                                         draw.timestampQueries)) {
+        return false;
+    }
+    if (traces) {
+        // The resumed pass loads the motion and depth attachments stored above;
+        // recordReflections() ordered the HDR target itself.
+        const VkMemoryBarrier2 attachments{
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
+                            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
+                            VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
+                             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT};
+        const VkDependencyInfo dependency{
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &attachments};
+        vkCmdPipelineBarrier2(draw.commandBuffer, &dependency);
+        beginRendering(draw.commandBuffer, m_postProcess.sceneView(draw.frameIndex),
+                       m_postProcess.motionView(draw.frameIndex), depthImage, depthView, draw.renderExtent,
+                       SceneAttachments::Preserve);
+        setSceneViewport(draw);
+    }
+    return true;
 }
 
 SceneGeometryViews MeshPass::sceneGeometry(uint32_t frameIndex) const {

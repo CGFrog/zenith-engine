@@ -442,8 +442,10 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             "motion and reactive mask", image(PostProcessPass::motionFormat, 5, pixels * sizeof(uint16_t) * 4));
         const auto ambientOcclusion =
             graph.createTransientImage("ambient occlusion", image(PostProcessPass::ambientOcclusionFormat, 5, pixels));
-        const auto reflections = graph.createTransientImage(
-            "screen-space reflections", image(PostProcessPass::sceneFormat, 5, pixels * sizeof(uint16_t) * 4));
+        // Persistent and shared by consecutive frames, like the temporal history.
+        const auto reflections =
+            graph.importImage("screen-space reflection target", image(ScreenSpaceReflectionPass::targetFormat, 5, 0),
+                              VK_IMAGE_LAYOUT_GENERAL);
         const RenderGraphAccess uploadAccesses[]{
             {meshAssets, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
              VK_IMAGE_LAYOUT_UNDEFINED},
@@ -474,6 +476,21 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             {probeCache, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
         graph.addPass("opaque and blended scene", RenderGraphQueue::Graphics, opaqueAccesses);
+        if (m_rendering->settings().reflections != ReflectionQuality::ProbesOnly) {
+            // Traces into the reflection target and blends it into the scene in
+            // place. It runs inside the scene pass, after opaque surfaces and
+            // the background and before blended ones, which this graph models
+            // as one pass. Also reads the prepass normals and depth pyramid,
+            // which MeshPass owns and synchronizes.
+            const RenderGraphAccess reflectionAccesses[]{
+                {hdr, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_GENERAL},
+                {reflections, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL}};
+            graph.addPass("screen-space reflections", RenderGraphQueue::Graphics, reflectionAccesses);
+        }
         const bool temporalResolve = m_rendering->settings().antialiasing == AntialiasingMode::Taa;
         if (temporalResolve) {
             // Also reads the previous frame's motion target, which is outside
@@ -509,14 +526,6 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             {ambientOcclusion, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
         graph.addPass("ambient occlusion", RenderGraphQueue::Graphics, ambientOcclusionAccesses);
-        const RenderGraphAccess reflectionAccesses[]{
-            {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
-            {reflections, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
-        graph.addPass("screen-space reflections", RenderGraphQueue::Graphics, reflectionAccesses);
         const RenderGraphAccess postAccesses[]{
             {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
@@ -527,8 +536,6 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             {ambientOcclusion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            {reflections, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             {output, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};

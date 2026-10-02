@@ -3,6 +3,8 @@
 #include "../Rendering.hpp"
 #include "../vulkan/VulkanContext.hpp"
 #include "BloomExposurePass.hpp"
+#include "SceneGeometryViews.hpp"
+#include "ScreenSpaceReflectionPass.hpp"
 #include "TemporalResolvePass.hpp"
 #include <chrono>
 #include <filesystem>
@@ -22,6 +24,18 @@ class PostProcessPass {
               VkExtent2D extent, VkImageView depthView);
     bool resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
     void prepareScene(VkCommandBuffer commandBuffer, uint32_t frameIndex);
+    // Whether recordReflections() traces for this geometry and quality:
+    // reflections need the depth prepass outputs.
+    static bool tracesReflections(const SceneGeometryViews& geometry, ReflectionQuality reflections);
+    // Blends screen-space reflections into the frame's HDR target when
+    // tracesReflections() holds, between the opaque surfaces (and background)
+    // and the blended ones. The scene pass must have ended rendering; the HDR
+    // target is in COLOR_ATTACHMENT_OPTIMAL before and after, ready for the
+    // pass to resume with its attachments preserved. Records timestamps 12 and
+    // 13 either way. Fails only if the reflection target cannot be allocated.
+    bool recordReflections(VkCommandBuffer commandBuffer, uint32_t frameIndex, const SceneGeometryViews& geometry,
+                           ReflectionQuality reflections, const ScreenSpaceReflectionCamera& camera,
+                           VkQueryPool timestampQueries);
     bool record(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkImage outputImage, VkImageView outputView,
                 VkImage depthImage, VkExtent2D extent, VkExtent2D internalExtent, const RenderSettings& settings,
                 const glm::mat4& inverseViewProjection, const glm::mat4& previousViewProjection,
@@ -46,6 +60,10 @@ class PostProcessPass {
         return m_temporalResolve.historyBytes();
     }
 
+    uint64_t reflectionBytes() const {
+        return m_reflections.targetBytes();
+    }
+
   private:
     struct Target {
         VkImage image{VK_NULL_HANDLE};
@@ -60,9 +78,6 @@ class PostProcessPass {
         VkImage ambientOcclusionImage{VK_NULL_HANDLE};
         VkImageView ambientOcclusionView{VK_NULL_HANDLE};
         VmaAllocation ambientOcclusionAllocation{VK_NULL_HANDLE};
-        VkImage reflectionImage{VK_NULL_HANDLE};
-        VkImageView reflectionView{VK_NULL_HANDLE};
-        VmaAllocation reflectionAllocation{VK_NULL_HANDLE};
         bool effectsInitialized{false};
         VkImage normalImage{VK_NULL_HANDLE};
         VkImageView normalView{VK_NULL_HANDLE};
@@ -92,12 +107,12 @@ class PostProcessPass {
     VkPipelineLayout m_pipelineLayout{VK_NULL_HANDLE};
     VkPipeline m_pipeline{VK_NULL_HANDLE};
     VkPipeline m_ambientOcclusionPipeline{VK_NULL_HANDLE};
-    VkPipeline m_reflectionPipeline{VK_NULL_HANDLE};
     VkSampler m_colorSampler{VK_NULL_HANDLE};
     VkSampler m_depthSampler{VK_NULL_HANDLE};
     VkExtent2D m_extent{};
     std::vector<Target> m_targets;
     TemporalResolvePass m_temporalResolve;
+    ScreenSpaceReflectionPass m_reflections;
     // The most recently recorded frame slot and its render extent; that slot's
     // motion target supplies the previous frame's motion and depth.
     std::optional<uint32_t> m_previousFrameIndex;

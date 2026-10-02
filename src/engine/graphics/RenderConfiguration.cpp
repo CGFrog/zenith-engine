@@ -89,6 +89,7 @@ bool validBloom(const RenderSettings& settings) {
     return settings.bloomIntensity >= 0.0f && settings.bloomIntensity <= 1.0f && settings.bloomFilterRadius > 0.0f &&
            settings.bloomFilterRadius <= 4.0f;
 }
+
 // Accepts the retired tiled modes (1: 32 lights, 2: 64 lights) as Clustered;
 // the light cap then comes from maximumLocalLights or its default.
 bool readLocalLighting(const Json& document, LocalLightingQuality& value) {
@@ -275,6 +276,10 @@ ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
     if (result.settings.reflections != ReflectionQuality::ProbesOnly && !capabilities.screenSpaceReflections) {
         result.settings.reflections = ReflectionQuality::ProbesOnly;
         result.fallbacks.emplace_back("Screen-space reflections are unsupported; using probes and IBL");
+    }
+    if (result.settings.reflections != ReflectionQuality::ProbesOnly && !result.settings.depthPrepass) {
+        result.settings.reflections = ReflectionQuality::ProbesOnly;
+        result.fallbacks.emplace_back("Screen-space reflections need the depth prepass; using probes and IBL");
     }
     return result;
 }

@@ -17,6 +17,7 @@
 #include "EnvironmentPass.hpp"
 #include "GpuDrivenPass.hpp"
 #include "PostProcessPass.hpp"
+#include "SceneGeometryViews.hpp"
 #include "engine/resources/DeferredReleaseQueue.hpp"
 #include <array>
 #include <map>
@@ -26,25 +27,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-
-// Depth-prepass outputs for screen-space effects, valid from the end of the
-// prepass until the frame's next record(). PostProcessPass::normalFormat and
-// DepthPyramid document the encodings.
-struct SceneGeometryViews {
-    // SHADER_READ_ONLY_OPTIMAL; covers renderExtent at the top-left.
-    VkImageView normals{VK_NULL_HANDLE};
-    // GENERAL; complete opaque depth of the frame.
-    VkImageView depthPyramid{VK_NULL_HANDLE};
-    VkSampler depthPyramidSampler{VK_NULL_HANDLE};
-    uint32_t depthPyramidLevels{0};
-    VkExtent2D renderExtent{};
-    // Size of the normal target and of pyramid level 0's storage.
-    VkExtent2D storageExtent{};
-
-    bool valid() const {
-        return normals != VK_NULL_HANDLE;
-    }
-};
 
 class MeshPass {
   public:
@@ -275,6 +257,11 @@ class MeshPass {
     void recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive, VkImage depthImage, VkImageView depthView,
                             const glm::mat4& viewProjection, const MeshLodView& lodView);
     void recordDepthNormalItems(const DrawContext& draw);
+    // Inside the scene pass, after opaque surfaces and the background: blends
+    // screen-space reflections into the HDR target when they are traced,
+    // ending and resuming the pass around the compute work.
+    bool recordScreenSpaceReflections(const DrawContext& draw, VkImage depthImage, VkImageView depthView,
+                                      const RenderSettings& settings, const ScreenSpaceReflectionCamera& camera);
     void bindOpaquePipeline(const DrawContext& draw, const GraphicsPipeline& pipeline, OpaquePipelines pipelines,
                             VkDescriptorSet cameraSet) const;
     void selectRenderItemLods(const MeshLodView& view);

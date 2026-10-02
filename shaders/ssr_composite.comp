@@ -1,0 +1,87 @@
+#version 450
+
+// Blends the traced screen-space reflections into the HDR scene before the
+// temporal resolve: scene = mix(scene, reflection, weight), where the weight
+// combines trace confidence, a dielectric Fresnel term, and a roughness fade
+// (compositeWeight in src/engine/graphics/ScreenSpaceReflectionTrace.hpp).
+// The lit scene already holds the IBL specular term; the mix replaces a
+// Fresnel-sized share of it with the traced radiance rather than adding it.
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// Premultiplied reflection radiance and confidence (ssr_trace.comp), GENERAL.
+layout(set = 0, binding = 0) uniform sampler2D reflectionTrace;
+layout(set = 0, binding = 1) uniform sampler2D sceneNormals;
+layout(set = 0, binding = 2) uniform sampler2D depthPyramid;
+layout(set = 0, binding = 3, rgba16f) uniform image2D sceneImage;
+
+// Mirrors CompositeConstants in ScreenSpaceReflectionPass.cpp.
+layout(push_constant) uniform CompositeConstants {
+    vec4 projection; // xy: scale ([0][0], [1][1]); zw: offset ([2][0], [2][1])
+    vec4 depthTerms; // x: [2][2], y: [3][2]
+    vec4 tuning;     // x: roughness fade start, y: roughness fade end, z: intensity
+    uvec4 extents;   // xy: render extent, zw: traced extent
+    // xy: render pixel traced by texel 0 (the trace's footprint offset),
+    // z: traced texels per render pixel (0.5 at half resolution, else 1).
+    vec4 footprint;
+    vec2 inverseTraceStorageExtent;
+} constants;
+
+float smoothFade(float x) {
+    x = clamp(x, 0.0, 1.0);
+    return x * x * (3.0 - 2.0 * x);
+}
+
+vec3 decodeOctahedral(vec2 encoded) {
+    vec3 normal = vec3(encoded, 1.0 - abs(encoded.x) - abs(encoded.y));
+    float fold = max(-normal.z, 0.0);
+    normal.x += normal.x >= 0.0 ? -fold : fold;
+    normal.y += normal.y >= 0.0 ? -fold : fold;
+    return normalize(normal);
+}
+
+float dielectricFresnel(float normalDotView, float roughness) {
+    const float reflectanceAtNormal = 0.04;
+    float grazing = max(1.0 - roughness, reflectanceAtNormal);
+    return reflectanceAtNormal + (grazing - reflectanceAtNormal) * pow(1.0 - clamp(normalDotView, 0.0, 1.0), 5.0);
+}
+
+float compositeWeight(float confidence, float normalDotView, float roughness) {
+    float fade = 1.0 - smoothFade((roughness - constants.tuning.x) / max(constants.tuning.y - constants.tuning.x, 1e-4));
+    float weight = clamp(confidence, 0.0, 1.0) * dielectricFresnel(normalDotView, roughness) * fade *
+                   max(constants.tuning.z, 0.0);
+    return clamp(weight, 0.0, 1.0);
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(uvec2(pixel), constants.extents.xy))) {
+        return;
+    }
+    vec4 normalSample = texelFetch(sceneNormals, pixel, 0);
+    float depth = texelFetch(depthPyramid, pixel, 0).g;
+    if (normalSample.a < 0.5 || depth <= 0.0) {
+        return;
+    }
+    vec2 renderExtent = vec2(constants.extents.xy);
+    vec2 tracedExtent = vec2(constants.extents.zw);
+    // Bilinear upsample from the traced grid, aligned with the render pixels
+    // the trace sampled this frame and kept inside its valid texels.
+    vec2 tracedTexel =
+        clamp((vec2(pixel) - constants.footprint.xy) * constants.footprint.z + 0.5, vec2(0.5), tracedExtent - 0.5);
+    vec4 reflection = textureLod(reflectionTrace, tracedTexel * constants.inverseTraceStorageExtent, 0.0);
+    if (reflection.a <= 1e-4) {
+        return;
+    }
+    vec2 ndc = (vec2(pixel) + 0.5) / renderExtent * 2.0 - 1.0;
+    float viewZ = -constants.depthTerms.y / (depth + constants.depthTerms.x);
+    vec3 viewPosition = vec3(-viewZ * (ndc + constants.projection.zw) / constants.projection.xy, viewZ);
+    vec3 normal = decodeOctahedral(normalSample.rg * 2.0 - 1.0);
+    float normalDotView = dot(normal, normalize(-viewPosition));
+    float weight = compositeWeight(reflection.a, normalDotView, normalSample.b);
+    if (weight <= 0.0) {
+        return;
+    }
+    vec4 scene = imageLoad(sceneImage, pixel);
+    vec3 radiance = reflection.rgb / reflection.a;
+    imageStore(sceneImage, pixel, vec4(mix(scene.rgb, radiance, weight), scene.a));
+}

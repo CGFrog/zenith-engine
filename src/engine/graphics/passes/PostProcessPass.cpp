@@ -61,8 +61,8 @@ bool PostProcessPass::init(const VulkanContext& context, VkFormat outputFormat, 
     m_targets.resize(frameCount);
     return m_bloomExposure.init(context) && createDescriptors(frameCount) && createPipeline(outputFormat) &&
            createEffectPipeline(shaderRoot() / "ssao.frag.spv", ambientOcclusionFormat, m_ambientOcclusionPipeline) &&
-           createEffectPipeline(shaderRoot() / "ssr.frag.spv", sceneFormat, m_reflectionPipeline) &&
-           m_temporalResolve.init(context, frameCount, extent) && createTargets(context, extent, depthView);
+           m_temporalResolve.init(context, frameCount, extent) && m_reflections.init(context, extent) &&
+           createTargets(context, extent, depthView);
 }
 
 bool PostProcessPass::createDescriptors(uint32_t frameCount) {
@@ -289,7 +289,9 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
                                 .arrayLayers = 1,
                                 .samples = VK_SAMPLE_COUNT_1_BIT,
                                 .tiling = VK_IMAGE_TILING_OPTIMAL,
-                                .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                // Storage: screen-space reflections composite in place.
+                                .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                         VK_IMAGE_USAGE_STORAGE_BIT,
                                 .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
         VmaAllocationCreateInfo allocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
         if (!checkVulkan(
@@ -336,18 +338,6 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
                          "Create ambient-occlusion view")) {
             return false;
         }
-        effectImage.format = sceneFormat;
-        if (!checkVulkan(vmaCreateImage(context.vmaAllocator(), &effectImage, &allocation, &target.reflectionImage,
-                                        &target.reflectionAllocation, nullptr),
-                         "Create reflection target")) {
-            return false;
-        }
-        view.image = target.reflectionImage;
-        view.format = sceneFormat;
-        if (!checkVulkan(vkCreateImageView(context.device(), &view, nullptr, &target.reflectionView),
-                         "Create reflection view")) {
-            return false;
-        }
         effectImage.format = normalFormat;
         if (!checkVulkan(vmaCreateImage(context.vmaAllocator(), &effectImage, &allocation, &target.normalImage,
                                         &target.normalAllocation, nullptr),
@@ -379,8 +369,10 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
             {.sampler = m_colorSampler,
              .imageView = target.ambientOcclusionView,
              .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            // Binding 5 is unused since reflections moved before the temporal
+            // resolve (ScreenSpaceReflectionPass); it stays bound to a valid view.
             {.sampler = m_colorSampler,
-             .imageView = target.reflectionView,
+             .imageView = target.view,
              .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
             // The previous frame's motion target; its alpha holds that frame's depth.
             {.sampler = m_colorSampler,
@@ -472,12 +464,6 @@ void PostProcessPass::destroyTargets(const VulkanContext& context) {
         if (target.ambientOcclusionImage) {
             vmaDestroyImage(context.vmaAllocator(), target.ambientOcclusionImage, target.ambientOcclusionAllocation);
         }
-        if (target.reflectionView) {
-            vkDestroyImageView(context.device(), target.reflectionView, nullptr);
-        }
-        if (target.reflectionImage) {
-            vmaDestroyImage(context.vmaAllocator(), target.reflectionImage, target.reflectionAllocation);
-        }
         if (target.normalView) {
             vkDestroyImageView(context.device(), target.normalView, nullptr);
         }
@@ -495,9 +481,6 @@ void PostProcessPass::destroyTargets(const VulkanContext& context) {
         target.ambientOcclusionImage = VK_NULL_HANDLE;
         target.ambientOcclusionView = VK_NULL_HANDLE;
         target.ambientOcclusionAllocation = VK_NULL_HANDLE;
-        target.reflectionImage = VK_NULL_HANDLE;
-        target.reflectionView = VK_NULL_HANDLE;
-        target.reflectionAllocation = VK_NULL_HANDLE;
         target.effectsInitialized = false;
         target.normalImage = VK_NULL_HANDLE;
         target.normalView = VK_NULL_HANDLE;
@@ -510,6 +493,7 @@ bool PostProcessPass::resize(const VulkanContext& context, VkExtent2D extent, Vk
     destroyTargets(context);
     m_previousFrameIndex.reset();
     m_temporalResolve.resize(extent);
+    m_reflections.resize(extent);
     return createTargets(context, extent, depthView);
 }
 
@@ -533,6 +517,38 @@ void PostProcessPass::prepareScene(VkCommandBuffer commandBuffer, uint32_t frame
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                  target.motionInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+}
+
+bool PostProcessPass::tracesReflections(const SceneGeometryViews& geometry, ReflectionQuality reflections) {
+    return reflections != ReflectionQuality::ProbesOnly && geometry.valid();
+}
+
+bool PostProcessPass::recordReflections(VkCommandBuffer commandBuffer, uint32_t frameIndex,
+                                        const SceneGeometryViews& geometry, ReflectionQuality reflections,
+                                        const ScreenSpaceReflectionCamera& camera, VkQueryPool timestampQueries) {
+    const Target& target = m_targets[frameIndex];
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestampQueries, 12);
+    }
+    if (tracesReflections(geometry, reflections)) {
+        imageBarrier(commandBuffer, target.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                     VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                         VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        if (!m_reflections.record(commandBuffer, target.view, geometry, reflections, camera)) {
+            return false;
+        }
+        // The scene pass resumes and blends later surfaces over the result.
+        imageBarrier(commandBuffer, target.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+    }
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 13);
+    }
+    return true;
 }
 
 bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkImage outputImage,
@@ -653,9 +669,6 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
     recordEffect(target.ambientOcclusionImage, target.ambientOcclusionView, m_ambientOcclusionPipeline,
                  scaledEffectExtent(settings.ambientOcclusion == AmbientOcclusionQuality::HalfResolution),
                  settings.ambientOcclusion != AmbientOcclusionQuality::Off, 1.0f, 10, 11);
-    recordEffect(target.reflectionImage, target.reflectionView, m_reflectionPipeline,
-                 scaledEffectExtent(settings.reflections == ReflectionQuality::ScreenSpaceHalfResolution),
-                 settings.reflections != ReflectionQuality::ProbesOnly, 0.0f, 12, 13);
     target.effectsInitialized = true;
     imageBarrier(commandBuffer, outputImage, VK_IMAGE_ASPECT_COLOR_BIT, outputOldLayout,
                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -833,6 +846,7 @@ VkImageView PostProcessPass::normalView(uint32_t frameIndex) const {
 void PostProcessPass::shutdown(const VulkanContext& context) {
     destroyTargets(context);
     m_temporalResolve.shutdown();
+    m_reflections.shutdown();
     m_bloomExposure.shutdown(context);
     m_previousExposureTime.reset();
     if (m_pipeline) {
@@ -840,9 +854,6 @@ void PostProcessPass::shutdown(const VulkanContext& context) {
     }
     if (m_ambientOcclusionPipeline) {
         vkDestroyPipeline(context.device(), m_ambientOcclusionPipeline, nullptr);
-    }
-    if (m_reflectionPipeline) {
-        vkDestroyPipeline(context.device(), m_reflectionPipeline, nullptr);
     }
     if (m_pipelineLayout) {
         vkDestroyPipelineLayout(context.device(), m_pipelineLayout, nullptr);
@@ -861,7 +872,6 @@ void PostProcessPass::shutdown(const VulkanContext& context) {
     }
     m_pipeline = VK_NULL_HANDLE;
     m_ambientOcclusionPipeline = VK_NULL_HANDLE;
-    m_reflectionPipeline = VK_NULL_HANDLE;
     m_pipelineLayout = VK_NULL_HANDLE;
     m_colorSampler = VK_NULL_HANDLE;
     m_depthSampler = VK_NULL_HANDLE;

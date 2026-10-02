@@ -297,6 +297,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/passes/ClusteredLightingPass.cpp
     src/engine/graphics/passes/EnvironmentPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
+    src/engine/graphics/passes/ScreenSpaceReflectionPass.cpp
     src/engine/graphics/passes/TemporalResolvePass.cpp
     src/engine/graphics/passes/BloomExposurePass.cpp
     src/engine/graphics/passes/UiPass.cpp
@@ -757,6 +758,10 @@ if(BUILD_TESTING)
     add_executable(zenith_depth_prepass_tests tests/engine/DepthPrepassTests.cpp)
     target_link_libraries(zenith_depth_prepass_tests PRIVATE zenith_engine)
     add_test(NAME zenith_depth_prepass COMMAND zenith_depth_prepass_tests)
+
+    add_executable(zenith_screen_space_reflection_tests tests/engine/ScreenSpaceReflectionTests.cpp)
+    target_link_libraries(zenith_screen_space_reflection_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_screen_space_reflections COMMAND zenith_screen_space_reflection_tests)
 
     add_executable(zenith_clustered_lighting_tests tests/engine/ClusteredLightingTests.cpp)
     target_link_libraries(zenith_clustered_lighting_tests PRIVATE zenith_engine)
