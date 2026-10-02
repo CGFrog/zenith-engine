@@ -1,0 +1,66 @@
+#version 450
+
+// Denoises and upsamples half-resolution GTAO in one pass: every render pixel
+// averages the 4x4 raw occlusion texels around it, which hold each phase of
+// gtao.comp's 4x4 noise tile exactly once, weighting each by how closely its
+// view depth matches the pixel's own. Texels across a depth edge keep a tiny
+// weight, so a window with no matching depth falls back to the plain average.
+// Mirrors ambient_occlusion::upsampleWindowOrigin and upsampleDepthWeight in
+// src/engine/graphics/AmbientOcclusion.cpp.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// r = raw visibility, g = positive view depth (65504 for the sky).
+layout(set = 0, binding = 0) uniform sampler2D rawOcclusion;
+// Depth pyramid level 0: reversed-Z scene depth (near = 1, far = 0).
+layout(set = 0, binding = 1) uniform sampler2D depthPyramid;
+layout(set = 0, binding = 2, r8) uniform writeonly image2D occlusion;
+
+// Mirrors UpsampleSettings in AmbientOcclusionPass.cpp.
+layout(push_constant) uniform Settings {
+    ivec2 dispatchExtent; // render pixels (plus one guard texel) to write
+    ivec2 renderExtent;   // valid region of the scene depth
+    ivec2 rawExtent;      // texels gtao.comp wrote
+    // Positive view depth = viewDepthTerms.x / (depth + viewDepthTerms.y).
+    vec2 viewDepthTerms;
+    float occlusionPower; // see ambient_occlusion::applyOcclusionPower
+} settings;
+
+const float DEPTH_TOLERANCE = 0.1;
+const float EDGE_WEIGHT = 1e-3;
+
+float depthWeight(float pixelDepth, float sampleDepth) {
+    float tolerance = max(pixelDepth * DEPTH_TOLERANCE, 1e-4);
+    return clamp(1.0 - abs(sampleDepth - pixelDepth) / tolerance, 0.0, 1.0) + EDGE_WEIGHT;
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, settings.dispatchExtent))) {
+        return;
+    }
+    // The guard column and row repeat the last rendered pixel.
+    ivec2 depthPixel = min(pixel, settings.renderExtent - 1);
+    float depth = texelFetch(depthPyramid, depthPixel, 0).r;
+    if (depth <= 0.0) {
+        imageStore(occlusion, pixel, vec4(1.0));
+        return;
+    }
+    float pixelDepth = settings.viewDepthTerms.x / (depth + settings.viewDepthTerms.y);
+    // Raw texel t was evaluated at pixel 2t, so the window starting at
+    // (pixel >> 1) - 1 is centered on the pixel to within half a texel.
+    ivec2 origin = (pixel >> 1) - 1;
+    float weightedVisibility = 0.0;
+    float totalWeight = 0.0;
+    for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 4; ++x) {
+            ivec2 texel = clamp(origin + ivec2(x, y), ivec2(0), settings.rawExtent - 1);
+            vec2 sampled = texelFetch(rawOcclusion, texel, 0).rg;
+            float weight = depthWeight(pixelDepth, sampled.g);
+            weightedVisibility += sampled.r * weight;
+            totalWeight += weight;
+        }
+    }
+    float visibility = clamp(weightedVisibility / totalWeight, 0.0, 1.0);
+    imageStore(occlusion, pixel, vec4(pow(visibility, settings.occlusionPower)));
+}

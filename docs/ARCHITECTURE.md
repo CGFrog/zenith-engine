@@ -480,12 +480,20 @@ ran):
 
 Ambient occlusion (`AmbientOcclusionPass`) is GTAO: right after the prepass
 and pyramid, `gtao.comp` integrates cosine-weighted horizon visibility per
-slice from pyramid level 0 and the prepass normals (view positions come from
-the inverse of the jittered projection), at half or full render resolution per
-`AmbientOcclusionQuality`; `gtao_denoise.comp` applies a depth-aware 5x5 blur
-that covers its 4x4 noise tile. The R8 result (one image per frame slot, kept
-in `GENERAL`) is camera binding 13, which `mesh.frag` samples with
-`ambient_occlusion::occlusionUv` (scale in `environmentParams.w`). Its minimum
+slice from the prepass normals and the depth pyramid (view positions come from
+the inverse of the jittered projection). `ambient_occlusion::qualityProfile`
+maps `AmbientOcclusionQuality` to a resolution and sampling pattern: Full
+traces every render pixel with 3 slices x 4 steps against pyramid level 0 and
+blurs the result with `gtao_denoise.comp` (depth-aware 5x5, covering the 4x4
+noise tile); HalfResolution traces a quarter of the pixels with 2 slices x 4
+steps against level 1 (checkerboarded farthest/closest depth), and
+`gtao_upsample.comp` denoises and upsamples to the render resolution in one
+pass, averaging the 4x4 raw texels around each pixel weighted by view-depth
+similarity. The clamp and occlusion power follow the average so few-slice
+estimates are not biased dark. The R8 result (one render-resolution image per
+frame slot, kept in `GENERAL`) is camera binding 13, which `mesh.frag` samples
+with `ambient_occlusion::occlusionUv` (scale in `environmentParams.w`, 1 for
+every quality). Its minimum
 with material occlusion attenuates indirect diffuse, and Lagarde's specular
 occlusion attenuates indirect specular; blended surfaces skip it. With TAA the
 noise rotates per frame and the temporal resolve supplies stability. When the
