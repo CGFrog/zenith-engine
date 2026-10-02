@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <optional>
 #include <ranges>
@@ -237,6 +238,12 @@ SceneDocumentResult serializeEntity(const Scene& scene, Entity entity, const Ass
                                            {"primary", light->primary},
                                            {"environment_asset", environmentAsset}};
     }
+    if (const auto* fog = registry.try_get<VolumetricFogComponent>(entity)) {
+        components["volumetric_fog"] = {{"density", fog->density},        {"height_falloff", fog->heightFalloff},
+                                        {"base_height", fog->baseHeight}, {"albedo", vector3(fog->albedo)},
+                                        {"anisotropy", fog->anisotropy},  {"noise_amount", fog->noiseAmount},
+                                        {"noise_scale", fog->noiseScale}, {"primary", fog->primary}};
+    }
     if (const auto* light = registry.try_get<PointLightComponent>(entity)) {
         components["point_light"] = {{"color", vector3(light->color)},
                                      {"intensity", light->intensity},
@@ -440,6 +447,28 @@ SceneDocumentResult deserializeComponents(const Json& components, Entity entity,
             light.environmentMap = loaded.handle;
         }
         registry.emplace<EnvironmentLightComponent>(entity, light);
+    }
+    if (const auto found = components.find("volumetric_fog"); found != components.end()) {
+        VolumetricFogComponent fog;
+        if (!readVector3(found->at("albedo"), fog.albedo)) {
+            return {.error = "Volumetric fog albedo must contain three numbers"};
+        }
+        fog.density = found->at("density").get<float>();
+        fog.heightFalloff = found->at("height_falloff").get<float>();
+        fog.baseHeight = found->at("base_height").get<float>();
+        fog.anisotropy = found->at("anisotropy").get<float>();
+        fog.noiseAmount = found->value("noise_amount", fog.noiseAmount);
+        fog.noiseScale = found->value("noise_scale", fog.noiseScale);
+        fog.primary = found->at("primary").get<bool>();
+        // Infinite coefficients would turn the integrated fog into NaN.
+        const auto finiteNonNegative = [](float value) { return std::isfinite(value) && value >= 0.0f; };
+        if (!finiteNonNegative(fog.density) || !finiteNonNegative(fog.heightFalloff) ||
+            !(std::abs(fog.anisotropy) < 1.0f) || !(fog.noiseAmount >= 0.0f && fog.noiseAmount <= 1.0f) ||
+            !finiteNonNegative(fog.noiseScale) || fog.noiseScale == 0.0f || !finiteNonNegative(fog.albedo.r) ||
+            !finiteNonNegative(fog.albedo.g) || !finiteNonNegative(fog.albedo.b) || !std::isfinite(fog.baseHeight)) {
+            return {.error = "Volumetric fog parameters are invalid"};
+        }
+        registry.emplace<VolumetricFogComponent>(entity, fog);
     }
     if (const auto found = components.find("point_light"); found != components.end()) {
         PointLightComponent light;

@@ -1,6 +1,6 @@
 #version 450
 
-// Prefix of CameraData in shaders/mesh.frag and MeshPass.cpp.
+// Prefix of CameraData in shaders/mesh.frag and MeshPass.cpp, through the fog fields.
 layout(set = 0, binding = 0) uniform CameraData {
     mat4 viewProjection;
     mat4 previousViewProjection;
@@ -8,7 +8,27 @@ layout(set = 0, binding = 0) uniform CameraData {
     vec4 cameraPosition;
     vec4 lightDirection; // xyz toward the light, w intensity
     vec4 lightColor;
+    vec4 environmentSky;
+    vec4 environmentGround;
+    vec4 shadowSettings;
+    vec4 cascadeSplits;
+    vec4 renderingSettings;
+    vec4 environmentSpecular[6];
+    vec4 clusterDepth;
+    vec4 clusterTileScale;
+    uvec4 clusterGrid;
+    vec4 environmentParams;
+    // Reflection probes (U9); unused here but keeps the fog fields' offsets.
+    vec4 reflectionProbeParams;
+    // Volumetric fog (U10): x enables it, w is the froxel depth slice count.
+    vec4 fogVolume;
+    // xy: integrated-volume uv per render pixel.
+    vec4 fogScreen;
 } camera;
+
+// Integrated volumetric fog; the sky lies beyond the volume, so it receives
+// the fog accumulated through the last froxel slice.
+layout(set = 0, binding = 18) uniform sampler3D volumetricFog;
 
 layout(set = 1, binding = 0) uniform samplerCube environment;
 
@@ -34,6 +54,11 @@ void main() {
         float sunCosine = dot(direction, normalize(camera.lightDirection.xyz));
         float disc = smoothstep(SUN_EDGE_COSINE, SUN_DISC_COSINE, sunCosine);
         radiance += camera.lightColor.rgb * camera.lightDirection.w * SUN_DISC_SCALE * disc;
+    }
+    if (camera.fogVolume.x > 0.5) {
+        float slices = camera.fogVolume.w;
+        vec4 fog = textureLod(volumetricFog, vec3(gl_FragCoord.xy * camera.fogScreen.xy, (slices - 0.5) / slices), 0.0);
+        radiance = radiance * fog.a + fog.rgb;
     }
     outColor = vec4(radiance, 0.0);
 

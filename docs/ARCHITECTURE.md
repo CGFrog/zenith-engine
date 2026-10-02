@@ -481,6 +481,26 @@ prepass is off (its normals are missing) or occlusion is Off, the image is
 cleared to 1 and no dispatch runs. `AmbientOcclusion.hpp` mirrors the
 integration on the CPU.
 
+Volumetric fog (`VolumetricFogPass`) is authored per scene by the primary
+`VolumetricFogComponent` (density, height falloff, albedo, Henyey-Greenstein
+anisotropy, noise) because the medium is content, like lights; its cost is a
+project render setting, `VolumetricFogQuality` (Off, Low, Medium, High). The
+froxel grid subdivides the cluster grid: each cluster tile and depth slice
+splits into an integer number of froxels with the same exponential depth law,
+so froxel `(x, y, z)` reads the light list of cluster
+`(x / sub.x, y / sub.y, z / sub.z)` and the volume ends at the cluster grid's
+`sliceEndDepth`. After light clustering and the shadow cascades, injection
+writes in-scattered radiance and extinction per froxel (sun with one hardware
+PCF tap of its cascade, clustered local lights unshadowed, ambient from the
+primary environment's SH or the hemisphere colors), jittered and blended 1:9
+with the reprojected previous frame on Medium and High. Integration then
+accumulates each column front to back, slice by slice with the analytic
+homogeneous-slice integral. `mesh.frag` (opaque and blended) and
+`skybox.frag` composite `color * transmittance + scattering` from camera
+binding 18; the skybox reads the last slice. Off records no fog work and
+keeps a cleared 1x1x1 volume bound. Local-light shadows in fog are a
+follow-up.
+
 The primary directional and environment light components provide direct-light,
 shadow, sky, and ground settings. Material occlusion attenuates only indirect
 environment lighting, leaving direct and emissive contributions unchanged.

@@ -30,7 +30,10 @@ inline constexpr uint32_t shadowCullEnd = 34;
 // Per-pixel reflection probe upload and cluster assignment.
 inline constexpr uint32_t reflectionProbeClustersBegin = 35;
 inline constexpr uint32_t reflectionProbeClustersEnd = 36;
-inline constexpr uint32_t count = 37;
+// Volumetric fog injection, reprojection, and integration.
+inline constexpr uint32_t volumetricFogBegin = 37;
+inline constexpr uint32_t volumetricFogEnd = 38;
+inline constexpr uint32_t count = 39;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot

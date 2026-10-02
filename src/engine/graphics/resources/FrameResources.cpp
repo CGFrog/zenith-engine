@@ -173,6 +173,7 @@ bool FrameResources::collectTimings(VkDevice device, GpuFrameTimings& timings) {
     timings.localShadowMilliseconds = elapsed(FrameTimestamp::localShadowsBegin, FrameTimestamp::localShadowsEnd);
     timings.reflectionProbeClusterMilliseconds =
         elapsed(FrameTimestamp::reflectionProbeClustersBegin, FrameTimestamp::reflectionProbeClustersEnd);
+    timings.volumetricFogMilliseconds = elapsed(FrameTimestamp::volumetricFogBegin, FrameTimestamp::volumetricFogEnd);
     return true;
 }
 

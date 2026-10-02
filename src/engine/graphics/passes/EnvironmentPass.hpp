@@ -45,6 +45,10 @@ struct EnvironmentFrameState {
     // slot, or -1 while it is not resident (waiting for its build, or its map
     // failed to build).
     std::vector<int32_t> probeSlots;
+    // Irradiance SH of the primary environment (vec4 coefficients[9], see
+    // camera binding 6), valid for this frame and readable by fragment and
+    // compute shaders after prepare's commands.
+    VkBuffer primaryIrradiance{VK_NULL_HANDLE};
 };
 
 // Split-sum image-based lighting. For each environment source it precomputes on

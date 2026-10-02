@@ -28,6 +28,10 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
         settings.depthPrepass = true;
         settings.shadows = ShadowQuality::CascadedHigh;
         settings.bloom = BloomQuality::Downsampled;
+        settings.volumetricFog = VolumetricFogQuality::High;
+    }
+    if (SDL_getenv("ZENITH_DISABLE_VOLUMETRIC_FOG") != nullptr) {
+        settings.volumetricFog = VolumetricFogQuality::Off;
     }
     if (SDL_getenv("ZENITH_FORCE_DYNAMIC_RESOLUTION") != nullptr) {
         settings.dynamicResolution.enabled = true;
@@ -103,7 +107,8 @@ RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const Render
             .perPixelReflectionProbes = imageBasedLighting && settings.reflectionProbes &&
                                         settings.reflectionProbeBlending == ReflectionProbeBlending::PerPixel,
             .depthPrepass = depthPrepassActive(settings),
-            .gpuDriven = gpuDrivenSubmissionActive(settings, capabilities)};
+            .gpuDriven = gpuDrivenSubmissionActive(settings, capabilities),
+            .volumetricFog = settings.volumetricFog != VolumetricFogQuality::Off};
 }
 } // namespace
 
@@ -150,6 +155,7 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
     m_meshPass.setFixedFrameSeconds(options.fixedFrameSeconds);
     rendering.m_capabilities.gpuDrivenPath = m_meshPass.gpuDrivenSupported();
     rendering.m_capabilities.maximumLocalLights = m_meshPass.localLightCapacity();
+    rendering.m_capabilities.volumetricFog = m_meshPass.volumetricFogSupported();
     m_currentFrame = 0;
     m_submittedFrames = 0;
     VkPhysicalDeviceProperties properties{};
@@ -301,6 +307,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuShadowCullingMilliseconds = gpuTimings.shadowCullingMilliseconds;
     stats.gpuLocalShadowMilliseconds = gpuTimings.localShadowMilliseconds;
     stats.gpuReflectionProbeClusterMilliseconds = gpuTimings.reflectionProbeClusterMilliseconds;
+    stats.gpuVolumetricFogMilliseconds = gpuTimings.volumetricFogMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;
@@ -521,6 +528,9 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
         const auto reflections =
             graph.importImage("screen-space reflection target", image(ScreenSpaceReflectionPass::targetFormat, 5, 0),
                               VK_IMAGE_LAYOUT_GENERAL);
+        // Persistent froxel volumes; VolumetricFogPass keeps them in GENERAL.
+        const auto fogVolume = graph.importImage("volumetric fog volume", image(VolumetricFogPass::volumeFormat, 5, 0),
+                                                 VK_IMAGE_LAYOUT_GENERAL);
         const RenderGraphAccess uploadAccesses[]{
             {meshAssets, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
              VK_IMAGE_LAYOUT_UNDEFINED},
@@ -598,6 +608,23 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
                 {probeClusters, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                  VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
             graph.addPass("reflection probe cluster assignment", RenderGraphQueue::Graphics, probeClusterAccesses);
+        }
+        if (shape.volumetricFog) {
+            // Injects the medium lit by the shadowed sun and clustered lights,
+            // reprojects last frame's volume, and integrates along depth.
+            std::vector<RenderGraphAccess> fogAccesses{
+                {fogVolume, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | computeReadWrite, VK_IMAGE_LAYOUT_GENERAL}};
+            if (shape.shadows) {
+                fogAccesses.push_back({shadow, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                       VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL});
+            }
+            if (shape.localLights) {
+                fogAccesses.push_back({lightClusters, RenderGraphAccessMode::Read,
+                                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                       VK_IMAGE_LAYOUT_UNDEFINED});
+            }
+            graph.addPass("volumetric fog", RenderGraphQueue::Graphics, fogAccesses);
         }
         const auto addDepthPyramidBuild = [&](const char* name) {
             const RenderGraphAccess pyramidAccesses[]{
@@ -707,6 +734,11 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
         }
         if (shape.gpuDriven) {
             opaqueAccesses.push_back(indirectDrawRead);
+        }
+        if (shape.volumetricFog) {
+            // Opaque, blended, and sky shading composite the integrated fog.
+            opaqueAccesses.push_back({fogVolume, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL});
         }
         if (shape.gpuDriven && !shape.depthPrepass) {
             // Without a prepass two-phase culling splits the shading pass.

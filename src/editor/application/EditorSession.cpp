@@ -1301,6 +1301,7 @@ void EditorSession::drawComponentControls(ApplicationContext& context, Entity en
     section.operator()<EnvironmentLightComponent>("Environment Light", ComponentEditors::drawEnvironmentLight);
     section.operator()<PointLightComponent>("Point Light", ComponentEditors::drawPointLight);
     section.operator()<SpotLightComponent>("Spot Light", ComponentEditors::drawSpotLight);
+    section.operator()<VolumetricFogComponent>("Volumetric Fog", ComponentEditors::drawVolumetricFog);
     section.operator()<ColliderComponent>("Collider", ComponentEditors::drawCollider);
     section.operator()<RigidBodyComponent>("Rigid Body", ComponentEditors::drawRigidBody);
     section.operator()<AnimationComponent>("Animation", [&context, entityId](AnimationComponent& animation) {
@@ -1349,6 +1350,7 @@ void EditorSession::drawComponentControls(ApplicationContext& context, Entity en
         add.operator()<EnvironmentLightComponent>("Environment Light");
         add.operator()<PointLightComponent>("Point Light");
         add.operator()<SpotLightComponent>("Spot Light");
+        add.operator()<VolumetricFogComponent>("Volumetric Fog");
         add.operator()<ColliderComponent>("Collider");
         add.operator()<RigidBodyComponent>("Rigid Body");
         add.operator()<AnimationComponent>("Animation");

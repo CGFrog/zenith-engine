@@ -1,0 +1,204 @@
+#version 450
+
+// Froxel volumetric fog, step 1: evaluates the participating medium of every
+// froxel and the light it scatters toward the eye (shadowed sun, clustered
+// local lights, ambient), then blends it with the reprojected previous frame.
+// The froxel layout and units are documented in
+// src/engine/graphics/VolumetricFog.hpp; the pass in VolumetricFogPass.cpp.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+const float PI = 3.14159265359;
+
+// Mirrors InjectUniforms in VolumetricFogPass.cpp (std140).
+layout(set = 0, binding = 0) uniform FogFrame {
+    mat4 inverseView;
+    mat4 previousViewProjection;
+    mat4 lightViewProjections[3];
+    vec4 cameraPosition;
+    vec4 lightDirection;   // xyz toward the light
+    vec4 lightRadiance;    // rgb
+    vec4 cascadeSplits;    // far distance of each cascade from the camera
+    vec4 projection;       // view.xy / depth = (ndc + zw) / xy
+    vec4 slices;           // x, y: slice = log(depth) * x + y; z: near depth; w: volume end depth
+    vec4 history;          // x: history valid; y, z: previous slice scale and bias; w: current weight
+    vec4 jitter;           // xyz: sample position inside the froxel
+    uvec4 volume;          // xyz: froxel counts; w: shadow cascades
+    uvec4 clusters;        // xyz: froxels per cluster; w: local light count
+    uvec4 clusterGrid;     // xyz: cluster columns, rows, slices; w: 1 reads ambient from the SH
+    vec4 albedoAnisotropy; // rgb: albedo; w: Henyey-Greenstein g
+    vec4 density;          // x: density; y: height falloff; z: base height; w: noise amount
+    vec4 noiseAmbient;     // x: noise cell size; w: ambient scale
+    vec4 ambientRadiance;  // rgb
+} fog;
+
+layout(set = 0, binding = 1) uniform sampler2DArrayShadow shadowMap;
+
+// Mirrors GpuLocalLight in ClusteredLightingPass.hpp (std430).
+struct LocalLight {
+    vec4 positionRange;
+    vec4 colorIntensity;
+    vec4 directionType;
+    vec4 spotCone;
+};
+
+layout(std430, set = 0, binding = 2) readonly buffer LocalLights {
+    LocalLight values[];
+} localLights;
+
+layout(std430, set = 0, binding = 3) readonly buffer ClusterRanges {
+    uvec2 values[];
+} clusterRanges;
+
+layout(std430, set = 0, binding = 4) readonly buffer ClusterLightIndices {
+    uint values[];
+} clusterLightIndices;
+
+// Order-2 SH of irradiance / pi (EnvironmentPass); coefficient 0 is the mean radiance / Y00.
+layout(std430, set = 0, binding = 5) readonly buffer EnvironmentIrradiance {
+    vec4 coefficients[9];
+} environmentIrradiance;
+
+layout(set = 0, binding = 6) uniform sampler3D historyVolume;
+layout(set = 0, binding = 7, rgba16f) uniform writeonly image3D scatteringVolume;
+
+// Mirrors volumetric_fog::henyeyGreenstein.
+float henyeyGreenstein(float cosine, float anisotropy) {
+    float g = clamp(anisotropy, -0.99, 0.99);
+    float denominator = 1.0 + g * g - 2.0 * g * clamp(cosine, -1.0, 1.0);
+    return (1.0 - g * g) / (4.0 * PI * denominator * sqrt(denominator));
+}
+
+float hash(vec3 cell) {
+    return fract(sin(dot(cell, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
+
+// Smooth value noise in [0, 1].
+float valueNoise(vec3 position) {
+    vec3 cell = floor(position);
+    vec3 local = fract(position);
+    vec3 weight = local * local * (3.0 - 2.0 * local);
+    float result = 0.0;
+    for (int corner = 0; corner < 8; ++corner) {
+        vec3 offset = vec3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
+        vec3 cornerWeight = mix(1.0 - weight, weight, offset);
+        result += hash(cell + offset) * cornerWeight.x * cornerWeight.y * cornerWeight.z;
+    }
+    return result;
+}
+
+// Mirrors volumetric_fog::heightFogExtinction, with optional noise around it.
+float extinctionAt(vec3 world) {
+    float aboveBase = max(world.y - fog.density.z, 0.0);
+    float extinction = fog.density.x * exp(-fog.density.y * aboveBase);
+    float noiseAmount = fog.density.w;
+    if (noiseAmount > 0.0) {
+        float noise = valueNoise(world / fog.noiseAmbient.x);
+        extinction *= max(1.0 - noiseAmount + 2.0 * noiseAmount * noise, 0.0);
+    }
+    return extinction;
+}
+
+// One hardware-filtered tap of the cascade covering the point; unshadowed
+// outside every cascade.
+float sunVisibility(vec3 world) {
+    uint cascadeCount = fog.volume.w;
+    if (cascadeCount == 0u) {
+        return 1.0;
+    }
+    float cameraDistance = length(world - fog.cameraPosition.xyz);
+    for (uint cascade = 0u; cascade < cascadeCount; ++cascade) {
+        if (cascadeCount > 1u && cameraDistance > fog.cascadeSplits[cascade]) {
+            continue;
+        }
+        vec4 clip = fog.lightViewProjections[cascade] * vec4(world, 1.0);
+        vec3 projected = clip.xyz / clip.w;
+        vec2 uv = projected.xy * 0.5 + 0.5;
+        if (projected.z <= 0.0 || projected.z >= 1.0 || any(lessThan(uv, vec2(0.0))) ||
+            any(greaterThan(uv, vec2(1.0)))) {
+            return 1.0;
+        }
+        return texture(shadowMap, vec4(uv, float(cascade), projected.z));
+    }
+    return 1.0;
+}
+
+vec3 localLightScattering(uvec3 froxel, vec3 world, vec3 toEye) {
+    uint lightCount = fog.clusters.w;
+    if (lightCount == 0u) {
+        return vec3(0.0);
+    }
+    uvec3 cluster = min(froxel / fog.clusters.xyz, fog.clusterGrid.xyz - 1u);
+    uint clusterIndex = cluster.x + fog.clusterGrid.x * (cluster.y + fog.clusterGrid.y * cluster.z);
+    uvec2 range = clusterRanges.values[clusterIndex];
+    vec3 radiance = vec3(0.0);
+    for (uint entry = 0u; entry < range.y; ++entry) {
+        LocalLight light = localLights.values[clusterLightIndices.values[range.x + entry]];
+        vec3 toLight = light.positionRange.xyz - world;
+        float distanceToLight = length(toLight);
+        float lightRange = light.positionRange.w;
+        if (distanceToLight >= lightRange || distanceToLight <= 0.0001) {
+            continue;
+        }
+        vec3 direction = toLight / distanceToLight;
+        // Mirrors the local-light attenuation in mesh.frag.
+        float attenuation =
+            pow(max(1.0 - distanceToLight / lightRange, 0.0), 2.0) / max(distanceToLight * distanceToLight, 0.01);
+        if (light.directionType.w > 0.5) {
+            float coneCosine = dot(-direction, normalize(light.directionType.xyz));
+            attenuation *= smoothstep(light.spotCone.y, light.spotCone.x, coneCosine);
+        }
+        float phase = henyeyGreenstein(dot(-direction, toEye), fog.albedoAnisotropy.w);
+        radiance += light.colorIntensity.rgb * light.colorIntensity.w * attenuation * phase;
+    }
+    return radiance;
+}
+
+vec3 ambientScattering() {
+    // Isotropic phase over uniform incident radiance integrates to the mean radiance.
+    if (fog.clusterGrid.w != 0u) {
+        return max(environmentIrradiance.coefficients[0].rgb * 0.282095, vec3(0.0)) * fog.noiseAmbient.w;
+    }
+    return fog.ambientRadiance.rgb;
+}
+
+void main() {
+    uvec3 froxel = gl_GlobalInvocationID;
+    if (any(greaterThanEqual(froxel, fog.volume.xyz))) {
+        return;
+    }
+    vec3 size = vec3(fog.volume.xyz);
+    vec2 ndc = (vec2(froxel.xy) + fog.jitter.xy) / size.xy * 2.0 - 1.0;
+    // Mirrors FroxelGrid::sliceDepth.
+    float slice = float(froxel.z) + fog.jitter.z;
+    float viewDepth = fog.slices.z * pow(fog.slices.w / fog.slices.z, slice / size.z);
+    vec3 viewPosition = vec3((ndc + fog.projection.zw) / fog.projection.xy * viewDepth, -viewDepth);
+    vec3 world = (fog.inverseView * vec4(viewPosition, 1.0)).xyz;
+    vec3 toEye = normalize(fog.cameraPosition.xyz - world);
+
+    float extinction = extinctionAt(world);
+    vec4 medium = vec4(0.0);
+    if (extinction > 0.0) {
+        vec3 scattering = fog.albedoAnisotropy.rgb * extinction;
+        vec3 lightDirection = normalize(fog.lightDirection.xyz);
+        // Sunlight travels along -lightDirection.
+        float sunPhase = henyeyGreenstein(dot(-lightDirection, toEye), fog.albedoAnisotropy.w);
+        vec3 incident = fog.lightRadiance.rgb * sunPhase * sunVisibility(world) +
+                        localLightScattering(froxel, world, toEye) + ambientScattering();
+        medium = vec4(scattering * incident, extinction);
+    }
+
+    if (fog.history.x > 0.5) {
+        vec4 previousClip = fog.previousViewProjection * vec4(world, 1.0);
+        if (previousClip.w > 0.0) {
+            vec2 previousUv = previousClip.xy / previousClip.w * 0.5 + 0.5;
+            // Clip w is the previous frame's view depth.
+            float previousSlice = log(previousClip.w) * fog.history.y + fog.history.z;
+            vec3 previous = vec3(previousUv, previousSlice / size.z);
+            if (all(greaterThanEqual(previous, vec3(0.0))) && all(lessThanEqual(previous, vec3(1.0)))) {
+                medium = mix(textureLod(historyVolume, previous, 0.0), medium, fog.history.w);
+            }
+        }
+    }
+    imageStore(scatteringVolume, ivec3(froxel), medium);
+}

@@ -114,6 +114,18 @@ enum class LocalShadowQuality : uint8_t {
     High,
 };
 
+// Froxel volumetric fog (VolumetricFogPass): Low 80x45x48 froxels sampled at
+// their centers, Medium 160x90x72 and High 160x90x96 with jittered samples and
+// temporal reprojection (see volumetric_fog::froxelSubdivision). The medium
+// itself is authored per scene with a VolumetricFogComponent; Off composites
+// nothing and records no fog work.
+enum class VolumetricFogQuality : uint8_t {
+    Off,
+    Low,
+    Medium,
+    High,
+};
+
 struct RenderPassBudget {
     double cpuMilliseconds{0.0};
     double gpuMilliseconds{0.0};
@@ -141,6 +153,7 @@ struct RenderPassBudgets {
     RenderPassBudget localShadows;
     // Per-pixel reflection probe upload and cluster assignment.
     RenderPassBudget reflectionProbeClusters;
+    RenderPassBudget volumetricFog;
 };
 
 struct DynamicResolutionSettings {
@@ -187,6 +200,7 @@ struct RenderSettings {
     DynamicResolutionSettings dynamicResolution;
     AmbientOcclusionQuality ambientOcclusion{AmbientOcclusionQuality::Off};
     ReflectionQuality reflections{ReflectionQuality::ProbesOnly};
+    VolumetricFogQuality volumetricFog{VolumetricFogQuality::Off};
     // Zero disables enforcement for that processor/pass pair.
     RenderPassBudgets budgets;
 
@@ -207,6 +221,8 @@ struct RenderCapabilities {
     bool temporalAntialiasing{true};
     bool screenSpaceAmbientOcclusion{true};
     bool screenSpaceReflections{true};
+    // Needs RGBA16F 3D storage images.
+    bool volumetricFog{true};
     bool meshShaders{false};
     bool rayTracing{false};
     bool dedicatedTransferQueue{false};
@@ -313,11 +329,16 @@ struct RenderStats {
     double gpuReflectionProbeClusterMilliseconds{0.0};
     // Probes resident for per-pixel blending this submission.
     uint32_t reflectionProbeCount{0};
+    // Fog injection, temporal reprojection, and integration; zero when Off or
+    // when the scene has no volumetric fog.
+    double gpuVolumetricFogMilliseconds{0.0};
     uint64_t temporalHistoryBytes{0};
     uint64_t motionVectorBytes{0};
     uint64_t ambientOcclusionBytes{0};
     uint64_t reflectionBytes{0};
     uint64_t shadowCacheBytes{0};
+    // Froxel volumes owned by the volumetric fog pass.
+    uint64_t volumetricFogBytes{0};
     uint64_t streamingDecodedBytes{0};
     uint64_t streamingUploadedBytes{0};
     uint64_t streamingDecodeBacklogBytes{0};

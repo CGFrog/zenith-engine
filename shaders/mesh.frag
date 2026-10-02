@@ -30,6 +30,12 @@ layout(set = 0, binding = 0) uniform CameraData {
     // Reflection probes (U9): x: 1 when per-pixel probe blending is active,
     // y: resident probe count.
     vec4 reflectionProbeParams;
+    // Volumetric fog (U10); see VolumetricFog.hpp. x: 1 composites the
+    // integrated fog volume; y, z: froxel slice = log(view depth) * y + z;
+    // w: froxel depth slices.
+    vec4 fogVolume;
+    // xy: integrated-volume uv per render pixel (1 / internal render extent).
+    vec4 fogScreen;
     // Temporal resolve: NDC jitter applied to the current (xy) and previous (zw)
     // projections, removed from motion vectors. Keep last in the block.
     vec4 temporalJitter;
@@ -50,6 +56,9 @@ layout(set = 0, binding = 7) uniform sampler2D environmentBrdf;
 // GTAO visibility of the opaque scene (AmbientOcclusionPass); uniformly 1 when
 // ambient occlusion is off or the depth prepass did not run.
 layout(set = 0, binding = 13) uniform sampler2D screenSpaceOcclusion;
+// Integrated volumetric fog (VolumetricFogPass): rgb in-scattered light, a
+// transmittance from the eye to the end of each froxel slice.
+layout(set = 0, binding = 18) uniform sampler3D volumetricFog;
 
 // Mirrors MaterialRecord in MeshPass.cpp (std430).
 struct MaterialRecord {
@@ -475,6 +484,20 @@ float screenSpaceAmbientOcclusion() {
     return textureLod(screenSpaceOcclusion, uv, 0.0).r;
 }
 
+// Composites the fog between the eye and this fragment; mirrors
+// FroxelGrid::integratedW for the depth lookup.
+vec3 applyVolumetricFog(vec3 color) {
+    if (camera.fogVolume.x < 0.5) {
+        return color;
+    }
+    float viewDepth = camera.clusterDepth.z / (gl_FragCoord.z + camera.clusterDepth.w);
+    float slices = camera.fogVolume.w;
+    float slice = clamp(log(viewDepth) * camera.fogVolume.y + camera.fogVolume.z, 0.0, slices);
+    float w = clamp((slice - 0.5) / slices, 0.5 / slices, (slices - 0.5) / slices);
+    vec4 fog = textureLod(volumetricFog, vec3(gl_FragCoord.xy * camera.fogScreen.xy, w), 0.0);
+    return color * fog.a + fog.rgb;
+}
+
 // Flat sky/ground approximation used when image-based lighting is disabled.
 // Occlusion applies to the diffuse term and, as specular occlusion, to the
 // reflection term.
@@ -599,7 +622,7 @@ void main() {
                                               vec3(0.35, 0.55, 1.0));
         color = mix(color, color * cascadeColors[shadowCascade(worldPosition)], 0.45);
     }
-    outColor = vec4(color, alpha);
+    outColor = vec4(applyVolumetricFog(color), alpha);
     // Jitter moved each projected point by -jitter in NDC; adding it back gives
     // unjittered positions, so a static scene has zero motion (mirrored by
     // unjitteredMotionUv in TemporalQuality.cpp).

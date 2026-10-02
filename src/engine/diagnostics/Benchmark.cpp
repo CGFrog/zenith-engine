@@ -115,6 +115,7 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("local_shadows.tiles_cached", s.localShadowTilesCached, "count");
     sample("local_shadows.tiles_pending", s.localShadowTilesPending, "count");
     sample("local_shadows.lights_rejected", s.localShadowLightsRejected, "count");
+    sample("render.volumetric_fog_bytes", static_cast<double>(s.volumetricFogBytes), "bytes");
     sample("streaming.decoded_bytes", static_cast<double>(s.streamingDecodedBytes), "bytes");
     sample("streaming.uploaded_bytes", static_cast<double>(s.streamingUploadedBytes), "bytes");
     sample("streaming.decode_backlog_bytes", static_cast<double>(s.streamingDecodeBacklogBytes), "bytes");
@@ -161,6 +162,7 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
     sample("gpu.local_shadows", s.gpuLocalShadowMilliseconds, "ms", budgets.localShadows.gpuMilliseconds);
     sample("gpu.reflection_probe_clusters", s.gpuReflectionProbeClusterMilliseconds, "ms",
            budgets.reflectionProbeClusters.gpuMilliseconds);
+    sample("gpu.volumetric_fog", s.gpuVolumetricFogMilliseconds, "ms", budgets.volumetricFog.gpuMilliseconds);
     sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
     sample("gpu.ui", s.gpuUiMilliseconds, "ms", budgets.ui.gpuMilliseconds);

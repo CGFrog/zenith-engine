@@ -308,6 +308,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/TemporalQuality.cpp
     src/engine/graphics/ToneMapping.cpp
     src/engine/graphics/AmbientOcclusion.cpp
+    src/engine/graphics/VolumetricFog.cpp
     src/engine/graphics/graph/RenderGraph.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
@@ -316,6 +317,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/passes/ClusteredLightingPass.cpp
     src/engine/graphics/passes/LocalShadowPass.cpp
     src/engine/graphics/passes/ReflectionProbeClusterPass.cpp
+    src/engine/graphics/passes/VolumetricFogPass.cpp
     src/engine/graphics/passes/EnvironmentPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
     src/engine/graphics/passes/ScreenSpaceReflectionPass.cpp
@@ -840,6 +842,9 @@ if(BUILD_TESTING)
     add_executable(zenith_local_shadow_tests tests/engine/LocalShadowTests.cpp)
     target_link_libraries(zenith_local_shadow_tests PRIVATE zenith_engine)
     add_test(NAME zenith_local_shadows COMMAND zenith_local_shadow_tests)
+    add_executable(zenith_volumetric_fog_tests tests/engine/VolumetricFogTests.cpp)
+    target_link_libraries(zenith_volumetric_fog_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_volumetric_fog COMMAND zenith_volumetric_fog_tests)
 
     add_executable(zenith_frame_task_graph_tests tests/engine/FrameTaskGraphTests.cpp)
     target_link_libraries(zenith_frame_task_graph_tests PRIVATE zenith_engine)

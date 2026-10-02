@@ -408,6 +408,7 @@ Renderer
    |- shadow pass, depth/normal prepass, and main mesh pipeline
    |- DepthPyramid (min/max hierarchical depth for culling and screen-space effects)
    |- AmbientOcclusionPass (GTAO and denoise between the prepass and shading)
+   |- VolumetricFogPass (froxel fog injection, reprojection, and integration)
    `- PostProcessPass (HDR/history, motion, prepass normals, and fullscreen pipelines)
       |- ScreenSpaceReflectionPass (Hi-Z reflection trace and in-place composite)
       `- BloomExposurePass (luminance histogram, exposure, bloom chain)
@@ -548,6 +549,23 @@ casters. A shadowed light's `GpuLocalLight::spotCone.z` names its first tile,
 and `mesh.frag` filters four bilinear comparisons with a slope-scaled normal
 offset.
 
+### `src/engine/graphics/passes/VolumetricFogPass.*`
+
+Froxel volumetric fog for scenes with a `VolumetricFogComponent` when
+`RenderSettings::volumetricFog` is not Off. After light clustering,
+`volumetric_fog_inject.comp` evaluates height fog (with optional noise) lit by
+the cascade-shadowed sun, the froxel's cluster light list, and the environment's
+ambient SH, blending it with the reprojected previous frame (Medium and High);
+`volumetric_fog_integrate.comp` accumulates it front to back. `mesh.frag` and
+`skybox.frag` composite the integrated RGBA16F volume at camera binding 18.
+
+### `src/engine/graphics/VolumetricFog.*`
+
+CPU mirror of the froxel layout (an integer subdivision of the cluster grid
+with the same exponential depth slicing), the integrated-volume depth lookup,
+front-to-back integration, Henyey-Greenstein phase, and height-fog density;
+`tests/engine/VolumetricFogTests.cpp` covers it.
+
 ### `src/engine/graphics/passes/EnvironmentPass.*`
 
 Split-sum image-based lighting. Per environment source (an equirectangular
@@ -677,6 +695,8 @@ mirror is in `TemporalQuality.*`.
 | `shaders/ssr_trace.comp` | Hi-Z screen-space reflection trace over the closest-depth pyramid. |
 | `shaders/ssr_composite.comp` | Blends traced reflections into the HDR scene before blended surfaces. |
 | `shaders/light_clusters.comp` | Assigns local lights to view clusters for clustered forward shading. |
+| `shaders/volumetric_fog_inject.comp` | Evaluates and lights the fog medium per froxel and reprojects history. |
+| `shaders/volumetric_fog_integrate.comp` | Integrates froxel fog front to back into scattering and transmittance. |
 | `shaders/depth_pyramid.comp` | Reduces scene depth into a conservative min-depth (reversed-Z) pyramid. |
 | `shaders/gpu_visibility.comp` | Runs early/late two-phase frustum and occlusion culling. |
 | `shaders/compact_draws.comp` | Packs non-empty batches into indirect-count draw commands. |

@@ -53,6 +53,8 @@ constexpr uint32_t objectRegionCount = maximumShadowCascades + 2;
 constexpr uint32_t previousSkinPaletteBinding = 12;
 // Camera-set binding of the frame's screen-space ambient occlusion (mesh.frag).
 constexpr uint32_t ambientOcclusionBinding = 13;
+// Camera-set binding of the integrated volumetric fog (mesh.frag, skybox.frag).
+constexpr uint32_t volumetricFogBinding = 18;
 
 struct CameraData {
     glm::mat4 viewProjection{1.0f};
@@ -81,6 +83,12 @@ struct CameraData {
     // Reflection probes (U9): x: 1 when per-pixel probe blending is active,
     // y: resident probe count.
     glm::vec4 reflectionProbeParams{0.0f};
+    // Volumetric fog (U10); see VolumetricFog.hpp. x: 1 composites the
+    // integrated fog volume; y, z: froxel slice = log(view depth) * y + z;
+    // w: froxel depth slices.
+    glm::vec4 fogVolume{0.0f};
+    // xy: integrated-volume uv per render pixel (1 / internal render extent).
+    glm::vec4 fogScreen{0.0f};
     // Temporal resolve: NDC jitter of the current (xy) and previous (zw)
     // projections, removed from motion vectors in mesh.frag. Keep last.
     glm::vec4 temporalJitter{0.0f};
@@ -123,6 +131,22 @@ void imageBarrier(VkCommandBuffer commandBuffer, VkImage image, VkImageAspectFla
     VkDependencyInfo dependency{
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier};
     vkCmdPipelineBarrier2(commandBuffer, &dependency);
+}
+
+// The primary fog medium with the lowest entity id, if the scene has one.
+std::optional<VolumetricFogComponent> primaryVolumetricFog(const Scene& scene) {
+    const auto components = scene.registry().view<const VolumetricFogComponent>();
+    Entity selected = entt::null;
+    for (Entity entity : components) {
+        const VolumetricFogComponent& component = components.get<const VolumetricFogComponent>(entity);
+        if (component.primary && (selected == entt::null || entt::to_integral(entity) < entt::to_integral(selected))) {
+            selected = entity;
+        }
+    }
+    if (selected == entt::null) {
+        return std::nullopt;
+    }
+    return components.get<const VolumetricFogComponent>(selected);
 }
 
 template <typename Component> Component resolvePrimary(const Scene& scene) {
@@ -263,11 +287,17 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     if (!m_uploadContext.init(context, true) || !m_textureUploadContext.init(context, false) ||
         !createDescriptors(context, frameCount) ||
         !m_clusteredLighting.init(context, frameCount, ClusterGridConfiguration{}, maximumLocalLights) ||
-        !m_reflectionProbeClusters.init(context, frameCount, m_clusteredLighting.configuration())) {
+        !m_reflectionProbeClusters.init(context, frameCount, m_clusteredLighting.configuration()) ||
+        !m_volumetricFog.init(context, frameCount)) {
         return false;
     }
     writeClusteredLightingDescriptors();
     writeReflectionProbeDescriptors();
+    // Written before the GPU-driven sets copy the shared bindings.
+    m_fogDescriptorGenerations.assign(frameCount, 0);
+    for (uint32_t frame = 0; frame < frameCount; ++frame) {
+        writeVolumetricFogDescriptors(frame);
+    }
     TextureAsset white{.width = 1, .height = 1, .rgba = {255, 255, 255, 255}};
     TextureAsset normal{.width = 1, .height = 1, .rgba = {128, 128, 255, 255}};
     m_geometry = std::make_unique<GeometryArena>(defaultGeometryPage);
@@ -319,7 +349,7 @@ bool MeshPass::createGpuDrivenDescriptors() {
         CameraBuffer& camera = m_cameras[frame];
         camera.gpuDrivenDescriptor = sets[frame];
         // Everything except the object buffer matches the CPU-submission set.
-        std::array<VkCopyDescriptorSet, 11> copies{};
+        std::array<VkCopyDescriptorSet, 12> copies{};
         const uint32_t sharedBindings[]{0,
                                         1,
                                         3,
@@ -330,7 +360,8 @@ bool MeshPass::createGpuDrivenDescriptors() {
                                         previousSkinPaletteBinding,
                                         LocalShadowPass::atlasBinding,
                                         LocalShadowPass::tileBinding,
-                                        ReflectionProbeClusterPass::cameraBinding};
+                                        ReflectionProbeClusterPass::cameraBinding,
+                                        volumetricFogBinding};
         for (size_t index = 0; index < copies.size(); ++index) {
             copies[index] = {.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET,
                              .srcSet = camera.descriptor,
@@ -406,6 +437,31 @@ void MeshPass::writeAmbientOcclusionDescriptors() {
         }
         vkUpdateDescriptorSets(m_device, writeCount, writes.data(), 0, nullptr);
     }
+}
+
+void MeshPass::writeVolumetricFogDescriptors(uint32_t frameIndex) {
+    if (m_fogDescriptorGenerations[frameIndex] == m_volumetricFog.generation()) {
+        return;
+    }
+    const VkDescriptorImageInfo fog{.sampler = m_volumetricFog.sampler(),
+                                    .imageView = m_volumetricFog.integratedView(),
+                                    .imageLayout = VolumetricFogPass::volumeLayout};
+    // The frame slot's previous submission retired, so its sets are not in use.
+    std::array<VkWriteDescriptorSet, 2> writes{};
+    uint32_t writeCount = 0;
+    for (VkDescriptorSet set : {m_cameras[frameIndex].descriptor, m_cameras[frameIndex].gpuDrivenDescriptor}) {
+        if (set == VK_NULL_HANDLE) {
+            continue;
+        }
+        writes[writeCount++] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                .dstSet = set,
+                                .dstBinding = volumetricFogBinding,
+                                .descriptorCount = 1,
+                                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                .pImageInfo = &fog};
+    }
+    vkUpdateDescriptorSets(m_device, writeCount, writes.data(), 0, nullptr);
+    m_fogDescriptorGenerations[frameIndex] = m_volumetricFog.generation();
 }
 
 bool MeshPass::resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView) {
@@ -498,6 +554,11 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
          .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
         {.binding = ReflectionProbeClusterPass::cameraBinding,
          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        // Integrated volumetric fog, owned by VolumetricFogPass.
+        {.binding = volumetricFogBinding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
          .descriptorCount = 1,
          .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
     VkDescriptorSetLayoutCreateInfo layoutInfo{
@@ -1953,7 +2014,9 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
     imageBarrier(commandBuffer, m_shadowTexture.image, VK_IMAGE_ASPECT_DEPTH_BIT,
                  m_shadowInitialized ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                 m_shadowInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                 // Earlier frames sampled it in shading and volumetric fog.
+                 m_shadowInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT
+                                     : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
                  VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
                  m_shadowInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, maximumShadowCascades);
@@ -2058,11 +2121,11 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
         }
         vkCmdEndRendering(commandBuffer);
     }
-    imageBarrier(commandBuffer, m_shadowTexture.image, VK_IMAGE_ASPECT_DEPTH_BIT,
-                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
-                 VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                 maximumShadowCascades);
+    imageBarrier(
+        commandBuffer, m_shadowTexture.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, maximumShadowCascades);
     m_shadowInitialized = true;
     return true;
 }
@@ -2106,6 +2169,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     ++m_frameSerial;
     if (m_frameSerial > m_cameras.size()) {
         m_releaseQueue.collect(m_frameSerial - m_cameras.size());
+        m_volumetricFog.collect(m_frameSerial - m_cameras.size());
     }
     pruneUnusedAssets(assets);
 
@@ -2151,6 +2215,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     }
     const DirectionalLightComponent light = resolvePrimary<DirectionalLightComponent>(scene);
     const EnvironmentLightComponent environment = resolvePrimary<EnvironmentLightComponent>(scene);
+    const std::optional<VolumetricFogComponent> fogMedium = primaryVolumetricFog(scene);
     // Hemisphere lighting reads these flat colors; image-based lighting reads
     // the maps EnvironmentPass binds.
     std::array<glm::vec3, 6> environmentSpecular;
@@ -2367,6 +2432,21 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
                                    0.0f, 0.0f};
     cameraData.clusterGrid = {clusterGrid.configuration.columns, clusterGrid.configuration.rows,
                               clusterGrid.configuration.depthSlices, localLightCount};
+    // Fog volumes follow the quality setting; the scene decides whether there
+    // is a medium to draw at all.
+    if (!m_volumetricFog.prepare(rendering.settings().volumetricFog, m_frameSerial)) {
+        return false;
+    }
+    writeVolumetricFogDescriptors(frameIndex);
+    const bool fogActive = rendering.settings().volumetricFog != VolumetricFogQuality::Off &&
+                           m_volumetricFog.supported() && fogMedium && fogMedium->density > 0.0f;
+    const volumetric_fog::FroxelGrid froxelGrid =
+        volumetric_fog::makeFroxelGrid(clusterGrid, m_volumetricFog.subdivision());
+    if (fogActive) {
+        cameraData.fogVolume = {1.0f, froxelGrid.sliceScaleBias(), static_cast<float>(froxelGrid.dimensions().z)};
+        cameraData.fogScreen = {1.0f / static_cast<float>(renderExtent.width),
+                                1.0f / static_cast<float>(renderExtent.height), 0.0f, 0.0f};
+    }
     std::memcpy(m_cameras[frameIndex].mapped, &cameraData, sizeof(cameraData));
     vmaFlushAllocation(m_allocator, m_cameras[frameIndex].buffer.allocation, 0, sizeof(cameraData));
     RenderStats& stats = rendering.m_stats;
@@ -2406,6 +2486,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.motionVectorBytes =
         static_cast<uint64_t>(extent.width) * extent.height * sizeof(uint16_t) * 4 * m_cameras.size();
     stats.ambientOcclusionBytes = m_ambientOcclusion.allocatedBytes();
+    stats.volumetricFogBytes = m_volumetricFog.allocatedBytes();
     stats.shadowCacheBytes =
         static_cast<uint64_t>(shadowResolution) * shadowResolution * sizeof(float) * maximumShadowCascades;
     DirectionalLightComponent shadowLight = light;
@@ -2537,6 +2618,35 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         m_reflectionProbeClusters.record(commandBuffer, frameIndex, probeRecords,
                                          m_environmentPass.probeIrradianceBuffer(), clusterGrid);
         passTimestamps.write(FrameTimestamp::reflectionProbeClustersEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    }
+    if (fogActive) {
+        const ClusteredLightingPass::FrameBuffers clusterBuffers = m_clusteredLighting.frameBuffers(frameIndex);
+        const VolumetricFogFrame fogFrame{
+            .grid = froxelGrid,
+            .inverseView = glm::inverse(view),
+            .previousViewProjection = cameraData.previousViewProjection,
+            .historyValid = !cameraCut,
+            .cameraPosition = cameraPosition,
+            .lightDirection = lightDirection,
+            .lightRadiance = glm::vec3(cameraData.lightColor) * cameraData.lightDirection.w,
+            .shadowCascades = shadowsEnabled ? cascadeCount : 0u,
+            .lightViewProjections = cameraData.lightViewProjections,
+            .cascadeSplits = cameraData.cascadeSplits,
+            .ambientRadiance = (glm::vec3(cameraData.environmentSky) + glm::vec3(cameraData.environmentGround)) * 0.5f *
+                               cameraData.environmentSky.w,
+            .environmentIrradiance = imageBasedLighting,
+            .ambientScale = cameraData.environmentSky.w,
+            .medium = *fogMedium,
+            .localLightCount = localLightCount,
+            .shadowMap = m_shadowTexture.view,
+            .shadowSampler = m_shadowSampler,
+            .localLights = clusterBuffers.lights,
+            .clusterRanges = clusterBuffers.clusterRanges,
+            .clusterLightIndices = clusterBuffers.lightIndices,
+            .environmentIrradianceBuffer = environmentState->primaryIrradiance};
+        recordVolumetricFog(draw, &fogFrame);
+    } else {
+        recordVolumetricFog(draw, nullptr);
     }
     const auto opaqueCpuBegin = std::chrono::steady_clock::now();
     if (depthPrepass) {
@@ -2910,6 +3020,26 @@ SceneGeometryViews MeshPass::sceneGeometry(uint32_t frameIndex) const {
             .storageExtent = m_depthPyramid.storageExtent()};
 }
 
+void MeshPass::recordVolumetricFog(const DrawContext& draw, const VolumetricFogFrame* frame) {
+    if (frame == nullptr) {
+        // Keeps the bound volume free of fog; records nothing once cleared.
+        m_volumetricFog.recordCleared(draw.commandBuffer);
+        return;
+    }
+    if (!m_shadowInitialized) {
+        // Fog binds the shadow map even when no cascade was ever rendered; it
+        // samples it only for rendered cascades.
+        imageBarrier(draw.commandBuffer, m_shadowTexture.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                     VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_NONE,
+                     VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, maximumShadowCascades);
+        m_shadowInitialized = true;
+    }
+    draw.passTimestamps->write(FrameTimestamp::volumetricFogBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    m_volumetricFog.record(draw.commandBuffer, draw.frameIndex, *frame);
+    draw.passTimestamps->write(FrameTimestamp::volumetricFogEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+}
+
 void MeshPass::recordAmbientOcclusion(const DrawContext& draw, AmbientOcclusionQuality quality,
                                       const glm::mat4& projection, bool temporalNoise) {
     if (draw.timestampQueries) {
@@ -3207,6 +3337,8 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_postProcess.shutdown(context);
     m_depthPyramid.shutdown();
     m_ambientOcclusion.shutdown();
+    m_volumetricFog.shutdown();
+    m_fogDescriptorGenerations.clear();
     m_depthPrepassFrame.reset();
     m_meshes.clear();
     m_unpackableMeshes.clear();

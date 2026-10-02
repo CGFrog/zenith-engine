@@ -146,6 +146,31 @@ struct EnvironmentLightComponent {
     TextureHandle environmentMap{};
 };
 
+// Participating medium for froxel volumetric fog, drawn when
+// RenderSettings::volumetricFog is not Off. The primary component with the
+// lowest entity id is used; its entity transform is ignored because the fog
+// fills the whole view. Distances are world units (meters) and coefficients
+// are per world unit.
+struct VolumetricFogComponent {
+    // Extinction coefficient at and below baseHeight; 0.02 removes about 2% of
+    // the light per meter.
+    float density{0.02f};
+    // Above baseHeight the density decays as exp(-heightFalloff * (y - baseHeight)).
+    float heightFalloff{0.1f};
+    float baseHeight{0.0f};
+    // Single-scattering albedo: scattering = albedo * extinction per channel.
+    glm::vec3 albedo{0.9f};
+    // Henyey-Greenstein asymmetry in (-1, 1); positive values scatter forward,
+    // brightening the fog when looking toward a light.
+    float anisotropy{0.4f};
+    // Zero keeps the density smooth; one lets world-space noise vary it
+    // between zero and twice the height-fog density.
+    float noiseAmount{0.0f};
+    // World size of one noise cell.
+    float noiseScale{4.0f};
+    bool primary{true};
+};
+
 // Local-light shadows are rendered into the renderer's shared atlas when the
 // light casts shadows and LocalShadowQuality is not Off. shadowResolution is
 // the requested tile edge in texels (per cube face for point lights); zero uses

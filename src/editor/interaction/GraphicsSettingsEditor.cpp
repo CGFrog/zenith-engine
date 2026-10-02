@@ -121,6 +121,14 @@ bool drawLighting(RenderSettings& settings, const RenderCapabilities& capabiliti
     changed |= enumCombo("Local light shadows", settings.localShadows,
                          std::array<EnumOption, 4>{{{"Off"}, {"Low"}, {"Medium"}, {"High"}}});
     ImGui::EndDisabled();
+    changed |= enumCombo("Volumetric fog", settings.volumetricFog,
+                         std::array<EnumOption, 4>{{{"Off"},
+                                                    {"Low", capabilities.volumetricFog},
+                                                    {"Medium", capabilities.volumetricFog},
+                                                    {"High", capabilities.volumetricFog}}});
+    if (settings.volumetricFog != VolumetricFogQuality::Off) {
+        ImGui::TextDisabled("Add a Volumetric Fog component to the scene to author the medium.");
+    }
     return changed;
 }
 
@@ -202,6 +210,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Shadow culling", budgets.shadowCulling);
     changed |= drawBudget("Local shadows", budgets.localShadows);
     changed |= drawBudget("Probe clusters", budgets.reflectionProbeClusters);
+    changed |= drawBudget("Volumetric fog", budgets.volumetricFog);
     return changed;
 }
 
@@ -218,8 +227,8 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
     }
     // Shadow time runs from the frame start through the early GPU cull, so it
     // also covers the environment precompute, local shadows and GPU
-    // shadow-cascade culling; opaque time spans the clusters, prepass, pyramid
-    // and ambient occlusion; blended time spans the skybox.
+    // shadow-cascade culling; opaque time spans the clusters, prepass, pyramid,
+    // volumetric fog and ambient occlusion; blended time spans the skybox.
     return {{"Shadows", stats.gpuShadowMilliseconds},
             {"Local shadows", stats.gpuLocalShadowMilliseconds, true},
             {"Environment precompute", stats.gpuEnvironmentPrecomputeMilliseconds, true},
@@ -228,6 +237,7 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
             {"Opaque", stats.gpuOpaqueMilliseconds},
             {"Light clusters", stats.gpuLightClusterMilliseconds, true},
             {"Probe clusters", stats.gpuReflectionProbeClusterMilliseconds, true},
+            {"Volumetric fog", stats.gpuVolumetricFogMilliseconds, true},
             {"Depth prepass", stats.gpuDepthPrepassMilliseconds, true},
             {"Depth pyramid", stats.gpuDepthPyramidMilliseconds, true},
             {"Ambient occlusion", stats.gpuAmbientOcclusionMilliseconds, true},
@@ -274,7 +284,8 @@ void clampToDocumentRanges(RenderSettings& settings) {
          {&budgets.shadow, &budgets.opaque, &budgets.blended, &budgets.bloom, &budgets.ui, &budgets.upload,
           &budgets.temporalResolve, &budgets.ambientOcclusion, &budgets.reflections, &budgets.exposure,
           &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment,
-          &budgets.localShadows, &budgets.shadowCulling, &budgets.reflectionProbeClusters}) {
+          &budgets.localShadows, &budgets.shadowCulling, &budgets.reflectionProbeClusters,
+          &budgets.volumetricFog}) {
         clampBudget(*budget);
     }
 }

@@ -326,7 +326,8 @@ std::optional<EnvironmentFrameState> EnvironmentPass::prepare(VkCommandBuffer co
     if (request.probe && request.probeWeight > 0.0f) {
         probe = ensureEnvironment(commandBuffer, *request.probe, request.quality);
     }
-    EnvironmentFrameState state{.probeWeight = probe ? std::clamp(request.probeWeight, 0.0f, 1.0f) : 0.0f};
+    EnvironmentFrameState state{.probeWeight = probe ? std::clamp(request.probeWeight, 0.0f, 1.0f) : 0.0f,
+                                .primaryIrradiance = primary->irradiance.buffer};
     // The probe array binding must stay valid, so without resident probes a
     // one-texel placeholder array is kept instead of the full cache.
     // A full cache that could not be allocated is not retried; the frame keeps
@@ -685,8 +686,10 @@ bool EnvironmentPass::projectIrradiance(VkCommandBuffer commandBuffer, const Res
                        &settings);
     vkCmdDispatch(commandBuffer, 1, 1, 1);
     retireComputeSet(set);
+    // Shading reads the coefficients in fragment shaders, volumetric fog in compute.
     memoryBarrier(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                  VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
     return true;
 }
 
