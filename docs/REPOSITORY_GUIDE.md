@@ -421,6 +421,8 @@ Renderer
    |- VolumetricFogPass (froxel fog injection, reprojection, and integration)
    `- PostProcessPass (HDR/history, motion, prepass normals, and fullscreen pipelines)
       |- ScreenSpaceReflectionPass (Hi-Z reflection trace and in-place composite)
+      |- TemporalResolvePass (TAA/TAAU history)
+      |- SpatialUpscalePass (FSR 1 EASU upsample and RCAS sharpen)
       `- BloomExposurePass (luminance histogram, exposure, bloom chain)
 ```
 
@@ -664,6 +666,10 @@ output-resolution result; otherwise they read the HDR target. The final
 fullscreen pass composes the resolved scene (or applies FXAA), the editor grid,
 exposure, the bloom mix, and tone mapping (AgX by default, AgX punchy or
 legacy ACES). Half-resolution effect tiers render into bounded sub-extents.
+With `RenderSettings::upscaler` set to FSR 1 the composite runs at render
+resolution into `SpatialUpscalePass`'s input (TAA then resolves at render
+resolution and reaches the composite through binding 0), and EASU and RCAS
+bring it to the output.
 
 ### `src/engine/graphics/passes/ScreenSpaceReflectionPass.*`
 
@@ -705,7 +711,27 @@ allocated on the first TAA frame after creation or resize. It
 reconstructs the jittered internal-resolution frame at output resolution,
 reprojects Catmull-Rom history with dilated motion, rejects disoccluded
 history, and blends after YCoCg variance clipping with luma weighting. Its CPU
-mirror is in `TemporalQuality.*`.
+mirror is in `TemporalQuality.*`. Each frame fills a top-left region of its
+history image (the output extent, or the render extent ahead of FSR 1) and
+reprojects the previous frame's region by UV, so region changes keep history.
+
+### `src/engine/graphics/passes/SpatialUpscalePass.*`
+
+AMD FidelityFX Super Resolution 1 for `UpscalerMode::Fsr1`. The tone-mapped
+frame is composited at render resolution into the top-left of an output-sized
+input target (the output format); `shaders/fsr_easu.comp` upsamples that
+region into an RGBA8 gamma-2 image, and `shaders/fsr_rcas.frag` sharpens it in
+a fullscreen draw into the output. Both targets are allocated on first use and
+shared by the frames in flight. Unsupported formats leave the pass disabled,
+and validation falls back to TAAU or native resolution.
+
+### `src/engine/graphics/SpatialUpscale.*`
+
+Upscaler presets (Quality 1.5x, Balanced 1.7x, Performance 2x), the
+dynamic-resolution range a frame follows under an upscaler, the EASU constants,
+and CPU references of EASU and RCAS that the shaders mirror;
+`tests/engine/SpatialUpscaleTests.cpp` covers them with the upscaler settings'
+serialization and fallbacks.
 
 ## Shaders
 
@@ -734,6 +760,8 @@ mirror is in `TemporalQuality.*`.
 | `shaders/gpu_visibility.comp` | Runs early/late two-phase frustum and occlusion culling. |
 | `shaders/compact_draws.comp` | Packs non-empty batches into indirect-count draw commands. |
 | `shaders/taa_resolve.comp` | Temporal anti-aliasing and upsampling into output-resolution history. |
+| `shaders/fsr_easu.comp` | FSR 1 edge-adaptive upsampling of the tone-mapped render-resolution frame. |
+| `shaders/fsr_rcas.frag` | FSR 1 contrast-adaptive sharpening into the output. |
 | `shaders/env_equirect_to_cube.comp` | Resamples an equirectangular radiance map into an environment cube. |
 | `shaders/env_procedural_sky.comp` | Writes the analytic sky cube used when no environment map is loaded. |
 | `shaders/env_prefilter_specular.comp` | GGX-prefilters one specular cube mip with mip-filtered importance sampling. |

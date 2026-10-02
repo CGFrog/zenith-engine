@@ -311,6 +311,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/ToneMapping.cpp
     src/engine/graphics/AmbientOcclusion.cpp
     src/engine/graphics/VolumetricFog.cpp
+    src/engine/graphics/SpatialUpscale.cpp
     src/engine/graphics/graph/RenderGraph.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
@@ -325,6 +326,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/passes/PostProcessPass.cpp
     src/engine/graphics/passes/ScreenSpaceReflectionPass.cpp
     src/engine/graphics/passes/TemporalResolvePass.cpp
+    src/engine/graphics/passes/SpatialUpscalePass.cpp
     src/engine/graphics/passes/BloomExposurePass.cpp
     src/engine/graphics/passes/UiPass.cpp
     src/engine/graphics/pipeline/GraphicsPipeline.cpp
@@ -862,6 +864,10 @@ if(BUILD_TESTING)
     target_link_libraries(zenith_temporal_quality_tests PRIVATE zenith_engine)
     add_test(NAME zenith_temporal_quality COMMAND zenith_temporal_quality_tests)
 
+    add_executable(zenith_spatial_upscale_tests tests/engine/SpatialUpscaleTests.cpp)
+    target_link_libraries(zenith_spatial_upscale_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_spatial_upscale COMMAND zenith_spatial_upscale_tests)
+
     add_executable(zenith_tone_mapping_tests tests/engine/ToneMappingTests.cpp)
     target_link_libraries(zenith_tone_mapping_tests PRIVATE zenith_engine)
     add_test(NAME zenith_tone_mapping COMMAND zenith_tone_mapping_tests)
@@ -1092,9 +1098,12 @@ if(BUILD_TESTING)
     set(ZENITH_VALIDATION_SUBMISSIONS cpu gpu_driven)
     set(ZENITH_VALIDATION_ENVIRONMENT_cpu "")
     set(ZENITH_VALIDATION_ENVIRONMENT_gpu_driven "ZENITH_FORCE_GPU_DRIVEN=1")
-    set(ZENITH_VALIDATION_QUALITIES default high_dynamic)
+    set(ZENITH_VALIDATION_QUALITIES default high_dynamic fsr1_dynamic)
     set(ZENITH_VALIDATION_ENVIRONMENT_default "")
     set(ZENITH_VALIDATION_ENVIRONMENT_high_dynamic "ZENITH_FORCE_HIGH_QUALITY=1;ZENITH_FORCE_DYNAMIC_RESOLUTION=1")
+    # FSR 1 after a render-resolution TAA resolve, under dynamic resolution.
+    set(ZENITH_VALIDATION_ENVIRONMENT_fsr1_dynamic
+        "ZENITH_FORCE_HIGH_QUALITY=1;ZENITH_FORCE_DYNAMIC_RESOLUTION=1;ZENITH_FORCE_UPSCALER=fsr1;ZENITH_FORCE_UPSCALER_QUALITY=performance")
     foreach(scene IN LISTS ZENITH_VALIDATION_SCENES)
         foreach(submission IN LISTS ZENITH_VALIDATION_SUBMISSIONS)
             foreach(quality IN LISTS ZENITH_VALIDATION_QUALITIES)

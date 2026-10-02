@@ -22,10 +22,14 @@ layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D resolvedOutput;
 layout(push_constant) uniform ResolveSettings {
     // Unjittered current clip space to the previous frame's unjittered clip space.
     mat4 currentToPreviousClip;
-    vec4 outputSize; // width, height, 1 / width, 1 / height
+    // The region of the history image this frame resolves (the output extent
+    // for temporal upsampling, the render extent ahead of a spatial upscaler):
+    // width, height, 1 / width, 1 / height.
+    vec4 outputSize;
     vec4 renderSize; // internal width, height, 1 / width, 1 / height
-    // xy: current render extent / output extent, zw: the previous frame's.
-    vec4 sceneScale;
+    // xy: the previous frame's resolved region / history image extent, zw: the
+    // previous render extent / scene image extent.
+    vec4 regionScale;
     // Offset of this frame's samples from internal texel centers, in internal pixels.
     vec2 jitterPixels;
     float historyValid;
@@ -65,9 +69,16 @@ float historyWeight(float sampleConfidence, float motionPixels, float reactive) 
 }
 
 // Five bilinear taps approximating a 4x4 Catmull-Rom filter, which keeps
-// history sharp across repeated reprojection.
+// history sharp across repeated reprojection. uv spans the previous frame's
+// resolved region; taps clamp to its texel centers so texels outside it,
+// stale from earlier region sizes, are never read.
 vec3 sampleHistory(vec2 uv) {
-    vec2 position = uv * settings.outputSize.xy;
+    vec2 imageSize = vec2(textureSize(history, 0));
+    vec2 inverseImageSize = 1.0 / imageSize;
+    vec2 regionSize = settings.regionScale.xy * imageSize;
+    vec2 firstCenter = vec2(0.5);
+    vec2 lastCenter = regionSize - 0.5;
+    vec2 position = uv * regionSize;
     vec2 center = floor(position - 0.5) + 0.5;
     vec2 fraction = position - center;
     vec2 weight0 = fraction * (-0.5 + fraction * (1.0 - 0.5 * fraction));
@@ -75,9 +86,9 @@ vec3 sampleHistory(vec2 uv) {
     vec2 weight2 = fraction * (0.5 + fraction * (2.0 - 1.5 * fraction));
     vec2 weight3 = fraction * fraction * (-0.5 + 0.5 * fraction);
     vec2 weight12 = weight1 + weight2;
-    vec2 uv0 = (center - 1.0) * settings.outputSize.zw;
-    vec2 uv3 = (center + 2.0) * settings.outputSize.zw;
-    vec2 uv12 = (center + weight2 / weight12) * settings.outputSize.zw;
+    vec2 uv0 = clamp(center - 1.0, firstCenter, lastCenter) * inverseImageSize;
+    vec2 uv3 = clamp(center + 2.0, firstCenter, lastCenter) * inverseImageSize;
+    vec2 uv12 = clamp(center + weight2 / weight12, firstCenter, lastCenter) * inverseImageSize;
     vec3 color = textureLod(history, vec2(uv12.x, uv0.y), 0.0).rgb * (weight12.x * weight0.y) +
                  textureLod(history, vec2(uv0.x, uv12.y), 0.0).rgb * (weight0.x * weight12.y) +
                  textureLod(history, uv12, 0.0).rgb * (weight12.x * weight12.y) +
@@ -104,7 +115,7 @@ bool disoccluded(vec2 sampleUv, float depth, vec2 motion) {
     }
     float expectedDepth = previousClip.z / previousClip.w;
     vec2 previousTexel = 1.0 / vec2(textureSize(previousMotionDepth, 0));
-    vec2 previousRegion = settings.sceneScale.zw;
+    vec2 previousRegion = settings.regionScale.zw;
     vec2 gatherUv = clamp((sampleUv - motion) * previousRegion, previousTexel, previousRegion - previousTexel);
     vec4 previousDepths = textureGather(previousMotionDepth, gatherUv, 3);
     float nearestPrevious = max(max(previousDepths.x, previousDepths.y), max(previousDepths.z, previousDepths.w));

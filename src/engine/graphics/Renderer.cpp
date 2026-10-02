@@ -3,11 +3,39 @@
 
 #include <algorithm>
 #include <chrono>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace {
 constexpr uint32_t surfaceRetryDelayMs = 16;
+
+// ZENITH_FORCE_UPSCALER=off|taau|fsr1 and ZENITH_FORCE_UPSCALER_QUALITY=
+// quality|balanced|performance; documented in docs/RENDERER_VALIDATION.md.
+// Unknown values are ignored. TAAU also forces TAA, which it requires.
+void applyUpscalerOverrides(RenderSettings& settings) {
+    if (const char* mode = SDL_getenv("ZENITH_FORCE_UPSCALER")) {
+        const std::string_view value{mode};
+        if (value == "off" || value == "native") {
+            settings.upscaler.mode = UpscalerMode::Off;
+        } else if (value == "taau") {
+            settings.upscaler.mode = UpscalerMode::Taau;
+            settings.antialiasing = AntialiasingMode::Taa;
+        } else if (value == "fsr1") {
+            settings.upscaler.mode = UpscalerMode::Fsr1;
+        }
+    }
+    if (const char* quality = SDL_getenv("ZENITH_FORCE_UPSCALER_QUALITY")) {
+        const std::string_view value{quality};
+        if (value == "quality") {
+            settings.upscaler.quality = UpscalerQuality::Quality;
+        } else if (value == "balanced") {
+            settings.upscaler.quality = UpscalerQuality::Balanced;
+        } else if (value == "performance") {
+            settings.upscaler.quality = UpscalerQuality::Performance;
+        }
+    }
+}
 
 void applyDiagnosticOverrides(RenderRuntime& rendering) {
     RenderSettings settings = rendering.settings();
@@ -38,6 +66,7 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
         settings.dynamicResolution.enabled = true;
         settings.dynamicResolution.targetGpuMilliseconds = 0.01f;
     }
+    applyUpscalerOverrides(settings);
     rendering.setSettings(settings);
 }
 
@@ -110,7 +139,9 @@ RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const Render
             .depthPrepass = depthPrepassActive(settings),
             .gpuDriven = gpuDrivenSubmissionActive(settings, capabilities),
             .volumetricFog = settings.volumetricFog != VolumetricFogQuality::Off,
-            .irradianceVolume = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume};
+            .irradianceVolume = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume,
+            // Mirrors the spatialUpscale decision in PostProcessPass::record.
+            .spatialUpscale = settings.upscaler.mode == UpscalerMode::Fsr1 && capabilities.spatialUpscaling};
 }
 } // namespace
 
@@ -159,6 +190,7 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
     rendering.m_capabilities.gpuDrivenPath = m_meshPass.gpuDrivenSupported();
     rendering.m_capabilities.maximumLocalLights = m_meshPass.localLightCapacity();
     rendering.m_capabilities.volumetricFog = m_meshPass.volumetricFogSupported();
+    rendering.m_capabilities.spatialUpscaling = m_meshPass.spatialUpscaleSupported();
     m_currentFrame = 0;
     m_submittedFrames = 0;
     VkPhysicalDeviceProperties properties{};
@@ -312,6 +344,8 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuReflectionProbeClusterMilliseconds = gpuTimings.reflectionProbeClusterMilliseconds;
     stats.gpuVolumetricFogMilliseconds = gpuTimings.volumetricFogMilliseconds;
     stats.gpuIrradianceVolumeMilliseconds = gpuTimings.irradianceVolumeMilliseconds;
+    stats.gpuFsrEasuMilliseconds = gpuTimings.fsrEasuMilliseconds;
+    stats.gpuFsrRcasMilliseconds = gpuTimings.fsrRcasMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;
@@ -822,6 +856,12 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
         if (m_rendering->settings().bloom != BloomQuality::Off) {
             graph.addPass("bloom chain", RenderGraphQueue::Graphics, sceneComputeRead);
         }
+        // With FSR 1 the composite renders at render resolution into the
+        // upscaler's persistent input target instead of the output.
+        const auto upscaleInput = shape.spatialUpscale
+                                      ? graph.importImage("FSR input", image(m_swapchain.format(), 5, 0),
+                                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                                      : output;
         const RenderGraphAccess postAccesses[]{
             {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
@@ -831,9 +871,28 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, TemporalResolvePass::resolvedLayout},
             {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
              VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            {output, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            {upscaleInput, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
              VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
         graph.addPass("post-process and tone map", RenderGraphQueue::Graphics, postAccesses);
+        if (shape.spatialUpscale) {
+            // Persistent output-resolution EASU result; SpatialUpscalePass
+            // writes it in GENERAL and RCAS samples it read-only.
+            const auto upscaled =
+                graph.importImage("FSR upscaled scene", image(SpatialUpscalePass::upscaledFormat, 5, 0),
+                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            const RenderGraphAccess easuAccesses[]{
+                {upscaleInput, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {upscaled, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL}};
+            graph.addPass("FSR EASU upsample", RenderGraphQueue::Graphics, easuAccesses);
+            const RenderGraphAccess rcasAccesses[]{
+                {upscaled, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {output, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+            graph.addPass("FSR RCAS sharpen", RenderGraphQueue::Graphics, rcasAccesses);
+        }
         RenderGraphPassHandle uiPass;
         if (useViewport) {
             const RenderGraphAccess uiAccesses[]{

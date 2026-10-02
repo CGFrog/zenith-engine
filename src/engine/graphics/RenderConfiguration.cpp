@@ -90,6 +90,57 @@ bool validBloom(const RenderSettings& settings) {
            settings.bloomFilterRadius <= 4.0f;
 }
 
+Json upscalerDocument(const UpscalerSettings& upscaler) {
+    return {{"mode", upscaler.mode}, {"quality", upscaler.quality}, {"sharpness", upscaler.sharpness}};
+}
+
+// Optional: documents written before upscalers keep the Off default, so
+// antialiasing 2 with dynamic resolution still means TAA upsampling.
+bool readUpscaler(const Json& document, UpscalerSettings& output) {
+    const auto found = document.find("upscaler");
+    if (found == document.end()) {
+        return true;
+    }
+    if (!found->is_object() ||
+        (found->contains("mode") && !readEnum(*found, "mode", UpscalerMode::Fsr1, output.mode)) ||
+        (found->contains("quality") && !readEnum(*found, "quality", UpscalerQuality::Performance, output.quality))) {
+        return false;
+    }
+    if (const auto sharpness = found->find("sharpness"); sharpness != found->end()) {
+        if (!sharpness->is_number()) {
+            return false;
+        }
+        output.sharpness = sharpness->get<float>();
+    }
+    return std::isfinite(output.sharpness) && output.sharpness >= 0.0f && output.sharpness <= 1.0f;
+}
+
+// FSR 1 falls back to TAA upsampling where temporal anti-aliasing exists and
+// to native resolution otherwise. TAA upsampling reconstructs with TAA, so it
+// selects TAA, or falls back to native resolution without it.
+void validateUpscaler(ValidatedRenderSettings& result, const RenderCapabilities& capabilities) {
+    UpscalerSettings& upscaler = result.settings.upscaler;
+    if (upscaler.mode == UpscalerMode::Fsr1 && !capabilities.spatialUpscaling) {
+        if (capabilities.temporalAntialiasing) {
+            upscaler.mode = UpscalerMode::Taau;
+            result.fallbacks.emplace_back("FSR 1 upscaling is unsupported; using TAA upsampling");
+        } else {
+            upscaler.mode = UpscalerMode::Off;
+            result.fallbacks.emplace_back("FSR 1 upscaling is unsupported; rendering at native resolution");
+        }
+    }
+    if (upscaler.mode != UpscalerMode::Taau) {
+        return;
+    }
+    if (!capabilities.temporalAntialiasing) {
+        upscaler.mode = UpscalerMode::Off;
+        result.fallbacks.emplace_back("TAA upsampling needs temporal antialiasing; rendering at native resolution");
+    } else if (result.settings.antialiasing != AntialiasingMode::Taa) {
+        result.settings.antialiasing = AntialiasingMode::Taa;
+        result.fallbacks.emplace_back("TAA upsampling reconstructs with temporal antialiasing, which was enabled");
+    }
+}
+
 // Accepts the retired tiled modes (1: 32 lights, 2: 64 lights) as Clustered;
 // the light cap then comes from maximumLocalLights or its default.
 bool readLocalLighting(const Json& document, LocalLightingQuality& value) {
@@ -106,6 +157,7 @@ bool readLocalLighting(const Json& document, LocalLightingQuality& value) {
 RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings, std::string& output) {
     const Json document = {{"version", 1},
                            {"antialiasing", settings.antialiasing},
+                           {"upscaler", upscalerDocument(settings.upscaler)},
                            {"shadows", settings.shadows},
                            {"lighting", settings.lighting},
                            {"bloom", settings.bloom},
@@ -156,7 +208,8 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"shadowCulling", budget(settings.budgets.shadowCulling)},
                              {"reflectionProbeClusters", budget(settings.budgets.reflectionProbeClusters)},
                              {"volumetricFog", budget(settings.budgets.volumetricFog)},
-                             {"irradianceVolume", budget(settings.budgets.irradianceVolume)}}}};
+                             {"irradianceVolume", budget(settings.budgets.irradianceVolume)},
+                             {"spatialUpscale", budget(settings.budgets.spatialUpscale)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -175,6 +228,9 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
             !readEnum(document, "environment", EnvironmentQuality::ImageBasedHigh, loaded.environment) ||
             !readLocalLighting(document, loaded.localLights)) {
             return {.error = "Render settings contain an unknown quality value"};
+        }
+        if (!readUpscaler(document, loaded.upscaler)) {
+            return {.error = "Render settings contain invalid upscaler settings"};
         }
         loaded.environmentBackground = document.value("environmentBackground", true);
         if (const auto maximumLights = document.find("maximumLocalLights"); maximumLights != document.end()) {
@@ -263,7 +319,8 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "shadowCulling", loaded.budgets.shadowCulling) ||
                 !readOptionalBudget(*budgets, "reflectionProbeClusters", loaded.budgets.reflectionProbeClusters) ||
                 !readOptionalBudget(*budgets, "volumetricFog", loaded.budgets.volumetricFog) ||
-                !readOptionalBudget(*budgets, "irradianceVolume", loaded.budgets.irradianceVolume)) {
+                !readOptionalBudget(*budgets, "irradianceVolume", loaded.budgets.irradianceVolume) ||
+                !readOptionalBudget(*budgets, "spatialUpscale", loaded.budgets.spatialUpscale)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }
@@ -325,6 +382,7 @@ ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
         result.settings.antialiasing = AntialiasingMode::Fxaa;
         result.fallbacks.emplace_back("Temporal antialiasing is unsupported; using FXAA");
     }
+    validateUpscaler(result, capabilities);
     if (result.settings.ambientOcclusion != AmbientOcclusionQuality::Off && !capabilities.screenSpaceAmbientOcclusion) {
         result.settings.ambientOcclusion = AmbientOcclusionQuality::Off;
         result.fallbacks.emplace_back("Screen-space ambient occlusion is unsupported and was disabled");

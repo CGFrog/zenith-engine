@@ -37,7 +37,16 @@ inline constexpr uint32_t volumetricFogEnd = 38;
 // volume changes. Probe sampling is part of opaque shading.
 inline constexpr uint32_t irradianceVolumeBegin = 39;
 inline constexpr uint32_t irradianceVolumeEnd = 40;
-inline constexpr uint32_t count = 41;
+// Post-process pairs: PostProcessPass records them after closeSkippedPasses
+// and writes every slot each frame (back to back when the pass is skipped).
+// FSR 1 upsampling (EASU) and sharpening (RCAS); see SpatialUpscalePass.
+inline constexpr uint32_t fsrEasuBegin = 47;
+inline constexpr uint32_t fsrEasuEnd = 48;
+inline constexpr uint32_t fsrRcasBegin = 49;
+inline constexpr uint32_t fsrRcasEnd = 50;
+inline constexpr uint32_t firstPostProcessPass = fsrEasuBegin;
+inline constexpr uint32_t postProcessPassesEnd = fsrRcasEnd + 1;
+inline constexpr uint32_t count = 51;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot
@@ -59,8 +68,12 @@ class OptionalPassTimestamps {
         m_written |= bit;
     }
 
+    // Leaves the post-process pairs to PostProcessPass, which records later.
     void closeSkippedPasses() {
         for (uint32_t query = FrameTimestamp::firstOptionalPass; query < FrameTimestamp::count; ++query) {
+            if (query >= FrameTimestamp::firstPostProcessPass && query < FrameTimestamp::postProcessPassesEnd) {
+                continue;
+            }
             write(query, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
         }
     }

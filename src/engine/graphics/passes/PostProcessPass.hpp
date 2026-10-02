@@ -5,6 +5,7 @@
 #include "BloomExposurePass.hpp"
 #include "SceneGeometryViews.hpp"
 #include "ScreenSpaceReflectionPass.hpp"
+#include "SpatialUpscalePass.hpp"
 #include "TemporalResolvePass.hpp"
 #include <chrono>
 #include <filesystem>
@@ -79,6 +80,20 @@ class PostProcessPass {
         return m_temporalResolve.historyBytes();
     }
 
+    // Whether UpscalerMode::Fsr1 can run; record() otherwise composites at
+    // output resolution as if the upscaler were Off.
+    bool spatialUpscaleSupported() const {
+        return m_spatialUpscale.supported();
+    }
+
+    uint32_t spatialUpscalePipelineCount() const {
+        return m_spatialUpscale.supported() ? SpatialUpscalePass::pipelineCount : 0u;
+    }
+
+    uint64_t spatialUpscaleBytes() const {
+        return m_spatialUpscale.targetBytes();
+    }
+
     // The reflection target plus every allocated prepass specular target.
     uint64_t reflectionBytes() const;
 
@@ -111,10 +126,22 @@ class PostProcessPass {
     bool createTargets(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
     void destroyTargets(const VulkanContext& context);
     bool ensureSpecularTarget(Target& target);
-    // Runs the temporal resolve when enabled and binds the latest resolved image
-    // as the post pass's binding 2. Records timestamps 19 and 20 either way.
-    bool resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent, bool enabled,
-                         const TemporalResolveFrame& temporal, VkQueryPool timestampQueries);
+    // Runs the temporal resolve when enabled, filling resolveExtent of the
+    // history, and binds the latest resolved image as the post pass's binding
+    // 2. Records timestamps 19 and 20 either way.
+    bool resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent,
+                         VkExtent2D resolveExtent, bool enabled, const TemporalResolveFrame& temporal,
+                         VkQueryPool timestampQueries);
+    // Binds the post pass's binding 0, the render-resolution scene it
+    // composites: the HDR target, or the resolved history when TAA resolved at
+    // render resolution ahead of the spatial upscaler.
+    void bindCompositeScene(uint32_t frameIndex, bool resolvedAtRenderResolution);
+    // FSR 1 after the composite (EASU, then RCAS into the output, which it
+    // moves to COLOR_ATTACHMENT_OPTIMAL first); when inactive only writes its
+    // timestamps (47 to 50).
+    void recordSpatialUpscale(VkCommandBuffer commandBuffer, bool active, VkImage outputImage, VkImageView outputView,
+                              VkImageLayout outputOldLayout, VkExtent2D internalExtent, const RenderSettings& settings,
+                              VkQueryPool timestampQueries);
     void recordBloomAndExposure(VkCommandBuffer commandBuffer, const BloomExposureInput& input,
                                 const RenderSettings& settings, VkQueryPool timestampQueries,
                                 double& bloomCpuMilliseconds);
@@ -132,6 +159,7 @@ class PostProcessPass {
     VkExtent2D m_extent{};
     std::vector<Target> m_targets;
     TemporalResolvePass m_temporalResolve;
+    SpatialUpscalePass m_spatialUpscale;
     ScreenSpaceReflectionPass m_reflections;
     // The most recently recorded frame slot and its render extent; that slot's
     // motion target supplies the previous frame's motion and depth.

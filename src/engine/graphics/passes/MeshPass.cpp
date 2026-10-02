@@ -3,6 +3,7 @@
 #include "../IrradianceVolume.hpp"
 #include "../Lighting.hpp"
 #include "../ReflectionProbes.hpp"
+#include "../SpatialUpscale.hpp"
 
 #include "engine/assets/CompressedTexture.hpp"
 #include "engine/assets/PackedVertexStreams.hpp"
@@ -2223,9 +2224,17 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const glm::vec3 cameraForward = -glm::normalize(glm::vec3(glm::inverse(view)[2]));
     const bool cameraCut = !m_cameraHistoryValid || glm::distance(cameraPosition, m_previousCameraPosition) > 10.0f ||
                            glm::dot(cameraForward, m_previousCameraForward) < 0.5f;
-    const TemporalFrameState temporal = m_temporalQuality.beginFrame(
-        extent.width, extent.height, previousGpuFrameMilliseconds, rendering.settings().dynamicResolution,
-        rendering.settings().antialiasing == AntialiasingMode::Taa, cameraCut);
+    // An upscaler lowers the internal resolution to its preset's scale. FSR 1
+    // without support composites at output resolution (PostProcessPass), so
+    // it renders natively rather than stretching a reduced frame.
+    UpscalerSettings upscaler = rendering.settings().upscaler;
+    if (upscaler.mode == UpscalerMode::Fsr1 && !m_postProcess.spatialUpscaleSupported()) {
+        upscaler.mode = UpscalerMode::Off;
+    }
+    const TemporalFrameState temporal =
+        m_temporalQuality.beginFrame(extent.width, extent.height, previousGpuFrameMilliseconds,
+                                     upscaledDynamicResolution(rendering.settings().dynamicResolution, upscaler),
+                                     rendering.settings().antialiasing == AntialiasingMode::Taa, cameraCut);
     const VkExtent2D renderExtent{temporal.internalWidth, temporal.internalHeight};
     // Swapping the planes yields reversed Z; see DepthConvention.hpp.
     glm::mat4 projection = glm::perspectiveRH_ZO(
@@ -2528,6 +2537,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.temporalHistoryValid = temporal.historyValid;
     stats.temporalHistoryInvalidated = temporal.historyInvalidated;
     stats.temporalHistoryBytes = m_postProcess.temporalHistoryBytes();
+    stats.spatialUpscaleBytes = m_postProcess.spatialUpscaleBytes();
     stats.motionVectorBytes =
         static_cast<uint64_t>(extent.width) * extent.height * sizeof(uint16_t) * 4 * m_cameras.size();
     stats.ambientOcclusionBytes = m_ambientOcclusion.allocatedBytes();

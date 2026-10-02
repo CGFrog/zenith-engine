@@ -60,6 +60,24 @@ bool drawAntialiasingAndResolution(RenderSettings& settings, const RenderCapabil
     bool changed =
         enumCombo("Anti-aliasing", settings.antialiasing,
                   std::array<EnumOption, 3>{{{"Off"}, {"FXAA"}, {"TAA", capabilities.temporalAntialiasing}}});
+    UpscalerSettings& upscaler = settings.upscaler;
+    if (enumCombo("Upscaler", upscaler.mode,
+                  std::array<EnumOption, 3>{{{"Off"},
+                                             {"TAA upsampling", capabilities.temporalAntialiasing},
+                                             {"FSR 1", capabilities.spatialUpscaling}}})) {
+        // TAA upsampling reconstructs with TAA; validation would enable it too.
+        if (upscaler.mode == UpscalerMode::Taau) {
+            settings.antialiasing = AntialiasingMode::Taa;
+        }
+        changed = true;
+    }
+    ImGui::BeginDisabled(upscaler.mode == UpscalerMode::Off);
+    changed |= enumCombo("Upscaler quality", upscaler.quality,
+                         std::array<EnumOption, 3>{{{"Quality (1.5x)"}, {"Balanced (1.7x)"}, {"Performance (2x)"}}});
+    ImGui::EndDisabled();
+    ImGui::BeginDisabled(upscaler.mode != UpscalerMode::Fsr1);
+    changed |= ImGui::SliderFloat("FSR sharpness", &upscaler.sharpness, 0.0f, 1.0f, "%.2f");
+    ImGui::EndDisabled();
     DynamicResolutionSettings& dynamic = settings.dynamicResolution;
     changed |= ImGui::Checkbox("Dynamic resolution", &dynamic.enabled);
     ImGui::BeginDisabled(!dynamic.enabled);
@@ -215,6 +233,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Probe clusters", budgets.reflectionProbeClusters);
     changed |= drawBudget("Volumetric fog", budgets.volumetricFog);
     changed |= drawBudget("Irradiance volume", budgets.irradianceVolume);
+    changed |= drawBudget("FSR upscale", budgets.spatialUpscale);
     return changed;
 }
 
@@ -253,6 +272,8 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
             {"Exposure", stats.gpuExposureMilliseconds},
             {"Bloom", stats.gpuBloomMilliseconds},
             {"Post-process", stats.gpuPostMilliseconds},
+            {"FSR upsample (EASU)", stats.gpuFsrEasuMilliseconds},
+            {"FSR sharpen (RCAS)", stats.gpuFsrRcasMilliseconds},
             {"UI", stats.gpuUiMilliseconds},
             {"Frame", stats.gpuFrameMilliseconds}};
 }
@@ -264,6 +285,7 @@ void clampToDocumentRanges(RenderSettings& settings) {
     settings.bloomIntensity = std::clamp(settings.bloomIntensity, 0.0f, 1.0f);
     settings.bloomFilterRadius = std::clamp(settings.bloomFilterRadius, minimumBloomRadius, maximumBloomRadius);
     settings.maximumLocalLights = std::max(settings.maximumLocalLights, 1u);
+    settings.upscaler.sharpness = std::clamp(settings.upscaler.sharpness, 0.0f, 1.0f);
 
     DynamicResolutionSettings& dynamic = settings.dynamicResolution;
     dynamic.minimumScale = std::clamp(dynamic.minimumScale, minimumDynamicScale, 1.0f);
@@ -285,12 +307,26 @@ void clampToDocumentRanges(RenderSettings& settings) {
     exposure.highPercentile = std::clamp(exposure.highPercentile, exposure.lowPercentile + minimumPercentileGap, 1.0f);
 
     RenderPassBudgets& budgets = settings.budgets;
-    for (RenderPassBudget* budget :
-         {&budgets.shadow, &budgets.opaque, &budgets.blended, &budgets.bloom, &budgets.ui, &budgets.upload,
-          &budgets.temporalResolve, &budgets.ambientOcclusion, &budgets.reflections, &budgets.exposure,
-          &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment,
-          &budgets.localShadows, &budgets.shadowCulling, &budgets.reflectionProbeClusters, &budgets.volumetricFog,
-          &budgets.irradianceVolume}) {
+    for (RenderPassBudget* budget : {&budgets.shadow,
+                                     &budgets.opaque,
+                                     &budgets.blended,
+                                     &budgets.bloom,
+                                     &budgets.ui,
+                                     &budgets.upload,
+                                     &budgets.temporalResolve,
+                                     &budgets.ambientOcclusion,
+                                     &budgets.reflections,
+                                     &budgets.exposure,
+                                     &budgets.depthPrepass,
+                                     &budgets.depthPyramid,
+                                     &budgets.lightClusters,
+                                     &budgets.environment,
+                                     &budgets.localShadows,
+                                     &budgets.shadowCulling,
+                                     &budgets.reflectionProbeClusters,
+                                     &budgets.volumetricFog,
+                                     &budgets.irradianceVolume,
+                                     &budgets.spatialUpscale}) {
         clampBudget(*budget);
     }
 }

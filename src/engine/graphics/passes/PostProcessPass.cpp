@@ -51,6 +51,21 @@ void imageBarrier(VkCommandBuffer commandBuffer, VkImage image, VkImageAspectFla
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier};
     vkCmdPipelineBarrier2(commandBuffer, &dependency);
 }
+
+// Moves the post-process output to COLOR_ATTACHMENT_OPTIMAL. An undefined
+// output is a freshly acquired swapchain image: the frame waits on the
+// acquire semaphore at color-attachment output, so the layout transition must
+// start from that stage to stay ordered after it. Otherwise it is the editor
+// viewport, which the UI sampled last frame.
+void transitionOutputForRendering(VkCommandBuffer commandBuffer, VkImage outputImage, VkImageLayout outputOldLayout) {
+    imageBarrier(commandBuffer, outputImage, VK_IMAGE_ASPECT_COLOR_BIT, outputOldLayout,
+                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                 outputOldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT
+                                                              : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 outputOldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+}
 } // namespace
 
 bool PostProcessPass::init(const VulkanContext& context, VkFormat outputFormat, VkFormat, uint32_t frameCount,
@@ -60,7 +75,8 @@ bool PostProcessPass::init(const VulkanContext& context, VkFormat outputFormat, 
     m_allocator = context.vmaAllocator();
     m_targets.resize(frameCount);
     return m_bloomExposure.init(context) && createDescriptors(frameCount) && createPipeline(outputFormat) &&
-           m_temporalResolve.init(context, frameCount, extent) && m_reflections.init(context, extent) &&
+           m_temporalResolve.init(context, frameCount, extent) &&
+           m_spatialUpscale.init(context, outputFormat, extent) && m_reflections.init(context, extent) &&
            createTargets(context, extent, depthView);
 }
 
@@ -428,6 +444,7 @@ bool PostProcessPass::resize(const VulkanContext& context, VkExtent2D extent, Vk
     destroyTargets(context);
     m_previousFrameIndex.reset();
     m_temporalResolve.resize(extent);
+    m_spatialUpscale.resize(extent);
     m_reflections.resize(extent);
     return createTargets(context, extent, depthView);
 }
@@ -509,16 +526,23 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
     const bool temporalEnabled = settings.antialiasing == AntialiasingMode::Taa;
-    if (!resolveTemporal(commandBuffer, frameIndex, internalExtent, temporalEnabled, temporal, timestampQueries)) {
+    // FSR 1 composites (anti-aliases and tone maps) at render resolution and
+    // upsamples afterwards, so TAA resolves at render resolution too. Without
+    // support it composites at output resolution as if the upscaler were Off.
+    const bool spatialUpscale = settings.upscaler.mode == UpscalerMode::Fsr1 && m_spatialUpscale.supported();
+    const VkExtent2D resolveExtent = spatialUpscale ? internalExtent : m_extent;
+    if (!resolveTemporal(commandBuffer, frameIndex, internalExtent, resolveExtent, temporalEnabled, temporal,
+                         timestampQueries)) {
         return false;
     }
-    // With TAA, exposure and bloom read the resolved output-resolution scene;
-    // otherwise the raw HDR target within its render extent.
+    bindCompositeScene(frameIndex, temporalEnabled && spatialUpscale);
+    // With TAA, exposure and bloom read the resolved scene; otherwise the raw
+    // HDR target within its render extent.
     const BloomExposureInput bloomInput =
         temporalEnabled
             ? BloomExposureInput{.view = m_temporalResolve.resolvedView(),
                                  .imageExtent = m_extent,
-                                 .validExtent = m_extent,
+                                 .validExtent = m_temporalResolve.resolvedExtent(),
                                  .layout = TemporalResolvePass::resolvedLayout}
             : BloomExposureInput{.view = target.view, .imageExtent = m_extent, .validExtent = internalExtent};
     recordBloomAndExposure(commandBuffer, bloomInput, settings, timestampQueries, bloomCpuMilliseconds);
@@ -533,7 +557,10 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
         .sceneScale = {static_cast<float>(internalExtent.width) / extent.width,
                        static_cast<float>(internalExtent.height) / extent.height},
         .bloomStrength = settings.bloom == BloomQuality::Off ? 0.0f : settings.bloomIntensity,
-        .antialiasingMode = static_cast<float>(settings.antialiasing),
+        // A render-resolution resolve reaches the composite through binding 0
+        // (bindCompositeScene), so it reads it like an unfiltered scene.
+        .antialiasingMode = temporalEnabled && spatialUpscale ? static_cast<float>(AntialiasingMode::Off)
+                                                              : static_cast<float>(settings.antialiasing),
         .temporalHistoryValid = temporal.historyValid ? 1.0f : 0.0f,
         .ambientOcclusionMode = static_cast<float>(settings.ambientOcclusion),
         .reflectionMode = static_cast<float>(settings.reflections),
@@ -541,34 +568,37 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
         .bloomUvScale = bloomSampling.uvScale,
         .bloomUvLimit = bloomSampling.uvLimit,
     };
-    // An undefined output is a freshly acquired swapchain image: the frame
-    // waits on the acquire semaphore at color-attachment output, so the
-    // layout transition must start from that stage to stay ordered after it.
-    imageBarrier(commandBuffer, outputImage, VK_IMAGE_ASPECT_COLOR_BIT, outputOldLayout,
-                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                 outputOldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT
-                                                              : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                 outputOldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+    // The composite renders into the output, or with FSR 1 into the top-left
+    // render extent of the upscaler's input target.
+    VkImageView compositeView = outputView;
+    VkExtent2D compositeExtent = extent;
+    if (spatialUpscale) {
+        compositeView = m_spatialUpscale.prepareInput(commandBuffer);
+        compositeExtent = internalExtent;
+        if (compositeView == VK_NULL_HANDLE) {
+            return false;
+        }
+    } else {
+        transitionOutputForRendering(commandBuffer, outputImage, outputOldLayout);
+    }
     VkRenderingAttachmentInfo color{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                                    .imageView = outputView,
+                                    .imageView = compositeView,
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                     .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
     VkRenderingInfo rendering{.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-                              .renderArea = {.offset = {0, 0}, .extent = extent},
+                              .renderArea = {.offset = {0, 0}, .extent = compositeExtent},
                               .layerCount = 1,
                               .colorAttachmentCount = 1,
                               .pColorAttachments = &color};
     vkCmdBeginRendering(commandBuffer, &rendering);
     VkViewport viewport{.x = 0.0f,
                         .y = 0.0f,
-                        .width = static_cast<float>(extent.width),
-                        .height = static_cast<float>(extent.height),
+                        .width = static_cast<float>(compositeExtent.width),
+                        .height = static_cast<float>(compositeExtent.height),
                         .minDepth = 0.0f,
                         .maxDepth = 1.0f};
-    VkRect2D scissor{.offset = {0, 0}, .extent = extent};
+    VkRect2D scissor{.offset = {0, 0}, .extent = compositeExtent};
     vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
     if (timestampQueries) {
@@ -584,13 +614,46 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
     if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 15);
     }
+    recordSpatialUpscale(commandBuffer, spatialUpscale, outputImage, outputView, outputOldLayout, internalExtent,
+                         settings, timestampQueries);
     m_previousFrameIndex = frameIndex;
     m_previousRenderExtent = internalExtent;
     return true;
 }
 
+void PostProcessPass::recordSpatialUpscale(VkCommandBuffer commandBuffer, bool active, VkImage outputImage,
+                                           VkImageView outputView, VkImageLayout outputOldLayout,
+                                           VkExtent2D internalExtent, const RenderSettings& settings,
+                                           VkQueryPool timestampQueries) {
+    if (!active) {
+        SpatialUpscalePass::writeSkippedTimestamps(commandBuffer, timestampQueries);
+        return;
+    }
+    m_spatialUpscale.recordEasu(commandBuffer, internalExtent, timestampQueries);
+    transitionOutputForRendering(commandBuffer, outputImage, outputOldLayout);
+    m_spatialUpscale.recordRcas(commandBuffer, outputView, settings.upscaler.sharpness, timestampQueries);
+}
+
+void PostProcessPass::bindCompositeScene(uint32_t frameIndex, bool resolvedAtRenderResolution) {
+    // As in resolveTemporal, this frame slot's set is not in use.
+    const Target& target = m_targets[frameIndex];
+    const VkImageView resolvedView = m_temporalResolve.resolvedView();
+    const bool useResolved = resolvedAtRenderResolution && resolvedView != VK_NULL_HANDLE;
+    const VkDescriptorImageInfo scene{.sampler = m_colorSampler,
+                                      .imageView = useResolved ? resolvedView : target.view,
+                                      .imageLayout = useResolved ? TemporalResolvePass::resolvedLayout
+                                                                 : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                     .dstSet = target.descriptor,
+                                     .dstBinding = 0,
+                                     .descriptorCount = 1,
+                                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                     .pImageInfo = &scene};
+    vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+}
+
 bool PostProcessPass::resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent,
-                                      bool enabled, const TemporalResolveFrame& temporal,
+                                      VkExtent2D resolveExtent, bool enabled, const TemporalResolveFrame& temporal,
                                       VkQueryPool timestampQueries) {
     const Target& target = m_targets[frameIndex];
     if (timestampQueries) {
@@ -609,6 +672,7 @@ bool PostProcessPass::resolveTemporal(VkCommandBuffer commandBuffer, uint32_t fr
                  .previousMotion = previous.motionView,
                  .renderExtent = internalExtent,
                  .previousRenderExtent = previousAvailable ? m_previousRenderExtent : internalExtent,
+                 .resolveExtent = resolveExtent,
                  .previousMotionValid = previousAvailable},
                 temporal)) {
             return false;
@@ -808,6 +872,7 @@ uint64_t PostProcessPass::reflectionBytes() const {
 void PostProcessPass::shutdown(const VulkanContext& context) {
     destroyTargets(context);
     m_temporalResolve.shutdown();
+    m_spatialUpscale.shutdown();
     m_reflections.shutdown();
     m_bloomExposure.shutdown(context);
     m_previousExposureTime.reset();

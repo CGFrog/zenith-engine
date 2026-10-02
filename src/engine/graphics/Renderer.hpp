@@ -42,6 +42,8 @@ struct RenderGraphShape {
     bool volumetricFog{false};
     // Irradiance volume (U6)
     bool irradianceVolume{false};
+    // FSR 1: the composite renders into the upscaler's input, then EASU and RCAS.
+    bool spatialUpscale{false};
 
     bool operator==(const RenderGraphShape&) const = default;
 };
