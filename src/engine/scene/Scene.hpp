@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -167,6 +168,34 @@ struct ReflectionProbeComponent {
     int32_t priority{0};
     std::string environmentAsset;
     TextureHandle environmentMap{};
+};
+
+struct IrradianceVolumeData;
+
+// A baked grid of irradiance probes that replaces environment lighting for
+// indirect diffuse inside its box (see engine/graphics/IrradianceVolume.hpp).
+// The box is axis-aligned, centered on the entity's world position, with
+// half extents in world units; rotation and scale are ignored, as for
+// reflection probes. Probes sit at the centers of probeCounts cells.
+struct IrradianceVolumeComponent {
+    glm::vec3 halfExtents{4.0f, 2.0f, 4.0f};
+    glm::uvec3 probeCounts{8u, 4u, 8u};
+    // Multiplier on baked irradiance. The bake already includes the primary
+    // environment light's diffuse intensity.
+    float intensity{1.0f};
+    // World-space width over which the volume fades to the environment at its
+    // boundary.
+    float blendDistance{0.5f};
+    // World-space offsets along the surface normal and toward the viewer
+    // applied before probe lookup, to avoid self-shadowing.
+    float normalBias{0.1f};
+    float viewBias{0.1f};
+    // Optional project-relative baked data (.zvol). The loaded data is
+    // immutable and shared; it records the bounds and counts it was baked
+    // with, which may differ from the authored ones until the next bake.
+    // bakedData stays null when the referenced file is missing.
+    std::string bakeAsset;
+    std::shared_ptr<const IrradianceVolumeData> bakedData;
 };
 
 struct SceneResult {

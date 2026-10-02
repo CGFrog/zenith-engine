@@ -36,6 +36,8 @@ struct RenderGraphShape {
     bool localLights{false};
     bool depthPrepass{false};
     bool gpuDriven{false};
+    // Irradiance volume (U6)
+    bool irradianceVolume{false};
 
     bool operator==(const RenderGraphShape&) const = default;
 };

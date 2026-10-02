@@ -72,7 +72,7 @@ or at the decision point named below, after capability validation.
 
 | Variable | Effect |
 | --- | --- |
-| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, clustered local lights, depth prepass on, cascaded (high) shadows, and bloom. |
+| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, clustered local lights, depth prepass on, cascaded (high) shadows, bloom, and probe-volume indirect diffuse. |
 | `ZENITH_FORCE_TAA` | Temporal anti-aliasing. |
 | `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
 | `ZENITH_FORCE_GPU_DRIVEN` | GPU-driven submission (two-phase occlusion culling and indirect draws) when the device supports it. |
@@ -100,8 +100,12 @@ environment changes), the early-phase `gpu.culling`, and any upload wait. `gpu.o
 `gpu.light_clusters`, `gpu.depth_prepass` (which includes the GPU-driven late
 cull), `gpu.depth_pyramid`, `gpu.ambient_occlusion`, and shading. `gpu.blended` includes `gpu.skybox`;
 `gpu.reflections` runs between them inside the scene pass and is subtracted from `gpu.blended`.
-`gpu.environment` is precompute plus skybox. The editor's Graphics panel shows
-the same table live.
+`gpu.environment` is precompute plus skybox. `gpu.irradiance_volume` is the
+irradiance-volume probe upload, which records work only on frames whose bound
+volume changed and also falls inside `gpu.shadow`; sampling the volume is part
+of opaque and blended shading, so its per-pixel cost shows up in `gpu.opaque`
+(compare against `indirectDiffuse` set to Environment, the Off fallback). The
+editor's Graphics panel shows the same table live.
 
 `gpu_visibility_mismatches` counts retired GPU-driven frames whose culling kept
 more objects than the CPU frustum reference. The GPU sphere test uses the

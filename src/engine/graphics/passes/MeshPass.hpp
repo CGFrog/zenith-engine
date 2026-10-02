@@ -18,6 +18,7 @@
 #include "DepthPyramid.hpp"
 #include "EnvironmentPass.hpp"
 #include "GpuDrivenPass.hpp"
+#include "IrradianceVolumePass.hpp"
 #include "PostProcessPass.hpp"
 #include "SceneGeometryViews.hpp"
 #include "engine/resources/DeferredReleaseQueue.hpp"
@@ -380,6 +381,8 @@ class MeshPass {
     bool m_cameraHistoryValid{false};
     TemporalQualityController m_temporalQuality;
     EnvironmentPass m_environmentPass;
+    // Irradiance volume (U6): probe buffer behind camera binding 8.
+    IrradianceVolumePass m_irradianceVolume;
     double m_uploadMilliseconds{0.0};
     double m_uploadGpuMilliseconds{0.0};
     uint64_t m_taskGeneration{0};

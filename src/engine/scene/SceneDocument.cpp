@@ -1,6 +1,7 @@
 #include "SceneDocument.hpp"
 
 #include "../assets/Assets.hpp"
+#include "../assets/IrradianceVolumeAsset.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
 #include <nlohmann/json.hpp>
@@ -243,6 +244,16 @@ SceneDocumentResult serializeEntity(const Scene& scene, Entity entity, const Ass
                                           {"priority", probe->priority},
                                           {"environment_asset", environmentAsset}};
     }
+    if (const auto* volume = registry.try_get<IrradianceVolumeComponent>(entity)) {
+        components["irradiance_volume"] = {
+            {"half_extents", vector3(volume->halfExtents)},
+            {"probe_counts", Json::array({volume->probeCounts.x, volume->probeCounts.y, volume->probeCounts.z})},
+            {"intensity", volume->intensity},
+            {"blend_distance", volume->blendDistance},
+            {"normal_bias", volume->normalBias},
+            {"view_bias", volume->viewBias},
+            {"bake_asset", volume->bakeAsset}};
+    }
     if (const auto* collider = registry.try_get<ColliderComponent>(entity)) {
         Json value;
         std::visit(
@@ -295,6 +306,52 @@ SceneDocumentResult readMesh(const Json& json, AssetManager& assets, const Scene
         return {.error = loaded.error};
     }
     output = loaded.handle;
+    return {.success = true};
+}
+
+SceneDocumentResult readIrradianceVolume(const Json& json, const SceneDocumentOptions& options,
+                                         IrradianceVolumeComponent& volume) {
+    const Json& counts = json.at("probe_counts");
+    if (!readVector3(json.at("half_extents"), volume.halfExtents) || !counts.is_array() || counts.size() != 3) {
+        return {.error = "Irradiance volume half extents and probe counts must each contain three numbers"};
+    }
+    volume.probeCounts = {counts[0].get<uint32_t>(), counts[1].get<uint32_t>(), counts[2].get<uint32_t>()};
+    volume.intensity = json.at("intensity").get<float>();
+    volume.blendDistance = json.at("blend_distance").get<float>();
+    volume.normalBias = json.at("normal_bias").get<float>();
+    volume.viewBias = json.at("view_bias").get<float>();
+    volume.bakeAsset = json.value("bake_asset", std::string{});
+    const uint64_t probeCount =
+        static_cast<uint64_t>(volume.probeCounts.x) * volume.probeCounts.y * volume.probeCounts.z;
+    if (glm::any(glm::lessThanEqual(volume.halfExtents, glm::vec3(0.0f))) || probeCount == 0 ||
+        glm::any(glm::greaterThan(volume.probeCounts, glm::uvec3(maximumIrradianceProbesPerAxis))) ||
+        probeCount > maximumIrradianceProbes || volume.intensity < 0.0f || volume.blendDistance < 0.0f ||
+        volume.normalBias < 0.0f || volume.viewBias < 0.0f) {
+        return {.error = "Irradiance volume extents, probe counts, intensity, or biases are invalid"};
+    }
+    if (volume.bakeAsset.empty()) {
+        return {.success = true};
+    }
+    // Baked lighting is derived data: a reference that is well formed but whose
+    // file is gone loads as an unbaked volume (shaded by the environment) so
+    // the scene can still be opened and re-baked. Corrupt files still fail.
+    const std::filesystem::path reference(volume.bakeAsset);
+    if (reference.is_absolute() || reference.empty() || *reference.begin() == "..") {
+        return {.error = "Irradiance volume bake reference must be project-relative: " + volume.bakeAsset};
+    }
+    std::error_code error;
+    if (!std::filesystem::exists(options.assetRoot / reference, error)) {
+        return {.success = true};
+    }
+    std::filesystem::path path;
+    if (SceneDocumentResult result = resolveAssetPath(volume.bakeAsset, options, path); !result) {
+        return result;
+    }
+    auto data = std::make_shared<IrradianceVolumeData>();
+    if (IrradianceVolumeResult loaded = loadIrradianceVolume(path, *data); !loaded) {
+        return {.error = loaded.error};
+    }
+    volume.bakedData = std::move(data);
     return {.success = true};
 }
 
@@ -465,6 +522,13 @@ SceneDocumentResult deserializeComponents(const Json& components, Entity entity,
             return {.error = "Reflection probe volume is invalid"};
         }
         registry.emplace<ReflectionProbeComponent>(entity, probe);
+    }
+    if (const auto found = components.find("irradiance_volume"); found != components.end()) {
+        IrradianceVolumeComponent volume;
+        if (SceneDocumentResult result = readIrradianceVolume(*found, options, volume); !result) {
+            return result;
+        }
+        registry.emplace<IrradianceVolumeComponent>(entity, std::move(volume));
     }
     if (const auto found = components.find("collider"); found != components.end()) {
         ColliderComponent collider;

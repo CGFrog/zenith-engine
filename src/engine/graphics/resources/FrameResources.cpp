@@ -169,6 +169,8 @@ bool FrameResources::collectTimings(VkDevice device, GpuFrameTimings& timings) {
     timings.environmentPrecomputeMilliseconds =
         elapsed(FrameTimestamp::environmentPrecomputeBegin, FrameTimestamp::environmentPrecomputeEnd);
     timings.skyboxMilliseconds = elapsed(FrameTimestamp::skyboxBegin, FrameTimestamp::skyboxEnd);
+    timings.irradianceVolumeMilliseconds =
+        elapsed(FrameTimestamp::irradianceVolumeBegin, FrameTimestamp::irradianceVolumeEnd);
     return true;
 }
 

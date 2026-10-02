@@ -1,0 +1,415 @@
+{
+  "entities": [
+    {
+      "components": {
+        "directional_light": {
+          "color": [
+            1.0,
+            0.9200000166893005,
+            0.800000011920929
+          ],
+          "direction": [
+            0.250627338886261,
+            0.3508782982826233,
+            0.9022584557533264
+          ],
+          "intensity": 6.0,
+          "primary": true,
+          "shadows": {
+            "constant_bias": 0.5,
+            "depth_range": 40.0,
+            "enabled": true,
+            "focus_distance": 4.0,
+            "half_extent": 9.0,
+            "normal_bias": 0.019999999552965164,
+            "slope_bias": 1.5
+          }
+        }
+      },
+      "id": 1,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Sun",
+      "parent": null
+    },
+    {
+      "components": {
+        "environment_light": {
+          "diffuse_intensity": 1.0,
+          "environment_asset": "",
+          "ground_color": [
+            0.11999999731779099,
+            0.10000000149011612,
+            0.07999999821186066
+          ],
+          "primary": true,
+          "sky_color": [
+            0.30000001192092896,
+            0.41999998688697815,
+            0.6499999761581421
+          ],
+          "specular_intensity": 0.4000000059604645
+        }
+      },
+      "id": 2,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Environment",
+      "parent": null
+    },
+    {
+      "components": {
+        "mesh_renderer": {
+          "mesh": 0,
+          "path": "irradiance_room/room.gltf"
+        }
+      },
+      "id": 3,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Floor",
+      "parent": null
+    },
+    {
+      "components": {
+        "mesh_renderer": {
+          "mesh": 1,
+          "path": "irradiance_room/room.gltf"
+        }
+      },
+      "id": 4,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Ceiling",
+      "parent": null
+    },
+    {
+      "components": {
+        "mesh_renderer": {
+          "mesh": 2,
+          "path": "irradiance_room/room.gltf"
+        }
+      },
+      "id": 5,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "WallLeft",
+      "parent": null
+    },
+    {
+      "components": {
+        "mesh_renderer": {
+          "mesh": 3,
+          "path": "irradiance_room/room.gltf"
+        }
+      },
+      "id": 6,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "WallRight",
+      "parent": null
+    },
+    {
+      "components": {
+        "mesh_renderer": {
+          "mesh": 4,
+          "path": "irradiance_room/room.gltf"
+        }
+      },
+      "id": 7,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "WallBack",
+      "parent": null
+    },
+    {
+      "components": {
+        "mesh_renderer": {
+          "mesh": 5,
+          "path": "irradiance_room/room.gltf"
+        }
+      },
+      "id": 8,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "WallFront",
+      "parent": null
+    },
+    {
+      "components": {
+        "mesh_renderer": {
+          "mesh": 6,
+          "path": "irradiance_room/room.gltf"
+        }
+      },
+      "id": 9,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Block",
+      "parent": null
+    },
+    {
+      "components": {
+        "mesh_renderer": {
+          "mesh": 7,
+          "path": "irradiance_room/room.gltf"
+        }
+      },
+      "id": 10,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Column",
+      "parent": null
+    },
+    {
+      "components": {
+        "collider": {
+          "half_extents": [
+            4.199999809265137,
+            0.10000000149011612,
+            5.199999809265137
+          ],
+          "type": "box"
+        },
+        "rigid_body": {
+          "allow_sleeping": true,
+          "angular_damping": 0.0,
+          "continuous_collision": false,
+          "friction": 0.800000011920929,
+          "gravity_factor": 1.0,
+          "layer": 0,
+          "linear_damping": 0.0,
+          "lock_rotation": false,
+          "mass": 1.0,
+          "motion_type": 0,
+          "restitution": 0.0,
+          "sensor": false
+        }
+      },
+      "id": 11,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        -0.10000000149011612,
+        0.0,
+        1.0
+      ],
+      "name": "FloorCollider",
+      "parent": null
+    },
+    {
+      "components": {
+        "irradiance_volume": {
+          "bake_asset": "baked/irradiance_room/irradiance_volume_12_2e2743cf3b3c11a4.zvol",
+          "blend_distance": 0.20000000298023224,
+          "half_extents": [
+            4.199999809265137,
+            1.9500000476837158,
+            5.199999809265137
+          ],
+          "intensity": 1.0,
+          "normal_bias": 0.15000000596046448,
+          "probe_counts": [
+            8,
+            4,
+            10
+          ],
+          "view_bias": 0.15000000596046448
+        }
+      },
+      "id": 12,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        1.75,
+        0.0,
+        1.0
+      ],
+      "name": "IrradianceVolume",
+      "parent": null
+    }
+  ],
+  "version": 1
+}

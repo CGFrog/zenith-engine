@@ -68,6 +68,9 @@ class EditorSession final : public ApplicationScene {
     void drawGraphicsPanel(ApplicationContext& context);
     void applyRenderSettings(ApplicationContext& context);
     void drawComponentControls(ApplicationContext& context, Entity entity);
+    // Bakes the volume's probes next to the project's other derived assets
+    // and records the new bake reference as an undoable edit.
+    void bakeIrradianceVolume(ApplicationContext& context, SceneEntityId volume);
     void drawStatusBar(const RenderStats& stats);
     void drawPathDialog(ApplicationContext& context);
     void drawUnsavedChangesDialog(ApplicationContext& context);

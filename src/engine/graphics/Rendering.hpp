@@ -94,6 +94,14 @@ enum class LocalLightingQuality : uint8_t {
     Clustered,
 };
 
+// Source of indirect diffuse light. Environment (the Off fallback) evaluates
+// the environment's spherical harmonics everywhere; ProbeVolume uses a baked
+// irradiance volume inside its box and the environment elsewhere.
+enum class IndirectDiffuseMode : uint8_t {
+    Environment,
+    ProbeVolume,
+};
+
 struct RenderPassBudget {
     double cpuMilliseconds{0.0};
     double gpuMilliseconds{0.0};
@@ -115,6 +123,8 @@ struct RenderPassBudgets {
     RenderPassBudget lightClusters;
     // Environment precompute (only when its inputs change) plus the skybox.
     RenderPassBudget environment;
+    // Irradiance-volume probe upload (sampling is part of opaque shading).
+    RenderPassBudget irradianceVolume;
 };
 
 struct DynamicResolutionSettings {
@@ -144,6 +154,7 @@ struct RenderSettings {
     // Lights uploaded per frame; the nearest are kept when a scene has more.
     uint32_t maximumLocalLights{1024};
     bool reflectionProbes{true};
+    IndirectDiffuseMode indirectDiffuse{IndirectDiffuseMode::ProbeVolume};
     bool preferGpuDrivenSubmission{false};
     // Opaque depth and view-space normals are drawn before shading, so opaque
     // pixels shade once and screen-space effects get normals and a depth
@@ -169,6 +180,7 @@ struct RenderCapabilities {
     bool gpuDrivenPath{false};
     bool imageBasedLighting{false};
     bool reflectionProbes{false};
+    bool irradianceVolumes{false};
     bool temporalAntialiasing{true};
     bool screenSpaceAmbientOcclusion{true};
     bool screenSpaceReflections{true};
@@ -260,6 +272,13 @@ struct RenderStats {
     // Precompute runs only on frames whose environment inputs changed.
     double gpuEnvironmentPrecomputeMilliseconds{0.0};
     double gpuSkyboxMilliseconds{0.0};
+    // Irradiance-volume probe upload; zero on frames whose bound volume did
+    // not change.
+    double gpuIrradianceVolumeMilliseconds{0.0};
+    // Probes in the bound irradiance volume; zero when none is bound.
+    uint32_t irradianceVolumeProbes{0};
+    // Device memory of the irradiance-volume probe buffer.
+    uint64_t irradianceVolumeBytes{0};
     uint64_t temporalHistoryBytes{0};
     uint64_t motionVectorBytes{0};
     uint64_t ambientOcclusionBytes{0};

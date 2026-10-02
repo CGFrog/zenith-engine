@@ -24,6 +24,7 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
         settings.depthPrepass = true;
         settings.shadows = ShadowQuality::CascadedHigh;
         settings.bloom = BloomQuality::Downsampled;
+        settings.indirectDiffuse = IndirectDiffuseMode::ProbeVolume;
     }
     if (SDL_getenv("ZENITH_FORCE_DYNAMIC_RESOLUTION") != nullptr) {
         settings.dynamicResolution.enabled = true;
@@ -93,7 +94,8 @@ RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const Render
             .environmentBackground = imageBasedLighting && settings.environmentBackground,
             .localLights = settings.localLights != LocalLightingQuality::Disabled,
             .depthPrepass = depthPrepassActive(settings),
-            .gpuDriven = gpuDrivenSubmissionActive(settings, capabilities)};
+            .gpuDriven = gpuDrivenSubmissionActive(settings, capabilities),
+            .irradianceVolume = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume};
 }
 } // namespace
 
@@ -112,6 +114,7 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
     rendering.m_capabilities = detectRenderCapabilities(m_context.pDevice());
     rendering.m_capabilities.imageBasedLighting = true;
     rendering.m_capabilities.reflectionProbes = true;
+    rendering.m_capabilities.irradianceVolumes = true;
     rendering.m_capabilities.dedicatedTransferQueue = m_context.hasDedicatedTransferQueue();
     rendering.m_capabilities.timelineTransfers = m_context.timelineSemaphoreSupported();
     if (!createSwapchainResources(window)) {
@@ -280,6 +283,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuLightClusterMilliseconds = gpuTimings.lightClusterMilliseconds;
     stats.gpuEnvironmentPrecomputeMilliseconds = gpuTimings.environmentPrecomputeMilliseconds;
     stats.gpuSkyboxMilliseconds = gpuTimings.skyboxMilliseconds;
+    stats.gpuIrradianceVolumeMilliseconds = gpuTimings.irradianceVolumeMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;
@@ -508,6 +512,16 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
             graph.addPass("environment precompute", RenderGraphQueue::Graphics, environmentAccesses);
         }
+        // Irradiance volume (U6): rewrites the probe buffer only when the bound
+        // volume changes; opaque and blended shading read it.
+        const auto irradianceProbes =
+            graph.importBuffer("irradiance volume probes", {.size = 0, .usage = 1, .alignment = 256});
+        if (shape.irradianceVolume) {
+            const RenderGraphAccess irradianceUploadAccesses[]{
+                {irradianceProbes, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                 VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
+            graph.addPass("irradiance volume upload", RenderGraphQueue::Graphics, irradianceUploadAccesses);
+        }
         if (shape.shadows) {
             const RenderGraphAccess shadowAccesses[]{
                 {shadow, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
@@ -622,6 +636,11 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
         }
         if (shape.gpuDriven) {
             opaqueAccesses.push_back(indirectDrawRead);
+        }
+        if (shape.irradianceVolume) {
+            opaqueAccesses.push_back({irradianceProbes, RenderGraphAccessMode::Read,
+                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                      VK_IMAGE_LAYOUT_UNDEFINED});
         }
         if (shape.gpuDriven && !shape.depthPrepass) {
             // Without a prepass two-phase culling splits the shading pass.

@@ -103,6 +103,9 @@ bool drawLighting(RenderSettings& settings, const RenderCapabilities& capabiliti
     ImGui::BeginDisabled(!capabilities.reflectionProbes);
     changed |= ImGui::Checkbox("Reflection probes", &settings.reflectionProbes);
     ImGui::EndDisabled();
+    changed |=
+        enumCombo("Indirect diffuse", settings.indirectDiffuse,
+                  std::array<EnumOption, 2>{{{"Environment"}, {"Probe volume", capabilities.irradianceVolumes}}});
     const bool localLightsAvailable = capabilities.maximumLocalLights > 0;
     changed |= enumCombo("Local lights", settings.localLights,
                          std::array<EnumOption, 2>{{{"Disabled"}, {"Clustered", localLightsAvailable}}});
@@ -192,6 +195,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Depth pyramid", budgets.depthPyramid);
     changed |= drawBudget("Light clusters", budgets.lightClusters);
     changed |= drawBudget("Environment", budgets.environment);
+    changed |= drawBudget("Irradiance volume", budgets.irradianceVolume);
     return changed;
 }
 
@@ -211,6 +215,7 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
     // prepass, pyramid and ambient occlusion; blended time spans the skybox.
     return {{"Shadows", stats.gpuShadowMilliseconds},
             {"Environment precompute", stats.gpuEnvironmentPrecomputeMilliseconds, true},
+            {"Irradiance volume upload", stats.gpuIrradianceVolumeMilliseconds, true},
             {"GPU culling", stats.gpuCullingMilliseconds, true},
             {"Opaque", stats.gpuOpaqueMilliseconds},
             {"Light clusters", stats.gpuLightClusterMilliseconds, true},
@@ -259,7 +264,8 @@ void clampToDocumentRanges(RenderSettings& settings) {
     for (RenderPassBudget* budget :
          {&budgets.shadow, &budgets.opaque, &budgets.blended, &budgets.bloom, &budgets.ui, &budgets.upload,
           &budgets.temporalResolve, &budgets.ambientOcclusion, &budgets.reflections, &budgets.exposure,
-          &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment}) {
+          &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment,
+          &budgets.irradianceVolume}) {
         clampBudget(*budget);
     }
 }

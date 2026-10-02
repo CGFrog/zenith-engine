@@ -118,6 +118,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"localLights", settings.localLights},
                            {"maximumLocalLights", settings.maximumLocalLights},
                            {"reflectionProbes", settings.reflectionProbes},
+                           {"indirectDiffuse", settings.indirectDiffuse},
                            {"preferGpuDrivenSubmission", settings.preferGpuDrivenSubmission},
                            {"depthPrepass", settings.depthPrepass},
                            {"lodErrorThresholdPixels", settings.lodErrorThresholdPixels},
@@ -147,7 +148,8 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"depthPrepass", budget(settings.budgets.depthPrepass)},
                              {"depthPyramid", budget(settings.budgets.depthPyramid)},
                              {"lightClusters", budget(settings.budgets.lightClusters)},
-                             {"environment", budget(settings.budgets.environment)}}}};
+                             {"environment", budget(settings.budgets.environment)},
+                             {"irradianceVolume", budget(settings.budgets.irradianceVolume)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -176,6 +178,10 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
             loaded.maximumLocalLights = maximumLights->get<uint32_t>();
         }
         loaded.reflectionProbes = document.value("reflectionProbes", true);
+        if (document.contains("indirectDiffuse") &&
+            !readEnum(document, "indirectDiffuse", IndirectDiffuseMode::ProbeVolume, loaded.indirectDiffuse)) {
+            return {.error = "Render settings contain an unknown indirect-diffuse mode"};
+        }
         loaded.preferGpuDrivenSubmission = document.value("preferGpuDrivenSubmission", false);
         loaded.depthPrepass = document.value("depthPrepass", true);
         loaded.lodErrorThresholdPixels = document.value("lodErrorThresholdPixels", 1.0f);
@@ -231,7 +237,8 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "depthPrepass", loaded.budgets.depthPrepass) ||
                 !readOptionalBudget(*budgets, "depthPyramid", loaded.budgets.depthPyramid) ||
                 !readOptionalBudget(*budgets, "lightClusters", loaded.budgets.lightClusters) ||
-                !readOptionalBudget(*budgets, "environment", loaded.budgets.environment)) {
+                !readOptionalBudget(*budgets, "environment", loaded.budgets.environment) ||
+                !readOptionalBudget(*budgets, "irradianceVolume", loaded.budgets.irradianceVolume)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }
@@ -261,6 +268,10 @@ ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
     if (result.settings.reflectionProbes && !capabilities.reflectionProbes) {
         result.settings.reflectionProbes = false;
         result.fallbacks.emplace_back("Reflection probes are unsupported and were disabled");
+    }
+    if (result.settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume && !capabilities.irradianceVolumes) {
+        result.settings.indirectDiffuse = IndirectDiffuseMode::Environment;
+        result.fallbacks.emplace_back("Irradiance volumes are unsupported; using environment indirect diffuse");
     }
     if (result.settings.localLights != LocalLightingQuality::Disabled && capabilities.maximumLocalLights == 0) {
         result.settings.localLights = LocalLightingQuality::Disabled;

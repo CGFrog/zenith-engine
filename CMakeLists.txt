@@ -290,9 +290,11 @@ add_library(zenith_engine STATIC
     src/engine/assets/TextureCooker.cpp
     src/engine/assets/AssetStreaming.cpp
     src/engine/assets/PackedVertexStreams.cpp
+    src/engine/assets/IrradianceVolumeAsset.cpp
     src/engine/graphics/Renderer.cpp
     src/engine/graphics/Lighting.cpp
     src/engine/graphics/EnvironmentLighting.cpp
+    src/engine/graphics/IrradianceVolume.cpp
     src/engine/graphics/RenderConfiguration.cpp
     src/engine/graphics/RenderSubmission.cpp
     src/engine/graphics/MeshLodSelection.cpp
@@ -306,6 +308,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/passes/AmbientOcclusionPass.cpp
     src/engine/graphics/passes/ClusteredLightingPass.cpp
     src/engine/graphics/passes/EnvironmentPass.cpp
+    src/engine/graphics/passes/IrradianceVolumePass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
     src/engine/graphics/passes/ScreenSpaceReflectionPass.cpp
     src/engine/graphics/passes/TemporalResolvePass.cpp
@@ -388,6 +391,7 @@ add_library(zenith_editor_app STATIC
     src/editor/interaction/GraphicsSettingsEditor.cpp
     src/editor/project/AssetCatalog.cpp
     src/editor/project/DerivedAssetInspector.cpp
+    src/editor/project/IrradianceVolumeBaker.cpp
     src/editor/project/ReflectionProbeBaker.cpp
     src/editor/project/ThumbnailCache.cpp
     src/editor/settings/EditorRenderSettings.cpp
@@ -822,6 +826,15 @@ if(BUILD_TESTING)
     target_link_libraries(zenith_environment_lighting_tests PRIVATE zenith_engine)
     add_test(NAME zenith_environment_lighting COMMAND zenith_environment_lighting_tests)
 
+    add_executable(zenith_irradiance_volume_tests tests/engine/IrradianceVolumeTests.cpp)
+    target_link_libraries(zenith_irradiance_volume_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_irradiance_volume_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_irradiance_volume_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_irradiance_volume COMMAND zenith_irradiance_volume_tests)
+
     add_executable(zenith_asset_streaming_tests tests/engine/AssetStreamingTests.cpp)
     target_link_libraries(zenith_asset_streaming_tests PRIVATE zenith_engine)
     add_test(NAME zenith_asset_streaming COMMAND zenith_asset_streaming_tests)
@@ -886,6 +899,19 @@ if(BUILD_TESTING)
         target_compile_options(zenith_project_asset_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_project_assets COMMAND zenith_project_asset_tests)
+
+    add_executable(zenith_irradiance_volume_baker_tests
+        tests/editor/IrradianceVolumeBakerTests.cpp
+        src/editor/project/IrradianceVolumeBaker.cpp
+    )
+    target_include_directories(zenith_irradiance_volume_baker_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    target_link_libraries(zenith_irradiance_volume_baker_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_irradiance_volume_baker_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_irradiance_volume_baker_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_irradiance_volume_baker COMMAND zenith_irradiance_volume_baker_tests)
 
     add_executable(zenith_editor_play_mode_tests
         tests/editor/EditorPlayModeTests.cpp

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/assets/IrradianceVolumeAsset.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <glm/glm.hpp>
@@ -22,4 +23,9 @@ bool drawCollider(ColliderComponent& component);
 bool drawRigidBody(RigidBodyComponent& component);
 bool drawAnimation(AnimationComponent& component, const ModelAsset* model);
 bool drawMorphWeights(MorphWeightsComponent& component);
+// Applies requested per-axis probe counts clamped to 1..maximumIrradianceProbesPerAxis;
+// rejects (returns false, leaving counts) a grid above maximumIrradianceProbes.
+// Returns whether counts changed.
+bool clampIrradianceProbeCounts(const glm::ivec3& requested, glm::uvec3& counts);
+bool drawIrradianceVolume(IrradianceVolumeComponent& component);
 } // namespace ComponentEditors

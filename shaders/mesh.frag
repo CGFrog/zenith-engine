@@ -27,6 +27,11 @@ layout(set = 0, binding = 0) uniform CameraData {
     // x: image-based lighting, y: probe weight, z: specular mip of roughness 1,
     // w: ambient-occlusion texels per render pixel
     vec4 environmentParams;
+    // Irradiance volume (U6); mirrors CameraData in MeshPass.cpp.
+    vec4 irradianceVolumeMinimum;  // xyz: world minimum corner, w: intensity
+    vec4 irradianceVolumeCellSize; // xyz: world probe spacing, w: edge blend distance
+    uvec4 irradianceVolumeCounts;  // xyz: probes per axis, w: 1 when a volume is bound
+    vec4 irradianceVolumeBias;     // x: normal bias, y: view bias
     // Temporal resolve: NDC jitter applied to the current (xy) and previous (zw)
     // projections, removed from motion vectors. Keep last in the block.
     vec4 temporalJitter;
@@ -43,6 +48,19 @@ layout(std430, set = 0, binding = 6) readonly buffer EnvironmentIrradiance {
 } environmentIrradiance[2];
 // Split-sum BRDF scale and bias, indexed by (n.v, roughness).
 layout(set = 0, binding = 7) uniform sampler2D environmentBrdf;
+
+// Irradiance volume (U6): mirrors irradiance_volume::GpuProbe (std430). Same SH
+// convention as EnvironmentIrradiance; irradiance[0].w is 1 for valid probes.
+// depthMoments holds the mean and mean-square distance to the nearest surface
+// per octahedral texel (irradianceProbeDepthResolution squared texels).
+const int IRRADIANCE_PROBE_DEPTH_RESOLUTION = 8;
+struct IrradianceProbe {
+    vec4 irradiance[9];
+    vec2 depthMoments[IRRADIANCE_PROBE_DEPTH_RESOLUTION * IRRADIANCE_PROBE_DEPTH_RESOLUTION];
+};
+layout(std430, set = 0, binding = 8) readonly buffer IrradianceVolumeProbes {
+    IrradianceProbe probes[];
+} irradianceVolume;
 // GTAO visibility of the opaque scene (AmbientOcclusionPass); uniformly 1 when
 // ambient occlusion is off or the depth prepass did not run.
 layout(set = 0, binding = 13) uniform sampler2D screenSpaceOcclusion;
@@ -224,6 +242,114 @@ vec3 evaluateIrradiance(vec4 coefficients[9], vec3 normal) {
     return max(result, vec3(0.0));
 }
 
+// Irradiance volume (U6). Mirrors the irradiance_volume namespace in
+// engine/graphics/IrradianceVolume.cpp; change both together.
+vec2 signNotZero(vec2 value) {
+    return vec2(value.x >= 0.0 ? 1.0 : -1.0, value.y >= 0.0 ? 1.0 : -1.0);
+}
+
+vec2 octahedralEncode(vec3 direction) {
+    vec2 projected = direction.xz / (abs(direction.x) + abs(direction.y) + abs(direction.z));
+    if (direction.y < 0.0) {
+        projected = (1.0 - abs(projected.yx)) * signNotZero(projected);
+    }
+    return projected * 0.5 + 0.5;
+}
+
+vec2 probeDepthTexel(uint probe, ivec2 texel) {
+    texel = clamp(texel, ivec2(0), ivec2(IRRADIANCE_PROBE_DEPTH_RESOLUTION - 1));
+    return irradianceVolume.probes[probe].depthMoments[texel.y * IRRADIANCE_PROBE_DEPTH_RESOLUTION + texel.x];
+}
+
+vec2 sampleProbeDepth(uint probe, vec3 direction) {
+    vec2 texel = octahedralEncode(direction) * float(IRRADIANCE_PROBE_DEPTH_RESOLUTION) - 0.5;
+    vec2 base = floor(texel);
+    vec2 fraction = texel - base;
+    ivec2 corner = ivec2(base);
+    vec2 top = mix(probeDepthTexel(probe, corner), probeDepthTexel(probe, corner + ivec2(1, 0)), fraction.x);
+    vec2 bottom =
+        mix(probeDepthTexel(probe, corner + ivec2(0, 1)), probeDepthTexel(probe, corner + ivec2(1, 1)), fraction.x);
+    return mix(top, bottom, fraction.y);
+}
+
+float chebyshevVisibility(vec2 moments, float distanceToProbe) {
+    if (distanceToProbe <= moments.x) {
+        return 1.0;
+    }
+    float variance = max(moments.y - moments.x * moments.x, 0.0001);
+    float delta = distanceToProbe - moments.x;
+    float probability = variance / (variance + delta * delta);
+    return probability * probability * probability;
+}
+
+// Visibility-weighted trilinear blend of the eight probes around the point.
+// Returns irradiance / pi in rgb and the volume's edge weight in a (zero when
+// no probe sees the point).
+vec4 sampleIrradianceVolume(vec3 position, vec3 normal, vec3 viewDirection) {
+    uvec3 counts = camera.irradianceVolumeCounts.xyz;
+    vec3 minimum = camera.irradianceVolumeMinimum.xyz;
+    vec3 cellSize = camera.irradianceVolumeCellSize.xyz;
+    // The edge weight comes first so fragments outside the box skip the probes;
+    // the CPU reference still evaluates them there for the baker's bounces.
+    vec3 maximum = minimum + cellSize * vec3(counts);
+    vec3 inside = min(position - minimum, maximum - position);
+    float edgeDistance = min(inside.x, min(inside.y, inside.z));
+    if (edgeDistance < 0.0) {
+        return vec4(0.0);
+    }
+    float blendDistance = camera.irradianceVolumeCellSize.w;
+    float edge = blendDistance <= 0.0 ? 1.0 : min(edgeDistance / blendDistance, 1.0);
+    vec3 biased = position + normal * camera.irradianceVolumeBias.x + viewDirection * camera.irradianceVolumeBias.y;
+    vec3 lastProbe = vec3(counts) - 1.0;
+    vec3 lattice = clamp((biased - minimum) / cellSize - 0.5, vec3(0.0), lastProbe);
+    vec3 base = min(floor(lattice), max(lastProbe - 1.0, vec3(0.0)));
+    vec3 alpha = clamp(lattice - base, vec3(0.0), vec3(1.0));
+    vec3 irradiance = vec3(0.0);
+    float totalWeight = 0.0;
+    for (uint corner = 0u; corner < 8u; ++corner) {
+        uvec3 offset = uvec3(corner & 1u, (corner >> 1u) & 1u, (corner >> 2u) & 1u);
+        vec3 trilinearAxes = mix(1.0 - alpha, alpha, vec3(offset));
+        float trilinear = trilinearAxes.x * trilinearAxes.y * trilinearAxes.z;
+        uvec3 index = min(uvec3(base) + offset, counts - 1u);
+        uint probe = index.x + counts.x * (index.y + counts.y * index.z);
+        if (irradianceVolume.probes[probe].irradiance[0].w < 0.5 || trilinear <= 0.0) {
+            continue;
+        }
+        vec3 probePosition = minimum + (vec3(index) + 0.5) * cellSize;
+        vec3 toProbe = probePosition - position;
+        float probeDistance = length(toProbe);
+        vec3 directionToProbe = probeDistance > 0.0001 ? toProbe / probeDistance : normal;
+        float facing = (dot(directionToProbe, normal) + 1.0) * 0.5;
+        float weight = facing * facing + 0.2;
+        vec3 probeToPoint = biased - probePosition;
+        float pointDistance = length(probeToPoint);
+        vec3 direction = pointDistance > 0.0001 ? probeToPoint / pointDistance : normal;
+        weight *= chebyshevVisibility(sampleProbeDepth(probe, direction), pointDistance);
+        weight = max(weight, 0.000001);
+        if (weight < 0.2) {
+            weight *= weight * weight / 0.04;
+        }
+        weight *= trilinear;
+        irradiance += evaluateIrradiance(irradianceVolume.probes[probe].irradiance, normal) * weight;
+        totalWeight += weight;
+    }
+    if (totalWeight <= 0.0) {
+        return vec4(0.0);
+    }
+    return vec4(irradiance / totalWeight, edge);
+}
+
+// Indirect diffuse radiance of a white surface: the bound irradiance volume
+// where it applies, faded into the environment term (`environment`, already
+// scaled by the environment's diffuse intensity) across the volume's edge.
+vec3 indirectDiffuseRadiance(vec3 environment, vec3 position, vec3 normal, vec3 viewDirection) {
+    if (camera.irradianceVolumeCounts.w == 0u) {
+        return environment;
+    }
+    vec4 volume = sampleIrradianceVolume(position, normal, viewDirection);
+    return mix(environment, volume.rgb * camera.irradianceVolumeMinimum.w, volume.a);
+}
+
 // Lambertian outgoing radiance of a white surface lit by the environment.
 vec3 environmentIrradianceAt(vec3 normal) {
     vec3 irradiance = evaluateIrradiance(environmentIrradiance[0].coefficients, normal);
@@ -263,11 +389,12 @@ float screenSpaceAmbientOcclusion() {
 // Flat sky/ground approximation used when image-based lighting is disabled.
 // Occlusion applies to the diffuse term and, as specular occlusion, to the
 // reflection term.
-vec3 hemisphereLighting(vec3 normal, float nDotV, vec3 albedo, float metallic, float roughness, vec3 reflectance,
-                        float occlusion) {
+vec3 hemisphereLighting(vec3 position, vec3 normal, vec3 viewDirection, float nDotV, vec3 albedo, float metallic,
+                        float roughness, vec3 reflectance, float occlusion) {
     float hemisphereWeight = normal.y * 0.5 + 0.5;
     vec3 diffuseEnvironment = mix(camera.environmentGround.rgb, camera.environmentSky.rgb, hemisphereWeight);
-    vec3 indirect = albedo * diffuseEnvironment * camera.environmentSky.w;
+    vec3 indirect = albedo * indirectDiffuseRadiance(diffuseEnvironment * camera.environmentSky.w, position, normal,
+                                                     viewDirection);
     if (!PHYSICALLY_BASED_LIGHTING) {
         return indirect * occlusion;
     }
@@ -285,9 +412,10 @@ vec3 hemisphereLighting(vec3 normal, float nDotV, vec3 albedo, float metallic, f
 
 // Split-sum image-based lighting with ambient occlusion applied to the diffuse
 // term and converted to specular occlusion for reflections.
-vec3 imageBasedLighting(vec3 normal, vec3 geometricNormal, vec3 viewDirection, float nDotV, vec3 albedo,
-                        float metallic, float roughness, vec3 reflectance, float occlusion) {
-    vec3 diffuse = albedo * environmentIrradianceAt(normal) * camera.environmentSky.w;
+vec3 imageBasedLighting(vec3 position, vec3 normal, vec3 geometricNormal, vec3 viewDirection, float nDotV,
+                        vec3 albedo, float metallic, float roughness, vec3 reflectance, float occlusion) {
+    vec3 diffuse = albedo * indirectDiffuseRadiance(environmentIrradianceAt(normal) * camera.environmentSky.w, position,
+                                                    normal, viewDirection);
     if (!PHYSICALLY_BASED_LIGHTING) {
         return diffuse * occlusion;
     }
@@ -367,10 +495,11 @@ void main() {
     }
     vec3 indirect;
     if (camera.environmentParams.x > 0.5) {
-        indirect = imageBasedLighting(normal, geometricNormal, viewDirection, nDotV, albedo, metallic, roughness,
-                                      reflectance, occlusion);
+        indirect = imageBasedLighting(worldPosition, normal, geometricNormal, viewDirection, nDotV, albedo, metallic,
+                                      roughness, reflectance, occlusion);
     } else {
-        indirect = hemisphereLighting(normal, nDotV, albedo, metallic, roughness, reflectance, occlusion);
+        indirect = hemisphereLighting(worldPosition, normal, viewDirection, nDotV, albedo, metallic, roughness,
+                                      reflectance, occlusion);
     }
     vec3 emissive = sampleMaterialTexture(material.extraTextures.x, texCoord).rgb * material.emissive.rgb;
     vec3 color = direct + indirect + emissive;
