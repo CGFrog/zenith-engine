@@ -21,7 +21,10 @@ inline constexpr uint32_t environmentPrecomputeBegin = 27;
 inline constexpr uint32_t environmentPrecomputeEnd = 28;
 inline constexpr uint32_t skyboxBegin = 29;
 inline constexpr uint32_t skyboxEnd = 30;
-inline constexpr uint32_t count = 31;
+// Local-light shadow tiles; skipped when every tile reused its cached depth.
+inline constexpr uint32_t localShadowsBegin = 31;
+inline constexpr uint32_t localShadowsEnd = 32;
+inline constexpr uint32_t count = 33;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot

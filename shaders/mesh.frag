@@ -66,7 +66,7 @@ struct LocalLight {
     vec4 positionRange;  // world position, range
     vec4 colorIntensity; // linear color, intensity
     vec4 directionType;  // world direction, type (0 point, 1 spot)
-    vec4 spotCone;       // inner and outer cone cosines
+    vec4 spotCone;       // inner and outer cone cosines, first local shadow tile (-1: unshadowed)
 };
 
 layout(std430, set = 0, binding = 9) readonly buffer LocalLights {
@@ -81,6 +81,22 @@ layout(std430, set = 0, binding = 10) readonly buffer ClusterRanges {
 layout(std430, set = 0, binding = 11) readonly buffer ClusterLightIndices {
     uint values[];
 } clusterLightIndices;
+
+// Local-light shadow atlas (LocalShadowPass): conventional depth, compared
+// LESS_OR_EQUAL. A shadowed light's spotCone.z names its first tile record;
+// point lights add the cube face (localShadowFace).
+layout(set = 0, binding = 14) uniform sampler2DShadow localShadowAtlas;
+
+// Mirrors GpuLocalShadowTile in LocalShadowPass.hpp (std430).
+struct LocalShadowTile {
+    mat4 viewProjection; // world to the tile's clip space
+    vec4 atlasRect;      // uv of the tile's top-left corner (xy) and its uv extent (zw)
+    vec4 params;         // x: shadow-texel world size per unit distance from the light
+};
+
+layout(std430, set = 0, binding = 15) readonly buffer LocalShadowTiles {
+    LocalShadowTile values[];
+} localShadowTiles;
 
 // Bindless material textures; slots come from MaterialRecord.
 layout(set = 1, binding = 0) uniform sampler materialSampler;
@@ -186,6 +202,60 @@ float shadowVisibility(vec3 position, vec3 normal, vec3 lightDirection) {
         visibility = mix(visibility, 1.0, smoothstep(lastSplit - fadeWidth, lastSplit, cameraDistance));
     }
     return visibility;
+}
+
+// Cube face of a point light's shadow: +X, -X, +Y, -Y, +Z, -Z by the major
+// axis of lightToPoint. Mirrors localShadowFace in LocalShadows.cpp.
+uint localShadowFace(vec3 lightToPoint) {
+    vec3 magnitude = abs(lightToPoint);
+    if (magnitude.x >= magnitude.y && magnitude.x >= magnitude.z) {
+        return lightToPoint.x >= 0.0 ? 0u : 1u;
+    }
+    if (magnitude.y >= magnitude.z) {
+        return lightToPoint.y >= 0.0 ? 2u : 3u;
+    }
+    return lightToPoint.z >= 0.0 ? 4u : 5u;
+}
+
+// Fraction of a local light reaching the surface (1 when the light has no
+// shadow tile). The receiver moves along its geometric normal by about one
+// shadow texel, more as the surface turns away from the light (slope-scaled),
+// and four bilinear comparisons filter a 3x3-texel footprint clamped inside
+// the tile so neighbouring tiles never bleed in.
+float localShadowVisibility(LocalLight light, vec3 position, vec3 geometricNormal, vec3 toLight,
+                            float distanceToLight) {
+    if (light.spotCone.z < 0.0) {
+        return 1.0;
+    }
+    uint tileIndex = uint(light.spotCone.z + 0.5);
+    if (light.directionType.w < 0.5) {
+        tileIndex += localShadowFace(position - light.positionRange.xyz);
+    }
+    LocalShadowTile tile = localShadowTiles.values[tileIndex];
+    float cosine = clamp(dot(geometricNormal, toLight), 0.0, 1.0);
+    float slope = min(sqrt(1.0 - cosine * cosine) / max(cosine, 0.05), 4.0);
+    float texelWorldSize = tile.params.x * distanceToLight;
+    vec4 clip = tile.viewProjection * vec4(position + geometricNormal * texelWorldSize * (1.0 + slope), 1.0);
+    if (clip.w <= 0.0) {
+        return 1.0;
+    }
+    vec3 projected = clip.xyz / clip.w;
+    // Beyond the light's range, or outside a tile that cannot cover a very
+    // wide spot cone (see localShadowTanHalfFov): treat as unshadowed rather
+    // than comparing against unrelated border texels.
+    if (projected.z >= 1.0 || any(greaterThan(abs(projected.xy), vec2(1.0)))) {
+        return 1.0;
+    }
+    vec2 atlasTexel = 1.0 / vec2(textureSize(localShadowAtlas, 0));
+    vec2 tileMinimum = tile.atlasRect.xy + atlasTexel * 1.5;
+    vec2 tileMaximum = tile.atlasRect.xy + tile.atlasRect.zw - atlasTexel * 1.5;
+    vec2 center = tile.atlasRect.xy + (projected.xy * 0.5 + 0.5) * tile.atlasRect.zw;
+    float visibility = 0.0;
+    for (int tap = 0; tap < 4; ++tap) {
+        vec2 offset = (vec2(tap & 1, tap >> 1) - 0.5) * atlasTexel;
+        visibility += texture(localShadowAtlas, vec3(clamp(center + offset, tileMinimum, tileMaximum), projected.z));
+    }
+    return visibility * 0.25;
 }
 
 // Reflected fraction of one light's irradiance, excluding radiance and the cosine
@@ -360,6 +430,10 @@ void main() {
             attenuation *= smoothstep(light.spotCone.y, light.spotCone.x, coneCosine);
         }
         float localNDotL = max(dot(normal, localDirection), 0.0);
+        if (localNDotL <= 0.0 || attenuation <= 0.0) {
+            continue;
+        }
+        attenuation *= localShadowVisibility(light, worldPosition, geometricNormal, localDirection, distanceToLight);
         vec3 localRadiance = light.colorIntensity.rgb * light.colorIntensity.w * attenuation;
         direct += directResponse(normal, viewDirection, localDirection, nDotV, localNDotL, albedo, metallic,
                                  roughness, reflectance, viewGeometry) *

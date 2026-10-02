@@ -26,11 +26,14 @@ struct StatisticsRecord {
     uint32_t discardedAssignments{0};
 };
 
+// GpuLocalLight::spotCone.z of a light without a local shadow.
+constexpr float unshadowedLight = -1.0f;
+
 GpuLocalLight packLight(const LocalLight& light) {
     return {.positionRange = {light.position, light.range},
             .colorIntensity = {light.color, light.intensity},
             .directionType = {light.direction, light.type == LocalLightType::Spot ? 1.0f : 0.0f},
-            .spotCone = {light.innerConeCosine, light.outerConeCosine, 0.0f, 0.0f}};
+            .spotCone = {light.innerConeCosine, light.outerConeCosine, unshadowedLight, 0.0f}};
 }
 } // namespace
 
@@ -180,6 +183,20 @@ uint32_t ClusteredLightingPass::beginFrame(uint32_t frameIndex, std::span<const 
         vmaFlushAllocation(m_allocator, frame.lights.allocation, 0, sizeof(GpuLocalLight) * frame.lightCount);
     }
     return frame.lightCount;
+}
+
+void ClusteredLightingPass::assignShadowTiles(uint32_t frameIndex, std::span<const int32_t> firstShadowTiles) {
+    FrameData& frame = m_frames[frameIndex];
+    const uint32_t count = static_cast<uint32_t>(std::min<size_t>(firstShadowTiles.size(), frame.lightCount));
+    auto* records = static_cast<GpuLocalLight*>(frame.lights.mapped);
+    for (uint32_t index = 0; index < count; ++index) {
+        // Tile indices stay far below 2^24, so the float holds them exactly.
+        records[index].spotCone.z =
+            firstShadowTiles[index] < 0 ? unshadowedLight : static_cast<float>(firstShadowTiles[index]);
+    }
+    if (count > 0) {
+        vmaFlushAllocation(m_allocator, frame.lights.allocation, 0, sizeof(GpuLocalLight) * count);
+    }
 }
 
 void ClusteredLightingPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const ClusterGrid& grid,

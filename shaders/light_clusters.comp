@@ -16,7 +16,7 @@ struct LocalLight {
     vec4 positionRange;
     vec4 colorIntensity;
     vec4 directionType;
-    vec4 spotCone;
+    vec4 spotCone; // inner and outer cone cosines, first local shadow tile (-1: none)
 };
 
 layout(std430, set = 0, binding = 0) readonly buffer Lights {

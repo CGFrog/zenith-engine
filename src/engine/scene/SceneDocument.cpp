@@ -44,6 +44,25 @@ bool readVector3(const Json& json, glm::vec3& value) {
     return true;
 }
 
+// Shadow fields are optional so documents written before local-light shadows
+// still load with shadows off.
+SceneDocumentResult readLocalLightShadows(const Json& light, bool& castsShadows, uint32_t& resolution,
+                                          int32_t& priority) {
+    constexpr uint32_t maximumShadowResolution = 16384;
+    castsShadows = light.value("casts_shadows", false);
+    priority = light.value("shadow_priority", 0);
+    const auto found = light.find("shadow_resolution");
+    if (found == light.end()) {
+        resolution = 0;
+        return {.success = true};
+    }
+    if (!found->is_number_unsigned() || found->get<uint64_t>() > maximumShadowResolution) {
+        return {.error = "Local light shadow resolution must be a whole number of at most 16384 texels"};
+    }
+    resolution = found->get<uint32_t>();
+    return {.success = true};
+}
+
 bool readMatrix4(const Json& json, glm::mat4& value) {
     if (!json.is_array() || json.size() != 16) {
         return false;
@@ -219,13 +238,20 @@ SceneDocumentResult serializeEntity(const Scene& scene, Entity entity, const Ass
                                            {"environment_asset", environmentAsset}};
     }
     if (const auto* light = registry.try_get<PointLightComponent>(entity)) {
-        components["point_light"] = {
-            {"color", vector3(light->color)}, {"intensity", light->intensity}, {"range", light->range}};
+        components["point_light"] = {{"color", vector3(light->color)},
+                                     {"intensity", light->intensity},
+                                     {"range", light->range},
+                                     {"casts_shadows", light->castsShadows},
+                                     {"shadow_resolution", light->shadowResolution},
+                                     {"shadow_priority", light->shadowPriority}};
     }
     if (const auto* light = registry.try_get<SpotLightComponent>(entity)) {
-        components["spot_light"] = {{"direction", vector3(light->direction)}, {"color", vector3(light->color)},
-                                    {"intensity", light->intensity},          {"range", light->range},
-                                    {"inner_cone", light->innerConeRadians},  {"outer_cone", light->outerConeRadians}};
+        components["spot_light"] = {
+            {"direction", vector3(light->direction)},  {"color", vector3(light->color)},
+            {"intensity", light->intensity},           {"range", light->range},
+            {"inner_cone", light->innerConeRadians},   {"outer_cone", light->outerConeRadians},
+            {"casts_shadows", light->castsShadows},    {"shadow_resolution", light->shadowResolution},
+            {"shadow_priority", light->shadowPriority}};
     }
     if (const auto* probe = registry.try_get<ReflectionProbeComponent>(entity)) {
         std::string environmentAsset = probe->environmentAsset;
@@ -425,6 +451,11 @@ SceneDocumentResult deserializeComponents(const Json& components, Entity entity,
         if (light.range <= 0.0f) {
             return {.error = "Point light range must be positive"};
         }
+        if (SceneDocumentResult result =
+                readLocalLightShadows(*found, light.castsShadows, light.shadowResolution, light.shadowPriority);
+            !result) {
+            return result;
+        }
         registry.emplace<PointLightComponent>(entity, light);
     }
     if (const auto found = components.find("spot_light"); found != components.end()) {
@@ -438,6 +469,11 @@ SceneDocumentResult deserializeComponents(const Json& components, Entity entity,
         light.outerConeRadians = found->at("outer_cone").get<float>();
         if (light.range <= 0.0f || light.innerConeRadians < 0.0f || light.outerConeRadians < light.innerConeRadians) {
             return {.error = "Spot light range and cone angles are invalid"};
+        }
+        if (SceneDocumentResult result =
+                readLocalLightShadows(*found, light.castsShadows, light.shadowResolution, light.shadowPriority);
+            !result) {
+            return result;
         }
         registry.emplace<SpotLightComponent>(entity, light);
     }

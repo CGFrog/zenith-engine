@@ -517,6 +517,23 @@ Owns the per-frame local-light buffer and the cluster light lists. Each frame
 exponential view-depth slices before the scene pass; `Lighting.*` holds the
 CPU mirror of the cluster math used by tests.
 
+### `src/engine/graphics/LocalShadows.*` and `src/engine/graphics/passes/LocalShadowPass.*`
+
+Local-light shadows. Point and spot lights opt in with `castsShadows` (plus
+resolution and priority hints) and share one depth atlas sized by
+`LocalShadowQuality`. `LocalShadows.*` is the CPU policy: atlas requests (spot
+lights before point lights, in a camera-independent order so placements stay
+put), per-tile projections (one perspective tile per spot, six cube faces per
+point light chosen by major axis), and `LocalShadowCache`, which keeps tiles
+whose light and nearby casters did not change and schedules at most the
+quality's per-frame tile budget for re-rendering, unrendered lights first and
+then the nearest. `LocalShadowPass` owns the atlas, its comparison sampler
+(camera binding 14), the per-frame tile records (binding 15), and the
+depth-only `local_shadow.vert` pipeline; `MeshPass` supplies each tile's
+casters. A shadowed light's `GpuLocalLight::spotCone.z` names its first tile,
+and `mesh.frag` filters four bilinear comparisons with a slope-scaled normal
+offset.
+
 ### `src/engine/graphics/passes/EnvironmentPass.*`
 
 Split-sum image-based lighting. Per environment source (an equirectangular
@@ -631,6 +648,7 @@ mirror is in `TemporalQuality.*`.
 | `shaders/mesh.vert` | Transforms mesh vertices and supplies world-space attributes. |
 | `shaders/mesh.frag` | Samples glTF materials, evaluates GGX lighting, shadows, occlusion, and emission. |
 | `shaders/shadow.vert` | Transforms geometry into directional-light depth space. |
+| `shaders/local_shadow.vert` | Transforms shadow casters into one local-light shadow atlas tile. |
 | `shaders/depth_normal.vert` / `.frag` | Depth prepass: invariant positions shared with `mesh.vert`, alpha masking, and encoded view-space normals plus roughness. |
 | `shaders/depth_pyramid.comp` | Reduces scene depth into the min/max depth pyramid one level per dispatch. |
 | `shaders/fullscreen.vert` | Generates a fullscreen triangle without a vertex buffer. |

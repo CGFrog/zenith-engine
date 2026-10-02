@@ -483,7 +483,10 @@ PrefabResult PrefabAuthoring::buildDocument(const Scene& scene, const AssetManag
             value.components.emplace_back("pointLight",
                                           Json({{"color", {light->color.x, light->color.y, light->color.z}},
                                                 {"intensity", light->intensity},
-                                                {"range", light->range}})
+                                                {"range", light->range},
+                                                {"castsShadows", light->castsShadows},
+                                                {"shadowResolution", light->shadowResolution},
+                                                {"shadowPriority", light->shadowPriority}})
                                               .dump());
         }
         if (const auto* camera = scene.registry().try_get<CameraComponent>(entity)) {

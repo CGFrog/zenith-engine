@@ -146,10 +146,18 @@ struct EnvironmentLightComponent {
     TextureHandle environmentMap{};
 };
 
+// Local-light shadows are rendered into the renderer's shared atlas when the
+// light casts shadows and LocalShadowQuality is not Off. shadowResolution is
+// the requested tile edge in texels (per cube face for point lights); zero uses
+// the quality default and the renderer clamps it to its quality maximum. Lights
+// with a higher shadowPriority keep their atlas space first.
 struct PointLightComponent {
     glm::vec3 color{1.0f};
     float intensity{10.0f};
     float range{8.0f};
+    bool castsShadows{false};
+    uint32_t shadowResolution{0};
+    int32_t shadowPriority{0};
 };
 
 struct SpotLightComponent {
@@ -159,6 +167,10 @@ struct SpotLightComponent {
     float range{10.0f};
     float innerConeRadians{glm::radians(20.0f)};
     float outerConeRadians{glm::radians(30.0f)};
+    // See PointLightComponent.
+    bool castsShadows{false};
+    uint32_t shadowResolution{0};
+    int32_t shadowPriority{0};
 };
 
 struct ReflectionProbeComponent {

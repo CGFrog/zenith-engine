@@ -72,7 +72,7 @@ or at the decision point named below, after capability validation.
 
 | Variable | Effect |
 | --- | --- |
-| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, clustered local lights, depth prepass on, cascaded (high) shadows, and bloom. |
+| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, clustered local lights with high-quality local shadows, depth prepass on, cascaded (high) shadows, and bloom. |
 | `ZENITH_FORCE_TAA` | Temporal anti-aliasing. |
 | `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
 | `ZENITH_FORCE_GPU_DRIVEN` | GPU-driven submission (two-phase occlusion culling and indirect draws) when the device supports it. |
@@ -96,7 +96,8 @@ Each frame's timestamp pool brackets every pass; `RenderStats` exposes the
 retired frame's durations and the benchmark reports them as `gpu.*` metrics.
 Passes a frame skips report zero. `gpu.shadow` runs from the frame start, so it
 also includes `gpu.environment_precompute` (which records work only when the
-environment changes), the early-phase `gpu.culling`, and any upload wait. `gpu.opaque` spans
+environment changes), `gpu.local_shadows` (zero on frames that reuse every cached
+atlas tile), the early-phase `gpu.culling`, and any upload wait. `gpu.opaque` spans
 `gpu.light_clusters`, `gpu.depth_prepass` (which includes the GPU-driven late
 cull), `gpu.depth_pyramid`, `gpu.ambient_occlusion`, and shading. `gpu.blended` includes `gpu.skybox`;
 `gpu.reflections` runs between them inside the scene pass and is subtracted from `gpu.blended`.
@@ -107,3 +108,23 @@ the same table live.
 more objects than the CPU frustum reference. The GPU sphere test uses the
 reference's exact x/y planes and tighter depth planes, so any nonzero value is a
 culling defect.
+
+### Local-light shadows
+
+`RenderSettings::localShadows` (`LocalShadowQuality`) shadows point and spot
+lights whose components set `castsShadows`. Off is the fallback: lights stay
+unshadowed, a 64x64 placeholder atlas stays bound, and no tile pass runs.
+Validation also turns it Off when clustered local lighting is disabled or
+unsupported. Low, Medium, and High pick the atlas size (2048 or 4096 texels),
+the default tile sizes, the number of shadowed lights (8, 16, 24), and the
+per-frame tile budget (6, 12, 24 tiles); see `localShadowProfile`.
+
+Tiles keep their depth across frames and are redrawn only when their light
+moves, a caster within the light's range moves or animates, or the caster set
+or materials change; dirty tiles beyond the budget keep shading with their
+previous depth and projection. The benchmark reports `gpu.local_shadows` and
+`cpu.local_shadows` against `RenderPassBudgets::localShadows`, plus
+`local_shadows.tiles_rendered`, `tiles_cached`, `tiles_pending`,
+`lights_rejected` (no atlas space), and `render.local_shadow_atlas_bytes`.
+`zenith_local_shadows` covers request order, cache invalidation, budget
+selection, and the face projections on the CPU.

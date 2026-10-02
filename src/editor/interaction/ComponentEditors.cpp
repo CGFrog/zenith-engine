@@ -82,6 +82,42 @@ bool drawEnvironmentLight(EnvironmentLightComponent& component) {
     return changed;
 }
 
+namespace {
+bool drawLocalLightShadows(bool& castsShadows, uint32_t& resolution, int32_t& priority) {
+    bool changed = ImGui::Checkbox("Cast shadows", &castsShadows);
+    ImGui::BeginDisabled(!castsShadows);
+    int texels = static_cast<int>(resolution);
+    if (ImGui::DragInt("Shadow resolution", &texels, 8.0f, 0, 4096, texels == 0 ? "Quality default" : "%d texels")) {
+        resolution = static_cast<uint32_t>(std::max(texels, 0));
+        changed = true;
+    }
+    changed |= ImGui::DragInt("Shadow priority", &priority, 0.1f);
+    ImGui::EndDisabled();
+    return changed;
+}
+} // namespace
+
+bool drawPointLight(PointLightComponent& component) {
+    bool changed = ImGui::ColorEdit3("Color", &component.color.x);
+    changed |= ImGui::DragFloat("Intensity", &component.intensity, 0.05f, 0.0f, 10000.0f);
+    changed |= ImGui::DragFloat("Range", &component.range, 0.05f, 0.01f, 10000.0f);
+    changed |= drawLocalLightShadows(component.castsShadows, component.shadowResolution, component.shadowPriority);
+    return changed;
+}
+
+bool drawSpotLight(SpotLightComponent& component) {
+    bool changed = ImGui::DragFloat3("Direction", &component.direction.x, 0.01f, -1.0f, 1.0f);
+    changed |= ImGui::ColorEdit3("Color", &component.color.x);
+    changed |= ImGui::DragFloat("Intensity", &component.intensity, 0.05f, 0.0f, 10000.0f);
+    changed |= ImGui::DragFloat("Range", &component.range, 0.05f, 0.01f, 10000.0f);
+    // The outer cone never narrows below the inner one (SceneDocument rejects it).
+    changed |= ImGui::SliderAngle("Inner cone", &component.innerConeRadians, 0.0f, 89.0f);
+    changed |= ImGui::SliderAngle("Outer cone", &component.outerConeRadians, 0.0f, 89.0f);
+    component.outerConeRadians = std::max(component.outerConeRadians, component.innerConeRadians);
+    changed |= drawLocalLightShadows(component.castsShadows, component.shadowResolution, component.shadowPriority);
+    return changed;
+}
+
 bool drawCollider(ColliderComponent& component) {
     bool changed = false;
     std::visit(

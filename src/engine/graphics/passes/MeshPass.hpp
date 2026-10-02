@@ -18,6 +18,7 @@
 #include "DepthPyramid.hpp"
 #include "EnvironmentPass.hpp"
 #include "GpuDrivenPass.hpp"
+#include "LocalShadowPass.hpp"
 #include "PostProcessPass.hpp"
 #include "SceneGeometryViews.hpp"
 #include "engine/resources/DeferredReleaseQueue.hpp"
@@ -46,10 +47,10 @@ class MeshPass {
     }
 
     uint32_t prewarmedPipelineCount() const {
-        // Twelve graphics pipelines (two depth-normal), the light-cluster
-        // assignment, the depth-pyramid build, ambient occlusion, and the
-        // environment pipelines.
-        return 14u + m_ambientOcclusion.pipelineCount() + m_environmentPass.pipelineCount() +
+        // Thirteen graphics pipelines (two depth-normal, one local-shadow), the
+        // light-cluster assignment, the depth-pyramid build, ambient occlusion,
+        // and the environment pipelines.
+        return 15u + m_ambientOcclusion.pipelineCount() + m_environmentPass.pipelineCount() +
                (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
     }
 
@@ -249,6 +250,20 @@ class MeshPass {
     bool buildRenderItems(const Scene& scene, const AssetManager& assets,
                           const std::vector<RenderObjectId>& outlinedObjects, std::vector<RenderItem>& items);
     uint32_t updateRenderItems(const Scene& scene, std::span<const Entity> changedEntities);
+    // Updates the local-light shadow atlas and tells clustered lighting which
+    // uploaded lights are shadowed. Runs before anything binds the frame's
+    // camera sets (it may rebind the atlas).
+    void recordLocalShadows(VkCommandBuffer commandBuffer, uint32_t frameIndex, const Scene& scene,
+                            const AssetManager& assets, const RenderSettings& settings,
+                            std::span<const LocalLight> lights, const glm::vec3& cameraPosition,
+                            OptionalPassTimestamps& timestamps, RenderStats& stats);
+    // Bounds of casters that moved or animated since the last local-shadow
+    // update, before and after the change.
+    void collectShadowCasterChanges(const Scene& scene);
+    // Draws one atlas tile's casters from the local-shadow object region.
+    // Returns false when that region is full.
+    bool drawLocalShadowCasters(VkCommandBuffer commandBuffer, uint32_t frameIndex, const glm::mat4& viewProjection,
+                                RenderStats& stats);
     bool recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, const std::vector<RenderItem>& items,
                       const DirectionalLightComponent& light, const std::array<glm::mat4, 3>& lightViewProjections,
                       uint32_t cascadeCount, const std::array<bool, 3>& dirtyCascades, RenderStats& stats);
@@ -341,6 +356,12 @@ class MeshPass {
     SceneRevisions m_shadowRevisions{};
     std::array<glm::mat4, 3> m_cachedLightViewProjections{};
     uint32_t m_cachedCascadeCount{0};
+    LocalShadowPass m_localShadows;
+    SceneRevisions m_localShadowRevisions{};
+    uint64_t m_localShadowAssetRevision{0};
+    std::vector<ShadowCasterBounds> m_changedShadowCasters;
+    // Objects written to the local-shadow region of this frame's object buffer.
+    uint32_t m_localShadowObjectCount{0};
     bool m_depthInitialized{false};
     std::map<MeshShadingVariant, std::unique_ptr<MeshPipelineSet>> m_meshPipelines;
     VkFormat m_sceneColorFormat{VK_FORMAT_UNDEFINED};

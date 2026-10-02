@@ -113,6 +113,8 @@ bool drawLighting(RenderSettings& settings, const RenderCapabilities& capabiliti
         settings.maximumLocalLights = static_cast<uint32_t>(maximumLights);
         changed = true;
     }
+    changed |= enumCombo("Local light shadows", settings.localShadows,
+                         std::array<EnumOption, 4>{{{"Off"}, {"Low"}, {"Medium"}, {"High"}}});
     ImGui::EndDisabled();
     return changed;
 }
@@ -192,6 +194,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Depth pyramid", budgets.depthPyramid);
     changed |= drawBudget("Light clusters", budgets.lightClusters);
     changed |= drawBudget("Environment", budgets.environment);
+    changed |= drawBudget("Local shadows", budgets.localShadows);
     return changed;
 }
 
@@ -207,9 +210,10 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
         return {};
     }
     // Shadow time runs from the frame start through the early GPU cull, so it
-    // also covers the environment precompute; opaque time spans the clusters,
+    // also covers the environment precompute and local shadows; opaque time spans the clusters,
     // prepass, pyramid and ambient occlusion; blended time spans the skybox.
     return {{"Shadows", stats.gpuShadowMilliseconds},
+            {"Local shadows", stats.gpuLocalShadowMilliseconds, true},
             {"Environment precompute", stats.gpuEnvironmentPrecomputeMilliseconds, true},
             {"GPU culling", stats.gpuCullingMilliseconds, true},
             {"Opaque", stats.gpuOpaqueMilliseconds},
@@ -259,7 +263,8 @@ void clampToDocumentRanges(RenderSettings& settings) {
     for (RenderPassBudget* budget :
          {&budgets.shadow, &budgets.opaque, &budgets.blended, &budgets.bloom, &budgets.ui, &budgets.upload,
           &budgets.temporalResolve, &budgets.ambientOcclusion, &budgets.reflections, &budgets.exposure,
-          &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment}) {
+          &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment,
+          &budgets.localShadows}) {
         clampBudget(*budget);
     }
 }

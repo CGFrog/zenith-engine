@@ -43,8 +43,11 @@ constexpr uint32_t maximumGpuDrawGroups = 64;
 constexpr uint32_t singleSidedBucket = 0;
 constexpr uint32_t doubleSidedBucket = 1;
 // Per-frame object buffer layout: one region per shadow cascade, then the
-// region for objects the CPU submits to the main view.
+// region for objects the CPU submits to the main view, then the region every
+// local-light shadow tile drawn this frame shares.
 constexpr uint32_t mainObjectBase = maximumShadowCascades * maximumObjectsPerFrame;
+constexpr uint32_t localShadowObjectBase = mainObjectBase + maximumObjectsPerFrame;
+constexpr uint32_t objectRegionCount = maximumShadowCascades + 2;
 // Camera-set binding of the previous frame's skin palettes (mesh.vert).
 constexpr uint32_t previousSkinPaletteBinding = 12;
 // Camera-set binding of the frame's screen-space ambient occlusion (mesh.frag).
@@ -255,6 +258,7 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     if (!createZeroSkinInfluence() || !uploadTexture(white, m_whiteTexture) ||
         !uploadTexture(normal, m_normalTexture) || !createBindlessDescriptors(context, frameCount) ||
         !createShadowResources(depthFormat) ||
+        !m_localShadows.init(context, frameCount, depthFormat, m_cameraLayout, m_bindlessLayout) ||
         !m_postProcess.init(context, colorFormat, depthFormat, frameCount, extent, depthView) ||
         !m_depthPyramid.init(context, extent, depthView) || !m_ambientOcclusion.init(context, frameCount, extent) ||
         !createPipeline(PostProcessPass::sceneFormat, depthFormat) ||
@@ -269,6 +273,9 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
                                  .maximumInstances = maximumGpuDrivenInstances,
                                  .maximumBatches = maximumGpuDrivenInstances,
                                  .maximumGroups = maximumGpuDrawGroups};
+    for (uint32_t frame = 0; frame < frameCount; ++frame) {
+        m_localShadows.writeDescriptors(frame, {&m_cameras[frame].descriptor, 1});
+    }
     m_gpuDrivenSupported =
         m_gpuDrivenPass.init(context, frameCount, m_depthPyramid, limits, features12.drawIndirectCount == VK_TRUE);
     if (m_gpuDrivenSupported && !createGpuDrivenDescriptors()) {
@@ -294,8 +301,17 @@ bool MeshPass::createGpuDrivenDescriptors() {
         CameraBuffer& camera = m_cameras[frame];
         camera.gpuDrivenDescriptor = sets[frame];
         // Everything except the object buffer matches the CPU-submission set.
-        std::array<VkCopyDescriptorSet, 8> copies{};
-        const uint32_t sharedBindings[]{0, 1, 3, 4, 9, 10, 11, previousSkinPaletteBinding};
+        std::array<VkCopyDescriptorSet, 10> copies{};
+        const uint32_t sharedBindings[]{0,
+                                        1,
+                                        3,
+                                        4,
+                                        9,
+                                        10,
+                                        11,
+                                        previousSkinPaletteBinding,
+                                        LocalShadowPass::atlasBinding,
+                                        LocalShadowPass::tileBinding};
         for (size_t index = 0; index < copies.size(); ++index) {
             copies[index] = {.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET,
                              .srcSet = camera.descriptor,
@@ -431,7 +447,16 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         {.binding = ambientOcclusionBinding,
          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
          .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        // Local-light shadow atlas and tile records, written by LocalShadowPass.
+        {.binding = LocalShadowPass::atlasBinding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        {.binding = LocalShadowPass::tileBinding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT}};
     VkDescriptorSetLayoutCreateInfo layoutInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = static_cast<uint32_t>(std::size(cameraBindings)),
@@ -448,9 +473,9 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
     const VkDescriptorPoolSize poolSizes[]{
         {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = frameCount * 2},
         {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = frameCount * 2 * (7 + EnvironmentPass::environmentSlots)},
+         .descriptorCount = frameCount * 2 * (8 + EnvironmentPass::environmentSlots)},
         {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         .descriptorCount = frameCount * 2 * (3 + EnvironmentPass::environmentSlots)}};
+         .descriptorCount = frameCount * 2 * (4 + EnvironmentPass::environmentSlots)}};
     VkDescriptorPoolCreateInfo poolInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = frameCount * 2,
@@ -535,7 +560,7 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
         previousSkinWrite.pBufferInfo = &previousSkinDescriptor;
         vkUpdateDescriptorSets(m_device, 1, &previousSkinWrite, 0, nullptr);
 
-        buffer.size = sizeof(ObjectData) * maximumObjectsPerFrame * (maximumShadowCascades + 1);
+        buffer.size = sizeof(ObjectData) * maximumObjectsPerFrame * objectRegionCount;
         buffer.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
         if (!checkVulkan(vmaCreateBuffer(m_allocator, &buffer, &allocation, &m_cameras[i].objects.buffer,
                                          &m_cameras[i].objects.allocation, &info),
@@ -1661,6 +1686,135 @@ uint32_t MeshPass::updateRenderItems(const Scene& scene, std::span<const Entity>
     return updated;
 }
 
+void MeshPass::recordLocalShadows(VkCommandBuffer commandBuffer, uint32_t frameIndex, const Scene& scene,
+                                  const AssetManager& assets, const RenderSettings& settings,
+                                  std::span<const LocalLight> lights, const glm::vec3& cameraPosition,
+                                  OptionalPassTimestamps& timestamps, RenderStats& stats) {
+    const auto cpuBegin = std::chrono::steady_clock::now();
+    const SceneRevisions& revisions = scene.revisions();
+    collectShadowCasterChanges(scene);
+    const bool enabled = settings.localLights != LocalLightingQuality::Disabled;
+    const LocalShadowFrameInput input{.quality = enabled ? settings.localShadows : LocalShadowQuality::Off,
+                                      .lights = lights,
+                                      .cameraPosition = cameraPosition,
+                                      .changedCasters = m_changedShadowCasters,
+                                      .invalidateAll = revisions.renderable != m_localShadowRevisions.renderable ||
+                                                       revisions.material != m_localShadowRevisions.material ||
+                                                       assets.revision() != m_localShadowAssetRevision};
+    const CameraBuffer& camera = m_cameras[frameIndex];
+    const std::array<VkDescriptorSet, 2> cameraSets{camera.descriptor, camera.gpuDrivenDescriptor};
+    m_localShadowObjectCount = 0;
+    const std::vector<int32_t> firstTiles = m_localShadows.record(
+        commandBuffer, frameIndex, m_frameSerial, input,
+        std::span<const VkDescriptorSet>(cameraSets.data(), camera.gpuDrivenDescriptor ? 2u : 1u),
+        camera.bindlessDescriptor, m_releaseQueue, timestamps,
+        [&](VkCommandBuffer tileCommands, const glm::mat4& viewProjection) {
+            return drawLocalShadowCasters(tileCommands, frameIndex, viewProjection, stats);
+        },
+        stats);
+    m_clusteredLighting.assignShadowTiles(frameIndex, firstTiles);
+    m_localShadowRevisions = revisions;
+    m_localShadowAssetRevision = assets.revision();
+    stats.cpuLocalShadowMilliseconds =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuBegin).count();
+}
+
+void MeshPass::collectShadowCasterChanges(const Scene& scene) {
+    m_changedShadowCasters.clear();
+    const auto addCaster = [&](const RenderItem& item) {
+        if (item.material->alphaMode == MaterialAlphaMode::Blend) {
+            return;
+        }
+        // updateRenderItems kept the previous transform, so both the vacated
+        // and the newly covered space are reported.
+        m_changedShadowCasters.push_back({item.boundsCenter, item.boundsRadius});
+        m_changedShadowCasters.push_back({glm::vec3(item.previousWorld * glm::vec4(item.mesh->bounds.center, 1.0f)),
+                                          item.mesh->bounds.radius * maximumAxisScale(item.previousWorld)});
+    };
+    const SceneRevisions& revisions = scene.revisions();
+    if (revisions.transform != m_localShadowRevisions.transform) {
+        for (Entity entity : scene.changedTransforms()) {
+            const auto found = m_objectItems.find(static_cast<RenderObjectId>(entt::to_integral(entity)));
+            if (found == m_objectItems.end()) {
+                continue;
+            }
+            for (size_t itemIndex : found->second) {
+                addCaster(m_renderItems[itemIndex]);
+            }
+        }
+    }
+    if (revisions.skin != m_localShadowRevisions.skin) {
+        for (const RenderItem& item : m_renderItems) {
+            if (!item.jointPalette.empty()) {
+                addCaster(item);
+            }
+        }
+    }
+}
+
+bool MeshPass::drawLocalShadowCasters(VkCommandBuffer commandBuffer, uint32_t frameIndex,
+                                      const glm::mat4& viewProjection, RenderStats& stats) {
+    const Frustum frustum = makeFrustum(viewProjection);
+    m_shadowVisibleItems.clear();
+    for (const RenderItem& item : m_renderItems) {
+        if (item.material->alphaMode != MaterialAlphaMode::Blend &&
+            sphereVisible(frustum, item.boundsCenter, item.boundsRadius)) {
+            m_shadowVisibleItems.push_back(&item);
+        }
+    }
+    if (m_localShadowObjectCount + m_shadowVisibleItems.size() > maximumObjectsPerFrame) {
+        return false;
+    }
+    // Keep each primitive's LOD range adjacent so its instances share a draw.
+    std::ranges::stable_sort(m_shadowVisibleItems, {}, [](const RenderItem* item) {
+        return std::tuple(item->material->doubleSided, handleKey(item->meshHandle), item->lod.firstIndex);
+    });
+    const uint32_t objectBase = localShadowObjectBase + m_localShadowObjectCount;
+    auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped);
+    for (size_t index = 0; index < m_shadowVisibleItems.size(); ++index) {
+        const RenderItem& item = *m_shadowVisibleItems[index];
+        objectData[objectBase + index] = {.model = item.world,
+                                          .previousModel = item.previousWorld,
+                                          .skin = {item.skinPaletteOffset,
+                                                   static_cast<uint32_t>(item.jointPalette.size()),
+                                                   item.gpuMaterial->index, 0}};
+    }
+    if (!m_shadowVisibleItems.empty()) {
+        vmaFlushAllocation(m_allocator, m_cameras[frameIndex].objects.allocation, sizeof(ObjectData) * objectBase,
+                           sizeof(ObjectData) * m_shadowVisibleItems.size());
+    }
+    m_localShadowObjectCount += static_cast<uint32_t>(m_shadowVisibleItems.size());
+    std::optional<uint32_t> boundPage;
+    std::optional<bool> boundDoubleSided;
+    for (size_t itemIndex = 0; itemIndex < m_shadowVisibleItems.size();) {
+        const RenderItem& item = *m_shadowVisibleItems[itemIndex];
+        size_t batchEnd = itemIndex + 1;
+        while (batchEnd < m_shadowVisibleItems.size()) {
+            const RenderItem& candidate = *m_shadowVisibleItems[batchEnd];
+            if (candidate.gpuMesh != item.gpuMesh || candidate.lod.firstIndex != item.lod.firstIndex ||
+                candidate.lod.indexCount != item.lod.indexCount ||
+                candidate.material->doubleSided != item.material->doubleSided) {
+                break;
+            }
+            ++batchEnd;
+        }
+        if (!boundDoubleSided || *boundDoubleSided != item.material->doubleSided) {
+            vkCmdSetCullMode(commandBuffer, item.material->doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
+            boundDoubleSided = item.material->doubleSided;
+        }
+        bindGeometry(commandBuffer, *item.gpuMesh, boundPage);
+        const uint32_t instanceCount = static_cast<uint32_t>(batchEnd - itemIndex);
+        vkCmdDrawIndexed(commandBuffer, item.lod.indexCount, instanceCount,
+                         item.gpuMesh->geometry.firstIndex + item.lod.firstIndex, item.gpuMesh->geometry.vertexOffset,
+                         objectBase + static_cast<uint32_t>(itemIndex));
+        stats.localShadowCasterCount += instanceCount;
+        ++stats.drawCalls;
+        stats.triangleCount += static_cast<uint64_t>(item.lod.indexCount / 3) * instanceCount;
+        itemIndex = batchEnd;
+    }
+    return true;
+}
+
 bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, const std::vector<RenderItem>& items,
                             const DirectionalLightComponent& light,
                             const std::array<glm::mat4, maximumShadowCascades>& lightViewProjections,
@@ -2113,6 +2267,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const MeshLodView lodView = makeMeshLodView(cameraPosition, projection[1][1], renderExtent.height,
                                                 rendering.settings().lodErrorThresholdPixels);
     selectRenderItemLods(lodView);
+    recordLocalShadows(commandBuffer, frameIndex, scene, assets, rendering.settings(),
+                       std::span<const LocalLight>(selectedLights.data(), localLightCount), cameraPosition,
+                       passTimestamps, stats);
     const auto shadowCpuBegin = std::chrono::steady_clock::now();
     const bool shadowCastersChanged =
         !m_shadowInitialized || revisions.transform != m_shadowRevisions.transform ||
@@ -2834,6 +2991,9 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_geometry.reset();
     // Shutdown runs after the device is idle, so deferred releases may run now.
     m_releaseQueue.collect(std::numeric_limits<uint64_t>::max());
+    // After the queue ran: it may hold atlases this pass retired.
+    m_localShadows.shutdown();
+    m_changedShadowCasters.clear();
     for (auto& [_, texture] : m_textures) {
         destroyTexture(texture);
     }

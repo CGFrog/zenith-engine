@@ -22,6 +22,12 @@ struct LocalLight {
     float innerConeCosine{1.0f};
     float outerConeCosine{0.0f};
     uint64_t stableId{0};
+    // Shadow request hints copied from the light component (see
+    // PointLightComponent); buildLocalShadowRequests turns them into atlas
+    // requests.
+    bool castsShadows{false};
+    uint32_t shadowResolution{0};
+    int32_t shadowPriority{0};
 };
 
 std::vector<LocalLight> gatherLocalLights(const Scene& scene);

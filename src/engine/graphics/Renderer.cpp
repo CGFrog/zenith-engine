@@ -21,6 +21,7 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
         settings.reflections = ReflectionQuality::ScreenSpaceFullResolution;
         settings.environment = EnvironmentQuality::ImageBasedHigh;
         settings.localLights = LocalLightingQuality::Clustered;
+        settings.localShadows = LocalShadowQuality::High;
         settings.depthPrepass = true;
         settings.shadows = ShadowQuality::CascadedHigh;
         settings.bloom = BloomQuality::Downsampled;
@@ -92,6 +93,8 @@ RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const Render
             .imageBasedLighting = imageBasedLighting,
             .environmentBackground = imageBasedLighting && settings.environmentBackground,
             .localLights = settings.localLights != LocalLightingQuality::Disabled,
+            .localShadows = settings.localLights != LocalLightingQuality::Disabled &&
+                            settings.localShadows != LocalShadowQuality::Off,
             .depthPrepass = depthPrepassActive(settings),
             .gpuDriven = gpuDrivenSubmissionActive(settings, capabilities)};
 }
@@ -280,6 +283,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuLightClusterMilliseconds = gpuTimings.lightClusterMilliseconds;
     stats.gpuEnvironmentPrecomputeMilliseconds = gpuTimings.environmentPrecomputeMilliseconds;
     stats.gpuSkyboxMilliseconds = gpuTimings.skyboxMilliseconds;
+    stats.gpuLocalShadowMilliseconds = gpuTimings.localShadowMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;
@@ -472,6 +476,9 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
         const auto environmentMaps = graph.importImage("environment maps", image(PostProcessPass::sceneFormat, 5, 0),
                                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         const auto lightClusters = graph.importBuffer("light clusters", {.size = 0, .usage = 1, .alignment = 256});
+        // Persistent: cached tiles keep their depth across frames.
+        const auto localShadowAtlas = graph.importImage("local shadow atlas", image(m_swapchain.depthFormat(), 5, 0),
+                                                        VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
         const auto gpuDrivenDraws = graph.importBuffer("GPU-driven draws", {.size = 0, .usage = 1, .alignment = 256});
         const auto normals =
             graph.importImage("scene normals", image(PostProcessPass::normalFormat, 5, 0), VK_IMAGE_LAYOUT_UNDEFINED);
@@ -514,6 +521,16 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL},
                 {meshAssets, RenderGraphAccessMode::Read, geometryStages, geometryAccess, VK_IMAGE_LAYOUT_UNDEFINED}};
             graph.addPass("directional shadows", RenderGraphQueue::Graphics, shadowAccesses);
+        }
+        if (shape.localShadows) {
+            // Re-renders only the atlas tiles the update budget scheduled.
+            const RenderGraphAccess localShadowAccesses[]{
+                {localShadowAtlas, RenderGraphAccessMode::ReadWrite,
+                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL},
+                {meshAssets, RenderGraphAccessMode::Read, geometryStages, geometryAccess, VK_IMAGE_LAYOUT_UNDEFINED}};
+            graph.addPass("local light shadows", RenderGraphQueue::Graphics, localShadowAccesses);
         }
         if (shape.gpuDriven) {
             // The early phase emits last frame's visible set; it binds the
@@ -614,6 +631,11 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             opaqueAccesses.push_back({environmentMaps, RenderGraphAccessMode::Read,
                                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+        }
+        if (shape.localShadows) {
+            opaqueAccesses.push_back({localShadowAtlas, RenderGraphAccessMode::Read,
+                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                      VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL});
         }
         if (shape.localLights) {
             opaqueAccesses.push_back({lightClusters, RenderGraphAccessMode::Read,
