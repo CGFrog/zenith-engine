@@ -1,5 +1,7 @@
 #include "GraphicsSettingsEditor.hpp"
 
+#include "engine/graphics/MotionBlur.hpp"
+
 #include <imgui.h>
 
 #include <algorithm>
@@ -148,6 +150,19 @@ bool drawScreenSpaceEffects(RenderSettings& settings, const RenderCapabilities& 
     return changed;
 }
 
+bool drawMotionBlur(RenderSettings& settings, const RenderCapabilities& capabilities) {
+    bool changed = enumCombo(
+        "Motion blur", settings.motionBlur,
+        std::array<EnumOption, 3>{{{"Off"}, {"Low", capabilities.motionBlur}, {"High", capabilities.motionBlur}}});
+    ImGui::BeginDisabled(settings.motionBlur == MotionBlurQuality::Off);
+    changed |= ImGui::SliderFloat("Shutter (60 Hz frames)", &settings.motionBlurShutterFraction,
+                                  motion_blur::minimumShutterFraction, motion_blur::maximumShutterFraction, "%.2f");
+    changed |= ImGui::SliderFloat("Maximum blur radius", &settings.motionBlurMaximumRadiusPixels,
+                                  motion_blur::minimumRadiusPixels, motion_blur::maximumRadiusPixels, "%.0f px");
+    ImGui::EndDisabled();
+    return changed;
+}
+
 bool drawBloomAndToneMapping(RenderSettings& settings) {
     bool changed = enumCombo("Bloom", settings.bloom, std::array<EnumOption, 2>{{{"Off"}, {"Downsampled chain"}}});
     ImGui::BeginDisabled(settings.bloom == BloomQuality::Off);
@@ -215,6 +230,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Probe clusters", budgets.reflectionProbeClusters);
     changed |= drawBudget("Volumetric fog", budgets.volumetricFog);
     changed |= drawBudget("Irradiance volume", budgets.irradianceVolume);
+    changed |= drawBudget("Motion blur", budgets.motionBlur);
     return changed;
 }
 
@@ -250,6 +266,7 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
             {"Skybox", stats.gpuSkyboxMilliseconds, true},
             {"Reflections", stats.gpuReflectionsMilliseconds},
             {"Temporal resolve", stats.gpuTemporalMilliseconds},
+            {"Motion blur", stats.gpuMotionBlurMilliseconds},
             {"Exposure", stats.gpuExposureMilliseconds},
             {"Bloom", stats.gpuBloomMilliseconds},
             {"Post-process", stats.gpuPostMilliseconds},
@@ -264,6 +281,10 @@ void clampToDocumentRanges(RenderSettings& settings) {
     settings.bloomIntensity = std::clamp(settings.bloomIntensity, 0.0f, 1.0f);
     settings.bloomFilterRadius = std::clamp(settings.bloomFilterRadius, minimumBloomRadius, maximumBloomRadius);
     settings.maximumLocalLights = std::max(settings.maximumLocalLights, 1u);
+    settings.motionBlurShutterFraction = std::clamp(
+        settings.motionBlurShutterFraction, motion_blur::minimumShutterFraction, motion_blur::maximumShutterFraction);
+    settings.motionBlurMaximumRadiusPixels = std::clamp(
+        settings.motionBlurMaximumRadiusPixels, motion_blur::minimumRadiusPixels, motion_blur::maximumRadiusPixels);
 
     DynamicResolutionSettings& dynamic = settings.dynamicResolution;
     dynamic.minimumScale = std::clamp(dynamic.minimumScale, minimumDynamicScale, 1.0f);
@@ -285,12 +306,26 @@ void clampToDocumentRanges(RenderSettings& settings) {
     exposure.highPercentile = std::clamp(exposure.highPercentile, exposure.lowPercentile + minimumPercentileGap, 1.0f);
 
     RenderPassBudgets& budgets = settings.budgets;
-    for (RenderPassBudget* budget :
-         {&budgets.shadow, &budgets.opaque, &budgets.blended, &budgets.bloom, &budgets.ui, &budgets.upload,
-          &budgets.temporalResolve, &budgets.ambientOcclusion, &budgets.reflections, &budgets.exposure,
-          &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment,
-          &budgets.localShadows, &budgets.shadowCulling, &budgets.reflectionProbeClusters, &budgets.volumetricFog,
-          &budgets.irradianceVolume}) {
+    for (RenderPassBudget* budget : {&budgets.shadow,
+                                     &budgets.opaque,
+                                     &budgets.blended,
+                                     &budgets.bloom,
+                                     &budgets.ui,
+                                     &budgets.upload,
+                                     &budgets.temporalResolve,
+                                     &budgets.ambientOcclusion,
+                                     &budgets.reflections,
+                                     &budgets.exposure,
+                                     &budgets.depthPrepass,
+                                     &budgets.depthPyramid,
+                                     &budgets.lightClusters,
+                                     &budgets.environment,
+                                     &budgets.localShadows,
+                                     &budgets.shadowCulling,
+                                     &budgets.reflectionProbeClusters,
+                                     &budgets.volumetricFog,
+                                     &budgets.irradianceVolume,
+                                     &budgets.motionBlur}) {
         clampBudget(*budget);
     }
 }
@@ -310,6 +345,9 @@ bool drawSettings(RenderSettings& settings, const RenderCapabilities& capabiliti
     }
     if (ImGui::CollapsingHeader("Screen-space effects", ImGuiTreeNodeFlags_DefaultOpen)) {
         changed |= drawScreenSpaceEffects(settings, capabilities);
+    }
+    if (ImGui::CollapsingHeader("Motion blur")) {
+        changed |= drawMotionBlur(settings, capabilities);
     }
     if (ImGui::CollapsingHeader("Bloom and tone mapping")) {
         changed |= drawBloomAndToneMapping(settings);

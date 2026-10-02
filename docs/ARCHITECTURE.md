@@ -358,10 +358,14 @@ Scene shading
   -> blended surfaces -> editor outlines
 Temporal resolve (TAA only, compute)
   HDR + motion/reactive + output-resolution history -> resolved scene
+Motion blur (compute, when enabled)
+  resolved scene (else HDR) + motion vectors -> tile max -> neighbour max
+  -> reconstruction gather -> blurred scene read by everything below
 Exposure and bloom (compute)
   luminance histogram -> adapted exposure buffer; bloom down/upsample chain
 Post-process and tone mapping
-  resolved scene (else HDR) + bloom mix + exposure + FXAA (non-TAA) + tone map
+  blurred, else resolved, else HDR scene + bloom mix + exposure + FXAA (non-TAA)
+  + tone map
   -> swapchain image or editor viewport
 Game or editor UI
   -> swapchain image

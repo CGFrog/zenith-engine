@@ -61,7 +61,7 @@ bool PostProcessPass::init(const VulkanContext& context, VkFormat outputFormat, 
     m_targets.resize(frameCount);
     return m_bloomExposure.init(context) && createDescriptors(frameCount) && createPipeline(outputFormat) &&
            m_temporalResolve.init(context, frameCount, extent) && m_reflections.init(context, extent) &&
-           createTargets(context, extent, depthView);
+           m_motionBlur.init(context, frameCount, extent) && createTargets(context, extent, depthView);
 }
 
 bool PostProcessPass::createDescriptors(uint32_t frameCount) {
@@ -429,6 +429,7 @@ bool PostProcessPass::resize(const VulkanContext& context, VkExtent2D extent, Vk
     m_previousFrameIndex.reset();
     m_temporalResolve.resize(extent);
     m_reflections.resize(extent);
+    m_motionBlur.resize(extent);
     return createTargets(context, extent, depthView);
 }
 
@@ -491,8 +492,8 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
                              const RenderSettings& settings, const glm::mat4& inverseViewProjection,
                              const glm::mat4& previousViewProjection, const TemporalResolveFrame& temporal,
                              const glm::vec3& cameraPosition, const std::optional<GridOverlay>& gridOverlay,
-                             VkQueryPool timestampQueries, double& bloomCpuMilliseconds,
-                             VkImageLayout outputOldLayout) {
+                             VkQueryPool timestampQueries, OptionalPassTimestamps& passTimestamps,
+                             double& bloomCpuMilliseconds, VkImageLayout outputOldLayout) {
     Target& target = m_targets[frameIndex];
     constexpr VkPipelineStageFlags2 sampledStages =
         VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
@@ -512,15 +513,21 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
     if (!resolveTemporal(commandBuffer, frameIndex, internalExtent, temporalEnabled, temporal, timestampQueries)) {
         return false;
     }
-    // With TAA, exposure and bloom read the resolved output-resolution scene;
-    // otherwise the raw HDR target within its render extent.
-    const BloomExposureInput bloomInput =
+    // With TAA, the HDR effects read the resolved output-resolution scene;
+    // otherwise the raw HDR target within its render extent. Each effect
+    // replaces the scene with its own output.
+    BloomExposureInput scene =
         temporalEnabled
             ? BloomExposureInput{.view = m_temporalResolve.resolvedView(),
                                  .imageExtent = m_extent,
                                  .validExtent = m_extent,
                                  .layout = TemporalResolvePass::resolvedLayout}
             : BloomExposureInput{.view = target.view, .imageExtent = m_extent, .validExtent = internalExtent};
+    if (!recordMotionBlur(commandBuffer, frameIndex, internalExtent, settings, temporal, passTimestamps, scene)) {
+        return false;
+    }
+    bindPostScene(frameIndex, scene, temporalEnabled);
+    const BloomExposureInput& bloomInput = scene;
     recordBloomAndExposure(commandBuffer, bloomInput, settings, timestampQueries, bloomCpuMilliseconds);
     const BloomSampling bloomSampling = m_bloomExposure.bloomSampling(bloomInput.validExtent);
     const PostSettings postSettings{
@@ -635,6 +642,50 @@ bool PostProcessPass::resolveTemporal(VkCommandBuffer commandBuffer, uint32_t fr
     return true;
 }
 
+bool PostProcessPass::recordMotionBlur(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent,
+                                       const RenderSettings& settings, const TemporalResolveFrame& temporal,
+                                       OptionalPassTimestamps& passTimestamps, BloomExposureInput& scene) {
+    // Measured every frame so the first blurred frame after enabling it sees
+    // a real frame time.
+    const float frameSeconds = recordedFrameSeconds(m_previousMotionBlurTime);
+    if (settings.motionBlur == MotionBlurQuality::Off) {
+        return true;
+    }
+    const motion_blur::FramePlan plan = motion_blur::planFrame(
+        settings, {scene.validExtent.width, scene.validExtent.height}, m_extent.width, frameSeconds);
+    passTimestamps.write(FrameTimestamp::motionBlurBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    if (!m_motionBlur.record(commandBuffer, frameIndex,
+                             {.sceneColor = scene.view,
+                              .sceneColorLayout = scene.layout,
+                              .colorRegion = scene.validExtent,
+                              .motion = m_targets[frameIndex].motionView,
+                              .motionRegion = internalExtent,
+                              .currentToPreviousClip = temporal.currentToPreviousClip},
+                             plan)) {
+        return false;
+    }
+    passTimestamps.write(FrameTimestamp::motionBlurEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    scene.view = m_motionBlur.blurredView();
+    scene.layout = MotionBlurPass::blurredLayout;
+    return true;
+}
+
+void PostProcessPass::bindPostScene(uint32_t frameIndex, const BloomExposureInput& scene, bool temporalEnabled) {
+    // As in resolveTemporal(): the set is not yet bound in this command buffer
+    // and its frame slot's previous submission has retired. Binding 0 is
+    // rewritten every frame so a frame without effects restores the scene
+    // target; an effect output covers the image like the scene target does,
+    // so post.frag samples it with the same sceneScale.
+    const VkDescriptorImageInfo image{.sampler = m_colorSampler, .imageView = scene.view, .imageLayout = scene.layout};
+    const VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                     .dstSet = m_targets[frameIndex].descriptor,
+                                     .dstBinding = temporalEnabled ? 2u : 0u,
+                                     .descriptorCount = 1,
+                                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                     .pImageInfo = &image};
+    vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+}
+
 void PostProcessPass::recordBloomAndExposure(VkCommandBuffer commandBuffer, const BloomExposureInput& input,
                                              const RenderSettings& settings, VkQueryPool timestampQueries,
                                              double& bloomCpuMilliseconds) {
@@ -669,14 +720,17 @@ void PostProcessPass::recordBloomAndExposure(VkCommandBuffer commandBuffer, cons
 // not snap exposure.
 float PostProcessPass::exposureDeltaSeconds() {
     constexpr float maximumDeltaSeconds = 0.25f;
+    return std::clamp(recordedFrameSeconds(m_previousExposureTime), 0.0f, maximumDeltaSeconds);
+}
+
+float PostProcessPass::recordedFrameSeconds(std::optional<std::chrono::steady_clock::time_point>& previousTime) const {
     if (m_fixedFrameSeconds) {
-        return std::clamp(*m_fixedFrameSeconds, 0.0f, maximumDeltaSeconds);
+        return *m_fixedFrameSeconds;
     }
     const auto now = std::chrono::steady_clock::now();
-    const float delta =
-        m_previousExposureTime ? std::chrono::duration<float>(now - *m_previousExposureTime).count() : 0.0f;
-    m_previousExposureTime = now;
-    return std::clamp(delta, 0.0f, maximumDeltaSeconds);
+    const float delta = previousTime ? std::chrono::duration<float>(now - *previousTime).count() : 0.0f;
+    previousTime = now;
+    return delta;
 }
 
 VkImage PostProcessPass::sceneImage(uint32_t frameIndex) const {
@@ -809,8 +863,10 @@ void PostProcessPass::shutdown(const VulkanContext& context) {
     destroyTargets(context);
     m_temporalResolve.shutdown();
     m_reflections.shutdown();
+    m_motionBlur.shutdown();
     m_bloomExposure.shutdown(context);
     m_previousExposureTime.reset();
+    m_previousMotionBlurTime.reset();
     if (m_pipeline) {
         vkDestroyPipeline(context.device(), m_pipeline, nullptr);
     }

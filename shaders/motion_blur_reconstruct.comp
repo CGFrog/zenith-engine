@@ -1,0 +1,116 @@
+#version 450
+
+// Motion blur, step 3 of 3: the reconstruction gather of McGuire et al. 2012,
+// "A Reconstruction Filter for Plausible Motion Blur". Each pixel whose tile
+// neighbourhood moves gathers samples along the neighbourhood's largest
+// velocity and weights them by depth order and by whether each blur covers the
+// other pixel, so moving foreground smears over a static background and a
+// static foreground stays sharp in front of a moving background.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+// HDR scene; the top-left colorRegion texels hold this frame.
+layout(set = 0, binding = 0) uniform sampler2D sceneColor;
+// xy: unjittered UV motion, z: reactive mask, w: reversed-Z depth. The top-left
+// motionRegion texels hold this frame.
+layout(set = 0, binding = 1) uniform sampler2D motionVectors;
+layout(set = 0, binding = 3, rgba16f) uniform readonly image2D neighborMax;
+layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D blurredColor;
+
+// Mirrors MotionBlurSettings in MotionBlurPass.cpp and the other motion blur shaders.
+layout(push_constant) uniform MotionBlurSettings {
+    // Unjittered current clip space to the previous frame's unjittered clip
+    // space; reprojects pixels that no surface wrote motion for.
+    mat4 currentToPreviousClip;
+    vec4 colorRegion; // width, height, 1 / width, 1 / height
+    vec2 motionRegion; // motion texels holding this frame
+    float velocityScale;
+    float radiusPixels;
+    ivec2 tileCount;
+    int tileSize;
+    int sampleCount;
+} settings;
+
+// Relative view-distance band over which two surfaces blend from "in front"
+// to "behind" each other.
+const float softDepthFraction = 0.05;
+
+// Blur velocity (xy, colour-region pixels) and relative view distance (z).
+// Keep in sync with motion_blur_tile_max.comp.
+vec3 velocityAndDistance(ivec2 pixel) {
+    vec2 uv = (vec2(pixel) + 0.5) * settings.colorRegion.zw;
+    ivec2 motionTexel = clamp(ivec2(uv * settings.motionRegion), ivec2(0), ivec2(settings.motionRegion) - 1);
+    vec4 motionDepth = texelFetch(motionVectors, motionTexel, 0);
+    vec2 motion = motionDepth.xy;
+    if (motionDepth.w <= 0.0) {
+        // No surface wrote motion here; the far plane moves with the camera.
+        vec4 previousClip = settings.currentToPreviousClip * vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+        motion = previousClip.w > 0.0 ? uv - (previousClip.xy / previousClip.w * 0.5 + 0.5) : vec2(0.0);
+    }
+    vec2 velocity = 0.5 * motion * settings.colorRegion.xy * settings.velocityScale;
+    float velocityLength = length(velocity);
+    if (velocityLength > settings.radiusPixels) {
+        velocity *= settings.radiusPixels / velocityLength;
+    }
+    // Reversed-Z depth is proportional to 1 / view distance.
+    return vec3(velocity, 1.0 / max(motionDepth.w, 1e-7));
+}
+
+// One when the surface at distance a is in front of (or level with) the one at
+// distance b, fading to zero as it falls behind by softDepthFraction.
+float softInFront(float a, float b) {
+    return clamp(1.0 - (a - b) / (softDepthFraction * min(a, b)), 0.0, 1.0);
+}
+
+// Whether a blur of the given half-length reaches a pixel this far away: a
+// cone for one-sided coverage and a cylinder for blurs that overlap both ways.
+float cone(float distance, float velocityLength) { return clamp(1.0 - distance / velocityLength, 0.0, 1.0); }
+
+float cylinder(float distance, float velocityLength) {
+    return 1.0 - smoothstep(0.95 * velocityLength, 1.05 * velocityLength, distance);
+}
+
+// Interleaved gradient noise (Jimenez 2014) in [0, 1); offsets the samples
+// per pixel so the gather does not band.
+float interleavedGradientNoise(vec2 pixel) { return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715)))); }
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 region = ivec2(settings.colorRegion.xy);
+    if (any(greaterThanEqual(pixel, region))) {
+        return;
+    }
+    vec3 centerColor = texelFetch(sceneColor, pixel, 0).rgb;
+    vec2 neighborhood = imageLoad(neighborMax, pixel / settings.tileSize).xy;
+    // Nothing nearby moves by more than half a pixel: keep the pixel sharp.
+    if (dot(neighborhood, neighborhood) <= 0.25) {
+        imageStore(blurredColor, pixel, vec4(centerColor, 1.0));
+        return;
+    }
+    vec3 center = velocityAndDistance(pixel);
+    float centerLength = max(length(center.xy), 0.5);
+    float totalWeight = 1.0 / centerLength;
+    vec3 sum = centerColor * totalWeight;
+    float jitter = interleavedGradientNoise(vec2(pixel)) - 0.5;
+    for (int i = 0; i < settings.sampleCount; ++i) {
+        // Spread evenly across (-1, 1) of the neighbourhood velocity.
+        float t = mix(-1.0, 1.0, (float(i) + jitter + 1.0) / float(settings.sampleCount + 1));
+        ivec2 samplePixel = clamp(ivec2(floor(vec2(pixel) + 0.5 + neighborhood * t)), ivec2(0), region - 1);
+        vec3 sampled = velocityAndDistance(samplePixel);
+        float sampleLength = max(length(sampled.xy), 0.5);
+        float distance = length(vec2(samplePixel - pixel));
+        // The sample's blur covers this pixel and it is in front, this
+        // pixel's blur covers the sample and it is in front, or both blur
+        // across each other.
+        float weight = softInFront(sampled.z, center.z) * cone(distance, sampleLength) +
+                       softInFront(center.z, sampled.z) * cone(distance, centerLength) +
+                       cylinder(distance, sampleLength) * cylinder(distance, centerLength) * 2.0;
+        totalWeight += weight;
+        sum += weight * texelFetch(sceneColor, samplePixel, 0).rgb;
+    }
+    vec3 result = sum / totalWeight;
+    if (any(isnan(result)) || any(isinf(result))) {
+        result = centerColor;
+    }
+    imageStore(blurredColor, pixel, vec4(result, 1.0));
+}

@@ -1,0 +1,47 @@
+#version 450
+
+// Motion blur, step 2 of 3: the largest tile velocity in each tile's 3x3
+// neighbourhood (McGuire et al. 2012, "NeighborMax"). Tiles are at least as
+// large as the blur radius, so this covers every pixel whose blur can reach
+// the tile.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 2, rgba16f) uniform readonly image2D tileMax;
+layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D neighborMax;
+
+// Mirrors MotionBlurSettings in MotionBlurPass.cpp and the other motion blur shaders.
+layout(push_constant) uniform MotionBlurSettings {
+    mat4 currentToPreviousClip;
+    vec4 colorRegion;
+    vec2 motionRegion;
+    float velocityScale;
+    float radiusPixels;
+    ivec2 tileCount;
+    int tileSize;
+    int sampleCount;
+} settings;
+
+void main() {
+    ivec2 tile = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(tile, settings.tileCount))) {
+        return;
+    }
+    vec2 largest = vec2(0.0);
+    float largestSquaredLength = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            ivec2 neighbor = tile + ivec2(x, y);
+            if (any(lessThan(neighbor, ivec2(0))) || any(greaterThanEqual(neighbor, settings.tileCount))) {
+                continue;
+            }
+            vec2 velocity = imageLoad(tileMax, neighbor).xy;
+            float squaredLength = dot(velocity, velocity);
+            if (squaredLength > largestSquaredLength) {
+                largest = velocity;
+                largestSquaredLength = squaredLength;
+            }
+        }
+    }
+    imageStore(neighborMax, tile, vec4(largest, 0.0, 0.0));
+}

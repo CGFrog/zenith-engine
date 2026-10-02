@@ -1,5 +1,7 @@
 #include "RenderConfiguration.hpp"
 
+#include "MotionBlur.hpp"
+
 #include <cmath>
 #include <nlohmann/json.hpp>
 
@@ -137,6 +139,9 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"ambientOcclusion", settings.ambientOcclusion},
                            {"reflections", settings.reflections},
                            {"volumetricFog", settings.volumetricFog},
+                           {"motionBlur", settings.motionBlur},
+                           {"motionBlurShutterFraction", settings.motionBlurShutterFraction},
+                           {"motionBlurMaximumRadiusPixels", settings.motionBlurMaximumRadiusPixels},
                            {"budgets",
                             {{"shadow", budget(settings.budgets.shadow)},
                              {"opaque", budget(settings.budgets.opaque)},
@@ -156,7 +161,8 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"shadowCulling", budget(settings.budgets.shadowCulling)},
                              {"reflectionProbeClusters", budget(settings.budgets.reflectionProbeClusters)},
                              {"volumetricFog", budget(settings.budgets.volumetricFog)},
-                             {"irradianceVolume", budget(settings.budgets.irradianceVolume)}}}};
+                             {"irradianceVolume", budget(settings.budgets.irradianceVolume)},
+                             {"motionBlur", budget(settings.budgets.motionBlur)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -244,6 +250,18 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
             !readEnum(document, "volumetricFog", VolumetricFogQuality::High, loaded.volumetricFog)) {
             return {.error = "Render settings contain an unknown volumetric-fog quality"};
         }
+        // Documents written before motion blur keep its defaults (Off).
+        if (document.contains("motionBlur") &&
+            !readEnum(document, "motionBlur", MotionBlurQuality::High, loaded.motionBlur)) {
+            return {.error = "Render settings contain an unknown motion-blur quality"};
+        }
+        loaded.motionBlurShutterFraction =
+            document.value("motionBlurShutterFraction", loaded.motionBlurShutterFraction);
+        loaded.motionBlurMaximumRadiusPixels =
+            document.value("motionBlurMaximumRadiusPixels", loaded.motionBlurMaximumRadiusPixels);
+        if (!motion_blur::validParameters(loaded.motionBlurShutterFraction, loaded.motionBlurMaximumRadiusPixels)) {
+            return {.error = "Render settings contain out-of-range motion-blur parameters"};
+        }
         if (const auto budgets = document.find("budgets"); budgets != document.end()) {
             if (!budgets->is_object() || !readBudget(*budgets, "shadow", loaded.budgets.shadow) ||
                 !readBudget(*budgets, "opaque", loaded.budgets.opaque) ||
@@ -263,7 +281,8 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "shadowCulling", loaded.budgets.shadowCulling) ||
                 !readOptionalBudget(*budgets, "reflectionProbeClusters", loaded.budgets.reflectionProbeClusters) ||
                 !readOptionalBudget(*budgets, "volumetricFog", loaded.budgets.volumetricFog) ||
-                !readOptionalBudget(*budgets, "irradianceVolume", loaded.budgets.irradianceVolume)) {
+                !readOptionalBudget(*budgets, "irradianceVolume", loaded.budgets.irradianceVolume) ||
+                !readOptionalBudget(*budgets, "motionBlur", loaded.budgets.motionBlur)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }
@@ -340,6 +359,10 @@ ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
     if (result.settings.volumetricFog != VolumetricFogQuality::Off && !capabilities.volumetricFog) {
         result.settings.volumetricFog = VolumetricFogQuality::Off;
         result.fallbacks.emplace_back("Volumetric fog needs RGBA16F 3D storage images and was disabled");
+    }
+    if (result.settings.motionBlur != MotionBlurQuality::Off && !capabilities.motionBlur) {
+        result.settings.motionBlur = MotionBlurQuality::Off;
+        result.fallbacks.emplace_back("Motion blur is unsupported and was disabled");
     }
     return result;
 }
