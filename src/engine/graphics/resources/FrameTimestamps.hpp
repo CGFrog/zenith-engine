@@ -64,7 +64,11 @@ inline constexpr uint32_t particleSimulationBegin = 53;
 inline constexpr uint32_t particleSimulationEnd = 54;
 inline constexpr uint32_t particleDrawBegin = 55;
 inline constexpr uint32_t particleDrawEnd = 56;
-inline constexpr uint32_t count = 57;
+// Copy of the opaque scene for transmissive surfaces; inside the 2-3 span,
+// only on frames that draw one.
+inline constexpr uint32_t transmissionBackgroundBegin = 57;
+inline constexpr uint32_t transmissionBackgroundEnd = 58;
+inline constexpr uint32_t count = 59;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot

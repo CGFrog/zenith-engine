@@ -365,6 +365,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuDecalClusterMilliseconds = gpuTimings.decalClusterMilliseconds;
     stats.gpuParticleSimulationMilliseconds = gpuTimings.particleSimulationMilliseconds;
     stats.gpuParticleDrawMilliseconds = gpuTimings.particleDrawMilliseconds;
+    stats.gpuTransmissionBackgroundMilliseconds = gpuTimings.transmissionBackgroundMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;

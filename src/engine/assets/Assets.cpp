@@ -432,9 +432,7 @@ AssetLease<MaterialHandle> AssetManager::lease(MaterialHandle handle) const {
     }
     auto composite = std::make_shared<CompositeLeaseToken>();
     composite->tokens.push_back(root.m_token);
-    const std::array textures = {asset->baseColorTexture, asset->normalTexture, asset->metallicRoughnessTexture,
-                                 asset->occlusionTexture, asset->emissiveTexture};
-    for (TextureHandle textureHandle : textures) {
+    for (TextureHandle textureHandle : asset->textures()) {
         AssetLease<TextureHandle> child = lease(textureHandle);
         if (child) {
             composite->tokens.push_back(child.m_token);

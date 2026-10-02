@@ -344,7 +344,10 @@ generates normals or tangent space when absent. Non-triangle primitives are
 skipped. Morph deltas and animation weight channels are retained, while
 compressed paths report the missing optional decoder by name. Parsing,
 resource-limit, and validation failures return descriptive errors. Each
-imported mesh then passes through `MeshOptimization`.
+imported mesh then passes through `MeshOptimization`. Materials also take the
+`KHR_materials_clearcoat`, `sheen`, `specular`, `transmission`, `volume`, and
+`ior` extensions (see `docs/RENDERER_VALIDATION.md`), whose texture slots join
+the color/normal/data usage classification.
 
 ### `src/engine/assets/MeshOptimization.*`
 
@@ -440,6 +443,7 @@ Renderer
    |- VolumetricFogPass (froxel fog injection, reprojection, and integration)
    |- DecalClusterPass (decal records and per-cluster decal lists)
    |- ParticlePass (GPU particle emission, simulation, sorting, and drawing)
+   |- TransmissionBackground (mip-chained opaque-scene copy for transmissive materials)
    `- PostProcessPass (HDR/history, motion, prepass normals, and fullscreen pipelines)
       |- ScreenSpaceReflectionPass (Hi-Z reflection trace and in-place composite)
       |- TemporalResolvePass (TAA/TAAU history)
@@ -670,8 +674,8 @@ reflection probe, and draws the skybox behind opaque geometry.
 ### `src/engine/graphics/EnvironmentLighting.*`
 
 CPU reference for the IBL conventions (cube faces, equirectangular mapping,
-analytic sky, SH projection, split-sum BRDF) that the `env_*.comp` shaders
-mirror, plus the content-hashed CPU environment averaging used by editor tools.
+analytic sky, SH projection, split-sum BRDF, sheen albedo) that the `env_*.comp`
+shaders mirror, plus the content-hashed CPU environment averaging used by editor tools.
 
 ### `src/engine/graphics/graph/RenderGraph.*`
 
@@ -730,6 +734,21 @@ bakes available to undo. A scene whose bake file is missing still loads, with
 the volume unbaked (environment lighting) until it is baked again. The inspector's "Bake Irradiance Volume" button bakes
 one volume; `zenith_editor <project> --bake-irradiance-volumes` bakes every
 volume in a project's startup scene without opening a window.
+
+### `src/engine/graphics/MaterialRecord.*`
+
+The GPU form of `MaterialAsset` in the camera set's material buffer (binding 4):
+factors, bindless texture slots, and the lobe bit mask that gates the KHR
+material extension lobes in `mesh.frag`. `packMaterialRecord` is CPU-testable;
+the shaders mirror the 192-byte std430 layout.
+
+### `src/engine/graphics/passes/TransmissionBackground.*`
+
+A mip-chained copy of the opaque scene (with sky and screen-space reflections)
+that transmissive materials sample through camera binding 24. `MeshPass`
+captures it between opaque and blended surfaces, ending and resuming the scene
+pass, only on frames that draw a transmissive surface; the copy stretches the
+render extent over the whole image so every mip is valid.
 
 ### `src/engine/graphics/passes/PostProcessPass.*`
 

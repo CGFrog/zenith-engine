@@ -334,12 +334,16 @@ irradiance-volume probe upload, which records work only on frames whose bound
 volume changed and also falls inside `gpu.shadow`; sampling the volume is part
 of opaque and blended shading, so its per-pixel cost shows up in `gpu.opaque`
 (compare against `indirectDiffuse` set to Environment, the Off fallback).
-`gpu.motion_blur` runs after `gpu.temporal_resolve` and before `gpu.exposure`
-and reports zero when motion blur is Off. The editor's Graphics panel shows the
-same table live.
-`gpu.color_grade` is the colour-grade draw after `gpu.post` (zero when every
-grade effect is off; see "Colour grading"). The editor's Graphics panel shows
-the same table live.
+`gpu.depth_of_field` and then `gpu.motion_blur` run after
+`gpu.temporal_resolve` and before `gpu.exposure`, and report zero when Off.
+`gpu.fsr_easu` and `gpu.fsr_rcas` follow `gpu.post` when FSR 1 is selected, and
+`gpu.color_grade` is the colour-grade draw after them (zero when every grade
+effect is off; see "Colour grading"). `gpu.decal_clusters` runs beside the light
+clusters, `gpu.particle_simulate` after the volumetric fog, and
+`gpu.particle_draw` inside the `gpu.blended` span. `gpu.transmission_background`
+is the opaque-scene copy for transmissive materials, inside the `gpu.blended`
+span and subtracted from it (see KHR material extensions). The editor's Graphics
+panel shows the same table live.
 
 ### GPU-culled shadow cascades
 
@@ -649,6 +653,81 @@ pixels walk a list of several decals.
 more objects than the CPU frustum reference. The GPU sphere test uses the
 reference's exact x/y planes and tighter depth planes, so any nonzero value is a
 culling defect.
+
+## KHR material extensions
+
+`ModelImporter` reads `KHR_materials_clearcoat`, `KHR_materials_sheen`,
+`KHR_materials_specular`, `KHR_materials_transmission`, `KHR_materials_volume`
+(thickness and attenuation factors; no thickness texture) and
+`KHR_materials_ior` into `MaterialAsset`. Absent extensions keep neutral
+defaults (ior 1.5, specular 1 and white, no coat, black sheen, no
+transmission), which shade exactly like plain metallic-roughness. Texture
+slots are classified for cooking like the core ones: coat normals are normal
+maps, sheen and specular colors are sRGB color, the rest linear data.
+
+`MaterialRecord` (`engine/graphics/MaterialRecord.hpp`, 192 bytes, mirrored in
+`mesh.frag`, `shadow.frag` and `depth_normal.frag`) carries a lobe bit mask;
+`mesh.frag` evaluates and samples a lobe only when its bit is set, so a
+material without extensions pays a few uniform branches. Shading follows the
+glTF specifications and the Khronos sample viewer:
+
+- **ior / specular**: dielectric F0 = min(((ior - 1) / (ior + 1))^2 *
+  specular color, 1); the specular factor scales the dielectric Fresnel term,
+  grazing value included, in direct, image-based and hemisphere lighting. The
+  depth prepass writes the same F0 for screen-space reflections.
+- **sheen**: Charlie distribution with the Estevez-Kulla visibility per light;
+  the layers below are scaled by 1 - max(sheen color) * albedo, where the
+  directional albedo lives in the environment BRDF table's blue channel
+  (`env_brdf_lut.comp`, CPU reference `integrateSheenAlbedo`). Ambient sheen is
+  lit by the cosine-weighted environment (irradiance), not a Charlie-filtered
+  cube.
+- **clearcoat**: a second GGX lobe (ior 1.5) on the coat normal (the coat
+  normal map, or the geometric normal) for every light and for prefiltered
+  image-based reflections; everything below, emission included, is attenuated
+  by 1 - coat * F(n.v).
+- **transmission**: transmissive materials are translucent
+  (`MaterialAsset::translucent()`): they draw with blended surfaces, cast no
+  shadows and stay out of the depth prepass, ambient occlusion and the
+  irradiance baker. On frames that draw one, `TransmissionBackground` ends the
+  scene pass after opaque surfaces, the sky and screen-space reflections,
+  blits the HDR target into a mip-chained copy, and resumes. The surface
+  replaces `transmission` of its diffuse base with that copy, tinted by the
+  base color and reduced by its split-sum reflectance, blurred by
+  roughness * clamp(2 ior - 2, 0, 1) through the mips. Without a volume the
+  surface is thin-walled (straight through); a `KHR_materials_volume`
+  thickness refracts the view ray by the ior and absorbs along it with the
+  Beer-Lambert attenuation. Limitations: thickness is in world units (object
+  scale is ignored), lights behind the surface reach it only through the copy,
+  and transmissive surfaces do not see each other (the copy holds only the
+  opaque scene). An opaque-mode transmissive surface writes alpha 1; with
+  `BLEND` its alpha still composites over the result.
+- The fast lighting variant (`PHYSICALLY_BASED_LIGHTING` off) keeps only
+  transmission, without the reflectance term.
+
+`gpu.transmission_background` times the copy (inside the `gpu.blended` span and
+subtracted from it); the lobes are part of `gpu.opaque` and `gpu.blended`
+shading. `zenith_material_extensions` covers import, defaults, texture usages,
+record packing and the sheen albedo; `tools/showcase/build_materials.py`
+generates the material gallery (`assets/showcase/materials/`).
+
+The 2026-10-02 Release measurement (RTX 2070 SUPER, 1920x1080, project render
+settings with TAA, render mode, 200 warm-up and 600 measured frames, three
+alternating runs, medians) put the gallery in the showcase room at (0, 0, -8.2)
+and viewed it from `0,1.6,-4.5,0,-10`, where its fifteen spheres cover about
+15% of the screen. The baseline is the same gallery with every extension
+stripped:
+
+| Gallery | `gpu.opaque` | `gpu.blended` | `gpu.transmission_background` | `gpu.frame` |
+| --- | ---: | ---: | ---: | ---: |
+| Plain metallic-roughness | 2.863 ms | 0.218 ms | - | 4.870 ms |
+| With extensions | 2.849 ms | 0.292 ms | 0.119 ms | 5.022 ms |
+
+Clearcoat, sheen, specular and ior shading are within run-to-run noise
+(under 0.02 ms) in `gpu.opaque`. The three glass spheres move from opaque to
+blended shading (+0.07 ms with refraction, absorption and mip sampling), and
+the scene copy with its mip chain costs 0.12 ms at this resolution, paid only on
+frames that draw a transmissive surface. The copy holds one RGBA16F image of
+the render target's size with a full mip chain (about 22 MB at 1920x1080).
 
 ## Silent-fallback audit
 

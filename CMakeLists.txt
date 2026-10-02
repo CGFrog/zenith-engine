@@ -320,6 +320,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/ColorGrading.cpp
     src/engine/graphics/SpatialUpscale.cpp
     src/engine/graphics/Particles.cpp
+    src/engine/graphics/MaterialRecord.cpp
     src/engine/graphics/graph/RenderGraph.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
@@ -339,6 +340,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/passes/TemporalResolvePass.cpp
     src/engine/graphics/passes/DepthOfFieldPass.cpp
     src/engine/graphics/passes/SpatialUpscalePass.cpp
+    src/engine/graphics/passes/TransmissionBackground.cpp
     src/engine/graphics/passes/BloomExposurePass.cpp
     src/engine/graphics/passes/ColorGradePass.cpp
     src/engine/graphics/passes/UiPass.cpp
@@ -696,6 +698,17 @@ if(BUILD_TESTING)
         target_compile_options(zenith_showcase_content_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_showcase_content COMMAND zenith_showcase_content_tests)
+
+    add_executable(zenith_material_extension_tests tests/engine/MaterialExtensionTests.cpp)
+    target_compile_definitions(zenith_material_extension_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_material_extension_tests zenith_assets)
+    target_link_libraries(zenith_material_extension_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_material_extension_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_material_extension_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_material_extensions COMMAND zenith_material_extension_tests)
 
     add_executable(zenith_compressed_texture_tests tests/engine/CompressedTextureTests.cpp)
     target_link_libraries(zenith_compressed_texture_tests PRIVATE zenith_engine)

@@ -77,16 +77,32 @@ layout(set = 0, binding = 13) uniform sampler2D screenSpaceOcclusion;
 // Integrated volumetric fog (VolumetricFogPass): rgb in-scattered light, a
 // transmittance from the eye to the end of each froxel slice.
 layout(set = 0, binding = 18) uniform sampler3D volumetricFog;
+// Opaque scene behind transmissive surfaces (TransmissionBackground): render
+// pixel p maps to uv p * camera.fogScreen.xy; mips are box-filtered.
+layout(set = 0, binding = 24) uniform sampler2D transmissionBackground;
 
-// Mirrors MaterialRecord in MeshPass.cpp (std430).
+// Mirrors MaterialRecord in engine/graphics/MaterialRecord.hpp (std430).
 struct MaterialRecord {
     vec4 baseColor;
     vec4 factors;  // metallic, roughness, normal scale, occlusion strength
     vec4 emissive; // rgb radiance; w unused
-    vec4 surface;  // alpha cutoff, alpha mode (0 opaque, 1 mask, 2 blend)
+    vec4 surface;  // alpha cutoff, alpha mode (0 opaque, 1 mask, 2 blend), ior, transmission
     uvec4 textures; // bindless slots: base color, normal, metallic-roughness, occlusion
-    uvec4 extraTextures; // bindless slots: emissive
+    uvec4 extraTextures; // emissive slot, lobe flags (LOBE_*), transmission slot, unused
+    vec4 clearcoat; // factor, perceptual roughness, normal scale, unused
+    vec4 sheen;     // linear rgb color, perceptual roughness
+    vec4 specular;  // linear rgb color, factor
+    vec4 volume;    // attenuation coefficient per world unit (rgb), thickness
+    uvec4 lobeTextures;  // bindless slots: clearcoat, clearcoat roughness, clearcoat normal, sheen color
+    uvec4 layerTextures; // bindless slots: sheen roughness, specular, specular color; w unused
 };
+
+// Mirror the material_lobes bits in MaterialRecord.hpp.
+const uint LOBE_CLEARCOAT = 1u;
+const uint LOBE_SHEEN = 2u;
+const uint LOBE_TRANSMISSION = 4u;
+const uint LOBE_SPECULAR_TEXTURES = 8u;
+const uint LOBE_VOLUME = 16u;
 
 layout(std430, set = 0, binding = 4) readonly buffer Materials {
     MaterialRecord values[];
@@ -351,13 +367,15 @@ float localShadowVisibility(LocalLight light, vec3 position, vec3 geometricNorma
 
 // Reflected fraction of one light's irradiance, excluding radiance and the cosine
 // term. The fast variant is unnormalized Lambert, matching its tuned brightness.
+// specularWeight scales the Fresnel term, grazing value included
+// (KHR_materials_specular); 1 is the plain metallic-roughness model.
 vec3 directResponse(vec3 normal, vec3 viewDirection, vec3 lightDirection, float nDotV, float nDotL, vec3 albedo,
-                    float metallic, float roughness, vec3 reflectance, float viewGeometry) {
+                    float metallic, float roughness, vec3 reflectance, float specularWeight, float viewGeometry) {
     if (!PHYSICALLY_BASED_LIGHTING) {
         return albedo;
     }
     vec3 halfVector = normalize(viewDirection + lightDirection);
-    vec3 fresnel = fresnelSchlick(max(dot(halfVector, viewDirection), 0.0), reflectance);
+    vec3 fresnel = specularWeight * fresnelSchlick(max(dot(halfVector, viewDirection), 0.0), reflectance);
     float distribution = distributionGGX(normal, halfVector, roughness);
     float geometry = viewGeometry * geometrySchlickGGX(nDotL, roughness);
     vec3 specular = distribution * geometry * fresnel / max(4.0 * nDotV * nDotL, 0.0001);
@@ -660,7 +678,7 @@ vec3 applyVolumetricFog(vec3 color) {
 // Occlusion applies to the diffuse term and, as specular occlusion, to the
 // reflection term.
 vec3 hemisphereLighting(vec3 position, vec3 normal, vec3 viewDirection, float nDotV, vec3 albedo, float metallic,
-                        float roughness, vec3 reflectance, float occlusion) {
+                        float roughness, vec3 reflectance, float specularWeight, float occlusion) {
     float hemisphereWeight = normal.y * 0.5 + 0.5;
     vec3 diffuseEnvironment = mix(camera.environmentGround.rgb, camera.environmentSky.rgb, hemisphereWeight);
     vec3 indirect = albedo * indirectDiffuseRadiance(diffuseEnvironment * camera.environmentSky.w, position, normal,
@@ -668,7 +686,7 @@ vec3 hemisphereLighting(vec3 position, vec3 normal, vec3 viewDirection, float nD
     if (!PHYSICALLY_BASED_LIGHTING) {
         return indirect * occlusion;
     }
-    vec3 indirectFresnel = fresnelSchlickRoughness(nDotV, reflectance, roughness);
+    vec3 indirectFresnel = specularWeight * fresnelSchlickRoughness(nDotV, reflectance, roughness);
     vec3 indirectDiffuse = (vec3(1.0) - indirectFresnel) * (1.0 - metallic) * indirect;
     float specularLevel = roughness * 5.0;
     int specularLow = int(floor(specularLevel));
@@ -683,7 +701,8 @@ vec3 hemisphereLighting(vec3 position, vec3 normal, vec3 viewDirection, float nD
 // Split-sum image-based lighting with ambient occlusion applied to the diffuse
 // term and converted to specular occlusion for reflections.
 vec3 imageBasedLighting(vec3 position, vec3 normal, vec3 geometricNormal, vec3 viewDirection, float nDotV,
-                        vec3 albedo, float metallic, float roughness, vec3 reflectance, float occlusion) {
+                        vec3 albedo, float metallic, float roughness, vec3 reflectance, float specularWeight,
+                        float occlusion) {
     ProbeBlend probeBlend = blendReflectionProbes(position);
     // The irradiance volume replaces the probe-blended environment term inside
     // its box and fades back to it across the box edge.
@@ -693,14 +712,15 @@ vec3 imageBasedLighting(vec3 position, vec3 normal, vec3 geometricNormal, vec3 v
     if (!PHYSICALLY_BASED_LIGHTING) {
         return diffuse * occlusion;
     }
-    vec3 diffuseWeight = (vec3(1.0) - fresnelSchlickRoughness(nDotV, reflectance, roughness)) * (1.0 - metallic);
+    vec3 diffuseWeight =
+        (vec3(1.0) - specularWeight * fresnelSchlickRoughness(nDotV, reflectance, roughness)) * (1.0 - metallic);
     vec3 reflected = reflect(-viewDirection, normal);
     vec2 brdf = textureLod(environmentBrdf, vec2(nDotV, roughness), 0.0).rg;
     // A horizon fade removes reflections that a normal map bends below the
     // geometric surface.
     float horizon = min(1.0 + dot(reflected, geometricNormal), 1.0);
     vec3 specular = prefilteredRadiance(worldPosition, reflected, roughness, probeBlend) *
-                    (reflectance * brdf.x + brdf.y) * camera.environmentGround.w * specularOcclusion(nDotV, occlusion, roughness) * horizon * horizon;
+                    (reflectance * brdf.x + brdf.y) * specularWeight * camera.environmentGround.w * specularOcclusion(nDotV, occlusion, roughness) * horizon * horizon;
     return diffuseWeight * diffuse * occlusion + specular;
 }
 
@@ -774,6 +794,238 @@ void applyDecals(vec3 position, vec3 geometricNormal, inout vec3 albedo, inout v
     metallic = clamp(metallic, 0.0, 1.0);
 }
 
+// ---------------------------------------------------------------------------
+// KHR material extensions layered over metallic-roughness, following the glTF
+// specifications and the Khronos sample viewer:
+//   ior, specular: dielectric F0 and specular weight (dielectricSpecular).
+//   transmission (+ volume): the diffuse base is replaced by the opaque scene
+//     behind the surface (transmittedRadiance).
+//   sheen: Charlie lobe over the base, which is scaled by 1 - max(sheen color)
+//     * sheen albedo (environmentBrdf.b).
+//   clearcoat: GGX lobe of a 1.5-ior coat over everything below it, which is
+//     attenuated by the coat's Fresnel at the view angle.
+// Each lobe runs only when its LOBE_* bit is set, a branch uniform per
+// material.
+// ---------------------------------------------------------------------------
+
+// Per-fragment inputs of the optional lobes; values of disabled lobes are
+// neutral (zero coat, black sheen, no transmission).
+struct SurfaceLobes {
+    uint flags;
+    float clearcoat;
+    float clearcoatRoughness;
+    vec3 clearcoatNormal;
+    vec3 sheenColor;
+    float sheenRoughness;
+    // Energy the sheen takes from the layers below it.
+    float sheenAlbedoScaling;
+    // Fraction of the light below the coat that leaves through it.
+    float clearcoatAttenuation;
+    float transmission;
+};
+
+const uint LOBE_LAYERS = LOBE_SHEEN | LOBE_CLEARCOAT;
+
+// Mirror the functions of the same names in env_brdf_lut.comp and
+// EnvironmentLighting.cpp.
+float charlieDistribution(float nDotH, float alpha) {
+    float inverseAlpha = 1.0 / alpha;
+    float sinSquared = max(1.0 - nDotH * nDotH, 0.0);
+    return (2.0 + inverseAlpha) * pow(sinSquared, 0.5 * inverseAlpha) / (2.0 * PI);
+}
+
+float sheenLambdaHelper(float x, float alpha) {
+    float oneMinusAlphaSquared = (1.0 - alpha) * (1.0 - alpha);
+    float a = mix(21.5473, 25.3245, oneMinusAlphaSquared);
+    float b = mix(3.82987, 3.32435, oneMinusAlphaSquared);
+    float c = mix(0.19823, 0.16801, oneMinusAlphaSquared);
+    float d = mix(-1.97760, -1.27393, oneMinusAlphaSquared);
+    float e = mix(-4.32054, -4.85967, oneMinusAlphaSquared);
+    return a / (1.0 + b * pow(x, c)) + d * x + e;
+}
+
+float sheenLambda(float cosine, float alpha) {
+    if (abs(cosine) < 0.5) {
+        return exp(sheenLambdaHelper(cosine, alpha));
+    }
+    return exp(2.0 * sheenLambdaHelper(0.5, alpha) - sheenLambdaHelper(1.0 - cosine, alpha));
+}
+
+float sheenVisibility(float nDotL, float nDotV, float alpha) {
+    float denominator = (1.0 + sheenLambda(nDotV, alpha) + sheenLambda(nDotL, alpha)) * (4.0 * nDotV * nDotL);
+    return clamp(1.0 / max(denominator, 1e-6), 0.0, 1.0);
+}
+
+float sheenAlpha(float sheenRoughness) {
+    return max(sheenRoughness * sheenRoughness, 1e-6);
+}
+
+// KHR_materials_ior and KHR_materials_specular: dielectric reflectance at
+// normal incidence (rgb) and the specular weight (a), which scales the
+// dielectric Fresnel term including its grazing value. ior 1.5 with the
+// default specular gives (0.04, 1), the metallic-roughness model.
+vec4 dielectricSpecular(MaterialRecord material, vec2 uv) {
+    float ior = material.surface.z;
+    float reflectance = (ior - 1.0) / (ior + 1.0);
+    vec3 color = material.specular.rgb;
+    float weight = material.specular.w;
+    if ((material.extraTextures.y & LOBE_SPECULAR_TEXTURES) != 0u) {
+        weight *= sampleMaterialTexture(material.layerTextures.y, uv).a;
+        color *= sampleMaterialTexture(material.layerTextures.z, uv).rgb;
+    }
+    return vec4(min(vec3(reflectance * reflectance) * color, vec3(1.0)), weight);
+}
+
+// tangentFrame maps tangent space to world space around the geometric normal.
+SurfaceLobes surfaceLobes(MaterialRecord material, vec2 uv, mat3 tangentFrame, vec3 viewDirection, float nDotV) {
+    SurfaceLobes lobes;
+    // The fast lighting variant keeps only transmission, so glass stays
+    // see-through; sheen and the coat need the physically based model.
+    const uint fastLobes = LOBE_TRANSMISSION | LOBE_VOLUME;
+    lobes.flags = material.extraTextures.y & (PHYSICALLY_BASED_LIGHTING ? 0xffffffffu : fastLobes);
+    lobes.clearcoat = 0.0;
+    lobes.clearcoatRoughness = 1.0;
+    lobes.clearcoatNormal = tangentFrame[2];
+    lobes.sheenColor = vec3(0.0);
+    lobes.sheenRoughness = 0.0;
+    lobes.sheenAlbedoScaling = 1.0;
+    lobes.clearcoatAttenuation = 1.0;
+    lobes.transmission = 0.0;
+    if ((lobes.flags & LOBE_CLEARCOAT) != 0u) {
+        lobes.clearcoat = material.clearcoat.x * sampleMaterialTexture(material.lobeTextures.x, uv).r;
+        lobes.clearcoatRoughness =
+            clamp(material.clearcoat.y * sampleMaterialTexture(material.lobeTextures.y, uv).g, 0.045, 1.0);
+        // Without a coat normal map the flat fallback leaves the geometric
+        // normal, as the extension specifies.
+        vec2 mappedXY = sampleMaterialTexture(material.lobeTextures.z, uv).xy * 2.0 - 1.0;
+        vec3 mapped = vec3(mappedXY * material.clearcoat.z, sqrt(clamp(1.0 - dot(mappedXY, mappedXY), 0.0, 1.0)));
+        lobes.clearcoatNormal = normalize(tangentFrame * mapped);
+        float coatNDotV = max(dot(lobes.clearcoatNormal, viewDirection), 0.0);
+        lobes.clearcoatAttenuation = 1.0 - lobes.clearcoat * fresnelSchlick(coatNDotV, vec3(0.04)).x;
+    }
+    if ((lobes.flags & LOBE_SHEEN) != 0u) {
+        lobes.sheenColor = material.sheen.rgb * sampleMaterialTexture(material.lobeTextures.w, uv).rgb;
+        lobes.sheenRoughness = material.sheen.w * sampleMaterialTexture(material.layerTextures.x, uv).a;
+        float albedo = textureLod(environmentBrdf, vec2(nDotV, lobes.sheenRoughness), 0.0).b;
+        float strongest = max(lobes.sheenColor.r, max(lobes.sheenColor.g, lobes.sheenColor.b));
+        lobes.sheenAlbedoScaling = 1.0 - strongest * albedo;
+    }
+    if ((lobes.flags & LOBE_TRANSMISSION) != 0u) {
+        lobes.transmission = material.surface.w * sampleMaterialTexture(material.extraTextures.z, uv).r;
+    }
+    return lobes;
+}
+
+// Sheen and clearcoat response to one light, each weighted by its own cosine;
+// the sheen is already attenuated by the coat above it. main() scales the
+// base layer by sheenAlbedoScaling and clearcoatAttenuation.
+vec3 lobeDirectResponse(SurfaceLobes lobes, vec3 normal, vec3 viewDirection, vec3 lightDirection, float nDotV,
+                        float nDotL) {
+    if ((lobes.flags & LOBE_LAYERS) == 0u) {
+        return vec3(0.0);
+    }
+    vec3 response = vec3(0.0);
+    vec3 halfVector = normalize(viewDirection + lightDirection);
+    if ((lobes.flags & LOBE_SHEEN) != 0u && nDotL > 0.0) {
+        float alpha = sheenAlpha(lobes.sheenRoughness);
+        response += lobes.sheenColor * charlieDistribution(max(dot(normal, halfVector), 0.0), alpha) *
+                    sheenVisibility(nDotL, max(nDotV, 1e-4), alpha) * nDotL * lobes.clearcoatAttenuation;
+    }
+    if ((lobes.flags & LOBE_CLEARCOAT) != 0u) {
+        vec3 coatNormal = lobes.clearcoatNormal;
+        float coatNDotL = max(dot(coatNormal, lightDirection), 0.0);
+        if (coatNDotL > 0.0) {
+            float coatNDotV = max(dot(coatNormal, viewDirection), 1e-4);
+            float roughness = lobes.clearcoatRoughness;
+            float fresnel = fresnelSchlick(max(dot(halfVector, viewDirection), 0.0), vec3(0.04)).x;
+            float geometry = geometrySchlickGGX(coatNDotV, roughness) * geometrySchlickGGX(coatNDotL, roughness);
+            response += lobes.clearcoat * fresnel * distributionGGX(coatNormal, halfVector, roughness) * geometry /
+                        max(4.0 * coatNDotV, 0.0001);
+        }
+    }
+    return response;
+}
+
+// Ambient light of the sheen (attenuated by the coat) and clearcoat lobes from
+// the same sources as the base layer: image-based lighting or the hemisphere
+// fallback.
+vec3 lobeIndirectResponse(SurfaceLobes lobes, vec3 position, vec3 normal, vec3 viewDirection, float nDotV,
+                          float occlusion) {
+    if ((lobes.flags & LOBE_LAYERS) == 0u) {
+        return vec3(0.0);
+    }
+    bool imageBased = camera.environmentParams.x > 0.5;
+    ProbeBlend probeBlend;
+    if (imageBased) {
+        probeBlend = blendReflectionProbes(position);
+    }
+    vec3 response = vec3(0.0);
+    if ((lobes.flags & LOBE_SHEEN) != 0u) {
+        // The broad sheen lobe is lit by the cosine-weighted environment, the
+        // radiance a white diffuse surface reflects, scaled by its albedo.
+        vec3 environment = imageBased ? environmentIrradianceAt(normal, probeBlend)
+                                      : mix(camera.environmentGround.rgb, camera.environmentSky.rgb,
+                                            normal.y * 0.5 + 0.5);
+        vec3 white = indirectDiffuseRadiance(environment * camera.environmentSky.w, position, normal, viewDirection);
+        float albedo = textureLod(environmentBrdf, vec2(nDotV, lobes.sheenRoughness), 0.0).b;
+        response += lobes.sheenColor * albedo * white * occlusion * lobes.clearcoatAttenuation;
+    }
+    if ((lobes.flags & LOBE_CLEARCOAT) != 0u) {
+        vec3 coatNormal = lobes.clearcoatNormal;
+        float coatNDotV = max(dot(coatNormal, viewDirection), 1e-4);
+        float roughness = lobes.clearcoatRoughness;
+        vec3 reflected = reflect(-viewDirection, coatNormal);
+        vec3 radiance;
+        float reflectance;
+        if (imageBased) {
+            radiance = prefilteredRadiance(position, reflected, roughness, probeBlend);
+            vec2 brdf = textureLod(environmentBrdf, vec2(coatNDotV, roughness), 0.0).rg;
+            reflectance = 0.04 * brdf.x + brdf.y;
+        } else {
+            float level = roughness * 5.0;
+            int low = int(floor(level));
+            radiance = mix(camera.environmentSpecular[low].rgb, camera.environmentSpecular[min(low + 1, 5)].rgb,
+                           fract(level)) *
+                       mix(1.0, 0.35, roughness);
+            reflectance = fresnelSchlickRoughness(coatNDotV, vec3(0.04), roughness).x;
+        }
+        response += lobes.clearcoat * radiance * reflectance * camera.environmentGround.w *
+                    specularOcclusion(coatNDotV, occlusion, roughness);
+    }
+    return response;
+}
+
+// KHR_materials_transmission: light from the opaque scene behind the surface,
+// tinted by the base color and reduced by what the surface reflects. Thin
+// walled (straight through) unless KHR_materials_volume gives a thickness,
+// which refracts the view ray by the ior and absorbs along it. Roughness blurs
+// through the background's mips. Light sources behind the surface reach it
+// only through the background, not as direct transmission.
+vec3 transmittedRadiance(MaterialRecord material, SurfaceLobes lobes, vec3 normal, vec3 viewDirection, float nDotV,
+                         vec3 albedo, float metallic, float roughness, vec3 reflectance, float specularWeight) {
+    float ior = material.surface.z;
+    vec2 uv = gl_FragCoord.xy * camera.fogScreen.xy;
+    vec3 absorption = vec3(1.0);
+    if ((lobes.flags & LOBE_VOLUME) != 0u) {
+        // Thickness is in world units (object scale is not applied).
+        float thickness = material.volume.w;
+        vec3 refracted = refract(-viewDirection, normal, 1.0 / ior);
+        vec4 exitClip = camera.viewProjection * vec4(worldPosition + refracted * thickness, 1.0);
+        if (exitClip.w > 0.0) {
+            uv = exitClip.xy / exitClip.w * 0.5 + 0.5;
+        }
+        absorption = exp(-material.volume.rgb * thickness);
+    }
+    float lod = log2(float(textureSize(transmissionBackground, 0).x)) * roughness * clamp(ior * 2.0 - 2.0, 0.0, 1.0);
+    vec3 background = textureLod(transmissionBackground, uv, lod).rgb;
+    vec3 reflected = vec3(0.0);
+    if (PHYSICALLY_BASED_LIGHTING) {
+        vec2 brdf = textureLod(environmentBrdf, vec2(nDotV, roughness), 0.0).rg;
+        reflected = specularWeight * (reflectance * brdf.x + brdf.y);
+    }
+    return lobes.transmission * (1.0 - metallic) * (vec3(1.0) - reflected) * albedo * absorption * background;
+}
+
 void main() {
     MaterialRecord material = materials.values[materialIndex];
     vec4 sampledBase = sampleMaterialTexture(material.textures.x, texCoord);
@@ -788,8 +1040,14 @@ void main() {
     float occlusion = mix(1.0, sampleMaterialTexture(material.textures.w, texCoord).r, material.factors.w);
     // Screen-space occlusion describes the opaque depth; blended surfaces in
     // front of it keep only their material occlusion.
-    if (material.surface.y < 1.5) {
+    bool transmissive = (material.extraTextures.y & LOBE_TRANSMISSION) != 0u;
+    if (material.surface.y < 1.5 && !transmissive) {
         occlusion = min(occlusion, screenSpaceAmbientOcclusion());
+    }
+    // Transmissive surfaces show the scene behind through their color, not
+    // their coverage (unless blended as well).
+    if (transmissive && material.surface.y < 1.5) {
+        alpha = 1.0;
     }
 
     vec3 tangent = normalize(worldTangent.xyz);
@@ -797,11 +1055,12 @@ void main() {
     vec3 normal = geometricNormal;
     tangent = normalize(tangent - normal * dot(normal, tangent));
     vec3 bitangent = cross(normal, tangent) * worldTangent.w;
+    mat3 tangentFrame = mat3(tangent, bitangent, geometricNormal);
     // Normal maps may be two-channel (BC5), so Z is rebuilt from unit length.
     vec2 mappedNormalXY = sampleMaterialTexture(material.textures.y, texCoord).xy * 2.0 - 1.0;
     vec3 mappedNormal = vec3(mappedNormalXY, sqrt(clamp(1.0 - dot(mappedNormalXY, mappedNormalXY), 0.0, 1.0)));
     mappedNormal.xy *= material.factors.z;
-    normal = normalize(mat3(tangent, bitangent, normal) * mappedNormal);
+    normal = normalize(tangentFrame * mappedNormal);
     // Decals paint opaque and masked surfaces; blended surfaces keep their own.
     if (material.surface.y < 1.5) {
         applyDecals(worldPosition, geometricNormal, albedo, normal, roughness, metallic);
@@ -811,14 +1070,21 @@ void main() {
     vec3 lightDirection = normalize(camera.lightDirection.xyz);
     float nDotV = max(dot(normal, viewDirection), 0.0);
     float nDotL = max(dot(normal, lightDirection), 0.0);
-    vec3 reflectance = mix(vec3(0.04), albedo, metallic);
+    SurfaceLobes lobes = surfaceLobes(material, texCoord, tangentFrame, viewDirection, nDotV);
+    vec4 dielectric = dielectricSpecular(material, texCoord);
+    vec3 reflectance = mix(dielectric.rgb, albedo, metallic);
+    float specularWeight = mix(dielectric.a, 1.0, metallic);
+    // Transmission replaces part of the diffuse base (transmittedRadiance).
+    vec3 diffuseAlbedo = albedo * (1.0 - lobes.transmission);
     // The view half of the Smith geometry term is shared by every light.
     float viewGeometry = geometrySchlickGGX(nDotV, roughness);
     float shadow = shadowVisibility(worldPosition, geometricNormal, lightDirection);
     vec3 sunRadiance = camera.lightColor.rgb * camera.lightDirection.w;
-    vec3 direct = directResponse(normal, viewDirection, lightDirection, nDotV, nDotL, albedo, metallic, roughness,
-                                 reflectance, viewGeometry) *
+    vec3 direct = directResponse(normal, viewDirection, lightDirection, nDotV, nDotL, diffuseAlbedo, metallic,
+                                 roughness, reflectance, specularWeight, viewGeometry) *
                   sunRadiance * nDotL * shadow;
+    vec3 lobeLight =
+        lobeDirectResponse(lobes, normal, viewDirection, lightDirection, nDotV, nDotL) * sunRadiance * shadow;
     uvec2 clusterLights = camera.clusterGrid.w > 0u ? clusterRanges.values[fragmentCluster()] : uvec2(0u);
     for (uint entry = 0; entry < clusterLights.y; ++entry) {
         LocalLight light = localLights.values[clusterLightIndices.values[clusterLights.x + entry]];
@@ -841,26 +1107,39 @@ void main() {
         }
         attenuation *= localShadowVisibility(light, worldPosition, geometricNormal, localDirection, distanceToLight);
         vec3 localRadiance = light.colorIntensity.rgb * light.colorIntensity.w * attenuation;
-        direct += directResponse(normal, viewDirection, localDirection, nDotV, localNDotL, albedo, metallic,
-                                 roughness, reflectance, viewGeometry) *
+        direct += directResponse(normal, viewDirection, localDirection, nDotV, localNDotL, diffuseAlbedo, metallic,
+                                 roughness, reflectance, specularWeight, viewGeometry) *
                   localRadiance * localNDotL;
+        lobeLight +=
+            lobeDirectResponse(lobes, normal, viewDirection, localDirection, nDotV, localNDotL) * localRadiance;
     }
     vec3 indirect;
     if (camera.environmentParams.x > 0.5) {
-        indirect = imageBasedLighting(worldPosition, normal, geometricNormal, viewDirection, nDotV, albedo, metallic,
-                                      roughness, reflectance, occlusion);
+        indirect = imageBasedLighting(worldPosition, normal, geometricNormal, viewDirection, nDotV, diffuseAlbedo,
+                                      metallic, roughness, reflectance, specularWeight, occlusion);
     } else {
-        indirect = hemisphereLighting(worldPosition, normal, viewDirection, nDotV, albedo, metallic, roughness,
-                                      reflectance, occlusion);
+        indirect = hemisphereLighting(worldPosition, normal, viewDirection, nDotV, diffuseAlbedo, metallic, roughness,
+                                      reflectance, specularWeight, occlusion);
     }
+    lobeLight += lobeIndirectResponse(lobes, worldPosition, normal, viewDirection, nDotV, occlusion);
     vec3 emissive = sampleMaterialTexture(material.extraTextures.x, texCoord).rgb * material.emissive.rgb;
-    vec3 color = direct + indirect + emissive;
+    // Base and emission sit below the sheen, which sits below the coat.
+    float baseScale = lobes.sheenAlbedoScaling * lobes.clearcoatAttenuation;
+    vec3 color = (direct + indirect) * baseScale + emissive * lobes.clearcoatAttenuation + lobeLight;
+    // The background already carries the fog in front of it, so transmitted
+    // light joins after this surface's own fog.
+    vec3 transmitted = vec3(0.0);
+    if ((lobes.flags & LOBE_TRANSMISSION) != 0u) {
+        transmitted = transmittedRadiance(material, lobes, normal, viewDirection, nDotV, albedo, metallic, roughness,
+                                          reflectance, specularWeight) *
+                      baseScale;
+    }
     if (SHADOW_CASCADE_COUNT > 1 && camera.renderingSettings.w > 0.5) {
         const vec3 cascadeColors[3] = vec3[3](vec3(1.0, 0.35, 0.35), vec3(0.35, 1.0, 0.35),
                                               vec3(0.35, 0.55, 1.0));
         color = mix(color, color * cascadeColors[shadowCascade(worldPosition)], 0.45);
     }
-    outColor = vec4(applyVolumetricFog(color), alpha);
+    outColor = vec4(applyVolumetricFog(color) + transmitted, alpha);
     // Jitter moved each projected point by -jitter in NDC; adding it back gives
     // unjittered positions, so a static scene has zero motion (mirrored by
     // unjitteredMotionUv in TemporalQuality.cpp).

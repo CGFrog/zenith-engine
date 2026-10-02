@@ -189,6 +189,7 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
     sample("gpu.particle_simulate", s.gpuParticleSimulationMilliseconds, "ms",
            budgets.particleSimulation.gpuMilliseconds);
     sample("gpu.particle_draw", s.gpuParticleDrawMilliseconds, "ms", budgets.particleDraw.gpuMilliseconds);
+    sample("gpu.transmission_background", s.gpuTransmissionBackgroundMilliseconds);
     sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
     sample("gpu.fsr_easu", s.gpuFsrEasuMilliseconds);

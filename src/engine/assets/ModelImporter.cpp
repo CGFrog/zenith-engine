@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
+#include <limits>
 #include <memory>
 
 namespace {
@@ -177,6 +178,22 @@ std::vector<ImageUsage> imageUsages(const cgltf_data& data) {
         reference(material.emissive_texture, colorBit);
         reference(material.normal_texture, normalBit);
         reference(material.occlusion_texture, dataBit);
+        if (material.has_clearcoat) {
+            reference(material.clearcoat.clearcoat_texture, dataBit);
+            reference(material.clearcoat.clearcoat_roughness_texture, dataBit);
+            reference(material.clearcoat.clearcoat_normal_texture, normalBit);
+        }
+        if (material.has_sheen) {
+            reference(material.sheen.sheen_color_texture, colorBit);
+            reference(material.sheen.sheen_roughness_texture, dataBit);
+        }
+        if (material.has_specular) {
+            reference(material.specular.specular_texture, dataBit);
+            reference(material.specular.specular_color_texture, colorBit);
+        }
+        if (material.has_transmission) {
+            reference(material.transmission.transmission_texture, dataBit);
+        }
     }
     std::vector<ImageUsage> usages(data.images_count);
     for (size_t index = 0; index < references.size(); ++index) {
@@ -219,6 +236,55 @@ TextureHandle textureHandle(const cgltf_texture_view& view, const cgltf_data& da
     }
     const cgltf_size index = static_cast<cgltf_size>(view.texture->image - data.images);
     return index < images.size() ? images[index] : TextureHandle{};
+}
+
+// Reads the KHR material extensions layered over metallic-roughness; absent
+// extensions keep MaterialAsset's defaults, which leave shading unchanged.
+void importMaterialExtensions(const cgltf_material& source, const cgltf_data& data,
+                              const std::vector<TextureHandle>& images, MaterialAsset& material) {
+    if (source.has_ior) {
+        material.ior = source.ior.ior;
+    }
+    if (source.has_clearcoat) {
+        const cgltf_clearcoat& clearcoat = source.clearcoat;
+        material.clearcoat.factor = clearcoat.clearcoat_factor;
+        material.clearcoat.roughness = clearcoat.clearcoat_roughness_factor;
+        material.clearcoat.normalScale = clearcoat.clearcoat_normal_texture.scale;
+        material.clearcoat.texture = textureHandle(clearcoat.clearcoat_texture, data, images);
+        material.clearcoat.roughnessTexture = textureHandle(clearcoat.clearcoat_roughness_texture, data, images);
+        material.clearcoat.normalTexture = textureHandle(clearcoat.clearcoat_normal_texture, data, images);
+    }
+    if (source.has_sheen) {
+        const cgltf_sheen& sheen = source.sheen;
+        material.sheen.color = {sheen.sheen_color_factor[0], sheen.sheen_color_factor[1], sheen.sheen_color_factor[2]};
+        material.sheen.roughness = sheen.sheen_roughness_factor;
+        material.sheen.colorTexture = textureHandle(sheen.sheen_color_texture, data, images);
+        material.sheen.roughnessTexture = textureHandle(sheen.sheen_roughness_texture, data, images);
+    }
+    if (source.has_specular) {
+        const cgltf_specular& specular = source.specular;
+        material.specular.factor = specular.specular_factor;
+        material.specular.color = {specular.specular_color_factor[0], specular.specular_color_factor[1],
+                                   specular.specular_color_factor[2]};
+        material.specular.texture = textureHandle(specular.specular_texture, data, images);
+        material.specular.colorTexture = textureHandle(specular.specular_color_texture, data, images);
+    }
+    if (source.has_transmission) {
+        material.transmission.factor = source.transmission.transmission_factor;
+        material.transmission.texture = textureHandle(source.transmission.transmission_texture, data, images);
+    }
+    if (source.has_volume) {
+        const cgltf_volume& volume = source.volume;
+        material.transmission.thickness = volume.thickness_factor;
+        material.transmission.attenuationColor = {volume.attenuation_color[0], volume.attenuation_color[1],
+                                                  volume.attenuation_color[2]};
+        // cgltf reports a missing distance as the largest float; zero is
+        // invalid glTF. Both mean a medium that does not absorb.
+        const bool absorbs =
+            volume.attenuation_distance > 0.0f && volume.attenuation_distance < std::numeric_limits<float>::max();
+        material.transmission.attenuationDistance =
+            absorbs ? volume.attenuation_distance : std::numeric_limits<float>::infinity();
+    }
 }
 } // namespace
 
@@ -317,6 +383,7 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
                                                                            : MaterialAlphaMode::Opaque;
         material.alphaCutoff = source.alpha_cutoff;
         material.doubleSided = source.double_sided != 0;
+        importMaterialExtensions(source, *data, images, material);
 
         materials[i] = m_assets.addMaterial(material);
     }

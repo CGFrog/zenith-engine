@@ -93,6 +93,36 @@ float smithGeometryIbl(float nDotV, float nDotL, float roughness) {
     const float k = roughness * roughness * 0.5f;
     return nDotV / (nDotV * (1.0f - k) + k) * (nDotL / (nDotL * (1.0f - k) + k));
 }
+
+// Charlie sheen distribution (Estevez and Kulla 2017); alpha = roughness^2.
+float charlieDistribution(float nDotH, float alpha) {
+    const float inverseAlpha = 1.0f / alpha;
+    const float sinSquared = std::max(1.0f - nDotH * nDotH, 0.0f);
+    return (2.0f + inverseAlpha) * std::pow(sinSquared, 0.5f * inverseAlpha) / (2.0f * pi);
+}
+
+// Fitted Charlie shadowing exponent, as in the Khronos glTF sample viewer.
+float sheenLambdaHelper(float x, float alpha) {
+    const float oneMinusAlphaSquared = (1.0f - alpha) * (1.0f - alpha);
+    const float a = glm::mix(21.5473f, 25.3245f, oneMinusAlphaSquared);
+    const float b = glm::mix(3.82987f, 3.32435f, oneMinusAlphaSquared);
+    const float c = glm::mix(0.19823f, 0.16801f, oneMinusAlphaSquared);
+    const float d = glm::mix(-1.97760f, -1.27393f, oneMinusAlphaSquared);
+    const float e = glm::mix(-4.32054f, -4.85967f, oneMinusAlphaSquared);
+    return a / (1.0f + b * std::pow(x, c)) + d * x + e;
+}
+
+float sheenLambda(float cosine, float alpha) {
+    if (std::abs(cosine) < 0.5f) {
+        return std::exp(sheenLambdaHelper(cosine, alpha));
+    }
+    return std::exp(2.0f * sheenLambdaHelper(0.5f, alpha) - sheenLambdaHelper(1.0f - cosine, alpha));
+}
+
+float sheenVisibility(float nDotL, float nDotV, float alpha) {
+    const float denominator = (1.0f + sheenLambda(nDotV, alpha) + sheenLambda(nDotL, alpha)) * (4.0f * nDotV * nDotL);
+    return std::clamp(1.0f / std::max(denominator, 1e-6f), 0.0f, 1.0f);
+}
 } // namespace
 
 const PrefilteredEnvironment& EnvironmentLightingCache::preprocess(const TextureAsset& texture,
@@ -265,6 +295,28 @@ glm::vec2 integrateEnvironmentBrdf(float nDotV, float roughness, uint32_t sample
         result += glm::vec2((1.0f - fresnel) * visibility, fresnel * visibility);
     }
     return result / static_cast<float>(sampleCount);
+}
+
+float integrateSheenAlbedo(float nDotV, float roughness) {
+    nDotV = std::clamp(nDotV, 1e-4f, 1.0f);
+    const float alpha = std::max(roughness * roughness, 1e-6f);
+    const glm::vec3 view(std::sqrt(1.0f - nDotV * nDotV), 0.0f, nDotV);
+    // Midpoints of a grid uniform in solid angle (cos theta, phi): the lobe is
+    // broad, so a fixed grid converges without importance sampling.
+    float sum = 0.0f;
+    for (uint32_t row = 0; row < sheenAlbedoCosineSteps; ++row) {
+        const float nDotL = (static_cast<float>(row) + 0.5f) / static_cast<float>(sheenAlbedoCosineSteps);
+        const float sinTheta = std::sqrt(1.0f - nDotL * nDotL);
+        for (uint32_t column = 0; column < sheenAlbedoAzimuthSteps; ++column) {
+            const float phi =
+                2.0f * pi * (static_cast<float>(column) + 0.5f) / static_cast<float>(sheenAlbedoAzimuthSteps);
+            const glm::vec3 light(std::cos(phi) * sinTheta, std::sin(phi) * sinTheta, nDotL);
+            const glm::vec3 halfVector = glm::normalize(view + light);
+            sum += charlieDistribution(halfVector.z, alpha) * sheenVisibility(nDotL, nDotV, alpha) * nDotL;
+        }
+    }
+    // Each grid cell covers 2 pi / cell count steradians.
+    return sum * 2.0f * pi / static_cast<float>(sheenAlbedoCosineSteps * sheenAlbedoAzimuthSteps);
 }
 
 float prefilteredMipRoughness(uint32_t mip, uint32_t mipCount) {

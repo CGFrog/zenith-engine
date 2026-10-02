@@ -160,6 +160,60 @@ enum class MaterialAlphaMode : uint8_t {
     Blend,
 };
 
+// KHR_materials_clearcoat: a clear dielectric coat (index of refraction 1.5)
+// layered over the base material. A zero factor disables the layer.
+struct MaterialClearcoat {
+    float factor{0.0f};
+    // Perceptual roughness of the coat.
+    float roughness{0.0f};
+    float normalScale{1.0f};
+    // Red channel scales the factor.
+    TextureHandle texture{};
+    // Green channel scales the roughness.
+    TextureHandle roughnessTexture{};
+    // Tangent-space normal of the coat; without one the coat follows the
+    // geometric normal rather than the base normal map.
+    TextureHandle normalTexture{};
+};
+
+// KHR_materials_sheen: a retro-reflective fabric lobe (Charlie distribution)
+// over the base. A black color disables the lobe.
+struct MaterialSheen {
+    glm::vec3 color{0.0f};
+    float roughness{0.0f};
+    // Color in rgb (sRGB encoded).
+    TextureHandle colorTexture{};
+    // Alpha channel scales the roughness.
+    TextureHandle roughnessTexture{};
+};
+
+// KHR_materials_specular: strength and tint of the dielectric reflection.
+// The defaults leave the metallic-roughness model unchanged.
+struct MaterialSpecular {
+    float factor{1.0f};
+    // Linear tint of the dielectric reflectance at normal incidence.
+    glm::vec3 color{1.0f};
+    // Alpha channel scales the factor.
+    TextureHandle texture{};
+    // Color in rgb (sRGB encoded).
+    TextureHandle colorTexture{};
+};
+
+// KHR_materials_transmission with the optional KHR_materials_volume. A zero
+// factor disables transmission; a zero thickness keeps the surface thin-walled.
+struct MaterialTransmission {
+    // Fraction of the diffuse base replaced by light passing through.
+    float factor{0.0f};
+    // Red channel scales the factor.
+    TextureHandle texture{};
+    // Volume thickness in world units (the asset's mesh units, unscaled).
+    float thickness{0.0f};
+    // Linear color white light reaches after attenuationDistance in the medium.
+    glm::vec3 attenuationColor{1.0f};
+    // World units; infinity means the medium does not absorb.
+    float attenuationDistance{std::numeric_limits<float>::infinity()};
+};
+
 struct MaterialAsset {
     glm::vec4 baseColor{1.0f};
     glm::vec3 emissive{0.0f};
@@ -176,6 +230,28 @@ struct MaterialAsset {
     MaterialAlphaMode alphaMode{MaterialAlphaMode::Opaque};
     float alphaCutoff{0.5f};
     bool doubleSided{false};
+    // KHR_materials_ior: index of refraction of dielectric parts; 1.5 gives the
+    // metallic-roughness model's 4% reflectance.
+    float ior{1.5f};
+    MaterialClearcoat clearcoat{};
+    MaterialSheen sheen{};
+    MaterialSpecular specular{};
+    MaterialTransmission transmission{};
+
+    // True when the surface reveals what is behind it, so renderers draw it
+    // after opaque geometry: alpha blending or transmission.
+    bool translucent() const {
+        return alphaMode == MaterialAlphaMode::Blend || transmission.factor > 0.0f;
+    }
+
+    // Every texture slot, absent ones included as empty handles; leases and
+    // renderer uploads cover exactly this set.
+    std::array<TextureHandle, 13> textures() const {
+        return {baseColorTexture,    normalTexture,          metallicRoughnessTexture,   occlusionTexture,
+                emissiveTexture,     clearcoat.texture,      clearcoat.roughnessTexture, clearcoat.normalTexture,
+                sheen.colorTexture,  sheen.roughnessTexture, specular.texture,           specular.colorTexture,
+                transmission.texture};
+    }
 };
 
 // One level of detail of a primitive: an index range into MeshAsset::indices
