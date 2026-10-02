@@ -6,7 +6,7 @@
 uint64_t EditorDiagnostics::add(EditorDiagnosticSeverity severity, std::string source, std::string message,
                                 std::string action) {
     const uint64_t id = m_nextId++;
-    m_entries.push_back({id, severity, std::move(source), std::move(message), std::move(action)});
+    m_entries.push_back({id, severity, std::move(source), std::move(message), std::move(action), std::nullopt});
     return id;
 }
 
@@ -22,6 +22,15 @@ bool EditorDiagnostics::hasUnacknowledgedError() const {
 
 void EditorDiagnostics::acknowledgeErrors() {
     m_unacknowledgedError = false;
+}
+
+void EditorDiagnostics::replaceSource(std::string_view source, std::vector<EditorDiagnostic> replacements) {
+    std::erase_if(m_entries, [source](const EditorDiagnostic& entry) { return entry.source == source; });
+    for (EditorDiagnostic& replacement : replacements) {
+        replacement.id = m_nextId++;
+        replacement.source = std::string(source);
+        m_entries.push_back(std::move(replacement));
+    }
 }
 
 void EditorDiagnostics::dismiss(uint64_t id) {

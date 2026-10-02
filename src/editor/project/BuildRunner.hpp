@@ -1,0 +1,76 @@
+#pragma once
+
+#include "editor/project/CompilerOutputParser.hpp"
+#include "engine/platform/ChildProcess.hpp"
+
+#include <cstddef>
+#include <deque>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <vector>
+
+struct BuildRequest {
+    // Run by the platform shell, so it may chain commands.
+    std::string command;
+    // Empty runs in the editor's working directory. Relative diagnostic paths
+    // are resolved against this directory.
+    std::filesystem::path workingDirectory;
+};
+
+enum class BuildState : uint8_t {
+    Idle,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled
+};
+
+struct BuildOutputLine {
+    std::string text;
+    // Set when the line is a compiler diagnostic, for highlighting.
+    std::optional<CompilerDiagnosticSeverity> severity;
+    // The diagnostic's location, made absolute, when it has one.
+    std::optional<EditorSourceLocation> location;
+};
+
+struct BuildPollResult {
+    size_t newLines{0};
+    // True on the one poll that observes the build ending.
+    bool finished{false};
+};
+
+// Runs one build command at a time without blocking its caller, keeping the
+// output log and the diagnostics parsed from it. All members are called from
+// the owning (UI) thread; ChildProcess does the background reading.
+class BuildRunner {
+  public:
+    // The log keeps the most recent lines only; diagnostics are kept for the
+    // whole build.
+    static constexpr size_t maximumOutputLines = 20000;
+
+    ChildProcessResult start(const BuildRequest& request);
+    // Moves newly read output into the log and parses it.
+    BuildPollResult poll();
+    void cancel();
+
+    BuildState state() const;
+    bool running() const;
+    std::optional<int> exitCode() const;
+    const std::deque<BuildOutputLine>& output() const;
+    // Diagnostics so far, with relative paths made absolute.
+    std::vector<CompilerDiagnostic> diagnostics() const;
+    const std::string& command() const;
+
+  private:
+    void appendLine(std::string text);
+    EditorSourceLocation resolve(EditorSourceLocation location) const;
+
+    ChildProcess m_process;
+    CompilerOutputParser m_parser;
+    std::deque<BuildOutputLine> m_output;
+    std::string m_command;
+    std::filesystem::path m_workingDirectory;
+    BuildState m_state{BuildState::Idle};
+    std::optional<int> m_exitCode;
+};

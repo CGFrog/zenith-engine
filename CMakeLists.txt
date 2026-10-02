@@ -364,6 +364,7 @@ add_library(zenith_engine STATIC
     src/engine/jobs/JobSystem.cpp
     src/engine/jobs/FrameTaskGraph.cpp
     src/engine/physics/PhysicsWorld.cpp
+    src/engine/platform/ChildProcess.cpp
     src/engine/platform/PlatformServices.cpp
     src/engine/project/ProjectConfig.cpp
     src/engine/reflection/FieldJson.cpp
@@ -435,6 +436,7 @@ add_library(zenith_editor_app STATIC
     src/editor/interaction/ReflectedFieldEditor.cpp
     src/editor/interaction/Selection.cpp
     src/editor/panels/AssetBrowserPanel.cpp
+    src/editor/panels/BuildPanel.cpp
     src/editor/panels/DiagnosticsPanel.cpp
     src/editor/panels/EditorContext.cpp
     src/editor/panels/GraphicsPanel.cpp
@@ -443,7 +445,10 @@ add_library(zenith_editor_app STATIC
     src/editor/panels/RenderStatisticsPanel.cpp
     src/editor/panels/ViewportPanel.cpp
     src/editor/project/AssetCatalog.cpp
+    src/editor/project/BuildRunner.cpp
+    src/editor/project/CompilerOutputParser.cpp
     src/editor/project/DerivedAssetInspector.cpp
+    src/editor/project/ExternalEditor.cpp
     src/editor/project/IrradianceVolumeBaker.cpp
     src/editor/project/ReflectionProbeBaker.cpp
     src/editor/project/ThumbnailCache.cpp
@@ -1177,6 +1182,26 @@ if(BUILD_TESTING)
         target_compile_options(zenith_reflected_field_editor_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_reflected_field_editor COMMAND zenith_reflected_field_editor_tests)
+
+    add_executable(zenith_child_process_tests tests/engine/ChildProcessTests.cpp)
+    target_link_libraries(zenith_child_process_tests PRIVATE zenith_engine)
+    target_compile_definitions(zenith_child_process_tests PRIVATE ZENITH_TEST_CMAKE="${CMAKE_COMMAND}")
+    if(MSVC)
+        target_compile_options(zenith_child_process_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_child_process_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_child_process COMMAND zenith_child_process_tests)
+
+    add_executable(zenith_build_workflow_tests tests/editor/BuildWorkflowTests.cpp)
+    target_link_libraries(zenith_build_workflow_tests PRIVATE zenith_editor_app)
+    target_compile_definitions(zenith_build_workflow_tests PRIVATE ZENITH_TEST_CMAKE="${CMAKE_COMMAND}")
+    if(MSVC)
+        target_compile_options(zenith_build_workflow_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_build_workflow_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_build_workflow COMMAND zenith_build_workflow_tests)
 
     add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
     set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES

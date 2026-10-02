@@ -2,7 +2,9 @@
 
 #include <charconv>
 #include <fstream>
+#include <initializer_list>
 #include <string_view>
+#include <utility>
 
 namespace {
 bool parseBoolean(std::string_view value, bool& destination) {
@@ -31,6 +33,7 @@ EditorSettingsResult EditorSettings::load() {
     }
 
     EditorPanelVisibility loaded = m_panels;
+    EditorToolSettings loadedTools = m_tools;
     uint32_t loadedLayoutVersion = m_layoutVersion;
     std::string line;
     size_t lineNumber = 0;
@@ -57,6 +60,19 @@ EditorSettingsResult EditorSettings::load() {
             continue;
         }
 
+        std::string* text = nullptr;
+        if (key == "build.command") {
+            text = &loadedTools.buildCommand;
+        } else if (key == "build.directory") {
+            text = &loadedTools.buildDirectory;
+        } else if (key == "ide.command") {
+            text = &loadedTools.ideCommand;
+        }
+        if (text != nullptr) {
+            text->assign(value);
+            continue;
+        }
+
         bool* destination = nullptr;
         if (key == "panel.viewport") {
             destination = &loaded.viewport;
@@ -72,6 +88,8 @@ EditorSettingsResult EditorSettings::load() {
             destination = &loaded.assetBrowser;
         } else if (key == "panel.graphics") {
             destination = &loaded.graphics;
+        } else if (key == "panel.build") {
+            destination = &loaded.build;
         } else {
             continue;
         }
@@ -85,11 +103,17 @@ EditorSettingsResult EditorSettings::load() {
         return {.error = "Could not read editor settings: " + m_path.string()};
     }
     m_panels = loaded;
+    m_tools = std::move(loadedTools);
     m_layoutVersion = loadedLayoutVersion;
     return {.success = true};
 }
 
 EditorSettingsResult EditorSettings::save() const {
+    for (const std::string* value : {&m_tools.buildCommand, &m_tools.buildDirectory, &m_tools.ideCommand}) {
+        if (value->find_first_of("\r\n") != std::string::npos) {
+            return {.error = "Editor tool settings cannot contain line breaks"};
+        }
+    }
     std::error_code error;
     if (const std::filesystem::path parent = m_path.parent_path(); !parent.empty()) {
         std::filesystem::create_directories(parent, error);
@@ -110,7 +134,11 @@ EditorSettingsResult EditorSettings::save() const {
            << "panel.diagnostics=" << (m_panels.diagnostics ? "true" : "false") << '\n'
            << "panel.render_statistics=" << (m_panels.renderStatistics ? "true" : "false") << '\n'
            << "panel.asset_browser=" << (m_panels.assetBrowser ? "true" : "false") << '\n'
-           << "panel.graphics=" << (m_panels.graphics ? "true" : "false") << '\n';
+           << "panel.graphics=" << (m_panels.graphics ? "true" : "false") << '\n'
+           << "panel.build=" << (m_panels.build ? "true" : "false") << '\n'
+           << "build.command=" << m_tools.buildCommand << '\n'
+           << "build.directory=" << m_tools.buildDirectory << '\n'
+           << "ide.command=" << m_tools.ideCommand << '\n';
     if (!output) {
         return {.error = "Could not finish writing editor settings: " + m_path.string()};
     }
@@ -123,6 +151,14 @@ EditorPanelVisibility& EditorSettings::panels() {
 
 const EditorPanelVisibility& EditorSettings::panels() const {
     return m_panels;
+}
+
+EditorToolSettings& EditorSettings::tools() {
+    return m_tools;
+}
+
+const EditorToolSettings& EditorSettings::tools() const {
+    return m_tools;
 }
 
 uint32_t EditorSettings::layoutVersion() const {

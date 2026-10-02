@@ -65,7 +65,8 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
                 {&m_diagnosticsPanel, &EditorPanelVisibility::diagnostics},
                 {&m_renderStatistics, &EditorPanelVisibility::renderStatistics},
                 {&m_assetBrowser, &EditorPanelVisibility::assetBrowser},
-                {&m_graphics, &EditorPanelVisibility::graphics}}}
+                {&m_graphics, &EditorPanelVisibility::graphics},
+                {&m_buildPanel, &EditorPanelVisibility::build}}}
     , m_sceneRoot(std::move(sceneRoot))
     , m_fontPath(std::move(fontPath))
     , m_initialSceneLoader(std::move(initialSceneLoader))
@@ -277,6 +278,7 @@ void EditorSession::initializeDefaultLayout(uint32_t dockspaceId) {
     ImGui::DockBuilderDockWindow(m_inspector.title(), inspector);
     ImGui::DockBuilderDockWindow(m_graphics.title(), graphics);
     ImGui::DockBuilderDockWindow(m_diagnosticsPanel.title(), bottom);
+    ImGui::DockBuilderDockWindow(m_buildPanel.title(), bottom);
     ImGui::DockBuilderDockWindow(m_renderStatistics.title(), bottom);
     ImGui::DockBuilderFinish(dockspaceId);
 

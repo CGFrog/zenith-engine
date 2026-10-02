@@ -12,6 +12,7 @@ depend on this subtree.
 | `document/` | Scene document state, persistence workflow, and undo/redo history. |
 | `interaction/` | Editor camera, picking, selection, gizmos, and component editing widgets. |
 | `panels/` | One class per dockable window, drawn from an `EditorContext`. |
+| `project/` | Project tooling: asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, and IDE launching. |
 | `settings/` | Persistent editor preferences and panel/layout state. |
 
 ## Local rules
