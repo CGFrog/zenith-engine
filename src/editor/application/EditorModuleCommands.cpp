@@ -36,7 +36,7 @@ void EditorSession::loadGameModule() {
     reportGameModule(m_moduleHost.load(m_gameModulePath, m_document));
 }
 
-void EditorSession::updateGameModule(ApplicationContext& context, float deltaSeconds) {
+void EditorSession::updateGameModule(ApplicationContext& context, const InputState& input, float deltaSeconds) {
     if (!m_moduleHost.sourcePath().empty()) {
         // A successful build reloads a module it rebuilt; the file check
         // also catches builds started outside the editor.
@@ -59,7 +59,8 @@ void EditorSession::updateGameModule(ApplicationContext& context, float deltaSec
     if (m_playMode.mode() == EditorMode::Edit) {
         m_moduleHost.runEditFrame(context.scene, deltaSeconds, context.physics.config().fixedTimeStep);
     } else if (m_playMode.mode() == EditorMode::Play) {
-        m_moduleHost.runSystems(SystemPhase::Update, context.scene, &context, SimulationMode::Play, deltaSeconds);
+        m_moduleHost.runSystems(SystemPhase::Update, context.scene, &context, SimulationMode::Play, deltaSeconds,
+                                &input);
     }
 }
 

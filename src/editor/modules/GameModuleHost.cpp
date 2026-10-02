@@ -251,11 +251,13 @@ void GameModuleHost::releaseEditorExtensions() {
 }
 
 void GameModuleHost::runSystems(SystemPhase phase, Scene& scene, ApplicationContext* application, SimulationMode mode,
-                                float deltaSeconds) {
+                                float deltaSeconds, const InputState* input) {
     if (!m_module) {
         return;
     }
-    m_scheduler.run(phase, {.scene = scene, .application = application, .mode = mode, .deltaSeconds = deltaSeconds});
+    m_scheduler.run(
+        phase,
+        {.scene = scene, .application = application, .mode = mode, .deltaSeconds = deltaSeconds, .input = input});
 }
 
 void GameModuleHost::runEditFrame(Scene& scene, float deltaSeconds, float fixedStepSeconds) {

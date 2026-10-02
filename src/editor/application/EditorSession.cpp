@@ -396,7 +396,7 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
     for (const PanelSlot& slot : m_panels) {
         slot.panel->update(editor, input, deltaSeconds);
     }
-    updateGameModule(context, deltaSeconds);
+    updateGameModule(context, input, deltaSeconds);
 }
 
 void EditorSession::updateSmokeScenario(ApplicationContext& context) {
@@ -495,11 +495,12 @@ void EditorSession::updateAutosave(ApplicationContext& context, float deltaSecon
     }
 }
 
-void EditorSession::fixedUpdate(ApplicationContext& context, const InputState&, float deltaSeconds) {
+void EditorSession::fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) {
     // Fixed updates run only while simulating (including a paused single
     // step); Edit mode keeps its own fixed clock in updateGameModule.
     if (m_playMode.mode() != EditorMode::Edit) {
-        m_moduleHost.runSystems(SystemPhase::FixedUpdate, context.scene, &context, SimulationMode::Play, deltaSeconds);
+        m_moduleHost.runSystems(SystemPhase::FixedUpdate, context.scene, &context, SimulationMode::Play, deltaSeconds,
+                                &input);
     }
 }
 

@@ -98,9 +98,10 @@ class GameModuleHost {
     void unload(Scene& scene, EditorDocument& document);
 
     // Runs the module's systems of phase that run in mode. application is
-    // null in Edit mode.
+    // null in Edit mode; input is the frame's device state in Play mode and
+    // null when systems must not react to input.
     void runSystems(SystemPhase phase, Scene& scene, ApplicationContext* application, SimulationMode mode,
-                    float deltaSeconds);
+                    float deltaSeconds, const InputState* input = nullptr);
     // Edit mode, once per frame: runs Update systems for deltaSeconds, then
     // FixedUpdate systems once per elapsed fixedStepSeconds (the simulation
     // itself does not step in Edit mode, so the host keeps the fixed clock).

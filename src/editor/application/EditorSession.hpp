@@ -116,7 +116,7 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
 
     // Game module hosting.
     void loadGameModule();
-    void updateGameModule(ApplicationContext& context, float deltaSeconds);
+    void updateGameModule(ApplicationContext& context, const InputState& input, float deltaSeconds);
     void reloadGameModule(ApplicationContext& context);
     void reportGameModule(const GameModuleHostResult& result);
     std::string gameModuleStatusText() const;
