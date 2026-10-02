@@ -13,8 +13,14 @@ class EditorDocument;
 // references only, so the session builds one per frame from the objects it
 // owns; every reference must outlive the SceneEditing value.
 //
-// Each edit captures a serialized snapshot before and after the change. A
-// failure is reported to diagnostics and leaves the scene as the failed
+// Each edit captures a serialized snapshot before and after the change, but
+// the snapshots are transient: commit records only the entities whose
+// document form differs (EntityDiffCommand), and undo and redo patch those
+// entities in place. Entities an edit did not touch keep their EnTT handles;
+// created or restored entities get new handles, so callers that hold
+// entities across an edit should keep their stable SceneEntityId instead.
+//
+// A failure is reported to diagnostics and leaves the scene as the failed
 // operation left it, matching the editor's existing command behavior.
 class SceneEditing {
   public:

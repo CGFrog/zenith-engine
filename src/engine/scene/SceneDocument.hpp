@@ -5,8 +5,11 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 class AssetManager;
 class ComponentTypeRegistry;
@@ -41,6 +44,23 @@ class ParsedSceneDocument {
     std::shared_ptr<const Impl> m_impl;
 };
 
+// One entity's document form on each side of an edit: its compact JSON entity
+// object exactly as SceneDocument::serialize writes it (id, name,
+// local_transform, parent, components), or nullopt when the entity does not
+// exist on that side.
+struct SceneEntityChange {
+    SceneEntityId id;
+    std::optional<std::string> before;
+    std::optional<std::string> after;
+};
+
+enum class SceneChangeDirection {
+    // Moves each changed entity to its after state.
+    Forward,
+    // Moves each changed entity back to its before state.
+    Backward,
+};
+
 class SceneDocument {
   public:
     static constexpr uint32_t currentVersion = 1;
@@ -56,4 +76,31 @@ class SceneDocument {
                                     const SceneDocumentOptions& options);
     static SceneDocumentResult load(const std::filesystem::path& path, AssetManager& assets,
                                     const SceneDocumentOptions& options, Scene& destination);
+
+    // Lists, sorted by id, the entities whose document form differs between
+    // two serialized documents. Entities equal on both sides are omitted, so
+    // the result is empty when the documents describe the same scene.
+    static SceneDocumentResult diff(std::string_view before, std::string_view after,
+                                    std::vector<SceneEntityChange>& changes);
+
+    // Patches destination in place so every listed entity matches its state
+    // on the chosen side: absent entities are destroyed, others are created
+    // or rebuilt from their JSON with the same stable id. Unlisted entities
+    // are untouched and keep their EnTT handles, components, and child order.
+    //
+    // A rebuilt entity keeps its EnTT handle, loses every component the
+    // document does not describe (as a full document load would), and keeps
+    // its position among its siblings when its parent is unchanged. An entity
+    // that is created or moves to another parent is inserted before the first
+    // sibling with a larger stable id, which is the order a full document load
+    // produces when siblings are already in id order.
+    //
+    // The patch is atomic: entity JSON, components, parent references,
+    // hierarchy cycles, and children orphaned by a removal are all validated
+    // before the scene changes, and a failure leaves destination untouched.
+    // Removing an entity that does not exist is not an error, so a patch can
+    // be applied to a scene already in the target state.
+    static SceneDocumentResult applyChanges(std::span<const SceneEntityChange> changes, SceneChangeDirection direction,
+                                            AssetManager& assets, const SceneDocumentOptions& options,
+                                            Scene& destination);
 };

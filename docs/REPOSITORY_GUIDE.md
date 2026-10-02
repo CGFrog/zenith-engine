@@ -207,6 +207,10 @@ validation, sanitizing, texture bindings, and schema migrations, and a
 `SceneDocumentOptions::componentTypes` lets a game pass a registry that adds
 its own. `SceneDocument` saves and loads every registered component, and keeps
 components with unknown keys verbatim in `PreservedComponentsComponent`.
+`SceneDocument::diff` lists the entities whose document form differs between
+two serialized documents, and `SceneDocument::applyChanges` patches those
+entities in place toward either side atomically, leaving every other entity,
+its EnTT handle, and its child order untouched.
 `SceneAssetReferences.*` converts project-relative asset references for codecs.
 
 ### `src/engine/scene/Prefab.*`
@@ -295,6 +299,13 @@ engine, while neither the engine nor demo depends on editor code.
 `EditorSession` owns the panels and builds an `EditorContext` each frame: the
 application context, a `SceneEditing` view over the document and history, the
 selection, diagnostics, camera, and the session workflows panels may request.
+
+`SceneEditing` captures transient whole-scene snapshots around an edit but
+records only the entities it added, removed, or changed as an
+`EntityDiffCommand`, so history memory and undo/redo time scale with the edit
+rather than the scene. `CommandHistory::storedBytes` reports what the history
+keeps. Opening or creating a document still replaces the whole scene and
+clears the history.
 
 ### `src/editor/settings/EditorRenderSettings.*`
 

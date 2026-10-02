@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <fstream>
+#include <map>
+#include <optional>
 #include <ranges>
 #include <sstream>
 #include <unordered_map>
@@ -123,6 +125,244 @@ SceneDocumentResult replaceFile(const std::filesystem::path& temporary, const st
 #endif
     return {.success = true};
 }
+
+// The entity objects of a serialized document, keyed by stable id.
+SceneDocumentResult readDocumentEntities(std::string_view input, Json& document,
+                                         std::map<uint64_t, const Json*>& entities) {
+    document = Json::parse(input);
+    if (!document.is_object() || !document.contains("version") || !document.contains("entities") ||
+        !document["entities"].is_array()) {
+        return {.error = "Scene document must contain version and entities fields"};
+    }
+    if (const uint32_t version = document["version"].get<uint32_t>(); version != SceneDocument::currentVersion) {
+        return {.error = "Unsupported scene document version " + std::to_string(version)};
+    }
+    for (const Json& serialized : document["entities"]) {
+        const uint64_t id = serialized.at("id").get<uint64_t>();
+        if (id == 0) {
+            return {.error = "Scene contains invalid entity ID 0"};
+        }
+        if (!entities.emplace(id, &serialized).second) {
+            return {.error = "Duplicate scene entity ID " + std::to_string(id)};
+        }
+    }
+    return {.success = true};
+}
+
+std::optional<std::string> compactEntity(const Json* serialized) {
+    return serialized == nullptr ? std::nullopt : std::optional<std::string>(serialized->dump());
+}
+
+// An entity a patch creates or rebuilds, read and loaded into a staging scene
+// before the destination changes.
+struct StagedEntity {
+    SceneEntityId id;
+    std::string name;
+    glm::mat4 local{1.0f};
+    SceneEntityId parent;
+    Entity staged{entt::null};
+};
+
+SceneDocumentResult stageEntity(SceneEntityId id, const std::string& serialized, AssetManager& assets,
+                                const SceneDocumentOptions& options, Scene& staging, StagedEntity& output) {
+    const Json json = Json::parse(serialized);
+    if (!json.is_object() || json.at("id").get<uint64_t>() != id.value) {
+        return {.error = "Change for entity " + std::to_string(id.value) + " describes a different entity"};
+    }
+    output.id = id;
+    output.name = json.at("name").get<std::string>();
+    if (!readMatrix4(json.at("local_transform"), output.local)) {
+        return {.error = "Entity " + std::to_string(id.value) + " has an invalid local transform"};
+    }
+    const Json& parent = json.at("parent");
+    output.parent = parent.is_null() ? SceneEntityId{} : SceneEntityId{parent.get<uint64_t>()};
+    if (!parent.is_null() && !output.parent) {
+        return {.error = "Entity " + std::to_string(id.value) + " references invalid parent ID 0"};
+    }
+    if (SceneResult result = staging.createEntityWithId(id, output.name, output.staged); !result) {
+        return {.error = result.error};
+    }
+    if (SceneDocumentResult result =
+            deserializeComponents(json.at("components"), output.staged, assets, options, staging);
+        !result) {
+        return {.error = "Entity " + std::to_string(id.value) + ": " + result.error};
+    }
+    return {.success = true};
+}
+
+// What a patch will do, checked against the destination's current hierarchy
+// before anything changes. Upserts are sorted by id.
+struct PatchPlan {
+    std::vector<StagedEntity> upserts;
+    std::unordered_map<uint64_t, size_t> upsertIndices;
+    std::unordered_set<uint64_t> removals;
+    std::unordered_map<uint64_t, Entity> existing;
+};
+
+SceneEntityId currentParent(const Scene& scene, Entity entity) {
+    const Entity parent = scene.registry().get<RelationshipComponent>(entity).parent;
+    return parent == entt::null ? SceneEntityId{} : scene.id(parent);
+}
+
+SceneDocumentResult validateHierarchy(const PatchPlan& plan, const Scene& scene) {
+    const auto survives = [&plan](uint64_t id) {
+        return plan.upsertIndices.contains(id) || (plan.existing.contains(id) && !plan.removals.contains(id));
+    };
+    const auto finalParent = [&](uint64_t id) {
+        if (const auto upsert = plan.upsertIndices.find(id); upsert != plan.upsertIndices.end()) {
+            return plan.upserts[upsert->second].parent.value;
+        }
+        return currentParent(scene, plan.existing.at(id)).value;
+    };
+
+    for (const StagedEntity& upsert : plan.upserts) {
+        if (upsert.parent && !survives(upsert.parent.value)) {
+            return {.error = "Entity " + std::to_string(upsert.id.value) + " references missing parent " +
+                             std::to_string(upsert.parent.value)};
+        }
+    }
+    // Every parent now resolves, so ancestor walks stay inside the planned
+    // scene. Ids already shown to reach a root are not walked again.
+    std::unordered_set<uint64_t> rooted;
+    for (const StagedEntity& upsert : plan.upserts) {
+        std::unordered_set<uint64_t> path{upsert.id.value};
+        for (uint64_t ancestor = upsert.parent.value; ancestor != 0 && !rooted.contains(ancestor);
+             ancestor = finalParent(ancestor)) {
+            if (!path.insert(ancestor).second) {
+                return {.error = "Scene hierarchy contains a cycle at entity " + std::to_string(ancestor)};
+            }
+        }
+        rooted.insert(path.begin(), path.end());
+    }
+
+    for (const uint64_t removed : plan.removals) {
+        const auto found = plan.existing.find(removed);
+        if (found == plan.existing.end()) {
+            continue;
+        }
+        for (const Entity child : scene.registry().get<RelationshipComponent>(found->second).children) {
+            const uint64_t childId = scene.id(child).value;
+            if (!plan.removals.contains(childId) && !plan.upsertIndices.contains(childId)) {
+                return {.error = "Removing entity " + std::to_string(removed) + " would also remove unchanged child " +
+                                 std::to_string(childId)};
+            }
+        }
+    }
+    return {.success = true};
+}
+
+// Removes every component except the stable id, name, transform, and
+// hierarchy, so the entity starts from what a fresh document load creates.
+// Scene-private transform caches are recreated when the transform is marked
+// dirty.
+void stripComponents(Scene& scene, Entity entity) {
+    for (auto&& pool : scene.registry().storage()) {
+        auto& storage = pool.second;
+        const entt::type_info& type = storage.type();
+        if (type == entt::type_id<SceneEntityIdComponent>() || type == entt::type_id<NameComponent>() ||
+            type == entt::type_id<TransformComponent>() || type == entt::type_id<RelationshipComponent>()) {
+            continue;
+        }
+        if (storage.contains(entity)) {
+            storage.remove(entity);
+        }
+    }
+}
+
+// Moves child under parent, or to the root when parent is null, placing it
+// before the first sibling with a larger stable id.
+void attachInIdOrder(Scene& scene, Entity child, Entity parent) {
+    entt::registry& registry = scene.registry();
+    auto& relationship = registry.get<RelationshipComponent>(child);
+    if (relationship.parent != entt::null && registry.valid(relationship.parent)) {
+        std::erase(registry.get<RelationshipComponent>(relationship.parent).children, child);
+    }
+    relationship.parent = parent;
+    if (parent == entt::null) {
+        return;
+    }
+    auto& siblings = registry.get<RelationshipComponent>(parent).children;
+    const uint64_t childId = scene.id(child).value;
+    const auto position =
+        std::ranges::find_if(siblings, [&scene, childId](Entity sibling) { return scene.id(sibling).value > childId; });
+    siblings.insert(position, child);
+}
+
+bool hasPhysics(const Scene& scene, Entity entity) {
+    return scene.registry().any_of<ColliderComponent, RigidBodyComponent>(entity);
+}
+
+void transferComponents(const Scene& staging, Entity source, const ComponentTypeRegistry& types, Scene& scene,
+                        Entity destination) {
+    for (const ComponentType& type : types.types()) {
+        if (const void* component = type.find(staging, source)) {
+            type.addDefault(scene, destination);
+            type.assign(type.find(scene, destination), type.copy(component));
+        }
+    }
+    if (const auto* preserved = staging.registry().try_get<PreservedComponentsComponent>(source)) {
+        scene.registry().emplace<PreservedComponentsComponent>(destination, *preserved);
+    }
+}
+
+// Applies a validated plan. Nothing here can fail: ids, parents, hierarchy,
+// and components were all checked while planning.
+void applyPlan(const PatchPlan& plan, const Scene& staging, const SceneDocumentOptions& options, Scene& scene) {
+    std::unordered_map<uint64_t, Entity> entities = plan.existing;
+    std::vector<bool> hadPhysics(plan.upserts.size(), false);
+    for (size_t index = 0; index < plan.upserts.size(); ++index) {
+        const StagedEntity& upsert = plan.upserts[index];
+        const auto found = entities.find(upsert.id.value);
+        if (found == entities.end()) {
+            Entity created = entt::null;
+            scene.createEntityWithId(upsert.id, upsert.name, created);
+            entities[upsert.id.value] = created;
+            continue;
+        }
+        hadPhysics[index] = hasPhysics(scene, found->second);
+        scene.registry().get<NameComponent>(found->second).name = upsert.name;
+        stripComponents(scene, found->second);
+    }
+
+    // Reparent before removing so a moved child is not destroyed with its old
+    // parent; validation guaranteed every other child is removed too.
+    for (const StagedEntity& upsert : plan.upserts) {
+        const Entity entity = entities.at(upsert.id.value);
+        scene.registry().get<TransformComponent>(entity).local = upsert.local;
+        const Entity parent = upsert.parent ? entities.at(upsert.parent.value) : Entity{entt::null};
+        const bool created = !plan.existing.contains(upsert.id.value);
+        if (created || scene.registry().get<RelationshipComponent>(entity).parent != parent) {
+            attachInIdOrder(scene, entity, parent);
+        }
+    }
+    for (const uint64_t removed : plan.removals) {
+        if (const auto found = plan.existing.find(removed); found != plan.existing.end()) {
+            scene.destroyEntity(found->second);
+        }
+    }
+
+    const ComponentTypeRegistry& types = componentTypesFor(options);
+    for (size_t index = 0; index < plan.upserts.size(); ++index) {
+        const StagedEntity& upsert = plan.upserts[index];
+        const Entity entity = entities.at(upsert.id.value);
+        transferComponents(staging, upsert.staged, types, scene, entity);
+        scene.markTransformDirty(entity);
+        if (hadPhysics[index] || hasPhysics(scene, entity)) {
+            scene.markPhysicsDirty(entity);
+        }
+    }
+    if (!plan.upserts.empty()) {
+        // Revisions are scene-wide counters; one bump invalidates every cache
+        // that might hold a rebuilt entity's previous components.
+        const Entity any = entities.at(plan.upserts.front().id.value);
+        scene.markRenderableDirty(any);
+        scene.markLightDirty(any);
+        scene.markCameraDirty(any);
+        scene.markSkinDirty(any);
+        scene.markMaterialDirty(any);
+    }
+    scene.updateWorldTransforms();
+}
 } // namespace
 
 struct ParsedSceneDocument::Impl {
@@ -220,7 +460,9 @@ SceneDocumentResult SceneDocument::commit(const ParsedSceneDocument& parsed, Ass
 
         Scene loaded;
         std::unordered_map<uint64_t, Entity> entities;
-        std::unordered_map<uint64_t, uint64_t> parents;
+        // Children are attached in document order, which serialize writes
+        // in ascending id order, so a loaded hierarchy lists siblings by id.
+        std::vector<std::pair<uint64_t, uint64_t>> parents;
         for (const Json& serialized : document["entities"]) {
             const SceneEntityId id{serialized.at("id").get<uint64_t>()};
             Entity entity = entt::null;
@@ -234,7 +476,7 @@ SceneDocumentResult SceneDocument::commit(const ParsedSceneDocument& parsed, Ass
             }
             entities.emplace(id.value, entity);
             if (!serialized.at("parent").is_null()) {
-                parents.emplace(id.value, serialized.at("parent").get<uint64_t>());
+                parents.emplace_back(id.value, serialized.at("parent").get<uint64_t>());
             }
         }
 
@@ -303,4 +545,96 @@ SceneDocumentResult SceneDocument::load(const std::filesystem::path& path, Asset
         return {.error = "Could not read scene document: " + path.string()};
     }
     return deserialize(contents.str(), assets, options, destination);
+}
+
+SceneDocumentResult SceneDocument::diff(std::string_view before, std::string_view after,
+                                        std::vector<SceneEntityChange>& changes) {
+    try {
+        Json beforeDocument;
+        Json afterDocument;
+        std::map<uint64_t, const Json*> beforeEntities;
+        std::map<uint64_t, const Json*> afterEntities;
+        if (SceneDocumentResult result = readDocumentEntities(before, beforeDocument, beforeEntities); !result) {
+            return result;
+        }
+        if (SceneDocumentResult result = readDocumentEntities(after, afterDocument, afterEntities); !result) {
+            return result;
+        }
+
+        std::vector<SceneEntityChange> result;
+        auto beforeEntity = beforeEntities.begin();
+        auto afterEntity = afterEntities.begin();
+        // Both maps are ordered by id, so one merge pass visits every id once.
+        while (beforeEntity != beforeEntities.end() || afterEntity != afterEntities.end()) {
+            const bool takeBefore = afterEntity == afterEntities.end() ||
+                                    (beforeEntity != beforeEntities.end() && beforeEntity->first <= afterEntity->first);
+            const bool takeAfter = beforeEntity == beforeEntities.end() ||
+                                   (afterEntity != afterEntities.end() && afterEntity->first <= beforeEntity->first);
+            const uint64_t id = takeBefore ? beforeEntity->first : afterEntity->first;
+            const Json* beforeJson = takeBefore ? beforeEntity->second : nullptr;
+            const Json* afterJson = takeAfter ? afterEntity->second : nullptr;
+            if (beforeJson == nullptr || afterJson == nullptr || *beforeJson != *afterJson) {
+                result.push_back({.id = {id}, .before = compactEntity(beforeJson), .after = compactEntity(afterJson)});
+            }
+            if (takeBefore) {
+                ++beforeEntity;
+            }
+            if (takeAfter) {
+                ++afterEntity;
+            }
+        }
+        changes = std::move(result);
+        return {.success = true};
+    } catch (const nlohmann::json::exception& error) {
+        return {.error = "Invalid scene document: " + std::string(error.what())};
+    }
+}
+
+SceneDocumentResult SceneDocument::applyChanges(std::span<const SceneEntityChange> changes,
+                                                SceneChangeDirection direction, AssetManager& assets,
+                                                const SceneDocumentOptions& options, Scene& destination) {
+    try {
+        PatchPlan plan;
+        Scene staging;
+        std::unordered_set<uint64_t> listed;
+        for (const SceneEntityChange& change : changes) {
+            if (!change.id) {
+                return {.error = "Scene change contains invalid entity ID 0"};
+            }
+            if (!listed.insert(change.id.value).second) {
+                return {.error = "Scene change lists entity " + std::to_string(change.id.value) + " twice"};
+            }
+            const std::optional<std::string>& target =
+                direction == SceneChangeDirection::Forward ? change.after : change.before;
+            if (!target) {
+                plan.removals.insert(change.id.value);
+                continue;
+            }
+            StagedEntity staged;
+            if (SceneDocumentResult result = stageEntity(change.id, *target, assets, options, staging, staged);
+                !result) {
+                return result;
+            }
+            plan.upserts.push_back(std::move(staged));
+        }
+        // Ascending ids make sibling insertion deterministic.
+        std::ranges::sort(plan.upserts, {}, [](const StagedEntity& upsert) { return upsert.id.value; });
+        for (size_t index = 0; index < plan.upserts.size(); ++index) {
+            plan.upsertIndices.emplace(plan.upserts[index].id.value, index);
+        }
+
+        auto view = destination.registry().view<const SceneEntityIdComponent>();
+        for (const Entity entity : view) {
+            plan.existing.emplace(view.get<const SceneEntityIdComponent>(entity).id.value, entity);
+        }
+        if (SceneDocumentResult result = validateHierarchy(plan, destination); !result) {
+            return result;
+        }
+        applyPlan(plan, staging, options, destination);
+        return {.success = true};
+    } catch (const nlohmann::json::exception& error) {
+        return {.error = "Invalid scene change: " + std::string(error.what())};
+    } catch (const std::exception& error) {
+        return {.error = "Could not apply scene change: " + std::string(error.what())};
+    }
 }

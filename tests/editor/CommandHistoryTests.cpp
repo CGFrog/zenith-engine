@@ -5,6 +5,8 @@
 
 #include <filesystem>
 #include <iostream>
+#include <string>
+#include <vector>
 
 namespace {
 int failures = 0;
@@ -110,6 +112,61 @@ void testPrefabAuthoring(const std::filesystem::path& directory) {
     expect(authoring.inspect(*first, inspection).success && inspection.orphaned.size() == 1,
            "inspection should report orphaned overrides separately");
 }
+
+std::vector<SceneEntityChange> diff(const std::string& before, const std::string& after) {
+    std::vector<SceneEntityChange> changes;
+    const SceneDocumentResult result = SceneDocument::diff(before, after, changes);
+    expect(result.success, "documents should diff");
+    return changes;
+}
+
+void testEntityDiffCoalescing(const std::filesystem::path& directory) {
+    SceneDocumentOptions options{.assetRoot = directory};
+    AssetManager assets;
+    Scene scene;
+    scene.createEntity("A");
+    scene.createEntity("B");
+    const std::string start = snapshot(scene, assets, options);
+    scene.registry().get<NameComponent>(scene.findEntity({1})).name = "A1";
+    scene.createEntity("Temporary");
+    const std::string middle = snapshot(scene, assets, options);
+    scene.registry().get<NameComponent>(scene.findEntity({1})).name = "A2";
+    scene.registry().get<NameComponent>(scene.findEntity({2})).name = "B2";
+    scene.destroyEntity(scene.findEntity({3}));
+    const std::string end = snapshot(scene, assets, options);
+
+    SceneDocument::deserialize(start, assets, options, scene);
+    EditorCommandContext context{scene, assets, options};
+    CommandHistory history;
+    expect(history.execute(std::make_unique<EntityDiffCommand>("Drag", diff(start, middle), "drag"), context).success &&
+               snapshot(scene, assets, options) == middle,
+           "an entity diff command should apply its after state");
+    const Entity untouched = scene.findEntity({2});
+    expect(history.execute(std::make_unique<EntityDiffCommand>("Drag", diff(middle, end), "drag"), context).success &&
+               snapshot(scene, assets, options) == end,
+           "a coalescing entity diff command should apply its after state");
+    expect(history.size() == 1, "entity diff commands sharing a key should coalesce");
+    expect(history.storedBytes() > 0, "history should report the memory its commands keep");
+
+    expect(history.undo(context).success && snapshot(scene, assets, options) == start,
+           "undoing a coalesced entity diff should restore the state before the first edit");
+    expect(scene.findEntity({3}) == entt::null && scene.findEntity({2}) == untouched,
+           "an entity created and removed within one coalesced edit should not reappear, and rebuilt entities "
+           "should keep their handles");
+    expect(history.redo(context).success && snapshot(scene, assets, options) == end,
+           "redoing a coalesced entity diff should apply the last edit");
+
+    scene.registry().get<NameComponent>(scene.findEntity({1})).name = "A3";
+    const std::string other = snapshot(scene, assets, options);
+    SceneDocument::deserialize(end, assets, options, scene);
+    expect(
+        history.execute(std::make_unique<EntityDiffCommand>("Rename", diff(end, other), "rename"), context).success &&
+            history.size() == 2,
+        "entity diff commands with different keys should not coalesce");
+    expect(history.execute(std::make_unique<SceneStateCommand>("Rename", other, end, "rename"), context).success &&
+               history.size() == 3,
+           "a snapshot command should not coalesce into an entity diff command");
+}
 } // namespace
 
 int main() {
@@ -172,6 +229,7 @@ int main() {
     history.crossBoundary(CommandHistoryBoundary::NewDocument);
     expect(history.size() == 0 && !history.canUndo() && !history.canRedo() && !history.dirty(),
            "New should start a clean history timeline");
+    testEntityDiffCoalescing(directory);
     testPrefabAuthoring(directory);
     std::filesystem::remove_all(directory, error);
     return failures == 0 ? 0 : 1;

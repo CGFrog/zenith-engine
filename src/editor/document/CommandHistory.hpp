@@ -34,8 +34,14 @@ class EditorCommand {
     virtual EditorCommandResult execute(EditorCommandContext& context) = 0;
     virtual EditorCommandResult undo(EditorCommandContext& context) = 0;
     virtual bool mergeWith(const EditorCommand& newer);
+    // Approximate memory the command keeps to undo and redo itself; zero for
+    // commands that do not report it.
+    virtual size_t storedBytes() const;
 };
 
+// Replaces the whole scene with a serialized document on each side. Simple
+// but costly for large scenes: it stores two full documents and rebuilds
+// every entity, so scene edits are recorded as EntityDiffCommand instead.
 class SceneStateCommand final : public EditorCommand {
   public:
     SceneStateCommand(std::string name, std::string before, std::string after, std::string coalesceKey = {});
@@ -44,11 +50,40 @@ class SceneStateCommand final : public EditorCommand {
     EditorCommandResult execute(EditorCommandContext& context) override;
     EditorCommandResult undo(EditorCommandContext& context) override;
     bool mergeWith(const EditorCommand& newer) override;
+    size_t storedBytes() const override;
 
   private:
     std::string m_name;
     std::string m_before;
     std::string m_after;
+    std::string m_coalesceKey;
+};
+
+// Records an edit as the document form of only the entities it added,
+// removed, or changed (SceneDocument::diff), and undoes or redoes it by
+// patching those entities in place (SceneDocument::applyChanges). Memory and
+// time scale with the size of the edit rather than the scene, and entities
+// the edit did not touch keep their EnTT handles across undo and redo.
+//
+// Commands with the same non-empty coalesce key merge: the merged command
+// keeps each entity's state before the first edit and after the last one,
+// dropping entities that ended where they started.
+class EntityDiffCommand final : public EditorCommand {
+  public:
+    EntityDiffCommand(std::string name, std::vector<SceneEntityChange> changes, std::string coalesceKey = {});
+
+    std::string_view name() const override;
+    EditorCommandResult execute(EditorCommandContext& context) override;
+    EditorCommandResult undo(EditorCommandContext& context) override;
+    bool mergeWith(const EditorCommand& newer) override;
+    size_t storedBytes() const override;
+
+    // Sorted by entity id.
+    const std::vector<SceneEntityChange>& changes() const;
+
+  private:
+    std::string m_name;
+    std::vector<SceneEntityChange> m_changes;
     std::string m_coalesceKey;
 };
 
@@ -78,6 +113,8 @@ class CommandHistory {
     bool canRedo() const;
     bool dirty() const;
     size_t size() const;
+    // Sum of the recorded commands' storedBytes().
+    size_t storedBytes() const;
 
   private:
     void enforceLimit();
