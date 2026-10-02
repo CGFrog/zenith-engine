@@ -24,6 +24,8 @@ class Engine {
     PhysicsWorld& physics();
     AudioSystem& audio();
     RenderRuntime& rendering();
+    // Validation-layer results, including messages emitted during shutdown.
+    GraphicsValidationReport graphicsValidation() const;
 
   private:
     static uint64_t readFrameLimit();
@@ -39,4 +41,5 @@ class Engine {
     AudioSystem m_audio;
     GameUiContext m_gameUi;
     float m_physicsAccumulator{0.0f};
+    GraphicsValidationOptions m_graphicsValidation;
 };

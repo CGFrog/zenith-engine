@@ -76,6 +76,8 @@ class UploadContext {
     VkQueryPool m_timestampQueries{VK_NULL_HANDLE};
     float m_timestampPeriod{0.0f};
     uint32_t m_timestampValidBits{0};
+    // Reset timestamp queries from the host; required on transfer-only queues.
+    bool m_hostQueryReset{false};
     uint64_t m_stagedBytes{0};
     double m_lastGpuMilliseconds{0.0};
     uint64_t m_nextTimelineValue{1};

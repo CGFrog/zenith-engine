@@ -25,12 +25,20 @@ jobs:
         run: cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DZENITH_WINDOWS_INSTALLER=${{ runner.os == 'Windows' }}
       - name: Build
         run: cmake --build build --config Release --parallel 4
+      # Every GPU test carries the vulkan label, including the vulkan;validation
+      # strict matrix, so runners without a GPU only run CPU coverage here.
       - name: Run CPU tests
         run: ctest --test-dir build -C Release --output-on-failure -LE vulkan
       - name: Run bounded Vulkan smoke test
         if: runner.os == 'Windows'
         continue-on-error: true
-        run: ctest --test-dir build -C Release --output-on-failure -L vulkan
+        run: ctest --test-dir build -C Release --output-on-failure -L vulkan -LE validation
+      # Strict validation runs exit 77 (reported as skipped) when the Vulkan
+      # loader or VK_LAYER_KHRONOS_validation is unavailable on the runner.
+      - name: Run strict Vulkan validation smoke matrix
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: ctest --test-dir build -C Release --output-on-failure -L validation
       - name: Package
         run: cmake --build build --config Release --target package --parallel 4
       - name: Verify clean extraction

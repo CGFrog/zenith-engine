@@ -63,6 +63,63 @@ resizes the offscreen viewport twice and exercises Play, Pause, Single Step,
 and Stop. It is labeled `vulkan;smoke` so headless CI can exclude it while a
 Vulkan-capable workstation runs it explicitly.
 
+## Strict Vulkan validation
+
+`VulkanContext` enables `VK_LAYER_KHRONOS_validation` whenever it is
+installed and counts every message the debug messenger receives (through the
+messenger's `pUserData`, never global state). `Engine::graphicsValidation()`
+returns the counts as a `GraphicsValidationReport`, including messages emitted
+while the device and instance are destroyed. Executables print a one-line
+summary on exit when the layer was active.
+
+Setting `ZENITH_VALIDATION_STRICT=1` turns validation into a gate:
+
+- synchronization validation is enabled through `VkValidationFeaturesEXT`;
+- the process exits with code 77 when the Vulkan loader or the validation
+  layer is unavailable (CTest reports the test as skipped);
+- the process exits nonzero if any error, or any warning of the validation or
+  general type, was reported.
+
+Two kinds of message are printed and counted separately but never fail a
+strict run:
+
+- performance warnings (`VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT`):
+  advisory, driver-dependent hints rather than API-usage violations
+  (best-practices validation is not enabled);
+- Vulkan loader diagnostics (message ID `Loader Message`): they describe the
+  machine's layer registry, such as implicit-layer manifests left behind by
+  uninstalled overlays, not the application.
+
+No validation message IDs are filtered. A confirmed layer false positive must
+be filtered by its ID in `VulkanContext::debugCallback` with a comment naming
+the layer issue.
+
+The `vulkan;validation` CTest label runs every combination of
+
+| Axis | Values |
+| --- | --- |
+| Content | demo (`zenith`), showcase (`zenith --project projects/showcase.zenith-project`) |
+| Submission | CPU, `ZENITH_FORCE_GPU_DRIVEN=1` |
+| Quality | project default, `ZENITH_FORCE_HIGH_QUALITY=1` + `ZENITH_FORCE_DYNAMIC_RESOLUTION=1` |
+
+for 120 frames each, plus the scripted editor smoke
+(`zenith_validation_editor`), all with `ZENITH_VALIDATION_STRICT=1`:
+
+```powershell
+ctest --test-dir build -C Debug --output-on-failure -L validation
+```
+
+The first strict run (Vulkan SDK 1.4.363, RTX 2070 SUPER) found and fixed:
+push descriptors, independent blend, and demote-to-helper-invocation used
+without enabling the device features; `vkCmdResetQueryPool` recorded on the
+transfer-only upload queue (upload timestamps now use host query reset); and
+swapchain layout transitions that did not start at the acquire semaphore's
+color-attachment-output wait stage. The whole matrix now reports zero
+validation and synchronization messages at 300 frames.
+
+CI excludes every `vulkan` test from the CPU step and runs the validation
+matrix in a separate, non-blocking Windows step that skips without the layer.
+
 ## Diagnostic environment variables
 
 Every variable is read at runtime; unset means off. Presence is enough for the
@@ -78,6 +135,7 @@ or at the decision point named below, after capability validation.
 | `ZENITH_FORCE_GPU_DRIVEN` | GPU-driven submission (two-phase occlusion culling and indirect draws) when the device supports it. |
 | `ZENITH_DISABLE_DEPTH_PREPASS` | Skips the depth/normal prepass even when `RenderSettings::depthPrepass` is set. |
 | `ZENITH_DISABLE_RENDER_PACKET_CACHE` | Rebuilds render packets every frame (packet-cache baseline). |
+| `ZENITH_VALIDATION_STRICT=1` | Requires the validation layer, enables synchronization validation, and fails the process on any counted validation message (exit 77 when the layer is unavailable). Any value other than empty or `0` enables it. |
 | `ZENITH_SMOKE_FRAMES=N` | Quits after N presented frames; used by bounded smoke runs and CTest. |
 | `ZENITH_EDITOR_SMOKE` | Runs the scripted editor scenario (viewport resizes, play-mode transitions, streamed layer). |
 | `ZENITH_BENCHMARK_FRAMES=N` | Measures N frames and prints the benchmark JSON report to stdout, then quits. |

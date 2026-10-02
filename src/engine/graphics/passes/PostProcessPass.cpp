@@ -530,9 +530,12 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
         .bloomUvScale = bloomSampling.uvScale,
         .bloomUvLimit = bloomSampling.uvLimit,
     };
+    // An undefined output is a freshly acquired swapchain image: the frame
+    // waits on the acquire semaphore at color-attachment output, so the
+    // layout transition must start from that stage to stay ordered after it.
     imageBarrier(commandBuffer, outputImage, VK_IMAGE_ASPECT_COLOR_BIT, outputOldLayout,
                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                 outputOldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT
+                 outputOldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT
                                                               : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                  outputOldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,

@@ -42,7 +42,8 @@ struct RenderGraphShape {
 
 class Renderer {
   public:
-    bool init(const Window& window, RenderRuntime& rendering, FrameTaskExecutor& frameTasks);
+    bool init(const Window& window, RenderRuntime& rendering, FrameTaskExecutor& frameTasks,
+              const GraphicsValidationOptions& validation = {});
     bool drawFrame(const Window& window, Scene& scene, const AssetManager& assets);
     void processUiEvent(const SDL_Event& event);
     void beginUiFrame(const AssetManager& assets);
@@ -51,6 +52,11 @@ class Renderer {
 
     const char* presentModeName() const {
         return m_swapchain.presentModeName();
+    }
+
+    // Validation-layer message counts for this renderer; valid after shutdown.
+    GraphicsValidationReport validationReport() const {
+        return m_context.validationReport();
     }
 
     const std::string& gpuName() const {
@@ -83,7 +89,7 @@ class Renderer {
         Failed
     };
 
-    bool initContext(const Window& window);
+    bool initContext(const Window& window, const GraphicsValidationOptions& validation);
     bool createSwapchainResources(const Window& window);
     void destroySwapchainResources();
     FrameStatus prepareSurface(const Window& window);
