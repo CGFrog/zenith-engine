@@ -336,6 +336,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/resources/ImageReadback.cpp
     src/engine/graphics/resources/ViewportTarget.cpp
     src/engine/graphics/shader/ShaderModule.cpp
+    src/engine/graphics/resources/MipChainBlit.cpp
     src/engine/graphics/surface/Surface.cpp
     src/engine/graphics/swapchain/Swapchain.cpp
     src/engine/graphics/vulkan/VulkanContext.cpp

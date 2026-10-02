@@ -3,6 +3,7 @@
 #include "../IrradianceVolume.hpp"
 #include "../Lighting.hpp"
 #include "../ReflectionProbes.hpp"
+#include "../resources/MipChainBlit.hpp"
 
 #include "engine/assets/CompressedTexture.hpp"
 #include "engine/assets/PackedVertexStreams.hpp"
@@ -1098,8 +1099,7 @@ bool MeshPass::uploadTexture(const TextureAsset& texture, GpuTexture& output) {
         return false;
     }
 
-    const uint32_t mipLevels =
-        1 + static_cast<uint32_t>(std::floor(std::log2(std::max(texture.width, texture.height))));
+    const uint32_t mipLevels = fullMipChainLength(texture.width, texture.height);
     VkImageCreateInfo imageInfo{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
                                 .flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT,
                                 .imageType = VK_IMAGE_TYPE_2D,
@@ -1126,74 +1126,40 @@ bool MeshPass::uploadTexture(const TextureAsset& texture, GpuTexture& output) {
     }
 
     const bool uploaded = m_textureUploadContext.submit([&](VkCommandBuffer command) {
-        const auto transitionMip = [&](uint32_t baseMip, uint32_t levelCount, VkImageLayout oldLayout,
-                                       VkImageLayout newLayout, VkPipelineStageFlags2 sourceStage,
-                                       VkPipelineStageFlags2 destinationStage, VkAccessFlags2 sourceAccess,
-                                       VkAccessFlags2 destinationAccess) {
-            VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                          .srcStageMask = sourceStage,
-                                          .srcAccessMask = sourceAccess,
-                                          .dstStageMask = destinationStage,
-                                          .dstAccessMask = destinationAccess,
-                                          .oldLayout = oldLayout,
-                                          .newLayout = newLayout,
-                                          .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                          .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                          .image = output.image,
-                                          .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                                               .baseMipLevel = baseMip,
-                                                               .levelCount = levelCount,
-                                                               .baseArrayLayer = 0,
-                                                               .layerCount = 1}};
-            VkDependencyInfo dependency{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                        .imageMemoryBarrierCount = 1,
-                                        .pImageMemoryBarriers = &barrier};
-            vkCmdPipelineBarrier2(command, &dependency);
-        };
-        transitionMip(0, mipLevels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                      VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, 0,
-                      VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        const VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                            .srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                                            .srcAccessMask = 0,
+                                            .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                                            .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                                            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                            .image = output.image,
+                                            .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                                 .baseMipLevel = 0,
+                                                                 .levelCount = mipLevels,
+                                                                 .baseArrayLayer = 0,
+                                                                 .layerCount = 1}};
+        const VkDependencyInfo dependency{
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier};
+        vkCmdPipelineBarrier2(command, &dependency);
         VkBufferImageCopy copy{.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                                                     .mipLevel = 0,
                                                     .baseArrayLayer = 0,
                                                     .layerCount = 1},
                                .imageExtent = {.width = texture.width, .height = texture.height, .depth = 1}};
         vkCmdCopyBufferToImage(command, staging, output.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-        int32_t sourceWidth = static_cast<int32_t>(texture.width);
-        int32_t sourceHeight = static_cast<int32_t>(texture.height);
-        for (uint32_t mip = 1; mip < mipLevels; ++mip) {
-            transitionMip(mip - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                          VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                          VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
-            const int32_t destinationWidth = std::max(sourceWidth / 2, 1);
-            const int32_t destinationHeight = std::max(sourceHeight / 2, 1);
-            VkImageBlit blit{.srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                                .mipLevel = mip - 1,
-                                                .baseArrayLayer = 0,
-                                                .layerCount = 1},
-                             .srcOffsets = {{0, 0, 0}, {sourceWidth, sourceHeight, 1}},
-                             .dstSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                                                .mipLevel = mip,
-                                                .baseArrayLayer = 0,
-                                                .layerCount = 1},
-                             .dstOffsets = {{0, 0, 0}, {destinationWidth, destinationHeight, 1}}};
-            vkCmdBlitImage(command, output.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, output.image,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
-            transitionMip(mip - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                          VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                          m_textureUploadContext.usesDedicatedQueue() ? VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT
-                                                                      : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                          VK_ACCESS_2_TRANSFER_READ_BIT,
-                          m_textureUploadContext.usesDedicatedQueue() ? 0 : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-            sourceWidth = destinationWidth;
-            sourceHeight = destinationHeight;
-        }
-        transitionMip(mipLevels - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                      VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                      m_textureUploadContext.usesDedicatedQueue() ? VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT
-                                                                  : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                      VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                      m_textureUploadContext.usesDedicatedQueue() ? 0 : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    // A dedicated transfer queue's consumers wait on the upload timeline
+    // semaphore, so its final barriers only order the transfer work.
+    const MipChainConsumers consumers =
+        m_textureUploadContext.usesDedicatedQueue()
+            ? MipChainConsumers{.stages = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, .access = 0}
+            : MipChainConsumers{.stages = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                .access = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT};
+        recordMipChainBlits(
+            command, {.image = output.image, .width = texture.width, .height = texture.height, .mipCount = mipLevels},
+            consumers);
     });
     if (uploaded) {
         m_uploadGpuMilliseconds += m_textureUploadContext.lastGpuMilliseconds();

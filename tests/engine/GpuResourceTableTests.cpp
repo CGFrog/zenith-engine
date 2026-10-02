@@ -1,5 +1,6 @@
 #include "engine/graphics/resources/BindlessTextureTable.hpp"
 #include "engine/graphics/resources/GeometryArena.hpp"
+#include "engine/graphics/resources/MipChainBlit.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -85,9 +86,43 @@ void testGeometryArenaLayouts() {
     expect(secondSkinned && secondSkinned->page == skinnedMesh->page, "meshes of one layout share its page");
     expect(arena.pageCount() == 2, "no page opens while a page of the right layout has room");
 }
+
+void testMipChainBlitPlan() {
+    expect(fullMipChainLength(256, 64) == 9 && fullMipChainLength(1, 1) == 1 && fullMipChainLength(5, 3) == 3 &&
+               fullMipChainLength(0, 0) == 0,
+           "a full chain halves the largest dimension down to one texel");
+
+    const std::vector<MipBlitStep> steps = planMipChainBlits(256, 64, 9);
+    expect(steps.size() == 8, "every level after the base is filled by one blit");
+    bool chained = true;
+    for (uint32_t index = 0; index < steps.size(); ++index) {
+        chained = chained && steps[index].sourceMip == index;
+        if (index > 0) {
+            chained = chained && steps[index].sourceWidth == steps[index - 1].destinationWidth &&
+                      steps[index].sourceHeight == steps[index - 1].destinationHeight;
+        }
+    }
+    expect(chained, "each blit reads the level the previous blit wrote");
+    expect(steps.front().sourceWidth == 256 && steps.front().sourceHeight == 64 &&
+               steps.front().destinationWidth == 128 && steps.front().destinationHeight == 32,
+           "the first blit halves the base level");
+    expect(steps.back().destinationWidth == 1 && steps.back().destinationHeight == 1, "a full chain ends at one texel");
+    expect(steps[6].sourceHeight == 1 && steps[6].destinationHeight == 1,
+           "a dimension that reached one texel stays at one");
+
+    const std::vector<MipBlitStep> odd = planMipChainBlits(5, 3, 3);
+    expect(odd.size() == 2 && odd[0].destinationWidth == 2 && odd[0].destinationHeight == 1 &&
+               odd[1].destinationWidth == 1,
+           "odd extents round down");
+    expect(planMipChainBlits(64, 64, 3).size() == 2, "a partial chain stops at the requested level count");
+    expect(planMipChainBlits(64, 64, 1).empty() && planMipChainBlits(64, 64, 0).empty(),
+           "a single level needs no blits");
+    expect(planMipChainBlits(4, 4, 10).size() == 2, "requests past the full chain are clamped");
+}
 } // namespace
 
 int main() {
+    testMipChainBlitPlan();
     testBindlessTable();
     testGeometryArena();
     testGeometryArenaLayouts();
