@@ -255,14 +255,18 @@ class MeshPass {
     void beginRendering(VkCommandBuffer commandBuffer, VkImageView colorView, VkImageView motionView,
                         VkImage depthImage, VkImageView depthView, VkExtent2D extent,
                         SceneAttachments attachments) const;
-    void beginDepthPrepass(VkCommandBuffer commandBuffer, VkImageView normalView, VkImage depthImage,
-                           VkImageView depthView, VkExtent2D extent, SceneAttachments attachments) const;
+    // specularView may be VK_NULL_HANDLE, which discards the specular output.
+    void beginDepthPrepass(VkCommandBuffer commandBuffer, VkImageView normalView, VkImageView specularView,
+                           VkImage depthImage, VkImageView depthView, VkExtent2D extent,
+                           SceneAttachments attachments) const;
     void prepareDepthForClear(VkCommandBuffer commandBuffer, VkImage depthImage) const;
     void setSceneViewport(const DrawContext& draw) const;
     // Draws opaque depth and normals, then builds the depth pyramid from it.
     // With GPU-driven submission it also runs the late cull between phases.
-    void recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive, VkImage depthImage, VkImageView depthView,
-                            const glm::mat4& viewProjection, const MeshLodView& lodView);
+    // Specular reflectance is written only when reflections trace screen
+    // space. Fails only if the specular target cannot be allocated.
+    bool recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive, VkImage depthImage, VkImageView depthView,
+                            const glm::mat4& viewProjection, const MeshLodView& lodView, ReflectionQuality reflections);
     void recordDepthNormalItems(const DrawContext& draw);
     // Inside the scene pass, after opaque surfaces and the background: blends
     // screen-space reflections into the HDR target when they are traced,

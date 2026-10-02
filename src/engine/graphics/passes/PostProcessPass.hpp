@@ -18,13 +18,17 @@ class PostProcessPass {
     // Depth prepass output: octahedral view-space normal in rg, roughness in
     // b, coverage in a. SceneNormalEncoding.hpp documents the encoding.
     static constexpr VkFormat normalFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+    // Depth prepass output for screen-space reflections: linear specular
+    // reflectance (F0) in rgb through the sRGB transfer, coverage in a.
+    // SceneSpecularEncoding.hpp documents the encoding.
+    static constexpr VkFormat specularFormat = VK_FORMAT_R8G8B8A8_SRGB;
 
     bool init(const VulkanContext& context, VkFormat outputFormat, VkFormat depthFormat, uint32_t frameCount,
               VkExtent2D extent, VkImageView depthView);
     bool resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
     void prepareScene(VkCommandBuffer commandBuffer, uint32_t frameIndex);
     // Whether recordReflections() traces for this geometry and quality:
-    // reflections need the depth prepass outputs.
+    // reflections need the depth prepass outputs, including specular.
     static bool tracesReflections(const SceneGeometryViews& geometry, ReflectionQuality reflections);
     // Blends screen-space reflections into the frame's HDR target when
     // tracesReflections() holds, between the opaque surfaces (and background)
@@ -48,20 +52,29 @@ class PostProcessPass {
     VkImage motionImage(uint32_t frameIndex) const;
     VkImageView motionView(uint32_t frameIndex) const;
     // Moves the frame's normal target to COLOR_ATTACHMENT_OPTIMAL for the depth
-    // prepass, discarding its previous contents.
+    // prepass, discarding its previous contents. The frame's specular target
+    // is unwritten until prepareSpecular().
     void prepareNormals(VkCommandBuffer commandBuffer, uint32_t frameIndex);
-    // Makes the prepass normals readable (SHADER_READ_ONLY_OPTIMAL) by compute
-    // and fragment shaders.
+    // Allocates the frame's specular target on first use and moves it to
+    // COLOR_ATTACHMENT_OPTIMAL for the depth prepass, discarding its previous
+    // contents. Call after prepareNormals() on frames that trace screen-space
+    // reflections. Fails only if the target cannot be allocated.
+    bool prepareSpecular(VkCommandBuffer commandBuffer, uint32_t frameIndex);
+    // Makes the prepass normals, and the specular target if prepared this
+    // frame, readable (SHADER_READ_ONLY_OPTIMAL) by compute and fragment
+    // shaders.
     void finishNormals(VkCommandBuffer commandBuffer, uint32_t frameIndex);
     VkImageView normalView(uint32_t frameIndex) const;
+    // The specular target if prepareSpecular() ran since the slot's last
+    // prepareNormals(), else VK_NULL_HANDLE.
+    VkImageView specularView(uint32_t frameIndex) const;
 
     uint64_t temporalHistoryBytes() const {
         return m_temporalResolve.historyBytes();
     }
 
-    uint64_t reflectionBytes() const {
-        return m_reflections.targetBytes();
-    }
+    // The reflection target plus every allocated prepass specular target.
+    uint64_t reflectionBytes() const;
 
   private:
     struct Target {
@@ -78,12 +91,20 @@ class PostProcessPass {
         VkImageView normalView{VK_NULL_HANDLE};
         VmaAllocation normalAllocation{VK_NULL_HANDLE};
         bool normalInitialized{false};
+        // Allocated on first use; written only on frames that trace
+        // screen-space reflections.
+        VkImage specularImage{VK_NULL_HANDLE};
+        VkImageView specularView{VK_NULL_HANDLE};
+        VmaAllocation specularAllocation{VK_NULL_HANDLE};
+        bool specularInitialized{false};
+        bool specularWritten{false};
     };
 
     bool createDescriptors(uint32_t frameCount);
     bool createPipeline(VkFormat outputFormat);
     bool createTargets(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
     void destroyTargets(const VulkanContext& context);
+    bool ensureSpecularTarget(Target& target);
     // Runs the temporal resolve when enabled and binds the latest resolved image
     // as the post pass's binding 2. Records timestamps 19 and 20 either way.
     bool resolveTemporal(VkCommandBuffer commandBuffer, uint32_t frameIndex, VkExtent2D internalExtent, bool enabled,

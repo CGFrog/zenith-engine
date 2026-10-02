@@ -709,9 +709,9 @@ bool MeshPass::createPipeline(VkFormat colorFormat, VkFormat depthFormat) {
     m_sceneColorFormat = colorFormat;
     m_sceneDepthFormat = depthFormat;
     const auto createDepthNormal = [&](GraphicsPipeline& pipeline, bool doubleSided) {
-        return pipeline.initDepthNormalPipeline(m_device, PostProcessPass::normalFormat, depthFormat, m_cameraLayout,
-                                                m_bindlessLayout, depthNormalVertex.handle(),
-                                                depthNormalFragment.handle(), m_pipelineCache, doubleSided);
+        return pipeline.initDepthNormalPipeline(
+            m_device, PostProcessPass::normalFormat, PostProcessPass::specularFormat, depthFormat, m_cameraLayout,
+            m_bindlessLayout, depthNormalVertex.handle(), depthNormalFragment.handle(), m_pipelineCache, doubleSided);
     };
     if (!createDepthNormal(m_depthNormalPipeline, false) ||
         !createDepthNormal(m_depthNormalDoubleSidedPipeline, true)) {
@@ -1483,19 +1483,27 @@ void MeshPass::prepareDepthForClear(VkCommandBuffer commandBuffer, VkImage depth
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
 }
 
-void MeshPass::beginDepthPrepass(VkCommandBuffer commandBuffer, VkImageView normalView, VkImage depthImage,
-                                 VkImageView depthView, VkExtent2D extent, SceneAttachments attachments) const {
+void MeshPass::beginDepthPrepass(VkCommandBuffer commandBuffer, VkImageView normalView, VkImageView specularView,
+                                 VkImage depthImage, VkImageView depthView, VkExtent2D extent,
+                                 SceneAttachments attachments) const {
     const bool clear = attachments == SceneAttachments::Clear;
     if (clear) {
         prepareDepthForClear(commandBuffer, depthImage);
     }
     const VkAttachmentLoadOp loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-    const VkRenderingAttachmentInfo normals{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-                                            .imageView = normalView,
-                                            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                            .loadOp = loadOp,
-                                            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-                                            .clearValue = {.color = {.float32 = {0.0f, 0.0f, 0.0f, 0.0f}}}};
+    const VkRenderingAttachmentInfo colors[]{{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                                              .imageView = normalView,
+                                              .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                              .loadOp = loadOp,
+                                              .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                              .clearValue = {.color = {.float32 = {0.0f, 0.0f, 0.0f, 0.0f}}}},
+                                             // A null view discards the shader's specular output.
+                                             {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                                              .imageView = specularView,
+                                              .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                              .loadOp = loadOp,
+                                              .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                              .clearValue = {.color = {.float32 = {0.0f, 0.0f, 0.0f, 0.0f}}}}};
     const VkRenderingAttachmentInfo depth{
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
         .imageView = depthView,
@@ -1506,8 +1514,8 @@ void MeshPass::beginDepthPrepass(VkCommandBuffer commandBuffer, VkImageView norm
     const VkRenderingInfo rendering{.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
                                     .renderArea = {.offset = {0, 0}, .extent = extent},
                                     .layerCount = 1,
-                                    .colorAttachmentCount = 1,
-                                    .pColorAttachments = &normals,
+                                    .colorAttachmentCount = static_cast<uint32_t>(std::size(colors)),
+                                    .pColorAttachments = colors,
                                     .pDepthAttachment = &depth};
     vkCmdBeginRendering(commandBuffer, &rendering);
 }
@@ -2186,7 +2194,10 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const auto opaqueCpuBegin = std::chrono::steady_clock::now();
     if (depthPrepass) {
         passTimestamps.write(FrameTimestamp::depthPrepassBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-        recordDepthPrepass(draw, gpuDrivenActive, depthImage, depthView, cameraData.viewProjection, lodView);
+        if (!recordDepthPrepass(draw, gpuDrivenActive, depthImage, depthView, cameraData.viewProjection, lodView,
+                                rendering.settings().reflections)) {
+            return false;
+        }
     }
     const auto prepassCpuEnd = std::chrono::steady_clock::now();
     m_depthPrepassFrame = depthPrepass ? std::optional<uint32_t>(frameIndex) : std::nullopt;
@@ -2414,14 +2425,22 @@ void MeshPass::recordGpuDrivenGroups(const DrawContext& draw, GpuCullPhase phase
     }
 }
 
-void MeshPass::recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive, VkImage depthImage,
-                                  VkImageView depthView, const glm::mat4& viewProjection, const MeshLodView& lodView) {
+bool MeshPass::recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive, VkImage depthImage,
+                                  VkImageView depthView, const glm::mat4& viewProjection, const MeshLodView& lodView,
+                                  ReflectionQuality reflections) {
     const VkCommandBuffer commandBuffer = draw.commandBuffer;
     const OpaquePipelines depthNormal{
         .singleSided = &m_depthNormalPipeline, .doubleSided = &m_depthNormalDoubleSidedPipeline, .pushesView = true};
     m_postProcess.prepareNormals(commandBuffer, draw.frameIndex);
+    // Only screen-space reflections read specular reflectance.
+    if (reflections != ReflectionQuality::ProbesOnly &&
+        !m_postProcess.prepareSpecular(commandBuffer, draw.frameIndex)) {
+        return false;
+    }
     const VkImageView normalView = m_postProcess.normalView(draw.frameIndex);
-    beginDepthPrepass(commandBuffer, normalView, depthImage, depthView, draw.renderExtent, SceneAttachments::Clear);
+    const VkImageView specularView = m_postProcess.specularView(draw.frameIndex);
+    beginDepthPrepass(commandBuffer, normalView, specularView, depthImage, depthView, draw.renderExtent,
+                      SceneAttachments::Clear);
     setSceneViewport(draw);
     if (gpuDrivenActive) {
         // Two-phase occlusion culling runs here, so the shading pass reuses
@@ -2433,7 +2452,7 @@ void MeshPass::recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive,
         m_gpuDrivenPass.cull(commandBuffer, draw.frameIndex, GpuCullPhase::Late, viewProjection, m_depthPyramid,
                              lodView);
         restoreDepthAfterPyramid(commandBuffer, depthImage);
-        beginDepthPrepass(commandBuffer, normalView, depthImage, depthView, draw.renderExtent,
+        beginDepthPrepass(commandBuffer, normalView, specularView, depthImage, depthView, draw.renderExtent,
                           SceneAttachments::Preserve);
         setSceneViewport(draw);
         recordGpuDrivenGroups(draw, GpuCullPhase::Late, depthNormal);
@@ -2449,6 +2468,7 @@ void MeshPass::recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive,
     m_depthPyramid.build(commandBuffer, draw.renderExtent);
     draw.passTimestamps->write(FrameTimestamp::depthPyramidEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     restoreDepthAfterPyramid(commandBuffer, depthImage);
+    return true;
 }
 
 void MeshPass::recordDepthNormalItems(const DrawContext& draw) {
@@ -2529,6 +2549,7 @@ SceneGeometryViews MeshPass::sceneGeometry(uint32_t frameIndex) const {
         return {};
     }
     return {.normals = m_postProcess.normalView(frameIndex),
+            .specular = m_postProcess.specularView(frameIndex),
             .depthPyramid = m_depthPyramid.view(),
             .depthPyramidSampler = m_depthPyramid.sampler(),
             .depthPyramidLevels = m_depthPyramid.levelCount(),

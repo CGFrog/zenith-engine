@@ -475,6 +475,9 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
         const auto gpuDrivenDraws = graph.importBuffer("GPU-driven draws", {.size = 0, .usage = 1, .alignment = 256});
         const auto normals =
             graph.importImage("scene normals", image(PostProcessPass::normalFormat, 5, 0), VK_IMAGE_LAYOUT_UNDEFINED);
+        // Written by the prepass only on frames that trace screen-space reflections.
+        const auto specular = graph.importImage("scene specular", image(PostProcessPass::specularFormat, 5, 0),
+                                                VK_IMAGE_LAYOUT_UNDEFINED);
         const auto depthPyramid =
             graph.importImage("depth pyramid", image(DepthPyramid::format, 5, 0), VK_IMAGE_LAYOUT_GENERAL);
         const auto hdr = graph.createTransientImage(
@@ -557,6 +560,11 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
                 {meshAssets, RenderGraphAccessMode::Read, geometryStages, geometryAccess, VK_IMAGE_LAYOUT_UNDEFINED}};
             if (shape.gpuDriven) {
                 prepassAccesses.push_back(indirectDrawRead);
+            }
+            if (shape.reflections != ReflectionQuality::ProbesOnly) {
+                prepassAccesses.push_back(
+                    {specular, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
             }
             graph.addPass("depth and normal prepass", RenderGraphQueue::Graphics, prepassAccesses);
             if (shape.gpuDriven) {
@@ -642,6 +650,8 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
                      VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                  VK_IMAGE_LAYOUT_GENERAL},
                 {normals, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {specular, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                 {depthPyramid, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL},

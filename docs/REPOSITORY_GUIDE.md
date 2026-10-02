@@ -595,7 +595,8 @@ face away from the ray, and samples the current frame's lit scene at the hit.
 It writes premultiplied radiance and confidence (screen-edge, reach, and
 iteration-budget fades) at half or full render resolution into one shared
 target. The composite mixes that radiance into the scene in place with a
-dielectric Fresnel weight and a roughness fade, replacing that share of the
+per-channel Fresnel weight from the prepass specular reflectance (F0, so metals
+reflect tinted) and a roughness fade, replacing that share of the
 IBL/probe specular; misses leave the scene unchanged. Without the depth
 prepass, reflections are skipped. `ScreenSpaceReflectionTrace.hpp` is the CPU
 mirror covered by `tests/engine/ScreenSpaceReflectionTests.cpp`.

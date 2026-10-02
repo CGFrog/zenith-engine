@@ -111,13 +111,15 @@ bool ScreenSpaceReflectionPass::init(const VulkanContext& context, VkExtent2D ou
 }
 
 bool ScreenSpaceReflectionPass::createLayout() {
-    // Both shaders share one push-descriptor layout: three sampled inputs and
-    // one storage image. The inputs change per frame slot.
-    std::array<VkDescriptorSetLayoutBinding, 4> bindings{};
+    // Both shaders share one push-descriptor layout: sampled inputs at 0-2,
+    // one storage image at 3, and the prepass specular target at 4, which only
+    // the composite reads. The inputs change per frame slot.
+    constexpr uint32_t storageBinding = 3;
+    std::array<VkDescriptorSetLayoutBinding, 5> bindings{};
     for (uint32_t binding = 0; binding < bindings.size(); ++binding) {
         bindings[binding] = {.binding = binding,
-                             .descriptorType = binding < 3 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                                                           : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                             .descriptorType = binding == storageBinding ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                                                                         : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                              .descriptorCount = 1,
                              .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT};
     }
@@ -291,11 +293,15 @@ void ScreenSpaceReflectionPass::recordComposite(VkCommandBuffer commandBuffer, V
         {.sampler = geometry.depthPyramidSampler,
          .imageView = geometry.depthPyramid,
          .imageLayout = VK_IMAGE_LAYOUT_GENERAL},
-        {.imageView = sceneView, .imageLayout = VK_IMAGE_LAYOUT_GENERAL}};
+        {.imageView = sceneView, .imageLayout = VK_IMAGE_LAYOUT_GENERAL},
+        {.sampler = m_sampler,
+         .imageView = geometry.specular,
+         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
     const VkWriteDescriptorSet writes[]{imageWrite(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &images[0]),
                                         imageWrite(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &images[1]),
                                         imageWrite(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &images[2]),
-                                        imageWrite(3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &images[3])};
+                                        imageWrite(3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &images[3]),
+                                        imageWrite(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &images[4])};
     const screen_space_reflection::PerspectiveTerms terms =
         screen_space_reflection::perspectiveTerms(camera.projection);
     const CompositeConstants constants{

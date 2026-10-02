@@ -23,9 +23,9 @@ struct ScreenSpaceReflectionCamera {
 // shaders/ssr_composite.comp), blended into the lit HDR scene after opaque
 // surfaces and the background and before blended surfaces, so the temporal
 // resolve accumulates them. Pixels without a confident hit keep the scene's
-// IBL and probe specular unchanged. The composite assumes dielectric
-// reflectance (F0 = 0.04) because the prepass stores no specular color, so
-// metals get weak, untinted screen-space reflections over their IBL specular.
+// IBL and probe specular unchanged. The composite weights reflections per
+// channel by Fresnel-Schlick of the prepass specular reflectance (F0), so
+// metals reflect tinted by their base color and dielectrics use F0 = 0.04.
 //
 // The trace reads the depth prepass normals and the depth pyramid
 // (SceneGeometryViews) and samples the current frame's HDR scene at the hit,
@@ -52,8 +52,9 @@ class ScreenSpaceReflectionPass {
     // Traces and composites into sceneView. The scene image must be in
     // GENERAL with its writes visible to compute sampled and storage access;
     // on return the composite's storage writes still need a barrier before
-    // later readers. quality must not be ProbesOnly. Fails only if the target
-    // cannot be allocated.
+    // later readers. quality must not be ProbesOnly and geometry must include
+    // the prepass specular target. Fails only if the target cannot be
+    // allocated.
     bool record(VkCommandBuffer commandBuffer, VkImageView sceneView, const SceneGeometryViews& geometry,
                 ReflectionQuality quality, const ScreenSpaceReflectionCamera& camera);
 
