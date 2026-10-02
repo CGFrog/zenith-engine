@@ -1,10 +1,11 @@
-// Blender object-mode commands: modal G/R/S transforms, selection, add,
-// delete, rename, clear transforms, and viewpoint keys.
+// Blender object-mode operators that need the running editor: modal G/R/S
+// transforms, the Add/Delete/Rename popups, and the viewpoint keys. Operators
+// that only edit the document live in editor/operators/ObjectOperators.
 
 #include "EditorSession.hpp"
 
 #include "editor/application/EntityCommands.hpp"
-#include "editor/document/DefaultScene.hpp"
+#include "editor/operators/ObjectOperators.hpp"
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
@@ -25,6 +26,64 @@ constexpr float halfTurn = glm::pi<float>();
 constexpr const char* addMenuPopup = "ObjectAddMenu";
 constexpr const char* deleteMenuPopup = "ObjectDeleteMenu";
 constexpr const char* renamePopup = "ObjectRename";
+
+enum class ViewAxis : uint8_t {
+    Front,
+    Back,
+    Right,
+    Left,
+    Top,
+    Bottom,
+};
+
+struct ViewAxisProperties {
+    ViewAxis type{ViewAxis::Front};
+};
+
+enum class OrbitDirection : uint8_t {
+    Left,
+    Right,
+    Up,
+    Down,
+};
+
+struct OrbitProperties {
+    OrbitDirection direction{OrbitDirection::Left};
+};
+
+// Yaw and pitch, in radians, of Blender's numpad viewpoints.
+std::pair<float, float> viewAxisAngles(ViewAxis axis) {
+    switch (axis) {
+    case ViewAxis::Front:
+        return {0.0f, 0.0f};
+    case ViewAxis::Back:
+        return {halfTurn, 0.0f};
+    case ViewAxis::Right:
+        return {-quarterTurn, 0.0f};
+    case ViewAxis::Left:
+        return {quarterTurn, 0.0f};
+    case ViewAxis::Top:
+        return {0.0f, -quarterTurn};
+    case ViewAxis::Bottom:
+        return {0.0f, quarterTurn};
+    }
+    return {0.0f, 0.0f};
+}
+
+// Yaw and pitch change of one numpad orbit step.
+glm::vec2 orbitStep(OrbitDirection direction) {
+    switch (direction) {
+    case OrbitDirection::Left:
+        return {orbitStepRadians, 0.0f};
+    case OrbitDirection::Right:
+        return {-orbitStepRadians, 0.0f};
+    case OrbitDirection::Up:
+        return {0.0f, -orbitStepRadians};
+    case OrbitDirection::Down:
+        return {0.0f, orbitStepRadians};
+    }
+    return glm::vec2(0.0f);
+}
 
 ImU32 axisColor(TransformAxis axis) {
     switch (axis) {
@@ -70,136 +129,127 @@ glm::mat3 normalizedAxes(const glm::mat4& world) {
 void EditorSession::handleObjectKeys(ApplicationContext& context, KeymapRegion region) {
     const ImGuiIO& io = ImGui::GetIO();
     if (io.WantTextInput || m_playMode.mode() != EditorMode::Edit || m_activeTransform || m_fileDialog.pending() ||
-        ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
+        m_keymapEditor.capturing() || ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
+        ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
         return;
     }
-    for (const ObjectKeyBinding& binding : objectKeymap()) {
-        if ((binding.regions & static_cast<uint8_t>(region)) != 0 && ImGui::IsKeyChordPressed(binding.chord)) {
-            runObjectCommand(context, binding.command, region);
-            return;
-        }
-    }
+    dispatchKeymap(context, region);
 }
 
-void EditorSession::runObjectCommand(ApplicationContext& context, ObjectCommand command, KeymapRegion region) {
-    switch (command) {
-    case ObjectCommand::Grab:
-        beginModalTransform(context, TransformOperation::Translate, "Move", {}, false);
-        break;
-    case ObjectCommand::Rotate:
-        beginModalTransform(context, TransformOperation::Rotate, "Rotate", {}, false);
-        break;
-    case ObjectCommand::Scale:
-        beginModalTransform(context, TransformOperation::Scale, "Resize", {}, false);
-        break;
-    case ObjectCommand::ClearLocation:
-        clearSelectedTransforms(context, TransformPart::Location);
-        break;
-    case ObjectCommand::ClearRotation:
-        clearSelectedTransforms(context, TransformPart::Rotation);
-        break;
-    case ObjectCommand::ClearScale:
-        clearSelectedTransforms(context, TransformPart::Scale);
-        break;
-    case ObjectCommand::Duplicate: {
-        // In the viewport the duplicate follows the mouse; the copy and its
-        // move form one undo step, and cancelling the move keeps the copy.
-        const SceneEditing sceneEditing = editing(context);
-        if (region != KeymapRegion::Viewport) {
-            EntityCommands::duplicateSelection(sceneEditing, m_selection);
-            break;
-        }
-        std::string before;
-        if (EntityCommands::duplicateSelectionUncommitted(sceneEditing, m_selection, before) &&
-            !beginModalTransform(context, TransformOperation::Translate, "Duplicate Objects", before, true)) {
-            sceneEditing.commit("Duplicate Objects", {}, std::move(before));
-        }
-        break;
-    }
-    case ObjectCommand::DeleteWithConfirmation:
-        m_openDeleteMenu = !m_selection.empty();
-        break;
-    case ObjectCommand::Delete:
-        EntityCommands::deleteSelection(editing(context), m_selection);
-        break;
-    case ObjectCommand::SelectAll: {
-        // Tapping A twice quickly deselects everything.
-        const double now = ImGui::GetTime();
-        if (m_lastSelectAllTime >= 0.0 && now - m_lastSelectAllTime <= ImGui::GetIO().MouseDoubleClickTime) {
-            m_selection.clear();
-            m_lastSelectAllTime = -1.0;
-        } else {
-            m_selection.selectAll(context.scene);
-            m_lastSelectAllTime = now;
-        }
-        break;
-    }
-    case ObjectCommand::DeselectAll:
-        m_selection.clear();
-        break;
-    case ObjectCommand::InvertSelection:
-        m_selection.invert(context.scene);
-        break;
-    case ObjectCommand::AddMenu:
-        m_openAddMenu = true;
-        break;
-    case ObjectCommand::Rename:
-        if (const Entity active = m_selection.empty() ? entt::null : context.scene.findEntity(*m_selection.active());
-            active != entt::null) {
-            m_renameBuffer = context.scene.registry().get<NameComponent>(active).name;
+void EditorSession::registerObjectModeOperators() {
+    const auto canTransform = [this](const OperatorContext& context) {
+        return context.app != nullptr && context.editMode() && !context.selection.empty() && !m_activeTransform;
+    };
+    const auto modalTransform = [this, canTransform](std::string id, std::string label, std::string description,
+                                                     TransformOperation operation, std::string commandName) {
+        return Operator{.id = std::move(id),
+                        .label = std::move(label),
+                        .description = std::move(description),
+                        .poll = canTransform,
+                        .execute = [this, operation, commandName](OperatorContext& context, OperatorProperties&) {
+                            return beginModalTransform(*context.app, operation, commandName, {}, false)
+                                       ? OperatorResult::finished()
+                                       : OperatorResult::cancelled();
+                        }};
+    };
+    registerOperator(modalTransform("transform.translate", "Move", "Move the selection with the mouse",
+                                    TransformOperation::Translate, "Move"));
+    registerOperator(modalTransform("transform.rotate", "Rotate", "Rotate the selection with the mouse",
+                                    TransformOperation::Rotate, "Rotate"));
+    registerOperator(modalTransform("transform.resize", "Scale", "Scale the selection with the mouse",
+                                    TransformOperation::Scale, "Resize"));
+    // The copy follows the mouse; the copy and its move form one undo step,
+    // and cancelling the move keeps the copy.
+    registerOperator(
+        {.id = "object.duplicate_move",
+         .label = "Duplicate and Move",
+         .description = "Duplicate the selection and move the copies with the mouse",
+         .poll = canTransform,
+         .execute = [this](OperatorContext& context, OperatorProperties&) {
+             std::string before;
+             if (!EntityCommands::duplicateSelectionUncommitted(context.editing, m_selection, before)) {
+                 return OperatorResult::cancelled("Nothing was duplicated");
+             }
+             if (!beginModalTransform(*context.app, TransformOperation::Translate, "Duplicate Objects", before, true)) {
+                 context.editing.commit("Duplicate Objects", {}, std::move(before));
+             }
+             return OperatorResult::finished();
+         }});
+
+    const auto inEditMode = [](const OperatorContext& context) { return context.app != nullptr && context.editMode(); };
+    registerOperator(applicationOperator(
+        "object.delete_menu", "Delete...", "Ask before deleting the selected objects",
+        [](const OperatorContext& context) { return context.editMode() && !context.selection.empty(); },
+        [this](ApplicationContext&) { m_openDeleteMenu = true; }));
+    registerOperator(applicationOperator("object.add_menu", "Add...", "Open the Add menu at the mouse", inEditMode,
+                                         [this](ApplicationContext&) { m_openAddMenu = true; }));
+    registerOperator(applicationOperator(
+        "object.rename_popup", "Rename...", "Type a new name for the active object",
+        [](const OperatorContext& context) {
+            return context.editMode() && !context.selection.empty() &&
+                   context.editing.scene().findEntity(*context.selection.active()) != entt::null;
+        },
+        [this](ApplicationContext& app) {
+            const Entity active = app.scene.findEntity(*m_selection.active());
+            m_renameBuffer = app.scene.registry().get<NameComponent>(active).name;
             m_openRenamePopup = true;
             m_focusRenameField = true;
-        }
-        break;
-    case ObjectCommand::Copy:
-        copySelection(context);
-        break;
-    case ObjectCommand::Paste:
-        pasteClipboard(context);
-        break;
-    case ObjectCommand::ToggleSnapping:
-        m_viewport.tools().snapping = !m_viewport.tools().snapping;
-        break;
-    case ObjectCommand::FrameSelected:
-        frameEntities(context, m_selection.ids());
-        break;
-    case ObjectCommand::FrameAll:
-        frameAll(context);
-        break;
-    case ObjectCommand::ViewFront:
-        m_camera.setViewAngles(0.0f, 0.0f);
-        break;
-    case ObjectCommand::ViewBack:
-        m_camera.setViewAngles(halfTurn, 0.0f);
-        break;
-    case ObjectCommand::ViewRight:
-        m_camera.setViewAngles(-quarterTurn, 0.0f);
-        break;
-    case ObjectCommand::ViewLeft:
-        m_camera.setViewAngles(quarterTurn, 0.0f);
-        break;
-    case ObjectCommand::ViewTop:
-        m_camera.setViewAngles(0.0f, -quarterTurn);
-        break;
-    case ObjectCommand::ViewBottom:
-        m_camera.setViewAngles(0.0f, quarterTurn);
-        break;
-    case ObjectCommand::ViewOpposite:
-        m_camera.setViewAngles(m_camera.yaw() + halfTurn, -m_camera.pitch());
-        break;
-    case ObjectCommand::OrbitLeft:
-        m_camera.orbitAroundPivot(orbitStepRadians, 0.0f);
-        break;
-    case ObjectCommand::OrbitRight:
-        m_camera.orbitAroundPivot(-orbitStepRadians, 0.0f);
-        break;
-    case ObjectCommand::OrbitUp:
-        m_camera.orbitAroundPivot(0.0f, -orbitStepRadians);
-        break;
-    case ObjectCommand::OrbitDown:
-        m_camera.orbitAroundPivot(0.0f, orbitStepRadians);
-        break;
-    }
+        }));
+
+    registerOperator(applicationOperator(
+        "view3d.toggle_snapping", "Toggle Snapping", "Turn transform snapping on or off", {},
+        [this](ApplicationContext&) { m_viewport.tools().snapping = !m_viewport.tools().snapping; }));
+    registerOperator(applicationOperator(
+        "view3d.frame_selected", "Frame Selected", "Move the view to show the selected objects",
+        [](const OperatorContext& context) { return !context.selection.empty(); },
+        [this](ApplicationContext& app) { frameEntities(app, m_selection.ids()); }));
+    registerOperator(applicationOperator("view3d.frame_all", "Frame All", "Move the view to show every object", {},
+                                         [this](ApplicationContext& app) { frameAll(app); }));
+    registerOperator({.id = "view3d.view_axis",
+                      .label = "View Axis",
+                      .description = "Look along a world axis",
+                      .properties = OperatorProperties::make(
+                          ViewAxisProperties{},
+                          std::move(Fields<ViewAxisProperties>()
+                                        .add("type", &ViewAxisProperties::type)
+                                        .options({{"front", "Front", static_cast<int64_t>(ViewAxis::Front)},
+                                                  {"back", "Back", static_cast<int64_t>(ViewAxis::Back)},
+                                                  {"right", "Right", static_cast<int64_t>(ViewAxis::Right)},
+                                                  {"left", "Left", static_cast<int64_t>(ViewAxis::Left)},
+                                                  {"top", "Top", static_cast<int64_t>(ViewAxis::Top)},
+                                                  {"bottom", "Bottom", static_cast<int64_t>(ViewAxis::Bottom)}}))),
+                      .poll = [](const OperatorContext& context) { return context.app != nullptr; },
+                      .execute =
+                          [this](OperatorContext&, OperatorProperties& properties) {
+                              const ViewAxisProperties* values = properties.get<ViewAxisProperties>();
+                              const auto [yaw, pitch] =
+                                  viewAxisAngles(values != nullptr ? values->type : ViewAxis::Front);
+                              m_camera.setViewAngles(yaw, pitch);
+                              return OperatorResult::finished();
+                          }});
+    registerOperator(applicationOperator(
+        "view3d.view_opposite", "View Opposite", "Look from the opposite side", {},
+        [this](ApplicationContext&) { m_camera.setViewAngles(m_camera.yaw() + halfTurn, -m_camera.pitch()); }));
+    registerOperator({.id = "view3d.view_orbit",
+                      .label = "Orbit View",
+                      .description = "Orbit the view 15 degrees around its pivot",
+                      .properties = OperatorProperties::make(
+                          OrbitProperties{},
+                          std::move(Fields<OrbitProperties>()
+                                        .add("direction", &OrbitProperties::direction)
+                                        .options({{"left", "Left", static_cast<int64_t>(OrbitDirection::Left)},
+                                                  {"right", "Right", static_cast<int64_t>(OrbitDirection::Right)},
+                                                  {"up", "Up", static_cast<int64_t>(OrbitDirection::Up)},
+                                                  {"down", "Down", static_cast<int64_t>(OrbitDirection::Down)}}))),
+                      .poll = [](const OperatorContext& context) { return context.app != nullptr; },
+                      .execute =
+                          [this](OperatorContext&, OperatorProperties& properties) {
+                              const OrbitProperties* values = properties.get<OrbitProperties>();
+                              const glm::vec2 step =
+                                  orbitStep(values != nullptr ? values->direction : OrbitDirection::Left);
+                              m_camera.orbitAroundPivot(step.x, step.y);
+                              return OperatorResult::finished();
+                          }});
 }
 
 void EditorSession::drawObjectPopups(ApplicationContext& context) {
@@ -211,23 +261,15 @@ void EditorSession::drawObjectPopups(ApplicationContext& context) {
         ImGui::TextDisabled("Add");
         ImGui::Separator();
         if (ImGui::BeginMenu("Mesh")) {
-            if (ImGui::MenuItem("Cube")) {
-                addObject(context, AddableObject::Cube);
-            }
+            operatorMenuItem(context, "object.add_cube", "Cube");
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Light")) {
-            if (ImGui::MenuItem("Sun")) {
-                addObject(context, AddableObject::Sun);
-            }
+            operatorMenuItem(context, "object.add_sun", "Sun");
             ImGui::EndMenu();
         }
-        if (ImGui::MenuItem("Environment")) {
-            addObject(context, AddableObject::Environment);
-        }
-        if (ImGui::MenuItem("Empty")) {
-            addObject(context, AddableObject::Empty);
-        }
+        operatorMenuItem(context, "object.add_environment", "Environment");
+        operatorMenuItem(context, "object.add_empty", "Empty");
         ImGui::EndPopup();
     }
 
@@ -236,9 +278,7 @@ void EditorSession::drawObjectPopups(ApplicationContext& context) {
         m_openDeleteMenu = false;
     }
     if (ImGui::BeginPopup(deleteMenuPopup)) {
-        if (ImGui::MenuItem("Delete")) {
-            EntityCommands::deleteSelection(editing(context), m_selection);
-        }
+        operatorMenuItem(context, "object.delete", "Delete");
         ImGui::EndPopup();
     }
 
@@ -255,68 +295,16 @@ void EditorSession::drawObjectPopups(ApplicationContext& context) {
         ImGui::SetNextItemWidth(220.0f);
         if (ImGui::InputText("##RenameObject", &m_renameBuffer,
                              ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
-            const Entity active = m_selection.empty() ? entt::null : context.scene.findEntity(*m_selection.active());
-            if (active != entt::null) {
-                const std::string name = m_renameBuffer;
-                editing(context).perform("Rename", {}, [&] {
-                    context.scene.registry().get<NameComponent>(active).name = name;
-                    return SceneResult{.success = true};
-                });
+            if (const Operator* rename = m_operators.find("object.rename")) {
+                OperatorProperties properties = rename->properties;
+                if (RenameProperties* values = properties.get<RenameProperties>()) {
+                    values->name = m_renameBuffer;
+                }
+                invokeOperator(context, "object.rename", properties);
             }
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
-    }
-}
-
-void EditorSession::clearSelectedTransforms(ApplicationContext& context, TransformPart part) {
-    if (m_selection.empty()) {
-        return;
-    }
-    const char* name = part == TransformPart::Location
-                           ? "Clear Location"
-                           : (part == TransformPart::Rotation ? "Clear Rotation" : "Clear Scale");
-    const std::vector<SceneEntityId> selection = m_selection.ids();
-    editing(context).perform(name, {}, [&] {
-        for (SceneEntityId id : selection) {
-            if (const Entity entity = context.scene.findEntity(id); entity != entt::null) {
-                glm::mat4& local = context.scene.registry().get<TransformComponent>(entity).local;
-                local = clearTransformPart(local, part);
-                context.scene.markTransformDirty(entity);
-            }
-        }
-        context.scene.updateWorldTransforms();
-        return SceneResult{.success = true};
-    });
-}
-
-void EditorSession::addObject(ApplicationContext& context, AddableObject object) {
-    static constexpr std::array names{"Add Cube", "Add Sun", "Add Environment", "Add Empty"};
-    SceneEntityId created;
-    editing(context).perform(names[static_cast<size_t>(object)], {}, [&]() -> SceneResult {
-        Entity entity = entt::null;
-        switch (object) {
-        case AddableObject::Cube:
-            if (SceneResult result = addCube(context.scene, context.assets, m_document.options().assetRoot, entity);
-                !result) {
-                return result;
-            }
-            break;
-        case AddableObject::Sun:
-            entity = addSun(context.scene);
-            break;
-        case AddableObject::Environment:
-            entity = addEnvironment(context.scene);
-            break;
-        case AddableObject::Empty:
-            entity = addEmpty(context.scene);
-            break;
-        }
-        created = context.scene.id(entity);
-        return {.success = true};
-    });
-    if (created) {
-        m_selection.selectOnly(created);
     }
 }
 

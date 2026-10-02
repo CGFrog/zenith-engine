@@ -1,24 +1,26 @@
 #include "InspectorPanel.hpp"
 
-#include "editor/application/EditorDiagnostics.hpp"
-#include "editor/application/EntityCommands.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/ReflectedFieldEditor.hpp"
 #include "editor/panels/EditorContext.hpp"
-#include "editor/project/IrradianceVolumeBaker.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
-#include <memory>
 #include <vector>
 
 namespace {
 constexpr ImVec4 problemColor{1.0f, 0.35f, 0.35f, 1.0f};
+
+// Properties for object.component_add and object.component_remove.
+std::string componentProperties(std::string_view key) {
+    return nlohmann::json{{"component", key}}.dump();
+}
 
 template <typename Component> InspectorPanel::CustomEditor typedEditor(bool (*draw)(Component&)) {
     return [draw](EditorContext&, Entity, void* component) { return draw(*static_cast<Component*>(component)); };
@@ -75,8 +77,7 @@ void InspectorPanel::draw(EditorContext& context) {
 void InspectorPanel::drawMultipleSelection(EditorContext& context) {
     ImGui::Text("%zu entities selected", context.selection.size());
     if (ImGui::Button("Delete All")) {
-        EntityCommands::deleteEntities(context.editing, context.selection.ids(), "Delete Entities");
-        context.selection.clear();
+        context.invoke("object.delete");
     }
 }
 
@@ -125,7 +126,7 @@ void InspectorPanel::drawComponents(EditorContext& context, SceneEntityId entity
     drawPreservedComponents(context, entityId);
     if (scene.registry().all_of<IrradianceVolumeComponent>(scene.findEntity(entityId)) &&
         ImGui::Button("Bake Irradiance Volume", {-1.0f, 0.0f})) {
-        bakeIrradianceVolume(context, entityId);
+        context.invoke("object.irradiance_volume_bake");
     }
 
     const Entity entity = scene.findEntity(entityId);
@@ -185,10 +186,7 @@ void InspectorPanel::drawComponent(EditorContext& context, const ComponentType& 
         }
     }
     if (remove) {
-        context.editing.perform("Remove " + type.displayName(), {}, [&] {
-            type.remove(scene, scene.findEntity(entityId));
-            return SceneResult{.success = true};
-        });
+        context.invoke("object.component_remove", componentProperties(type.key()));
     }
     ImGui::PopID();
 }
@@ -213,16 +211,7 @@ void InspectorPanel::drawPreservedComponents(EditorContext& context, SceneEntity
             ImGui::TextDisabled("%s", payload.c_str());
         }
         if (remove) {
-            const std::string removedKey = key;
-            context.editing.perform("Remove " + key, {}, [&] {
-                const Entity entity = scene.findEntity(entityId);
-                auto& stored = scene.registry().get<PreservedComponentsComponent>(entity).components;
-                std::erase_if(stored, [&removedKey](const auto& entry) { return entry.first == removedKey; });
-                if (stored.empty()) {
-                    scene.registry().remove<PreservedComponentsComponent>(entity);
-                }
-                return SceneResult{.success = true};
-            });
+            context.invoke("object.component_remove", componentProperties(key));
         }
         ImGui::PopID();
         if (remove) {
@@ -266,39 +255,9 @@ void InspectorPanel::drawAddComponentMenu(EditorContext& context, SceneEntityId 
                 continue;
             }
             if (ImGui::MenuItem(type.displayName().c_str())) {
-                context.editing.perform("Add " + type.displayName(), {}, [&] {
-                    type.addDefault(scene, scene.findEntity(entityId));
-                    return SceneResult{.success = true};
-                });
+                context.invoke("object.component_add", componentProperties(type.key()));
             }
         }
     }
     ImGui::EndPopup();
-}
-
-void InspectorPanel::bakeIrradianceVolume(EditorContext& context, SceneEntityId volume) {
-    Scene& scene = context.app.scene;
-    const EditorDocument& document = context.editing.document();
-    const std::filesystem::path& assetRoot = document.options().assetRoot;
-    auto baked = std::make_shared<IrradianceVolumeData>();
-    std::filesystem::path written;
-    scene.updateWorldTransforms();
-    // Runs on the UI thread; a typical room bakes in well under a second.
-    if (const IrradianceVolumeBakeResult result =
-            bakeIrradianceVolumeFile(scene, context.app.assets, scene.findEntity(volume),
-                                     irradianceVolumeBakeDirectory(assetRoot, document.path()), {}, *baked, written);
-        !result) {
-        context.diagnostics.reportError("Irradiance volume bake failed: " + result.error);
-        return;
-    }
-    const std::string reference = written.lexically_relative(assetRoot).generic_string();
-    context.editing.perform("Bake Irradiance Volume", {}, [&] {
-        auto* component = scene.registry().try_get<IrradianceVolumeComponent>(scene.findEntity(volume));
-        if (component == nullptr) {
-            return SceneResult{.error = "The baked irradiance volume no longer exists"};
-        }
-        component->bakeAsset = reference;
-        component->bakedData = baked;
-        return SceneResult{.success = true};
-    });
 }

@@ -3,6 +3,7 @@
 #include "editor/panels/EditorPanel.hpp"
 #include "engine/scene/Scene.hpp"
 
+#include <optional>
 #include <string>
 
 // The scene outliner: a filterable entity tree with creation, deletion,
@@ -22,4 +23,8 @@ class HierarchyPanel final : public EditorPanel {
 
     std::string m_filter;
     bool m_preserveWorldOnReparent{true};
+    // Expand All / Collapse All request opening or closing every tree node;
+    // the request applies for the whole of the next frame.
+    std::optional<bool> m_requestedAllOpen;
+    std::optional<bool> m_setAllOpen;
 };

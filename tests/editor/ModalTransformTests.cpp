@@ -1,11 +1,9 @@
 #include "editor/interaction/ModalTransform.hpp"
-#include "editor/interaction/ObjectKeymap.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <cmath>
 #include <iostream>
-#include <set>
 #include <string>
 #include <utility>
 
@@ -184,23 +182,6 @@ void testClearTransform() {
     expect(near(glm::length(glm::vec3(noScale[0])), 1.0f) && near(glm::vec3(noScale[0]), glm::vec3(local[0]) * 0.5f),
            "Alt+S should clear scale but keep rotation");
 }
-
-void testKeymap() {
-    expect(findObjectCommand(ImGuiKey_G, KeymapRegion::Viewport) == ObjectCommand::Grab, "G should grab");
-    expect(!findObjectCommand(ImGuiKey_G, KeymapRegion::Outliner), "G is a viewport-only command");
-    expect(findObjectCommand(ImGuiMod_Shift | ImGuiKey_D, KeymapRegion::Outliner) == ObjectCommand::Duplicate,
-           "Shift+D should duplicate in the outliner too");
-    expect(std::string(objectCommandLabel(ObjectCommand::AddMenu)) == "Shift A", "labels should use Blender's style");
-    std::set<std::pair<int, int>> seen;
-    for (const ObjectKeyBinding& binding : objectKeymap()) {
-        for (uint8_t region :
-             {static_cast<uint8_t>(KeymapRegion::Viewport), static_cast<uint8_t>(KeymapRegion::Outliner)}) {
-            if ((binding.regions & region) != 0) {
-                expect(seen.insert({binding.chord, region}).second, "each chord should map to one command per region");
-            }
-        }
-    }
-}
 } // namespace
 
 int main() {
@@ -209,6 +190,5 @@ int main() {
     testRotation();
     testScale();
     testClearTransform();
-    testKeymap();
     return failures == 0 ? 0 : 1;
 }

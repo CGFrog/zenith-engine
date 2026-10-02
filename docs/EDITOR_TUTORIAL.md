@@ -18,13 +18,23 @@ asset and scene roots are relative to that file.
 3. Open the Asset Browser, find a model, and drag it into the viewport or onto
    an entity in the Inspector. Import failures appear in Diagnostics with a
    suggested next action.
-4. Use `Ctrl+D` to duplicate a selection, or `Ctrl+C` and `Ctrl+V` to copy and
-   paste serialized entity hierarchies. `Ctrl+Z` and `Ctrl+Y` undo and redo.
+4. Use `Shift+D` to duplicate a selection, or `Ctrl+C` and `Ctrl+V` to copy and
+   paste serialized entity hierarchies. `Ctrl+Z` undoes; `Ctrl+Shift+Z` or
+   `Ctrl+Y` redoes. After adding or duplicating an object, the **Adjust Last
+   Operation** panel at the bottom-left of the viewport lets you change its
+   location, size, or offset; the operation is redone with the new values.
 5. Choose **File > Save As** and save beneath the project's scene root. Saves
    are atomic. A separate recovery file is written periodically while the
    document is dirty and is offered after an interrupted session.
 6. Press `F5` to enter Play, `F6` to pause, `F7` to step, and `Shift+F5` to
    stop. Play uses a runtime clone; stopping restores the authored scene.
+
+Every menu item and key runs a named operator. Press `F3` to search all
+operators that can run right now, with their shortcuts; use the arrow keys and
+`Enter`. **Edit > Keymap...** lists every operator: click a shortcut and press
+a new key chord to rebind it (conflicts in the same region are refused), `+`
+adds a shortcut, and **Reset** restores the defaults. Your changes are saved to
+`keymap.json` in the editor settings folder.
 
 New, Open, Exit, and the native window close button ask what to do when the
 scene has unsaved changes. **Cancel** always leaves the active document intact.

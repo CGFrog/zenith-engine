@@ -458,7 +458,6 @@ add_library(zenith_editor_app STATIC
     src/editor/application/EditorDiagnostics.cpp
     src/editor/application/EditorObjectCommands.cpp
     src/editor/application/EditorPlayMode.cpp
-    src/editor/application/EditorShortcuts.cpp
     src/editor/application/EditorTheme.cpp
     src/editor/application/NativeFileDialog.cpp
     src/editor/application/EditorSession.cpp
@@ -473,10 +472,18 @@ add_library(zenith_editor_app STATIC
     src/editor/interaction/ComponentEditors.cpp
     src/editor/interaction/EditorCamera.cpp
     src/editor/interaction/ModalTransform.cpp
-    src/editor/interaction/ObjectKeymap.cpp
     src/editor/interaction/GraphicsSettingsEditor.cpp
     src/editor/interaction/ReflectedFieldEditor.cpp
     src/editor/interaction/Selection.cpp
+    src/editor/operators/DefaultKeymap.cpp
+    src/editor/operators/Keymap.cpp
+    src/editor/operators/KeymapEditor.cpp
+    src/editor/operators/LastOperatorPanel.cpp
+    src/editor/operators/ObjectOperators.cpp
+    src/editor/operators/Operator.cpp
+    src/editor/operators/OperatorRegistry.cpp
+    src/editor/operators/OperatorRunner.cpp
+    src/editor/operators/OperatorSearch.cpp
     src/editor/panels/AssetBrowserPanel.cpp
     src/editor/panels/BuildPanel.cpp
     src/editor/panels/DiagnosticsPanel.cpp
@@ -1327,6 +1334,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_asset_browser_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_asset_browser COMMAND zenith_asset_browser_tests)
+
+    add_executable(zenith_operator_tests tests/editor/OperatorTests.cpp)
+    target_link_libraries(zenith_operator_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_operator_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_operator_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_operators COMMAND zenith_operator_tests)
 
     add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
     set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES
