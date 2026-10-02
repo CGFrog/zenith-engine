@@ -5,6 +5,7 @@
 #include "editor/document/SceneFragment.hpp"
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/GraphicsSettingsEditor.hpp"
+#include "editor/project/IrradianceVolumeBaker.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -1311,6 +1312,11 @@ void EditorSession::drawComponentControls(ApplicationContext& context, Entity en
         return ComponentEditors::drawAnimation(animation, model);
     });
     section.operator()<MorphWeightsComponent>("Morph Weights", ComponentEditors::drawMorphWeights);
+    section.operator()<IrradianceVolumeComponent>("Irradiance Volume", ComponentEditors::drawIrradianceVolume);
+    if (context.scene.registry().all_of<IrradianceVolumeComponent>(context.scene.findEntity(entityId)) &&
+        ImGui::Button("Bake Irradiance Volume", {-1.0f, 0.0f})) {
+        bakeIrradianceVolume(context, entityId);
+    }
 
     entity = context.scene.findEntity(entityId);
     entt::registry& registry = context.scene.registry();
@@ -1355,8 +1361,34 @@ void EditorSession::drawComponentControls(ApplicationContext& context, Entity en
         add.operator()<RigidBodyComponent>("Rigid Body");
         add.operator()<AnimationComponent>("Animation");
         add.operator()<MorphWeightsComponent>("Morph Weights");
+        add.operator()<IrradianceVolumeComponent>("Irradiance Volume");
         ImGui::EndPopup();
     }
+}
+
+void EditorSession::bakeIrradianceVolume(ApplicationContext& context, SceneEntityId volume) {
+    const std::filesystem::path& assetRoot = m_document.options().assetRoot;
+    auto baked = std::make_shared<IrradianceVolumeData>();
+    std::filesystem::path written;
+    context.scene.updateWorldTransforms();
+    // Runs on the UI thread; a typical room bakes in well under a second.
+    if (const IrradianceVolumeBakeResult result =
+            bakeIrradianceVolumeFile(context.scene, context.assets, context.scene.findEntity(volume),
+                                     irradianceVolumeBakeDirectory(assetRoot, m_document.path()), {}, *baked, written);
+        !result) {
+        reportDiagnostic("Irradiance volume bake failed: " + result.error);
+        return;
+    }
+    const std::string reference = written.lexically_relative(assetRoot).generic_string();
+    performMutation(context, "Bake Irradiance Volume", {}, [&] {
+        auto* component = context.scene.registry().try_get<IrradianceVolumeComponent>(context.scene.findEntity(volume));
+        if (component == nullptr) {
+            return SceneResult{.error = "The baked irradiance volume no longer exists"};
+        }
+        component->bakeAsset = reference;
+        component->bakedData = baked;
+        return SceneResult{.success = true};
+    });
 }
 
 bool EditorSession::selected(SceneEntityId id) const {

@@ -19,6 +19,7 @@
 #include "DepthPyramid.hpp"
 #include "EnvironmentPass.hpp"
 #include "GpuDrivenPass.hpp"
+#include "IrradianceVolumePass.hpp"
 #include "LocalShadowPass.hpp"
 #include "PostProcessPass.hpp"
 #include "ReflectionProbeClusterPass.hpp"
@@ -318,10 +319,10 @@ class MeshPass {
     void setSceneViewport(const DrawContext& draw) const;
     // Draws opaque depth and normals, then builds the depth pyramid from it.
     // With GPU-driven submission it also runs the late cull between phases.
-    // Specular reflectance is written only when reflections trace screen
-    // space. Fails only if the specular target cannot be allocated.
+    // Specular reflectance is always written (see the definition for why).
+    // Fails only if the specular target cannot be allocated.
     bool recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive, VkImage depthImage, VkImageView depthView,
-                            const glm::mat4& viewProjection, const MeshLodView& lodView, ReflectionQuality reflections);
+                            const glm::mat4& viewProjection, const MeshLodView& lodView);
     void recordDepthNormalItems(const DrawContext& draw);
     // Inside the scene pass, after opaque surfaces and the background: blends
     // screen-space reflections into the HDR target when they are traced,
@@ -465,6 +466,8 @@ class MeshPass {
     bool m_cameraHistoryValid{false};
     TemporalQualityController m_temporalQuality;
     EnvironmentPass m_environmentPass;
+    // Irradiance volume (U6): probe buffer behind camera binding 8.
+    IrradianceVolumePass m_irradianceVolume;
     double m_uploadMilliseconds{0.0};
     double m_uploadGpuMilliseconds{0.0};
     uint64_t m_taskGeneration{0};

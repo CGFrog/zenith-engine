@@ -1,0 +1,29 @@
+{
+ "version": 3,
+ "displayName": "Zenith Irradiance Room",
+ "assetRoot": "../assets",
+ "sceneRoot": "scenes",
+ "startupScene": "irradiance_room.zenith-scene",
+ "renderSettings": {
+  "version": 1,
+  "antialiasing": 2,
+  "shadows": 3,
+  "lighting": 1,
+  "bloom": 1,
+  "tonemap": 1,
+  "environment": 2,
+  "environmentBackground": true,
+  "localLights": 1,
+  "maximumLocalLights": 1024,
+  "reflectionProbes": true,
+  "indirectDiffuse": 1,
+  "preferGpuDrivenSubmission": false,
+  "depthPrepass": true,
+  "lodErrorThresholdPixels": 1.0,
+  "cascadeSplitLambda": 0.65,
+  "cascadeBlendFraction": 0.1,
+  "visualizeShadowCascades": false,
+  "ambientOcclusion": 2,
+  "reflections": 0
+ }
+}

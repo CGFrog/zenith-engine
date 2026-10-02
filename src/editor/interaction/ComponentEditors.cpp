@@ -207,4 +207,39 @@ bool drawMorphWeights(MorphWeightsComponent& component) {
     }
     return changed;
 }
+
+bool clampIrradianceProbeCounts(const glm::ivec3& requested, glm::uvec3& counts) {
+    const glm::uvec3 clamped(glm::clamp(requested, glm::ivec3(1), glm::ivec3(maximumIrradianceProbesPerAxis)));
+    if (static_cast<uint64_t>(clamped.x) * clamped.y * clamped.z > maximumIrradianceProbes) {
+        return false;
+    }
+    const bool changed = clamped != counts;
+    counts = clamped;
+    return changed;
+}
+
+bool drawIrradianceVolume(IrradianceVolumeComponent& component) {
+    bool changed = ImGui::DragFloat3("Half extents", &component.halfExtents.x, 0.01f, 0.01f, 10000.0f);
+    component.halfExtents = glm::max(component.halfExtents, glm::vec3(0.01f));
+    glm::ivec3 counts(component.probeCounts);
+    if (ImGui::DragInt3("Probe counts", &counts.x, 0.05f, 1, static_cast<int>(maximumIrradianceProbesPerAxis))) {
+        changed |= clampIrradianceProbeCounts(counts, component.probeCounts);
+    }
+    changed |= ImGui::DragFloat("Intensity", &component.intensity, 0.01f, 0.0f, 100.0f);
+    changed |= ImGui::DragFloat("Blend distance", &component.blendDistance, 0.01f, 0.0f, 100.0f);
+    changed |= ImGui::DragFloat("Normal bias", &component.normalBias, 0.005f, 0.0f, 10.0f);
+    changed |= ImGui::DragFloat("View bias", &component.viewBias, 0.005f, 0.0f, 10.0f);
+    component.intensity = std::max(component.intensity, 0.0f);
+    component.blendDistance = std::max(component.blendDistance, 0.0f);
+    component.normalBias = std::max(component.normalBias, 0.0f);
+    component.viewBias = std::max(component.viewBias, 0.0f);
+    if (component.bakeAsset.empty()) {
+        ImGui::TextDisabled("Bake: (not baked)");
+    } else if (!component.bakedData) {
+        ImGui::TextColored({1.0f, 0.35f, 0.35f, 1.0f}, "Bake missing: %s", component.bakeAsset.c_str());
+    } else {
+        ImGui::TextDisabled("Bake: %s", component.bakeAsset.c_str());
+    }
+    return changed;
+}
 } // namespace ComponentEditors

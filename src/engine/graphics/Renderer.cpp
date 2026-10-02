@@ -29,6 +29,7 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
         settings.shadows = ShadowQuality::CascadedHigh;
         settings.bloom = BloomQuality::Downsampled;
         settings.volumetricFog = VolumetricFogQuality::High;
+        settings.indirectDiffuse = IndirectDiffuseMode::ProbeVolume;
     }
     if (SDL_getenv("ZENITH_DISABLE_VOLUMETRIC_FOG") != nullptr) {
         settings.volumetricFog = VolumetricFogQuality::Off;
@@ -108,7 +109,8 @@ RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const Render
                                         settings.reflectionProbeBlending == ReflectionProbeBlending::PerPixel,
             .depthPrepass = depthPrepassActive(settings),
             .gpuDriven = gpuDrivenSubmissionActive(settings, capabilities),
-            .volumetricFog = settings.volumetricFog != VolumetricFogQuality::Off};
+            .volumetricFog = settings.volumetricFog != VolumetricFogQuality::Off,
+            .irradianceVolume = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume};
 }
 } // namespace
 
@@ -131,6 +133,7 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
     rendering.m_capabilities.reflectionProbes = true;
     // The probe cube array needs imageCubeArray, which device selection requires.
     rendering.m_capabilities.perPixelReflectionProbes = true;
+    rendering.m_capabilities.irradianceVolumes = true;
     rendering.m_capabilities.dedicatedTransferQueue = m_context.hasDedicatedTransferQueue();
     rendering.m_capabilities.timelineTransfers = m_context.timelineSemaphoreSupported();
     if (!createSwapchainResources(window)) {
@@ -308,6 +311,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     stats.gpuLocalShadowMilliseconds = gpuTimings.localShadowMilliseconds;
     stats.gpuReflectionProbeClusterMilliseconds = gpuTimings.reflectionProbeClusterMilliseconds;
     stats.gpuVolumetricFogMilliseconds = gpuTimings.volumetricFogMilliseconds;
+    stats.gpuIrradianceVolumeMilliseconds = gpuTimings.irradianceVolumeMilliseconds;
     stats.gpuUploadWaitMilliseconds = gpuTimings.uploadWaitMilliseconds;
     const StreamingStats& streaming = assets.streaming().stats();
     stats.streamingDecodedBytes = streaming.decodedBytes;
@@ -559,6 +563,16 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
                 graph.addPass("reflection probe residency", RenderGraphQueue::Graphics, residencyAccesses);
             }
         }
+        // Irradiance volume (U6): rewrites the probe buffer only when the bound
+        // volume changes; opaque and blended shading read it.
+        const auto irradianceProbes =
+            graph.importBuffer("irradiance volume probes", {.size = 0, .usage = 1, .alignment = 256});
+        if (shape.irradianceVolume) {
+            const RenderGraphAccess irradianceUploadAccesses[]{
+                {irradianceProbes, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                 VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
+            graph.addPass("irradiance volume upload", RenderGraphQueue::Graphics, irradianceUploadAccesses);
+        }
         if (shape.shadows) {
             // Mirrors the shadow-culling decision in MeshPass::record.
             const bool gpuShadowCulling = shape.gpuDriven && SDL_getenv("ZENITH_DISABLE_GPU_SHADOW_CULLING") == nullptr;
@@ -739,6 +753,11 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport) {
             // Opaque, blended, and sky shading composite the integrated fog.
             opaqueAccesses.push_back({fogVolume, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                                       VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL});
+        }
+        if (shape.irradianceVolume) {
+            opaqueAccesses.push_back({irradianceProbes, RenderGraphAccessMode::Read,
+                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                      VK_IMAGE_LAYOUT_UNDEFINED});
         }
         if (shape.gpuDriven && !shape.depthPrepass) {
             // Without a prepass two-phase culling splits the shading pass.

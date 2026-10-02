@@ -328,6 +328,8 @@ void testSettings() {
 
     RenderCapabilities capabilities;
     capabilities.reflectionProbes = true;
+    // Isolates probe blending from the default probe-volume indirect diffuse.
+    capabilities.irradianceVolumes = true;
     capabilities.perPixelReflectionProbes = false;
     RenderSettings perPixel;
     const ValidatedRenderSettings fallback = validateRenderSettings(perPixel, capabilities);

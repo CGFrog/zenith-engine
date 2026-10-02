@@ -126,6 +126,14 @@ enum class VolumetricFogQuality : uint8_t {
     High,
 };
 
+// Source of indirect diffuse light. Environment (the Off fallback) evaluates
+// the environment's spherical harmonics everywhere; ProbeVolume uses a baked
+// irradiance volume inside its box and the environment elsewhere.
+enum class IndirectDiffuseMode : uint8_t {
+    Environment,
+    ProbeVolume,
+};
+
 struct RenderPassBudget {
     double cpuMilliseconds{0.0};
     double gpuMilliseconds{0.0};
@@ -154,6 +162,8 @@ struct RenderPassBudgets {
     // Per-pixel reflection probe upload and cluster assignment.
     RenderPassBudget reflectionProbeClusters;
     RenderPassBudget volumetricFog;
+    // Irradiance-volume probe upload (sampling is part of opaque shading).
+    RenderPassBudget irradianceVolume;
 };
 
 struct DynamicResolutionSettings {
@@ -186,6 +196,7 @@ struct RenderSettings {
     LocalShadowQuality localShadows{LocalShadowQuality::Medium};
     bool reflectionProbes{true};
     ReflectionProbeBlending reflectionProbeBlending{ReflectionProbeBlending::PerPixel};
+    IndirectDiffuseMode indirectDiffuse{IndirectDiffuseMode::ProbeVolume};
     bool preferGpuDrivenSubmission{false};
     // Opaque depth and view-space normals are drawn before shading, so opaque
     // pixels shade once and screen-space effects get normals and a depth
@@ -218,6 +229,7 @@ struct RenderCapabilities {
     bool imageBasedLighting{false};
     bool reflectionProbes{false};
     bool perPixelReflectionProbes{false};
+    bool irradianceVolumes{false};
     bool temporalAntialiasing{true};
     bool screenSpaceAmbientOcclusion{true};
     bool screenSpaceReflections{true};
@@ -332,6 +344,13 @@ struct RenderStats {
     // Fog injection, temporal reprojection, and integration; zero when Off or
     // when the scene has no volumetric fog.
     double gpuVolumetricFogMilliseconds{0.0};
+    // Irradiance-volume probe upload; zero on frames whose bound volume did
+    // not change.
+    double gpuIrradianceVolumeMilliseconds{0.0};
+    // Probes in the bound irradiance volume; zero when none is bound.
+    uint32_t irradianceVolumeProbes{0};
+    // Device memory of the irradiance-volume probe buffer.
+    uint64_t irradianceVolumeBytes{0};
     uint64_t temporalHistoryBytes{0};
     uint64_t motionVectorBytes{0};
     uint64_t ambientOcclusionBytes{0};

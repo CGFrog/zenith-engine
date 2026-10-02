@@ -203,7 +203,7 @@ or at the decision point named below, after capability validation.
 
 | Variable | Effect |
 | --- | --- |
-| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, per-pixel reflection probe blending, clustered local lights with high-quality local shadows, depth prepass on, cascaded (high) shadows, bloom, and High volumetric fog. |
+| `ZENITH_FORCE_HIGH_QUALITY` | TAA, full-resolution AO and screen-space reflections, high image-based lighting, per-pixel reflection probe blending, probe-volume indirect diffuse, clustered local lights with high-quality local shadows, depth prepass on, cascaded (high) shadows, bloom, and High volumetric fog. |
 | `ZENITH_DISABLE_VOLUMETRIC_FOG` | Forces volumetric fog Off (applied after `ZENITH_FORCE_HIGH_QUALITY`). |
 | `ZENITH_FORCE_TAA` | Temporal anti-aliasing. |
 | `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
@@ -246,8 +246,13 @@ cull), `gpu.depth_pyramid`, `gpu.ambient_occlusion`, and shading. `gpu.blended` 
 `gpu.environment` is precompute plus skybox. `gpu.volumetric_fog` (fog
 injection, reprojection, and integration) runs inside `gpu.opaque` after
 `gpu.light_clusters` and reports zero when fog is Off or the scene has no
-`VolumetricFogComponent`; `render.volumetric_fog_bytes` reports its volumes. The editor's Graphics panel shows
-the same table live.
+`VolumetricFogComponent`; `render.volumetric_fog_bytes` reports its volumes.
+`gpu.irradiance_volume` is the
+irradiance-volume probe upload, which records work only on frames whose bound
+volume changed and also falls inside `gpu.shadow`; sampling the volume is part
+of opaque and blended shading, so its per-pixel cost shows up in `gpu.opaque`
+(compare against `indirectDiffuse` set to Environment, the Off fallback). The
+editor's Graphics panel shows the same table live.
 
 ### GPU-culled shadow cascades
 

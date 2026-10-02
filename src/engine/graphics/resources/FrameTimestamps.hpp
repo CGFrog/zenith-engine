@@ -33,7 +33,11 @@ inline constexpr uint32_t reflectionProbeClustersEnd = 36;
 // Volumetric fog injection, reprojection, and integration.
 inline constexpr uint32_t volumetricFogBegin = 37;
 inline constexpr uint32_t volumetricFogEnd = 38;
-inline constexpr uint32_t count = 39;
+// Irradiance volume: the probe upload, which records work only when the bound
+// volume changes. Probe sampling is part of opaque shading.
+inline constexpr uint32_t irradianceVolumeBegin = 39;
+inline constexpr uint32_t irradianceVolumeEnd = 40;
+inline constexpr uint32_t count = 41;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot

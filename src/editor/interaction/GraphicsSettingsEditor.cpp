@@ -108,6 +108,9 @@ bool drawLighting(RenderSettings& settings, const RenderCapabilities& capabiliti
         enumCombo("Probe blending", settings.reflectionProbeBlending,
                   std::array<EnumOption, 2>{{{"At camera"}, {"Per pixel", capabilities.perPixelReflectionProbes}}});
     ImGui::EndDisabled();
+    changed |=
+        enumCombo("Indirect diffuse", settings.indirectDiffuse,
+                  std::array<EnumOption, 2>{{{"Environment"}, {"Probe volume", capabilities.irradianceVolumes}}});
     const bool localLightsAvailable = capabilities.maximumLocalLights > 0;
     changed |= enumCombo("Local lights", settings.localLights,
                          std::array<EnumOption, 2>{{{"Disabled"}, {"Clustered", localLightsAvailable}}});
@@ -211,6 +214,7 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Local shadows", budgets.localShadows);
     changed |= drawBudget("Probe clusters", budgets.reflectionProbeClusters);
     changed |= drawBudget("Volumetric fog", budgets.volumetricFog);
+    changed |= drawBudget("Irradiance volume", budgets.irradianceVolume);
     return changed;
 }
 
@@ -233,6 +237,7 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
             {"Local shadows", stats.gpuLocalShadowMilliseconds, true},
             {"Environment precompute", stats.gpuEnvironmentPrecomputeMilliseconds, true},
             {"Shadow culling", stats.gpuShadowCullingMilliseconds, true},
+            {"Irradiance volume upload", stats.gpuIrradianceVolumeMilliseconds, true},
             {"GPU culling", stats.gpuCullingMilliseconds, true},
             {"Opaque", stats.gpuOpaqueMilliseconds},
             {"Light clusters", stats.gpuLightClusterMilliseconds, true},
@@ -284,8 +289,8 @@ void clampToDocumentRanges(RenderSettings& settings) {
          {&budgets.shadow, &budgets.opaque, &budgets.blended, &budgets.bloom, &budgets.ui, &budgets.upload,
           &budgets.temporalResolve, &budgets.ambientOcclusion, &budgets.reflections, &budgets.exposure,
           &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment,
-          &budgets.localShadows, &budgets.shadowCulling, &budgets.reflectionProbeClusters,
-          &budgets.volumetricFog}) {
+          &budgets.localShadows, &budgets.shadowCulling, &budgets.reflectionProbeClusters, &budgets.volumetricFog,
+          &budgets.irradianceVolume}) {
         clampBudget(*budget);
     }
 }

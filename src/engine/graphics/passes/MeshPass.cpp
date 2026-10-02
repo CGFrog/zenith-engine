@@ -1,5 +1,6 @@
 #include "MeshPass.hpp"
 #include "../DepthConvention.hpp"
+#include "../IrradianceVolume.hpp"
 #include "../Lighting.hpp"
 #include "../ReflectionProbes.hpp"
 
@@ -89,6 +90,15 @@ struct CameraData {
     glm::vec4 fogVolume{0.0f};
     // xy: integrated-volume uv per render pixel (1 / internal render extent).
     glm::vec4 fogScreen{0.0f};
+    // Irradiance volume (U6); see irradiance_volume in IrradianceVolume.hpp.
+    // xyz: world-space minimum corner of the baked box, w: intensity.
+    glm::vec4 irradianceVolumeMinimum{0.0f};
+    // xyz: world-space probe spacing, w: edge blend distance.
+    glm::vec4 irradianceVolumeCellSize{1.0f};
+    // xyz: probes per axis, w: 1 when a volume is bound, else 0.
+    glm::uvec4 irradianceVolumeCounts{0u};
+    // x: normal bias, y: view bias (world units); zw unused.
+    glm::vec4 irradianceVolumeBias{0.0f};
     // Temporal resolve: NDC jitter of the current (xy) and previous (zw)
     // projections, removed from motion vectors in mesh.frag. Keep last.
     glm::vec4 temporalJitter{0.0f};
@@ -330,6 +340,13 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
         return false;
     }
     writeAmbientOcclusionDescriptors();
+    if (!m_irradianceVolume.init(context, frameCount)) {
+        return false;
+    }
+    for (uint32_t frame = 0; frame < frameCount; ++frame) {
+        const std::array<VkDescriptorSet, 2> sets{m_cameras[frame].descriptor, m_cameras[frame].gpuDrivenDescriptor};
+        m_irradianceVolume.writeDescriptors(frame, sets);
+    }
     return true;
 }
 
@@ -515,6 +532,11 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
          .descriptorCount = 1,
          .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+        // Irradiance volume probes, written by IrradianceVolumePass.
+        {.binding = IrradianceVolumePass::binding,
+         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1,
+         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
         // Clustered local lighting: lights, per-cluster ranges, light indices.
         {.binding = 9,
          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -577,7 +599,7 @@ bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCou
     const VkDescriptorPoolSize poolSizes[]{
         {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = frameCount * 2},
         {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = frameCount * 2 * (8 + EnvironmentPass::environmentSlots)},
+         .descriptorCount = frameCount * 2 * (8 + EnvironmentPass::environmentSlots + 1 /* irradiance volume */)},
         {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
          .descriptorCount = frameCount * 2 * (4 + EnvironmentPass::environmentSlots)}};
     VkDescriptorPoolCreateInfo poolInfo{
@@ -2341,6 +2363,29 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     cameraData.environmentParams = {imageBasedLighting ? 1.0f : 0.0f, environmentState->probeWeight,
                                     environmentState->specularMaximumLod,
                                     AmbientOcclusionPass::resolutionScale(ambientOcclusion)};
+    // Irradiance volume (U6): bind the volume nearest the camera and upload its
+    // probes when they change; Environment mode leaves the volume disabled.
+    passTimestamps.write(FrameTimestamp::irradianceVolumeBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    const Entity irradianceVolumeEntity = rendering.settings().indirectDiffuse == IndirectDiffuseMode::ProbeVolume
+                                              ? irradiance_volume::selectVolume(scene, cameraPosition)
+                                              : entt::null;
+    const IrradianceVolumeComponent* irradianceVolume =
+        irradianceVolumeEntity == entt::null ? nullptr
+                                             : &scene.registry().get<IrradianceVolumeComponent>(irradianceVolumeEntity);
+    if (!m_irradianceVolume.prepare(commandBuffer, frameIndex, m_frameSerial,
+                                    irradianceVolume ? irradianceVolume->bakedData : nullptr,
+                                    std::span(environmentSets.data(), frameCamera.gpuDrivenDescriptor ? 2u : 1u))) {
+        return false;
+    }
+    passTimestamps.write(FrameTimestamp::irradianceVolumeEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+    if (irradianceVolume) {
+        const IrradianceVolumeData& volumeData = *irradianceVolume->bakedData;
+        cameraData.irradianceVolumeMinimum = {volumeData.minimum, std::max(irradianceVolume->intensity, 0.0f)};
+        cameraData.irradianceVolumeCellSize = {volumeData.cellSize(), std::max(irradianceVolume->blendDistance, 0.0f)};
+        cameraData.irradianceVolumeCounts = {volumeData.probeCounts, 1u};
+        cameraData.irradianceVolumeBias = {std::max(irradianceVolume->normalBias, 0.0f),
+                                           std::max(irradianceVolume->viewBias, 0.0f), 0.0f, 0.0f};
+    }
     const uint32_t localLightLimit =
         rendering.settings().localLights == LocalLightingQuality::Disabled
             ? 0u
@@ -2487,6 +2532,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         static_cast<uint64_t>(extent.width) * extent.height * sizeof(uint16_t) * 4 * m_cameras.size();
     stats.ambientOcclusionBytes = m_ambientOcclusion.allocatedBytes();
     stats.volumetricFogBytes = m_volumetricFog.allocatedBytes();
+    stats.irradianceVolumeBytes = m_irradianceVolume.allocatedBytes();
+    stats.irradianceVolumeProbes =
+        irradianceVolume ? static_cast<uint32_t>(irradianceVolume->bakedData->probes.size()) : 0u;
     stats.shadowCacheBytes =
         static_cast<uint64_t>(shadowResolution) * shadowResolution * sizeof(float) * maximumShadowCascades;
     DirectionalLightComponent shadowLight = light;
@@ -2651,8 +2699,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const auto opaqueCpuBegin = std::chrono::steady_clock::now();
     if (depthPrepass) {
         passTimestamps.write(FrameTimestamp::depthPrepassBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-        if (!recordDepthPrepass(draw, gpuDrivenActive, depthImage, depthView, cameraData.viewProjection, lodView,
-                                rendering.settings().reflections)) {
+        if (!recordDepthPrepass(draw, gpuDrivenActive, depthImage, depthView, cameraData.viewProjection, lodView)) {
             return false;
         }
     }
@@ -2889,15 +2936,16 @@ void MeshPass::recordGpuDrivenGroups(const DrawContext& draw, GpuCullPhase phase
 }
 
 bool MeshPass::recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive, VkImage depthImage,
-                                  VkImageView depthView, const glm::mat4& viewProjection, const MeshLodView& lodView,
-                                  ReflectionQuality reflections) {
+                                  VkImageView depthView, const glm::mat4& viewProjection, const MeshLodView& lodView) {
     const VkCommandBuffer commandBuffer = draw.commandBuffer;
     const OpaquePipelines depthNormal{
         .singleSided = &m_depthNormalPipeline, .doubleSided = &m_depthNormalDoubleSidedPipeline, .pushesView = true};
     m_postProcess.prepareNormals(commandBuffer, draw.frameIndex);
-    // Only screen-space reflections read specular reflectance.
-    if (reflections != ReflectionQuality::ProbesOnly &&
-        !m_postProcess.prepareSpecular(commandBuffer, draw.frameIndex)) {
+    // Only screen-space reflections read specular reflectance, but the
+    // depth-normal pipelines always declare the attachment: a null view with a
+    // non-UNDEFINED pipeline format needs dynamicRenderingUnusedAttachments,
+    // so the target is written whenever the prepass runs.
+    if (!m_postProcess.prepareSpecular(commandBuffer, draw.frameIndex)) {
         return false;
     }
     const VkImageView normalView = m_postProcess.normalView(draw.frameIndex);
@@ -3332,6 +3380,7 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_selectionMaskPipeline.shutdown(context.device());
     m_outlinePipeline.shutdown(context.device());
     m_environmentPass.shutdown();
+    m_irradianceVolume.shutdown();
     m_depthNormalPipeline.shutdown(context.device());
     m_depthNormalDoubleSidedPipeline.shutdown(context.device());
     m_postProcess.shutdown(context);
