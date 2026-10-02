@@ -65,6 +65,12 @@ class VulkanContext {
         return m_blockCompressionSupported;
     }
 
+    // True when shaders may index storage-image arrays with dynamically uniform
+    // indices (shaderStorageImageArrayDynamicIndexing enabled).
+    bool storageImageArrayDynamicIndexingSupported() const {
+        return m_storageImageArrayDynamicIndexingSupported;
+    }
+
     uint32_t gfxQueueIndex() const {
         return m_gfxQueueFamIdx;
     }
@@ -113,6 +119,7 @@ class VulkanContext {
     bool m_timelineSemaphoreSupported{false};
     bool m_hostQueryResetSupported{false};
     bool m_blockCompressionSupported{false};
+    bool m_storageImageArrayDynamicIndexingSupported{false};
     VmaAllocator m_vmaAllocator{VK_NULL_HANDLE};
     VkPipelineCache m_pipelineCache{VK_NULL_HANDLE};
     std::filesystem::path m_pipelineCachePath;

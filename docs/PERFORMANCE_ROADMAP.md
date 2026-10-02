@@ -155,6 +155,13 @@ batches, not total entities.
 - Keep CPU reference culling available in tests. Periodically compare GPU
   visibility results against conservative CPU results in diagnostic builds.
 
+Milestone 25 replaced the per-level depth-pyramid dispatches with a single-pass
+downsampler and made the post-prepass rebuild on the GPU-driven path
+conditional on the late phase drawing anything, so the pyramid is built once
+per frame in the steady state. A full build fell from about 0.067 ms to 0.047
+ms at 1280x720 (RTX 2070 SUPER); GPU-driven showcase frames fell from 1.551 ms
+to 1.466 ms median. See `RENDERER_VALIDATION.md` for the full A/B table.
+
 ### Measurement and completion gate
 
 - Benchmark visible-heavy, occluded-heavy, camera-cut, and rapidly moving

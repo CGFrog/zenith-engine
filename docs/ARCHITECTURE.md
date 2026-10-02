@@ -435,7 +435,9 @@ prepass vertex shader repeats `mesh.vert`'s position math with `precise` and
 `invariant gl_Position`, so opaque shading tests `EQUAL` with depth writes off
 and every opaque pixel shades once; masked materials alpha-test in both passes.
 After the prepass the depth pyramid is rebuilt from the complete opaque depth
-on both submission paths. With the prepass off, the main pass tests and writes
+on both submission paths; with GPU-driven submission the GPU skips that rebuild
+when the late phase emitted nothing, since the occlusion build already holds
+the complete depth. With the prepass off, the main pass tests and writes
 depth as before and the outputs below are unavailable.
 
 Contract for screen-space consumers (`MeshPass::sceneGeometry` returns

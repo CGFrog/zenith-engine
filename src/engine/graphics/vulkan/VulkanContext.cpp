@@ -344,11 +344,15 @@ bool VulkanContext::initDevice() {
                                               .dynamicRendering = VK_TRUE};
     // BC sampling is optional: without it, textures stay on the RGBA8 path.
     m_blockCompressionSupported = supported.features.textureCompressionBC == VK_TRUE;
+    // Optional: the single-pass depth-pyramid build indexes its level array.
+    m_storageImageArrayDynamicIndexingSupported = supported.features.shaderStorageImageArrayDynamicIndexing == VK_TRUE;
     VkPhysicalDeviceFeatures enabledFeatures{.imageCubeArray = VK_TRUE,
                                              .independentBlend = VK_TRUE,
                                              .multiDrawIndirect = supported.features.multiDrawIndirect,
                                              .samplerAnisotropy = VK_TRUE,
-                                             .textureCompressionBC = supported.features.textureCompressionBC};
+                                             .textureCompressionBC = supported.features.textureCompressionBC,
+                                             .shaderStorageImageArrayDynamicIndexing =
+                                                 supported.features.shaderStorageImageArrayDynamicIndexing};
     const char* swapchainExtension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     VkDeviceCreateInfo deviceInfo{.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
                                   .pNext = &vulkan13,
