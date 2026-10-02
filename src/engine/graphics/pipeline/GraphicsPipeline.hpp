@@ -36,9 +36,10 @@ class GraphicsPipeline {
                               VkPipelineCache pipelineCache, bool doubleSided = false, bool blending = false,
                               const VkSpecializationInfo* fragmentSpecialization = nullptr,
                               SceneDepthUsage depthUsage = SceneDepthUsage::TestAndWrite);
-    // Depth prepass: writes scene depth and one color target (normalFormat).
-    // The vertex stage takes a mat4 push constant (the view matrix).
-    bool initDepthNormalPipeline(VkDevice device, VkFormat normalFormat, VkFormat depthFormat,
+    // Depth prepass: writes scene depth and two color targets, normals
+    // (normalFormat) then specular reflectance (specularFormat). The vertex
+    // stage takes a mat4 push constant (the view matrix).
+    bool initDepthNormalPipeline(VkDevice device, VkFormat normalFormat, VkFormat specularFormat, VkFormat depthFormat,
                                  VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout materialLayout,
                                  VkShaderModule vertex, VkShaderModule fragment, VkPipelineCache pipelineCache,
                                  bool doubleSided);

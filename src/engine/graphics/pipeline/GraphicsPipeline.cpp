@@ -411,10 +411,11 @@ bool GraphicsPipeline::initSkyboxPipeline(VkDevice device, VkFormat colorFormat,
                        "Create skybox pipeline");
 }
 
-bool GraphicsPipeline::initDepthNormalPipeline(VkDevice device, VkFormat normalFormat, VkFormat depthFormat,
-                                               VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout materialLayout,
-                                               VkShaderModule vertex, VkShaderModule fragment,
-                                               VkPipelineCache pipelineCache, bool doubleSided) {
+bool GraphicsPipeline::initDepthNormalPipeline(VkDevice device, VkFormat normalFormat, VkFormat specularFormat,
+                                               VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
+                                               VkDescriptorSetLayout materialLayout, VkShaderModule vertex,
+                                               VkShaderModule fragment, VkPipelineCache pipelineCache,
+                                               bool doubleSided) {
     // The view matrix rotates normals into view space.
     const VkPushConstantRange pushConstants{
         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT, .offset = 0, .size = sizeof(glm::mat4)};
@@ -430,14 +431,18 @@ bool GraphicsPipeline::initDepthNormalPipeline(VkDevice device, VkFormat normalF
     }
     const VkPipelineShaderStageCreateInfo stages[]{shaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertex),
                                                    shaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, fragment)};
+    const VkFormat colorFormats[]{normalFormat, specularFormat};
     VkPipelineRenderingCreateInfo rendering{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-                                            .colorAttachmentCount = 1,
-                                            .pColorAttachmentFormats = &normalFormat,
+                                            .colorAttachmentCount = static_cast<uint32_t>(std::size(colorFormats)),
+                                            .pColorAttachmentFormats = colorFormats,
                                             .depthAttachmentFormat = depthFormat};
     // Normal mapping and alpha masking read every stream the shading pass reads.
     FixedFunctionState state{MeshVertexInputs::Shaded};
     state.raster.cullMode = doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
     state.depth.depthCompareOp = scene_depth::compareOp;
+    const VkPipelineColorBlendAttachmentState colorAttachments[]{state.colorAttachment, state.colorAttachment};
+    state.blend.attachmentCount = static_cast<uint32_t>(std::size(colorAttachments));
+    state.blend.pAttachments = colorAttachments;
     VkGraphicsPipelineCreateInfo info = state.pipelineInfo();
     info.pNext = &rendering;
     info.stageCount = static_cast<uint32_t>(std::size(stages));

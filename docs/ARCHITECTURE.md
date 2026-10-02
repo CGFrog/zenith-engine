@@ -432,6 +432,14 @@ ran):
   surfaces are flipped towards the viewer), `b` is perceptual roughness clamped
   like the shading pass, and `a` is 1 where an opaque surface was written (0 on
   clear). `SceneNormalEncoding.hpp` mirrors the encoding on the CPU.
+- Specular: `PostProcessPass::specularFormat` (`R8G8B8A8_SRGB`), in
+  `SHADER_READ_ONLY_OPTIMAL`, same extents as the normals, written only on
+  frames that trace screen-space reflections (otherwise the attachment is
+  `VK_NULL_HANDLE` and `SceneGeometryViews::specular` is null). `rgb` is the
+  linear specular reflectance at normal incidence (F0 =
+  `mix(0.04, baseColor, metallic)`, stored through the sRGB transfer) and `a`
+  is coverage. Allocated per frame slot on first use, 4 bytes per output pixel;
+  `SceneSpecularEncoding.hpp` mirrors the encoding on the CPU.
 - Depth pyramid: `DepthPyramid`, one RG32F image in `GENERAL` layout,
   sampled with its nearest/clamp sampler via `texelFetch`. `r` is the farthest
   (minimum, reversed Z) and `g` the closest (maximum) depth a texel covers.

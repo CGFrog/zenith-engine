@@ -252,13 +252,12 @@ inline float hitConfidence(glm::vec2 hitPixel, glm::vec2 renderExtent, float edg
 }
 
 // Schlick Fresnel with the roughness-limited grazing term mesh.frag uses
-// (fresnelSchlickRoughness), for a dielectric: the prepass does not store
-// specular color, so reflections assume F0 = 0.04.
-inline float dielectricFresnel(float normalDotView, float roughness) {
-    constexpr float reflectanceAtNormal = 0.04f;
-    const float grazing = std::max(1.0f - roughness, reflectanceAtNormal);
-    return reflectanceAtNormal +
-           (grazing - reflectanceAtNormal) * std::pow(1.0f - std::clamp(normalDotView, 0.0f, 1.0f), 5.0f);
+// (fresnelSchlickRoughness), per channel of the specular reflectance at normal
+// incidence (F0) the prepass stores (SceneSpecularEncoding.hpp).
+inline glm::vec3 fresnelSchlickRoughness(float normalDotView, glm::vec3 reflectance, float roughness) {
+    reflectance = glm::clamp(reflectance, glm::vec3(0.0f), glm::vec3(1.0f));
+    const glm::vec3 grazing = glm::max(glm::vec3(1.0f - roughness), reflectance);
+    return reflectance + (grazing - reflectance) * std::pow(1.0f - std::clamp(normalDotView, 0.0f, 1.0f), 5.0f);
 }
 
 struct CompositeSettings {
@@ -267,14 +266,26 @@ struct CompositeSettings {
     float intensity{1.0f};
 };
 
-// Blend weight of the reflected radiance over the lit scene,
-// scene = mix(scene, reflection, weight); always within [0, 1].
-inline float compositeWeight(float confidence, float normalDotView, float roughness,
-                             const CompositeSettings& settings) {
-    const float weight = std::clamp(confidence, 0.0f, 1.0f) * dielectricFresnel(normalDotView, roughness) *
-                         roughnessFade(roughness, settings.roughnessFadeStart, settings.roughnessFadeEnd) *
-                         std::max(settings.intensity, 0.0f);
-    return std::clamp(weight, 0.0f, 1.0f);
+// Per-channel weight of the reflected radiance (see blendReflection); every
+// channel is within [0, 1]. reflectance is the surface's F0, so metals reflect
+// tinted by their base color and dielectrics (F0 = 0.04) reflect untinted.
+inline glm::vec3 compositeWeight(float confidence, float normalDotView, float roughness, glm::vec3 reflectance,
+                                 const CompositeSettings& settings) {
+    const float scale = std::clamp(confidence, 0.0f, 1.0f) *
+                        roughnessFade(roughness, settings.roughnessFadeStart, settings.roughnessFadeEnd) *
+                        std::max(settings.intensity, 0.0f);
+    const glm::vec3 weight = fresnelSchlickRoughness(normalDotView, reflectance, roughness) * scale;
+    return glm::clamp(weight, glm::vec3(0.0f), glm::vec3(1.0f));
+}
+
+// Replaces a share of the lit scene with the reflected radiance:
+// scene * (1 - max(weight)) + reflection * weight. The scalar share keeps the
+// result free of color shifts the tint would cause in a per-channel mix (a
+// metal's IBL specular would survive in the channels its F0 is low in); with a
+// grey weight it equals mix(scene, reflection, weight).
+inline glm::vec3 blendReflection(glm::vec3 scene, glm::vec3 reflection, glm::vec3 weight) {
+    const float replaced = std::max(std::max(weight.r, weight.g), weight.b);
+    return scene * (1.0f - replaced) + reflection * weight;
 }
 
 } // namespace screen_space_reflection

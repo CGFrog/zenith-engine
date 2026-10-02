@@ -7,6 +7,12 @@
 //   rg: octahedral view-space normal (+Z towards the camera), [-1, 1] -> [0, 1]
 //   b:  perceptual roughness, as the shading pass clamps it
 //   a:  1 for a written opaque surface (the clear value is 0)
+// and the specular target (PostProcessPass::specularFormat, R8G8B8A8_SRGB);
+// src/engine/graphics/SceneSpecularEncoding.hpp mirrors it:
+//   rgb: linear F0, mix(0.04, base color, metallic) as mesh.frag computes it
+//   a:   1 for a written opaque surface (the clear value is 0)
+// The specular attachment is VK_NULL_HANDLE on frames without screen-space
+// reflections, which discards that output.
 
 // Mirrors MaterialRecord in MeshPass.cpp (std430).
 struct MaterialRecord {
@@ -35,6 +41,7 @@ layout(location = 1) in vec2 texCoord;
 layout(location = 2) in vec4 viewTangent;
 layout(location = 3) flat in uint materialIndex;
 layout(location = 0) out vec4 outNormalRoughness;
+layout(location = 1) out vec4 outSpecular;
 
 vec2 signNotZero(vec2 value) {
     return vec2(value.x >= 0.0 ? 1.0 : -1.0, value.y >= 0.0 ? 1.0 : -1.0);
@@ -53,8 +60,9 @@ void main() {
     MaterialRecord material = materials.values[materialIndex];
     // Same alpha test as mesh.frag, so masked texels the shading pass would
     // discard never reach the depth it tests against.
+    vec4 sampledBase = sampleMaterialTexture(material.textures.x, texCoord);
     if (material.surface.y > 0.5 && material.surface.y < 1.5 &&
-        sampleMaterialTexture(material.textures.x, texCoord).a * material.baseColor.a < material.surface.x) {
+        sampledBase.a * material.baseColor.a < material.surface.x) {
         discard;
     }
     // Same normal mapping as mesh.frag; the basis is rotated into view space,
@@ -72,6 +80,9 @@ void main() {
     if (!gl_FrontFacing) {
         normal = -normal;
     }
-    float roughness = clamp(sampleMaterialTexture(material.textures.z, texCoord).g * material.factors.y, 0.045, 1.0);
+    vec4 orm = sampleMaterialTexture(material.textures.z, texCoord);
+    float roughness = clamp(orm.g * material.factors.y, 0.045, 1.0);
+    float metallic = clamp(orm.b * material.factors.x, 0.0, 1.0);
     outNormalRoughness = vec4(encodeOctahedral(normal) * 0.5 + 0.5, roughness, 1.0);
+    outSpecular = vec4(mix(vec3(0.04), sampledBase.rgb * material.baseColor.rgb, metallic), 1.0);
 }

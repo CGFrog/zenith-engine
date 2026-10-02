@@ -398,6 +398,12 @@ void PostProcessPass::destroyTargets(const VulkanContext& context) {
         if (target.normalImage) {
             vmaDestroyImage(context.vmaAllocator(), target.normalImage, target.normalAllocation);
         }
+        if (target.specularView) {
+            vkDestroyImageView(context.device(), target.specularView, nullptr);
+        }
+        if (target.specularImage) {
+            vmaDestroyImage(context.vmaAllocator(), target.specularImage, target.specularAllocation);
+        }
         target.image = VK_NULL_HANDLE;
         target.view = VK_NULL_HANDLE;
         target.allocation = VK_NULL_HANDLE;
@@ -410,6 +416,11 @@ void PostProcessPass::destroyTargets(const VulkanContext& context) {
         target.normalView = VK_NULL_HANDLE;
         target.normalAllocation = VK_NULL_HANDLE;
         target.normalInitialized = false;
+        target.specularImage = VK_NULL_HANDLE;
+        target.specularView = VK_NULL_HANDLE;
+        target.specularAllocation = VK_NULL_HANDLE;
+        target.specularInitialized = false;
+        target.specularWritten = false;
     }
 }
 
@@ -444,7 +455,7 @@ void PostProcessPass::prepareScene(VkCommandBuffer commandBuffer, uint32_t frame
 }
 
 bool PostProcessPass::tracesReflections(const SceneGeometryViews& geometry, ReflectionQuality reflections) {
-    return reflections != ReflectionQuality::ProbesOnly && geometry.valid();
+    return reflections != ReflectionQuality::ProbesOnly && geometry.valid() && geometry.specular != VK_NULL_HANDLE;
 }
 
 bool PostProcessPass::recordReflections(VkCommandBuffer commandBuffer, uint32_t frameIndex,
@@ -695,6 +706,67 @@ void PostProcessPass::prepareNormals(VkCommandBuffer commandBuffer, uint32_t fra
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                  target.normalInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+    target.specularWritten = false;
+}
+
+bool PostProcessPass::ensureSpecularTarget(Target& target) {
+    if (target.specularImage) {
+        return true;
+    }
+    // Same size and lifetime as the normal target, so dynamic resolution
+    // renders into its top-left like every other prepass output.
+    const VkImageCreateInfo image{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                                  .imageType = VK_IMAGE_TYPE_2D,
+                                  .format = specularFormat,
+                                  .extent = {.width = m_extent.width, .height = m_extent.height, .depth = 1},
+                                  .mipLevels = 1,
+                                  .arrayLayers = 1,
+                                  .samples = VK_SAMPLE_COUNT_1_BIT,
+                                  .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                  .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                  .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+    const VmaAllocationCreateInfo allocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    if (!checkVulkan(vmaCreateImage(m_allocator, &image, &allocation, &target.specularImage, &target.specularAllocation,
+                                    nullptr),
+                     "Create prepass specular target")) {
+        target.specularImage = VK_NULL_HANDLE;
+        target.specularAllocation = VK_NULL_HANDLE;
+        return false;
+    }
+    const VkImageViewCreateInfo view{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                                     .image = target.specularImage,
+                                     .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                                     .format = specularFormat,
+                                     .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                          .baseMipLevel = 0,
+                                                          .levelCount = 1,
+                                                          .baseArrayLayer = 0,
+                                                          .layerCount = 1}};
+    if (!checkVulkan(vkCreateImageView(m_device, &view, nullptr, &target.specularView),
+                     "Create prepass specular view")) {
+        vmaDestroyImage(m_allocator, target.specularImage, target.specularAllocation);
+        target.specularImage = VK_NULL_HANDLE;
+        target.specularView = VK_NULL_HANDLE;
+        target.specularAllocation = VK_NULL_HANDLE;
+        return false;
+    }
+    return true;
+}
+
+bool PostProcessPass::prepareSpecular(VkCommandBuffer commandBuffer, uint32_t frameIndex) {
+    Target& target = m_targets[frameIndex];
+    if (!ensureSpecularTarget(target)) {
+        return false;
+    }
+    // The prepass clears the target; only the reflection composite reads it.
+    imageBarrier(
+        commandBuffer, target.specularImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        target.specularInitialized ? VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        target.specularInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+    target.specularWritten = true;
+    return true;
 }
 
 void PostProcessPass::finishNormals(VkCommandBuffer commandBuffer, uint32_t frameIndex) {
@@ -704,10 +776,33 @@ void PostProcessPass::finishNormals(VkCommandBuffer commandBuffer, uint32_t fram
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
     target.normalInitialized = true;
+    if (target.specularWritten) {
+        imageBarrier(commandBuffer, target.specularImage, VK_IMAGE_ASPECT_COLOR_BIT,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        target.specularInitialized = true;
+    }
 }
 
 VkImageView PostProcessPass::normalView(uint32_t frameIndex) const {
     return m_targets[frameIndex].normalView;
+}
+
+VkImageView PostProcessPass::specularView(uint32_t frameIndex) const {
+    const Target& target = m_targets[frameIndex];
+    return target.specularWritten ? target.specularView : VK_NULL_HANDLE;
+}
+
+uint64_t PostProcessPass::reflectionBytes() const {
+    uint64_t bytes = m_reflections.targetBytes();
+    for (const Target& target : m_targets) {
+        if (target.specularImage) {
+            // specularFormat is four bytes per texel.
+            bytes += static_cast<uint64_t>(m_extent.width) * m_extent.height * 4;
+        }
+    }
+    return bytes;
 }
 
 void PostProcessPass::shutdown(const VulkanContext& context) {

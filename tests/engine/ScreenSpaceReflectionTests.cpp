@@ -1,5 +1,6 @@
 #include "engine/graphics/DepthPyramidLayout.hpp"
 #include "engine/graphics/RenderConfiguration.hpp"
+#include "engine/graphics/SceneSpecularEncoding.hpp"
 #include "engine/graphics/ScreenSpaceReflectionTrace.hpp"
 #include "engine/graphics/TemporalQuality.hpp"
 
@@ -304,22 +305,73 @@ void testFadesAndCompositeWeight() {
     bool weightBounded = true;
     float grazingWeight = 0.0f;
     const ssr::CompositeSettings bright{.roughnessFadeStart = 0.35f, .roughnessFadeEnd = 0.6f, .intensity = 50.0f};
+    const glm::vec3 dielectric = scene_specular::reflectanceAtNormal(glm::vec3(0.8f, 0.2f, 0.1f), 0.0f);
+    const glm::vec3 overbright(2.0f, -1.0f, 0.5f);
+    const auto inUnitRange = [](glm::vec3 weight) {
+        return glm::all(glm::greaterThanEqual(weight, glm::vec3(0.0f))) &&
+               glm::all(glm::lessThanEqual(weight, glm::vec3(1.0f)));
+    };
     for (float confidence : {-1.0f, 0.0f, 0.5f, 1.0f, 4.0f}) {
         for (float normalDotView = -0.2f; normalDotView <= 1.2f; normalDotView += 0.05f) {
             for (float roughness = 0.0f; roughness <= 1.0f; roughness += 0.1f) {
                 for (const ssr::CompositeSettings& settings : {ssr::CompositeSettings{}, bright}) {
-                    const float weight = ssr::compositeWeight(confidence, normalDotView, roughness, settings);
-                    weightBounded = weightBounded && weight >= 0.0f && weight <= 1.0f;
+                    for (const glm::vec3& reflectance : {dielectric, overbright}) {
+                        weightBounded =
+                            weightBounded && inUnitRange(ssr::compositeWeight(confidence, normalDotView, roughness,
+                                                                              reflectance, settings));
+                    }
                 }
             }
         }
-        grazingWeight = std::max(grazingWeight, ssr::compositeWeight(confidence, 0.0f, 0.045f, {}));
+        grazingWeight = std::max(grazingWeight, ssr::compositeWeight(confidence, 0.0f, 0.045f, dielectric, {}).x);
     }
     expect(weightBounded, "the composite weight never leaves [0, 1]");
-    expect(ssr::compositeWeight(0.0f, 0.5f, 0.1f, {}) == 0.0f, "a miss leaves the scene unchanged");
-    expect(std::abs(ssr::compositeWeight(1.0f, 1.0f, 0.045f, {}) - 0.04f) < 1e-4f,
-           "head-on dielectric reflections use F0 = 0.04");
+    expect(ssr::compositeWeight(0.0f, 0.5f, 0.1f, dielectric, {}) == glm::vec3(0.0f),
+           "a miss leaves the scene unchanged");
+    const glm::vec3 headOnDielectric = ssr::compositeWeight(1.0f, 1.0f, 0.045f, dielectric, {});
+    expect(glm::all(glm::lessThan(glm::abs(headOnDielectric - glm::vec3(0.04f)), glm::vec3(1e-4f))),
+           "head-on dielectric reflections use an untinted F0 = 0.04");
     expect(grazingWeight > 0.9f, "smooth grazing reflections approach full weight");
+}
+
+// Metals store their base color as F0, so reflections take on the metal's
+// tint; the stored representation keeps dielectric F0 close to 0.04.
+void testMetalReflectionsAreTinted() {
+    const glm::vec3 gold(1.0f, 0.78f, 0.34f);
+    const glm::vec3 stored = scene_specular::storeAndLoadReflectance(scene_specular::reflectanceAtNormal(gold, 1.0f));
+    expect(glm::all(glm::lessThan(glm::abs(stored - gold), glm::vec3(0.01f))), "metal F0 is the stored base color");
+    const glm::vec3 storedDielectric =
+        scene_specular::storeAndLoadReflectance(scene_specular::reflectanceAtNormal(gold, 0.0f));
+    expect(glm::all(glm::lessThan(glm::abs(storedDielectric - glm::vec3(0.04f)), glm::vec3(0.002f))),
+           "dielectric F0 survives the 8-bit sRGB store");
+
+    const glm::vec3 headOn = ssr::compositeWeight(1.0f, 1.0f, 0.045f, stored, {});
+    expect(glm::all(glm::lessThan(glm::abs(headOn - stored), glm::vec3(1e-4f))),
+           "head-on metal reflections are weighted by the metal's F0");
+    expect(headOn.r > headOn.g && headOn.g > headOn.b, "gold reflections are tinted towards red and green");
+    expect(headOn.b > 0.04f, "metals reflect far more than dielectrics");
+    const glm::vec3 grazing = ssr::compositeWeight(1.0f, 0.0f, 0.045f, stored, {});
+    expect(glm::all(glm::greaterThan(grazing, glm::vec3(0.9f))), "metal reflections lose their tint at grazing angles");
+    const glm::vec3 rough = ssr::compositeWeight(1.0f, 1.0f, 0.8f, stored, {});
+    expect(rough == glm::vec3(0.0f), "rough metals fade out of screen-space reflections");
+
+    // The lit metal holds its IBL specular, environment * F0. A confident
+    // head-on hit replaces it with the reflected radiance * F0, leaving no
+    // remainder of the (here much brighter) environment in any channel.
+    const glm::vec3 environment(8.0f);
+    const glm::vec3 reflected(0.5f, 0.4f, 0.3f);
+    const glm::vec3 blendedMetal =
+        ssr::blendReflection(environment * gold, reflected, ssr::compositeWeight(1.0f, 1.0f, 0.045f, gold, {}));
+    expect(glm::all(glm::lessThan(glm::abs(blendedMetal - reflected * gold), glm::vec3(1e-4f))),
+           "a confident metal reflection replaces the metal's IBL specular with tinted radiance");
+
+    // Grey (dielectric) weights blend exactly like a scalar mix.
+    const glm::vec3 scene(0.6f, 0.3f, 0.1f);
+    const glm::vec3 dielectricWeight = ssr::compositeWeight(0.7f, 0.6f, 0.2f, glm::vec3(0.04f), {});
+    const glm::vec3 blendedDielectric = ssr::blendReflection(scene, reflected, dielectricWeight);
+    expect(glm::all(glm::lessThan(glm::abs(blendedDielectric - glm::mix(scene, reflected, dielectricWeight.x)),
+                                  glm::vec3(1e-6f))),
+           "dielectric reflections blend as before");
 }
 
 // A shallow floor reflection: the ray hugs the floor in screen space, so
@@ -371,6 +423,7 @@ int main() {
     testThicknessRejectsOccluderInFront();
     testRayClipsToNearPlane();
     testFadesAndCompositeWeight();
+    testMetalReflectionsAreTinted();
     if (failures != 0) {
         std::cerr << failures << " screen-space reflection test(s) failed\n";
         return 1;
