@@ -23,6 +23,9 @@ import bpy
 import numpy as np
 from mathutils import Matrix, Vector
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import build_coverage  # noqa: E402  (sibling script, importable without Blender)
+
 TEXTURE_SIZE = 1024
 SCAN_TEXTURE_SIZE = 2048
 SCAN_TRIANGLES = 60000
@@ -506,6 +509,8 @@ def build_scene_document(document, templates):
         writer.add("Sphere Spot %d" % (index + 1), Matrix.Translation((x, 3.6, -2.0)),
                    {"spot_light": {"direction": [0.0, -1.0, 0.0], "color": [1.0, 0.95, 0.9], "intensity": 25.0,
                                    "range": 6.0, "inner_cone": 0.25, "outer_cone": 0.45}})
+    # The skinned tentacle and gold mirror come from build_coverage.py (assets/showcase/coverage/).
+    writer.entities.extend(build_coverage.scene_entities(len(writer.entities) + 1))
     return {"version": 1, "entities": writer.entities}
 
 

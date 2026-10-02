@@ -34,6 +34,16 @@ Meshroom photoscan `Granite Pond Rock 2`: decimated to about 60k triangles,
 laid flat, cropped to the boulder and its immediate surroundings, and scaled
 to 1.8 m.
 
+## Coverage content (`coverage/`)
+
+`tentacle.gltf`, `gold_mirror.gltf`, their `.bin` buffers and
+`tentacle_stripes.png` are generated procedurally by
+`tools/showcase/build_coverage.py` (Python standard library only) and are
+original to this repository; no external source material is used. The
+tentacle is a tapered tube skinned to a six-joint chain (`JOINTS_0`/`WEIGHTS_0`,
+two influences per vertex) with a seamlessly looping 4 s rotation clip. The
+mirror is a 5 m x 1.6 m gold slab (metallic 1, roughness 0.03).
+
 ## Environment (`sky.hdr`)
 
 Blender's bundled `courtyard.exr` studio-light world HDRI, converted to
