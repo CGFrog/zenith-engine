@@ -144,9 +144,23 @@ build\Debug\zenith.exe --project projects\showcase.zenith-project
 Each folder under `tests/references/` is one reference set: a `captures.json`
 naming the project it renders, plus the reference PNGs.
 
-- `showcase/` covers converged and adapting auto exposure, TAAU ghosting during
-  a lateral pan, alpha-tested foliage edges through the depth prepass, GTAO
-  contact occlusion, screen-space reflections, and bloom.
+- `showcase/` renders the project's own settings, so every view also carries
+  probe-volume indirect diffuse, the mild default depth of field, Low motion
+  blur, and the LUT, vignette and film-grain grade. It covers converged and
+  adapting auto exposure, TAAU ghosting during a lateral pan, alpha-tested
+  foliage edges through the depth prepass, half-resolution GTAO contact
+  occlusion, screen-space reflections, bloom, the KHR material gallery
+  (clearcoat, sheen, transmission, specular, ior), clustered decals (floor,
+  wall with a normal map, and a box straddling a wall corner that must not
+  leak), GPU particles (additive embers and lit smoke), depth of field on a near
+  sphere, camera motion blur (a 180 degree/s yaw) and object motion blur (the
+  fast tentacle under a static camera), the colour grade over a wide view, and
+  FSR 1 at the Performance preset. Views whose feature an image-wide default
+  would mask switch that default off in their `environment`
+  (`ZENITH_DISABLE_DEPTH_OF_FIELD` for the foliage, GTAO, SSR, material and
+  object-blur views; `ZENITH_DISABLE_MOTION_BLUR` for TAAU ghosting). Film
+  grain is seeded by the frame serial, so it repeats exactly and needs no extra
+  tolerance; every view uses the default limits.
 - `irradiance_room/` covers volumetric fog light shafts through the room's
   window (dense uniform fog, ambient-lit by the baked irradiance volume) and
   the volume's bounce lighting and color bleed.
@@ -157,7 +171,9 @@ environment variables, and optional per-view tolerances. The checked-in PNGs
 beside it are the references.
 
 `zenith_reference_capture` renders every view with `zenith`, a clean
-environment (benchmark, smoke, and `ZENITH_FORCE_*` switches removed), the
+environment (benchmark, smoke, and every `ZENITH_FORCE_*`, `ZENITH_DISABLE_*`
+and `ZENITH_DEPTH_PYRAMID_PER_LEVEL` switch removed before the view's own
+`environment` entries are applied), the
 manifest's window size, and `ZENITH_FRAME_DETERMINISTIC=1`, then compares each
 capture with its reference in `engine/diagnostics/ImageComparison`. Differences
 are per RGB channel in 8-bit units: a pixel differs when any channel exceeds
@@ -344,6 +360,81 @@ clusters, `gpu.particle_simulate` after the volumetric fog, and
 is the opaque-scene copy for transmissive materials, inside the `gpu.blended`
 span and subtracted from it (see KHR material extensions). The editor's Graphics
 panel shows the same table live.
+
+### Per-pass GPU cost on the reference hardware
+
+The Milestone 24/25 exit measurement of the final showcase (every feature
+enabled by the project's render settings: TAA, half-resolution GTAO,
+full-resolution SSR, per-pixel probe blending, probe-volume indirect diffuse,
+Medium volumetric fog, clustered decals, High particles, High depth of field,
+Low motion blur, LUT + vignette + film grain, Medium local shadows). Release build
+at `ac779a0` plus this change, RTX 2070 SUPER, VSync off,
+`ZENITH_BENCHMARK_MODE=render`, `ZENITH_BENCHMARK_WARMUP_FRAMES=300`,
+`ZENITH_BENCHMARK_FRAMES=600`, capture camera `0,1.7,4,0,-8` (the
+`exposure_overview` view), 2026-10-02. Each configuration ran three times,
+interleaved, on an otherwise idle machine; per-run medians agreed within 1%
+(`gpu.frame` 4.829 / 4.864 / 4.868 ms at 1080p). Values are the median of the
+three runs' medians and of their p95s, in milliseconds. The FSR 1 columns add
+`ZENITH_FORCE_UPSCALER=fsr1` and `ZENITH_FORCE_UPSCALER_QUALITY=performance`
+(render scale 0.5 per axis).
+
+| Scope | 1920x1080 median / p95 | 1280x720 median / p95 | FSR 1 1920x1080 median / p95 | FSR 1 1280x720 median / p95 |
+| --- | ---: | ---: | ---: | ---: |
+| `gpu.shadow` (cascades cached) | 0.007 / 0.007 | 0.007 / 0.007 | 0.007 / 0.007 | 0.007 / 0.007 |
+| `gpu.depth_prepass` (in opaque) | 0.188 / 0.193 | 0.094 / 0.095 | 0.063 / 0.065 | 0.040 / 0.041 |
+| `gpu.depth_pyramid` (in opaque) | 0.088 / 0.090 | 0.047 / 0.048 | 0.033 / 0.035 | 0.022 / 0.023 |
+| `gpu.ambient_occlusion` (in opaque) | 0.262 / 0.265 | 0.122 / 0.123 | 0.075 / 0.076 | 0.036 / 0.037 |
+| `gpu.light_clusters` (in opaque) | 0.020 / 0.022 | 0.020 / 0.021 | 0.020 / 0.021 | 0.019 / 0.019 |
+| `gpu.decal_clusters` (in opaque) | 0.011 / 0.012 | 0.011 / 0.012 | 0.011 / 0.012 | 0.011 / 0.012 |
+| `gpu.reflection_probe_clusters` (in opaque) | 0.009 / 0.010 | 0.009 / 0.010 | 0.009 / 0.010 | 0.009 / 0.010 |
+| `gpu.volumetric_fog` (in opaque) | 0.166 / 0.168 | 0.166 / 0.168 | 0.166 / 0.167 | 0.166 / 0.167 |
+| `gpu.particle_simulate` (in opaque) | 0.056 / 0.058 | 0.051 / 0.052 | 0.051 / 0.052 | 0.049 / 0.051 |
+| `gpu.opaque` (total) | 2.360 / 2.393 | 1.290 / 1.302 | 0.924 / 0.935 | 0.629 / 0.640 |
+| opaque shading alone (total minus the nested scopes) | 1.560 | 0.770 | 0.496 | 0.277 |
+| `gpu.skybox` (in blended) | 0.015 / 0.016 | 0.006 / 0.007 | 0.003 / 0.004 | 0.001 / 0.002 |
+| `gpu.reflections` | 1.129 / 1.143 | 0.482 / 0.485 | 0.273 / 0.276 | 0.131 / 0.133 |
+| `gpu.transmission_background` | 0.119 / 0.121 | 0.068 / 0.069 | 0.109 / 0.111 | 0.063 / 0.063 |
+| `gpu.particle_draw` (in blended) | 0.068 / 0.103 | 0.017 / 0.025 | 0.012 / 0.017 | 0.008 / 0.010 |
+| `gpu.blended` | 0.175 / 0.209 | 0.082 / 0.090 | 0.073 / 0.078 | 0.051 / 0.054 |
+| `gpu.temporal_resolve` | 0.289 / 0.299 | 0.133 / 0.137 | 0.080 / 0.082 | 0.041 / 0.043 |
+| `gpu.depth_of_field` | 0.295 / 0.302 | 0.135 / 0.137 | 0.081 / 0.082 | 0.037 / 0.038 |
+| `gpu.motion_blur` (static camera) | 0.106 / 0.107 | 0.054 / 0.055 | 0.035 / 0.037 | 0.020 / 0.020 |
+| `gpu.exposure` | 0.064 / 0.066 | 0.039 / 0.039 | 0.029 / 0.030 | 0.023 / 0.024 |
+| `gpu.bloom_downsample` | 0.141 / 0.143 | 0.077 / 0.078 | 0.053 / 0.054 | 0.039 / 0.040 |
+| `gpu.post` | 0.074 / 0.076 | 0.037 / 0.037 | 0.023 / 0.024 | 0.013 / 0.014 |
+| `gpu.fsr_easu` | - | - | 0.176 / 0.178 | 0.082 / 0.082 |
+| `gpu.fsr_rcas` | - | - | 0.055 / 0.055 | 0.026 / 0.027 |
+| `gpu.color_grade` | 0.095 / 0.096 | 0.045 / 0.046 | 0.095 / 0.096 | 0.045 / 0.045 |
+| `gpu.ui` | 0.002 / 0.002 | 0.002 / 0.002 | 0.002 / 0.002 | 0.002 / 0.002 |
+| **`gpu.frame`** | **4.864 / 4.936** | **2.465 / 2.483** | **2.030 / 2.043** | **1.222 / 1.233** |
+
+Scopes that measured at most 0.001 ms on every run (cached
+`gpu.local_shadows`, `gpu.environment_precompute`, `gpu.irradiance_volume`,
+`gpu.shadow_culling` and `gpu.culling`, which are GPU-driven only, and the FSR
+scopes at native resolution) are omitted. `gpu.environment` is precompute plus
+skybox. Nested rows are already included in their parent; see "GPU pass
+metrics" above for the spans.
+
+Screen-space reflections at full resolution are the largest single pass (23%
+of the 1080p frame), followed by opaque shading itself (the KHR gallery,
+irradiance-volume sampling, 52 clustered lights, decals and per-pixel probe
+blending), the temporal resolve, depth of field and GTAO. Volumetric fog and
+particle simulation are fixed costs (froxel grid and pool size) and do not
+scale with resolution. Under FSR 1 everything before `gpu.post` runs at a
+quarter of the pixels and the frame drops 58% at 1080p, while EASU + RCAS
+(0.231 ms) and the output-resolution colour grade remain.
+
+Against earlier showcase measurements with the content and settings of the
+time: the upscaler measurement above recorded 3.29 ms at 1080p (native, TAA,
+full-resolution GTAO, before the gallery, decals, particles, irradiance volume,
+depth of field, motion blur and grade) and the GPU-driven comparison 1.489 ms
+at 720p with the project defaults. The final showcase costs 4.86 ms and
+2.47 ms on its overview camera, +1.57 ms and +0.98 ms; the new post-process
+passes (depth of field, motion blur, colour grade) account for 0.50 ms at
+1080p, transmission, decals and particles for about 0.26 ms, and the rest is
+the added gallery and probe-volume shading that the switch from full- to
+half-resolution GTAO only partly offsets. Those earlier runs used other cameras
+and shared the GPU, so the comparison is indicative.
 
 ### GPU-culled shadow cascades
 

@@ -24,8 +24,38 @@
     "cascadeSplitLambda": 0.65,
     "cascadeBlendFraction": 0.1,
     "visualizeShadowCascades": false,
-    "ambientOcclusion": 2,
+    "ambientOcclusion": 1,
     "reflections": 2,
-    "volumetricFog": 2
+    "volumetricFog": 2,
+    "indirectDiffuse": 1,
+    "decals": 1,
+    "particles": 2,
+    "motionBlur": 1,
+    "motionBlurShutterFraction": 0.5,
+    "depthOfField": {
+      "quality": 2,
+      "focusDistance": 6.0,
+      "fStop": 1.4,
+      "sensorHeightMillimeters": 36.0,
+      "maximumCocRadiusPixels": 12.0
+    },
+    "colorGrade": {
+      "colorLut": {
+        "enabled": true,
+        "path": "color_grading/warm_cinematic.cube",
+        "strength": 0.7
+      },
+      "vignette": {
+        "enabled": true,
+        "intensity": 0.3,
+        "smoothness": 0.6,
+        "roundness": 1.0
+      },
+      "filmGrain": {
+        "enabled": true,
+        "intensity": 0.025,
+        "size": 1.5
+      }
+    }
   }
 }

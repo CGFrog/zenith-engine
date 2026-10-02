@@ -4779,6 +4779,661 @@
      "environment_asset": "showcase/probe_warm.hdr"
     }
    }
+  },
+  {
+   "id": 136,
+   "name": "Material Gallery",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -0.6,
+    0.0,
+    -8.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "mesh_renderer": {
+     "path": "showcase/materials/material_gallery.gltf",
+     "mesh": 0
+    }
+   }
+  },
+  {
+   "id": 137,
+   "name": "Decal Floor Stencil",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    2.3,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "decal": {
+     "half_extents": [
+      1.1,
+      0.3,
+      1.1
+     ],
+     "albedo_asset": "showcase/decals/decal_stencil.png",
+     "tint": [
+      1.0,
+      0.45,
+      0.08
+     ],
+     "roughness": 0.6,
+     "roughness_strength": 0.6
+    }
+   }
+  },
+  {
+   "id": 138,
+   "name": "Decal Arrow",
+   "local_transform": [
+    0.866025,
+    0.0,
+    -0.5,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.5,
+    0.0,
+    0.866025,
+    0.0,
+    -3.0,
+    0.0,
+    0.6,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "decal": {
+     "half_extents": [
+      0.45,
+      0.3,
+      0.75
+     ],
+     "albedo_asset": "showcase/decals/decal_arrow.png",
+     "roughness": 0.7,
+     "roughness_strength": 0.8,
+     "sort_order": 1
+    }
+   }
+  },
+  {
+   "id": 139,
+   "name": "Decal Puddle",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.0,
+    0.0,
+    0.6,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "decal": {
+     "half_extents": [
+      1.4,
+      0.3,
+      1.0
+     ],
+     "albedo_asset": "showcase/decals/decal_puddle.png",
+     "base_color_strength": 0.7,
+     "roughness": 0.22,
+     "roughness_strength": 1.0
+    }
+   }
+  },
+  {
+   "id": 140,
+   "name": "Decal Wall Plate",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    -1.0,
+    0.0,
+    0.0,
+    -0.6,
+    3.0,
+    -9.0,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "decal": {
+     "half_extents": [
+      0.8,
+      0.3,
+      0.8
+     ],
+     "albedo_asset": "showcase/decals/decal_plate.png",
+     "normal_asset": "showcase/decals/decal_plate_normal.png",
+     "roughness": 0.3,
+     "roughness_strength": 1.0,
+     "metallic": 1.0,
+     "metallic_strength": 1.0
+    }
+   }
+  },
+  {
+   "id": 141,
+   "name": "Decal Corner",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -7.4,
+    0.0,
+    -0.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "decal": {
+     "half_extents": [
+      1.2,
+      0.8,
+      1.2
+     ],
+     "albedo_asset": "showcase/decals/decal_stencil.png",
+     "tint": [
+      0.1,
+      0.8,
+      1.0
+     ]
+    }
+   }
+  },
+  {
+   "id": 142,
+   "name": "Ember Emitter",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -5.6,
+    0.05,
+    -3.4,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "particle_emitter": {
+     "max_particles": 2000,
+     "spawn_rate": 400.0,
+     "lifetime": [
+      1.0,
+      2.5
+     ],
+     "direction": [
+      0.0,
+      1.0,
+      0.0
+     ],
+     "cone_angle": 0.45,
+     "speed": [
+      0.8,
+      2.2
+     ],
+     "spawn_radius": 0.12,
+     "gravity": [
+      0.0,
+      0.4,
+      0.0
+     ],
+     "drag": 0.6,
+     "start_size": 0.045,
+     "end_size": 0.012,
+     "start_color": [
+      1.0,
+      0.55,
+      0.15,
+      1.0
+     ],
+     "end_color": [
+      1.0,
+      0.18,
+      0.04,
+      0.0
+     ],
+     "emissive_intensity": 6.0,
+     "lit": false,
+     "blend_mode": "additive",
+     "space": "world",
+     "soft_distance": 0.05
+    }
+   }
+  },
+  {
+   "id": 143,
+   "name": "Fast Skinned Tentacle",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    3.4,
+    0.0,
+    0.4,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "model": {
+     "path": "showcase/coverage/tentacle.gltf"
+    },
+    "animation": {
+     "clip": 0,
+     "time": 0.0,
+     "speed": 3.5,
+     "looping": true,
+     "playing": true,
+     "blend_clip": null,
+     "blend_time": 0.0,
+     "blend_duration": 0.0
+    }
+   }
+  },
+  {
+   "id": 144,
+   "name": "Fast TentacleMesh",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "parent": 143,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 143,
+     "node": 0
+    },
+    "skin": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 143,
+     "skin": 0
+    },
+    "mesh_renderer": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "mesh": 0
+    }
+   }
+  },
+  {
+   "id": 145,
+   "name": "Fast Joint0",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "parent": 143,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 143,
+     "node": 1
+    }
+   }
+  },
+  {
+   "id": 146,
+   "name": "Fast Joint1",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3,
+    0.0,
+    1.0
+   ],
+   "parent": 145,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 143,
+     "node": 2
+    }
+   }
+  },
+  {
+   "id": 147,
+   "name": "Fast Joint2",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3,
+    0.0,
+    1.0
+   ],
+   "parent": 146,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 143,
+     "node": 3
+    }
+   }
+  },
+  {
+   "id": 148,
+   "name": "Fast Joint3",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3,
+    0.0,
+    1.0
+   ],
+   "parent": 147,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 143,
+     "node": 4
+    }
+   }
+  },
+  {
+   "id": 149,
+   "name": "Fast Joint4",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3,
+    0.0,
+    1.0
+   ],
+   "parent": 148,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 143,
+     "node": 5
+    }
+   }
+  },
+  {
+   "id": 150,
+   "name": "Fast Joint5",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.3,
+    0.0,
+    1.0
+   ],
+   "parent": 149,
+   "components": {
+    "model_node": {
+     "path": "showcase/coverage/tentacle.gltf",
+     "instance_root": 143,
+     "node": 6
+    }
+   }
+  },
+  {
+   "id": 151,
+   "name": "Smoke Emitter",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    -5.6,
+    0.3,
+    -3.4,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "particle_emitter": {
+     "max_particles": 400,
+     "spawn_rate": 60.0,
+     "lifetime": [
+      3.0,
+      5.0
+     ],
+     "direction": [
+      0.0,
+      1.0,
+      0.0
+     ],
+     "cone_angle": 0.35,
+     "speed": [
+      0.25,
+      0.6
+     ],
+     "spawn_radius": 0.2,
+     "gravity": [
+      0.0,
+      0.12,
+      0.0
+     ],
+     "drag": 0.35,
+     "start_size": 0.25,
+     "end_size": 1.1,
+     "angular_speed": 0.6,
+     "start_color": [
+      0.5,
+      0.5,
+      0.52,
+      0.12
+     ],
+     "end_color": [
+      0.45,
+      0.45,
+      0.47,
+      0.0
+     ],
+     "emissive_intensity": 0.0,
+     "lit": true,
+     "blend_mode": "alpha",
+     "space": "world",
+     "soft_distance": 0.4
+    }
+   }
+  },
+  {
+   "id": 152,
+   "name": "Irradiance Volume",
+   "local_transform": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    2.0,
+    -3.5,
+    1.0
+   ],
+   "parent": null,
+   "components": {
+    "irradiance_volume": {
+     "half_extents": [
+      7.9,
+      2.0,
+      5.45
+     ],
+     "probe_counts": [
+      16,
+      4,
+      11
+     ],
+     "intensity": 1.0,
+     "blend_distance": 0.5,
+     "normal_bias": 0.2,
+     "view_bias": 0.2,
+     "bake_asset": "baked/showcase/irradiance_volume_152_48673e52d07839cf.zvol"
+    }
+   }
   }
  ]
 }

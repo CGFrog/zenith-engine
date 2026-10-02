@@ -366,24 +366,25 @@ def references_coverage(entity):
                for component in entity.get("components", {}).values())
 
 
-def scene_entities(first_id):
-    """Scene-document entities for the coverage assets, with consecutive ids from first_id.
+def tentacle_entities(first_id, name_prefix, origin, speed):
+    """Scene-document entities for one tentacle instance, with consecutive ids from first_id.
 
     The tentacle is serialized as an instantiated model: a root with the model and a
     looping animation, one model_node entity per glTF node, and the skin and mesh on
-    the mesh node. Node transforms match the glTF rest pose.
+    the mesh node. Node transforms match the glTF rest pose. name_prefix keeps the
+    entity names of several instances distinct.
     """
     entities = []
 
     def add(name, matrix, parent, components):
         entity_id = first_id + len(entities)
-        entities.append({"id": entity_id, "name": name, "local_transform": matrix, "parent": parent,
+        entities.append({"id": entity_id, "name": name_prefix + name, "local_transform": matrix, "parent": parent,
                          "components": components})
         return entity_id
 
-    root = add("Skinned Tentacle", translation(TENTACLE_ORIGIN), None, {
+    root = add("Skinned Tentacle", translation(origin), None, {
         "model": {"path": TENTACLE_PATH},
-        "animation": {"clip": 0, "time": 0.0, "speed": 1.0, "looping": True, "playing": True, "blend_clip": None,
+        "animation": {"clip": 0, "time": 0.0, "speed": speed, "looping": True, "playing": True, "blend_clip": None,
                       "blend_time": 0.0, "blend_duration": 0.0}})
     add("TentacleMesh", translation((0.0, 0.0, 0.0)), root, {
         "model_node": {"path": TENTACLE_PATH, "instance_root": root, "node": 0},
@@ -394,7 +395,14 @@ def scene_entities(first_id):
         offset = (0.0, SEGMENT_LENGTH if joint > 0 else 0.0, 0.0)
         parent = add("Joint%d" % joint, translation(offset), parent, {
             "model_node": {"path": TENTACLE_PATH, "instance_root": root, "node": joint + 1}})
-    add("Gold Mirror", translation(MIRROR_CENTRE), None, {"mesh_renderer": {"path": MIRROR_PATH, "mesh": 0}})
+    return entities
+
+
+def scene_entities(first_id):
+    """Scene-document entities for the coverage assets, with consecutive ids from first_id."""
+    entities = tentacle_entities(first_id, "", TENTACLE_ORIGIN, 1.0)
+    entities.append({"id": first_id + len(entities), "name": "Gold Mirror", "local_transform": translation(MIRROR_CENTRE),
+                     "parent": None, "components": {"mesh_renderer": {"path": MIRROR_PATH, "mesh": 0}}})
     return entities
 
 

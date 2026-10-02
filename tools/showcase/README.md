@@ -54,3 +54,26 @@ procedural Python 3. It only writes the asset; place it with a
 ```powershell
 python tools/showcase/build_materials.py --repo .
 ```
+
+`build_features.py` places the Milestone 24/25 features in the scene and merges
+their render settings into the project (Python 3 only). It replaces just its own
+entities: the material gallery (in front of the back wall), five clustered
+decals (`assets/showcase/decals/`, from `build_decal_textures.py`), an ember and
+smoke campfire of GPU particle emitters, a second tentacle instance swaying 3.5x
+faster for object motion blur, and an irradiance volume over the room. The
+render settings it owns turn on half-resolution GTAO, probe-volume indirect
+diffuse, decals, High particles, Low motion blur, a mild High depth of field
+(focus 6 m, f/1.4 on a 36 mm sensor) and the warm LUT grade with a vignette and
+film grain. Rerun it after `build_coverage.py`, which replaces every tentacle
+instance, then bake the irradiance volume:
+
+```powershell
+python tools/showcase/build_features.py --repo .
+build\Debug\zenith_editor.exe projects\showcase.zenith-project --bake-irradiance-volumes
+```
+
+The bake writes `assets/baked/showcase/irradiance_volume_<id>_<hash>.zvol` and
+saves the scene through the editor's serializer; `build_features.py` keeps the
+volume's `bake_asset` when it runs again. Rebake after moving static geometry,
+delete the previous `.zvol`, and regenerate the showcase reference captures
+(`docs/RENDERER_VALIDATION.md`).

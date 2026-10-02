@@ -174,9 +174,19 @@ bool runCapture(const DriverOptions& options, const CaptureManifest& manifest, c
         std::cerr << "Cannot copy the process environment: " << SDL_GetError() << '\n';
         return false;
     }
-    for (const char* name : {"ZENITH_SMOKE_FRAMES", "ZENITH_BENCHMARK_FRAMES", "ZENITH_CAPTURE_CAMERA_MOTION",
-                             "ZENITH_FORCE_HIGH_QUALITY", "ZENITH_FORCE_TAA", "ZENITH_FORCE_GPU_DRIVEN",
-                             "ZENITH_FORCE_DYNAMIC_RESOLUTION", "ZENITH_DISABLE_DEPTH_PREPASS"}) {
+    // Every diagnostic switch that changes the rendered image is cleared, so only
+    // the view's own environment entries (applied below) can select one.
+    for (const char* name : {"ZENITH_SMOKE_FRAMES",           "ZENITH_BENCHMARK_FRAMES",
+                             "ZENITH_BENCHMARK_MODE",         "ZENITH_BENCHMARK_OBJECTS",
+                             "ZENITH_BENCHMARK_LIGHTS",       "ZENITH_CAPTURE_CAMERA_MOTION",
+                             "ZENITH_FORCE_HIGH_QUALITY",     "ZENITH_FORCE_TAA",
+                             "ZENITH_FORCE_GPU_DRIVEN",       "ZENITH_FORCE_DYNAMIC_RESOLUTION",
+                             "ZENITH_FORCE_UPSCALER",         "ZENITH_FORCE_UPSCALER_QUALITY",
+                             "ZENITH_DISABLE_DEPTH_PREPASS",  "ZENITH_DISABLE_GPU_SHADOW_CULLING",
+                             "ZENITH_DISABLE_SHADOW_CACHE",   "ZENITH_DISABLE_RENDER_PACKET_CACHE",
+                             "ZENITH_DISABLE_VOLUMETRIC_FOG", "ZENITH_DISABLE_DEPTH_OF_FIELD",
+                             "ZENITH_DISABLE_MOTION_BLUR",    "ZENITH_DISABLE_PARTICLES",
+                             "ZENITH_DEPTH_PYRAMID_PER_LEVEL"}) {
         SDL_UnsetEnvironmentVariable(environment, name);
     }
     const std::string frame = std::to_string(view.frame);

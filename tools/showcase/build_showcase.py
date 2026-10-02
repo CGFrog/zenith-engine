@@ -25,6 +25,7 @@ from mathutils import Matrix, Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import build_coverage  # noqa: E402  (sibling script, importable without Blender)
+import build_features  # noqa: E402  (sibling script, importable without Blender)
 
 TEXTURE_SIZE = 1024
 SCAN_TEXTURE_SIZE = 2048
@@ -518,6 +519,9 @@ def build_scene_document(document, templates):
         writer.add(name, Matrix.Translation((x, 2.0, -3.0)),
                    {"reflection_probe": {"half_extents": [4.0, 2.0, 6.0], "blend_distance": 1.5, "priority": 0,
                                          "environment_asset": asset}})
+    # The material gallery, decals, particle emitters and irradiance volume come from
+    # build_features.py; bake the volume again after a rebuild (see that script).
+    writer.entities.extend(build_features.scene_entities(len(writer.entities) + 1))
     return {"version": 1, "entities": writer.entities}
 
 
@@ -535,7 +539,8 @@ PROJECT = {
         "environment": 2, "environmentBackground": True, "localLights": 1, "maximumLocalLights": 1024,
         "reflectionProbes": True, "reflectionProbeBlending": 1, "preferGpuDrivenSubmission": False, "depthPrepass": True,
         "lodErrorThresholdPixels": 1.0, "cascadeSplitLambda": 0.65, "cascadeBlendFraction": 0.1,
-        "visualizeShadowCascades": False, "ambientOcclusion": 2, "reflections": 2,
+        "visualizeShadowCascades": False, "reflections": 2, "localShadows": 2, "volumetricFog": 2,
+        **build_features.RENDER_SETTINGS,
     },
 }
 

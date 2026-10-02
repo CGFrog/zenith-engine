@@ -10,7 +10,7 @@
   "views": [
     {
       "name": "exposure_overview",
-      "covers": "converged auto exposure, image-based lighting, cascaded shadows",
+      "covers": "converged auto exposure, image-based lighting, cascaded shadows, probe-volume indirect diffuse, and the project's default depth of field and colour grade",
       "frame": 300,
       "camera": "0,1.7,4,0,-8"
     },
@@ -23,34 +23,111 @@
     },
     {
       "name": "taau_ghosting",
-      "covers": "TAAU history reprojection and ghosting during a lateral pan",
+      "covers": "TAAU history reprojection and ghosting during a lateral pan (motion blur off so it cannot hide ghosting)",
       "frame": 180,
       "camera": "-3.5,1.3,1,0,-12",
-      "motion": "1.5,0,0,0,0"
+      "motion": "1.5,0,0,0,0",
+      "environment": {
+        "ZENITH_DISABLE_MOTION_BLUR": "1"
+      }
     },
     {
       "name": "masked_prepass_edges",
-      "covers": "alpha-tested foliage edges through the depth prepass",
+      "covers": "alpha-tested foliage edges through the depth prepass (depth of field off so edges stay sharp)",
       "frame": 300,
-      "camera": "3.6,1,-3.6,-70,-15"
+      "camera": "3.6,1,-3.6,-70,-15",
+      "environment": {
+        "ZENITH_DISABLE_DEPTH_OF_FIELD": "1"
+      }
     },
     {
       "name": "gtao_contact",
-      "covers": "GTAO contact occlusion around pedestals and the floor",
+      "covers": "half-resolution GTAO contact occlusion around pedestals and the floor (depth of field off)",
       "frame": 300,
-      "camera": "-2,1,0,0,-22"
+      "camera": "-2,1,0,0,-22",
+      "environment": {
+        "ZENITH_DISABLE_DEPTH_OF_FIELD": "1"
+      }
     },
     {
       "name": "ssr_floor",
-      "covers": "screen-space reflections on the glossy floor",
+      "covers": "screen-space reflections on the glossy floor (depth of field off)",
       "frame": 300,
-      "camera": "0,0.4,-0.5,0,-4"
+      "camera": "0,0.4,-0.5,0,-4",
+      "environment": {
+        "ZENITH_DISABLE_DEPTH_OF_FIELD": "1"
+      }
     },
     {
       "name": "bloom_emissive",
       "covers": "bloom around the emissive strips and pillar",
       "frame": 300,
       "camera": "-4,1.2,-4.6,40,0"
+    },
+    {
+      "name": "material_extensions",
+      "covers": "KHR material gallery: clearcoat car paints, sheen fabrics, clear/frosted/tinted transmission, tinted specular and an ior ladder (depth of field off)",
+      "frame": 300,
+      "camera": "-0.3,1.15,-4.6,0,0",
+      "environment": {
+        "ZENITH_DISABLE_DEPTH_OF_FIELD": "1"
+      }
+    },
+    {
+      "name": "decals_overview",
+      "covers": "clustered decals: floor stencil, rotated arrow, glossy puddle, and the normal-mapped metal plate on the back wall",
+      "frame": 300,
+      "camera": "0,1.7,4.5,0,-14"
+    },
+    {
+      "name": "decals_corner",
+      "covers": "a decal box straddling the west wall stays on the floor (angle fade, no leak onto the wall)",
+      "frame": 300,
+      "camera": "-4.5,1.6,2.5,50,-20"
+    },
+    {
+      "name": "particles",
+      "covers": "GPU particles: additive unlit embers rising through lit, alpha-blended soft smoke",
+      "frame": 200,
+      "camera": "-3.0,1.1,-0.2,39,-8"
+    },
+    {
+      "name": "depth_of_field",
+      "covers": "depth of field: a near sphere blurred in front of the in-focus material gallery 6 m away",
+      "frame": 300,
+      "camera": "-1.45,1.1,-1.4,0,-3"
+    },
+    {
+      "name": "motion_blur_camera",
+      "covers": "camera motion blur while yawing at 180 degrees per second",
+      "frame": 120,
+      "camera": "1.5,1.5,0.5,0,-8",
+      "motion": "0,0,0,180,0"
+    },
+    {
+      "name": "motion_blur_object",
+      "covers": "object motion blur on the fast skinned tentacle seen by a static camera (depth of field off)",
+      "frame": 300,
+      "camera": "2.6,1.2,3.4,-12,-8",
+      "environment": {
+        "ZENITH_DISABLE_DEPTH_OF_FIELD": "1"
+      }
+    },
+    {
+      "name": "color_grade",
+      "covers": "colour grade: warm 3D LUT, vignette, and deterministic film grain over a wide view",
+      "frame": 300,
+      "camera": "-6.5,2.4,1.5,-35,-12"
+    },
+    {
+      "name": "fsr1_upscale",
+      "covers": "FSR 1 EASU upscale and RCAS sharpening from the Performance (2x) render scale",
+      "frame": 300,
+      "camera": "0,1.7,4,0,-8",
+      "environment": {
+        "ZENITH_FORCE_UPSCALER": "fsr1",
+        "ZENITH_FORCE_UPSCALER_QUALITY": "performance"
+      }
     }
   ]
 }
