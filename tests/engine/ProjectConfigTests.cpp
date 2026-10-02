@@ -6,6 +6,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <nlohmann/json.hpp>
+#include <string>
 
 namespace {
 int failures = 0;
@@ -20,6 +23,11 @@ void expect(bool condition, const char* message) {
 void writeFile(const std::filesystem::path& path, std::string_view contents) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     output << contents;
+}
+
+std::string readFile(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 } // namespace
 
@@ -108,6 +116,49 @@ int main() {
     expect(!loadProjectConfig(escapingPath, escaping), "project startup scenes cannot escape the scene root");
     expect(escaping.displayName == loaded.displayName,
            "failed containment validation preserves the active project configuration");
+
+    expect(loaded.gameModule.empty(), "a project saved without a game module loads without one");
+    expect(readFile(projectPath).find("gameModule") == std::string::npos,
+           "a project without a game module does not write the optional key");
+
+    const std::filesystem::path moduleProjectPath = directory / "module.zenith-project";
+    ProjectConfig withModule = source;
+    withModule.gameModule = directory / "bin" / "game_module.dll";
+    expect(saveProjectConfig(moduleProjectPath, withModule).success, "a project with a game module should save");
+    const std::string moduleProjectText = readFile(moduleProjectPath);
+    expect(moduleProjectText.find(R"("gameModule": "bin/game_module.dll")") != std::string::npos &&
+               moduleProjectText.find(R"("version": 4)") != std::string::npos,
+           "the game module is written relative to the project file in a version 4 project");
+    ProjectConfig loadedWithModule;
+    expect(loadProjectConfig(moduleProjectPath, loadedWithModule).success &&
+               loadedWithModule.gameModule == directory / "bin" / "game_module.dll",
+           "the game module resolves against the project directory");
+    ProjectConfig resavedWithModule;
+    expect(saveProjectConfig(moduleProjectPath, loadedWithModule).success &&
+               loadProjectConfig(moduleProjectPath, resavedWithModule).success &&
+               resavedWithModule.gameModule == loadedWithModule.gameModule,
+           "the game module is preserved when a loaded project is saved again");
+
+    // Variants of the saved version 4 document with one field changed.
+    const auto writeVariant = [&](const std::filesystem::path& path, int version, nlohmann::json gameModule) {
+        nlohmann::json document = nlohmann::json::parse(moduleProjectText);
+        document["version"] = version;
+        document["gameModule"] = std::move(gameModule);
+        writeFile(path, document.dump());
+    };
+    const std::filesystem::path absoluteModulePath = directory / "absolute-module.zenith-project";
+    writeVariant(absoluteModulePath, 4, (directory / "game.dll").generic_string());
+    ProjectConfig absoluteModule;
+    expect(!loadProjectConfig(absoluteModulePath, absoluteModule), "an absolute game module path is rejected");
+    const std::filesystem::path numericModulePath = directory / "numeric-module.zenith-project";
+    writeVariant(numericModulePath, 4, 7);
+    ProjectConfig numericModule;
+    expect(!loadProjectConfig(numericModulePath, numericModule), "a game module that is not a path is rejected");
+    const std::filesystem::path versionThreePath = directory / "version-three.zenith-project";
+    writeVariant(versionThreePath, 3, "ignored.dll");
+    ProjectConfig versionThree;
+    expect(loadProjectConfig(versionThreePath, versionThree).success && versionThree.gameModule.empty(),
+           "version 3 projects load without a game module");
 
     writeFile(projectPath, "{not json");
     ProjectConfig preserved = loaded;

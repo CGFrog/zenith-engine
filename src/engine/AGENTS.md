@@ -13,6 +13,7 @@ This subtree is the reusable `zenith_engine` library. It must not include from
 | `audio/` | SDL audio device, decoding, mixing, streaming, and audio handles. |
 | `graphics/` | Renderer and Vulkan implementation; nested folders separate passes, resources, pipelines, surfaces, swapchains, shaders, and Vulkan setup. |
 | `input/` | Device-state translation; gameplay meaning belongs in `src/game/`. |
+| `module/` | Game module ABI, shadow-copied loading and unloading, module registration, and the system registry and scheduler. |
 | `physics/` | Jolt-backed simulation exposed through Zenith domain types. |
 | `reflection/` | Plain-data field descriptors and their JSON codec; no scene or asset knowledge. |
 | `scene/` | ECS components, hierarchy, transforms, the component type registry, and scene serialization. |
@@ -29,5 +30,8 @@ This subtree is the reusable `zenith_engine` library. It must not include from
 - A serialized component is registered in `scene/BuiltInComponentTypes.cpp`;
   `SceneDocument` and the editor inspector discover it from the registry.
   Changing a field key or meaning needs a schema version and a migration.
+- `zenith_engine` is a shared library. Functions are exported automatically;
+  exported data needs `ZENITH_ENGINE_API`. Do not call privately linked
+  third-party libraries (volk, Jolt, shaderc) from inline header code.
 - Prefer CPU-only coverage under the matching `tests/engine/` area. Graphics or
   window work also needs a bounded smoke test when Vulkan is available.

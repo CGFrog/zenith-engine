@@ -24,6 +24,19 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(FetchContent)
 
+# zenith_engine is a shared library so an executable and the game modules it
+# loads share one copy of the engine and of its third-party state. Static
+# third-party libraries linked into it must be position independent, and every
+# runtime binary lands in one directory so executables, tests, and the loader
+# find the engine and SDL libraries beside them (per configuration with
+# multi-config generators).
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+if(UNIX AND NOT APPLE)
+    set(CMAKE_INSTALL_RPATH "$ORIGIN")
+endif()
+
 # Fetch Vulkan's headers but do not link the platform Vulkan loader. Volk will
 # load the Vulkan runtime dynamically when the renderer initializes it.
 FetchContent_Declare(
@@ -101,8 +114,10 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
-set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-set(SDL_STATIC ON CACHE BOOL "" FORCE)
+# SDL is shared because the engine library, executables, and tests all call it
+# and must see one set of SDL globals (environment, video, errors).
+set(SDL_SHARED ON CACHE BOOL "" FORCE)
+set(SDL_STATIC OFF CACHE BOOL "" FORCE)
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
 set(SDL_TESTS OFF CACHE BOOL "" FORCE)
 set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
@@ -225,7 +240,10 @@ FetchContent_MakeAvailable(
     meshoptimizer
 )
 
-add_library(imgui STATIC
+# Dear ImGui is compiled into zenith_engine (whose renderer owns the context
+# and uses the engine's volk function table), and exported from it with
+# IMGUI_API so the editor and its widgets share that one context.
+add_library(imgui OBJECT
     "${imgui_SOURCE_DIR}/imgui.cpp"
     "${imgui_SOURCE_DIR}/imgui_demo.cpp"
     "${imgui_SOURCE_DIR}/imgui_draw.cpp"
@@ -240,8 +258,21 @@ target_include_directories(imgui PUBLIC
     "${imgui_SOURCE_DIR}/backends"
 )
 target_compile_definitions(imgui PUBLIC IMGUI_IMPL_VULKAN_USE_VOLK VK_NO_PROTOTYPES)
+if(WIN32)
+    target_compile_definitions(imgui PRIVATE "IMGUI_API=__declspec(dllexport)")
+endif()
 target_link_libraries(imgui PUBLIC Vulkan::Headers volk SDL3::SDL3)
-target_link_libraries(imguizmo PUBLIC imgui)
+
+# ImGuizmo declares its own functions with IMGUI_API, so it must be built where
+# that macro means export: it is compiled into zenith_engine beside Dear ImGui.
+# The dependency's static target is not built.
+set_target_properties(imguizmo PROPERTIES EXCLUDE_FROM_ALL ON)
+add_library(zenith_imguizmo OBJECT "${imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp")
+target_include_directories(zenith_imguizmo PUBLIC "${imguizmo_SOURCE_DIR}/src")
+target_link_libraries(zenith_imguizmo PUBLIC imgui)
+if(WIN32)
+    target_compile_definitions(zenith_imguizmo PRIVATE "IMGUI_API=__declspec(dllexport)")
+endif()
 
 # cgltf is a single-header library and does not provide its own CMake target.
 add_library(cgltf INTERFACE)
@@ -274,7 +305,7 @@ else()
     target_compile_options(zenith_bc7enc PRIVATE -w)
 endif()
 
-add_library(zenith_engine STATIC
+add_library(zenith_engine SHARED
     src/engine/diagnostics/Benchmark.cpp
     src/engine/diagnostics/FrameCaptureConfig.cpp
     src/engine/diagnostics/ImageComparison.cpp
@@ -363,6 +394,12 @@ add_library(zenith_engine STATIC
     src/engine/input/InputProfiles.cpp
     src/engine/jobs/JobSystem.cpp
     src/engine/jobs/FrameTaskGraph.cpp
+    src/engine/module/GameModule.cpp
+    src/engine/module/ModuleApi.cpp
+    src/engine/module/ModuleRegistrar.cpp
+    src/engine/module/ModuleShadowCopy.cpp
+    src/engine/module/SharedLibrary.cpp
+    src/engine/module/SystemScheduler.cpp
     src/engine/physics/PhysicsWorld.cpp
     src/engine/platform/PlatformServices.cpp
     src/engine/project/ProjectConfig.cpp
@@ -451,7 +488,6 @@ add_library(zenith_editor_app STATIC
     src/editor/settings/EditorSettings.cpp
 )
 target_link_libraries(zenith_editor_app PUBLIC zenith_engine)
-target_link_libraries(zenith_editor_app PUBLIC imguizmo::imguizmo)
 target_compile_definitions(zenith_editor_app PRIVATE GLM_ENABLE_EXPERIMENTAL)
 
 add_executable(zenith_editor src/editor/main.cpp)
@@ -552,6 +588,14 @@ target_include_directories(zenith_engine PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
+set_target_properties(zenith_engine PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+target_compile_definitions(zenith_engine PRIVATE ZENITH_ENGINE_BUILDING)
+if(WIN32)
+    target_compile_definitions(zenith_engine
+        PRIVATE "IMGUI_API=__declspec(dllexport)"
+        INTERFACE "IMGUI_API=__declspec(dllimport)")
+endif()
+
 target_compile_definitions(zenith_engine PUBLIC VK_NO_PROTOTYPES PRIVATE
     ZENITH_BENCHMARK_REVISION="${ZENITH_SOURCE_REVISION}"
     ZENITH_BENCHMARK_DIRTY="${ZENITH_SOURCE_DIRTY}"
@@ -560,22 +604,26 @@ target_compile_definitions(zenith_engine PUBLIC VK_NO_PROTOTYPES PRIVATE
     ZENITH_BENCHMARK_PLATFORM="${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}"
 )
 
+# Header-only and shared dependencies are public. Static libraries are linked
+# privately so their code and globals exist once, inside the engine library;
+# consumers receive only the headers of those that engine headers include.
 target_link_libraries(zenith_engine PUBLIC
     Vulkan::Headers
-    volk
     glm::glm
     SDL3::SDL3
     cgltf::cgltf
     stb
     EnTT::EnTT
     nlohmann_json::nlohmann_json
-    Jolt
     GPUOpen::VulkanMemoryAllocator
-    shaderc
-    imgui
 )
-target_link_libraries(zenith_engine PRIVATE zenith_bc7enc)
-target_link_libraries(zenith_engine PRIVATE meshoptimizer)
+target_link_libraries(zenith_engine PRIVATE volk imgui zenith_imguizmo Jolt shaderc zenith_bc7enc meshoptimizer ${CMAKE_DL_LIBS})
+foreach(header_dependency IN ITEMS volk imgui zenith_imguizmo)
+    target_include_directories(zenith_engine PUBLIC
+        $<TARGET_PROPERTY:${header_dependency},INTERFACE_INCLUDE_DIRECTORIES>)
+    target_compile_definitions(zenith_engine PUBLIC
+        $<TARGET_PROPERTY:${header_dependency},INTERFACE_COMPILE_DEFINITIONS>)
+endforeach()
 
 if(MSVC)
     target_compile_options(zenith_engine PRIVATE /W4 /permissive- /FS)
@@ -595,6 +643,13 @@ install(TARGETS zenith zenith_asset_build
         POST_EXCLUDE_REGEXES ".*[Ss]ystem32/.*" ".*/lib(c|m|pthread|dl|rt)\\.so.*"
     RUNTIME DESTINATION .
     BUNDLE DESTINATION .
+)
+# The engine and SDL shared libraries sit beside the executables. Their import
+# libraries and development symlinks are not part of the runtime package.
+install(TARGETS zenith_engine SDL3-shared
+    RUNTIME DESTINATION .
+    LIBRARY DESTINATION . NAMELINK_SKIP
+    ARCHIVE DESTINATION lib COMPONENT development EXCLUDE_FROM_ALL
 )
 install(DIRECTORY "${ZENITH_ASSET_SOURCE_DIR}/" DESTINATION assets)
 install(DIRECTORY "${ZENITH_SHADER_BINARY_DIR}/" DESTINATION shaders FILES_MATCHING PATTERN "*.spv")
@@ -660,7 +715,8 @@ if(BUILD_TESTING)
     add_executable(zenith_milestone_19_21_tests tests/engine/Milestone19And21Tests.cpp)
     target_compile_definitions(zenith_milestone_19_21_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
     add_dependencies(zenith_milestone_19_21_tests zenith_assets)
-    target_link_libraries(zenith_milestone_19_21_tests PRIVATE zenith_engine zenith_demo zenith_editor_app)
+    # meshoptimizer is private to the engine library; this test calls it directly.
+    target_link_libraries(zenith_milestone_19_21_tests PRIVATE zenith_engine zenith_demo zenith_editor_app meshoptimizer)
     if(MSVC)
         target_compile_options(zenith_milestone_19_21_tests PRIVATE /W4 /permissive-)
     else()
@@ -810,6 +866,36 @@ if(BUILD_TESTING)
         target_compile_options(zenith_component_types_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_component_types COMMAND zenith_component_types_tests)
+
+    # Game modules for zenith_game_module_tests: a working module, one built for
+    # another module API version, and a library without module entry points.
+    add_library(zenith_test_game_module MODULE tests/engine/modules/TestGameModule.cpp)
+    target_link_libraries(zenith_test_game_module PRIVATE zenith_engine)
+    add_library(zenith_test_mismatched_module MODULE tests/engine/modules/MismatchedApiModule.cpp)
+    target_include_directories(zenith_test_mismatched_module PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    add_library(zenith_test_not_a_module MODULE tests/engine/modules/NotAModule.cpp)
+    target_include_directories(zenith_test_not_a_module PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    add_executable(zenith_game_module_tests tests/engine/GameModuleTests.cpp)
+    target_link_libraries(zenith_game_module_tests PRIVATE zenith_engine)
+    target_compile_definitions(zenith_game_module_tests PRIVATE
+        ZENITH_TEST_GAME_MODULE="$<TARGET_FILE:zenith_test_game_module>"
+        ZENITH_TEST_MISMATCHED_MODULE="$<TARGET_FILE:zenith_test_mismatched_module>"
+        ZENITH_TEST_NOT_A_MODULE="$<TARGET_FILE:zenith_test_not_a_module>")
+    if(MSVC)
+        target_compile_definitions(zenith_game_module_tests PRIVATE
+            ZENITH_TEST_GAME_MODULE_PDB="$<TARGET_PDB_FILE:zenith_test_game_module>")
+    endif()
+    add_dependencies(zenith_game_module_tests
+        zenith_test_game_module zenith_test_mismatched_module zenith_test_not_a_module)
+    foreach(module_test_target IN ITEMS zenith_test_game_module zenith_test_mismatched_module
+            zenith_test_not_a_module zenith_game_module_tests)
+        if(MSVC)
+            target_compile_options(${module_test_target} PRIVATE /W4 /permissive-)
+        else()
+            target_compile_options(${module_test_target} PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+    endforeach()
+    add_test(NAME zenith_game_module COMMAND zenith_game_module_tests)
 
     add_executable(zenith_project_config_tests tests/engine/ProjectConfigTests.cpp)
     target_link_libraries(zenith_project_config_tests PRIVATE zenith_engine)
@@ -993,7 +1079,8 @@ if(BUILD_TESTING)
     # hardware Vulkan device; zenith_update_<set>_references regenerates one
     # set and zenith_update_references regenerates all of them.
     add_executable(zenith_reference_capture tests/capture/ReferenceCaptureDriver.cpp)
-    target_link_libraries(zenith_reference_capture PRIVATE zenith_engine)
+    # The driver loads Vulkan through its own volk instance; the engine's is private.
+    target_link_libraries(zenith_reference_capture PRIVATE zenith_engine volk)
     # Captures sample the cooked BC7/BC5 textures, so they must be current.
     add_dependencies(zenith_reference_capture zenith zenith_cooked_textures)
     add_custom_target(zenith_update_references)
