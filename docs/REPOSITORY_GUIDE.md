@@ -304,6 +304,24 @@ directory when no project file was given. `apply` hands the renderer the
 capability-validated settings and returns the fallbacks; the request itself
 keeps what the user chose.
 
+### `src/editor/panels/AssetBrowserPanel.*` and `src/editor/project/`
+
+The Asset Browser shows the project's asset and scene roots as a folder tree
+with favourites, breadcrumbs, a grid or list of the current folder, and search
+and type filters. Models drag out as `ZENITH_MODEL_ASSET` payloads and scenes
+open on double-click. `drawBrowser` draws everything from diagnostics and a
+small `AssetBrowserActions` set, so tests drive it in a headless ImGui frame.
+All file-system knowledge stays behind `project/AssetCatalog` (asset records
+plus every folder, empty ones included) so a later asset database can replace
+it locally. `project/ProjectFileOperations` creates folders and empty scenes,
+renames (keeping file extensions), duplicates, moves items to the OS trash
+(Recycle Bin through `IFileOperation`, or the XDG home trash; never a silent permanent
+delete), and reveals items in Explorer or via `xdg-open`; none of them
+overwrite an existing item. `settings/AssetBrowserSettings` persists the view
+mode, favourites, and last folder in `asset-browser.json` in the editor's
+settings directory, falling back to defaults with a warning when the file is
+invalid.
+
 ### `src/editor/interaction/GraphicsSettingsEditor.*`
 
 ImGui controls for every `RenderSettings` field (options a device cannot run
