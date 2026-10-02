@@ -16,8 +16,8 @@ enum class SelectionClickMode {
 
 // The editor's object selection. As in Blender, the first entry is the active
 // entity that the inspector and local transform axes follow. Entities are held
-// by stable SceneEntityId so the selection survives undo, which rebuilds the
-// scene's EnTT handles.
+// by stable SceneEntityId so the selection survives undo and document loads,
+// which give recreated entities new EnTT handles.
 class Selection {
   public:
     const std::vector<SceneEntityId>& ids() const;

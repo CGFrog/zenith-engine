@@ -20,8 +20,9 @@
 #include <utility>
 
 namespace {
-// Layouts older than version 3 lack the Graphics panel below the Inspector.
-constexpr uint32_t currentLayoutVersion = 3;
+// Layouts older than version 3 lack the Graphics panel below the Inspector;
+// version 4 docks the Build panel beside Diagnostics.
+constexpr uint32_t currentLayoutVersion = 4;
 constexpr const char* sceneExtension = ".zenith-scene";
 constexpr float editorFontPixelSize = 15.0f;
 constexpr float autosaveIntervalSeconds = 30.0f;

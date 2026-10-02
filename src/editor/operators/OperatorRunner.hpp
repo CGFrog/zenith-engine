@@ -19,7 +19,7 @@ struct LastOperator {
     bool recordedUndoStep{false};
     // History state and scene snapshot right after the operator, used to make
     // sure undoing the newest step really undoes this operator.
-    size_t historySize{0};
+    uint64_t historyRevision{0};
     std::string sceneAfter;
 };
 
@@ -40,9 +40,9 @@ class OperatorRunner {
     OperatorResult invokeWithJson(std::string_view id, OperatorContext& context, std::string_view propertiesJson);
 
     // nullptr when there is no last operator, or when other edits, undo, or
-    // redo have happened since it ran. Detection compares the history size,
-    // which stops growing once the history reaches its step limit; adjustLast
-    // then still refuses to run unless the scene equals the operator's result.
+    // redo have happened since it ran (detected with CommandHistory::revision,
+    // which keeps counting at the history limit). adjustLast additionally
+    // refuses to run unless the scene equals the operator's result.
     const LastOperator* lastOperator() const;
     // Undoes the last operator and runs it again with properties, as a fresh
     // invocation with those properties would.

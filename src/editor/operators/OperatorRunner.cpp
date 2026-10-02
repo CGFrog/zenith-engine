@@ -62,7 +62,7 @@ OperatorResult OperatorRunner::invoke(std::string_view id, OperatorContext& cont
                               .properties = std::move(values),
                               .selectionBefore = std::move(selectionBefore),
                               .recordedUndoStep = recorded,
-                              .historySize = m_history.size(),
+                              .historyRevision = m_history.revision(),
                               .sceneAfter = std::move(after)};
     } else if (recorded) {
         // A newer undo step sits above the remembered operator.
@@ -88,7 +88,9 @@ const LastOperator* OperatorRunner::lastOperator() const {
     if (!m_last) {
         return nullptr;
     }
-    if (m_last->recordedUndoStep && (m_history.canRedo() || m_history.size() != m_last->historySize)) {
+    // Any later execute, undo, or redo changes the revision, so the newest
+    // undo step is no longer this operator's.
+    if (m_last->recordedUndoStep && m_history.revision() != m_last->historyRevision) {
         return nullptr;
     }
     return &*m_last;

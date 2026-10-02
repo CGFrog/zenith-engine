@@ -219,8 +219,15 @@ int main() {
 
     SceneDocument::deserialize(after2, assets, options, scene);
     history.execute(std::make_unique<SceneStateCommand>("Edit 2", after, after2), context);
+    const uint64_t revisionAtLimit = history.revision();
     history.execute(std::make_unique<SceneStateCommand>("Edit 3", after2, after3), context);
     expect(history.size() == 2, "history should enforce its configured command limit");
+    expect(history.revision() > revisionAtLimit,
+           "the revision should keep advancing after the size stops growing at the limit");
+    const uint64_t revisionBeforeUndo = history.revision();
+    history.undo(context);
+    history.redo(context);
+    expect(history.revision() == revisionBeforeUndo + 2, "undo and redo should each advance the revision");
 
     history.crossBoundary(CommandHistoryBoundary::OpenDocument);
     expect(history.size() == 0 && !history.canUndo() && !history.canRedo() && !history.dirty(),

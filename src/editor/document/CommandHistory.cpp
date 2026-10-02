@@ -138,6 +138,7 @@ EditorCommandResult CommandHistory::execute(std::unique_ptr<EditorCommand> comma
         }
         m_commands.erase(m_commands.begin() + static_cast<std::ptrdiff_t>(m_position), m_commands.end());
     }
+    ++m_revision;
     if (m_position > 0 && m_commands[m_position - 1]->mergeWith(*command)) {
         if (m_savedPosition && *m_savedPosition == m_position) {
             m_savedPosition.reset();
@@ -158,6 +159,7 @@ EditorCommandResult CommandHistory::undo(EditorCommandContext& context) {
         return result;
     }
     --m_position;
+    ++m_revision;
     return {.success = true};
 }
 
@@ -169,6 +171,7 @@ EditorCommandResult CommandHistory::redo(EditorCommandContext& context) {
         return result;
     }
     ++m_position;
+    ++m_revision;
     return {.success = true};
 }
 
@@ -176,6 +179,11 @@ void CommandHistory::clear() {
     m_commands.clear();
     m_position = 0;
     m_savedPosition = 0;
+    ++m_revision;
+}
+
+uint64_t CommandHistory::revision() const {
+    return m_revision;
 }
 
 void CommandHistory::markSaved() {

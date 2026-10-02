@@ -3,6 +3,7 @@
 #include "engine/scene/SceneDocument.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -115,6 +116,10 @@ class CommandHistory {
     size_t size() const;
     // Sum of the recorded commands' storedBytes().
     size_t storedBytes() const;
+    // Increases on every change to the timeline (execute, including merges,
+    // undo, redo, and clear) and never repeats, unlike size(), which stops
+    // growing at the limit. Callers compare it to detect any later edit.
+    uint64_t revision() const;
 
   private:
     void enforceLimit();
@@ -123,4 +128,5 @@ class CommandHistory {
     std::vector<std::unique_ptr<EditorCommand>> m_commands;
     size_t m_position{0};
     std::optional<size_t> m_savedPosition{0};
+    uint64_t m_revision{0};
 };
