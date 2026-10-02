@@ -77,7 +77,9 @@ rebuilt while loaded, refuses a module whose API version or toolchain/runtime
 build hash differs, and lets it register component types into a copy of the
 host's registry and systems into its own `SystemRegistry`. A
 `SystemScheduler` runs systems per update or fixed-update phase by order,
-filtered by edit/play `RunIn` flags. Module code is reachable through
+filtered by edit/play `RunIn` flags. A system receives the frame's raw
+`InputState` through `SystemContext::input` when the host routes player input
+to the scene (null otherwise) and interprets it with its own bindings. Module code is reachable through
 registered functions, EnTT storage created by module code, and component
 values, so a host releases all of them, destroying affected scenes after
 serializing what must survive, before unloading. Wiring modules and systems
@@ -257,7 +259,10 @@ Components are capabilities:
 - `ColliderComponent` plus `RigidBodyComponent` and `TransformComponent` makes
   an entity discoverable by physics.
 - Game-defined components can add behavior without becoming engine dependencies;
-  the demo's `CharacterControllerComponent` is one example.
+  the demo's `CharacterControllerComponent` is one example. The demo registers
+  it as `character_controller`, with its first-person systems, through
+  `registerDemoGameplay`, which both the `zenith_game_demo` module and the
+  statically linked game executable call.
 
 Imported models do not become monolithic render objects. The model root gets a
 `ModelComponent`; every imported node gets its own entity and transform; nodes

@@ -3,9 +3,11 @@
 #include "engine/graphics/Rendering.hpp"
 
 #include <filesystem>
+#include <memory>
 #include <string>
 
 class AssetManager;
+class ComponentTypeRegistry;
 class Scene;
 
 struct ProjectConfig {
@@ -36,6 +38,11 @@ ProjectConfigResult loadProjectConfig(const std::filesystem::path& path, Project
 ProjectConfigResult saveProjectConfig(const std::filesystem::path& path, const ProjectConfig& config);
 ProjectConfigResult resolveProjectScene(const ProjectConfig& config, const std::filesystem::path& reference,
                                         std::filesystem::path& scenePath);
+// Loads a project scene with componentTypes, or with the engine's built-in
+// component types when it is null. A game passes the registry its game module
+// extended so scenes holding the game's components load.
 ProjectConfigResult loadProjectScene(const ProjectConfig& config, const std::filesystem::path& reference,
-                                     AssetManager& assets, Scene& scene);
-ProjectConfigResult loadProjectStartupScene(const ProjectConfig& config, AssetManager& assets, Scene& scene);
+                                     AssetManager& assets, Scene& scene,
+                                     std::shared_ptr<const ComponentTypeRegistry> componentTypes = nullptr);
+ProjectConfigResult loadProjectStartupScene(const ProjectConfig& config, AssetManager& assets, Scene& scene,
+                                            std::shared_ptr<const ComponentTypeRegistry> componentTypes = nullptr);

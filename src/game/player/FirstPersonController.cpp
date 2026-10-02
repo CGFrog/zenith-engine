@@ -3,6 +3,28 @@
 #include <algorithm>
 #include <glm/gtc/matrix_transform.hpp>
 
+namespace {
+// The controller's camera, adopting the first camera child when none is
+// assigned, as for a controller loaded from a scene document.
+Entity resolveCamera(Scene& scene, Entity entity, CharacterControllerComponent& controller) {
+    entt::registry& registry = scene.registry();
+    if (controller.camera != entt::null && registry.valid(controller.camera) &&
+        registry.all_of<TransformComponent>(controller.camera)) {
+        return controller.camera;
+    }
+    controller.camera = entt::null;
+    if (const auto* relationship = registry.try_get<RelationshipComponent>(entity)) {
+        for (Entity child : relationship->children) {
+            if (registry.valid(child) && registry.all_of<CameraComponent, TransformComponent>(child)) {
+                controller.camera = child;
+                break;
+            }
+        }
+    }
+    return controller.camera;
+}
+} // namespace
+
 void FirstPersonControllerSystem::updateView(Scene& scene, const FirstPersonControllerInput& input,
                                              float deltaSeconds) const {
     auto controllers = scene.registry().view<CharacterControllerComponent>();
@@ -14,7 +36,7 @@ void FirstPersonControllerSystem::updateView(Scene& scene, const FirstPersonCont
             std::clamp(controller.pitchRadians - input.look.y * controller.lookSensitivity * lookScale,
                        glm::radians(-89.0f), glm::radians(89.0f));
 
-        if (controller.camera == entt::null || !scene.registry().valid(controller.camera)) {
+        if (resolveCamera(scene, entity, controller) == entt::null) {
             continue;
         }
         const glm::mat4 yaw = glm::rotate(glm::mat4(1.0f), controller.yawRadians, glm::vec3(0.0f, 1.0f, 0.0f));

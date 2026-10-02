@@ -3,17 +3,19 @@
 #include "engine/application/Application.hpp"
 #include "engine/project/ProjectConfig.hpp"
 #include "game/application/GameSettings.hpp"
+#include "game/application/LinkedGameplay.hpp"
 #include "game/input/DemoInput.hpp"
-#include "game/player/FirstPersonController.hpp"
 #include "game/scene/CaptureCamera.hpp"
 
 #include <optional>
 
 class GameplayScene final : public ApplicationScene {
   public:
-    GameplayScene(AudioClipHandle interactionSound, std::shared_ptr<InputActionMap> inputActions,
-                  std::shared_ptr<GameSettings> settings, std::filesystem::path settingsPath,
-                  std::optional<ProjectConfig> project = std::nullopt,
+    // gameplay supplies the component types scenes load with and the systems
+    // the scene runs while playing.
+    GameplayScene(LinkedGameplay gameplay, AudioClipHandle interactionSound,
+                  std::shared_ptr<InputActionMap> inputActions, std::shared_ptr<GameSettings> settings,
+                  std::filesystem::path settingsPath, std::optional<ProjectConfig> project = std::nullopt,
                   std::optional<CaptureCameraPath> captureCamera = std::nullopt);
     SceneResult load(ApplicationContext& context) override;
     void update(ApplicationContext& context, const InputState& input, float deltaSeconds) override;
@@ -36,9 +38,16 @@ class GameplayScene final : public ApplicationScene {
     void drawSettings(ApplicationContext& context);
     void persistSettings() const;
     void spawnPlayer(Scene& scene);
+    // Gives authored controllers what spawnPlayer would: the capsule collider
+    // and player body they lack, and an audio listener on a camera child when
+    // the scene has none.
+    void completeAuthoredPlayers(Scene& scene);
     void spawnCaptureCamera(Scene& scene);
 
-    FirstPersonControllerSystem m_firstPersonControllers;
+    void applyViewPreferences(Scene& scene) const;
+    void runSystems(ApplicationContext& context, SystemPhase phase, const InputState& input, float deltaSeconds) const;
+
+    LinkedGameplay m_gameplay;
     AudioClipHandle m_interactionSound;
     std::shared_ptr<InputActionMap> m_inputActions;
     std::shared_ptr<GameSettings> m_settings;

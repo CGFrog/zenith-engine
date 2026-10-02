@@ -1,5 +1,6 @@
 #include "engine/project/ProjectConfig.hpp"
 #include "engine/resources/ResourceLocator.hpp"
+#include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
@@ -12,6 +13,10 @@
 
 namespace {
 int failures = 0;
+
+struct ProjectMarkerComponent {
+    int32_t value{0};
+};
 
 void expect(bool condition, const char* message) {
     if (!condition) {
@@ -85,6 +90,40 @@ int main() {
     expect(loadProjectScene(loaded, "chapter/room.zenith-scene", assets, runtimeScene).success &&
                runtimeScene.registry().view<NameComponent>().size() == 2,
            "project-relative scene references load authored transition destinations");
+
+    // A game's component types load only through the registry the game passes.
+    auto gameTypes = std::make_shared<ComponentTypeRegistry>(*builtInComponentTypes());
+    expect(gameTypes
+               ->add(ComponentTypeBuilder<ProjectMarkerComponent>("project_marker", "Project Marker")
+                         .fields(Fields<ProjectMarkerComponent>().add("value", &ProjectMarkerComponent::value))
+                         .build())
+               .success,
+           "the game component type registers");
+    Scene markedScene;
+    const Entity marked = markedScene.createEntity("Marked");
+    markedScene.registry().emplace<ProjectMarkerComponent>(marked, ProjectMarkerComponent{.value = 42});
+    const std::filesystem::path markedPath = directory / "scenes" / "marked.zenith-scene";
+    expect(SceneDocument::save(markedPath, markedScene, assets,
+                               {.assetRoot = source.assetRoot, .componentTypes = gameTypes})
+               .success,
+           "the game component fixture should save");
+    Scene builtInOnly;
+    expect(loadProjectScene(loaded, "marked.zenith-scene", assets, builtInOnly).success &&
+               builtInOnly.registry().view<ProjectMarkerComponent>().empty(),
+           "without a registry project scenes load with the built-in component types only");
+    Scene withGameTypes;
+    const bool loadedWithGameTypes =
+        loadProjectScene(loaded, "marked.zenith-scene", assets, withGameTypes, gameTypes).success;
+    const auto markers = withGameTypes.registry().view<ProjectMarkerComponent>();
+    expect(loadedWithGameTypes && markers.size() == 1 &&
+               markers.get<ProjectMarkerComponent>(*markers.begin()).value == 42,
+           "project scenes load game components through the registry the game passes");
+    ProjectConfig markedStartup = loaded;
+    markedStartup.startupScene = directory / "scenes" / "marked.zenith-scene";
+    Scene startupWithGameTypes;
+    expect(loadProjectStartupScene(markedStartup, assets, startupWithGameTypes, gameTypes).success &&
+               startupWithGameTypes.registry().view<ProjectMarkerComponent>().size() == 1,
+           "startup scenes load game components through the registry the game passes");
 
     const std::filesystem::path legacyPath = directory / "legacy.zenith-project";
     writeFile(legacyPath, R"({"version":1,"assetRoot":"content","sceneRoot":"scenes"})");

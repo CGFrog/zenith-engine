@@ -3,6 +3,7 @@
 #include "engine/application/Application.hpp"
 #include "engine/project/ProjectConfig.hpp"
 #include "game/application/GameSettings.hpp"
+#include "game/application/LinkedGameplay.hpp"
 #include "game/input/DemoInput.hpp"
 #include "game/scene/CaptureCamera.hpp"
 
@@ -31,6 +32,7 @@ class DemoApplication final : public Application {
     void onStop(ApplicationContext& context) override;
 
   private:
+    LinkedGameplay m_gameplay;
     AudioClipHandle m_interactionSound;
     AudioVoiceHandle m_backgroundMusic;
     std::shared_ptr<InputActionMap> m_inputActions;

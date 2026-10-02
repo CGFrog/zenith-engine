@@ -227,16 +227,19 @@ ProjectConfigResult resolveProjectScene(const ProjectConfig& config, const std::
 }
 
 ProjectConfigResult loadProjectScene(const ProjectConfig& config, const std::filesystem::path& reference,
-                                     AssetManager& assets, Scene& scene) {
+                                     AssetManager& assets, Scene& scene,
+                                     std::shared_ptr<const ComponentTypeRegistry> componentTypes) {
     std::filesystem::path scenePath;
     if (ProjectConfigResult result = resolveProjectScene(config, reference, scenePath); !result) {
         return result;
     }
-    const SceneDocumentResult result = SceneDocument::load(scenePath, assets, {.assetRoot = config.assetRoot}, scene);
+    const SceneDocumentOptions options{.assetRoot = config.assetRoot, .componentTypes = std::move(componentTypes)};
+    const SceneDocumentResult result = SceneDocument::load(scenePath, assets, options, scene);
     return {.success = result.success, .error = result.error};
 }
 
-ProjectConfigResult loadProjectStartupScene(const ProjectConfig& config, AssetManager& assets, Scene& scene) {
+ProjectConfigResult loadProjectStartupScene(const ProjectConfig& config, AssetManager& assets, Scene& scene,
+                                            std::shared_ptr<const ComponentTypeRegistry> componentTypes) {
     if (config.startupScene.empty()) {
         return {.error = "Project '" + config.displayName + "' does not configure a startup scene"};
     }
@@ -246,5 +249,5 @@ ProjectConfigResult loadProjectStartupScene(const ProjectConfig& config, AssetMa
     }
 
     const std::filesystem::path reference = config.startupScene.lexically_relative(config.sceneRoot);
-    return loadProjectScene(config, reference, assets, scene);
+    return loadProjectScene(config, reference, assets, scene, std::move(componentTypes));
 }

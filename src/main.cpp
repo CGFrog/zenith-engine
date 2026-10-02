@@ -6,6 +6,7 @@
 #include "engine/resources/ResourceLocator.hpp"
 #include "engine/scene/Scene.hpp"
 #include "game/application/DemoApplication.hpp"
+#include "game/application/LinkedGameplay.hpp"
 #include "game/scene/CaptureCamera.hpp"
 
 #include <cstdlib>
@@ -57,9 +58,16 @@ int runApplication(int argc, char** argv) {
             return EXIT_FAILURE;
         }
         if (project) {
+            LinkedGameplay gameplay;
+            if (const LinkedGameplayResult result = linkDemoGameplay(gameplay); !result) {
+                std::cerr << result.error << '\n';
+                return EXIT_FAILURE;
+            }
             AssetManager assetManager;
             Scene scene;
-            if (const ProjectConfigResult result = loadProjectStartupScene(*project, assetManager, scene); !result) {
+            if (const ProjectConfigResult result =
+                    loadProjectStartupScene(*project, assetManager, scene, gameplay.componentTypes);
+                !result) {
                 std::cerr << result.error << '\n';
                 return EXIT_FAILURE;
             }

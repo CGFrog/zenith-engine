@@ -10,6 +10,7 @@
 
 class Scene;
 struct ApplicationContext;
+struct InputState;
 
 // Whether the host is authoring a scene (the editor with simulation stopped)
 // or simulating it (a game, or the editor's play mode).
@@ -43,13 +44,17 @@ enum class SystemPhase {
 };
 
 // What a system may touch while it runs. application is null when the host
-// has no running application services, as in the editor's edit mode.
+// has no running application services, as in the editor's edit mode. input is
+// the device state of the current frame, or null when the host routes no
+// player input to the scene (for example while an editor viewport is not
+// focused); systems that read it must tolerate null.
 struct SystemContext {
     Scene& scene;
     ApplicationContext* application{nullptr};
     SimulationMode mode{SimulationMode::Play};
     // Seconds; the frame duration for Update, the fixed step for FixedUpdate.
     float deltaSeconds{0.0f};
+    const InputState* input{nullptr};
 };
 
 // A named per-frame callback over a scene, usually registered by a game
