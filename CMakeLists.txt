@@ -293,6 +293,7 @@ add_library(zenith_engine STATIC
     src/engine/graphics/graph/RenderGraph.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
+    src/engine/graphics/passes/DepthPyramid.cpp
     src/engine/graphics/passes/ClusteredLightingPass.cpp
     src/engine/graphics/passes/PostProcessPass.cpp
     src/engine/graphics/passes/BloomExposurePass.cpp
@@ -750,6 +751,10 @@ if(BUILD_TESTING)
     add_executable(zenith_packed_vertex_stream_tests tests/engine/PackedVertexStreamTests.cpp)
     target_link_libraries(zenith_packed_vertex_stream_tests PRIVATE zenith_engine)
     add_test(NAME zenith_packed_vertex_streams COMMAND zenith_packed_vertex_stream_tests)
+
+    add_executable(zenith_depth_prepass_tests tests/engine/DepthPrepassTests.cpp)
+    target_link_libraries(zenith_depth_prepass_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_depth_prepass COMMAND zenith_depth_prepass_tests)
 
     add_executable(zenith_clustered_lighting_tests tests/engine/ClusteredLightingTests.cpp)
     target_link_libraries(zenith_clustered_lighting_tests PRIVATE zenith_engine)

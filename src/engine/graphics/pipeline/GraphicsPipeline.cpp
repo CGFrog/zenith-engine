@@ -151,7 +151,8 @@ bool GraphicsPipeline::initGraphicsPipeline(VkDevice device, VkFormat colorForma
                                             VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
                                             VkDescriptorSetLayout materialLayout, VkShaderModule vertex,
                                             VkShaderModule fragment, VkPipelineCache pipelineCache, bool doubleSided,
-                                            bool blending, const VkSpecializationInfo* fragmentSpecialization) {
+                                            bool blending, const VkSpecializationInfo* fragmentSpecialization,
+                                            SceneDepthUsage depthUsage) {
     // Per-object and per-material data live in storage buffers indexed by the
     // instance, so mesh pipelines take no push constants.
     const VkDescriptorSetLayout setLayouts[]{cameraLayout, materialLayout};
@@ -172,6 +173,10 @@ bool GraphicsPipeline::initGraphicsPipeline(VkDevice device, VkFormat colorForma
     FixedFunctionState state{MeshVertexInputs::Shaded};
     state.raster.cullMode = doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
     state.depth.depthCompareOp = scene_depth::compareOp;
+    if (!blending && depthUsage == SceneDepthUsage::EqualToPrepass) {
+        state.depth.depthWriteEnable = VK_FALSE;
+        state.depth.depthCompareOp = VK_COMPARE_OP_EQUAL;
+    }
     if (blending) {
         state.depth.depthWriteEnable = VK_FALSE;
         state.colorAttachment.blendEnable = VK_TRUE;
@@ -326,4 +331,40 @@ bool GraphicsPipeline::initSelectionMaskPipeline(VkDevice device, VkFormat color
     info.layout = m_pipelineLayout;
     return checkVulkan(vkCreateGraphicsPipelines(device, pipelineCache, 1, &info, nullptr, &m_pipeline),
                        "Create selection-mask pipeline");
+}
+
+bool GraphicsPipeline::initDepthNormalPipeline(VkDevice device, VkFormat normalFormat, VkFormat depthFormat,
+                                               VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout materialLayout,
+                                               VkShaderModule vertex, VkShaderModule fragment,
+                                               VkPipelineCache pipelineCache, bool doubleSided) {
+    // The view matrix rotates normals into view space.
+    const VkPushConstantRange pushConstants{
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT, .offset = 0, .size = sizeof(glm::mat4)};
+    const VkDescriptorSetLayout setLayouts[]{cameraLayout, materialLayout};
+    VkPipelineLayoutCreateInfo layout{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+                                      .setLayoutCount = static_cast<uint32_t>(std::size(setLayouts)),
+                                      .pSetLayouts = setLayouts,
+                                      .pushConstantRangeCount = 1,
+                                      .pPushConstantRanges = &pushConstants};
+    if (!checkVulkan(vkCreatePipelineLayout(device, &layout, nullptr, &m_pipelineLayout),
+                     "Create depth-normal pipeline layout")) {
+        return false;
+    }
+    const VkPipelineShaderStageCreateInfo stages[]{shaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertex),
+                                                   shaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, fragment)};
+    VkPipelineRenderingCreateInfo rendering{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+                                            .colorAttachmentCount = 1,
+                                            .pColorAttachmentFormats = &normalFormat,
+                                            .depthAttachmentFormat = depthFormat};
+    // Normal mapping and alpha masking read every stream the shading pass reads.
+    FixedFunctionState state{MeshVertexInputs::Shaded};
+    state.raster.cullMode = doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+    state.depth.depthCompareOp = scene_depth::compareOp;
+    VkGraphicsPipelineCreateInfo info = state.pipelineInfo();
+    info.pNext = &rendering;
+    info.stageCount = static_cast<uint32_t>(std::size(stages));
+    info.pStages = stages;
+    info.layout = m_pipelineLayout;
+    return checkVulkan(vkCreateGraphicsPipelines(device, pipelineCache, 1, &info, nullptr, &m_pipeline),
+                       "Create depth-normal pipeline");
 }

@@ -4,39 +4,44 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 0) uniform sampler2D sourceDepth;
 layout(set = 0, binding = 1) uniform sampler2D sourcePyramid;
-layout(r32f, set = 0, binding = 2) uniform writeonly image2D outputMip;
+layout(rg32f, set = 0, binding = 2) uniform writeonly image2D outputLevel;
 
+// Mirrors BuildSettings in DepthPyramid.cpp. Extents describe the rendered
+// region of each level, which may be smaller than its storage.
 layout(push_constant) uniform Settings {
-    ivec2 outputSize;
-    int sourceMip;
+    ivec2 outputExtent;
+    ivec2 sourceExtent;
+    int sourceLevel;
     int copyDepth;
 } settings;
 
-// Each texel stores the farthest depth it covers. Scene depth is reversed Z
-// (near = 1, far = 0), so the farthest occluder is the minimum.
+// Scene depth is reversed Z (near = 1, far = 0). Each texel stores the
+// farthest depth it covers in r (the minimum) and the closest in g (the
+// maximum). See DepthPyramidLayout.hpp for the level layout.
 void main() {
     ivec2 outputCoordinate = ivec2(gl_GlobalInvocationID.xy);
-    if (any(greaterThanEqual(outputCoordinate, settings.outputSize))) {
+    if (any(greaterThanEqual(outputCoordinate, settings.outputExtent))) {
         return;
     }
-    float farthestDepth;
+    vec2 farthestClosest;
     if (settings.copyDepth != 0) {
-        farthestDepth = texelFetch(sourceDepth, outputCoordinate, 0).r;
+        float depth = texelFetch(sourceDepth, outputCoordinate, 0).r;
+        farthestClosest = vec2(depth);
     } else {
         // Levels halve with truncation, so on an odd source axis the last output
         // texel must also cover the leftover third source texel to stay conservative.
-        ivec2 sourceSize = textureSize(sourcePyramid, settings.sourceMip);
         ivec2 sourceBegin = outputCoordinate * 2;
         ivec2 sourceEnd = sourceBegin + 2;
-        bvec2 lastOutput = equal(outputCoordinate, settings.outputSize - 1);
-        sourceEnd = mix(sourceEnd, sourceSize, lastOutput);
-        sourceEnd = min(sourceEnd, sourceSize);
-        farthestDepth = 1.0;
+        bvec2 lastOutput = equal(outputCoordinate, settings.outputExtent - 1);
+        sourceEnd = mix(sourceEnd, settings.sourceExtent, lastOutput);
+        sourceEnd = min(sourceEnd, settings.sourceExtent);
+        farthestClosest = vec2(1.0, 0.0);
         for (int y = sourceBegin.y; y < sourceEnd.y; ++y) {
             for (int x = sourceBegin.x; x < sourceEnd.x; ++x) {
-                farthestDepth = min(farthestDepth, texelFetch(sourcePyramid, ivec2(x, y), settings.sourceMip).r);
+                vec2 source = texelFetch(sourcePyramid, ivec2(x, y), settings.sourceLevel).rg;
+                farthestClosest = vec2(min(farthestClosest.x, source.x), max(farthestClosest.y, source.y));
             }
         }
     }
-    imageStore(outputMip, outputCoordinate, vec4(farthestDepth));
+    imageStore(outputLevel, outputCoordinate, vec4(farthestClosest, 0.0, 0.0));
 }

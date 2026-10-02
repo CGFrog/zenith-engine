@@ -206,6 +206,7 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
         !uploadTexture(normal, m_normalTexture) || !createBindlessDescriptors(context, frameCount) ||
         !createShadowResources(depthFormat) ||
         !m_postProcess.init(context, colorFormat, depthFormat, frameCount, extent, depthView) ||
+        !m_depthPyramid.init(context, extent, depthView) ||
         !createPipeline(PostProcessPass::sceneFormat, depthFormat)) {
         return false;
     }
@@ -217,7 +218,7 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
                                  .maximumBatches = maximumGpuDrivenInstances,
                                  .maximumGroups = maximumGpuDrawGroups};
     m_gpuDrivenSupported =
-        m_gpuDrivenPass.init(context, frameCount, extent, depthView, limits, features12.drawIndirectCount == VK_TRUE);
+        m_gpuDrivenPass.init(context, frameCount, m_depthPyramid, limits, features12.drawIndirectCount == VK_TRUE);
     if (m_gpuDrivenSupported && !createGpuDrivenDescriptors()) {
         return false;
     }
@@ -285,8 +286,14 @@ bool MeshPass::resize(const VulkanContext& context, VkExtent2D extent, VkImageVi
     m_depthInitialized = false;
     m_cameraHistoryValid = false;
     m_temporalQuality.invalidateHistory();
-    return m_postProcess.resize(context, extent, depthView) &&
-           (!m_gpuDrivenSupported || m_gpuDrivenPass.resize(context, extent, depthView));
+    m_depthPrepassFrame.reset();
+    if (!m_postProcess.resize(context, extent, depthView) || !m_depthPyramid.resize(extent, depthView)) {
+        return false;
+    }
+    if (m_gpuDrivenSupported) {
+        m_gpuDrivenPass.bindDepthPyramid(m_depthPyramid);
+    }
+    return true;
 }
 
 bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCount) {
@@ -567,16 +574,29 @@ bool MeshPass::createPipeline(VkFormat colorFormat, VkFormat depthFormat) {
     ShaderModule selectionMaskFragment(m_device);
     ShaderModule outlineVertex(m_device);
     ShaderModule outlineFragment(m_device);
+    ShaderModule depthNormalVertex(m_device);
+    ShaderModule depthNormalFragment(m_device);
 
     if (!shadowVertex.load(shaders / "shadow.vert.spv") || !shadowFragment.load(shaders / "shadow.frag.spv") ||
         !outlineVertex.load(shaders / "outline.vert.spv") || !outlineFragment.load(shaders / "outline.frag.spv") ||
         !selectionMaskVertex.load(shaders / "selection_mask.vert.spv") ||
-        !selectionMaskFragment.load(shaders / "selection_mask.frag.spv")) {
+        !selectionMaskFragment.load(shaders / "selection_mask.frag.spv") ||
+        !depthNormalVertex.load(shaders / "depth_normal.vert.spv") ||
+        !depthNormalFragment.load(shaders / "depth_normal.frag.spv")) {
         return false;
     }
 
     m_sceneColorFormat = colorFormat;
     m_sceneDepthFormat = depthFormat;
+    const auto createDepthNormal = [&](GraphicsPipeline& pipeline, bool doubleSided) {
+        return pipeline.initDepthNormalPipeline(m_device, PostProcessPass::normalFormat, depthFormat, m_cameraLayout,
+                                                m_bindlessLayout, depthNormalVertex.handle(),
+                                                depthNormalFragment.handle(), m_pipelineCache, doubleSided);
+    };
+    if (!createDepthNormal(m_depthNormalPipeline, false) ||
+        !createDepthNormal(m_depthNormalDoubleSidedPipeline, true)) {
+        return false;
+    }
     return m_shadowPipeline.initShadowPipeline(m_device, depthFormat, m_cameraLayout, m_bindlessLayout,
                                                shadowVertex.handle(), shadowFragment.handle(), m_pipelineCache) &&
            m_selectionMaskPipeline.initSelectionMaskPipeline(m_device, colorFormat, PostProcessPass::motionFormat,
@@ -614,11 +634,13 @@ const MeshPass::MeshPipelineSet* MeshPass::meshPipelines(MeshShadingVariant vari
                                               .dataSize = sizeof(constants),
                                               .pData = &constants};
     auto pipelines = std::make_unique<MeshPipelineSet>();
+    const SceneDepthUsage depthUsage =
+        variant.depthPrepass ? SceneDepthUsage::EqualToPrepass : SceneDepthUsage::TestAndWrite;
     const auto create = [&](GraphicsPipeline& pipeline, bool doubleSided, bool blending) {
         return pipeline.initGraphicsPipeline(m_device, m_sceneColorFormat, PostProcessPass::motionFormat,
                                              m_sceneDepthFormat, m_cameraLayout, m_bindlessLayout, vertex.handle(),
-                                             fragment.handle(), m_pipelineCache, doubleSided, blending,
-                                             &specialization);
+                                             fragment.handle(), m_pipelineCache, doubleSided, blending, &specialization,
+                                             depthUsage);
     };
     const bool created = create(pipelines->opaque, false, false) && create(pipelines->doubleSided, true, false) &&
                          create(pipelines->blend, false, true) && create(pipelines->blendDoubleSided, true, true);
@@ -1294,15 +1316,11 @@ void MeshPass::beginRendering(VkCommandBuffer commandBuffer, VkImageView colorVi
     const bool clear = attachments == SceneAttachments::Clear;
     // A preserved pass continues one the caller already transitioned.
     if (clear) {
-        imageBarrier(commandBuffer, depthImage, VK_IMAGE_ASPECT_DEPTH_BIT,
-                     m_depthInitialized ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
-                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                     m_depthInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-                     VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
-                     m_depthInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
-                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+        prepareDepthForClear(commandBuffer, depthImage);
     }
-    const VkAttachmentLoadOp loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+    const VkAttachmentLoadOp loadOp =
+        attachments == SceneAttachments::Preserve ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+    const VkAttachmentLoadOp depthLoadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
     VkRenderingAttachmentInfo color{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                                     .imageView = colorView,
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -1312,7 +1330,7 @@ void MeshPass::beginRendering(VkCommandBuffer commandBuffer, VkImageView colorVi
     VkRenderingAttachmentInfo depth{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                                     .imageView = depthView,
                                     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                                    .loadOp = loadOp,
+                                    .loadOp = depthLoadOp,
                                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
                                     .clearValue = {.depthStencil = {.depth = scene_depth::clearValue, .stencil = 0}}};
     VkRenderingAttachmentInfo motion{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -1329,6 +1347,58 @@ void MeshPass::beginRendering(VkCommandBuffer commandBuffer, VkImageView colorVi
                               .pColorAttachments = colors,
                               .pDepthAttachment = &depth};
     vkCmdBeginRendering(commandBuffer, &rendering);
+}
+
+void MeshPass::prepareDepthForClear(VkCommandBuffer commandBuffer, VkImage depthImage) const {
+    // Last frame's post-processing sampled the depth it stored.
+    imageBarrier(commandBuffer, depthImage, VK_IMAGE_ASPECT_DEPTH_BIT,
+                 m_depthInitialized ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                 m_depthInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+                 m_depthInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+}
+
+void MeshPass::beginDepthPrepass(VkCommandBuffer commandBuffer, VkImageView normalView, VkImage depthImage,
+                                 VkImageView depthView, VkExtent2D extent, SceneAttachments attachments) const {
+    const bool clear = attachments == SceneAttachments::Clear;
+    if (clear) {
+        prepareDepthForClear(commandBuffer, depthImage);
+    }
+    const VkAttachmentLoadOp loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+    const VkRenderingAttachmentInfo normals{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+                                            .imageView = normalView,
+                                            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                                            .loadOp = loadOp,
+                                            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                            .clearValue = {.color = {.float32 = {0.0f, 0.0f, 0.0f, 0.0f}}}};
+    const VkRenderingAttachmentInfo depth{
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView = depthView,
+        .imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+        .loadOp = loadOp,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .clearValue = {.depthStencil = {.depth = scene_depth::clearValue, .stencil = 0}}};
+    const VkRenderingInfo rendering{.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+                                    .renderArea = {.offset = {0, 0}, .extent = extent},
+                                    .layerCount = 1,
+                                    .colorAttachmentCount = 1,
+                                    .pColorAttachments = &normals,
+                                    .pDepthAttachment = &depth};
+    vkCmdBeginRendering(commandBuffer, &rendering);
+}
+
+void MeshPass::setSceneViewport(const DrawContext& draw) const {
+    const VkViewport viewport{.x = 0,
+                              .y = 0,
+                              .width = static_cast<float>(draw.renderExtent.width),
+                              .height = static_cast<float>(draw.renderExtent.height),
+                              .minDepth = 0,
+                              .maxDepth = 1};
+    const VkRect2D scissor{.offset = {0, 0}, .extent = draw.renderExtent};
+    vkCmdSetViewport(draw.commandBuffer, 0, 1, &viewport);
+    vkCmdSetScissor(draw.commandBuffer, 0, 1, &scissor);
 }
 
 bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
@@ -1708,9 +1778,12 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         cascadeCount = 3;
         break;
     }
+    const bool depthPrepass =
+        rendering.settings().depthPrepass && SDL_getenv("ZENITH_DISABLE_DEPTH_PREPASS") == nullptr;
     const MeshPipelineSet* shadingPipelines =
         meshPipelines({.physicallyBased = rendering.settings().lighting == LightingQuality::PhysicallyBased,
-                       .shadowCascades = cascadeCount});
+                       .shadowCascades = cascadeCount,
+                       .depthPrepass = depthPrepass});
     if (!shadingPipelines) {
         return false;
     }
@@ -1955,18 +2028,22 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
                            .frameIndex = frameIndex,
                            .pipelines = shadingPipelines,
                            .timestampQueries = timestampQueries,
-                           .stats = &stats};
+                           .stats = &stats,
+                           .view = view,
+                           .renderExtent = renderExtent};
     if (gpuDrivenActive) {
         if (!prepareGpuDrivenFrame(frameIndex, lodView)) {
             return false;
         }
         m_gpuDrivenPass.beginFrame(commandBuffer, frameIndex);
+        // The cull shader statically references the pyramid in both phases.
+        m_depthPyramid.prepareFirstUse(commandBuffer);
         // Culling time covers the early phase; the depth pyramid and late phase
         // run between the opaque passes and count toward opaque time.
         if (timestampQueries) {
             vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, timestampQueries, 8);
         }
-        m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Early, cameraData.viewProjection, renderExtent,
+        m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Early, cameraData.viewProjection, m_depthPyramid,
                              lodView);
         if (timestampQueries) {
             vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, timestampQueries, 9);
@@ -1988,34 +2065,39 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.culledCount += m_visibility.frustumCulled + (gpuDrivenActive ? 0u : m_visibility.occlusionCulled);
 
     m_clusteredLighting.record(commandBuffer, frameIndex, clusterGrid, view);
+    const auto opaqueCpuBegin = std::chrono::steady_clock::now();
+    if (depthPrepass) {
+        recordDepthPrepass(draw, gpuDrivenActive, depthImage, depthView, cameraData.viewProjection, lodView);
+    }
+    const auto prepassCpuEnd = std::chrono::steady_clock::now();
+    m_depthPrepassFrame = depthPrepass ? std::optional<uint32_t>(frameIndex) : std::nullopt;
     m_postProcess.prepareScene(commandBuffer, frameIndex);
     const VkImageView sceneView = m_postProcess.sceneView(frameIndex);
     const VkImageView motionView = m_postProcess.motionView(frameIndex);
-    beginRendering(commandBuffer, sceneView, motionView, depthImage, depthView, renderExtent, SceneAttachments::Clear);
+    beginRendering(commandBuffer, sceneView, motionView, depthImage, depthView, renderExtent,
+                   depthPrepass ? SceneAttachments::ClearColorKeepDepth : SceneAttachments::Clear);
     m_depthInitialized = true;
-    const VkViewport viewport{.x = 0,
-                              .y = 0,
-                              .width = static_cast<float>(renderExtent.width),
-                              .height = static_cast<float>(renderExtent.height),
-                              .minDepth = 0,
-                              .maxDepth = 1};
-    const VkRect2D scissor{.offset = {0, 0}, .extent = renderExtent};
-    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+    setSceneViewport(draw);
+    const OpaquePipelines shadingOpaque{.singleSided = &shadingPipelines->opaque,
+                                        .doubleSided = &shadingPipelines->doubleSided};
     if (gpuDrivenActive) {
-        const auto opaqueCpuBegin = std::chrono::steady_clock::now();
-        recordGpuDrivenGroups(draw, GpuCullPhase::Early);
-        vkCmdEndRendering(commandBuffer);
-        prepareDepthForPyramid(commandBuffer, depthImage);
-        m_gpuDrivenPass.buildDepthPyramid(commandBuffer);
-        m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Late, cameraData.viewProjection, renderExtent,
-                             lodView);
-        restoreDepthAfterPyramid(commandBuffer, depthImage);
-        beginRendering(commandBuffer, sceneView, motionView, depthImage, depthView, renderExtent,
-                       SceneAttachments::Preserve);
-        vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
-        vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
-        recordGpuDrivenGroups(draw, GpuCullPhase::Late);
+        if (depthPrepass) {
+            // The prepass culled both phases; shade the same compacted draws.
+            recordGpuDrivenGroups(draw, GpuCullPhase::Early, shadingOpaque);
+            recordGpuDrivenGroups(draw, GpuCullPhase::Late, shadingOpaque);
+        } else {
+            recordGpuDrivenGroups(draw, GpuCullPhase::Early, shadingOpaque);
+            vkCmdEndRendering(commandBuffer);
+            prepareDepthForPyramid(commandBuffer, depthImage);
+            m_depthPyramid.build(commandBuffer, renderExtent);
+            m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Late, cameraData.viewProjection,
+                                 m_depthPyramid, lodView);
+            restoreDepthAfterPyramid(commandBuffer, depthImage);
+            beginRendering(commandBuffer, sceneView, motionView, depthImage, depthView, renderExtent,
+                           SceneAttachments::Preserve);
+            setSceneViewport(draw);
+            recordGpuDrivenGroups(draw, GpuCullPhase::Late, shadingOpaque);
+        }
         stats.cpuOpaqueMilliseconds =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - opaqueCpuBegin).count();
         if (timestampQueries) {
@@ -2027,8 +2109,14 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     } else {
         stats.indirectCommandCount = static_cast<uint32_t>(m_visibility.commands.size());
     }
+    const double prepassCpuMilliseconds =
+        std::chrono::duration<double, std::milli>(prepassCpuEnd - opaqueCpuBegin).count();
     recordSelectionMask(draw);
     recordShadedItems(draw, gpuDrivenActive ? ShadedItems::BlendedOnly : ShadedItems::All);
+    if (!gpuDrivenActive) {
+        // The GPU-driven timing above already spans the prepass.
+        stats.cpuOpaqueMilliseconds += prepassCpuMilliseconds;
+    }
     recordOutlines(draw);
 
     vkCmdEndRendering(commandBuffer);
@@ -2147,24 +2235,116 @@ bool MeshPass::prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lod
                                    static_cast<uint32_t>(m_visibility.visibleInstances.size()));
 }
 
-void MeshPass::recordGpuDrivenGroups(const DrawContext& draw, GpuCullPhase phase) {
-    const VkDescriptorSet sets[]{m_cameras[draw.frameIndex].gpuDrivenDescriptor,
-                                 m_cameras[draw.frameIndex].bindlessDescriptor};
+void MeshPass::bindOpaquePipeline(const DrawContext& draw, const GraphicsPipeline& pipeline, OpaquePipelines pipelines,
+                                  VkDescriptorSet cameraSet) const {
+    const VkDescriptorSet sets[]{cameraSet, m_cameras[draw.frameIndex].bindlessDescriptor};
+    vkCmdBindPipeline(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
+    vkCmdBindDescriptorSets(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0,
+                            static_cast<uint32_t>(std::size(sets)), sets, 0, nullptr);
+    if (pipelines.pushesView) {
+        vkCmdPushConstants(draw.commandBuffer, pipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(draw.view),
+                           &draw.view);
+    }
+}
+
+void MeshPass::recordGpuDrivenGroups(const DrawContext& draw, GpuCullPhase phase, OpaquePipelines pipelines) {
     const GraphicsPipeline* boundPipeline = nullptr;
     for (uint32_t group = 0; group < m_drawPlan.groups.size(); ++group) {
         const IndirectDrawGroup& drawGroup = m_drawPlan.groups[group];
         const GraphicsPipeline& pipeline =
-            drawGroup.pipeline == doubleSidedBucket ? draw.pipelines->doubleSided : draw.pipelines->opaque;
+            drawGroup.pipeline == doubleSidedBucket ? *pipelines.doubleSided : *pipelines.singleSided;
         if (&pipeline != boundPipeline) {
-            vkCmdBindPipeline(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.handle());
-            vkCmdBindDescriptorSets(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline.layout(), 0,
-                                    static_cast<uint32_t>(std::size(sets)), sets, 0, nullptr);
+            bindOpaquePipeline(draw, pipeline, pipelines, m_cameras[draw.frameIndex].gpuDrivenDescriptor);
             boundPipeline = &pipeline;
         }
         bindGeometryPage(draw.commandBuffer, drawGroup.geometryPage);
         m_gpuDrivenPass.drawGroup(draw.commandBuffer, phase, group, drawGroup.firstBatch, drawGroup.batchCount);
         ++draw.stats->drawCalls;
     }
+}
+
+void MeshPass::recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive, VkImage depthImage,
+                                  VkImageView depthView, const glm::mat4& viewProjection, const MeshLodView& lodView) {
+    const VkCommandBuffer commandBuffer = draw.commandBuffer;
+    const OpaquePipelines depthNormal{
+        .singleSided = &m_depthNormalPipeline, .doubleSided = &m_depthNormalDoubleSidedPipeline, .pushesView = true};
+    m_postProcess.prepareNormals(commandBuffer, draw.frameIndex);
+    const VkImageView normalView = m_postProcess.normalView(draw.frameIndex);
+    beginDepthPrepass(commandBuffer, normalView, depthImage, depthView, draw.renderExtent, SceneAttachments::Clear);
+    setSceneViewport(draw);
+    if (gpuDrivenActive) {
+        // Two-phase occlusion culling runs here, so the shading pass reuses
+        // both phases' compacted draws.
+        recordGpuDrivenGroups(draw, GpuCullPhase::Early, depthNormal);
+        vkCmdEndRendering(commandBuffer);
+        prepareDepthForPyramid(commandBuffer, depthImage);
+        m_depthPyramid.build(commandBuffer, draw.renderExtent);
+        m_gpuDrivenPass.cull(commandBuffer, draw.frameIndex, GpuCullPhase::Late, viewProjection, m_depthPyramid,
+                             lodView);
+        restoreDepthAfterPyramid(commandBuffer, depthImage);
+        beginDepthPrepass(commandBuffer, normalView, depthImage, depthView, draw.renderExtent,
+                          SceneAttachments::Preserve);
+        setSceneViewport(draw);
+        recordGpuDrivenGroups(draw, GpuCullPhase::Late, depthNormal);
+    } else {
+        recordDepthNormalItems(draw);
+    }
+    vkCmdEndRendering(commandBuffer);
+    m_postProcess.finishNormals(commandBuffer, draw.frameIndex);
+    // Screen-space consumers get the pyramid of the complete opaque depth.
+    prepareDepthForPyramid(commandBuffer, depthImage);
+    m_depthPyramid.build(commandBuffer, draw.renderExtent);
+    restoreDepthAfterPyramid(commandBuffer, depthImage);
+}
+
+void MeshPass::recordDepthNormalItems(const DrawContext& draw) {
+    const OpaquePipelines depthNormal{
+        .singleSided = &m_depthNormalPipeline, .doubleSided = &m_depthNormalDoubleSidedPipeline, .pushesView = true};
+    const GraphicsPipeline* boundPipeline = nullptr;
+    std::optional<uint32_t> boundPage;
+    // Opaque items precede blended ones (collectCpuSubmittedItems).
+    for (size_t itemIndex = 0; itemIndex < m_visibleItems.size();) {
+        const RenderItem& item = *m_visibleItems[itemIndex];
+        if (item.material->alphaMode == MaterialAlphaMode::Blend) {
+            break;
+        }
+        size_t batchEnd = itemIndex + 1;
+        while (batchEnd < m_visibleItems.size()) {
+            const RenderItem& candidate = *m_visibleItems[batchEnd];
+            // The shading pass must test EQUAL against the same LOD's depth.
+            if (candidate.gpuMesh != item.gpuMesh || candidate.lod.firstIndex != item.lod.firstIndex ||
+                candidate.lod.indexCount != item.lod.indexCount ||
+                candidate.material->alphaMode == MaterialAlphaMode::Blend ||
+                candidate.material->doubleSided != item.material->doubleSided) {
+                break;
+            }
+            ++batchEnd;
+        }
+        const GraphicsPipeline& pipeline =
+            item.material->doubleSided ? m_depthNormalDoubleSidedPipeline : m_depthNormalPipeline;
+        if (&pipeline != boundPipeline) {
+            bindOpaquePipeline(draw, pipeline, depthNormal, m_cameras[draw.frameIndex].descriptor);
+            boundPipeline = &pipeline;
+        }
+        bindGeometry(draw.commandBuffer, *item.gpuMesh, boundPage);
+        vkCmdDrawIndexed(draw.commandBuffer, item.lod.indexCount, static_cast<uint32_t>(batchEnd - itemIndex),
+                         item.gpuMesh->geometry.firstIndex + item.lod.firstIndex, item.gpuMesh->geometry.vertexOffset,
+                         mainObjectBase + static_cast<uint32_t>(itemIndex));
+        ++draw.stats->drawCalls;
+        itemIndex = batchEnd;
+    }
+}
+
+SceneGeometryViews MeshPass::sceneGeometry(uint32_t frameIndex) const {
+    if (m_depthPrepassFrame != frameIndex) {
+        return {};
+    }
+    return {.normals = m_postProcess.normalView(frameIndex),
+            .depthPyramid = m_depthPyramid.view(),
+            .depthPyramidSampler = m_depthPyramid.sampler(),
+            .depthPyramidLevels = m_depthPyramid.levelCount(),
+            .renderExtent = m_depthPyramid.renderExtent(),
+            .storageExtent = m_depthPyramid.storageExtent()};
 }
 
 void MeshPass::prepareDepthForPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const {
@@ -2420,7 +2600,11 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_shadowPipeline.shutdown(context.device());
     m_selectionMaskPipeline.shutdown(context.device());
     m_outlinePipeline.shutdown(context.device());
+    m_depthNormalPipeline.shutdown(context.device());
+    m_depthNormalDoubleSidedPipeline.shutdown(context.device());
     m_postProcess.shutdown(context);
+    m_depthPyramid.shutdown();
+    m_depthPrepassFrame.reset();
     m_meshes.clear();
     m_unpackableMeshes.clear();
     for (const GeometryPage& page : m_geometryPages) {

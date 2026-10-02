@@ -13,17 +13,35 @@ constexpr uint32_t skin = 2;
 constexpr uint32_t count = 3;
 } // namespace mesh_vertex_binding
 
+// How an opaque scene pipeline uses the depth buffer.
+enum class SceneDepthUsage {
+    // Test against and write scene depth.
+    TestAndWrite,
+    // Shade only where the depth prepass stored this exact depth; no writes.
+    // Requires bit-identical clip positions in both passes.
+    EqualToPrepass,
+};
+
 class GraphicsPipeline {
   public:
     GraphicsPipeline() = default;
     GraphicsPipeline(const GraphicsPipeline&) = delete;
     GraphicsPipeline& operator=(const GraphicsPipeline&) = delete;
 
+    // Blended pipelines never write depth and always use the ordinary test, so
+    // depthUsage applies to opaque pipelines only.
     bool initGraphicsPipeline(VkDevice device, VkFormat colorFormat, VkFormat auxiliaryColorFormat,
                               VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
                               VkDescriptorSetLayout materialLayout, VkShaderModule vertex, VkShaderModule fragment,
                               VkPipelineCache pipelineCache, bool doubleSided = false, bool blending = false,
-                              const VkSpecializationInfo* fragmentSpecialization = nullptr);
+                              const VkSpecializationInfo* fragmentSpecialization = nullptr,
+                              SceneDepthUsage depthUsage = SceneDepthUsage::TestAndWrite);
+    // Depth prepass: writes scene depth and one color target (normalFormat).
+    // The vertex stage takes a mat4 push constant (the view matrix).
+    bool initDepthNormalPipeline(VkDevice device, VkFormat normalFormat, VkFormat depthFormat,
+                                 VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout materialLayout,
+                                 VkShaderModule vertex, VkShaderModule fragment, VkPipelineCache pipelineCache,
+                                 bool doubleSided);
     bool initShadowPipeline(VkDevice device, VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
                             VkDescriptorSetLayout materialLayout, VkShaderModule vertex, VkShaderModule fragment,
                             VkPipelineCache pipelineCache);

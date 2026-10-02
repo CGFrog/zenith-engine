@@ -3,6 +3,7 @@
 #include "../MeshLodSelection.hpp"
 #include "../pipeline/ComputePipeline.hpp"
 #include "../vulkan/VulkanContext.hpp"
+#include "DepthPyramid.hpp"
 
 #include <glm/glm.hpp>
 #include <span>
@@ -54,25 +55,27 @@ struct GpuDrivenLimits {
 
 // GPU frustum and two-phase occlusion culling that writes indirect draws.
 // Per frame: prepare -> beginFrame -> cull(Early) -> draw early groups ->
-// buildDepthPyramid -> cull(Late) -> draw late groups. The caller owns render
-// passes and the transitions of the scene depth image around the pyramid build.
+// build the depth pyramid -> cull(Late) -> draw late groups. Both phases keep
+// their compacted draws until the next beginFrame, so later passes may redraw
+// them without culling again. The caller owns render passes, the depth pyramid,
+// and the transitions of the scene depth image around the pyramid build.
 class GpuDrivenPass {
   public:
-    bool init(const VulkanContext& context, uint32_t frameCount, VkExtent2D extent, VkImageView depthView,
+    bool init(const VulkanContext& context, uint32_t frameCount, const DepthPyramid& depthPyramid,
               const GpuDrivenLimits& limits, bool indirectCount);
-    bool resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
+    // Points the late cull at the pyramid's current storage; call after the
+    // pyramid is recreated, while the device is idle.
+    void bindDepthPyramid(const DepthPyramid& depthPyramid);
     // Uploads this frame's records and batch templates (host writes).
     bool prepare(uint32_t frameIndex, std::span<const GpuDrivenObjectRecord> objects,
                  std::span<const GpuDrivenBatch> batches, uint32_t referenceVisibleCount);
     // Resets GPU counters and orders them after the previous frame's use.
     void beginFrame(VkCommandBuffer commandBuffer, uint32_t frameIndex);
     // Each visible object is emitted into the batch of the LOD level the view
-    // selects; see MeshLodSelection.hpp.
+    // selects; see MeshLodSelection.hpp. The late phase tests against the
+    // pyramid's latest build, which must cover this frame's early draws.
     void cull(VkCommandBuffer commandBuffer, uint32_t frameIndex, GpuCullPhase phase, const glm::mat4& viewProjection,
-              VkExtent2D renderExtent, const MeshLodView& lodView);
-    // Builds the min-depth pyramid; the scene depth must be in
-    // DEPTH_READ_ONLY_OPTIMAL with its attachment writes made visible.
-    void buildDepthPyramid(VkCommandBuffer commandBuffer);
+              const DepthPyramid& depthPyramid, const MeshLodView& lodView);
     // Issues one multi-draw for a contiguous group of batches.
     void drawGroup(VkCommandBuffer commandBuffer, GpuCullPhase phase, uint32_t group, uint32_t firstBatch,
                    uint32_t batchCount) const;
@@ -82,8 +85,6 @@ class GpuDrivenPass {
     VkBuffer instanceBuffer() const {
         return m_visibleObjects.buffer;
     }
-
-    uint32_t mipLevels() const;
 
     uint32_t visibilityMismatchCount() const {
         return m_visibilityMismatchCount;
@@ -95,7 +96,7 @@ class GpuDrivenPass {
     }
 
     uint32_t pipelineCount() const {
-        return 3;
+        return 2;
     }
 
     void shutdown(const VulkanContext& context);
@@ -122,25 +123,15 @@ class GpuDrivenPass {
     bool createLayouts();
     bool createPool(uint32_t frameCount);
     bool createBuffers(uint32_t frameCount);
-    bool createDepthResources(VkExtent2D extent, VkImageView depthView);
-    void writeCullDescriptors();
     bool createHostBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Buffer& output);
     bool createDeviceBuffer(VkDeviceSize size, VkBufferUsageFlags usage, Buffer& output);
-    void destroyDepthResources();
     void destroyBuffer(Buffer& buffer);
 
     VkDevice m_device{VK_NULL_HANDLE};
     VmaAllocator m_allocator{VK_NULL_HANDLE};
-    VkDescriptorSetLayout m_depthLayout{VK_NULL_HANDLE};
     VkDescriptorSetLayout m_cullLayout{VK_NULL_HANDLE};
     VkDescriptorSetLayout m_compactLayout{VK_NULL_HANDLE};
     VkDescriptorPool m_descriptorPool{VK_NULL_HANDLE};
-    VkSampler m_sampler{VK_NULL_HANDLE};
-    VkImage m_pyramid{VK_NULL_HANDLE};
-    VmaAllocation m_pyramidAllocation{VK_NULL_HANDLE};
-    VkImageView m_pyramidView{VK_NULL_HANDLE};
-    std::vector<VkImageView> m_mipViews;
-    std::vector<VkDescriptorSet> m_depthDescriptors;
     std::vector<FrameData> m_frames;
     // Device-local state written and read only by the GPU.
     Buffer m_visibleObjects;
@@ -149,13 +140,10 @@ class GpuDrivenPass {
     Buffer m_drawCounts;
     Buffer m_visibility;
     Buffer m_statistics;
-    ComputePipeline m_depthPipeline;
     ComputePipeline m_cullPipeline;
     ComputePipeline m_compactPipeline;
-    VkExtent2D m_extent{};
     GpuDrivenLimits m_limits;
     bool m_indirectCount{false};
-    bool m_pyramidInitialized{false};
     bool m_visibilityInitialized{false};
     uint32_t m_visibilityMismatchCount{0};
     uint32_t m_retiredVisibleCount{0};

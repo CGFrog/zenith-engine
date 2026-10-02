@@ -348,6 +348,18 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
                          "Create reflection view")) {
             return false;
         }
+        effectImage.format = normalFormat;
+        if (!checkVulkan(vmaCreateImage(context.vmaAllocator(), &effectImage, &allocation, &target.normalImage,
+                                        &target.normalAllocation, nullptr),
+                         "Create prepass normal target")) {
+            return false;
+        }
+        view.image = target.normalImage;
+        view.format = normalFormat;
+        if (!checkVulkan(vkCreateImageView(context.device(), &view, nullptr, &target.normalView),
+                         "Create prepass normal view")) {
+            return false;
+        }
     }
     for (uint32_t index = 0; index < m_targets.size(); ++index) {
         Target& target = m_targets[index];
@@ -465,6 +477,12 @@ void PostProcessPass::destroyTargets(const VulkanContext& context) {
         if (target.reflectionImage) {
             vmaDestroyImage(context.vmaAllocator(), target.reflectionImage, target.reflectionAllocation);
         }
+        if (target.normalView) {
+            vkDestroyImageView(context.device(), target.normalView, nullptr);
+        }
+        if (target.normalImage) {
+            vmaDestroyImage(context.vmaAllocator(), target.normalImage, target.normalAllocation);
+        }
         target.image = VK_NULL_HANDLE;
         target.view = VK_NULL_HANDLE;
         target.allocation = VK_NULL_HANDLE;
@@ -480,6 +498,10 @@ void PostProcessPass::destroyTargets(const VulkanContext& context) {
         target.reflectionView = VK_NULL_HANDLE;
         target.reflectionAllocation = VK_NULL_HANDLE;
         target.effectsInitialized = false;
+        target.normalImage = VK_NULL_HANDLE;
+        target.normalView = VK_NULL_HANDLE;
+        target.normalAllocation = VK_NULL_HANDLE;
+        target.normalInitialized = false;
     }
 }
 
@@ -714,6 +736,32 @@ VkImage PostProcessPass::motionImage(uint32_t frameIndex) const {
 
 VkImageView PostProcessPass::motionView(uint32_t frameIndex) const {
     return m_targets[frameIndex].motionView;
+}
+
+void PostProcessPass::prepareNormals(VkCommandBuffer commandBuffer, uint32_t frameIndex) {
+    Target& target = m_targets[frameIndex];
+    // The prepass clears the target, so earlier contents are discarded.
+    constexpr VkPipelineStageFlags2 readers =
+        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    imageBarrier(commandBuffer, target.normalImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                 target.normalInitialized ? readers : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 target.normalInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+}
+
+void PostProcessPass::finishNormals(VkCommandBuffer commandBuffer, uint32_t frameIndex) {
+    Target& target = m_targets[frameIndex];
+    imageBarrier(commandBuffer, target.normalImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    target.normalInitialized = true;
+}
+
+VkImageView PostProcessPass::normalView(uint32_t frameIndex) const {
+    return m_targets[frameIndex].normalView;
 }
 
 void PostProcessPass::shutdown(const VulkanContext& context) {

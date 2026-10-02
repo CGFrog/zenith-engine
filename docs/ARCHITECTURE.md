@@ -364,7 +364,7 @@ skin influence with a dynamic stride of 0, so every mesh pipeline shares one
 vertex layout.
 
 GPU-driven submission is opt-in and uses two-phase occlusion culling. Objects
-visible last frame are drawn first; a min-depth pyramid built from that depth
+visible last frame are drawn first; a depth pyramid built from that depth
 then tests every object, records its visibility for the next frame, and draws
 the newly visible remainder. A compaction pass packs non-empty draws so each
 pipeline and geometry page is one `vkCmdDrawIndexedIndirectCount`. Blended
@@ -380,6 +380,36 @@ camera's choice. The GPU path gives each level its own batch, chains a
 primitive's levels through the batch records, and selects in the cull shader
 with the same formula; every object reserves an instance slot in each of its
 level batches.
+
+`RenderSettings::depthPrepass` (on by default) draws opaque and masked
+surfaces into scene depth and a view-space normal target before shading. With
+GPU-driven submission the two-phase cull runs inside the prepass, and the
+shading pass redraws both phases' compacted draws without culling again. The
+prepass vertex shader repeats `mesh.vert`'s position math with `precise` and
+`invariant gl_Position`, so opaque shading tests `EQUAL` with depth writes off
+and every opaque pixel shades once; masked materials alpha-test in both passes.
+After the prepass the depth pyramid is rebuilt from the complete opaque depth
+on both submission paths. With the prepass off, the main pass tests and writes
+depth as before and the outputs below are unavailable.
+
+Contract for screen-space consumers (`MeshPass::sceneGeometry`, valid for the
+frame being recorded only when the prepass ran):
+
+- Normals: `PostProcessPass::normalFormat` (`A2B10G10R10_UNORM`), in
+  `SHADER_READ_ONLY_OPTIMAL`, output-sized with the render extent at the
+  top-left. `rg` is the octahedral view-space normal mapped to `[0, 1]` (view
+  space is right-handed, +Z towards the camera; back faces of double-sided
+  surfaces are flipped towards the viewer), `b` is perceptual roughness clamped
+  like the shading pass, and `a` is 1 where an opaque surface was written (0 on
+  clear). `SceneNormalEncoding.hpp` mirrors the encoding on the CPU.
+- Depth pyramid: `DepthPyramid`, one RG32F image in `GENERAL` layout,
+  sampled with its nearest/clamp sampler via `texelFetch`. `r` is the farthest
+  (minimum, reversed Z) and `g` the closest (maximum) depth a texel covers.
+  Level 0 copies scene depth over the render extent; level `L` spans
+  `max(renderExtent >> L, 1)` texels in the top-left of its storage mip, and
+  base pixel `p` lies in texel `min(p >> L, levelExtent - 1)`. Normalized UVs
+  must be scaled by `levelExtent / storageExtent` of the sampled level.
+  Readers in compute or fragment shaders are ordered before the next rebuild.
 The primary directional and environment light components provide direct-light,
 shadow, sky, and ground settings. Material occlusion attenuates only indirect
 environment lighting, leaving direct and emissive contributions unchanged.

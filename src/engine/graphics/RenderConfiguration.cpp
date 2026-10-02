@@ -117,6 +117,7 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                            {"maximumLocalLights", settings.maximumLocalLights},
                            {"reflectionProbes", settings.reflectionProbes},
                            {"preferGpuDrivenSubmission", settings.preferGpuDrivenSubmission},
+                           {"depthPrepass", settings.depthPrepass},
                            {"lodErrorThresholdPixels", settings.lodErrorThresholdPixels},
                            {"cascadeSplitLambda", settings.cascadeSplitLambda},
                            {"cascadeBlendFraction", settings.cascadeBlendFraction},
@@ -169,6 +170,7 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
         }
         loaded.reflectionProbes = document.value("reflectionProbes", true);
         loaded.preferGpuDrivenSubmission = document.value("preferGpuDrivenSubmission", false);
+        loaded.depthPrepass = document.value("depthPrepass", true);
         loaded.lodErrorThresholdPixels = document.value("lodErrorThresholdPixels", 1.0f);
         if (!(loaded.lodErrorThresholdPixels >= 0.0f &&
               loaded.lodErrorThresholdPixels <= maximumLodErrorThresholdPixels)) {

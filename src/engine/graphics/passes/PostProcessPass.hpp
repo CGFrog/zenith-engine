@@ -13,6 +13,9 @@ class PostProcessPass {
     static constexpr VkFormat sceneFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
     static constexpr VkFormat motionFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
     static constexpr VkFormat ambientOcclusionFormat = VK_FORMAT_R8_UNORM;
+    // Depth prepass output: octahedral view-space normal in rg, roughness in
+    // b, coverage in a. SceneNormalEncoding.hpp documents the encoding.
+    static constexpr VkFormat normalFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
 
     bool init(const VulkanContext& context, VkFormat outputFormat, VkFormat depthFormat, uint32_t frameCount,
               VkExtent2D extent, VkImageView depthView);
@@ -30,6 +33,13 @@ class PostProcessPass {
     VkImageView sceneView(uint32_t frameIndex) const;
     VkImage motionImage(uint32_t frameIndex) const;
     VkImageView motionView(uint32_t frameIndex) const;
+    // Moves the frame's normal target to COLOR_ATTACHMENT_OPTIMAL for the depth
+    // prepass, discarding its previous contents.
+    void prepareNormals(VkCommandBuffer commandBuffer, uint32_t frameIndex);
+    // Makes the prepass normals readable (SHADER_READ_ONLY_OPTIMAL) by compute
+    // and fragment shaders.
+    void finishNormals(VkCommandBuffer commandBuffer, uint32_t frameIndex);
+    VkImageView normalView(uint32_t frameIndex) const;
 
   private:
     struct Target {
@@ -49,6 +59,10 @@ class PostProcessPass {
         VkImageView reflectionView{VK_NULL_HANDLE};
         VmaAllocation reflectionAllocation{VK_NULL_HANDLE};
         bool effectsInitialized{false};
+        VkImage normalImage{VK_NULL_HANDLE};
+        VkImageView normalView{VK_NULL_HANDLE};
+        VmaAllocation normalAllocation{VK_NULL_HANDLE};
+        bool normalInitialized{false};
     };
 
     bool createDescriptors(uint32_t frameCount);

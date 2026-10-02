@@ -379,8 +379,9 @@ Renderer
 |- RenderGraph (pass hazards, synchronization plan, transient lifetimes)
 `- MeshPass
    |- GPU mesh/texture/material caches
-   |- shadow pass and main mesh pipeline
-   `- PostProcessPass (HDR/history, motion, SSAO/SSR, and fullscreen pipelines)
+   |- shadow pass, depth/normal prepass, and main mesh pipeline
+   |- DepthPyramid (min/max hierarchical depth for culling and screen-space effects)
+   `- PostProcessPass (HDR/history, motion, prepass normals, SSAO/SSR, and fullscreen pipelines)
       `- BloomExposurePass (luminance histogram, exposure, bloom chain)
 ```
 
@@ -441,10 +442,18 @@ index buffer for each reported page.
 
 ### `src/engine/graphics/passes/GpuDrivenPass.*`
 
-Two-phase GPU frustum and occlusion culling, the min-depth pyramid, and
-draw compaction into indirect-count commands. The cull shader also picks each
-object's LOD batch. The caller owns render passes and the scene-depth
-transitions around the pyramid build.
+Two-phase GPU frustum and occlusion culling and draw compaction into
+indirect-count commands. The cull shader also picks each object's LOD batch.
+Both phases' compacted draws stay valid for the rest of the frame, so the
+shading pass redraws what the prepass culled. The caller owns render passes,
+the depth pyramid, and the scene-depth transitions around the pyramid build.
+
+### `src/engine/graphics/passes/DepthPyramid.*`
+
+Builds the hierarchical depth of the scene view: one RG32F image in `GENERAL`
+layout, red = farthest (min, reversed Z) and green = closest (max) depth, level
+0 a copy of the depth over the render extent. `DepthPyramidLayout.hpp` holds
+the CPU-testable level-extent and texel-coverage rules the shaders mirror.
 
 ### `src/engine/graphics/MeshLodSelection.*`
 
@@ -473,15 +482,18 @@ pipeline creation. Its destructor releases the module.
 
 ### `src/engine/graphics/pipeline/GraphicsPipeline.*`
 
-Builds and owns the main mesh or depth-only shadow pipeline and layout using
-Vulkan dynamic rendering.
+Builds and owns the main mesh, depth-normal prepass, or depth-only shadow
+pipeline and layout using Vulkan dynamic rendering. After a prepass, opaque
+mesh pipelines test `EQUAL` without writing depth.
 
 ### `src/engine/graphics/passes/MeshPass.*`
 
 Finds the primary camera, updates per-frame camera data, lazily uploads CPU
 assets to renderer-owned GPU caches, and publishes bindless material records and
 texture slots. It first
-renders a directional shadow map and then the scene into a floating-point HDR
+renders a directional shadow map, then (when `RenderSettings::depthPrepass` is
+on) opaque depth and view-space normals plus the depth pyramid, and then the
+scene into a floating-point HDR
 target using Cook-Torrance GGX lighting plus hemispherical sky/ground indirect
 lighting. Directional and environment scene components supply lighting and
 shadow settings. Fallback textures fill missing maps.
@@ -494,8 +506,8 @@ influence boxes, blend distances, and priorities.
 
 ### `src/engine/graphics/passes/PostProcessPass.*`
 
-Owns one RGBA16F history target, motion/reactive target, SSAO target, and SSR
-target per frame slot. Separate GPU-scoped SSAO and SSR passes feed the final
+Owns one RGBA16F history target, motion/reactive target, prepass normal target
+(A2B10G10R10), SSAO target, and SSR target per frame slot. Separate GPU-scoped SSAO and SSR passes feed the final
 fullscreen pass, which performs neighborhood-clipped TAA (or FXAA),
 editor-grid composition, exposure, the bloom mix, and tone mapping (AgX by
 default, AgX punchy or legacy ACES). Half-resolution effect tiers render into
@@ -522,6 +534,8 @@ shaders mirror it by hand; `tests/engine/ToneMappingTests.cpp` covers it.
 | `shaders/mesh.vert` | Transforms mesh vertices and supplies world-space attributes. |
 | `shaders/mesh.frag` | Samples glTF materials, evaluates GGX lighting, shadows, occlusion, and emission. |
 | `shaders/shadow.vert` | Transforms geometry into directional-light depth space. |
+| `shaders/depth_normal.vert` / `.frag` | Depth prepass: invariant positions shared with `mesh.vert`, alpha masking, and encoded view-space normals plus roughness. |
+| `shaders/depth_pyramid.comp` | Reduces scene depth into the min/max depth pyramid one level per dispatch. |
 | `shaders/fullscreen.vert` | Generates a fullscreen triangle without a vertex buffer. |
 | `shaders/post.frag` | Combines HDR color into the exposed, bloomed, tone-mapped output. |
 | `shaders/luminance_histogram.comp` | Bins the valid HDR region into a 256-bin log2-luminance histogram. |
