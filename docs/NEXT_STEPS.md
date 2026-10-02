@@ -470,9 +470,110 @@ Exit criteria:
 - A release can be reproduced and diagnosed from its archived provenance while
   preserving user data across supported upgrades and rollbacks.
 
+## Milestone 22: renderer validation and hardening
+
+The renderer modernization (bindless materials, GPU-driven culling, BC
+textures, packed vertex streams, LODs, IBL, clustered lighting, depth prepass,
+GTAO, Hi-Z SSR, TAAU, bloom, AgX, and auto exposure) has run on one GPU, without
+Vulkan validation, on two small scenes. Harden it before adding features.
+
+- [x] Install the Vulkan SDK and run the demo and
+      `projects/showcase.zenith-project` with `VK_LAYER_KHRONOS_validation` and
+      synchronization validation on both the CPU and GPU-driven paths, with and
+      without high quality and dynamic resolution. Fix every message.
+- [x] Add a `vulkan;validation` CTest smoke label that fails on any validation
+      message when the layer is present and is skipped otherwise.
+- [x] Add built-in frame capture (an environment variable that writes the
+      backbuffer of a chosen frame to PNG) plus a fixed showcase camera, so
+      visual checks no longer depend on RenderDoc and window focus.
+- [x] Add deterministic showcase reference captures for TAAU ghosting, masked
+      prepass edges, GTAO, SSR, bloom, and exposure, and compare them in CI where
+      a GPU runner exists.
+- [x] Extend the showcase with an animated skinned glTF and a mirror-smooth
+      metal surface to cover skinned motion vectors, packed skin streams, and
+      SSR on metals.
+- [x] Audit silent fallbacks like the upload-backpressure bug fixed in
+      `5820789`: count deferred mesh and texture uploads in `RenderStats` and log
+      once when an asset stays deferred for more than a bounded number of frames.
+- [ ] Test on at least one AMD or Intel GPU, including the update-after-bind
+      bindless path and the RGBA8 fallback for devices without BC support.
+- [ ] Push the renderer work and confirm the Windows, Linux, and macOS CI jobs.
+
+Exit criteria:
+
+- The validation matrix runs with zero validation or synchronization errors.
+- Showcase captures are stable across runs on the reference machine, and every
+  quality option still produces its named behavior or an explicit fallback.
+
+## Milestone 23: lighting fidelity
+
+Global illumination is the largest remaining fidelity gap against mainstream
+engines; local-light shadows and volumetrics follow.
+
+- [x] Add baked irradiance probe volumes (a grid with editor baking and
+      visibility-aware interpolation) feeding indirect diffuse in `mesh.frag`.
+      Evaluate screen-space GI or ray-traced probe updates later as optional
+      tiers.
+- [x] Implement a local-light shadow atlas (`allocateLocalShadowAtlas` exists
+      but is unused): spot lights first, then point lights, with cached static
+      casters and a per-frame update budget.
+- [x] Cull shadow cascades on the GPU by reusing `GpuDrivenPass`.
+- [x] Blend reflection probes per pixel through the cluster grid, with box
+      projection, instead of once at the camera position.
+- [x] Add froxel volumetric fog that reuses the cluster grid and shadow maps.
+- [x] Store specular colour in the prepass normal target so SSR tints metal
+      reflections correctly.
+
+Exit criteria:
+
+- A representative interior shows plausible bounce lighting without manual
+  fill lights, and every new technique has an Off fallback and its own GPU scope
+  and budget.
+
+## Milestone 24: post-processing, materials, and effects
+
+- [ ] Add depth of field, motion blur (from the existing motion vectors), colour
+      grading LUTs, vignette, and film grain as individually selectable passes.
+- [ ] Offer FSR or DLSS behind capability checks alongside TAAU.
+- [ ] Support `KHR_materials_clearcoat`, `transmission`, `sheen`, and `specular`.
+- [ ] Add clustered decals and a GPU particle system with sorting and lighting.
+
+Exit criteria:
+
+- Each pass and material feature has a reference capture, a GPU scope, and a
+  documented cost on the reference hardware.
+
+## Milestone 25: renderer performance follow-ups
+
+Tracked against `PERFORMANCE_ROADMAP.md`, whose GPU-driven visibility and
+image-quality steps are now largely implemented.
+
+- [ ] Replace the per-mip depth-pyramid dispatches with a single-pass
+      downsampler, and build the pyramid once per frame on the GPU-driven path.
+- [ ] Reduce GTAO cost (0.6 ms at full resolution on the reference GPU): default
+      to half resolution or adopt a cheaper sampling pattern.
+- [ ] Decide whether GPU-driven submission becomes the default using the
+      showcase and a large draw-call-heavy scene; it is currently slower on both
+      small test scenes.
+- [ ] Stream texture mip ranges through the derived-asset cache and evaluate
+      asynchronous compute for clustering, pyramid, and bloom.
+- [ ] Clean up: deduplicate the mip-chain blit code in `EnvironmentPass` and
+      `MeshPass`, remove the unused post-process descriptor bindings 3–6, stop
+      `Renderer.cpp` from mirroring `MeshPass` decisions for the render-graph
+      model, and make FXAA read the composited image.
+
+Exit criteria:
+
+- No change regresses median or p95 GPU frame time on the demo, the showcase,
+  or the 4,000-object benchmark beyond measured noise.
+
 ## Recommended next implementation slice
 
-Milestone 20 is intentionally deferred. Its first slice should compare candidate
+Start with Milestone 22: validation runs and built-in frame capture protect
+everything that follows and are small. Then begin Milestone 23 with baked
+irradiance probes, which close the largest visual gap.
+
+Milestone 20 remains deferred. Its first slice should compare candidate
 scripting runtimes against a written startup, call, memory, debugging, sandbox,
 and packaging budget before adding a runtime dependency or serialized script
 component.
