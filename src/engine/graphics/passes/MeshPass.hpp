@@ -21,6 +21,7 @@
 #include "GpuDrivenPass.hpp"
 #include "IrradianceVolumePass.hpp"
 #include "LocalShadowPass.hpp"
+#include "ParticlePass.hpp"
 #include "PostProcessPass.hpp"
 #include "ReflectionProbeClusterPass.hpp"
 #include "SceneGeometryViews.hpp"
@@ -54,10 +55,10 @@ class MeshPass {
     uint32_t prewarmedPipelineCount() const {
         // Thirteen graphics pipelines (two depth-normal, one local-shadow), the
         // light- and reflection-probe-cluster assignments, the depth-pyramid
-        // build, ambient occlusion, volumetric fog, and the environment
-        // pipelines.
+        // build, ambient occlusion, volumetric fog, particles, and the
+        // environment pipelines.
         return 16u + m_ambientOcclusion.pipelineCount() + m_environmentPass.pipelineCount() +
-               (m_volumetricFog.supported() ? VolumetricFogPass::pipelineCount() : 0u) +
+               ParticlePass::pipelineCount() + (m_volumetricFog.supported() ? VolumetricFogPass::pipelineCount() : 0u) +
                (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
     }
 
@@ -91,6 +92,7 @@ class MeshPass {
     // See PostProcessPass::setFixedFrameSeconds.
     void setFixedFrameSeconds(std::optional<float> seconds) {
         m_postProcess.setFixedFrameSeconds(seconds);
+        m_particles.setFixedFrameSeconds(seconds);
     }
 
     void shutdown(const VulkanContext& context);
@@ -337,6 +339,17 @@ class MeshPass {
     // Records this frame's fog (or clears it) between light clustering and the
     // depth prepass, with its timestamp scope.
     void recordVolumetricFog(const DrawContext& draw, const VolumetricFogFrame* frame);
+    // Moves the directional shadow map to DEPTH_READ_ONLY_OPTIMAL before any
+    // cascade was rendered, so compute passes may bind it.
+    void prepareShadowMapForSampling(VkCommandBuffer commandBuffer);
+    // Records the frame's particle emission, simulation, and sorting with its
+    // timestamp scope; the emitters' sprites are resolved into
+    // m_particleSpriteViews for the draw.
+    bool recordParticleSimulation(const DrawContext& draw, const Scene& scene, const AssetManager& assets,
+                                  ParticleQuality quality, const ParticleSimulationFrame& frame);
+    // Inside the scene pass after blended surfaces: draws this frame's
+    // particles in their own rendering scope, then resumes the scene pass.
+    void recordParticles(const DrawContext& draw, VkImage depthImage, VkImageView depthView);
     void bindOpaquePipeline(const DrawContext& draw, const GraphicsPipeline& pipeline, OpaquePipelines pipelines,
                             VkDescriptorSet cameraSet) const;
     void selectRenderItemLods(const MeshLodView& view);
@@ -441,6 +454,8 @@ class MeshPass {
     ClusteredLightingPass m_clusteredLighting;
     ReflectionProbeClusterPass m_reflectionProbeClusters;
     VolumetricFogPass m_volumetricFog;
+    ParticlePass m_particles;
+    std::array<VkImageView, particles::maximumSpriteTextures> m_particleSpriteViews{};
     // Fog volume generation each frame slot's camera sets reference.
     std::vector<uint64_t> m_fogDescriptorGenerations;
     bool m_gpuDrivenSupported{false};

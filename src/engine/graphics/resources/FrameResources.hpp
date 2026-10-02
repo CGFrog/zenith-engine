@@ -29,6 +29,8 @@ struct GpuFrameTimings {
     double reflectionProbeClusterMilliseconds{0.0};
     double volumetricFogMilliseconds{0.0};
     double irradianceVolumeMilliseconds{0.0};
+    double particleSimulationMilliseconds{0.0};
+    double particleDrawMilliseconds{0.0};
 };
 
 // Owns the resources reused for one frame of CPU work.

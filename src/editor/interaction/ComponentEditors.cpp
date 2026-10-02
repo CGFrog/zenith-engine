@@ -130,6 +130,68 @@ bool drawVolumetricFog(VolumetricFogComponent& component) {
     return changed;
 }
 
+namespace {
+// Edits a [minimum, maximum] pair, keeping the maximum at least the minimum.
+bool drawRange(const char* label, float& minimum, float& maximum, float speed, float lowest, float highest) {
+    float range[2]{minimum, maximum};
+    if (!ImGui::DragFloat2(label, range, speed, lowest, highest)) {
+        return false;
+    }
+    minimum = std::clamp(range[0], lowest, highest);
+    maximum = std::clamp(std::max(range[1], minimum), lowest, highest);
+    return true;
+}
+} // namespace
+
+bool drawParticleEmitter(ParticleEmitterComponent& component) {
+    int maxParticles = static_cast<int>(component.maxParticles);
+    bool changed = false;
+    if (ImGui::DragInt("Max particles", &maxParticles, 16.0f, 1, static_cast<int>(maximumParticlesPerEmitter))) {
+        component.maxParticles =
+            static_cast<uint32_t>(std::clamp(maxParticles, 1, static_cast<int>(maximumParticlesPerEmitter)));
+        changed = true;
+    }
+    changed |= ImGui::Checkbox("Emitting", &component.emitting);
+    changed |= ImGui::DragFloat("Spawn rate", &component.spawnRate, 0.5f, 0.0f, 100000.0f, "%.1f /s");
+    int burstCount = static_cast<int>(component.burstCount);
+    if (ImGui::DragInt("Burst count", &burstCount, 1.0f, 0, static_cast<int>(maximumParticlesPerEmitter))) {
+        component.burstCount = static_cast<uint32_t>(std::max(burstCount, 0));
+        changed = true;
+    }
+    changed |= ImGui::DragFloat("Burst interval", &component.burstInterval, 0.01f, 0.0f, 3600.0f, "%.2f s");
+    changed |= drawRange("Lifetime", component.lifetimeMin, component.lifetimeMax, 0.01f, 0.001f, 3600.0f);
+    changed |= ImGui::DragFloat3("Direction", &component.direction.x, 0.01f, -1.0f, 1.0f);
+    if (glm::dot(component.direction, component.direction) < 1e-8f) {
+        component.direction = {0.0f, 1.0f, 0.0f};
+    }
+    changed |= ImGui::SliderAngle("Cone angle", &component.coneAngleRadians, 0.0f, 180.0f);
+    changed |= drawRange("Speed", component.speedMin, component.speedMax, 0.01f, 0.0f, 10000.0f);
+    changed |= ImGui::DragFloat("Spawn radius", &component.spawnRadius, 0.01f, 0.0f, 10000.0f);
+    changed |= ImGui::DragFloat3("Gravity", &component.gravity.x, 0.05f, -1000.0f, 1000.0f);
+    changed |= ImGui::DragFloat("Drag", &component.drag, 0.01f, 0.0f, 100.0f);
+    changed |= ImGui::DragFloat("Start size", &component.startSize, 0.005f, 0.0f, 1000.0f);
+    changed |= ImGui::DragFloat("End size", &component.endSize, 0.005f, 0.0f, 1000.0f);
+    changed |= ImGui::DragFloat("Angular speed", &component.angularSpeed, 0.01f, 0.0f, 100.0f, "%.2f rad/s");
+    changed |= ImGui::ColorEdit4("Start color", &component.startColor.x, ImGuiColorEditFlags_Float);
+    changed |= ImGui::ColorEdit4("End color", &component.endColor.x, ImGuiColorEditFlags_Float);
+    changed |= ImGui::DragFloat("Emissive intensity", &component.emissiveIntensity, 0.05f, 0.0f, 10000.0f);
+    changed |= ImGui::Checkbox("Lit", &component.lit);
+    int blendMode = component.blendMode == ParticleBlendMode::Additive ? 1 : 0;
+    if (ImGui::Combo("Blend mode", &blendMode, "Alpha\0Additive\0")) {
+        component.blendMode = blendMode == 1 ? ParticleBlendMode::Additive : ParticleBlendMode::Alpha;
+        changed = true;
+    }
+    int space = component.space == ParticleSimulationSpace::Local ? 1 : 0;
+    if (ImGui::Combo("Simulation space", &space, "World\0Local\0")) {
+        component.space = space == 1 ? ParticleSimulationSpace::Local : ParticleSimulationSpace::World;
+        changed = true;
+    }
+    changed |= ImGui::DragFloat("Soft distance", &component.softDistance, 0.01f, 0.0f, 100.0f);
+    ImGui::TextDisabled("Sprite: %s",
+                        component.textureAsset.empty() ? "procedural round" : component.textureAsset.c_str());
+    return changed;
+}
+
 bool drawCollider(ColliderComponent& component) {
     bool changed = false;
     std::visit(

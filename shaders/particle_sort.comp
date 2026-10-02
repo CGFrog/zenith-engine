@@ -1,0 +1,79 @@
+#version 450
+
+// GPU particles, step 3: one dispatch of a bitonic sorting network over the
+// sort keys, ascending by (key, index). particles::bitonicSortPlan lists the
+// dispatches and particles::sortReference mirrors this indexing on the CPU.
+
+layout(local_size_x = 512) in;
+
+const uint STEP_LOCAL_SORT = 0u;
+const uint STEP_GLOBAL_MERGE = 1u;
+const uint STEP_LOCAL_MERGE = 2u;
+// Twice local_size_x; mirrors particles::sortBlockElements.
+const uint BLOCK_ELEMENTS = 1024u;
+
+layout(push_constant) uniform SortPass {
+    uint step;
+    uint mergeSize; // bitonic sequence size k
+    uint distance;  // compare distance j
+} pass;
+
+layout(std430, set = 0, binding = 0) buffer SortKeys {
+    uvec2 values[];
+} sortKeys;
+
+shared uvec2 block[BLOCK_ELEMENTS];
+
+bool greaterThanKey(uvec2 first, uvec2 second) {
+    return first.x > second.x || (first.x == second.x && first.y > second.y);
+}
+
+// Lower index of the pair a thread handles in a step of compare distance j.
+uint pairIndex(uint thread, uint distance) {
+    return 2u * distance * (thread / distance) + thread % distance;
+}
+
+// Compare-exchange steps inside the workgroup's block, distances
+// firstDistance down to 1; the direction follows the global index.
+void mergeInsideBlock(uint blockStart, uint mergeSize, uint firstDistance) {
+    for (uint distance = firstDistance; distance > 0u; distance /= 2u) {
+        uint first = pairIndex(gl_LocalInvocationID.x, distance);
+        uint second = first + distance;
+        bool ascending = ((blockStart + first) & mergeSize) == 0u;
+        uvec2 firstKey = block[first];
+        uvec2 secondKey = block[second];
+        if (greaterThanKey(firstKey, secondKey) == ascending) {
+            block[first] = secondKey;
+            block[second] = firstKey;
+        }
+        barrier();
+    }
+}
+
+void main() {
+    if (pass.step == STEP_GLOBAL_MERGE) {
+        uint first = pairIndex(gl_GlobalInvocationID.x, pass.distance);
+        uint second = first + pass.distance;
+        uvec2 firstKey = sortKeys.values[first];
+        uvec2 secondKey = sortKeys.values[second];
+        if (greaterThanKey(firstKey, secondKey) == ((first & pass.mergeSize) == 0u)) {
+            sortKeys.values[first] = secondKey;
+            sortKeys.values[second] = firstKey;
+        }
+        return;
+    }
+    uint blockStart = gl_WorkGroupID.x * BLOCK_ELEMENTS;
+    uint local = gl_LocalInvocationID.x;
+    block[local] = sortKeys.values[blockStart + local];
+    block[local + BLOCK_ELEMENTS / 2u] = sortKeys.values[blockStart + local + BLOCK_ELEMENTS / 2u];
+    barrier();
+    if (pass.step == STEP_LOCAL_SORT) {
+        for (uint mergeSize = 2u; mergeSize <= BLOCK_ELEMENTS; mergeSize *= 2u) {
+            mergeInsideBlock(blockStart, mergeSize, mergeSize / 2u);
+        }
+    } else {
+        mergeInsideBlock(blockStart, pass.mergeSize, pass.distance);
+    }
+    sortKeys.values[blockStart + local] = block[local];
+    sortKeys.values[blockStart + local + BLOCK_ELEMENTS / 2u] = block[local + BLOCK_ELEMENTS / 2u];
+}

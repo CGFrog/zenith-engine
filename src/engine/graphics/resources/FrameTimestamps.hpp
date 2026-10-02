@@ -37,7 +37,13 @@ inline constexpr uint32_t volumetricFogEnd = 38;
 // volume changes. Probe sampling is part of opaque shading.
 inline constexpr uint32_t irradianceVolumeBegin = 39;
 inline constexpr uint32_t irradianceVolumeEnd = 40;
-inline constexpr uint32_t count = 41;
+// GPU particles: emission, simulation, lighting, and sorting, then the
+// billboard draw. Slots 41-52 are reserved for other Milestone 24 passes.
+inline constexpr uint32_t particleSimulationBegin = 53;
+inline constexpr uint32_t particleSimulationEnd = 54;
+inline constexpr uint32_t particleDrawBegin = 55;
+inline constexpr uint32_t particleDrawEnd = 56;
+inline constexpr uint32_t count = 57;
 } // namespace FrameTimestamp
 
 // Writes the optional-pass timestamps of one frame's command buffer. Each slot

@@ -118,6 +118,9 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("render.volumetric_fog_bytes", static_cast<double>(s.volumetricFogBytes), "bytes");
     sample("render.irradiance_volume_probes", s.irradianceVolumeProbes, "count");
     sample("render.irradiance_volume_bytes", static_cast<double>(s.irradianceVolumeBytes), "bytes");
+    sample("render.particle_emitters", s.particleEmitterCount, "count");
+    sample("render.particle_capacity", s.particleCapacity, "count");
+    sample("render.particle_bytes", static_cast<double>(s.particleBytes), "bytes");
     sample("streaming.decoded_bytes", static_cast<double>(s.streamingDecodedBytes), "bytes");
     sample("streaming.uploaded_bytes", static_cast<double>(s.streamingUploadedBytes), "bytes");
     sample("streaming.decode_backlog_bytes", static_cast<double>(s.streamingDecodeBacklogBytes), "bytes");
@@ -166,6 +169,9 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
            budgets.reflectionProbeClusters.gpuMilliseconds);
     sample("gpu.volumetric_fog", s.gpuVolumetricFogMilliseconds, "ms", budgets.volumetricFog.gpuMilliseconds);
     sample("gpu.irradiance_volume", s.gpuIrradianceVolumeMilliseconds, "ms", budgets.irradianceVolume.gpuMilliseconds);
+    sample("gpu.particleSimulate", s.gpuParticleSimulationMilliseconds, "ms",
+           budgets.particleSimulation.gpuMilliseconds);
+    sample("gpu.particleDraw", s.gpuParticleDrawMilliseconds, "ms", budgets.particleDraw.gpuMilliseconds);
     sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
     sample("gpu.ui", s.gpuUiMilliseconds, "ms", budgets.ui.gpuMilliseconds);

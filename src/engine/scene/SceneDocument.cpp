@@ -46,6 +46,18 @@ bool readVector3(const Json& json, glm::vec3& value) {
     return true;
 }
 
+Json vector4(const glm::vec4& value) {
+    return Json::array({value.x, value.y, value.z, value.w});
+}
+
+bool readVector4(const Json& json, glm::vec4& value) {
+    if (!json.is_array() || json.size() != 4) {
+        return false;
+    }
+    value = {json[0].get<float>(), json[1].get<float>(), json[2].get<float>(), json[3].get<float>()};
+    return true;
+}
+
 // Shadow fields are optional so documents written before local-light shadows
 // still load with shadows off.
 SceneDocumentResult readLocalLightShadows(const Json& light, bool& castsShadows, uint32_t& resolution,
@@ -128,6 +140,117 @@ SceneDocumentResult meshReference(const AssetManager& assets, MeshHandle handle,
         return result;
     }
     output = {{"path", relative}, {"mesh", source->meshIndex}};
+    return {.success = true};
+}
+
+// Every particle_emitter field is optional on load; missing ones keep the
+// ParticleEmitterComponent defaults.
+SceneDocumentResult serializeParticleEmitter(const ParticleEmitterComponent& emitter, const AssetManager& assets,
+                                             const SceneDocumentOptions& options, Json& output) {
+    std::string textureAsset = emitter.textureAsset;
+    if (emitter.texture) {
+        const auto source = assets.textureSource(emitter.texture);
+        if (!source) {
+            return {.error = "Cannot save a particle emitter with an unknown texture handle"};
+        }
+        if (SceneDocumentResult result = projectRelativePath(source->path, options, textureAsset); !result) {
+            return result;
+        }
+    }
+    output = {{"max_particles", emitter.maxParticles},
+              {"spawn_rate", emitter.spawnRate},
+              {"burst_count", emitter.burstCount},
+              {"burst_interval", emitter.burstInterval},
+              {"lifetime", Json::array({emitter.lifetimeMin, emitter.lifetimeMax})},
+              {"direction", vector3(emitter.direction)},
+              {"cone_angle", emitter.coneAngleRadians},
+              {"speed", Json::array({emitter.speedMin, emitter.speedMax})},
+              {"spawn_radius", emitter.spawnRadius},
+              {"gravity", vector3(emitter.gravity)},
+              {"drag", emitter.drag},
+              {"start_size", emitter.startSize},
+              {"end_size", emitter.endSize},
+              {"angular_speed", emitter.angularSpeed},
+              {"start_color", vector4(emitter.startColor)},
+              {"end_color", vector4(emitter.endColor)},
+              {"emissive_intensity", emitter.emissiveIntensity},
+              {"lit", emitter.lit},
+              {"blend_mode", emitter.blendMode == ParticleBlendMode::Additive ? "additive" : "alpha"},
+              {"space", emitter.space == ParticleSimulationSpace::Local ? "local" : "world"},
+              {"soft_distance", emitter.softDistance},
+              {"texture_asset", textureAsset},
+              {"emitting", emitter.emitting}};
+    return {.success = true};
+}
+
+SceneDocumentResult readParticleEmitter(const Json& json, AssetManager& assets, const SceneDocumentOptions& options,
+                                        ParticleEmitterComponent& emitter) {
+    if (!json.is_object()) {
+        return {.error = "Particle emitter must be an object"};
+    }
+    const auto readRange = [&json](const char* key, float& minimum, float& maximum) {
+        const auto found = json.find(key);
+        if (found == json.end()) {
+            return true;
+        }
+        if (!found->is_array() || found->size() != 2) {
+            return false;
+        }
+        minimum = (*found)[0].get<float>();
+        maximum = (*found)[1].get<float>();
+        return true;
+    };
+    const auto readOptionalVector3 = [&json](const char* key, glm::vec3& value) {
+        const auto found = json.find(key);
+        return found == json.end() || readVector3(*found, value);
+    };
+    const auto readOptionalVector4 = [&json](const char* key, glm::vec4& value) {
+        const auto found = json.find(key);
+        return found == json.end() || readVector4(*found, value);
+    };
+    if (!readRange("lifetime", emitter.lifetimeMin, emitter.lifetimeMax) ||
+        !readRange("speed", emitter.speedMin, emitter.speedMax) ||
+        !readOptionalVector3("direction", emitter.direction) || !readOptionalVector3("gravity", emitter.gravity) ||
+        !readOptionalVector4("start_color", emitter.startColor) ||
+        !readOptionalVector4("end_color", emitter.endColor)) {
+        return {.error = "Particle emitter ranges and vectors have the wrong number of components"};
+    }
+    const std::string blendMode = json.value("blend_mode", std::string("alpha"));
+    const std::string space = json.value("space", std::string("world"));
+    if ((blendMode != "alpha" && blendMode != "additive") || (space != "world" && space != "local")) {
+        return {.error = "Particle emitter blend mode must be alpha or additive and space world or local"};
+    }
+    emitter.blendMode = blendMode == "additive" ? ParticleBlendMode::Additive : ParticleBlendMode::Alpha;
+    emitter.space = space == "local" ? ParticleSimulationSpace::Local : ParticleSimulationSpace::World;
+    emitter.maxParticles = json.value("max_particles", emitter.maxParticles);
+    emitter.spawnRate = json.value("spawn_rate", emitter.spawnRate);
+    emitter.burstCount = json.value("burst_count", emitter.burstCount);
+    emitter.burstInterval = json.value("burst_interval", emitter.burstInterval);
+    emitter.coneAngleRadians = json.value("cone_angle", emitter.coneAngleRadians);
+    emitter.spawnRadius = json.value("spawn_radius", emitter.spawnRadius);
+    emitter.drag = json.value("drag", emitter.drag);
+    emitter.startSize = json.value("start_size", emitter.startSize);
+    emitter.endSize = json.value("end_size", emitter.endSize);
+    emitter.angularSpeed = json.value("angular_speed", emitter.angularSpeed);
+    emitter.emissiveIntensity = json.value("emissive_intensity", emitter.emissiveIntensity);
+    emitter.lit = json.value("lit", emitter.lit);
+    emitter.softDistance = json.value("soft_distance", emitter.softDistance);
+    emitter.emitting = json.value("emitting", emitter.emitting);
+    emitter.textureAsset = json.value("texture_asset", std::string{});
+    if (const std::string error = validateParticleEmitter(emitter); !error.empty()) {
+        return {.error = error};
+    }
+    if (!emitter.textureAsset.empty()) {
+        std::filesystem::path texturePath;
+        if (SceneDocumentResult result = resolveAssetPath(emitter.textureAsset, options, texturePath); !result) {
+            return result;
+        }
+        const AssetLoadResult<TextureHandle> loaded = assets.loadTexture(texturePath);
+        if (!loaded) {
+            return {.error = loaded.error};
+        }
+        emitter.texture = loaded.handle;
+    }
     return {.success = true};
 }
 
@@ -244,6 +367,13 @@ SceneDocumentResult serializeEntity(const Scene& scene, Entity entity, const Ass
                                         {"base_height", fog->baseHeight}, {"albedo", vector3(fog->albedo)},
                                         {"anisotropy", fog->anisotropy},  {"noise_amount", fog->noiseAmount},
                                         {"noise_scale", fog->noiseScale}, {"primary", fog->primary}};
+    }
+    if (const auto* emitter = registry.try_get<ParticleEmitterComponent>(entity)) {
+        Json particles;
+        if (SceneDocumentResult result = serializeParticleEmitter(*emitter, assets, options, particles); !result) {
+            return result;
+        }
+        components["particle_emitter"] = std::move(particles);
     }
     if (const auto* light = registry.try_get<PointLightComponent>(entity)) {
         components["point_light"] = {{"color", vector3(light->color)},
@@ -526,6 +656,13 @@ SceneDocumentResult deserializeComponents(const Json& components, Entity entity,
             return {.error = "Volumetric fog parameters are invalid"};
         }
         registry.emplace<VolumetricFogComponent>(entity, fog);
+    }
+    if (const auto found = components.find("particle_emitter"); found != components.end()) {
+        ParticleEmitterComponent emitter;
+        if (SceneDocumentResult result = readParticleEmitter(*found, assets, options, emitter); !result) {
+            return result;
+        }
+        registry.emplace<ParticleEmitterComponent>(entity, std::move(emitter));
     }
     if (const auto found = components.find("point_light"); found != components.end()) {
         PointLightComponent light;

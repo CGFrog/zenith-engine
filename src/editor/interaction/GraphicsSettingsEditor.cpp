@@ -132,6 +132,10 @@ bool drawLighting(RenderSettings& settings, const RenderCapabilities& capabiliti
     if (settings.volumetricFog != VolumetricFogQuality::Off) {
         ImGui::TextDisabled("Add a Volumetric Fog component to the scene to author the medium.");
     }
+    changed |= enumCombo("Particles", settings.particles,
+                         std::array<EnumOption, 3>{{{"Off"},
+                                                    {"Low (16k particles)", capabilities.particles},
+                                                    {"High (131k particles)", capabilities.particles}}});
     return changed;
 }
 
@@ -215,6 +219,8 @@ bool drawBudgets(RenderPassBudgets& budgets) {
     changed |= drawBudget("Probe clusters", budgets.reflectionProbeClusters);
     changed |= drawBudget("Volumetric fog", budgets.volumetricFog);
     changed |= drawBudget("Irradiance volume", budgets.irradianceVolume);
+    changed |= drawBudget("Particle simulation", budgets.particleSimulation);
+    changed |= drawBudget("Particle draw", budgets.particleDraw);
     return changed;
 }
 
@@ -232,7 +238,8 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
     // Shadow time runs from the frame start through the early GPU cull, so it
     // also covers the environment precompute, local shadows and GPU
     // shadow-cascade culling; opaque time spans the clusters, prepass, pyramid,
-    // volumetric fog and ambient occlusion; blended time spans the skybox.
+    // volumetric fog, particle simulation and ambient occlusion; blended time
+    // spans the skybox and the particle draw.
     return {{"Shadows", stats.gpuShadowMilliseconds},
             {"Local shadows", stats.gpuLocalShadowMilliseconds, true},
             {"Environment precompute", stats.gpuEnvironmentPrecomputeMilliseconds, true},
@@ -243,11 +250,13 @@ std::vector<GpuPassTiming> gpuPassTimings(const RenderStats& stats) {
             {"Light clusters", stats.gpuLightClusterMilliseconds, true},
             {"Probe clusters", stats.gpuReflectionProbeClusterMilliseconds, true},
             {"Volumetric fog", stats.gpuVolumetricFogMilliseconds, true},
+            {"Particle simulation", stats.gpuParticleSimulationMilliseconds, true},
             {"Depth prepass", stats.gpuDepthPrepassMilliseconds, true},
             {"Depth pyramid", stats.gpuDepthPyramidMilliseconds, true},
             {"Ambient occlusion", stats.gpuAmbientOcclusionMilliseconds, true},
             {"Blended", stats.gpuBlendedMilliseconds},
             {"Skybox", stats.gpuSkyboxMilliseconds, true},
+            {"Particle draw", stats.gpuParticleDrawMilliseconds, true},
             {"Reflections", stats.gpuReflectionsMilliseconds},
             {"Temporal resolve", stats.gpuTemporalMilliseconds},
             {"Exposure", stats.gpuExposureMilliseconds},
@@ -285,12 +294,27 @@ void clampToDocumentRanges(RenderSettings& settings) {
     exposure.highPercentile = std::clamp(exposure.highPercentile, exposure.lowPercentile + minimumPercentileGap, 1.0f);
 
     RenderPassBudgets& budgets = settings.budgets;
-    for (RenderPassBudget* budget :
-         {&budgets.shadow, &budgets.opaque, &budgets.blended, &budgets.bloom, &budgets.ui, &budgets.upload,
-          &budgets.temporalResolve, &budgets.ambientOcclusion, &budgets.reflections, &budgets.exposure,
-          &budgets.depthPrepass, &budgets.depthPyramid, &budgets.lightClusters, &budgets.environment,
-          &budgets.localShadows, &budgets.shadowCulling, &budgets.reflectionProbeClusters, &budgets.volumetricFog,
-          &budgets.irradianceVolume}) {
+    for (RenderPassBudget* budget : {&budgets.shadow,
+                                     &budgets.opaque,
+                                     &budgets.blended,
+                                     &budgets.bloom,
+                                     &budgets.ui,
+                                     &budgets.upload,
+                                     &budgets.temporalResolve,
+                                     &budgets.ambientOcclusion,
+                                     &budgets.reflections,
+                                     &budgets.exposure,
+                                     &budgets.depthPrepass,
+                                     &budgets.depthPyramid,
+                                     &budgets.lightClusters,
+                                     &budgets.environment,
+                                     &budgets.localShadows,
+                                     &budgets.shadowCulling,
+                                     &budgets.reflectionProbeClusters,
+                                     &budgets.volumetricFog,
+                                     &budgets.irradianceVolume,
+                                     &budgets.particleSimulation,
+                                     &budgets.particleDraw}) {
         clampBudget(*budget);
     }
 }

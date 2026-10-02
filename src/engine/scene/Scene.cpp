@@ -252,6 +252,7 @@ void Scene::clear() {
     ++m_revisions.skin;
     ++m_revisions.material;
     ++m_renderPacketRevision;
+    ++m_contentGeneration;
 }
 
 void Scene::replaceWith(Scene&& scene) {
@@ -272,6 +273,7 @@ void Scene::replaceWith(Scene&& scene) {
     m_transformAuditCountdown = scene.m_transformAuditCountdown;
     m_physicsLifecycleEvents = std::move(scene.m_physicsLifecycleEvents);
     m_renderPacketRevision = nextRevision;
+    m_contentGeneration = std::max(m_contentGeneration, scene.m_contentGeneration) + 1;
     scene.m_nextEntityId = 1;
 }
 
@@ -300,6 +302,9 @@ void Scene::swap(Scene& other) noexcept {
     const uint64_t nextRevision = std::max(m_renderPacketRevision, other.m_renderPacketRevision) + 1;
     m_renderPacketRevision = nextRevision;
     other.m_renderPacketRevision = nextRevision + 1;
+    const uint64_t nextGeneration = std::max(m_contentGeneration, other.m_contentGeneration) + 1;
+    m_contentGeneration = nextGeneration;
+    other.m_contentGeneration = nextGeneration + 1;
 }
 
 bool Scene::updateBranch(Entity entity, const glm::mat4& parentWorld, bool parentChanged) {
@@ -456,6 +461,10 @@ uint64_t Scene::renderPacketRevision() const {
     return m_renderPacketRevision;
 }
 
+uint64_t Scene::contentGeneration() const {
+    return m_contentGeneration;
+}
+
 entt::registry& Scene::registry() {
     return m_registry;
 }
@@ -484,6 +493,7 @@ Entity Scene::cloneBranch(Entity source, Entity parent, bool appendCopySuffix) {
     copy.operator()<DirectionalLightComponent>();
     copy.operator()<EnvironmentLightComponent>();
     copy.operator()<VolumetricFogComponent>();
+    copy.operator()<ParticleEmitterComponent>();
     copy.operator()<PointLightComponent>();
     copy.operator()<SpotLightComponent>();
     copy.operator()<ReflectionProbeComponent>();
