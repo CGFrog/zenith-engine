@@ -19,6 +19,27 @@
 #include <string>
 #include <unordered_map>
 
+// Every input that changes the planned frame graph's passes. Settings that only
+// change pass parameters are deliberately absent.
+struct RenderGraphShape {
+    uint32_t width{0};
+    uint32_t height{0};
+    bool viewport{false};
+    AntialiasingMode antialiasing{AntialiasingMode::Off};
+    AmbientOcclusionQuality ambientOcclusion{AmbientOcclusionQuality::Off};
+    ReflectionQuality reflections{ReflectionQuality::ProbesOnly};
+    BloomQuality bloom{BloomQuality::Off};
+    ExposureMode exposure{ExposureMode::Auto};
+    bool shadows{false};
+    bool imageBasedLighting{false};
+    bool environmentBackground{false};
+    bool localLights{false};
+    bool depthPrepass{false};
+    bool gpuDriven{false};
+
+    bool operator==(const RenderGraphShape&) const = default;
+};
+
 class Renderer {
   public:
     bool init(const Window& window, RenderRuntime& rendering, FrameTaskExecutor& frameTasks);
@@ -92,7 +113,8 @@ class Renderer {
     FrameTaskExecutor* m_frameTasks{nullptr};
     std::string m_gpuName;
     std::unordered_map<uint64_t, uint64_t> m_gameUiTextures;
-    uint64_t m_renderGraphSignature{0};
+    // Empty until the first plan, so the first frame always plans.
+    std::optional<RenderGraphShape> m_renderGraphShape;
     RenderGraphStatistics m_renderGraphStatistics;
     std::optional<RenderGraphBarrier> m_viewportToUiBarrier;
     std::optional<RenderGraphBarrier> m_swapchainToUiBarrier;

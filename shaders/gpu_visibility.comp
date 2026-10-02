@@ -74,15 +74,29 @@ layout(push_constant) uniform Settings {
     vec4 lodView;   // xyz: camera position, w: LOD error scale (0 = full detail only)
 } settings;
 
-bool frustumVisible(vec4 clipCenter, float clipRadius) {
-    float w = clipCenter.w;
-    return clipCenter.x >= -w - clipRadius && clipCenter.x <= w + clipRadius &&
-           clipCenter.y >= -w - clipRadius && clipCenter.y <= w + clipRadius &&
-           clipCenter.z >= -clipRadius && clipCenter.z <= w + clipRadius;
-}
-
 vec4 matrixRow(mat4 matrix, int row) {
     return vec4(matrix[0][row], matrix[1][row], matrix[2][row], matrix[3][row]);
+}
+
+// True when the plane's positive half-space (a.x*x + a.y*y + a.z*z + a.w >= 0)
+// contains any part of the sphere. The plane need not be normalized.
+bool sphereReachesPlane(vec4 plane, vec3 center, float radius) {
+    return dot(plane.xyz, center) + plane.w >= -radius * length(plane.xyz);
+}
+
+// Exact sphere test against the six clip planes of the reversed-Z, zero-to-one
+// projection: -w <= x, y <= w and 0 <= z <= w. The x/y planes match the CPU
+// reference (frustumPlanes in RenderSubmission.cpp); its depth planes are
+// looser, so the GPU never keeps an object the CPU reference rejects.
+bool frustumVisible(vec3 center, float radius) {
+    mat4 viewProjection = settings.viewProjection;
+    vec4 rowX = matrixRow(viewProjection, 0);
+    vec4 rowY = matrixRow(viewProjection, 1);
+    vec4 rowZ = matrixRow(viewProjection, 2);
+    vec4 rowW = matrixRow(viewProjection, 3);
+    return sphereReachesPlane(rowW + rowX, center, radius) && sphereReachesPlane(rowW - rowX, center, radius) &&
+           sphereReachesPlane(rowW + rowY, center, radius) && sphereReachesPlane(rowW - rowY, center, radius) &&
+           sphereReachesPlane(rowZ, center, radius) && sphereReachesPlane(rowW - rowZ, center, radius);
 }
 
 // Tests the bounding sphere against this frame's depth pyramid. Every clip
@@ -167,12 +181,7 @@ void main() {
         return;
     }
     ObjectRecord object = records.values[objectIndex];
-    vec4 clipCenter = settings.viewProjection * vec4(object.bounds.xyz, 1.0);
-    float radius = object.bounds.w;
-    float clipRadius = max(length((settings.viewProjection * vec4(radius, 0.0, 0.0, 0.0)).xyz),
-                           max(length((settings.viewProjection * vec4(0.0, radius, 0.0, 0.0)).xyz),
-                               length((settings.viewProjection * vec4(0.0, 0.0, radius, 0.0)).xyz)));
-    bool inFrustum = frustumVisible(clipCenter, clipRadius);
+    bool inFrustum = frustumVisible(object.bounds.xyz, object.bounds.w);
     uint visibilitySlot = object.draw.y;
     bool trackedSlot = visibilitySlot < settings.extents.w;
     bool visibleLastFrame = trackedSlot && visibility.values[visibilitySlot] != 0u;

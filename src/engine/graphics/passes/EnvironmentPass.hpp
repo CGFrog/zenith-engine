@@ -53,6 +53,11 @@ class EnvironmentPass {
     // Slot 0 is the primary environment, slot 1 the dominant reflection probe.
     static constexpr uint32_t environmentSlots = 2;
 
+    // Pipelines created by init: five precompute kernels and the skybox.
+    static constexpr uint32_t pipelineCount() {
+        return 6;
+    }
+
     bool init(const VulkanContext& context, VkDescriptorSetLayout cameraLayout, VkFormat colorFormat,
               VkFormat motionFormat, VkFormat depthFormat, uint32_t frameCount);
     // Records missing precomputation into commandBuffer, which must be outside a

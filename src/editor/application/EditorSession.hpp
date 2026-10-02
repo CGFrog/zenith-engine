@@ -9,6 +9,7 @@
 #include "editor/interaction/EditorCamera.hpp"
 #include "editor/project/AssetCatalog.hpp"
 #include "editor/project/ThumbnailCache.hpp"
+#include "editor/settings/EditorRenderSettings.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "engine/application/Application.hpp"
 #include "engine/jobs/JobSystem.hpp"
@@ -27,7 +28,7 @@
 class EditorSession final : public ApplicationScene {
   public:
     EditorSession(std::filesystem::path settingsDirectory, std::filesystem::path assetRoot,
-                  std::filesystem::path sceneRoot,
+                  std::filesystem::path sceneRoot, EditorRenderSettings renderSettings,
                   std::function<SceneResult(ApplicationContext&)> initialSceneLoader = {});
 
     SceneResult load(ApplicationContext& context) override;
@@ -61,6 +62,8 @@ class EditorSession final : public ApplicationScene {
     void drawHierarchyEntity(ApplicationContext& context, Entity entity);
     void drawInspector(ApplicationContext& context);
     void drawAssetBrowser(ApplicationContext& context);
+    void drawGraphicsPanel(ApplicationContext& context);
+    void applyRenderSettings(ApplicationContext& context);
     void drawComponentControls(ApplicationContext& context, Entity entity);
     void drawStatusBar(const RenderStats& stats);
     void drawPathDialog(ApplicationContext& context);
@@ -101,6 +104,9 @@ class EditorSession final : public ApplicationScene {
     };
 
     EditorSettings m_settings;
+    EditorRenderSettings m_renderSettings;
+    // Capability fallbacks from the latest applyRenderSettings.
+    std::vector<std::string> m_renderSettingFallbacks;
     EditorDocument m_document;
     EditorRecovery m_recovery;
     EditorDiagnostics m_diagnostics;

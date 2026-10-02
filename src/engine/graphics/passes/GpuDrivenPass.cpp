@@ -231,7 +231,9 @@ bool GpuDrivenPass::prepare(uint32_t frameIndex, std::span<const GpuDrivenObject
         vmaInvalidateAllocation(m_allocator, frame.statistics.allocation, 0, sizeof(uint32_t) * 2);
         const auto* emitted = static_cast<const uint32_t*>(frame.statistics.mapped);
         m_retiredVisibleCount = emitted[0] + emitted[1];
-        // The GPU never sees more than the CPU frustum reference for the frame.
+        // The GPU never keeps more than the CPU frustum reference for the frame:
+        // its x/y planes match the reference exactly and its depth planes are
+        // tighter (gpu_visibility.comp). Any excess is a culling defect.
         if (m_retiredVisibleCount > frame.referenceVisibleCount) {
             ++m_visibilityMismatchCount;
         }

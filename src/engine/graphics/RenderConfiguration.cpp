@@ -143,7 +143,11 @@ RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings
                              {"temporalResolve", budget(settings.budgets.temporalResolve)},
                              {"ambientOcclusion", budget(settings.budgets.ambientOcclusion)},
                              {"reflections", budget(settings.budgets.reflections)},
-                             {"exposure", budget(settings.budgets.exposure)}}}};
+                             {"exposure", budget(settings.budgets.exposure)},
+                             {"depthPrepass", budget(settings.budgets.depthPrepass)},
+                             {"depthPyramid", budget(settings.budgets.depthPyramid)},
+                             {"lightClusters", budget(settings.budgets.lightClusters)},
+                             {"environment", budget(settings.budgets.environment)}}}};
     output = document.dump(2);
     return {.success = true};
 }
@@ -223,7 +227,11 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
                 !readOptionalBudget(*budgets, "temporalResolve", loaded.budgets.temporalResolve) ||
                 !readOptionalBudget(*budgets, "ambientOcclusion", loaded.budgets.ambientOcclusion) ||
                 !readOptionalBudget(*budgets, "reflections", loaded.budgets.reflections) ||
-                !readOptionalBudget(*budgets, "exposure", loaded.budgets.exposure)) {
+                !readOptionalBudget(*budgets, "exposure", loaded.budgets.exposure) ||
+                !readOptionalBudget(*budgets, "depthPrepass", loaded.budgets.depthPrepass) ||
+                !readOptionalBudget(*budgets, "depthPyramid", loaded.budgets.depthPyramid) ||
+                !readOptionalBudget(*budgets, "lightClusters", loaded.budgets.lightClusters) ||
+                !readOptionalBudget(*budgets, "environment", loaded.budgets.environment)) {
                 return {.error = "Render settings contain invalid pass budgets"};
             }
         }

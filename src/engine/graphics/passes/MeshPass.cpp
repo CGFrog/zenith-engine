@@ -1926,10 +1926,13 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const bool imageBasedLighting = rendering.settings().environment != EnvironmentQuality::Hemisphere;
     const CameraBuffer& frameCamera = m_cameras[frameIndex];
     const std::array<VkDescriptorSet, 2> environmentSets{frameCamera.descriptor, frameCamera.gpuDrivenDescriptor};
+    OptionalPassTimestamps passTimestamps(commandBuffer, timestampQueries);
+    passTimestamps.write(FrameTimestamp::environmentPrecomputeBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     const std::optional<EnvironmentFrameState> environmentState =
         m_environmentPass.prepare(commandBuffer, frameIndex, m_frameSerial,
                                   environmentRequest(scene, assets, environment, rendering.settings(), cameraPosition),
                                   std::span(environmentSets.data(), frameCamera.gpuDrivenDescriptor ? 2u : 1u));
+    passTimestamps.write(FrameTimestamp::environmentPrecomputeEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     if (!environmentState) {
         return false;
     }
@@ -2132,6 +2135,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
                            .frameIndex = frameIndex,
                            .pipelines = shadingPipelines,
                            .timestampQueries = timestampQueries,
+                           .passTimestamps = &passTimestamps,
                            .stats = &stats,
                            .view = view,
                            .renderExtent = renderExtent};
@@ -2168,9 +2172,12 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     uploadCpuSubmittedObjects(frameIndex);
     stats.culledCount += m_visibility.frustumCulled + (gpuDrivenActive ? 0u : m_visibility.occlusionCulled);
 
+    passTimestamps.write(FrameTimestamp::lightClustersBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     m_clusteredLighting.record(commandBuffer, frameIndex, clusterGrid, view);
+    passTimestamps.write(FrameTimestamp::lightClustersEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     const auto opaqueCpuBegin = std::chrono::steady_clock::now();
     if (depthPrepass) {
+        passTimestamps.write(FrameTimestamp::depthPrepassBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
         recordDepthPrepass(draw, gpuDrivenActive, depthImage, depthView, cameraData.viewProjection, lodView);
     }
     const auto prepassCpuEnd = std::chrono::steady_clock::now();
@@ -2194,8 +2201,10 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         } else {
             recordGpuDrivenGroups(draw, GpuCullPhase::Early, shadingOpaque);
             vkCmdEndRendering(commandBuffer);
+            passTimestamps.write(FrameTimestamp::depthPyramidBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
             prepareDepthForPyramid(commandBuffer, depthImage);
             m_depthPyramid.build(commandBuffer, renderExtent);
+            passTimestamps.write(FrameTimestamp::depthPyramidEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
             m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Late, cameraData.viewProjection,
                                  m_depthPyramid, lodView);
             restoreDepthAfterPyramid(commandBuffer, depthImage);
@@ -2226,8 +2235,10 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     // The background fills what opaque geometry left at far depth, before
     // blended surfaces composite over it.
     if (imageBasedLighting && rendering.settings().environmentBackground) {
+        passTimestamps.write(FrameTimestamp::skyboxBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
         m_environmentPass.recordSkybox(commandBuffer, frameIndex, frameCamera.descriptor, environment.specularIntensity,
                                        cameraData.temporalJitter);
+        passTimestamps.write(FrameTimestamp::skyboxEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     }
     // Reflections of opaque surfaces and the background join the scene before
     // blended surfaces and outlines composite over it, and before the temporal
@@ -2250,6 +2261,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 3);
     }
+    passTimestamps.closeSkippedPasses();
     const auto bloomCpuBegin = std::chrono::steady_clock::now();
     const TemporalResolveFrame temporalResolve{.currentToPreviousClip = m_previousUnjitteredViewProjection *
                                                                         glm::inverse(unjitteredViewProjection),
@@ -2422,9 +2434,12 @@ void MeshPass::recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive,
     }
     vkCmdEndRendering(commandBuffer);
     m_postProcess.finishNormals(commandBuffer, draw.frameIndex);
+    draw.passTimestamps->write(FrameTimestamp::depthPrepassEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     // Screen-space consumers get the pyramid of the complete opaque depth.
+    draw.passTimestamps->write(FrameTimestamp::depthPyramidBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     prepareDepthForPyramid(commandBuffer, depthImage);
     m_depthPyramid.build(commandBuffer, draw.renderExtent);
+    draw.passTimestamps->write(FrameTimestamp::depthPyramidEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     restoreDepthAfterPyramid(commandBuffer, depthImage);
 }
 

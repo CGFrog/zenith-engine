@@ -26,6 +26,9 @@ std::unique_ptr<ApplicationScene> EditorApplication::createScene(SceneKey scene)
     if (scene != editorSessionKey) {
         return nullptr;
     }
+    // Without a project file, render settings persist beside the editor's
+    // own settings.
+    EditorRenderSettings renderSettings(m_project, m_settingsDirectory / "render-settings.json");
     return std::make_unique<EditorSession>(m_settingsDirectory, m_project.assetRoot, m_project.sceneRoot,
-                                           m_initialSceneLoader);
+                                           std::move(renderSettings), m_initialSceneLoader);
 }

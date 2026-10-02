@@ -9,6 +9,7 @@
 #include "../TemporalQuality.hpp"
 #include "../pipeline/GraphicsPipeline.hpp"
 #include "../resources/BindlessTextureTable.hpp"
+#include "../resources/FrameTimestamps.hpp"
 #include "../resources/GeometryArena.hpp"
 #include "../resources/UploadContext.hpp"
 #include "../vulkan/VulkanContext.hpp"
@@ -46,8 +47,10 @@ class MeshPass {
 
     uint32_t prewarmedPipelineCount() const {
         // Twelve graphics pipelines (two depth-normal), the light-cluster
-        // assignment, the depth-pyramid build, and ambient occlusion.
-        return 14u + m_ambientOcclusion.pipelineCount() + (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
+        // assignment, the depth-pyramid build, ambient occlusion, and the
+        // environment pipelines.
+        return 14u + m_ambientOcclusion.pipelineCount() + m_environmentPass.pipelineCount() +
+               (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
     }
 
     uint32_t localLightCapacity() const {
@@ -224,6 +227,7 @@ class MeshPass {
         uint32_t frameIndex{0};
         const MeshPipelineSet* pipelines{nullptr};
         VkQueryPool timestampQueries{VK_NULL_HANDLE};
+        OptionalPassTimestamps* passTimestamps{nullptr};
         RenderStats* stats{nullptr};
         // World-to-view transform; the depth prepass encodes view-space normals.
         glm::mat4 view{1.0f};

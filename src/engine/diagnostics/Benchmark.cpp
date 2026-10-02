@@ -139,6 +139,13 @@ void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& b
     sample("gpu.ambient_occlusion", s.gpuAmbientOcclusionMilliseconds, "ms", budgets.ambientOcclusion.gpuMilliseconds);
     sample("gpu.reflections", s.gpuReflectionsMilliseconds, "ms", budgets.reflections.gpuMilliseconds);
     sample("gpu.exposure", s.gpuExposureMilliseconds, "ms", budgets.exposure.gpuMilliseconds);
+    sample("gpu.depth_prepass", s.gpuDepthPrepassMilliseconds, "ms", budgets.depthPrepass.gpuMilliseconds);
+    sample("gpu.depth_pyramid", s.gpuDepthPyramidMilliseconds, "ms", budgets.depthPyramid.gpuMilliseconds);
+    sample("gpu.light_clusters", s.gpuLightClusterMilliseconds, "ms", budgets.lightClusters.gpuMilliseconds);
+    sample("gpu.environment", s.gpuEnvironmentPrecomputeMilliseconds + s.gpuSkyboxMilliseconds, "ms",
+           budgets.environment.gpuMilliseconds);
+    sample("gpu.environment_precompute", s.gpuEnvironmentPrecomputeMilliseconds);
+    sample("gpu.skybox", s.gpuSkyboxMilliseconds);
     sample("gpu.upload_wait", s.gpuUploadWaitMilliseconds);
     sample("gpu.post", s.gpuPostMilliseconds);
     sample("gpu.ui", s.gpuUiMilliseconds, "ms", budgets.ui.gpuMilliseconds);

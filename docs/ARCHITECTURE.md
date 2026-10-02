@@ -330,33 +330,54 @@ Each frame slot waits on its fence before reuse. The renderer then acquires a
 presentation image and records one command buffer:
 
 ```text
-Shadow pass
-  scene meshes -> directional-light depth map
-
-Main mesh pass
-  scene meshes + camera + materials + scene lighting + shadow map
-  -> per-frame RGBA16F HDR target + motion/reactive target + shared scene depth
-  -> after opaque surfaces and the background: screen-space reflections
-     (compute, when enabled and the prepass ran) trace prepass normals + depth
-     pyramid + HDR target into a reflection target and blend it into the HDR
-     target in place; blended surfaces and outlines follow
-
+Environment precompute (compute, only when an environment source changes)
+  equirect or analytic sky -> radiance cube -> prefiltered specular + SH irradiance
+Directional shadows
+  shadow casters -> cascaded depth atlas (cached per cascade while unchanged)
+GPU culling, early phase (GPU-driven only, compute)
+  objects visible last frame -> compacted indirect draws
+Light cluster assignment (compute, local lights enabled)
+  selected point/spot lights -> 16x9x24 cluster light lists
+Depth/normal prepass (default on)
+  opaque + masked depth and view-space normals
+  GPU-driven: early draws -> occlusion depth pyramid -> late cull -> late draws
+Depth pyramid (compute)
+  complete opaque depth -> min/max pyramid for screen-space consumers
+  (without a prepass, GPU-driven builds it mid-shading for the late cull)
+Ambient occlusion (GTAO, compute; reads the prepass normals and depth pyramid,
+  writes unoccluded values without them) -> occlusion sampled by shading
+Scene shading
+  opaque shading (EQUAL depth after the prepass) -> HDR + motion/reactive targets
+  -> skybox where opaque depth is far
+  -> screen-space reflections (compute, when enabled and the prepass ran):
+     Hi-Z trace of the prepass normals and depth pyramid, blended into the HDR
+     target in place
+  -> blended surfaces -> editor outlines
 Temporal resolve (TAA only, compute)
-  HDR target + motion/reactive target + output-resolution history
-  -> next output-resolution history image (the resolved scene)
-
-Post-process pass
-  resolved scene with TAA (else HDR target within its render extent) + depth
-  -> compute: luminance histogram -> adapted exposure buffer (persistent)
-  -> compute: bloom downsample/upsample chain (when enabled)
-  -> FXAA (non-TAA) + exposure + bloom mix + AgX tone mapping
+  HDR + motion/reactive + output-resolution history -> resolved scene
+Exposure and bloom (compute)
+  luminance histogram -> adapted exposure buffer; bloom down/upsample chain
+Post-process and tone mapping
+  resolved scene (else HDR) + bloom mix + exposure + FXAA (non-TAA) + tone map
+  -> swapchain image or editor viewport
+Game or editor UI
   -> swapchain image
-
-Game UI pass
-  resolution-independent commands -> swapchain image
-
 Transition to PRESENT -> submit -> present
 ```
+
+The ambient-occlusion and reflection techniques, and where they sit relative
+to shading and the temporal resolve, belong to their own passes; the list
+shows their position at the time of writing. Each bracketed GPU pass has a
+timestamp pair (`FrameResources::collectTimings`, `FrameTimestamps.hpp`); the
+decoded durations reach `RenderStats`, benchmark `gpu.*` metrics, and the
+editor's Graphics panel. `Renderer::updateRenderGraphPlan` mirrors this list as
+a declarative render-graph model whose shape (`RenderGraphShape`) follows the
+settings that add or remove passes: anti-aliasing, AO and reflection quality,
+bloom, exposure mode, shadows, environment quality and background, local
+lighting, the depth prepass, and GPU-driven submission. The model validates
+ordering and hazards and supplies barrier and transient-memory statistics;
+only its UI-boundary barriers are recorded, and the passes keep their own
+synchronization.
 
 The mesh pass maintains per-handle GPU caches. Camera buffers are per frame to
 avoid CPU/GPU write races. Materials are bindless: each frame slot owns a
@@ -511,8 +532,12 @@ Reflection probes use authored box volumes, blend distances, and priorities;
 the dominant probe at the camera is blended over the environment. Deterministic
 CPU probe preprocessing
 and bake-file policy live in editor tooling. Benchmark JSON contains timestamp
-scopes and configured budgets for shadow, opaque, blended, bloom/post, UI, and
-upload work, plus CPU and estimated GPU asset memory.
+scopes and configured budgets for shadow, opaque, blended, bloom/post, UI,
+upload, depth prepass, depth pyramid, light clusters, and environment work,
+plus CPU and estimated GPU asset memory. The editor's Graphics panel edits
+every RenderSettings field, applies it through the same capability
+validation, and saves it to the project file (or, without a project, to the
+editor's settings directory).
 
 ## Error model
 
