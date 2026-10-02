@@ -30,7 +30,7 @@ At the start of this project the plan was that I would write every line of code 
 ## Build
 
 The project uses Vulkan 1.4, Volk, GLM, SDL 3, cgltf, EnTT, Vulkan Memory
-Allocator, Khronos glslang, and stb_image. Dependencies are pinned and downloaded
+Allocator, Khronos glslang, stb_image, and meshoptimizer. Dependencies are pinned and downloaded
 into the build tree by CMake `FetchContent`.
 
 Requirements are CMake 3.24 or newer, a C++20 compiler, Git, Python 3, and a

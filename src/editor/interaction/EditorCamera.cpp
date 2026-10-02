@@ -171,19 +171,25 @@ Entity EditorCamera::pick(const Scene& scene, const AssetManager& assets, glm::v
         const glm::mat4 inverseWorld = glm::inverse(world);
         const glm::vec3 localOrigin = glm::vec3(inverseWorld * glm::vec4(m_position, 1.0f));
         const glm::vec3 localDirection = glm::vec3(inverseWorld * glm::vec4(direction, 0.0f));
-        for (size_t index = 0; index + 2 < mesh->indices.size(); index += 3) {
-            const uint32_t a = mesh->indices[index];
-            const uint32_t b = mesh->indices[index + 1];
-            const uint32_t c = mesh->indices[index + 2];
-            if (a >= mesh->vertices.size() || b >= mesh->vertices.size() || c >= mesh->vertices.size()) {
-                continue;
-            }
-            float triangleDistance = 0.0f;
-            if (intersectTriangle(localOrigin, localDirection, mesh->vertices[a].position, mesh->vertices[b].position,
-                                  mesh->vertices[c].position, triangleDistance) &&
-                triangleDistance < closestDistance) {
-                closest = entity;
-                closestDistance = triangleDistance;
+        // Pick against full-detail ranges only; simplified LOD ranges follow
+        // them in the same index buffer.
+        for (const MeshPrimitive& primitive : mesh->primitives) {
+            const size_t end = std::min<size_t>(static_cast<size_t>(primitive.firstIndex) + primitive.indexCount,
+                                                mesh->indices.size());
+            for (size_t index = primitive.firstIndex; index + 2 < end; index += 3) {
+                const uint32_t a = mesh->indices[index];
+                const uint32_t b = mesh->indices[index + 1];
+                const uint32_t c = mesh->indices[index + 2];
+                if (a >= mesh->vertices.size() || b >= mesh->vertices.size() || c >= mesh->vertices.size()) {
+                    continue;
+                }
+                float triangleDistance = 0.0f;
+                if (intersectTriangle(localOrigin, localDirection, mesh->vertices[a].position,
+                                      mesh->vertices[b].position, mesh->vertices[c].position, triangleDistance) &&
+                    triangleDistance < closestDistance) {
+                    closest = entity;
+                    closestDistance = triangleDistance;
+                }
             }
         }
     }

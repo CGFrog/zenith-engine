@@ -21,6 +21,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <tuple>
 
 namespace {
 constexpr uint32_t shadowResolution = 1448;
@@ -34,6 +35,8 @@ constexpr uint32_t maximumBindlessTextures = 8192;
 // Slots kept free for the other sampled images bound alongside the array.
 constexpr uint32_t reservedSampledImages = 16;
 constexpr GeometryPageCapacity defaultGeometryPage{.vertices = 1u << 19, .indices = 1u << 21};
+// Every GPU-driven object reserves an instance slot in each of its LOD batches.
+constexpr uint32_t maximumGpuDrivenInstances = maximumObjectsPerFrame * maximumMeshLods;
 // Draw groups are (pipeline bucket, geometry page) pairs.
 constexpr uint32_t maximumGpuDrawGroups = 64;
 // Pipeline buckets used as IndirectDrawKey::pipeline.
@@ -215,7 +218,8 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     VkPhysicalDeviceFeatures2 features{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &features12};
     vkGetPhysicalDeviceFeatures2(context.pDevice(), &features);
     const GpuDrivenLimits limits{.maximumObjects = maximumObjectsPerFrame,
-                                 .maximumBatches = maximumObjectsPerFrame,
+                                 .maximumInstances = maximumGpuDrivenInstances,
+                                 .maximumBatches = maximumGpuDrivenInstances,
                                  .maximumGroups = maximumGpuDrawGroups};
     m_gpuDrivenSupported =
         m_gpuDrivenPass.init(context, frameCount, extent, depthView, limits, features12.drawIndirectCount == VK_TRUE);
@@ -1381,6 +1385,7 @@ bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
                              .materialHandle = primitive.material,
                              .mesh = mesh,
                              .primitive = &primitive,
+                             .lod = primitive.lod(0),
                              .material = material,
                              .gpuMesh = gpuMesh,
                              .gpuMaterial = gpuMaterial,
@@ -1546,6 +1551,11 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
                 m_shadowVisibleItems.push_back(&item);
             }
         }
+        // Instances of one primitive may select different LODs; keep each
+        // range adjacent so its instances still share a draw.
+        std::ranges::stable_sort(m_shadowVisibleItems, {}, [](const RenderItem* item) {
+            return std::tuple(item->material->doubleSided, handleKey(item->meshHandle), item->lod.firstIndex);
+        });
         const uint32_t objectBase = cascade * maximumObjectsPerFrame;
         auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped);
         for (size_t index = 0; index < m_shadowVisibleItems.size(); ++index) {
@@ -1566,9 +1576,8 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
                 const RenderItem& candidate = *m_shadowVisibleItems[batchEnd];
                 // Materials are per instance now, so only geometry and culling
                 // state split a shadow batch.
-                if (candidate.gpuMesh != item.gpuMesh ||
-                    candidate.primitive->firstIndex != item.primitive->firstIndex ||
-                    candidate.primitive->indexCount != item.primitive->indexCount ||
+                if (candidate.gpuMesh != item.gpuMesh || candidate.lod.firstIndex != item.lod.firstIndex ||
+                    candidate.lod.indexCount != item.lod.indexCount ||
                     candidate.material->doubleSided != item.material->doubleSided) {
                     break;
                 }
@@ -1580,12 +1589,12 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
             }
             bindGeometry(commandBuffer, *item.gpuMesh, boundPage);
             const uint32_t instanceCount = static_cast<uint32_t>(batchEnd - itemIndex);
-            vkCmdDrawIndexed(commandBuffer, item.primitive->indexCount, instanceCount,
-                             item.gpuMesh->geometry.firstIndex + item.primitive->firstIndex,
+            vkCmdDrawIndexed(commandBuffer, item.lod.indexCount, instanceCount,
+                             item.gpuMesh->geometry.firstIndex + item.lod.firstIndex,
                              item.gpuMesh->geometry.vertexOffset, objectBase + static_cast<uint32_t>(itemIndex));
             stats.shadowCasterCount += instanceCount;
             ++stats.drawCalls;
-            stats.triangleCount += static_cast<uint64_t>(item.primitive->indexCount / 3) * instanceCount;
+            stats.triangleCount += static_cast<uint64_t>(item.lod.indexCount / 3) * instanceCount;
             itemIndex = batchEnd;
         }
         vkCmdEndRendering(commandBuffer);
@@ -1949,6 +1958,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         // this timestamp exposes any queue bubble before the first consumer.
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, timestampQueries, 16);
     }
+    const MeshLodView lodView = makeMeshLodView(cameraPosition, projection[1][1], renderExtent.height,
+                                                rendering.settings().lodErrorThresholdPixels);
+    selectRenderItemLods(lodView);
     const auto shadowCpuBegin = std::chrono::steady_clock::now();
     const bool shadowCastersChanged =
         !m_shadowInitialized || revisions.transform != m_shadowRevisions.transform ||
@@ -1981,7 +1993,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
                            .timestampQueries = timestampQueries,
                            .stats = &stats};
     if (gpuDrivenActive) {
-        if (!prepareGpuDrivenFrame(frameIndex)) {
+        if (!prepareGpuDrivenFrame(frameIndex, lodView)) {
             return false;
         }
         m_gpuDrivenPass.beginFrame(commandBuffer, frameIndex);
@@ -1990,7 +2002,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         if (timestampQueries) {
             vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, timestampQueries, 8);
         }
-        m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Early, cameraData.viewProjection, renderExtent);
+        m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Early, cameraData.viewProjection, renderExtent,
+                             lodView);
         if (timestampQueries) {
             vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, timestampQueries, 9);
         }
@@ -2031,7 +2044,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         vkCmdEndRendering(commandBuffer);
         prepareDepthForPyramid(commandBuffer, depthImage);
         m_gpuDrivenPass.buildDepthPyramid(commandBuffer);
-        m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Late, cameraData.viewProjection, renderExtent);
+        m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Late, cameraData.viewProjection, renderExtent,
+                             lodView);
         restoreDepthAfterPyramid(commandBuffer, depthImage);
         beginRendering(commandBuffer, sceneView, motionView, depthImage, depthView, renderExtent,
                        SceneAttachments::Preserve);
@@ -2087,20 +2101,42 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     return true;
 }
 
-bool MeshPass::prepareGpuDrivenFrame(uint32_t frameIndex) {
+void MeshPass::selectRenderItemLods(const MeshLodView& view) {
+    for (RenderItem& item : m_renderItems) {
+        const uint32_t level =
+            selectMeshLod(*item.primitive, view, item.boundsCenter, item.boundsRadius, maximumAxisScale(item.world));
+        item.lod = item.primitive->lod(level);
+    }
+}
+
+bool MeshPass::prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lodView) {
     m_gpuDrivenCandidates.clear();
     m_gpuDrivenKeys.clear();
+    m_gpuDrivenKeySources.clear();
+    // Without LOD selection the cull shader never leaves level 0, so skip the
+    // coarser batches and their reserved instance slots.
+    const bool lodEnabled = lodView.errorScale > 0.0f;
     for (const RenderItem& item : m_renderItems) {
         if (item.material->alphaMode == MaterialAlphaMode::Blend) {
             continue;
         }
         const GeometryAllocation& geometry = item.gpuMesh->geometry;
+        const uint32_t candidate = static_cast<uint32_t>(m_gpuDrivenCandidates.size());
         m_gpuDrivenCandidates.push_back(&item);
-        m_gpuDrivenKeys.push_back({.pipeline = item.material->doubleSided ? doubleSidedBucket : singleSidedBucket,
-                                   .geometryPage = geometry.page,
-                                   .firstIndex = geometry.firstIndex + item.primitive->firstIndex,
-                                   .vertexOffset = geometry.vertexOffset,
-                                   .indexCount = item.primitive->indexCount});
+        const uint32_t levelCount = lodEnabled ? item.primitive->lodCount() : 1u;
+        for (uint32_t level = 0; level < levelCount; ++level) {
+            const MeshLod lod = item.primitive->lod(level);
+            m_gpuDrivenKeys.push_back({.pipeline = item.material->doubleSided ? doubleSidedBucket : singleSidedBucket,
+                                       .geometryPage = geometry.page,
+                                       .firstIndex = geometry.firstIndex + lod.firstIndex,
+                                       .vertexOffset = geometry.vertexOffset,
+                                       .indexCount = lod.indexCount});
+            m_gpuDrivenKeySources.push_back({.candidate = candidate, .level = level});
+        }
+    }
+    if (m_gpuDrivenKeys.size() > maximumGpuDrivenInstances) {
+        std::cerr << "GPU-driven LOD instances exceed the renderer capacity\n";
+        return false;
     }
     buildIndirectDrawPlan(m_gpuDrivenKeys, m_drawPlan);
     if (m_drawPlan.groups.size() > maximumGpuDrawGroups) {
@@ -2116,17 +2152,39 @@ bool MeshPass::prepareGpuDrivenFrame(uint32_t frameIndex) {
                                       .group = batch.group,
                                       .groupFirstBatch = m_drawPlan.groups[batch.group].firstBatch});
     }
+    m_gpuDrivenKeyBatches.resize(m_gpuDrivenKeys.size());
+    for (size_t slot = 0; slot < m_drawPlan.instanceOrder.size(); ++slot) {
+        m_gpuDrivenKeyBatches[m_drawPlan.instanceOrder[slot]] = m_drawPlan.instanceBatch[slot];
+    }
+    // Chain each primitive's levels so the cull shader can walk from level 0
+    // to coarser batches. Every instance of a primitive writes the same links.
+    for (size_t key = 0; key < m_gpuDrivenKeys.size(); ++key) {
+        const GpuDrivenKeySource source = m_gpuDrivenKeySources[key];
+        GpuDrivenBatch& batch = m_gpuDrivenBatches[m_gpuDrivenKeyBatches[key]];
+        batch.lodGeometricError = m_gpuDrivenCandidates[source.candidate]->primitive->lod(source.level).geometricError;
+        const bool hasCoarserLevel =
+            key + 1 < m_gpuDrivenKeys.size() && m_gpuDrivenKeySources[key + 1].candidate == source.candidate;
+        if (hasCoarserLevel) {
+            batch.nextLodBatch = m_gpuDrivenKeyBatches[key + 1];
+        }
+    }
     m_gpuDrivenObjects.clear();
     for (size_t slot = 0; slot < m_drawPlan.instanceOrder.size(); ++slot) {
-        const RenderItem& item = *m_gpuDrivenCandidates[m_drawPlan.instanceOrder[slot]];
+        const GpuDrivenKeySource source = m_gpuDrivenKeySources[m_drawPlan.instanceOrder[slot]];
+        if (source.level != 0) {
+            continue;
+        }
+        const RenderItem& item = *m_gpuDrivenCandidates[source.candidate];
+        const uint32_t levelCount = lodEnabled ? item.primitive->lodCount() : 1u;
         // The persistent-scene slot is stable while the object lives, so it
         // carries the object's visibility from one frame to the next.
-        m_gpuDrivenObjects.push_back({.model = item.world,
-                                      .previousModel = item.previousWorld,
-                                      .bounds = {item.boundsCenter, item.boundsRadius},
-                                      .draw = {m_drawPlan.instanceBatch[slot], item.gpuSceneHandle.index, 0u, 0u},
-                                      .skin = {item.skinPaletteOffset, static_cast<uint32_t>(item.jointPalette.size()),
-                                               item.gpuMaterial->index, 0u}});
+        m_gpuDrivenObjects.push_back(
+            {.model = item.world,
+             .previousModel = item.previousWorld,
+             .bounds = {item.boundsCenter, item.boundsRadius},
+             .draw = {m_drawPlan.instanceBatch[slot], item.gpuSceneHandle.index, levelCount, 0u},
+             .skin = {item.skinPaletteOffset, static_cast<uint32_t>(item.jointPalette.size()), item.gpuMaterial->index,
+                      0u}});
     }
     return m_gpuDrivenPass.prepare(frameIndex, m_gpuDrivenObjects, m_gpuDrivenBatches,
                                    static_cast<uint32_t>(m_visibility.visibleInstances.size()));
@@ -2201,7 +2259,13 @@ bool MeshPass::collectCpuSubmittedItems(bool gpuDrivenActive, const glm::vec3& c
                              return !firstBlended;
                          }
                          if (!firstBlended) {
-                             return false;
+                             // Opaque items arrive grouped by material, mesh and
+                             // primitive; keeping each LOD's instances adjacent
+                             // lets them share a draw.
+                             return std::tuple(handleKey(first->materialHandle), handleKey(first->meshHandle),
+                                               first->primitive->firstIndex, first->lod.firstIndex) <
+                                    std::tuple(handleKey(second->materialHandle), handleKey(second->meshHandle),
+                                               second->primitive->firstIndex, second->lod.firstIndex);
                          }
                          const glm::vec3 firstOffset = first->boundsCenter - cameraPosition;
                          const glm::vec3 secondOffset = second->boundsCenter - cameraPosition;
@@ -2241,9 +2305,9 @@ void MeshPass::recordSelectionMask(const DrawContext& draw) {
             continue;
         }
         bindGeometry(draw.commandBuffer, *item.gpuMesh, boundPage);
-        vkCmdDrawIndexed(draw.commandBuffer, item.primitive->indexCount, 1,
-                         item.gpuMesh->geometry.firstIndex + item.primitive->firstIndex,
-                         item.gpuMesh->geometry.vertexOffset, mainObjectBase + static_cast<uint32_t>(itemIndex));
+        vkCmdDrawIndexed(draw.commandBuffer, item.lod.indexCount, 1,
+                         item.gpuMesh->geometry.firstIndex + item.lod.firstIndex, item.gpuMesh->geometry.vertexOffset,
+                         mainObjectBase + static_cast<uint32_t>(itemIndex));
         ++draw.stats->drawCalls;
     }
 }
@@ -2278,8 +2342,8 @@ void MeshPass::recordShadedItems(const DrawContext& draw, ShadedItems selection)
         size_t batchEnd = itemIndex + 1;
         while (batchEnd < m_visibleItems.size()) {
             const RenderItem& candidate = *m_visibleItems[batchEnd];
-            if (candidate.gpuMesh != item.gpuMesh || candidate.primitive->firstIndex != item.primitive->firstIndex ||
-                candidate.primitive->indexCount != item.primitive->indexCount ||
+            if (candidate.gpuMesh != item.gpuMesh || candidate.lod.firstIndex != item.lod.firstIndex ||
+                candidate.lod.indexCount != item.lod.indexCount ||
                 candidate.material->alphaMode != item.material->alphaMode ||
                 candidate.material->doubleSided != item.material->doubleSided) {
                 break;
@@ -2300,12 +2364,12 @@ void MeshPass::recordShadedItems(const DrawContext& draw, ShadedItems selection)
         }
         bindGeometry(draw.commandBuffer, *item.gpuMesh, boundPage);
         const uint32_t instanceCount = static_cast<uint32_t>(batchEnd - itemIndex);
-        vkCmdDrawIndexed(draw.commandBuffer, item.primitive->indexCount, instanceCount,
-                         item.gpuMesh->geometry.firstIndex + item.primitive->firstIndex,
-                         item.gpuMesh->geometry.vertexOffset, mainObjectBase + static_cast<uint32_t>(itemIndex));
+        vkCmdDrawIndexed(draw.commandBuffer, item.lod.indexCount, instanceCount,
+                         item.gpuMesh->geometry.firstIndex + item.lod.firstIndex, item.gpuMesh->geometry.vertexOffset,
+                         mainObjectBase + static_cast<uint32_t>(itemIndex));
         ++draw.stats->drawCalls;
         draw.stats->visibleCount += instanceCount;
-        draw.stats->triangleCount += static_cast<uint64_t>(item.primitive->indexCount / 3) * instanceCount;
+        draw.stats->triangleCount += static_cast<uint64_t>(item.lod.indexCount / 3) * instanceCount;
         itemIndex = batchEnd;
     }
     const auto now = std::chrono::steady_clock::now();
@@ -2336,9 +2400,9 @@ void MeshPass::recordOutlines(const DrawContext& draw) {
         const glm::vec4 outlineSettings{item.mesh->bounds.center, 2.0f};
         vkCmdPushConstants(draw.commandBuffer, m_outlinePipeline.layout(), VK_SHADER_STAGE_VERTEX_BIT, 0,
                            sizeof(outlineSettings), &outlineSettings);
-        vkCmdDrawIndexed(draw.commandBuffer, item.primitive->indexCount, 1,
-                         item.gpuMesh->geometry.firstIndex + item.primitive->firstIndex,
-                         item.gpuMesh->geometry.vertexOffset, mainObjectBase + static_cast<uint32_t>(itemIndex));
+        vkCmdDrawIndexed(draw.commandBuffer, item.lod.indexCount, 1,
+                         item.gpuMesh->geometry.firstIndex + item.lod.firstIndex, item.gpuMesh->geometry.vertexOffset,
+                         mainObjectBase + static_cast<uint32_t>(itemIndex));
         ++draw.stats->drawCalls;
     }
 }

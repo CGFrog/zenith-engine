@@ -36,6 +36,8 @@ struct CullSettings {
     glm::mat4 viewProjection{1.0f};
     glm::uvec4 counts{0u};
     glm::uvec4 extents{0u};
+    // xyz: camera position, w: LOD error scale (zero selects full detail).
+    glm::vec4 lodView{0.0f};
 };
 
 struct CompactSettings {
@@ -159,7 +161,7 @@ bool GpuDrivenPass::createDeviceBuffer(VkDeviceSize size, VkBufferUsageFlags usa
 bool GpuDrivenPass::createBuffers(uint32_t frameCount) {
     constexpr VkBufferUsageFlags storage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     constexpr VkBufferUsageFlags cleared = storage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    if (!createDeviceBuffer(renderObjectSize * m_limits.maximumObjects * phaseCount, storage, m_visibleObjects) ||
+    if (!createDeviceBuffer(renderObjectSize * m_limits.maximumInstances * phaseCount, storage, m_visibleObjects) ||
         !createDeviceBuffer(sizeof(uint32_t) * m_limits.maximumBatches * phaseCount, cleared, m_instanceCounts) ||
         !createDeviceBuffer(drawCommandSize * m_limits.maximumBatches * phaseCount,
                             storage | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, m_drawCommands) ||
@@ -413,17 +415,18 @@ void GpuDrivenPass::beginFrame(VkCommandBuffer commandBuffer, uint32_t) {
 }
 
 void GpuDrivenPass::cull(VkCommandBuffer commandBuffer, uint32_t frameIndex, GpuCullPhase phase,
-                         const glm::mat4& viewProjection, VkExtent2D renderExtent) {
+                         const glm::mat4& viewProjection, VkExtent2D renderExtent, const MeshLodView& lodView) {
     const FrameData& frame = m_frames[frameIndex];
     const uint32_t phaseIndex = static_cast<uint32_t>(phase);
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_cullPipeline.handle());
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, m_cullPipeline.layout(), 0, 1,
                             &frame.cullDescriptor, 0, nullptr);
     const CullSettings cullSettings{.viewProjection = viewProjection,
-                                    .counts = {frame.objectCount, mipLevels(), phaseIndex, m_limits.maximumObjects},
+                                    .counts = {frame.objectCount, mipLevels(), phaseIndex, m_limits.maximumInstances},
                                     .extents = {m_limits.maximumBatches, std::min(renderExtent.width, m_extent.width),
                                                 std::min(renderExtent.height, m_extent.height),
-                                                m_limits.maximumObjects}};
+                                                m_limits.maximumObjects},
+                                    .lodView = {lodView.cameraPosition, lodView.errorScale}};
     vkCmdPushConstants(commandBuffer, m_cullPipeline.layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(cullSettings),
                        &cullSettings);
     if (frame.objectCount > 0) {
@@ -438,7 +441,7 @@ void GpuDrivenPass::cull(VkCommandBuffer commandBuffer, uint32_t frameIndex, Gpu
                             &frame.compactDescriptor, 0, nullptr);
     const CompactSettings compactSettings{
         .counts = {frame.batchCount, phaseIndex, m_limits.maximumBatches, m_limits.maximumGroups},
-        .options = {m_limits.maximumObjects, m_indirectCount ? 1u : 0u, 0u, 0u}};
+        .options = {m_limits.maximumInstances, m_indirectCount ? 1u : 0u, 0u, 0u}};
     vkCmdPushConstants(commandBuffer, m_compactPipeline.layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0,
                        sizeof(compactSettings), &compactSettings);
     if (frame.batchCount > 0) {

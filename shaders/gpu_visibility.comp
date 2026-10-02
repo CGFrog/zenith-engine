@@ -15,7 +15,7 @@ struct ObjectRecord {
     mat4 model;
     mat4 previousModel;
     vec4 bounds;
-    uvec4 draw; // x: batch index, y: persistent visibility slot
+    uvec4 draw; // x: LOD 0 batch index, y: persistent visibility slot, z: LOD level count
     uvec4 skin; // x: palette offset, y: joint count, z: material index
 };
 
@@ -27,8 +27,8 @@ struct BatchRecord {
     uint firstInstance;
     uint group;
     uint groupFirstBatch;
-    uint reserved0;
-    uint reserved1;
+    float lodGeometricError;
+    uint nextLodBatch;
 };
 
 struct RenderObject {
@@ -41,7 +41,7 @@ layout(std430, set = 0, binding = 0) readonly buffer ObjectRecords {
     ObjectRecord values[];
 } records;
 
-// Two regions of maximumObjects instances: early, then late.
+// Two regions of maximum-instance slots: early, then late.
 layout(std430, set = 0, binding = 1) writeonly buffer VisibleObjects {
     RenderObject values[];
 } visibleObjects;
@@ -69,8 +69,9 @@ layout(std430, set = 0, binding = 6) readonly buffer Batches {
 
 layout(push_constant) uniform Settings {
     mat4 viewProjection;
-    uvec4 counts;   // x: objects, y: pyramid levels, z: phase, w: maximum objects
+    uvec4 counts;   // x: objects, y: pyramid levels, z: phase, w: maximum instances
     uvec4 extents;  // x: maximum batches, y: render width, z: render height, w: visibility slots
+    vec4 lodView;   // xyz: camera position, w: LOD error scale (0 = full detail only)
 } settings;
 
 bool frustumVisible(vec4 clipCenter, float clipRadius) {
@@ -129,8 +130,29 @@ bool occluded(ObjectRecord object) {
     return nearestDepth < farthestOccluder;
 }
 
-void emit(ObjectRecord object, uint phase) {
+// Mirrors selectMeshLod in MeshLodSelection.cpp: walks the object's chain of
+// LOD batches and keeps the coarsest level whose geometric error, projected
+// from the nearest point of the bounding sphere, stays within the threshold.
+uint selectLodBatch(ObjectRecord object) {
     uint batchIndex = object.draw.x;
+    float errorScale = settings.lodView.w;
+    if (errorScale <= 0.0) {
+        return batchIndex;
+    }
+    float worldScale = max(length(object.model[0].xyz), max(length(object.model[1].xyz), length(object.model[2].xyz)));
+    float distance = max(length(object.bounds.xyz - settings.lodView.xyz) - object.bounds.w, 0.0);
+    for (uint level = 1u; level < object.draw.z; ++level) {
+        uint nextBatch = batches.values[batchIndex].nextLodBatch;
+        if (batches.values[nextBatch].lodGeometricError * worldScale * errorScale > distance) {
+            break;
+        }
+        batchIndex = nextBatch;
+    }
+    return batchIndex;
+}
+
+void emit(ObjectRecord object, uint phase) {
+    uint batchIndex = selectLodBatch(object);
     uint slot = atomicAdd(instanceCounts.values[phase * settings.extents.x + batchIndex], 1u);
     uint outputIndex = phase * settings.counts.w + batches.values[batchIndex].firstInstance + slot;
     visibleObjects.values[outputIndex].model = object.model;

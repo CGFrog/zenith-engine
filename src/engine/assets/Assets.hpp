@@ -3,6 +3,8 @@
 #include "AssetStreaming.hpp"
 #include "ProductionAssetPipeline.hpp"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <compare>
 #include <cstdint>
@@ -172,10 +174,40 @@ struct MaterialAsset {
     bool doubleSided{false};
 };
 
+// One level of detail of a primitive: an index range into MeshAsset::indices
+// that addresses the same vertices as the full-detail range.
+struct MeshLod {
+    uint32_t firstIndex{0};
+    uint32_t indexCount{0};
+    // Object-space distance the simplified surface may deviate from the full-
+    // detail surface; zero for the full-detail level.
+    float geometricError{0.0f};
+};
+
+// Level 0 plus up to three simplified levels.
+inline constexpr uint32_t maximumMeshLods = 4;
+
 struct MeshPrimitive {
+    // Full-detail (LOD 0) index range.
     uint32_t firstIndex{0};
     uint32_t indexCount{0};
     MaterialHandle material{};
+    // Progressively coarser ranges (LOD 1, 2, ...) with strictly decreasing
+    // index counts and non-decreasing geometric errors.
+    std::array<MeshLod, maximumMeshLods - 1> simplifiedLods{};
+    uint32_t simplifiedLodCount{0};
+
+    uint32_t lodCount() const {
+        return 1 + simplifiedLodCount;
+    }
+
+    // Level 0 is the full-detail range; levels past the coarsest clamp to it.
+    MeshLod lod(uint32_t level) const {
+        if (level == 0 || simplifiedLodCount == 0) {
+            return {.firstIndex = firstIndex, .indexCount = indexCount, .geometricError = 0.0f};
+        }
+        return simplifiedLods[std::min(level, simplifiedLodCount) - 1];
+    }
 };
 
 struct MorphTarget {
