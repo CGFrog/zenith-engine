@@ -15,6 +15,7 @@ This subtree is the reusable `zenith_engine` library. It must not include from
 | `input/` | Device-state translation; gameplay meaning belongs in `src/game/`. |
 | `module/` | Game module ABI, shadow-copied loading and unloading, module registration, and the system registry and scheduler. |
 | `physics/` | Jolt-backed simulation exposed through Zenith domain types. |
+| `platform/` | OS services: user-data locations, atomic writes, diagnostics bundles, and child processes. |
 | `reflection/` | Plain-data field descriptors and their JSON codec; no scene or asset knowledge. |
 | `scene/` | ECS components, hierarchy, transforms, the component type registry, and scene serialization. |
 | `window/` | SDL window ownership and platform surface access. |

@@ -40,7 +40,7 @@ src/
 |  |- module/              game module loading and system scheduling
 |  `- project/             shared project manifests and scene paths
 |- editor/                 authoring application
-|  |- application/ document/ interaction/ panels/ settings/
+|  |- application/ document/ interaction/ panels/ project/ settings/
 |- game/                   current demo client
 |  |- application/ player/ scene/
 `- main.cpp                game executable composition root
@@ -336,6 +336,21 @@ rather than the scene. `CommandHistory::storedBytes` reports what the history
 keeps. Opening or creating a document still replaces the whole scene and
 clears the history.
 
+### Build and IDE workflow
+
+`panels/BuildPanel` runs the `build.command` setting through the platform shell
+in `build.directory` (default: the editor's working directory) without blocking
+the UI, using `project/BuildRunner`. Output streams into the panel with error
+and warning lines highlighted; when the build ends its diagnostics replace the
+previous build's entries (source `Build`) in `EditorDiagnostics`.
+`project/CompilerOutputParser` turns MSVC/MSBuild, GCC/Clang, CMake, and linker
+lines into located, deduplicated diagnostics. Clicking a located line in the
+Build or Diagnostics panel runs `ide.command` through `project/ExternalEditor`,
+which tokenizes the template and substitutes `{file}`, `{line}`, and `{column}`
+into arguments (never a shell); the default is
+`code -g "{file}:{line}:{column}"`. These settings live in the editor's
+`settings.ini` and are editable in the Build panel.
+
 ### `src/editor/settings/EditorRenderSettings.*`
 
 Owns the render settings the editor requests and their persistent home: the
@@ -510,6 +525,15 @@ Added/Modified/Removed/Renamed events with root-relative `/` paths; buffer
 overflow or watch failure yields `RescanRequired`. Ignored suffixes and an
 ignore predicate hide temporary files. `FileWatchCoalescer` holds the merge
 rules so they can be tested without the file system.
+
+### `src/engine/platform/ChildProcess.*`
+
+Starts a program (exact arguments, no shell) or a platform-shell command line
+in a working directory, captures combined stdout/stderr as lines on a
+background thread, and reports exit codes. Cancelling or destroying a running
+process terminates its whole tree (a Windows job object, a POSIX process
+group). `launchDetached()` starts a program that outlives the caller, such as
+an IDE.
 
 ## Physics
 
@@ -1082,7 +1106,7 @@ The source directory is copied as a whole to `build/assets/` for runtime use.
 | Path | Coverage |
 | --- | --- |
 | `tests/engine/` | Audio, asset importing, scene documents/hierarchy, and physics contracts. |
-| `tests/editor/` | Settings, render-settings persistence and graphics-panel helpers, document state, command history, undoable scene editing and entity commands, selection, camera behavior, and component editing helpers. |
+| `tests/editor/` | Settings, build output parsing, build runner and IDE launching, render-settings persistence and graphics-panel helpers, document state, command history, undoable scene editing and entity commands, selection, camera behavior, and component editing helpers. |
 | `tests/game/` | Application callback order, scene changes, cleanup, demo composition, controls, and reload behavior. |
 | `tests/capture/`, `tests/references/` | Reference capture driver, showcase capture manifest, and reference PNGs (`docs/RENDERER_VALIDATION.md`). |
 

@@ -2,10 +2,13 @@
 
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/panels/EditorContext.hpp"
+#include "editor/project/ExternalEditor.hpp"
+#include "editor/settings/EditorSettings.hpp"
 
 #include <imgui.h>
 
 #include <limits>
+#include <string>
 #include <vector>
 
 namespace {
@@ -38,27 +41,42 @@ const char* assetKindName(AssetKind kind) {
 }
 } // namespace
 
+DiagnosticsPanel::DiagnosticsPanel(const EditorToolSettings& tools)
+    : m_tools(tools) {}
+
 const char* DiagnosticsPanel::title() const {
     return "Diagnostics";
 }
 
 void DiagnosticsPanel::draw(EditorContext& context) {
-    drawDiagnostics(context);
+    drawDiagnostics(context.diagnostics);
     ImGui::SeparatorText("Asset lifetime");
     drawAssetLifetime(context);
     drawAudioLifetime(context);
 }
 
-void DiagnosticsPanel::drawDiagnostics(EditorContext& context) {
-    EditorDiagnostics& diagnostics = context.diagnostics;
+void DiagnosticsPanel::drawDiagnostics(EditorDiagnostics& diagnostics) {
     if (diagnostics.entries().empty()) {
         ImGui::TextDisabled("No diagnostics.");
         return;
     }
+    // Opening may add an IDE diagnostic, so it runs after the loop.
+    std::optional<EditorSourceLocation> open;
     for (const EditorDiagnostic& diagnostic : diagnostics.entries()) {
         ImGui::PushID(static_cast<int>(diagnostic.id));
         ImGui::Text("[%s] %s", severityName(diagnostic.severity), diagnostic.source.c_str());
         ImGui::TextWrapped("%s", diagnostic.message.c_str());
+        if (diagnostic.location) {
+            const EditorSourceLocation& location = *diagnostic.location;
+            const std::string label = location.file.filename().string() + "(" + std::to_string(location.line) +
+                                      (location.column != 0 ? "," + std::to_string(location.column) : "") + ")";
+            if (ImGui::TextLink(label.c_str())) {
+                open = location;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Open %s in the IDE", location.file.string().c_str());
+            }
+        }
         if (!diagnostic.action.empty()) {
             ImGui::TextDisabled("Action: %s", diagnostic.action.c_str());
         }
@@ -72,6 +90,9 @@ void DiagnosticsPanel::drawDiagnostics(EditorContext& context) {
         }
         ImGui::Separator();
         ImGui::PopID();
+    }
+    if (open) {
+        openSourceLocation(m_tools.ideCommand, *open, diagnostics);
     }
 }
 

@@ -13,6 +13,7 @@
 #include "editor/interaction/ObjectKeymap.hpp"
 #include "editor/interaction/Selection.hpp"
 #include "editor/panels/AssetBrowserPanel.hpp"
+#include "editor/panels/BuildPanel.hpp"
 #include "editor/panels/DiagnosticsPanel.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/GraphicsPanel.hpp"
@@ -140,12 +141,13 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     ViewportPanel m_viewport;
     HierarchyPanel m_hierarchy;
     InspectorPanel m_inspector;
-    DiagnosticsPanel m_diagnosticsPanel;
+    DiagnosticsPanel m_diagnosticsPanel{m_settings.tools()};
     RenderStatisticsPanel m_renderStatistics;
     AssetBrowserPanel m_assetBrowser;
     GraphicsPanel m_graphics;
+    BuildPanel m_buildPanel{m_settings.tools()};
     // Drawing order, which is also the View menu order.
-    std::array<PanelSlot, 7> m_panels;
+    std::array<PanelSlot, 8> m_panels;
 
     std::filesystem::path m_sceneRoot;
     std::filesystem::path m_fontPath;
