@@ -60,7 +60,6 @@ bool PostProcessPass::init(const VulkanContext& context, VkFormat outputFormat, 
     m_allocator = context.vmaAllocator();
     m_targets.resize(frameCount);
     return m_bloomExposure.init(context) && createDescriptors(frameCount) && createPipeline(outputFormat) &&
-           createEffectPipeline(shaderRoot() / "ssao.frag.spv", ambientOcclusionFormat, m_ambientOcclusionPipeline) &&
            m_temporalResolve.init(context, frameCount, extent) && m_reflections.init(context, extent) &&
            createTargets(context, extent, depthView);
 }
@@ -218,63 +217,6 @@ bool PostProcessPass::createPipeline(VkFormat outputFormat) {
                        "Create post-process pipeline");
 }
 
-bool PostProcessPass::createEffectPipeline(const std::filesystem::path& fragmentPath, VkFormat outputFormat,
-                                           VkPipeline& outputPipeline) {
-    ShaderModule vertex(m_device);
-    ShaderModule fragment(m_device);
-    if (!vertex.load(shaderRoot() / "fullscreen.vert.spv") || !fragment.load(fragmentPath)) {
-        return false;
-    }
-    const VkPipelineShaderStageCreateInfo stages[]{{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                                                    .stage = VK_SHADER_STAGE_VERTEX_BIT,
-                                                    .module = vertex.handle(),
-                                                    .pName = "main"},
-                                                   {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                                                    .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-                                                    .module = fragment.handle(),
-                                                    .pName = "main"}};
-    VkPipelineVertexInputStateCreateInfo vertexInput{.sType =
-                                                         VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-    VkPipelineInputAssemblyStateCreateInfo assembly{.sType =
-                                                        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-                                                    .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
-    VkPipelineViewportStateCreateInfo viewport{
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, .viewportCount = 1, .scissorCount = 1};
-    VkPipelineRasterizationStateCreateInfo raster{.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-                                                  .polygonMode = VK_POLYGON_MODE_FILL,
-                                                  .cullMode = VK_CULL_MODE_NONE,
-                                                  .lineWidth = 1.0f};
-    VkPipelineMultisampleStateCreateInfo multisample{.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-                                                     .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT};
-    VkPipelineColorBlendAttachmentState colorAttachment{.colorWriteMask =
-                                                            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                                            VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
-    VkPipelineColorBlendStateCreateInfo blend{.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-                                              .attachmentCount = 1,
-                                              .pAttachments = &colorAttachment};
-    const VkDynamicState states[]{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-    VkPipelineDynamicStateCreateInfo dynamic{.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-                                             .dynamicStateCount = static_cast<uint32_t>(std::size(states)),
-                                             .pDynamicStates = states};
-    VkPipelineRenderingCreateInfo rendering{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-                                            .colorAttachmentCount = 1,
-                                            .pColorAttachmentFormats = &outputFormat};
-    VkGraphicsPipelineCreateInfo pipeline{.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-                                          .pNext = &rendering,
-                                          .stageCount = static_cast<uint32_t>(std::size(stages)),
-                                          .pStages = stages,
-                                          .pVertexInputState = &vertexInput,
-                                          .pInputAssemblyState = &assembly,
-                                          .pViewportState = &viewport,
-                                          .pRasterizationState = &raster,
-                                          .pMultisampleState = &multisample,
-                                          .pColorBlendState = &blend,
-                                          .pDynamicState = &dynamic,
-                                          .layout = m_pipelineLayout};
-    return checkVulkan(vkCreateGraphicsPipelines(m_device, m_pipelineCache, 1, &pipeline, nullptr, &outputPipeline),
-                       "Create screen-space effect pipeline");
-}
-
 bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D extent, VkImageView depthView) {
     m_extent = extent;
     if (!m_bloomExposure.createChain(context, extent)) {
@@ -326,18 +268,6 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
             return false;
         }
         VkImageCreateInfo effectImage = motionImage;
-        effectImage.format = ambientOcclusionFormat;
-        if (!checkVulkan(vmaCreateImage(context.vmaAllocator(), &effectImage, &allocation,
-                                        &target.ambientOcclusionImage, &target.ambientOcclusionAllocation, nullptr),
-                         "Create ambient-occlusion target")) {
-            return false;
-        }
-        view.image = target.ambientOcclusionImage;
-        view.format = ambientOcclusionFormat;
-        if (!checkVulkan(vkCreateImageView(context.device(), &view, nullptr, &target.ambientOcclusionView),
-                         "Create ambient-occlusion view")) {
-            return false;
-        }
         effectImage.format = normalFormat;
         if (!checkVulkan(vmaCreateImage(context.vmaAllocator(), &effectImage, &allocation, &target.normalImage,
                                         &target.normalAllocation, nullptr),
@@ -366,11 +296,15 @@ bool PostProcessPass::createTargets(const VulkanContext& context, VkExtent2D ext
             {.sampler = m_colorSampler,
              .imageView = target.motionView,
              .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+            // Unused: ambient occlusion moved into the shading pass
+            // (AmbientOcclusionPass). The binding stays in the shared layout and
+            // holds the scene target as a valid placeholder.
             {.sampler = m_colorSampler,
-             .imageView = target.ambientOcclusionView,
+             .imageView = target.view,
              .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            // Binding 5 is unused since reflections moved before the temporal
-            // resolve (ScreenSpaceReflectionPass); it stays bound to a valid view.
+            // Unused: screen-space reflections moved into the scene pass
+            // (ScreenSpaceReflectionPass). The binding stays in the shared layout
+            // and holds the scene target as a valid placeholder.
             {.sampler = m_colorSampler,
              .imageView = target.view,
              .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
@@ -458,12 +392,6 @@ void PostProcessPass::destroyTargets(const VulkanContext& context) {
         if (target.motionImage) {
             vmaDestroyImage(context.vmaAllocator(), target.motionImage, target.motionAllocation);
         }
-        if (target.ambientOcclusionView) {
-            vkDestroyImageView(context.device(), target.ambientOcclusionView, nullptr);
-        }
-        if (target.ambientOcclusionImage) {
-            vmaDestroyImage(context.vmaAllocator(), target.ambientOcclusionImage, target.ambientOcclusionAllocation);
-        }
         if (target.normalView) {
             vkDestroyImageView(context.device(), target.normalView, nullptr);
         }
@@ -478,10 +406,6 @@ void PostProcessPass::destroyTargets(const VulkanContext& context) {
         target.motionView = VK_NULL_HANDLE;
         target.motionAllocation = VK_NULL_HANDLE;
         target.motionInitialized = false;
-        target.ambientOcclusionImage = VK_NULL_HANDLE;
-        target.ambientOcclusionView = VK_NULL_HANDLE;
-        target.ambientOcclusionAllocation = VK_NULL_HANDLE;
-        target.effectsInitialized = false;
         target.normalImage = VK_NULL_HANDLE;
         target.normalView = VK_NULL_HANDLE;
         target.normalAllocation = VK_NULL_HANDLE;
@@ -606,70 +530,6 @@ bool PostProcessPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex,
         .bloomUvScale = bloomSampling.uvScale,
         .bloomUvLimit = bloomSampling.uvLimit,
     };
-    const auto recordEffect = [&](VkImage image, VkImageView view, VkPipeline pipeline, VkExtent2D effectExtent,
-                                  bool enabled, float disabledClearValue, uint32_t firstTimestamp,
-                                  uint32_t lastTimestamp) {
-        imageBarrier(commandBuffer, image, VK_IMAGE_ASPECT_COLOR_BIT,
-                     target.effectsInitialized ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
-                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                     target.effectsInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
-                                               : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                     target.effectsInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
-                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-        if (timestampQueries) {
-            vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timestampQueries, firstTimestamp);
-        }
-        VkRenderingAttachmentInfo effectAttachment{
-            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = view,
-            .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .loadOp = enabled ? VK_ATTACHMENT_LOAD_OP_DONT_CARE : VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue = {
-                .color = {{disabledClearValue, disabledClearValue, disabledClearValue, disabledClearValue}}}};
-        VkRenderingInfo effectRendering{.sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-                                        .renderArea = {.offset = {0, 0}, .extent = effectExtent},
-                                        .layerCount = 1,
-                                        .colorAttachmentCount = 1,
-                                        .pColorAttachments = &effectAttachment};
-        vkCmdBeginRendering(commandBuffer, &effectRendering);
-        VkViewport effectViewport{.x = 0.0f,
-                                  .y = 0.0f,
-                                  .width = static_cast<float>(effectExtent.width),
-                                  .height = static_cast<float>(effectExtent.height),
-                                  .minDepth = 0.0f,
-                                  .maxDepth = 1.0f};
-        VkRect2D effectScissor{.offset = {0, 0}, .extent = effectExtent};
-        vkCmdSetViewport(commandBuffer, 0, 1, &effectViewport);
-        vkCmdSetScissor(commandBuffer, 0, 1, &effectScissor);
-        if (enabled) {
-            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipelineLayout, 0, 1,
-                                    &target.descriptor, 0, nullptr);
-            vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(postSettings),
-                               &postSettings);
-            vkCmdDraw(commandBuffer, 3, 1, 0, 0);
-        }
-        vkCmdEndRendering(commandBuffer);
-        if (timestampQueries) {
-            vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries,
-                                 lastTimestamp);
-        }
-        imageBarrier(commandBuffer, image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-    };
-    const auto scaledEffectExtent = [&](bool halfResolution) {
-        return halfResolution
-                   ? VkExtent2D{std::max(1u, internalExtent.width / 2), std::max(1u, internalExtent.height / 2)}
-                   : internalExtent;
-    };
-    recordEffect(target.ambientOcclusionImage, target.ambientOcclusionView, m_ambientOcclusionPipeline,
-                 scaledEffectExtent(settings.ambientOcclusion == AmbientOcclusionQuality::HalfResolution),
-                 settings.ambientOcclusion != AmbientOcclusionQuality::Off, 1.0f, 10, 11);
-    target.effectsInitialized = true;
     imageBarrier(commandBuffer, outputImage, VK_IMAGE_ASPECT_COLOR_BIT, outputOldLayout,
                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                  outputOldLayout == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT
@@ -852,9 +712,6 @@ void PostProcessPass::shutdown(const VulkanContext& context) {
     if (m_pipeline) {
         vkDestroyPipeline(context.device(), m_pipeline, nullptr);
     }
-    if (m_ambientOcclusionPipeline) {
-        vkDestroyPipeline(context.device(), m_ambientOcclusionPipeline, nullptr);
-    }
     if (m_pipelineLayout) {
         vkDestroyPipelineLayout(context.device(), m_pipelineLayout, nullptr);
     }
@@ -871,7 +728,6 @@ void PostProcessPass::shutdown(const VulkanContext& context) {
         vkDestroyDescriptorSetLayout(context.device(), m_layout, nullptr);
     }
     m_pipeline = VK_NULL_HANDLE;
-    m_ambientOcclusionPipeline = VK_NULL_HANDLE;
     m_pipelineLayout = VK_NULL_HANDLE;
     m_colorSampler = VK_NULL_HANDLE;
     m_depthSampler = VK_NULL_HANDLE;

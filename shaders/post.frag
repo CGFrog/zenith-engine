@@ -5,7 +5,6 @@ layout(set = 0, binding = 1) uniform sampler2D sceneDepth;
 // Output-resolution scene from the temporal resolve (taa_resolve.comp); valid
 // when temporal anti-aliasing is selected.
 layout(set = 0, binding = 2) uniform sampler2D resolvedScene;
-layout(set = 0, binding = 4) uniform sampler2D ambientOcclusion;
 // Mip 0 of the bloom chain (BloomExposurePass); covers the valid scene region.
 layout(set = 0, binding = 7) uniform sampler2D bloomChain;
 // Adapted exposure written by exposure_adapt.comp.
@@ -137,8 +136,6 @@ void main() {
     // With TAA the scene was already accumulated and upsampled to output resolution.
     vec3 center = settings.antialiasingMode > 1.5 ? texture(resolvedScene, texCoord).rgb
                                                  : texture(hdrScene, sceneTexCoord).rgb;
-    vec2 ambientOcclusionUv = sceneTexCoord * (settings.ambientOcclusionMode > 0.5 && settings.ambientOcclusionMode < 1.5 ? 0.5 : 1.0);
-    center *= texture(ambientOcclusion, ambientOcclusionUv).r;
     vec4 grid = editorGrid(texCoord);
     // Grid colors are display-referred; pre-divide so exposure leaves them unchanged.
     center = mix(center, grid.rgb / max(exposureState.exposure, 1e-6), grid.a);

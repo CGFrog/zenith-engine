@@ -382,7 +382,8 @@ Renderer
    |- GPU mesh/texture/material caches
    |- shadow pass, depth/normal prepass, and main mesh pipeline
    |- DepthPyramid (min/max hierarchical depth for culling and screen-space effects)
-   `- PostProcessPass (HDR/history, motion, prepass normals, SSAO, and fullscreen pipelines)
+   |- AmbientOcclusionPass (GTAO and denoise between the prepass and shading)
+   `- PostProcessPass (HDR/history, motion, prepass normals, and fullscreen pipelines)
       |- ScreenSpaceReflectionPass (Hi-Z reflection trace and in-place composite)
       `- BloomExposurePass (luminance histogram, exposure, bloom chain)
 ```
@@ -457,6 +458,21 @@ layout, red = farthest (min, reversed Z) and green = closest (max) depth, level
 0 a copy of the depth over the render extent. `DepthPyramidLayout.hpp` holds
 the CPU-testable level-extent and texel-coverage rules the shaders mirror.
 
+### `src/engine/graphics/passes/AmbientOcclusionPass.*`
+
+GTAO after the depth prepass: `gtao.comp` writes raw visibility and view depth
+(one shared RG16F image), `gtao_denoise.comp` blurs it depth-aware into an R8
+image per frame slot that `mesh.frag` reads at camera binding 13 for indirect
+diffuse and specular occlusion. Half or full render resolution; cleared to 1
+when occlusion is off or the prepass did not run.
+
+### `src/engine/graphics/AmbientOcclusion.*`
+
+CPU mirror of the GTAO integration, view-position reconstruction from
+reversed-Z depth, occlusion-texel mapping under dynamic resolution, specular
+occlusion, and denoise weights; `tests/engine/AmbientOcclusionTests.cpp`
+covers it.
+
 ### `src/engine/graphics/MeshLodSelection.*`
 
 The CPU definition of LOD selection: the coarsest level whose geometric error,
@@ -526,22 +542,22 @@ the camera is blended over the primary environment.
 ### `src/engine/graphics/passes/PostProcessPass.*`
 
 Owns one RGBA16F HDR scene target, motion/reactive target, prepass normal
-target (A2B10G10R10), and SSAO target per frame slot, plus the view's
-`ScreenSpaceReflectionPass`, `TemporalResolvePass`, and `BloomExposurePass`.
-`finishScene()` ends the scene pass: it blends screen-space reflections into
-the HDR target (when enabled and the depth prepass ran) and makes it readable.
-With TAA selected the resolve runs next and exposure and bloom read its
-output-resolution result; otherwise they read the HDR target. A GPU-scoped
-SSAO pass then feeds the final fullscreen pass,
-which composes the resolved scene (or applies FXAA), the editor grid,
+target (A2B10G10R10) per frame slot, plus the view's `ScreenSpaceReflectionPass`,
+`TemporalResolvePass`, and `BloomExposurePass`. `recordReflections()` runs
+inside the scene pass, between opaque and blended surfaces, and blends
+screen-space reflections into the HDR target when enabled and the depth prepass
+ran. With TAA selected the resolve runs first and exposure and bloom read its
+output-resolution result; otherwise they read the HDR target. The final
+fullscreen pass composes the resolved scene (or applies FXAA), the editor grid,
 exposure, the bloom mix, and tone mapping (AgX by default, AgX punchy or
 legacy ACES). Half-resolution effect tiers render into bounded sub-extents.
 
 ### `src/engine/graphics/passes/ScreenSpaceReflectionPass.*`
 
 Hi-Z screen-space reflections in compute (`shaders/ssr_trace.comp`,
-`shaders/ssr_composite.comp`), run on the HDR scene before the temporal
-resolve so TAA accumulates them. The trace reflects the view vector about the
+`shaders/ssr_composite.comp`), run inside the scene pass after opaque
+surfaces and the background and before blended surfaces, so blended surfaces
+composite over them and TAA accumulates them. The trace reflects the view vector about the
 prepass normal (GGX-jittered per frame when TAA accumulates), walks the
 closest-depth channel of the depth pyramid, rejects hits that are too thick or
 face away from the ray, and samples the current frame's lit scene at the hit.
@@ -592,9 +608,10 @@ mirror is in `TemporalQuality.*`.
 | `shaders/exposure_adapt.comp` | Percentile-averages the histogram and adapts the persistent exposure. |
 | `shaders/bloom_downsample.comp` | 13-tap bloom downsample; Karis average on the first level. |
 | `shaders/bloom_upsample.comp` | 3x3 tent bloom upsample accumulated into the next larger level. |
-| `shaders/ssao.frag` | Estimates scalable screen-space ambient occlusion. |
+| `shaders/gtao.comp` | Integrates ground-truth ambient occlusion from prepass depth and normals. |
+| `shaders/gtao_denoise.comp` | Depth-aware 5x5 blur of the raw GTAO visibility. |
 | `shaders/ssr_trace.comp` | Hi-Z screen-space reflection trace over the closest-depth pyramid. |
-| `shaders/ssr_composite.comp` | Blends traced reflections into the HDR scene before the temporal resolve. |
+| `shaders/ssr_composite.comp` | Blends traced reflections into the HDR scene before blended surfaces. |
 | `shaders/light_clusters.comp` | Assigns local lights to view clusters for clustered forward shading. |
 | `shaders/depth_pyramid.comp` | Reduces scene depth into a conservative min-depth (reversed-Z) pyramid. |
 | `shaders/gpu_visibility.comp` | Runs early/late two-phase frustum and occlusion culling. |
