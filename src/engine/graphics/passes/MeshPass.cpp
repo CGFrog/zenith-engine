@@ -5,6 +5,7 @@
 #include "../Lighting.hpp"
 #include "../ReflectionProbes.hpp"
 #include "../SpatialUpscale.hpp"
+#include "../ViewShading.hpp"
 #include "../resources/DescriptorPoolSizes.hpp"
 #include "../resources/MipChainBlit.hpp"
 
@@ -111,6 +112,18 @@ struct CameraData {
     // projections, removed from motion vectors in mesh.frag. Keep last.
     glm::vec4 temporalJitter{0.0f};
 };
+
+// Replaces the scene's directional and hemisphere light with the studio rig
+// for view shading modes other than Rendered (see ViewShading.hpp).
+void applyStudioLighting(CameraData& cameraData, const StudioLighting& studio) {
+    cameraData.lightDirection = {studio.keyDirection, 1.0f};
+    cameraData.lightColor = {studio.keyRadiance, 1.0f};
+    cameraData.environmentSky = {studio.skyColor, studio.diffuseIntensity};
+    cameraData.environmentGround = {studio.groundColor, studio.specularIntensity};
+    for (size_t level = 0; level < studio.specularLevels.size(); ++level) {
+        cameraData.environmentSpecular[level] = {studio.specularLevels[level], 1.0f};
+    }
+}
 
 // Mirrors RenderObject in the mesh, shadow, outline, and selection shaders.
 struct ObjectData {
@@ -986,13 +999,16 @@ const MeshPass::MeshPipelineSet* MeshPass::meshPipelines(MeshShadingVariant vari
     struct Constants {
         VkBool32 physicallyBased;
         int32_t shadowCascades;
+        VkBool32 solidSurfaces;
     };
 
     const Constants constants{.physicallyBased = variant.physicallyBased ? VK_TRUE : VK_FALSE,
-                              .shadowCascades = static_cast<int32_t>(variant.shadowCascades)};
+                              .shadowCascades = static_cast<int32_t>(variant.shadowCascades),
+                              .solidSurfaces = variant.solidSurfaces ? VK_TRUE : VK_FALSE};
     const VkSpecializationMapEntry entries[]{
         {.constantID = 0, .offset = offsetof(Constants, physicallyBased), .size = sizeof(VkBool32)},
-        {.constantID = 1, .offset = offsetof(Constants, shadowCascades), .size = sizeof(int32_t)}};
+        {.constantID = 1, .offset = offsetof(Constants, shadowCascades), .size = sizeof(int32_t)},
+        {.constantID = 2, .offset = offsetof(Constants, solidSurfaces), .size = sizeof(VkBool32)}};
     const VkSpecializationInfo specialization{.mapEntryCount = static_cast<uint32_t>(std::size(entries)),
                                               .pMapEntries = entries,
                                               .dataSize = sizeof(constants),
@@ -1006,16 +1022,38 @@ const MeshPass::MeshPipelineSet* MeshPass::meshPipelines(MeshShadingVariant vari
                                              fragment.handle(), m_pipelineCache, doubleSided, blending, &specialization,
                                              depthUsage);
     };
-    const bool created = create(pipelines->opaque, false, false) && create(pipelines->doubleSided, true, false) &&
-                         create(pipelines->blend, false, true) && create(pipelines->blendDoubleSided, true, true);
+    bool created = create(pipelines->opaque, false, false) && create(pipelines->doubleSided, true, false) &&
+                   create(pipelines->blend, false, true) && create(pipelines->blendDoubleSided, true, true);
+    if (created && variant.wireframeOverlay) {
+        created = createWireframeOverlay(*pipelines, vertex.handle());
+    }
     if (!created) {
-        pipelines->opaque.shutdown(m_device);
-        pipelines->doubleSided.shutdown(m_device);
-        pipelines->blend.shutdown(m_device);
-        pipelines->blendDoubleSided.shutdown(m_device);
+        pipelines->shutdown(m_device);
         return nullptr;
     }
     return m_meshPipelines.emplace(variant, std::move(pipelines)).first->second.get();
+}
+
+bool MeshPass::createWireframeOverlay(MeshPipelineSet& pipelines, VkShaderModule meshVertex) {
+    ShaderModule fragment(m_device);
+    if (!fragment.load(shaderRoot() / "mesh_wireframe.frag.spv")) {
+        return false;
+    }
+    const auto create = [&](GraphicsPipeline& pipeline, bool doubleSided) {
+        return pipeline.initWireframeOverlayPipeline(m_device, m_sceneColorFormat, PostProcessPass::motionFormat,
+                                                     m_sceneDepthFormat, m_cameraLayout, m_bindlessLayout, meshVertex,
+                                                     fragment.handle(), m_pipelineCache, doubleSided);
+    };
+    return create(pipelines.wireframe, false) && create(pipelines.wireframeDoubleSided, true);
+}
+
+void MeshPass::MeshPipelineSet::shutdown(VkDevice device) {
+    opaque.shutdown(device);
+    doubleSided.shutdown(device);
+    blend.shutdown(device);
+    blendDoubleSided.shutdown(device);
+    wireframe.shutdown(device);
+    wireframeDoubleSided.shutdown(device);
 }
 
 bool MeshPass::createShadowResources(VkFormat depthFormat) {
@@ -2566,7 +2604,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const MeshPipelineSet* shadingPipelines =
         meshPipelines({.physicallyBased = rendering.settings().lighting == LightingQuality::PhysicallyBased,
                        .shadowCascades = cascadeCount,
-                       .depthPrepass = depthPrepass});
+                       .depthPrepass = depthPrepass,
+                       .solidSurfaces = usesSolidSurfaceShading(rendering.settings().viewShading),
+                       .wireframeOverlay = drawsWireframeOverlay(rendering.settings().viewShading)});
     if (!shadingPipelines) {
         return false;
     }
@@ -2625,6 +2665,10 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     };
     for (size_t level = 0; level < environmentSpecular.size(); ++level) {
         cameraData.environmentSpecular[level] = {glm::max(environmentSpecular[level], glm::vec3(0.0f)), 1.0f};
+    }
+    // View shading: every mode but Rendered replaces the scene's lights.
+    if (usesStudioLighting(rendering.settings().viewShading)) {
+        applyStudioLighting(cameraData, studioLighting(glm::inverse(view)));
     }
     // Environment maps are bound before any pass uses this frame's camera sets.
     const bool imageBasedLighting = rendering.settings().environment != EnvironmentQuality::Hemisphere;
@@ -3022,7 +3066,8 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             .cameraPosition = cameraPosition,
             .clusters = clusterGrid,
             .localLightCount = localLightCount,
-            .lightDirection = lightDirection,
+            // The camera constants' light: the studio key outside Rendered.
+            .lightDirection = glm::vec3(cameraData.lightDirection),
             .lightRadiance = glm::vec3(cameraData.lightColor) * cameraData.lightDirection.w,
             .shadowCascades = shadowsEnabled ? cascadeCount : 0u,
             .lightViewProjections = cameraData.lightViewProjections,
@@ -3059,6 +3104,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     m_postProcess.prepareScene(commandBuffer, frameIndex);
     // Shading pipelines statically reference the transmission background.
     m_transmissionBackground.prepareFirstUse(commandBuffer);
+    // ...and the shadow map, which a session that starts without shadows
+    // (shadows Off, or a view shading mode other than Rendered) never drew.
+    prepareShadowMapForSampling(commandBuffer);
     const VkImageView sceneView = m_postProcess.sceneView(frameIndex);
     const VkImageView motionView = m_postProcess.motionView(frameIndex);
     beginRendering(commandBuffer, sceneView, motionView, depthImage, depthView, renderExtent,
@@ -3133,6 +3181,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.reflectionBytes = m_postProcess.reflectionBytes();
     recordTransmissionBackground(draw, depthImage, depthView);
     recordShadedItems(draw, ShadedItems::BlendedOnly);
+    // View shading: Wireframe edges go over every surface, under particles
+    // and outlines.
+    recordWireframeOverlay(draw, gpuDrivenActive);
     recordParticles(draw, depthImage, depthView);
     recordOutlines(draw);
 
@@ -3774,6 +3825,45 @@ void MeshPass::recordOutlines(const DrawContext& draw) {
     }
 }
 
+void MeshPass::recordWireframeOverlay(const DrawContext& draw, bool gpuDrivenActive) {
+    if (!draw.pipelines->hasWireframeOverlay()) {
+        return;
+    }
+    const OpaquePipelines overlay{.singleSided = &draw.pipelines->wireframe,
+                                  .doubleSided = &draw.pipelines->wireframeDoubleSided};
+    if (gpuDrivenActive) {
+        // Both cull phases' compacted draws are complete inside the scene pass.
+        recordGpuDrivenGroups(draw, GpuCullPhase::Early, overlay);
+        recordGpuDrivenGroups(draw, GpuCullPhase::Late, overlay);
+    }
+    // CPU-submitted items: every surface without GPU culling, else the
+    // blended ones (outlined opaque items are also listed then, but their
+    // edges came from the indirect groups). Unlike recordShadedItems this adds
+    // no visibility or timing statistics; the edges belong to surfaces already
+    // counted.
+    const VkDescriptorSet sets[]{m_cameras[draw.frameIndex].descriptor, m_cameras[draw.frameIndex].bindlessDescriptor};
+    const GraphicsPipeline* boundPipeline = nullptr;
+    std::optional<uint32_t> boundPage;
+    for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
+        const RenderItem& item = *m_visibleItems[itemIndex];
+        if (gpuDrivenActive && !item.material->translucent()) {
+            continue;
+        }
+        const GraphicsPipeline* pipeline = item.material->doubleSided ? overlay.doubleSided : overlay.singleSided;
+        if (pipeline != boundPipeline) {
+            vkCmdBindPipeline(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->handle());
+            vkCmdBindDescriptorSets(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->layout(), 0,
+                                    static_cast<uint32_t>(std::size(sets)), sets, 0, nullptr);
+            boundPipeline = pipeline;
+        }
+        bindGeometry(draw.commandBuffer, *item.gpuMesh, boundPage);
+        vkCmdDrawIndexed(draw.commandBuffer, item.lod.indexCount, 1,
+                         item.gpuMesh->geometry.firstIndex + item.lod.firstIndex, item.gpuMesh->geometry.vertexOffset,
+                         mainObjectBase + static_cast<uint32_t>(itemIndex));
+        ++draw.stats->drawCalls;
+    }
+}
+
 void MeshPass::recordDeferredUploads(const RenderSettings& settings, RenderStats& stats) {
     m_deferredUploads.setConfiguration({.warningFrames = settings.deferredUploadWarningFrames});
     const DeferredUploadFrameSummary deferred = m_deferredUploads.endFrame();
@@ -3837,10 +3927,7 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_uploadContext.shutdown();
     m_textureUploadContext.shutdown();
     for (auto& [variant, pipelines] : m_meshPipelines) {
-        pipelines->opaque.shutdown(context.device());
-        pipelines->doubleSided.shutdown(context.device());
-        pipelines->blend.shutdown(context.device());
-        pipelines->blendDoubleSided.shutdown(context.device());
+        pipelines->shutdown(context.device());
     }
     m_meshPipelines.clear();
     m_shadowPipeline.shutdown(context.device());

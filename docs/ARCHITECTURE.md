@@ -471,6 +471,13 @@ ordering and hazards and supplies barrier and transient-memory statistics;
 only its UI-boundary barriers are recorded, and the passes keep their own
 synchronization.
 
+View shading modes other than Rendered (Material Preview, Solid, Wireframe;
+`ViewShading.*`) do not add a recording path. `Renderer::recordFrame` swaps in
+the mode's reduced settings for the frame, so the plan, the graph model and
+the passes all see the same feature set; the mesh pass only selects a pipeline
+variant (clay surfaces, the LINE overlay), lights the camera constants with a
+studio rig, and draws Wireframe's edges after the blended surfaces.
+
 The mesh pass maintains per-handle GPU caches. Camera buffers are per frame to
 avoid CPU/GPU write races. Materials are bindless: each frame slot owns a
 material-record buffer and a runtime-sized texture array whose slots are only

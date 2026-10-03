@@ -976,6 +976,16 @@ capabilities, and the diagnostic overrides read once at renderer startup.
 `MeshPass::record` and `Renderer::updateRenderGraphPlan` consume the same
 plan; `tests/engine/MeshPassFramePlanTests.cpp` covers it.
 
+### `src/engine/graphics/ViewShading.*`
+
+View shading modes (Rendered, Material Preview, Solid, Wireframe) as pure
+functions: the Wireframe capability fallback, the reduced frame settings each
+mode records with, which mesh pipeline variant it needs, and the
+camera-relative studio light rig. `ScopedViewShadingSettings` applies the
+frame settings while `Renderer::recordFrame` records. The contract is in
+`docs/RENDERER_VALIDATION.md` (View shading modes);
+`tests/engine/ViewShadingTests.cpp` covers it.
+
 ### `src/engine/graphics/passes/ClusteredLightingPass.*`
 
 Owns the per-frame local-light buffer and the cluster light lists. Each frame
@@ -1295,7 +1305,8 @@ the capability fallback.
 | File | Stage and job |
 | --- | --- |
 | `shaders/mesh.vert` | Transforms mesh vertices and supplies world-space attributes. |
-| `shaders/mesh.frag` | Samples glTF materials, evaluates GGX lighting, shadows, occlusion, and emission. |
+| `shaders/mesh.frag` | Samples glTF materials, evaluates GGX lighting, shadows, occlusion, and emission; its `SOLID_SURFACES` variant draws Solid view shading's clay. |
+| `shaders/mesh_wireframe.frag` | Colours the polygon-mode LINE edges of Wireframe view shading. |
 | `shaders/shadow.vert` | Transforms geometry into directional-light depth space. |
 | `shaders/local_shadow.vert` | Transforms shadow casters into one local-light shadow atlas tile. |
 | `shaders/depth_normal.vert` / `.frag` | Depth prepass: invariant positions shared with `mesh.vert`, alpha masking, and encoded view-space normals plus roughness. |

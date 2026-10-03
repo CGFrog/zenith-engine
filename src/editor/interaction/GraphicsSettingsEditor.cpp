@@ -1,7 +1,7 @@
 #include "GraphicsSettingsEditor.hpp"
 
-#include "engine/graphics/MotionBlur.hpp"
 #include "engine/graphics/DepthOfField.hpp"
+#include "engine/graphics/MotionBlur.hpp"
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
@@ -460,6 +460,11 @@ bool drawSettings(RenderSettings& settings, const RenderCapabilities& capabiliti
     bool changed = false;
     // Narrow docked panels still leave room for the labels.
     ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x * 0.45f);
+    // Global until viewports get their own shading menu; the settings below
+    // describe the Rendered mode.
+    changed |= enumCombo("Viewport shading", settings.viewShading,
+                         std::array<EnumOption, 4>{
+                             {{"Rendered"}, {"Material preview"}, {"Solid"}, {"Wireframe", capabilities.wireframe}}});
     if (ImGui::CollapsingHeader("Anti-aliasing and resolution", ImGuiTreeNodeFlags_DefaultOpen)) {
         changed |= drawAntialiasingAndResolution(settings, capabilities);
     }

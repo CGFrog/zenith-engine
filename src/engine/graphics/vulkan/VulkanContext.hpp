@@ -74,6 +74,12 @@ class VulkanContext {
         return m_storageImageArrayDynamicIndexingSupported;
     }
 
+    // True when pipelines may rasterize polygons as lines (fillModeNonSolid
+    // enabled), which wireframe view shading needs.
+    bool fillModeNonSolidSupported() const {
+        return m_fillModeNonSolidSupported;
+    }
+
     uint32_t gfxQueueIndex() const {
         return m_gfxQueueFamIdx;
     }
@@ -129,6 +135,7 @@ class VulkanContext {
     bool m_hostQueryResetSupported{false};
     bool m_blockCompressionSupported{false};
     bool m_storageImageArrayDynamicIndexingSupported{false};
+    bool m_fillModeNonSolidSupported{false};
     VmaAllocator m_vmaAllocator{VK_NULL_HANDLE};
     VkPipelineCache m_pipelineCache{VK_NULL_HANDLE};
     std::filesystem::path m_pipelineCachePath;

@@ -1,12 +1,13 @@
 #include "RenderConfiguration.hpp"
 
-#include "MotionBlur.hpp"
 #include "DepthOfField.hpp"
+#include "MotionBlur.hpp"
+#include "ViewShading.hpp"
 
 #include <cmath>
 #include <limits>
-#include <utility>
 #include <nlohmann/json.hpp>
+#include <utility>
 
 namespace {
 using Json = nlohmann::json;
@@ -254,6 +255,7 @@ bool readLocalLighting(const Json& document, LocalLightingQuality& value) {
 
 RenderConfigurationResult serializeRenderSettings(const RenderSettings& settings, std::string& output) {
     const Json document = {{"version", 1},
+                           {"viewShading", settings.viewShading},
                            {"antialiasing", settings.antialiasing},
                            {"upscaler", upscalerDocument(settings.upscaler)},
                            {"shadows", settings.shadows},
@@ -340,6 +342,11 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
             !readEnum(document, "environment", EnvironmentQuality::ImageBasedHigh, loaded.environment) ||
             !readLocalLighting(document, loaded.localLights)) {
             return {.error = "Render settings contain an unknown quality value"};
+        }
+        // Documents written before view shading modes draw Rendered.
+        if (document.contains("viewShading") &&
+            !readEnum(document, "viewShading", ViewShading::Wireframe, loaded.viewShading)) {
+            return {.error = "Render settings contain an unknown view shading mode"};
         }
         if (!readUpscaler(document, loaded.upscaler)) {
             return {.error = "Render settings contain invalid upscaler settings"};
@@ -499,6 +506,11 @@ RenderConfigurationResult deserializeRenderSettings(std::string_view input, Rend
 ValidatedRenderSettings validateRenderSettings(const RenderSettings& requested,
                                                const RenderCapabilities& capabilities) {
     ValidatedRenderSettings result{requested};
+    if (const ViewShading shading = resolveViewShading(result.settings.viewShading, capabilities);
+        shading != result.settings.viewShading) {
+        result.settings.viewShading = shading;
+        result.fallbacks.emplace_back("Wireframe view shading needs fillModeNonSolid; using Solid shading");
+    }
     if (result.settings.environment != EnvironmentQuality::Hemisphere && !capabilities.imageBasedLighting) {
         result.settings.environment = EnvironmentQuality::Hemisphere;
         result.fallbacks.emplace_back("Image-based lighting is unsupported; using hemisphere lighting");
