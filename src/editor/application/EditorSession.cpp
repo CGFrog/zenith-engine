@@ -542,11 +542,13 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     const bool simulateDone = updateSmokeSimulate(context);
     // Starts after the Simulate step's last frame, back in Edit mode.
     const bool outlinerDone = updateSmokeOutliner(context);
+    // Starts after the outliner step.
+    const bool pickingDone = updateSmokePicking(context);
     if (m_smokeFrame == 500 && !m_smokeStreamCompleted) {
         m_diagnostics.reportError("Streaming smoke did not commit while frames were being presented");
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
     } else if (areasDone && viewportsDone && componentsDone && menusDone && simulateDone && outlinerDone &&
-               m_smokeStreamCompleted) {
+               pickingDone && m_smokeStreamCompleted) {
         updateSmokeModuleReload(context);
     }
 }

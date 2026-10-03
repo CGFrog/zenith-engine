@@ -1,7 +1,9 @@
 // Collections, visibility flags, collection instancing, and their scene
-// document form (format version 3). CPU only.
+// document form (format version 3), and the scene lighting that follows
+// visibility. CPU only.
 
 #include "engine/assets/Assets.hpp"
+#include "engine/graphics/Lighting.hpp"
 #include "engine/scene/SceneDocument.hpp"
 #include "engine/scene/SceneVisibility.hpp"
 
@@ -117,6 +119,60 @@ void testVisibilityRules() {
     const auto& moved = scene.registry().get<CollectionMembershipComponent>(inHidden);
     expect(moved.collections == std::vector<SceneCollectionId>{hiddenParent},
            "members of a deleted collection should move to its parent");
+}
+
+// Scene-wide lighting follows the same visibility as meshes: the frame's sun,
+// sky, and fog come from drawn primary components only.
+void testLightingVisibility() {
+    Scene scene;
+    SceneCollections collections;
+    const SceneCollectionId hiddenCollection = create(collections, "Hidden lights");
+    collections.setFlag(hiddenCollection, CollectionFlag::Visible, false);
+    scene.setCollections(collections);
+
+    expect(frameDirectionalLight(scene).intensity == DirectionalLightComponent{}.intensity &&
+               frameEnvironmentLight(scene).diffuseIntensity == EnvironmentLightComponent{}.diffuseIntensity &&
+               !frameVolumetricFog(scene),
+           "a scene without lights uses the default sun and sky and no fog");
+
+    const Entity sun = scene.createEntity("Sun");
+    scene.registry().emplace<DirectionalLightComponent>(sun, DirectionalLightComponent{.intensity = 3.0f});
+    const Entity sky = scene.createEntity("Sky");
+    scene.registry().emplace<EnvironmentLightComponent>(sky, EnvironmentLightComponent{.diffuseIntensity = 0.25f});
+    const Entity fog = scene.createEntity("Fog");
+    scene.registry().emplace<VolumetricFogComponent>(fog, VolumetricFogComponent{.density = 0.5f});
+    expect(primaryDirectionalLight(scene) == sun && frameDirectionalLight(scene).intensity == 3.0f &&
+               frameEnvironmentLight(scene).diffuseIntensity == 0.25f && frameVolumetricFog(scene) &&
+               frameVolumetricFog(scene)->density == 0.5f,
+           "drawn primary components light the frame");
+
+    // The editor hide removes them from editor views only.
+    scene.registry().emplace<VisibilityComponent>(sun, VisibilityComponent{.hidden = true});
+    linkToCollection(scene, sky, hiddenCollection);
+    scene.registry().emplace<VisibilityComponent>(fog, VisibilityComponent{.hidden = true});
+    const DirectionalLightComponent hiddenSun = frameDirectionalLight(scene, SceneVisibilityMode::Editor);
+    expect(primaryDirectionalLight(scene, SceneVisibilityMode::Editor) == entt::null && hiddenSun.intensity == 0.0f &&
+               !hiddenSun.shadows.enabled,
+           "a hidden sun neither lights nor casts shadows in editor views");
+    expect(frameEnvironmentLight(scene, SceneVisibilityMode::Editor).diffuseIntensity == 0.0f &&
+               frameEnvironmentLight(scene, SceneVisibilityMode::Editor).skyColor == glm::vec3(0.0f),
+           "an environment in a hidden collection is off in editor views");
+    expect(!frameVolumetricFog(scene, SceneVisibilityMode::Editor), "hidden fog is not drawn in editor views");
+    expect(frameDirectionalLight(scene).intensity == 3.0f && frameEnvironmentLight(scene).diffuseIntensity == 0.25f &&
+               frameVolumetricFog(scene),
+           "the editor hide does not change runtime lighting");
+
+    // Not renderable removes them everywhere.
+    scene.registry().replace<VisibilityComponent>(sun, VisibilityComponent{.renderable = false});
+    scene.registry().replace<VisibilityComponent>(fog, VisibilityComponent{.renderable = false});
+    expect(frameDirectionalLight(scene).intensity == 0.0f && !frameVolumetricFog(scene),
+           "lights and fog that are not renderable are off at runtime too");
+
+    // A second, drawn primary light takes over.
+    const Entity backup = scene.createEntity("Backup sun");
+    scene.registry().emplace<DirectionalLightComponent>(backup, DirectionalLightComponent{.intensity = 2.0f});
+    expect(primaryDirectionalLight(scene) == backup && frameDirectionalLight(scene).intensity == 2.0f,
+           "the next drawn primary light is used");
 }
 
 // The filter and expansion MeshPass::buildRenderItems applies, checked on the
@@ -298,6 +354,7 @@ int main() {
     const SceneDocumentOptions options{.assetRoot = ZENITH_ASSET_DIR};
     testCollectionDefinitions();
     testVisibilityRules();
+    testLightingVisibility();
     testInstanceExpansion();
     testDocument(assets, options);
     testCollectionChanges(assets, options);

@@ -2,6 +2,7 @@
 
 #include "engine/assets/IrradianceVolumeAsset.hpp"
 #include "engine/scene/Scene.hpp"
+#include "engine/scene/SceneVisibilityMode.hpp"
 
 #include <array>
 #include <glm/glm.hpp>
@@ -73,10 +74,12 @@ Sample sample(const IrradianceVolumeData& data, const ShadingParameters& paramet
 // holds the mean radiance; volumeWeight is the edge fade.
 Sample sampleMeanRadiance(const IrradianceVolumeData& data, const glm::vec3& position, float blendDistance);
 
-// Chooses the baked volume to bind for a camera: one containing the camera,
-// else the nearest; ties go to the lower scene entity ID. entt::null when no
+// Chooses the baked volume to bind for a camera among those the visibility
+// mode draws (see SceneVisibility.hpp): one containing the camera, else the
+// nearest; ties go to the lower scene entity ID. entt::null when no drawn
 // volume has baked data.
-Entity selectVolume(const Scene& scene, const glm::vec3& cameraPosition);
+Entity selectVolume(const Scene& scene, const glm::vec3& cameraPosition,
+                    SceneVisibilityMode visibility = SceneVisibilityMode::Runtime);
 
 // std430 record of one probe in the shader storage buffer; mirrors
 // IrradianceProbe in shaders/mesh.frag. irradiance[0].w is 1 for valid probes.

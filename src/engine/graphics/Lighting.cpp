@@ -54,6 +54,72 @@ LocalShadowAtlas allocateLocalShadowAtlas(std::span<const LocalShadowRequest> re
     return atlas;
 }
 
+namespace {
+template <typename Component> Entity primaryDrawnEntity(const Scene& scene, SceneVisibilityMode visibilityMode) {
+    const SceneVisibility visibility(scene, visibilityMode);
+    const auto components = scene.registry().view<const Component>();
+    Entity selected = entt::null;
+    for (Entity entity : components) {
+        if (components.template get<const Component>(entity).primary && visibility.drawn(entity) &&
+            (selected == entt::null || entt::to_integral(entity) < entt::to_integral(selected))) {
+            selected = entity;
+        }
+    }
+    return selected;
+}
+
+template <typename Component> bool hasPrimary(const Scene& scene) {
+    const auto components = scene.registry().view<const Component>();
+    return std::ranges::any_of(components,
+                               [&](Entity entity) { return components.template get<const Component>(entity).primary; });
+}
+} // namespace
+
+Entity primaryDirectionalLight(const Scene& scene, SceneVisibilityMode visibility) {
+    return primaryDrawnEntity<DirectionalLightComponent>(scene, visibility);
+}
+
+Entity primaryEnvironmentLight(const Scene& scene, SceneVisibilityMode visibility) {
+    return primaryDrawnEntity<EnvironmentLightComponent>(scene, visibility);
+}
+
+Entity primaryVolumetricFog(const Scene& scene, SceneVisibilityMode visibility) {
+    return primaryDrawnEntity<VolumetricFogComponent>(scene, visibility);
+}
+
+DirectionalLightComponent frameDirectionalLight(const Scene& scene, SceneVisibilityMode visibility) {
+    if (const Entity entity = primaryDirectionalLight(scene, visibility); entity != entt::null) {
+        return scene.registry().get<DirectionalLightComponent>(entity);
+    }
+    DirectionalLightComponent light;
+    if (hasPrimary<DirectionalLightComponent>(scene)) {
+        light.intensity = 0.0f;
+        light.shadows.enabled = false;
+    }
+    return light;
+}
+
+EnvironmentLightComponent frameEnvironmentLight(const Scene& scene, SceneVisibilityMode visibility) {
+    if (const Entity entity = primaryEnvironmentLight(scene, visibility); entity != entt::null) {
+        return scene.registry().get<EnvironmentLightComponent>(entity);
+    }
+    EnvironmentLightComponent environment;
+    if (hasPrimary<EnvironmentLightComponent>(scene)) {
+        environment.skyColor = glm::vec3(0.0f);
+        environment.groundColor = glm::vec3(0.0f);
+        environment.diffuseIntensity = 0.0f;
+        environment.specularIntensity = 0.0f;
+    }
+    return environment;
+}
+
+std::optional<VolumetricFogComponent> frameVolumetricFog(const Scene& scene, SceneVisibilityMode visibility) {
+    if (const Entity entity = primaryVolumetricFog(scene, visibility); entity != entt::null) {
+        return scene.registry().get<VolumetricFogComponent>(entity);
+    }
+    return std::nullopt;
+}
+
 std::vector<LocalLight> gatherLocalLights(const Scene& scene, SceneVisibilityMode visibilityMode) {
     std::vector<LocalLight> result;
     const SceneVisibility visibility(scene, visibilityMode);

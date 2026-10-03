@@ -28,9 +28,14 @@ std::vector<uint32_t> sortedUnique(std::vector<uint32_t> ids) {
     return ids;
 }
 
+} // namespace
+
 // Even-odd rule: a horizontal ray from the point crosses the outline an odd
 // number of times when the point is inside.
 bool insidePolygon(std::span<const glm::vec2> polygon, glm::vec2 point) {
+    if (polygon.size() < 3) {
+        return false;
+    }
     bool inside = false;
     for (size_t current = 0, previous = polygon.size() - 1; current < polygon.size(); previous = current++) {
         const glm::vec2 a = polygon[current];
@@ -44,7 +49,6 @@ bool insidePolygon(std::span<const glm::vec2> polygon, glm::vec2 point) {
     }
     return inside;
 }
-} // namespace
 
 IdGrid idGrid(const PickResult& result) {
     return {.width = result.region.width, .height = result.region.height, .ids = result.ids, .depth = result.depth};

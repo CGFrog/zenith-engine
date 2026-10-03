@@ -4,6 +4,7 @@
 #include "engine/scene/SceneVisibilityMode.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -35,6 +36,24 @@ struct LocalLight {
 // in stable-id order.
 std::vector<LocalLight> gatherLocalLights(const Scene& scene,
                                           SceneVisibilityMode visibility = SceneVisibilityMode::Runtime);
+// The scene-wide lighting a frame uses: among the entities the visibility mode
+// draws (see SceneVisibility.hpp) whose component is marked primary, the one
+// with the lowest entity handle; entt::null when there is none. So
+// `renderable` off removes a light, fog medium, or environment everywhere and
+// the editor's viewport hide removes it in Editor mode.
+Entity primaryDirectionalLight(const Scene& scene, SceneVisibilityMode visibility = SceneVisibilityMode::Runtime);
+Entity primaryEnvironmentLight(const Scene& scene, SceneVisibilityMode visibility = SceneVisibilityMode::Runtime);
+Entity primaryVolumetricFog(const Scene& scene, SceneVisibilityMode visibility = SceneVisibilityMode::Runtime);
+// What a frame lights with. The drawn primary component; for a scene without
+// a primary component the defaults (a default sun and sky, no fog); and when
+// the scene's primary components are all hidden or not renderable, none: a
+// sun of zero intensity without shadows, a black sky, no fog.
+DirectionalLightComponent frameDirectionalLight(const Scene& scene,
+                                                SceneVisibilityMode visibility = SceneVisibilityMode::Runtime);
+EnvironmentLightComponent frameEnvironmentLight(const Scene& scene,
+                                                SceneVisibilityMode visibility = SceneVisibilityMode::Runtime);
+std::optional<VolumetricFogComponent> frameVolumetricFog(const Scene& scene,
+                                                         SceneVisibilityMode visibility = SceneVisibilityMode::Runtime);
 // Keeps at most maximumLights lights, preferring those whose range reaches
 // closest to the camera; the result stays in stable-id order.
 std::vector<LocalLight> selectLocalLights(std::span<const LocalLight> lights, const glm::vec3& cameraPosition,

@@ -72,6 +72,9 @@ std::vector<uint32_t> pickBox(const IdGrid& grid, const GridRect& rect);
 // Distinct ids with a pixel centre inside the polygon (even-odd rule, so
 // concave and self-intersecting outlines work), ascending. Needs three points.
 std::vector<uint32_t> pickLasso(const IdGrid& grid, std::span<const glm::vec2> polygon);
+// Whether point lies inside the closed outline polygon by the even-odd rule;
+// false for fewer than three points.
+bool insidePolygon(std::span<const glm::vec2> polygon, glm::vec2 point);
 // Distinct ids within `radius` pixels of `pixel`, ordered for Alt+click
 // cycling: closest pixel to the click first, then nearer depth, then more
 // covered pixels, then lower id.

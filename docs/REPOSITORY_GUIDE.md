@@ -633,6 +633,28 @@ its overlays as its area state (`viewportAreaState`).
 CPU; `tests/editor/SceneGizmoCaptureTests.cpp` is the strict-validation smoke
 test and the `scene_gizmos` reference capture.
 
+
+`src/editor/viewport/` holds the viewport's selection tools. A left click runs
+`view3d.select` (Shift extends, a miss clears unless extending; Alt runs
+`view3d.select_cycle`, stepping from the active object through the objects
+under the cursor, visible ones first, then occluded ray hits), B starts the
+modal box tool (`view3d.select_box`, `BoxSelect`), and Ctrl+RMB drags a lasso
+(`view3d.select_lasso`, `LassoSelect`; Ctrl+Shift+RMB extends, Ctrl+Alt+RMB
+subtracts). Box and lasso take `auto` (Shift extends, Ctrl subtracts at
+release), `set`, `extend`, or `subtract`; Esc or a right click cancels them.
+`ViewportPicker` resolves every pick through the GPU id buffer when it can and
+the CPU otherwise; hidden and unselectable objects are never picked, a
+collection instance picks its instancer, and an armed eyedropper takes a click
+instead of the selection. Numpad / (`view3d.localview`) toggles local view per
+viewport: the selection and its descendants are isolated in that viewport's
+render view (and its picks) and framed, and toggling again restores the
+previous camera. `RegionSelect` holds the shared modes and outline drawing,
+`ViewFraming` the framing math shared with `view3d.frame_selected`, and
+`ViewportSelectOperators` the operators. `tests/editor/ViewportPickingTests.cpp`
+covers clicks, the pending-pick fallback, box, lasso, cycling, the eyedropper,
+and local view headless with a synthetic `ViewportPickProvider`; the editor
+smoke clicks an object through the real id buffer and toggles local view.
+
 `panels/InfoPanel` is the unified log view. Its CPU-only `InfoLog` model
 merges, by time, the engine log (`ApplicationContext::logger`), editor
 diagnostics (sources `Build` and `Game Module` get their own source filter),
@@ -954,7 +976,8 @@ settings controls over the same `RenderSettingsController`.
 Pure selection queries over a GPU pick result's id grid: point picks with a
 pixel tolerance, box and lasso (even-odd, pixel centres) selection, depth at a
 pixel, and Alt+click cycling candidates merged with CPU ray hits. The header
-documents how a viewport turns clicks and drags into `requestPick` regions;
+documents how a viewport turns clicks and drags into `requestPick` regions
+(implemented by `editor/viewport/ViewportPicker`);
 `tests/editor/PickQueriesTests.cpp` covers each query on synthetic grids.
 
 ## Assets

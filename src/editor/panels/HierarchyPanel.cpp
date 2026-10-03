@@ -441,7 +441,8 @@ void HierarchyPanel::acceptEntityDrop(EditorContext& context, SceneEntityId pare
     }
     // A prefab dragged from the Asset Browser is instantiated under the row.
     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(prefabAssetPayload)) {
-        context.placePrefab(static_cast<const char*>(payload->Data), parent);
+        const Entity parentEntity = parent ? context.app.scene.findEntity(parent) : Entity{entt::null};
+        context.placePrefab(static_cast<const char*>(payload->Data), parentEntity);
     }
     ImGui::EndDragDropTarget();
 }

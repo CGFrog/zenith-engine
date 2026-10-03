@@ -104,8 +104,17 @@ void ViewportRegistry::releaseView(RenderRuntime& rendering, RenderViewId view) 
     rendering.setViewGridOverlay(view, std::nullopt);
     rendering.setViewOutlinedObjects(view, {});
     rendering.setViewSettings(view, std::nullopt);
+    rendering.setViewVisibleEntities(view, std::nullopt);
     rendering.setViewInputActive(view, false);
     m_defaultViewHolder = {};
+}
+
+void ViewportRegistry::setPickProvider(ViewportPickProvider* provider) {
+    m_pickProvider = provider;
+}
+
+ViewportPickProvider* ViewportRegistry::pickProvider() const {
+    return m_pickProvider;
 }
 
 bool ViewportRegistry::defaultViewFree() const {

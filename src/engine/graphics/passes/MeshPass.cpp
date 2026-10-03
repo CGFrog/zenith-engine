@@ -155,34 +155,6 @@ void imageBarrier(VkCommandBuffer commandBuffer, VkImage image, VkImageAspectFla
     vkCmdPipelineBarrier2(commandBuffer, &dependency);
 }
 
-// The primary fog medium with the lowest entity id, if the scene has one.
-std::optional<VolumetricFogComponent> primaryVolumetricFog(const Scene& scene) {
-    const auto components = scene.registry().view<const VolumetricFogComponent>();
-    Entity selected = entt::null;
-    for (Entity entity : components) {
-        const VolumetricFogComponent& component = components.get<const VolumetricFogComponent>(entity);
-        if (component.primary && (selected == entt::null || entt::to_integral(entity) < entt::to_integral(selected))) {
-            selected = entity;
-        }
-    }
-    if (selected == entt::null) {
-        return std::nullopt;
-    }
-    return components.get<const VolumetricFogComponent>(selected);
-}
-
-template <typename Component> Component resolvePrimary(const Scene& scene) {
-    const auto components = scene.registry().view<const Component>();
-    Entity selected = entt::null;
-    for (Entity entity : components) {
-        const Component& component = components.template get<const Component>(entity);
-        if (component.primary && (selected == entt::null || entt::to_integral(entity) < entt::to_integral(selected))) {
-            selected = entity;
-        }
-    }
-    return selected == entt::null ? Component{} : components.template get<const Component>(selected);
-}
-
 glm::vec3 normalizedLightDirection(const glm::vec3& direction) {
     constexpr float minimumDirectionLength = 0.0001f;
     if (glm::dot(direction, direction) < minimumDirectionLength * minimumDirectionLength) {
@@ -2583,8 +2555,8 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
                             const DirectionalLightComponent& light,
                             const std::array<glm::mat4, maximumShadowCascades>& lightViewProjections,
                             uint32_t cascadeCount, const std::array<bool, maximumShadowCascades>& dirtyCascades,
-                            ShadowCulling culling, const MeshLodView& lodView, OptionalPassTimestamps& passTimestamps,
-                            RenderStats& stats) {
+                            ShadowCulling culling, const std::vector<RenderObjectId>* casterObjects,
+                            const MeshLodView& lodView, OptionalPassTimestamps& passTimestamps, RenderStats& stats) {
     if (cascadeCount == 0 || std::ranges::none_of(dirtyCascades, [](bool dirty) { return dirty; })) {
         stats.shadowCascadesCached = cascadeCount;
         return true;
@@ -2659,8 +2631,13 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
         const std::array<glm::vec4, 6> shadowFrustum = clipVolumePlanes(lightViewProjections[cascade]);
         m_shadowVisibleItems.clear();
         m_shadowVisibleItems.reserve(items.size());
+        const auto castsHere = [casterObjects](const RenderItem& item) {
+            return casterObjects == nullptr ||
+                   std::ranges::binary_search(*casterObjects,
+                                              static_cast<RenderObjectId>(entt::to_integral(item.renderObject())));
+        };
         for (const RenderItem& item : items) {
-            if (light.shadows.enabled && !item.material->translucent() &&
+            if (light.shadows.enabled && !item.material->translucent() && castsHere(item) &&
                 sphereReachesClipVolume(shadowFrustum, item.boundsCenter, item.boundsRadius)) {
                 m_shadowVisibleItems.push_back(&item);
             }
@@ -2907,6 +2884,22 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const 
         m_outlinedObjects.erase(duplicates.begin(), duplicates.end());
     }
 
+    // The cascades are shared by every view of the frame, so casters are
+    // limited only while every rendered view is isolated: to the union of
+    // their isolation sets (a lone local view casts only its objects).
+    m_frameShadowCasters.reset();
+    if (std::ranges::all_of(views,
+                            [](const MeshPassViewRequest& request) { return request.visibleObjects != nullptr; })) {
+        std::vector<RenderObjectId> casters;
+        for (const MeshPassViewRequest& request : views) {
+            casters.insert(casters.end(), request.visibleObjects->begin(), request.visibleObjects->end());
+        }
+        std::ranges::sort(casters);
+        const auto repeated = std::ranges::unique(casters);
+        casters.erase(repeated.begin(), repeated.end());
+        m_frameShadowCasters = std::move(casters);
+    }
+
     // Fog volumes follow each view's quality. Their descriptors are written
     // before anything in this command buffer binds the camera sets, since the
     // default view's sets are the frame's.
@@ -2965,9 +2958,11 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
     const RenderSettings& settings = rendering.settings();
     RenderStats& stats = rendering.m_stats;
     ViewState& leadView = *m_views[lead.view];
-    frame.light = resolvePrimary<DirectionalLightComponent>(scene);
-    frame.environment = resolvePrimary<EnvironmentLightComponent>(scene);
-    frame.fogMedium = primaryVolumetricFog(scene);
+    // Only what the frame's visibility mode draws lights it: `renderable` off,
+    // or the editor hide in Editor mode, removes a light, environment, or fog.
+    frame.light = frameDirectionalLight(scene, m_sceneVisibilityMode);
+    frame.environment = frameEnvironmentLight(scene, m_sceneVisibilityMode);
+    frame.fogMedium = frameVolumetricFog(scene, m_sceneVisibilityMode);
     const DirectionalLightComponent& light = frame.light;
     const EnvironmentLightComponent& environment = frame.environment;
     // Hemisphere lighting reads these flat colors; image-based lighting reads
@@ -3072,9 +3067,10 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
     // Irradiance volume (U6): bind the volume nearest the leading camera and
     // upload its probes when they change; Environment mode leaves it disabled.
     passTimestamps.write(FrameTimestamp::irradianceVolumeBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-    const Entity irradianceVolumeEntity = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume
-                                              ? irradiance_volume::selectVolume(scene, cameraPosition)
-                                              : entt::null;
+    const Entity irradianceVolumeEntity =
+        settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume
+            ? irradiance_volume::selectVolume(scene, cameraPosition, m_sceneVisibilityMode)
+            : entt::null;
     const IrradianceVolumeComponent* irradianceVolume =
         irradianceVolumeEntity == entt::null ? nullptr
                                              : &scene.registry().get<IrradianceVolumeComponent>(irradianceVolumeEntity);
@@ -3275,7 +3271,8 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
         !m_shadowInitialized || SDL_getenv("ZENITH_DISABLE_SHADOW_CACHE") != nullptr ||
         revisions.transform != m_shadowRevisions.transform || revisions.renderable != m_shadowRevisions.renderable ||
         revisions.light != m_shadowRevisions.light || revisions.skin != m_shadowRevisions.skin ||
-        revisions.material != m_shadowRevisions.material;
+        revisions.material != m_shadowRevisions.material || m_sceneVisibilityMode != m_shadowVisibilityMode ||
+        m_frameShadowCasters != m_shadowCasterObjects;
     std::array<bool, maximumShadowCascades> dirtyCascades{};
     for (uint32_t cascade = 0; cascade < cascadeCount; ++cascade) {
         float maximumDifference = 0.0f;
@@ -3288,11 +3285,16 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
         }
         dirtyCascades[cascade] = shadowCastersChanged || cascade >= m_cachedCascadeCount || maximumDifference > 0.0001f;
     }
+    // Isolated casters imply an isolated leading view, which culls on the CPU.
     if (!recordShadow(commandBuffer, frameIndex, m_renderItems, shadowLight, cameraData.lightViewProjections,
-                      cascadeCount, dirtyCascades, frame.shadowCulling, leadFrame.lodView, passTimestamps, stats)) {
+                      cascadeCount, dirtyCascades, frame.shadowCulling,
+                      m_frameShadowCasters ? &*m_frameShadowCasters : nullptr, leadFrame.lodView, passTimestamps,
+                      stats)) {
         return false;
     }
     m_shadowRevisions = revisions;
+    m_shadowVisibilityMode = m_sceneVisibilityMode;
+    m_shadowCasterObjects = m_frameShadowCasters;
     m_cachedLightViewProjections = cameraData.lightViewProjections;
     m_cachedCascadeCount = cascadeCount;
     stats.cpuShadowMilliseconds =
@@ -4277,10 +4279,16 @@ bool MeshPass::recordPicks(const DrawContext& draw, const Scene& scene, const Me
             continue;
         }
         const RenderItem& item = m_renderItems[found->second];
-        const auto [entry, inserted] = entityIds.try_emplace(item.entity, static_cast<uint32_t>(objects.size() + 1));
+        // A collection instance's draws pick as the instancing entity, and an
+        // isolated view picks only what it draws.
+        const Entity pickedEntity = item.renderObject();
+        const RenderObjectId pickedObject = static_cast<RenderObjectId>(entt::to_integral(pickedEntity));
+        if (request.visibleObjects != nullptr && !std::ranges::binary_search(*request.visibleObjects, pickedObject)) {
+            continue;
+        }
+        const auto [entry, inserted] = entityIds.try_emplace(pickedEntity, static_cast<uint32_t>(objects.size() + 1));
         if (inserted) {
-            objects.push_back({.entity = scene.id(item.entity),
-                               .object = static_cast<RenderObjectId>(entt::to_integral(item.entity))});
+            objects.push_back({.entity = scene.id(pickedEntity), .object = pickedObject});
         }
         items.push_back(&item);
         itemIds.push_back(entry->second);

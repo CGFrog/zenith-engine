@@ -7,7 +7,9 @@
 
 #include <glm/glm.hpp>
 
+#include <functional>
 #include <optional>
+#include <vector>
 
 // Camera math for any lens described as a RenderView (the editor camera's, or
 // a scene camera a viewport looks through). The view space is right-handed
@@ -21,9 +23,31 @@ glm::mat4 lensGizmoProjectionMatrix(const RenderView& lens, float aspectRatio);
 // The closest mesh hit by the ray through normalizedViewportPosition (0..1,
 // top-left origin), or entt::null. Only entities the editor may select
 // (SceneVisibility::selectable) are hit; a collection instance's draw picks
-// its instancing entity.
+// its instancing entity. isolatedObjects, when not null, holds the sorted
+// render objects a local view isolates (as RenderRuntime::
+// setViewVisibleEntities takes them) and limits picks to those.
 Entity pickThroughLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
-                       glm::vec2 normalizedViewportPosition, float aspectRatio);
+                       glm::vec2 normalizedViewportPosition, float aspectRatio,
+                       const std::vector<RenderObjectId>* isolatedObjects = nullptr);
+
+// One entity a lens ray hits; distance is in world units along the ray.
+struct LensHit {
+    Entity entity{entt::null};
+    float distance{0.0f};
+};
+
+// Every entity pickThroughLens could return for the ray, nearest first, each
+// once at its nearest hit, so Alt+click cycling reaches occluded objects.
+std::vector<LensHit> pickAllThroughLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
+                                        glm::vec2 normalizedViewportPosition, float aspectRatio,
+                                        const std::vector<RenderObjectId>* isolatedObjects = nullptr);
+// Entities pickThroughLens could return whose mesh bounds centre (the origin
+// for a mesh not loaded) projects in front of the lens to a normalized
+// viewport position `contains` accepts, each once, in scene order. The CPU
+// stand-in for box and lasso selection when no GPU pick is available.
+std::vector<Entity> pickInsideLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
+                                   float aspectRatio, const std::function<bool(glm::vec2)>& contains,
+                                   const std::vector<RenderObjectId>* isolatedObjects = nullptr);
 // The lens of entity's CameraComponent at its world transform (scale is
 // ignored), or nullopt when the entity has no camera. World transforms must
 // be current.

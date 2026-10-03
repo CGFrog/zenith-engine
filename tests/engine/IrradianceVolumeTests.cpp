@@ -262,6 +262,17 @@ void testVolumeSelection() {
     Scene empty;
     empty.registry().emplace<IrradianceVolumeComponent>(empty.createEntity("Unbaked"));
     expect(irradiance_volume::selectVolume(empty, {}) == entt::null, "unbaked volumes are never bound");
+
+    // Visibility: the editor hide drops a volume in Editor mode only, and a
+    // volume that is not renderable is never bound.
+    scene.registry().emplace<VisibilityComponent>(near, VisibilityComponent{.hidden = true});
+    expect(irradiance_volume::selectVolume(scene, {0.5f, 0.5f, 0.5f}, SceneVisibilityMode::Editor) == far,
+           "a hidden volume is skipped in editor views");
+    expect(irradiance_volume::selectVolume(scene, {0.5f, 0.5f, 0.5f}, SceneVisibilityMode::Runtime) == near,
+           "the editor hide does not change the runtime");
+    scene.registry().replace<VisibilityComponent>(near, VisibilityComponent{.renderable = false});
+    expect(irradiance_volume::selectVolume(scene, {0.5f, 0.5f, 0.5f}, SceneVisibilityMode::Runtime) == far,
+           "a volume that is not renderable is never bound");
 }
 
 void testSceneDocumentRoundTrip() {

@@ -548,6 +548,7 @@ add_library(zenith_editor_app STATIC
     src/editor/application/EditorDiagnostics.cpp
     src/editor/application/EditorModuleCommands.cpp
     src/editor/application/EditorObjectCommands.cpp
+    src/editor/application/EditorPickingSmoke.cpp
     src/editor/application/EditorViewports.cpp
     src/editor/application/EditorPlayMode.cpp
     src/editor/application/NativeFileDialog.cpp
@@ -650,6 +651,13 @@ add_library(zenith_editor_app STATIC
     src/editor/theme/PixelWallpaper.cpp
     src/editor/theme/ThemeChrome.cpp
     src/editor/viewport/SceneGizmoDraw.cpp
+    src/editor/viewport/BoxSelect.cpp
+    src/editor/viewport/LassoSelect.cpp
+    src/editor/viewport/RegionSelect.cpp
+    src/editor/viewport/ViewFraming.cpp
+    src/editor/viewport/ViewportPickProvider.cpp
+    src/editor/viewport/ViewportPicker.cpp
+    src/editor/viewport/ViewportSelectOperators.cpp
 )
 target_link_libraries(zenith_editor_app PUBLIC zenith_engine)
 if(WIN32)
@@ -1617,6 +1625,17 @@ if(BUILD_TESTING)
         target_compile_options(zenith_multi_viewport_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_multi_viewport COMMAND zenith_multi_viewport_tests)
+
+    add_executable(zenith_viewport_picking_tests tests/editor/ViewportPickingTests.cpp)
+    target_compile_definitions(zenith_viewport_picking_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_viewport_picking_tests zenith_assets)
+    target_link_libraries(zenith_viewport_picking_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_viewport_picking_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_viewport_picking_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_viewport_picking COMMAND zenith_viewport_picking_tests)
 
     add_executable(zenith_project_asset_tests
         tests/editor/ProjectAssetTests.cpp

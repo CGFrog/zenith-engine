@@ -8,7 +8,8 @@ class ViewportRegistry;
 
 // The view3d operators, each acting on the registry's active viewport when it
 // runs: the chrome toggles and shading (viewportChromeOperators), snapping,
-// the numpad viewpoints and orbit steps, framing, and the camera view toggle.
+// the numpad viewpoints and orbit steps, framing, the camera view toggle, and
+// the selection and local view operators (viewportSelectOperators).
 // They poll false while no viewport is open and fail with a descriptive
 // message if run anyway. Navigation operators leave a camera view first, as
 // in Blender. They need no window, so they also run headless; the registry

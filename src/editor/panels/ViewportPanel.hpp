@@ -5,12 +5,16 @@
 #include "editor/panels/EditorPanel.hpp"
 #include "editor/panels/ViewportChrome.hpp"
 #include "editor/panels/ViewportRegistry.hpp"
+#include "editor/viewport/BoxSelect.hpp"
+#include "editor/viewport/LassoSelect.hpp"
+#include "editor/viewport/ViewportPicker.hpp"
 #include "engine/graphics/Rendering.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <glm/vec2.hpp>
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -48,6 +52,14 @@ bool viewportDrawsSceneGizmos(EditorMode mode, bool lookingThroughSceneCamera, c
 // A viewport can look through a scene camera instead of its editor camera
 // (Blender's camera view): navigation is then disabled and every view
 // operator or the View menu returns to the editor camera.
+//
+// Selection: a left click runs view3d.select (Alt: view3d.select_cycle,
+// Shift extends), B starts the box tool (view3d.select_box) and Ctrl+RMB
+// drags a lasso (view3d.select_lasso). Picks resolve through the GPU id
+// buffer when the view renders and fall back to CPU ray casts otherwise
+// (ViewportPicker documents the timing); an armed eyedropper takes a click
+// instead of the selection. Local view (view3d.localview) isolates some
+// entities in this viewport only: its render view draws and picks just them.
 class ViewportPanel final : public EditorPanel {
   public:
     explicit ViewportPanel(ViewportRegistry& registry);
@@ -95,7 +107,64 @@ class ViewportPanel final : public EditorPanel {
     // navigation, so camera input waits until the button is released.
     void suppressCameraUntilRightRelease();
 
+    // Queues a click selection at a view-pixel position (continuous, origin
+    // at the image's top-left corner). The next draw starts its pick and
+    // applies it when it resolves: to the armed eyedropper, else to the
+    // selection (a miss clears it unless extending). cycle steps through
+    // the entities under the point, front to back, from the active one.
+    void requestClickSelect(glm::vec2 viewPoint, bool extend, bool cycle);
+    // The mouse position over the image in the latest draw, in view pixels.
+    glm::vec2 mouseInView() const;
+    // Modal box and lasso tools; at most one runs at a time, and starting
+    // one cancels the other.
+    void beginBoxSelect(SelectionSetMode mode);
+    void beginLassoSelect(SelectionSetMode mode, bool rightDrag);
+    void cancelSelectTool();
+    bool selectToolActive() const;
+    const BoxSelect& boxSelect() const;
+    const LassoSelect& lassoSelect() const;
+    // Whether a pick waits for the GPU.
+    bool pickPending() const;
+    // The latest resolved pick; empty before the first.
+    const std::optional<ViewportPickOutcome>& lastPickOutcome() const;
+
+    // Local view: isolates the existing entities among `entities` and their
+    // descendants, remembering the camera, and frames them. Returns false
+    // (changing nothing) when none exists or local view is already on.
+    bool enterLocalView(Scene& scene, const AssetManager& assets, std::span<const SceneEntityId> entities);
+    // Restores the camera (and camera view) from before local view.
+    void exitLocalView();
+    bool localViewActive() const;
+    // The entities local view was entered with; empty outside local view.
+    std::span<const SceneEntityId> localViewEntities() const;
+    // The sorted render objects isolated in the latest draw (the entities and
+    // their descendants that still exist); nullopt outside local view.
+    const std::optional<std::vector<RenderObjectId>>& localViewObjects() const;
+
   private:
+    // A click or region pick waiting for the next draw to start it.
+    struct QueuedSelect {
+        ViewportPickKind kind{ViewportPickKind::Click};
+        glm::vec2 point{0.0f};
+        RegionSelection region;
+        bool extend{false};
+    };
+
+    // What a started pick will do once it resolves.
+    struct SelectIntent {
+        ViewportPickKind kind{ViewportPickKind::Click};
+        bool extend{false};
+        SelectionSetMode mode{SelectionSetMode::Set};
+        // The eyedropper was armed when the click started.
+        bool eyedropper{false};
+    };
+
+    struct LocalView {
+        std::vector<SceneEntityId> entities;
+        EditorCamera previousCamera;
+        std::optional<SceneEntityId> previousCameraView;
+    };
+
     // Pushes the camera, shading, grid, outline, and scene gizmos to the
     // render view.
     void syncRenderView(EditorContext& context);
@@ -113,7 +182,16 @@ class ViewportPanel final : public EditorPanel {
     void drawItemTab(EditorContext& context);
     // Returns whether the gizmo is in use or under the mouse.
     bool drawGizmo(EditorContext& context);
-    void pickAtMouse(EditorContext& context);
+    // Runs view3d.select or view3d.select_cycle for a click on the image.
+    void selectAtMouse(EditorContext& context);
+    // Starts the Ctrl+RMB lasso through view3d.select_lasso.
+    void startLassoGesture(EditorContext& context);
+    void updateSelectTools(bool imageHovered);
+    // Starts a queued pick and applies a resolved one.
+    void processPicks(EditorContext& context);
+    void applyPick(EditorContext& context, const SelectIntent& intent, const ViewportPickOutcome& outcome);
+    // Recomputes the isolated objects and hands them to the render view.
+    void syncLocalView(EditorContext& context);
     void drawActiveName(EditorContext& context) const;
     void setInputActive(EditorContext& context, bool active);
 
@@ -139,4 +217,17 @@ class ViewportPanel final : public EditorPanel {
     std::string m_gizmoBefore;
     std::vector<RenderObjectId> m_outlinedObjects;
     std::vector<Entity> m_outlineTraversal;
+    glm::vec2 m_mouseInView{0.0f};
+    BoxSelect m_boxSelect;
+    LassoSelect m_lassoSelect;
+    std::optional<QueuedSelect> m_queuedSelect;
+    ViewportPicker m_picker;
+    SelectIntent m_pendingIntent;
+    std::optional<ViewportPickOutcome> m_lastPickOutcome;
+    std::optional<LocalView> m_localView;
+    std::optional<std::vector<RenderObjectId>> m_localViewObjects;
+    // The isolation last handed to m_view; m_isolationView is empty until
+    // the first hand-over and after the view is released.
+    RenderViewId m_isolationView;
+    std::optional<std::vector<RenderObjectId>> m_sentIsolation;
 };

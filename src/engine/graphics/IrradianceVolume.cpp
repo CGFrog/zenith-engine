@@ -1,6 +1,7 @@
 #include "IrradianceVolume.hpp"
 
 #include "EnvironmentLighting.hpp"
+#include "engine/scene/SceneVisibility.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -160,14 +161,15 @@ Sample sampleMeanRadiance(const IrradianceVolumeData& data, const glm::vec3& pos
     return {.irradiance = radiance / totalWeight, .volumeWeight = edgeWeight(data, position, blendDistance)};
 }
 
-Entity selectVolume(const Scene& scene, const glm::vec3& cameraPosition) {
+Entity selectVolume(const Scene& scene, const glm::vec3& cameraPosition, SceneVisibilityMode visibilityMode) {
+    const SceneVisibility visibility(scene, visibilityMode);
     Entity selected = entt::null;
     float selectedDistance = std::numeric_limits<float>::max();
     uint64_t selectedId = 0;
     const auto volumes = scene.registry().view<const IrradianceVolumeComponent>();
     for (Entity entity : volumes) {
         const IrradianceVolumeComponent& volume = volumes.get<const IrradianceVolumeComponent>(entity);
-        if (!volume.bakedData) {
+        if (!volume.bakedData || !visibility.drawn(entity)) {
             continue;
         }
         const glm::vec3 center = (volume.bakedData->minimum + volume.bakedData->maximum) * 0.5f;

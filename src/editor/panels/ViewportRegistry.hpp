@@ -11,6 +11,7 @@
 
 struct EditorContext;
 class ViewportPanel;
+class ViewportPickProvider;
 
 // Identifies one viewport panel for as long as it exists; never reused.
 struct ViewportId {
@@ -99,11 +100,18 @@ class ViewportRegistry {
     // it, otherwise a created view. Empty when the renderer has no free view.
     RenderViewId acquireView(RenderRuntime& rendering, ViewportId requester);
     // Destroys a created view; the default view has its per-view state
-    // (camera, grid, outlines, settings, input) reset and becomes free.
+    // (camera, grid, outlines, settings, isolation, input) reset and becomes
+    // free.
     void releaseView(RenderRuntime& rendering, RenderViewId view);
     bool defaultViewFree() const;
     // The viewport holding the default view, or null.
     ViewportPanel* defaultViewHolder() const;
+
+    // Replaces the renderer as the source of viewport GPU picks, as tests do
+    // with a synthetic id grid; null (the default) picks through the
+    // renderer. The provider must outlive every viewport pick it serves.
+    void setPickProvider(ViewportPickProvider* provider);
+    ViewportPickProvider* pickProvider() const;
 
     // Rejects an empty title, a missing draw function, and a title already
     // used by a built-in or added tab.
@@ -127,5 +135,6 @@ class ViewportRegistry {
     uint32_t m_nextId{1};
     ViewportId m_active;
     ViewportId m_defaultViewHolder;
+    ViewportPickProvider* m_pickProvider{nullptr};
     std::vector<ViewportSidebarTab> m_sidebarTabs;
 };
