@@ -1,5 +1,6 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "PhysicsWorld.hpp"
+#include "JoltDebugDraw.hpp"
 
 #include <Jolt/Jolt.h>
 
@@ -210,6 +211,8 @@ class PhysicsWorld::Impl {
     std::mutex contactMutex;
     const Scene* observedScene{nullptr};
     uint32_t stepsUntilAudit{0};
+    // Created by the first drawDebug while Jolt has no debug renderer.
+    std::unique_ptr<JoltDebugDraw> debugRenderer;
 };
 
 PhysicsWorld::PhysicsWorld()
@@ -256,6 +259,7 @@ void PhysicsWorld::shutdown() {
     }
 
     clear();
+    m_impl->debugRenderer.reset();
     m_impl->system.reset();
     m_impl->jobs.reset();
     m_impl->tempAllocator.reset();
@@ -690,6 +694,36 @@ bool PhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& direction, 
 
 std::span<const ContactEvent> PhysicsWorld::contactEvents() const {
     return m_impl->contactEvents;
+}
+
+PhysicsResult PhysicsWorld::drawDebug(DebugDraw& output, const PhysicsDebugDrawOptions& options) const {
+    if (!m_impl->initialized) {
+        return {.error = "Physics debug drawing needs an initialized physics world"};
+    }
+    // Jolt keeps one debug renderer per process; a world borrows another
+    // world's for the duration of this call instead of creating a second.
+    JoltDebugDraw* renderer = m_impl->debugRenderer.get();
+    if (renderer == nullptr && JPH::DebugRenderer::sInstance != nullptr) {
+        renderer = dynamic_cast<JoltDebugDraw*>(JPH::DebugRenderer::sInstance);
+        if (renderer == nullptr) {
+            return {.error = "Physics debug drawing found another Jolt debug renderer in this process"};
+        }
+    }
+    if (renderer == nullptr) {
+        m_impl->debugRenderer = std::make_unique<JoltDebugDraw>();
+        renderer = m_impl->debugRenderer.get();
+    }
+    JPH::BodyManager::DrawSettings settings;
+    settings.mDrawShape = options.shapes;
+    settings.mDrawShapeWireframe = true;
+    settings.mDrawShapeColor = JPH::BodyManager::EShapeColor::MotionTypeColor;
+    settings.mDrawBoundingBox = options.boundingBoxes;
+    settings.mDrawCenterOfMassTransform = options.centersOfMass;
+    settings.mDrawVelocity = options.velocities;
+    renderer->setTarget(&output, options.depth);
+    m_impl->system->DrawBodies(settings, renderer);
+    renderer->setTarget(nullptr, options.depth);
+    return {.success = true};
 }
 
 const PhysicsWorldConfig& PhysicsWorld::config() const {

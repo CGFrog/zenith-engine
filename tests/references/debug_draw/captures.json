@@ -1,0 +1,25 @@
+{
+  "windowSize": "640x360",
+  "tolerance": {
+    "channelTolerance": 3,
+    "maximumChannelDifference": 255,
+    "maximumRootMeanSquareError": 1.5,
+    "maximumDifferingPixelFraction": 0.001
+  },
+  "views": [
+    {
+      "name": "primitives",
+      "covers": "every DebugDraw primitive in the default view, drawn after tone mapping: depth-tested lines hidden by and intersecting scene surfaces, always-on-top lines over them, and an alpha-blended circle",
+      "frame": 60
+    },
+    {
+      "name": "primitives_fsr1",
+      "covers": "the same primitives with FSR 1 at its performance preset, so output-resolution lines test against scene depth rendered at a lower resolution",
+      "frame": 60,
+      "environment": {
+        "ZENITH_FORCE_UPSCALER": "fsr1",
+        "ZENITH_FORCE_UPSCALER_QUALITY": "performance"
+      }
+    }
+  ]
+}

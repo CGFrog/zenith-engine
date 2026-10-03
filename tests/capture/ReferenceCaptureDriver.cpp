@@ -28,6 +28,8 @@ struct CaptureView {
     std::string name;
     std::string covers;
     uint64_t frame{0};
+    // ZENITH_CAPTURE_CAMERA for the game; empty for an executable with a
+    // fixed camera.
     std::string camera;
     std::string motion;
     std::vector<std::pair<std::string, std::string>> environment;
@@ -36,6 +38,7 @@ struct CaptureView {
 
 struct CaptureManifest {
     std::filesystem::path referenceDirectory;
+    // Passed as --project; empty for an executable that needs no project.
     std::filesystem::path project;
     std::string windowSize;
     std::vector<CaptureView> views;
@@ -107,7 +110,9 @@ bool loadManifest(const std::filesystem::path& path, CaptureManifest& manifest) 
     try {
         const nlohmann::json json = nlohmann::json::parse(stream);
         manifest.referenceDirectory = std::filesystem::absolute(path).parent_path();
-        manifest.project = (manifest.referenceDirectory / json.at("project").get<std::string>()).lexically_normal();
+        if (json.contains("project")) {
+            manifest.project = (manifest.referenceDirectory / json.at("project").get<std::string>()).lexically_normal();
+        }
         manifest.windowSize = json.at("windowSize").get<std::string>();
         const ImageComparisonTolerance defaults = readTolerance(json.value("tolerance", nlohmann::json::object()), {});
         for (const nlohmann::json& entry : json.at("views")) {
@@ -115,7 +120,7 @@ bool loadManifest(const std::filesystem::path& path, CaptureManifest& manifest) 
             view.name = entry.at("name").get<std::string>();
             view.covers = entry.value("covers", std::string{});
             view.frame = entry.at("frame").get<uint64_t>();
-            view.camera = entry.at("camera").get<std::string>();
+            view.camera = entry.value("camera", std::string{});
             view.motion = entry.value("motion", std::string{});
             const nlohmann::json environment = entry.value("environment", nlohmann::json::object());
             for (const auto& [name, value] : environment.items()) {
@@ -206,7 +211,11 @@ bool runCapture(const DriverOptions& options, const CaptureManifest& manifest, c
     const std::string output = outputPath.string();
     SDL_SetEnvironmentVariable(environment, "ZENITH_CAPTURE_FRAME", frame.c_str(), true);
     SDL_SetEnvironmentVariable(environment, "ZENITH_CAPTURE_PATH", output.c_str(), true);
-    SDL_SetEnvironmentVariable(environment, "ZENITH_CAPTURE_CAMERA", view.camera.c_str(), true);
+    if (!view.camera.empty()) {
+        SDL_SetEnvironmentVariable(environment, "ZENITH_CAPTURE_CAMERA", view.camera.c_str(), true);
+    } else {
+        SDL_UnsetEnvironmentVariable(environment, "ZENITH_CAPTURE_CAMERA");
+    }
     SDL_SetEnvironmentVariable(environment, "ZENITH_WINDOW_SIZE", manifest.windowSize.c_str(), true);
     SDL_SetEnvironmentVariable(environment, "ZENITH_FRAME_DETERMINISTIC", "1", true);
     if (!view.motion.empty()) {
@@ -218,7 +227,9 @@ bool runCapture(const DriverOptions& options, const CaptureManifest& manifest, c
 
     const std::string executable = options.executable.string();
     const std::string project = manifest.project.string();
-    const char* arguments[]{executable.c_str(), "--project", project.c_str(), nullptr};
+    const char* withProject[]{executable.c_str(), "--project", project.c_str(), nullptr};
+    const char* withoutProject[]{executable.c_str(), nullptr};
+    const char** arguments = manifest.project.empty() ? withoutProject : withProject;
     const SDL_PropertiesID properties = SDL_CreateProperties();
     SDL_SetPointerProperty(properties, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, arguments);
     SDL_SetPointerProperty(properties, SDL_PROP_PROCESS_CREATE_ENVIRONMENT_POINTER, environment);

@@ -7,6 +7,7 @@
 #include "../window/Window.hpp"
 #include "Rendering.hpp"
 #include "graph/RenderGraph.hpp"
+#include "passes/DebugDrawPass.hpp"
 #include "passes/MeshPass.hpp"
 #include "passes/UiPass.hpp"
 #include "resources/FrameResources.hpp"
@@ -51,6 +52,8 @@ struct RenderGraphViewShape {
     // FSR 1: the composite renders into the upscaler's input, then EASU and RCAS.
     bool spatialUpscale{false};
     bool decals{false};
+    // Debug lines (RenderRuntime::debugDraw) blend over the finished output.
+    bool debugDraw{false};
 
     bool operator==(const RenderGraphViewShape&) const = default;
 };
@@ -185,12 +188,20 @@ class Renderer {
     void finishCapture(const FrameResources& frame);
     void pruneUnusedUiTextures(const AssetManager& assets);
     bool updateRenderGraphPlan();
+    // Draws this frame's debug lines into every recorded view and publishes
+    // each view's projected debug labels. After MeshPass::record.
+    bool recordDebugDraw(VkCommandBuffer commandBuffer);
+    // Ends the debug primitives' one-frame lifetime.
+    void clearDebugDraw();
 
     VulkanContext m_context;
     Surface m_surface;
     Swapchain m_swapchain;
     MeshPass m_meshPass;
     UiPass m_uiPass;
+    DebugDrawPass m_debugDrawPass;
+    // Per-frame scratch of recordDebugDraw.
+    std::vector<DebugDrawPassView> m_debugDrawViews;
     UiImageStore m_uiImages;
     ViewportTarget m_viewportTarget;
     // Indexed by view slot; slot 0 is unused (the default view's targets are

@@ -390,6 +390,16 @@ Jolt body automatically. Call `refreshBody`; it removes and rebuilds the body
 from current components. Forces, impulses, and velocity operations require a
 body already discovered by a step or explicit refresh.
 
+`PhysicsWorld::drawDebug(DebugDraw&, PhysicsDebugDrawOptions)` records collider
+wireframes, bounds, centres of mass, or velocities into a debug-draw list (see
+Debug drawing). Physics depends only on the renderer-independent
+`graphics/DebugDraw.hpp` recording type; `physics/JoltDebugDraw` adapts Jolt's
+`DebugRendererSimple` to it. Jolt is built with `JPH_DEBUG_RENDERER` in every
+configuration (`DEBUG_RENDERER_IN_DISTRIBUTION`), and Jolt publishes that
+definition to its users, so the library and the engine agree on it. Jolt
+allows one debug renderer per process: the first world that draws creates it
+and later worlds borrow it until its owner shuts down.
+
 ## Render flow
 
 Each frame slot waits on its fence before reuse. The renderer then acquires a
@@ -731,6 +741,43 @@ per-view stats add up the views' draws; `RenderViewStats` reports each view's
 own counts and CPU recording time. `tests/engine/RenderViewTests.cpp` covers the
 registry and planning; `tests/engine/MultiViewSmokeTests.cpp` renders two
 created views beside the default one under strict validation.
+
+### Debug drawing
+
+`DebugDraw` (`graphics/DebugDraw.hpp`) is an immediate-mode recording of lines
+and wire shapes (line, arrow, AABB and oriented box, sphere, circle, frustum,
+cone, capsule) plus world-anchored text labels. It is plain data with no
+graphics types, so any subsystem it is passed to can record. Colours are
+display-referred RGBA; each primitive is depth tested or drawn always on top.
+`RenderRuntime::debugDraw()` holds the primitives every view draws and
+`viewDebugDraw(view)` those of one view; there is no global instance.
+
+Lifetime is one frame: primitives recorded during update and UI building are
+drawn by the next `Renderer::drawFrame`, which clears every list when it
+returns, also when the frame is skipped. `DebugDrawPass` draws them as a
+LINE_LIST in every recorded view after the post chain (tone mapping, FSR,
+colour grade) and before the UI, into the view's display-referred output:
+
+- Colours are exact (exposure, bloom, and the grade never touch them), and
+  lines use the unjittered projection and never enter the TAA history, so
+  they neither shimmer nor smear.
+- Depth-tested lines compare their forward distance with the view's reversed-Z
+  scene depth, fetched in the fragment shader at the texel under each output
+  pixel. The depth buffer can be at a lower render resolution than the output
+  (dynamic resolution, TAAU, FSR 1), so a depth attachment test would not
+  line up. A 0.4% relative bias keeps lines lying on surfaces visible.
+- Lines are 1 pixel wide and not anti-aliased.
+
+The render graph declares a `debug draw` pass per view (reading scene depth,
+read-writing the output) when the view has lines, so the barrier that hands an
+offscreen view to the UI comes from it. Labels are not rasterized by the
+engine: after recording, the renderer projects each view's labels with the
+camera it rendered (`projectDebugLabels`) and publishes them through
+`viewDebugLabels(view)` in view pixels for the editor or game UI to draw;
+labels behind the camera or outside the view are dropped.
+`tests/engine/DebugDrawTests.cpp` covers tessellation, projection, and the
+Jolt adapter on the CPU; `tests/engine/DebugDrawSmokeTests.cpp` draws in three
+views under strict validation and renders the `debug_draw` reference set.
 
 ### Editor viewport
 
