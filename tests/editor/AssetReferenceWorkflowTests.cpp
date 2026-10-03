@@ -71,9 +71,8 @@ struct EditorStandIn {
     explicit EditorStandIn(const std::filesystem::path& assetRoot)
         : document(assetRoot) {}
 
-    AssetBrowserActions actions() {
+    ProjectAssetActions actions() {
         return {
-            .openScene = {},
             .reloadModel =
                 [this](const std::filesystem::path& path) {
                     reloadedModels.push_back(path);
@@ -108,13 +107,13 @@ struct EditorStandIn {
     }
 };
 
-// Polls the browser like the editor's frame loop until done() holds, for at
+// Polls the project like the editor's frame loop until done() holds, for at
 // most ten seconds.
-bool waitFor(AssetBrowserPanel& panel, EditorStandIn& editor, const std::function<bool()>& done) {
+bool waitFor(ProjectAssets& project, EditorStandIn& editor, const std::function<bool()>& done) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    const AssetBrowserActions actions = editor.actions();
+    const ProjectAssetActions actions = editor.actions();
     while (std::chrono::steady_clock::now() < deadline) {
-        panel.pollChanges(editor.diagnostics, actions);
+        project.pollChanges(editor.diagnostics, actions);
         if (done()) {
             return true;
         }
@@ -146,14 +145,15 @@ void testWorkflow(const std::filesystem::path& sourceAssets, const std::filesyst
     catalogOptions.watcher.debounce = std::chrono::milliseconds(50);
     catalogOptions.watcher.maxDelay = std::chrono::milliseconds(500);
     catalogOptions.watcher.pollingInterval = std::chrono::milliseconds(100);
-    AssetBrowserPanel panel(content, scenes, directory / "settings" / "asset-browser.json", catalogOptions);
+    ProjectAssets project(content, scenes, directory / "settings" / "asset-browser.json", catalogOptions);
+    AssetBrowserPanel panel(project);
     EditorStandIn editor(content);
-    const AssetBrowserActions actions = editor.actions();
+    const ProjectAssetActions actions = editor.actions();
     // The first poll scans the project, the second starts the watchers.
-    panel.pollChanges(editor.diagnostics, actions);
-    panel.pollChanges(editor.diagnostics, actions);
-    expect(panel.catalog().watching(), "the browser should watch the project");
-    editor.document.setAssetDatabase(panel.assetDatabase());
+    project.pollChanges(editor.diagnostics, actions);
+    project.pollChanges(editor.diagnostics, actions);
+    expect(project.catalog().watching(), "the browser should watch the project");
+    editor.document.setAssetDatabase(project.assetDatabase());
     const AssetGuid modelGuid = sidecarGuid(content / "models" / "cube.gltf");
     const AssetGuid textureGuid = sidecarGuid(content / "textures" / "arrow.png");
     expect(modelGuid && textureGuid, "scanning should give every asset a sidecar GUID");
@@ -176,7 +176,7 @@ void testWorkflow(const std::filesystem::path& sourceAssets, const std::filesyst
 
     // Renaming in the browser carries the sidecar and the open scene follows.
     panel.renameItem(content / "models" / "cube.gltf", "box", editor.diagnostics);
-    panel.dispatchChanges(editor.diagnostics, actions);
+    project.dispatchChanges(editor.diagnostics, actions);
     expect(sidecarGuid(content / "models" / "box.gltf") == modelGuid &&
                !std::filesystem::exists(assetMetaPath(content / "models" / "cube.gltf")),
            "renaming in the browser should move the sidecar and keep the GUID");
@@ -186,7 +186,7 @@ void testWorkflow(const std::filesystem::path& sourceAssets, const std::filesyst
 
     // Moving in the browser does the same.
     panel.moveItem(content / "models" / "box.gltf", content / "props", editor.diagnostics);
-    panel.dispatchChanges(editor.diagnostics, actions);
+    project.dispatchChanges(editor.diagnostics, actions);
     expect(sidecarGuid(content / "props" / "box.gltf") == modelGuid, "moving should keep the GUID");
     expect(serialized(editor).find("props/box.gltf") != std::string::npos,
            "the open scene's references should follow a moved model");
@@ -196,9 +196,9 @@ void testWorkflow(const std::filesystem::path& sourceAssets, const std::filesyst
     std::filesystem::rename(content / "textures" / "arrow.png", content / "textures" / "signs" / "arrow.png");
     std::filesystem::rename(assetMetaPath(content / "textures" / "arrow.png"),
                             assetMetaPath(content / "textures" / "signs" / "arrow.png"));
-    expect(waitFor(panel, editor, [&] { return editor.moved(content / "textures" / "signs" / "arrow.png"); }),
+    expect(waitFor(project, editor, [&] { return editor.moved(content / "textures" / "signs" / "arrow.png"); }),
            "the watcher should report a texture moved outside the editor");
-    expect(panel.catalog().findAsset(normalizedCatalogPath(content / "textures" / "signs" / "arrow.png")) != nullptr,
+    expect(project.catalog().findAsset(normalizedCatalogPath(content / "textures" / "signs" / "arrow.png")) != nullptr,
            "the catalog should list the moved texture");
 
     // The file on disk still names the old paths; GUIDs find the assets.
@@ -217,7 +217,7 @@ void testWorkflow(const std::filesystem::path& sourceAssets, const std::filesyst
 
     // Renaming the open scene in the browser moves the document with it.
     panel.renameItem(scenePath, "renamed", editor.diagnostics);
-    panel.dispatchChanges(editor.diagnostics, actions);
+    project.dispatchChanges(editor.diagnostics, actions);
     const std::filesystem::path renamedScene = normalizedCatalogPath(scenes / "renamed.zenith-scene");
     expect(editor.document.path() && normalizedCatalogPath(*editor.document.path()) == renamedScene,
            "renaming the open scene should update the document path");
@@ -231,14 +231,14 @@ void testWorkflow(const std::filesystem::path& sourceAssets, const std::filesyst
         append << "\n\n";
     }
     const std::filesystem::path boxPath = normalizedCatalogPath(content / "props" / "box.gltf");
-    expect(waitFor(panel, editor,
+    expect(waitFor(project, editor,
                    [&] { return std::ranges::find(editor.reloadedModels, boxPath) != editor.reloadedModels.end(); }),
            "a model changed on disk should be reloaded automatically");
     expect(editor.lastReloadSucceeded, "the automatic model reload should succeed");
 
     // Deleting the open scene behind the browser's back detaches the document.
     std::filesystem::remove(renamedScene);
-    expect(waitFor(panel, editor, [&] { return !editor.document.path().has_value(); }),
+    expect(waitFor(project, editor, [&] { return !editor.document.path().has_value(); }),
            "removing the open scene's file should make the document untitled");
     expect(editor.document.dirty(), "a detached document should have unsaved changes");
 

@@ -1,32 +1,32 @@
 #pragma once
 
 #include "editor/panels/EditorPanel.hpp"
-#include "editor/project/AssetCatalog.hpp"
-#include "editor/project/ThumbnailCache.hpp"
-#include "editor/settings/AssetBrowserSettings.hpp"
+#include "editor/project/ProjectAssets.hpp"
 
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
-#include <memory>
 #include <optional>
-#include <span>
 #include <string>
 #include <vector>
 
 class EditorDiagnostics;
 
-// What the browser asks of the editor when the user acts on an asset or the
-// project changes on disk. Unset actions are simply not offered or skipped.
+// What the browser asks of the editor when the user acts on an asset. Unset
+// actions are simply not offered.
 struct AssetBrowserActions {
     std::function<void(const std::filesystem::path&)> openScene;
-    // Re-imports a model; called by the Reload Model button and automatically
-    // when a model file changes on disk.
+    // Re-imports a model; called by the Reload Model button.
     std::function<void(const std::filesystem::path&)> reloadModel;
-    // Project files moved or were renamed, in the browser or outside it.
-    std::function<void(std::span<const ProjectFileMove>)> filesMoved;
-    // Project files were moved to the trash or deleted.
-    std::function<void(std::span<const std::filesystem::path>)> filesRemoved;
+};
+
+// Whether a browser's folder and view mode are remembered across sessions.
+// One browser (the first the editor opens) is Primary; any others keep their
+// view state in memory only, so several browsers never fight over the file.
+enum class AssetBrowserRole {
+    Primary,
+    Secondary,
 };
 
 // Browses the project's asset and scene roots: a folder tree with favourites,
@@ -36,18 +36,18 @@ struct AssetBrowserActions {
 // "ZENITH_MODEL_ASSET" payloads, and any item drags onto a folder to move it;
 // scenes open on double-click.
 //
-// The catalog identifies files through the project's asset databases, so
-// renames and moves keep `.meta` sidecars and GUIDs, and file watchers report
-// external changes as they happen: changed models are reloaded, changed
-// textures get fresh thumbnails, and moves and removals are passed to the
-// editor so open documents follow them. View mode, favourites, and the last
-// folder persist in the settings file.
+// The panel is one view over a shared ProjectAssets service, which owns the
+// catalog, watchers, thumbnails, change dispatch, favourites, and the file
+// operations. The panel holds only its view state (current folder,
+// selection, search, filters, view mode, open dialogs), so any number of
+// browsers can show the same project; each follows renames and moves made by
+// any of them. It never polls or dispatches project changes itself.
 class AssetBrowserPanel final : public EditorPanel {
   public:
-    // settingsFile is the panel's preferences file (asset-browser.json in the
-    // editor's settings directory); it is read here and written on change.
-    AssetBrowserPanel(std::filesystem::path assetRoot, std::filesystem::path sceneRoot,
-                      std::filesystem::path settingsFile, AssetCatalogOptions catalogOptions = {});
+    // project must outlive the panel. A Primary browser starts at the
+    // remembered folder and view mode and remembers its changes; a Secondary
+    // one starts the same way but keeps its changes to itself.
+    explicit AssetBrowserPanel(ProjectAssets& project, AssetBrowserRole role = AssetBrowserRole::Primary);
 
     const char* title() const override;
     void update(EditorContext& context, const InputState& input, float deltaSeconds) override;
@@ -57,24 +57,22 @@ class AssetBrowserPanel final : public EditorPanel {
     // with actions bound to the editor session; it needs no session itself.
     void drawBrowser(EditorDiagnostics& diagnostics, const AssetBrowserActions& actions);
 
-    // Rescans the project. Changes after the first scan are queued for the
-    // next dispatchChanges, and changed textures get fresh thumbnails.
+    // Rescans the project through the service, then syncs this view.
     void refresh(EditorDiagnostics& diagnostics);
-    // Picks up what the file watchers saw (or rescans once a second when the
-    // project cannot be watched), then dispatches every queued change.
-    void pollChanges(EditorDiagnostics& diagnostics, const AssetBrowserActions& actions, float deltaSeconds = 0.0f);
-    // Acts on queued changes: modified models are reloaded, modified textures
-    // are reported, and moves and removals are passed on.
-    void dispatchChanges(EditorDiagnostics& diagnostics, const AssetBrowserActions& actions);
+    // Follows renames and moves made through the service since the last sync,
+    // then falls back from a vanished folder to its nearest surviving
+    // ancestor and clears a vanished selection. update() and drawBrowser()
+    // call it; after a scan has listed the project, state is always valid.
+    void syncWithProject();
 
     const AssetCatalog& catalog() const;
-    // The asset root's database, for scene documents to resolve GUIDs.
-    std::shared_ptr<const AssetDatabase> assetDatabase() const;
+    AssetBrowserRole role() const;
     const std::filesystem::path& currentFolder() const;
     // Shows a catalog folder; unknown folders are refused with a diagnostic.
     void navigateTo(const std::filesystem::path& folder, EditorDiagnostics& diagnostics);
     AssetBrowserViewMode viewMode() const;
     void setViewMode(AssetBrowserViewMode mode, EditorDiagnostics& diagnostics);
+    // Favourites are shared by every browser on the project.
     bool isFavourite(const std::filesystem::path& folder) const;
     void toggleFavourite(const std::filesystem::path& folder, EditorDiagnostics& diagnostics);
     const std::filesystem::path& selectedPath() const;
@@ -82,8 +80,8 @@ class AssetBrowserPanel final : public EditorPanel {
     void setSearchText(std::string text);
     void setKindShown(EditorAssetKind kind, bool shown);
 
-    // File commands. Each reports its outcome through diagnostics, rescans the
-    // catalog, and selects what it produced.
+    // File commands, run through the service. Each reports its outcome
+    // through diagnostics and selects what it produced.
     void createFolder(EditorDiagnostics& diagnostics);
     void createScene(EditorDiagnostics& diagnostics);
     void renameItem(const std::filesystem::path& item, const std::string& utf8NewName, EditorDiagnostics& diagnostics);
@@ -128,19 +126,13 @@ class AssetBrowserPanel final : public EditorPanel {
         Delete,
     };
 
-    void rescan(EditorDiagnostics& diagnostics);
-    void absorb(AssetCatalogResult result, EditorDiagnostics& diagnostics);
-    void followMovedItem(const std::filesystem::path& source, const std::filesystem::path& destination,
-                         EditorDiagnostics& diagnostics);
+    void followItemMoves();
+    void keepStateValid();
+    void select(const std::optional<std::filesystem::path>& produced);
+    void rememberView(EditorDiagnostics& diagnostics);
     AssetBrowserActions sessionActions(EditorContext& context);
     void acceptItemDrop(const std::filesystem::path& folder);
-    void reportOutcome(EditorDiagnostics& diagnostics, bool success, const std::string& message);
-    void saveSettings(EditorDiagnostics& diagnostics);
-    void reportPendingSettingsError(EditorDiagnostics& diagnostics);
-    void keepStateValid();
 
-    std::string folderKey(const std::filesystem::path& folder) const;
-    std::filesystem::path resolveFolderKey(const std::string& key) const;
     std::string rootLabel(const std::filesystem::path& root) const;
     bool isRoot(const std::filesystem::path& path) const;
 
@@ -161,24 +153,19 @@ class AssetBrowserPanel final : public EditorPanel {
     void drawModals(EditorDiagnostics& diagnostics);
     std::string textureDetail(const EditorAssetRecord& asset);
 
-    AssetCatalog m_catalog;
-    ThumbnailCache m_thumbnails;
-    std::filesystem::path m_settingsPath;
-    AssetBrowserSettings m_settings;
-    std::string m_pendingSettingsError;
+    ProjectAssets& m_project;
+    AssetBrowserRole m_role;
+    AssetBrowserViewMode m_viewMode;
     std::filesystem::path m_currentFolder;
     std::filesystem::path m_selected;
     std::string m_search;
     std::array<bool, 4> m_shownKinds{true, true, true, true};
     std::optional<DeferredCommand> m_deferred;
-    // Catalog changes and moved or removed files not yet dispatched.
-    AssetCatalogResult m_pending{.success = true};
+    // The last service move this view has followed.
+    uint64_t m_followedItemMove{0};
     OpenModal m_openModal{OpenModal::None};
     bool m_modalNeedsOpening{false};
     std::filesystem::path m_modalTarget;
     std::string m_renameText;
     bool m_revealCurrentInTree{true};
-    float m_refreshElapsed{0.0f};
-    bool m_scanAttempted{false};
-    bool m_initialized{false};
 };

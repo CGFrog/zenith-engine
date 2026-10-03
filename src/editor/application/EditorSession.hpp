@@ -24,6 +24,7 @@
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/GraphicsPanel.hpp"
 #include "editor/panels/ViewportPanel.hpp"
+#include "editor/project/ProjectAssets.hpp"
 #include "editor/settings/EditorRenderSettings.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "engine/application/Application.hpp"
@@ -138,6 +139,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     bool updateSmokeAreas(ApplicationContext& context);
 
     SceneResult prepareSmokeScenario(ApplicationContext& context);
+    // What the editor does when project files change; dispatched by m_projectAssets.
+    ProjectAssetActions projectAssetActions(ApplicationContext& context);
     void updateSmokeScenario(ApplicationContext& context);
     void updateSmokeModuleReload(ApplicationContext& context);
     void releaseSmokeLayers();
@@ -208,6 +211,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     KeymapEditor m_keymapEditor;
     LastOperatorPanel m_lastOperatorPanel;
     bool m_showKeymapEditor{false};
+    // The project's asset service, shared by every asset browser; declared
+    // before the panels that reference it.
+    ProjectAssets m_projectAssets;
 
     // Panels holding editor-wide state, shown by single-instance area types.
     // Per-area panels (Hierarchy, Inspector, ...) are created by their types.

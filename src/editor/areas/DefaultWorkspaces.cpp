@@ -11,7 +11,7 @@ using enum DefaultDockSlot;
 constexpr std::array layoutAreas{
     DefaultArea{"viewport", Center},          DefaultArea{"hierarchy", Left},         DefaultArea{"inspector", Right},
     DefaultArea{"graphics", RightBottom},     DefaultArea{"diagnostics", Bottom},     DefaultArea{"build", Bottom},
-    DefaultArea{"render_statistics", Bottom}, DefaultArea{"asset_browser", Floating},
+    DefaultArea{"render_statistics", Bottom}, DefaultArea{"asset_browser", Bottom},
 };
 
 constexpr std::array lightingAreas{

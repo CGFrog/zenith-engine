@@ -539,6 +539,7 @@ add_library(zenith_editor_app STATIC
     src/editor/project/DerivedAssetInspector.cpp
     src/editor/project/ExternalEditor.cpp
     src/editor/project/IrradianceVolumeBaker.cpp
+    src/editor/project/ProjectAssets.cpp
     src/editor/project/ProjectFileOperations.cpp
     src/editor/project/ReflectionProbeBaker.cpp
     src/editor/project/ThumbnailCache.cpp
