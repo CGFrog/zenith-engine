@@ -40,55 +40,105 @@
 #include <unordered_set>
 #include <vector>
 
+// One render view a frame records (see RenderRuntime): where it draws and what
+// it shows. The targets must stay valid until the frame's submission retires.
+struct MeshPassViewRequest {
+    // MeshPass view slot (RenderViewId::index); slot 0 is the default view.
+    uint32_t view{0};
+    VkImage colorImage{VK_NULL_HANDLE};
+    VkImageView colorView{VK_NULL_HANDLE};
+    // Layout of colorImage before the frame; UNDEFINED discards its contents.
+    VkImageLayout colorOldLayout{VK_IMAGE_LAYOUT_UNDEFINED};
+    VkImage depthImage{VK_NULL_HANDLE};
+    VkImageView depthView{VK_NULL_HANDLE};
+    // Output extent; equals the extent the view was created or resized with.
+    VkExtent2D extent{};
+    // The view's composeViewSettings result; not null.
+    const RenderSettings* settings{nullptr};
+    // planFrame(*settings, ...); only the default view may use GPU-driven
+    // submission, so other views must clear gpuDrivenSubmission.
+    MeshPassFramePlan plan;
+    // Replaces the scene's primary camera when set.
+    std::optional<RenderView> cameraOverride;
+    std::optional<GridOverlay> grid;
+    // Sorted object ids drawn with the editor outline.
+    std::span<const RenderObjectId> outlinedObjects;
+    // Receives the view's statistics when not null.
+    RenderViewStats* stats{nullptr};
+};
+
+// Records the scene for one or more render views per frame. A frame first runs
+// the work every view shares once (render packets, uploads, environment,
+// irradiance volume, local and directional shadows, texture streaming), placed
+// by the first (leading) view's camera, then each view's own passes into its
+// targets (light, probe and decal clusters, fog, prepass, AO, shading,
+// reflections, particles, post-processing). Per-view GPU state (ViewState)
+// owns its camera sets, clusters, temporal and exposure history, depth
+// pyramid, and post-process targets, so views of different sizes and cameras
+// never disturb each other's history.
 class MeshPass {
   public:
+    // Creates the shared resources and the default view (slot 0).
     bool init(const VulkanContext& context, VkFormat colorFormat, VkFormat depthFormat, uint32_t frameCount,
               VkExtent2D extent, VkImageView depthView);
-    bool resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView);
 
-    // Decides this frame's graph-shaping choices; pass the result to record().
+    // Creates view slot `view` (>= 1) for targets of `extent` whose depth is
+    // `depthView`. Fails without leaving state behind.
+    bool createView(const VulkanContext& context, uint32_t view, VkExtent2D extent, VkImageView depthView);
+    // Resizes a view's size-dependent targets and discards its history. The
+    // caller waited until no submitted frame uses the view.
+    bool resizeView(const VulkanContext& context, uint32_t view, VkExtent2D extent, VkImageView depthView);
+    // Releases a created view. The caller waited until no submitted frame uses
+    // it; the default view lives until shutdown.
+    void destroyView(const VulkanContext& context, uint32_t view);
+
+    bool hasView(uint32_t view) const {
+        return view < m_views.size() && m_views[view] != nullptr;
+    }
+
+    // Decides a view's graph-shaping choices; pass the result in its request.
     MeshPassFramePlan planFrame(const RenderSettings& settings, const RenderCapabilities& capabilities) const {
         return planMeshPassFrame(settings, capabilities, m_diagnosticOverrides);
     }
 
-    // `plan` must come from planFrame() with this frame's settings.
-    bool record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImageView colorView, VkImage depthImage,
-                VkImageView depthView, VkExtent2D extent, uint32_t frameIndex, const Scene& scene,
-                const AssetManager& assets, RenderRuntime& rendering, const MeshPassFramePlan& plan,
-                FrameTaskExecutor& frameTasks, VkQueryPool timestampQueries,
-                VkImageLayout colorOldLayout = VK_IMAGE_LAYOUT_UNDEFINED);
+    // Records the frame's shared work and then every view in `views` order;
+    // views[0] leads (see the class comment) and receives the frame's GPU
+    // timestamps. Every request names a distinct existing view.
+    bool record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const Scene& scene, const AssetManager& assets,
+                RenderRuntime& rendering, std::span<const MeshPassViewRequest> views, FrameTaskExecutor& frameTasks,
+                VkQueryPool timestampQueries);
     bool uiTexture(TextureHandle handle, const AssetManager& assets, VkSampler& sampler, VkImageView& view);
 
     bool gpuDrivenSupported() const {
         return m_gpuDrivenSupported;
     }
 
+    // Pipelines created at startup; each created view adds its own per-view
+    // pass pipelines on top (see ViewState).
     uint32_t prewarmedPipelineCount() const {
         // Thirteen graphics pipelines (two depth-normal, one local-shadow), the
         // light- and reflection-probe-cluster assignments, the depth-pyramid
         // build, ambient occlusion, volumetric fog, depth of field, particles,
         // FSR 1, and the environment pipelines.
-        return 16u + m_ambientOcclusion.pipelineCount() + m_environmentPass.pipelineCount() +
+        const ViewState& view = *m_views.front();
+        return 16u + view.ambientOcclusion.pipelineCount() + m_environmentPass.pipelineCount() +
                DepthOfFieldPass::pipelineCount() + ParticlePass::pipelineCount() +
-               (m_volumetricFog.supported() ? VolumetricFogPass::pipelineCount() : 0u) +
-               m_postProcess.spatialUpscalePipelineCount() +
+               (view.volumetricFog.supported() ? VolumetricFogPass::pipelineCount() : 0u) +
+               view.postProcess.spatialUpscalePipelineCount() +
                (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
     }
 
     bool volumetricFogSupported() const {
-        return m_volumetricFog.supported();
+        return m_views.front()->volumetricFog.supported();
     }
 
     bool spatialUpscaleSupported() const {
-        return m_postProcess.spatialUpscaleSupported();
+        return m_views.front()->postProcess.spatialUpscaleSupported();
     }
 
     uint32_t localLightCapacity() const {
-        return m_clusteredLighting.lightCapacity();
+        return m_views.front()->clusteredLighting.lightCapacity();
     }
-
-    // Empty unless the latest record() for frameIndex ran the depth prepass.
-    SceneGeometryViews sceneGeometry(uint32_t frameIndex) const;
 
     VkSemaphore uploadTimelineSemaphore() const {
         return m_uploadContext.timelineSemaphore();
@@ -106,9 +156,15 @@ class MeshPass {
         return m_textureUploadContext.requiredTimelineValue();
     }
 
-    // See PostProcessPass::setFixedFrameSeconds.
+    // See PostProcessPass::setFixedFrameSeconds. Applies to every view,
+    // including views created later.
     void setFixedFrameSeconds(std::optional<float> seconds) {
-        m_postProcess.setFixedFrameSeconds(seconds);
+        m_fixedFrameSeconds = seconds;
+        for (const std::unique_ptr<ViewState>& view : m_views) {
+            if (view) {
+                view->postProcess.setFixedFrameSeconds(seconds);
+            }
+        }
         m_particles.setFixedFrameSeconds(seconds);
     }
 
@@ -217,6 +273,76 @@ class MeshPass {
         uint32_t skinPaletteOffset{0};
     };
 
+    // Camera set of a created view for one frame slot. The default view uses
+    // the frame's sets (m_cameras) instead, whose object buffer also holds the
+    // shadow regions; a created view's object buffer holds only its own
+    // CPU-submitted objects, from index 0.
+    struct ViewCameraSet {
+        GpuBuffer uniform;
+        void* uniformMapped{nullptr};
+        GpuBuffer objects;
+        void* objectsMapped{nullptr};
+        VkDescriptorSet descriptor{VK_NULL_HANDLE};
+    };
+
+    // GPU state and history of one render view. Bindings that every view
+    // shares (shadow map, skin palettes, materials, environment, irradiance
+    // volume, local shadows) are copied from the frame's set of the same slot
+    // before a created view records; the rest point at the view's own passes.
+    // Owns its passes' pipelines, so creating a view also compiles those
+    // (through the pipeline cache).
+    struct ViewState {
+        bool sharesFrameSets{false};
+        VkDescriptorPool descriptorPool{VK_NULL_HANDLE};
+        std::vector<ViewCameraSet> cameras;
+        ClusteredLightingPass clusteredLighting;
+        ReflectionProbeClusterPass reflectionProbeClusters;
+        DecalClusterPass decalClusters;
+        VolumetricFogPass volumetricFog;
+        // Fog volume generation each frame slot's camera sets reference.
+        std::vector<uint64_t> fogDescriptorGenerations;
+        PostProcessPass postProcess;
+        DepthPyramid depthPyramid;
+        AmbientOcclusionPass ambientOcclusion;
+        TransmissionBackground transmissionBackground;
+        // Frame slot whose latest recording ran the depth prepass, if any.
+        std::optional<uint32_t> depthPrepassFrame;
+        bool depthInitialized{false};
+        GpuVisibilityResult visibility;
+        // What the CPU submits this frame, in draw order, and whether each
+        // entry is outlined in this view.
+        std::vector<const RenderItem*> visibleItems;
+        std::vector<uint8_t> visibleOutlined;
+        glm::vec3 previousCameraPosition{0.0f};
+        glm::vec3 previousCameraForward{0.0f, 0.0f, -1.0f};
+        glm::mat4 previousViewProjection{1.0f};
+        glm::mat4 previousUnjitteredViewProjection{1.0f};
+        glm::vec2 previousJitterNdc{0.0f};
+        bool cameraHistoryValid{false};
+        TemporalQualityController temporalQuality;
+    };
+
+    // The camera and sampling of one view for the frame being recorded.
+    struct ViewFrame {
+        glm::mat4 view{1.0f};
+        // Reversed-Z projection at the internal render extent, jittered with TAA.
+        glm::mat4 projection{1.0f};
+        glm::mat4 unjitteredViewProjection{1.0f};
+        glm::vec3 cameraPosition{0.0f};
+        glm::vec3 cameraForward{0.0f, 0.0f, -1.0f};
+        float verticalFov{0.0f};
+        float nearPlane{0.1f};
+        float farPlane{1000.0f};
+        bool cameraCut{false};
+        TemporalFrameState temporal;
+        VkExtent2D renderExtent{};
+        MeshLodView lodView;
+    };
+
+    // Shared results of the frame stage that every view reads; defined in
+    // MeshPass.cpp.
+    struct FrameState;
+
     enum class SceneAttachments {
         Clear,
         // Continue a scene pass whose attachments the caller already prepared.
@@ -234,25 +360,37 @@ class MeshPass {
     bool createDescriptors(const VulkanContext& context, uint32_t frameCount);
     bool createBindlessDescriptors(const VulkanContext& context, uint32_t frameCount);
     bool createGpuDrivenDescriptors();
+    // Initializes a view's passes and writes their camera-set bindings.
+    bool initViewPasses(const VulkanContext& context, ViewState& view, VkExtent2D extent, VkImageView depthView);
+    // A created view's per-slot uniform and object buffers and camera sets.
+    bool createViewCameraSets(ViewState& view);
+    void destroyViewState(const VulkanContext& context, ViewState& view);
+    // The view's camera set for a frame slot, and its GPU-driven set (null
+    // except for the default view with GPU-driven support).
+    VkDescriptorSet viewCameraSet(const ViewState& view, uint32_t frameIndex) const;
+    std::array<VkDescriptorSet, 2> viewCameraSets(const ViewState& view, uint32_t frameIndex) const;
+    // Copies the bindings every view shares from the frame's set of the slot
+    // into a created view's set. The slot's previous submission retired.
+    void copySharedCameraBindings(const ViewState& view, uint32_t frameIndex);
     // Stages every region in one upload submission.
     bool uploadBufferRegions(std::span<const BufferUploadRegion> regions);
     bool createGeometryBuffer(VkDeviceSize size, VkBufferUsageFlags usage, GpuBuffer& output);
     bool createZeroSkinInfluence();
-    void writeClusteredLightingDescriptors();
+    void writeClusteredLightingDescriptors(const ViewState& view);
     // Binds each frame slot's probe buffer to camera binding 17.
-    void writeReflectionProbeDescriptors();
-    void writeDecalDescriptors();
+    void writeReflectionProbeDescriptors(const ViewState& view);
+    void writeDecalDescriptors(const ViewState& view);
     // Decals to apply this frame, packed for upload; empty when decals are off.
     std::vector<GpuDecal> prepareDecals(const Scene& scene, const AssetManager& assets, const RenderSettings& settings,
                                         const glm::vec3& cameraPosition, const glm::mat4& view,
                                         uint32_t& sceneDecalCount);
     // Binds each frame slot's occlusion image to camera binding 13 of both sets.
-    void writeAmbientOcclusionDescriptors();
+    void writeAmbientOcclusionDescriptors(const ViewState& view);
     // Binds the fog pass's integrated volume to camera binding 18 of the frame
     // slot's sets when the volume changed since they were last written.
-    void writeVolumetricFogDescriptors(uint32_t frameIndex);
+    void writeVolumetricFogDescriptors(ViewState& view, uint32_t frameIndex);
     // Binds the transmission background to camera binding 24 of every set.
-    void writeTransmissionBackgroundDescriptors();
+    void writeTransmissionBackgroundDescriptors(const ViewState& view);
     bool ensureGeometryPage(uint32_t page);
     void destroyGeometryPage(const GeometryPage& page);
     void bindGeometryPage(VkCommandBuffer commandBuffer, uint32_t page) const;
@@ -316,17 +454,24 @@ class MeshPass {
         GraphicsPipeline blendDoubleSided;
     };
 
-    // Per-frame state shared by the draw-recording helpers.
+    // Per-view state shared by the draw-recording helpers.
     struct DrawContext {
         VkCommandBuffer commandBuffer{VK_NULL_HANDLE};
         uint32_t frameIndex{0};
         const MeshPipelineSet* pipelines{nullptr};
+        // Null for every view but the leading one, which writes the frame's
+        // timestamps.
         VkQueryPool timestampQueries{VK_NULL_HANDLE};
         OptionalPassTimestamps* passTimestamps{nullptr};
         RenderStats* stats{nullptr};
         // World-to-view transform; the depth prepass encodes view-space normals.
         glm::mat4 view{1.0f};
         VkExtent2D renderExtent{};
+        // The view being recorded, its camera set for the frame slot, and the
+        // index of its first CPU-submitted object in that set's object buffer.
+        ViewState* viewState{nullptr};
+        VkDescriptorSet cameraSet{VK_NULL_HANDLE};
+        uint32_t objectBase{0};
     };
 
     // Single- and double-sided pipelines for opaque surfaces of one pass.
@@ -353,13 +498,13 @@ class MeshPass {
         Gpu,
     };
 
-    // Updates the local-light shadow atlas and tells clustered lighting which
-    // uploaded lights are shadowed. Runs before anything binds the frame's
-    // camera sets (it may rebind the atlas).
-    void recordLocalShadows(VkCommandBuffer commandBuffer, uint32_t frameIndex, const Scene& scene,
-                            const AssetManager& assets, const RenderSettings& settings,
-                            std::span<const LocalLight> lights, const glm::vec3& cameraPosition,
-                            OptionalPassTimestamps& timestamps, RenderStats& stats);
+    // Updates the local-light shadow atlas and returns each light's first
+    // shadow tile (negative when unshadowed), for clustered lighting. Runs
+    // before anything binds the frame's camera sets (it may rebind the atlas).
+    std::vector<int32_t> recordLocalShadows(VkCommandBuffer commandBuffer, uint32_t frameIndex, const Scene& scene,
+                                            const AssetManager& assets, const RenderSettings& settings,
+                                            std::span<const LocalLight> lights, const glm::vec3& cameraPosition,
+                                            OptionalPassTimestamps& timestamps, RenderStats& stats);
     // Bounds of casters that moved or animated since the last local-shadow
     // update, before and after the change.
     void collectShadowCasterChanges(const Scene& scene);
@@ -376,14 +521,16 @@ class MeshPass {
     // cascade's rendering scope with the shadow pipeline bound.
     void recordGpuShadowCascade(VkCommandBuffer commandBuffer, uint32_t frameIndex, uint32_t cascade,
                                 RenderStats& stats);
+    // depthInitialized: whether the view's depth holds an earlier frame's
+    // depth in DEPTH_READ_ONLY_OPTIMAL; read only when attachments is Clear.
     void beginRendering(VkCommandBuffer commandBuffer, VkImageView colorView, VkImageView motionView,
-                        VkImage depthImage, VkImageView depthView, VkExtent2D extent,
-                        SceneAttachments attachments) const;
+                        VkImage depthImage, VkImageView depthView, VkExtent2D extent, SceneAttachments attachments,
+                        bool depthInitialized) const;
     // specularView may be VK_NULL_HANDLE, which discards the specular output.
     void beginDepthPrepass(VkCommandBuffer commandBuffer, VkImageView normalView, VkImageView specularView,
-                           VkImage depthImage, VkImageView depthView, VkExtent2D extent,
-                           SceneAttachments attachments) const;
-    void prepareDepthForClear(VkCommandBuffer commandBuffer, VkImage depthImage) const;
+                           VkImage depthImage, VkImageView depthView, VkExtent2D extent, SceneAttachments attachments,
+                           bool depthInitialized) const;
+    void prepareDepthForClear(VkCommandBuffer commandBuffer, VkImage depthImage, bool depthInitialized) const;
     void setSceneViewport(const DrawContext& draw) const;
     // Draws opaque depth and normals, then builds the depth pyramid from it.
     // With GPU-driven submission it also runs the late cull between phases.
@@ -419,13 +566,34 @@ class MeshPass {
     void bindOpaquePipeline(const DrawContext& draw, const GraphicsPipeline& pipeline, OpaquePipelines pipelines,
                             VkDescriptorSet cameraSet) const;
     void selectRenderItemLods(const MeshLodView& view);
-    bool prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lodView);
+    // visibleInstanceCount: the default view's CPU-visible instances.
+    bool prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lodView, uint32_t visibleInstanceCount);
     void recordGpuDrivenGroups(const DrawContext& draw, GpuCullPhase phase, OpaquePipelines pipelines);
     void prepareDepthForPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const;
     void restoreDepthAfterPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const;
-    // Fills m_visibleItems with what the CPU submits this frame, in draw order.
-    bool collectCpuSubmittedItems(bool gpuDrivenActive, const glm::vec3& cameraPosition);
-    void uploadCpuSubmittedObjects(uint32_t frameIndex);
+    // Fills view.visibleItems with what the CPU submits this frame, in draw
+    // order, and marks the entries outlined in this view.
+    bool collectCpuSubmittedItems(ViewState& view, bool gpuDrivenActive, const glm::vec3& cameraPosition,
+                                  std::span<const RenderObjectId> outlinedObjects);
+    void uploadCpuSubmittedObjects(const DrawContext& draw);
+    // Empty unless the view's latest recording for frameIndex ran the depth
+    // prepass.
+    SceneGeometryViews sceneGeometry(const ViewState& view, uint32_t frameIndex) const;
+    // The view's camera and sampling for this frame (advances its temporal
+    // controller, so call once per view and frame).
+    ViewFrame prepareViewFrame(ViewState& view, const MeshPassViewRequest& request, const Scene& scene,
+                               double previousGpuFrameMilliseconds) const;
+    // Shared frame stage, placed by the leading view.
+    bool recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameIndex, const Scene& scene,
+                          const AssetManager& assets, RenderRuntime& rendering, const MeshPassViewRequest& lead,
+                          const ViewFrame& leadFrame, FrameTaskExecutor& frameTasks, VkQueryPool timestampQueries,
+                          OptionalPassTimestamps& passTimestamps, FrameState& frame);
+    // One view's passes into its targets. `leading` marks views[0], the only
+    // view given the timestamp pool.
+    bool recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, const Scene& scene, const AssetManager& assets,
+                    RenderRuntime& rendering, const MeshPassViewRequest& request, const ViewFrame& viewFrame,
+                    bool leading, FrameTaskExecutor& frameTasks, VkQueryPool timestampQueries,
+                    OptionalPassTimestamps& passTimestamps, FrameState& frame);
     void recordSelectionMask(const DrawContext& draw);
     void recordShadedItems(const DrawContext& draw, ShadedItems selection);
     void recordOutlines(const DrawContext& draw);
@@ -483,12 +651,13 @@ class MeshPass {
     std::unordered_map<uint64_t, GpuSceneHandle> m_gpuRecords;
     std::unordered_map<uint64_t, size_t> m_gpuHandleItems;
     PersistentGpuScene m_gpuScene;
-    GpuVisibilityResult m_visibility;
     SceneRevisions m_sceneRevisions{};
     uint64_t m_assetRevision{0};
     uint64_t m_outlineRevision{0};
     bool m_packetCachingEnabled{true};
-    std::vector<const RenderItem*> m_visibleItems;
+    // Union of every recorded view's outlined objects; RenderItem::outlined
+    // marks it, and each view filters by its own list.
+    std::vector<RenderObjectId> m_outlinedObjects;
     std::vector<const RenderItem*> m_shadowVisibleItems;
     GpuTexture m_whiteTexture;
     GpuTexture m_normalTexture;
@@ -506,7 +675,6 @@ class MeshPass {
     std::vector<ShadowCasterBounds> m_changedShadowCasters;
     // Objects written to the local-shadow region of this frame's object buffer.
     uint32_t m_localShadowObjectCount{0};
-    bool m_depthInitialized{false};
     std::map<MeshShadingVariant, std::unique_ptr<MeshPipelineSet>> m_meshPipelines;
     VkFormat m_sceneColorFormat{VK_FORMAT_UNDEFINED};
     VkFormat m_sceneDepthFormat{VK_FORMAT_UNDEFINED};
@@ -515,21 +683,16 @@ class MeshPass {
     GraphicsPipeline m_outlinePipeline;
     GraphicsPipeline m_depthNormalPipeline;
     GraphicsPipeline m_depthNormalDoubleSidedPipeline;
-    PostProcessPass m_postProcess;
-    DepthPyramid m_depthPyramid;
-    AmbientOcclusionPass m_ambientOcclusion;
-    TransmissionBackground m_transmissionBackground;
-    // Frame slot whose latest record() ran the depth prepass, if any.
-    std::optional<uint32_t> m_depthPrepassFrame;
+    // Indexed by view slot; slot 0 (the default view) exists from init to
+    // shutdown, other slots between createView and destroyView.
+    std::vector<std::unique_ptr<ViewState>> m_views;
+    VkFormat m_outputFormat{VK_FORMAT_UNDEFINED};
+    std::optional<float> m_fixedFrameSeconds;
+    // GPU-driven submission and its occlusion history belong to the default
+    // view and bind its depth pyramid.
     GpuDrivenPass m_gpuDrivenPass;
-    ClusteredLightingPass m_clusteredLighting;
-    ReflectionProbeClusterPass m_reflectionProbeClusters;
-    DecalClusterPass m_decalClusters;
-    VolumetricFogPass m_volumetricFog;
     ParticlePass m_particles;
     std::array<VkImageView, particles::maximumSpriteTextures> m_particleSpriteViews{};
-    // Fog volume generation each frame slot's camera sets reference.
-    std::vector<uint64_t> m_fogDescriptorGenerations;
     bool m_gpuDrivenSupported{false};
     MeshPassDiagnosticOverrides m_diagnosticOverrides;
     std::vector<const RenderItem*> m_gpuDrivenCandidates;
@@ -546,13 +709,6 @@ class MeshPass {
     IndirectDrawPlan m_drawPlan;
     std::vector<GpuDrivenObjectRecord> m_gpuDrivenObjects;
     std::vector<GpuDrivenBatch> m_gpuDrivenBatches;
-    glm::vec3 m_previousCameraPosition{0.0f};
-    glm::vec3 m_previousCameraForward{0.0f, 0.0f, -1.0f};
-    glm::mat4 m_previousViewProjection{1.0f};
-    glm::mat4 m_previousUnjitteredViewProjection{1.0f};
-    glm::vec2 m_previousJitterNdc{0.0f};
-    bool m_cameraHistoryValid{false};
-    TemporalQualityController m_temporalQuality;
     EnvironmentPass m_environmentPass;
     // Irradiance volume (U6): probe buffer behind camera binding 8.
     IrradianceVolumePass m_irradianceVolume;

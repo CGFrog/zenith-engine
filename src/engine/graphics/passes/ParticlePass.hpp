@@ -99,7 +99,9 @@ struct ParticleDrawTargets {
 //   COLOR_ATTACHMENT_OPTIMAL. It draws into them in its own rendering scope
 //   (depth read-only, also sampled for soft particles) and returns with the
 //   same layouts and its attachment writes visible to later attachment use.
-//   It draws nothing unless this frame's recordSimulation recorded work.
+//   It draws nothing unless this frame's recordSimulation recorded work, and
+//   may run once per render view of the frame: the particles are simulated,
+//   culled, and sorted once, for the frame's leading view.
 //
 // Synchronization: the pool, sort keys, and draw arguments persist across
 // frames; each frame orders itself after earlier frames' compute, vertex, and

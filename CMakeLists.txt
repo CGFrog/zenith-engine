@@ -345,6 +345,8 @@ add_library(zenith_engine SHARED
     src/engine/graphics/RenderSubmission.cpp
     src/engine/graphics/MeshLodSelection.cpp
     src/engine/graphics/MeshPassFramePlan.cpp
+    src/engine/graphics/Rendering.cpp
+    src/engine/graphics/RenderViewPlanning.cpp
     src/engine/graphics/GpuCullLayout.cpp
     src/engine/graphics/TemporalQuality.cpp
     src/engine/graphics/ToneMapping.cpp
@@ -1054,6 +1056,22 @@ if(BUILD_TESTING)
     target_link_libraries(zenith_mesh_pass_frame_plan_tests PRIVATE zenith_engine)
     add_test(NAME zenith_mesh_pass_frame_plan COMMAND zenith_mesh_pass_frame_plan_tests)
 
+    add_executable(zenith_render_view_tests tests/engine/RenderViewTests.cpp)
+    target_link_libraries(zenith_render_view_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_render_views COMMAND zenith_render_view_tests)
+
+    # Two created render views beside the default one (docs/ARCHITECTURE.md,
+    # Render views); needs a Vulkan device like the editor smoke test.
+    add_executable(zenith_multi_view_smoke_tests tests/engine/MultiViewSmokeTests.cpp)
+    target_link_libraries(zenith_multi_view_smoke_tests PRIVATE zenith_engine)
+    add_dependencies(zenith_multi_view_smoke_tests zenith_assets)
+    add_test(NAME zenith_multi_view_vulkan_smoke COMMAND zenith_multi_view_smoke_tests)
+    set_tests_properties(zenith_multi_view_vulkan_smoke PROPERTIES
+        ENVIRONMENT "ZENITH_SMOKE_FRAMES=120"
+        LABELS "vulkan;smoke"
+        TIMEOUT 120
+    )
+
     add_executable(zenith_deferred_upload_tracker_tests tests/engine/DeferredUploadTrackerTests.cpp)
     target_link_libraries(zenith_deferred_upload_tracker_tests PRIVATE zenith_engine)
     add_test(NAME zenith_deferred_upload_tracker COMMAND zenith_deferred_upload_tracker_tests)
@@ -1525,4 +1543,8 @@ if(BUILD_TESTING)
         ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=600
     )
     set_tests_properties(zenith_validation_editor PROPERTIES RESOURCE_LOCK zenith_editor_user_data)
+    zenith_add_validation_smoke(zenith_validation_multi_view
+        COMMAND zenith_multi_view_smoke_tests
+        ENVIRONMENT ZENITH_SMOKE_FRAMES=120
+    )
 endif()

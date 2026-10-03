@@ -4,6 +4,7 @@
 #include "../IrradianceVolume.hpp"
 #include "../Lighting.hpp"
 #include "../ReflectionProbes.hpp"
+#include "../RenderViewPlanning.hpp"
 #include "../SpatialUpscale.hpp"
 #include "../resources/DescriptorPoolSizes.hpp"
 #include "../resources/MipChainBlit.hpp"
@@ -267,6 +268,110 @@ EnvironmentFrameRequest environmentRequest(const Scene& scene, const AssetManage
     }
     return request;
 }
+
+// Bindings of the camera set (set 0 of the mesh, shadow, outline, particle,
+// and skybox pipelines). Every view's camera set uses this layout.
+std::vector<VkDescriptorSetLayoutBinding> cameraLayoutBindings() {
+    return {{.binding = 0,
+             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT},
+            {.binding = 1,
+             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            {.binding = 2,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_VERTEX_BIT},
+            {.binding = 3,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_VERTEX_BIT},
+            {.binding = 4,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            // Image-based lighting, written by EnvironmentPass.
+            {.binding = EnvironmentPass::specularBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .descriptorCount = EnvironmentPass::environmentSlots,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            {.binding = EnvironmentPass::irradianceBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = EnvironmentPass::environmentSlots,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            {.binding = EnvironmentPass::brdfBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            // Irradiance volume probes, written by IrradianceVolumePass.
+            {.binding = IrradianceVolumePass::binding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            // Clustered local lighting: lights, per-cluster ranges, light indices.
+            {.binding = 9,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            {.binding = 10,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            {.binding = 11,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            {.binding = previousSkinPaletteBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_VERTEX_BIT},
+            // Screen-space ambient occlusion, written by AmbientOcclusionPass.
+            {.binding = ambientOcclusionBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            // Local-light shadow atlas and tile records, written by LocalShadowPass.
+            {.binding = LocalShadowPass::atlasBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            {.binding = LocalShadowPass::tileBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT},
+            // Per-pixel reflection probes: the resident probe cube array, written
+            // by EnvironmentPass, and the frame's probe buffer.
+            {.binding = EnvironmentPass::probeSpecularBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            {.binding = ReflectionProbeClusterPass::cameraBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            // Integrated volumetric fog, owned by VolumetricFogPass.
+            {.binding = volumetricFogBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            // Clustered decals: the frame's decal records and per-cluster decal
+            // lists, owned by DecalClusterPass.
+            {.binding = DecalClusterPass::recordsBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            {.binding = DecalClusterPass::clusterListsBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
+            // Opaque scene copy refracted by transmissive surfaces.
+            {.binding = transmissionBackgroundBinding,
+             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .descriptorCount = 1,
+             .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
+}
 } // namespace
 
 bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat depthFormat, uint32_t frameCount,
@@ -276,33 +381,19 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     m_allocator = context.vmaAllocator();
     m_blockCompressionSupported = context.blockCompressionSupported();
     m_packetCachingEnabled = SDL_getenv("ZENITH_DISABLE_RENDER_PACKET_CACHE") == nullptr;
+    m_outputFormat = colorFormat;
     m_renderItems.reserve(maximumObjectsPerFrame);
-    m_visibleItems.reserve(maximumObjectsPerFrame);
     m_shadowVisibleItems.reserve(maximumObjectsPerFrame);
     m_objectItems.reserve(maximumObjectsPerFrame);
     m_gpuRecords.reserve(maximumObjectsPerFrame);
     m_gpuHandleItems.reserve(maximumObjectsPerFrame);
-    m_visibility.visibleInstances.reserve(maximumObjectsPerFrame);
-    m_visibility.commands.reserve(maximumObjectsPerFrame);
     m_gpuDrivenObjects.reserve(maximumObjectsPerFrame);
     m_gpuDrivenBatches.reserve(maximumObjectsPerFrame);
     m_gpuDrivenCandidates.reserve(maximumObjectsPerFrame);
     m_gpuDrivenKeys.reserve(maximumObjectsPerFrame);
     if (!m_uploadContext.init(context, true) || !m_textureUploadContext.init(context, false) ||
-        !createDescriptors(context, frameCount) ||
-        !m_clusteredLighting.init(context, frameCount, ClusterGridConfiguration{}, maximumLocalLights) ||
-        !m_reflectionProbeClusters.init(context, frameCount, m_clusteredLighting.configuration()) ||
-        !m_decalClusters.init(context, frameCount, m_clusteredLighting.configuration()) ||
-        !m_volumetricFog.init(context, frameCount)) {
+        !createDescriptors(context, frameCount)) {
         return false;
-    }
-    writeClusteredLightingDescriptors();
-    writeReflectionProbeDescriptors();
-    writeDecalDescriptors();
-    // Written before the GPU-driven sets copy the shared bindings.
-    m_fogDescriptorGenerations.assign(frameCount, 0);
-    for (uint32_t frame = 0; frame < frameCount; ++frame) {
-        writeVolumetricFogDescriptors(frame);
     }
     TextureAsset white{.width = 1, .height = 1, .rgba = {255, 255, 255, 255}};
     TextureAsset normal{.width = 1, .height = 1, .rgba = {128, 128, 255, 255}};
@@ -311,13 +402,20 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
         !uploadTexture(normal, m_normalTexture) || !createBindlessDescriptors(context, frameCount) ||
         !createShadowResources(depthFormat) ||
         !m_localShadows.init(context, frameCount, depthFormat, m_cameraLayout, m_bindlessLayout) ||
-        !m_postProcess.init(context, colorFormat, depthFormat, frameCount, extent, depthView) ||
-        !m_depthPyramid.init(context, extent, depthView) || !m_ambientOcclusion.init(context, frameCount, extent) ||
-        !m_transmissionBackground.init(context, extent) || !createPipeline(PostProcessPass::sceneFormat, depthFormat) ||
+        !createPipeline(PostProcessPass::sceneFormat, depthFormat) ||
         !m_environmentPass.init(context, m_cameraLayout, PostProcessPass::sceneFormat, PostProcessPass::motionFormat,
                                 depthFormat, frameCount) ||
         !m_particles.init(context, frameCount, m_cameraLayout, PostProcessPass::sceneFormat,
                           PostProcessPass::motionFormat, depthFormat)) {
+        return false;
+    }
+    // The default view draws through the frame's camera sets; its bindings are
+    // written before the GPU-driven sets copy the shared ones.
+    m_views.clear();
+    m_views.push_back(std::make_unique<ViewState>());
+    ViewState& defaultView = *m_views.front();
+    defaultView.sharesFrameSets = true;
+    if (!initViewPasses(context, defaultView, extent, depthView)) {
         return false;
     }
     VkPhysicalDeviceVulkan12Features features12{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
@@ -332,13 +430,13 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
     for (uint32_t frame = 0; frame < frameCount; ++frame) {
         m_localShadows.writeDescriptors(frame, {&m_cameras[frame].descriptor, 1});
     }
-    m_gpuDrivenSupported =
-        m_gpuDrivenPass.init(context, frameCount, m_depthPyramid, limits, features12.drawIndirectCount == VK_TRUE);
+    m_gpuDrivenSupported = m_gpuDrivenPass.init(context, frameCount, defaultView.depthPyramid, limits,
+                                                features12.drawIndirectCount == VK_TRUE);
     if (m_gpuDrivenSupported && !createGpuDrivenDescriptors()) {
         return false;
     }
-    writeAmbientOcclusionDescriptors();
-    writeTransmissionBackgroundDescriptors();
+    writeAmbientOcclusionDescriptors(defaultView);
+    writeTransmissionBackgroundDescriptors(defaultView);
     if (!m_irradianceVolume.init(context, frameCount)) {
         return false;
     }
@@ -347,6 +445,220 @@ bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat
         m_irradianceVolume.writeDescriptors(frame, sets);
     }
     return true;
+}
+
+bool MeshPass::initViewPasses(const VulkanContext& context, ViewState& view, VkExtent2D extent, VkImageView depthView) {
+    const uint32_t frameCount = static_cast<uint32_t>(m_cameras.size());
+    view.visibleItems.reserve(maximumObjectsPerFrame);
+    view.visibleOutlined.reserve(maximumObjectsPerFrame);
+    view.visibility.visibleInstances.reserve(maximumObjectsPerFrame);
+    view.visibility.commands.reserve(maximumObjectsPerFrame);
+    if (!view.clusteredLighting.init(context, frameCount, ClusterGridConfiguration{}, maximumLocalLights) ||
+        !view.reflectionProbeClusters.init(context, frameCount, view.clusteredLighting.configuration()) ||
+        !view.decalClusters.init(context, frameCount, view.clusteredLighting.configuration()) ||
+        !view.volumetricFog.init(context, frameCount) ||
+        !view.postProcess.init(context, m_outputFormat, m_sceneDepthFormat, frameCount, extent, depthView) ||
+        !view.depthPyramid.init(context, extent, depthView) ||
+        !view.ambientOcclusion.init(context, frameCount, extent) ||
+        !view.transmissionBackground.init(context, extent)) {
+        return false;
+    }
+    view.postProcess.setFixedFrameSeconds(m_fixedFrameSeconds);
+    writeClusteredLightingDescriptors(view);
+    writeReflectionProbeDescriptors(view);
+    writeDecalDescriptors(view);
+    view.fogDescriptorGenerations.assign(frameCount, 0);
+    for (uint32_t frame = 0; frame < frameCount; ++frame) {
+        writeVolumetricFogDescriptors(view, frame);
+    }
+    writeAmbientOcclusionDescriptors(view);
+    writeTransmissionBackgroundDescriptors(view);
+    return true;
+}
+
+bool MeshPass::createView(const VulkanContext& context, uint32_t view, VkExtent2D extent, VkImageView depthView) {
+    if (view == 0 || hasView(view)) {
+        std::cerr << "Render view slot " << view << " cannot be created\n";
+        return false;
+    }
+    if (view >= m_views.size()) {
+        m_views.resize(view + 1);
+    }
+    auto state = std::make_unique<ViewState>();
+    if (!createViewCameraSets(*state) || !initViewPasses(context, *state, extent, depthView)) {
+        destroyViewState(context, *state);
+        return false;
+    }
+    m_views[view] = std::move(state);
+    return true;
+}
+
+bool MeshPass::resizeView(const VulkanContext& context, uint32_t view, VkExtent2D extent, VkImageView depthView) {
+    if (!hasView(view)) {
+        return false;
+    }
+    ViewState& state = *m_views[view];
+    state.depthInitialized = false;
+    state.cameraHistoryValid = false;
+    state.temporalQuality.invalidateHistory();
+    state.depthPrepassFrame.reset();
+    if (!state.postProcess.resize(context, extent, depthView) || !state.depthPyramid.resize(extent, depthView) ||
+        !state.ambientOcclusion.resize(extent) || !state.transmissionBackground.resize(extent)) {
+        return false;
+    }
+    writeAmbientOcclusionDescriptors(state);
+    writeTransmissionBackgroundDescriptors(state);
+    if (view == 0 && m_gpuDrivenSupported) {
+        m_gpuDrivenPass.bindDepthPyramid(state.depthPyramid);
+    }
+    return true;
+}
+
+void MeshPass::destroyView(const VulkanContext& context, uint32_t view) {
+    if (view == 0 || !hasView(view)) {
+        return;
+    }
+    destroyViewState(context, *m_views[view]);
+    m_views[view].reset();
+}
+
+bool MeshPass::createViewCameraSets(ViewState& view) {
+    const uint32_t frameCount = static_cast<uint32_t>(m_cameras.size());
+    const std::vector<VkDescriptorSetLayoutBinding> bindings = cameraLayoutBindings();
+    const std::vector<VkDescriptorPoolSize> poolSizes = descriptorPoolSizes(bindings, frameCount);
+    const VkDescriptorPoolCreateInfo poolInfo{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+                                              .maxSets = frameCount,
+                                              .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+                                              .pPoolSizes = poolSizes.data()};
+    if (!checkVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &view.descriptorPool),
+                     "Create render view descriptor pool")) {
+        return false;
+    }
+    const std::vector<VkDescriptorSetLayout> layouts(frameCount, m_cameraLayout);
+    std::vector<VkDescriptorSet> sets(frameCount);
+    const VkDescriptorSetAllocateInfo allocate{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                                               .descriptorPool = view.descriptorPool,
+                                               .descriptorSetCount = frameCount,
+                                               .pSetLayouts = layouts.data()};
+    if (!checkVulkan(vkAllocateDescriptorSets(m_device, &allocate, sets.data()),
+                     "Allocate render view camera descriptor sets")) {
+        return false;
+    }
+    view.cameras.resize(frameCount);
+    const VmaAllocationCreateInfo allocation{.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                                                      VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+                                             .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
+    for (uint32_t frame = 0; frame < frameCount; ++frame) {
+        ViewCameraSet& camera = view.cameras[frame];
+        camera.descriptor = sets[frame];
+        VmaAllocationInfo info{};
+        VkBufferCreateInfo buffer{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                  .size = sizeof(CameraData),
+                                  .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT};
+        if (!checkVulkan(vmaCreateBuffer(m_allocator, &buffer, &allocation, &camera.uniform.buffer,
+                                         &camera.uniform.allocation, &info),
+                         "Create render view camera buffer")) {
+            return false;
+        }
+        camera.uniformMapped = info.pMappedData;
+        buffer.size = sizeof(ObjectData) * maximumObjectsPerFrame;
+        buffer.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        if (!checkVulkan(vmaCreateBuffer(m_allocator, &buffer, &allocation, &camera.objects.buffer,
+                                         &camera.objects.allocation, &info),
+                         "Create render view object buffer")) {
+            return false;
+        }
+        camera.objectsMapped = info.pMappedData;
+        const VkDescriptorBufferInfo uniformInfo{.buffer = camera.uniform.buffer, .range = sizeof(CameraData)};
+        const VkDescriptorBufferInfo objectInfo{.buffer = camera.objects.buffer, .range = VK_WHOLE_SIZE};
+        const std::array<VkWriteDescriptorSet, 2> writes{{{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                                           .dstSet = camera.descriptor,
+                                                           .dstBinding = 0,
+                                                           .descriptorCount = 1,
+                                                           .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                                           .pBufferInfo = &uniformInfo},
+                                                          {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                                           .dstSet = camera.descriptor,
+                                                           .dstBinding = 2,
+                                                           .descriptorCount = 1,
+                                                           .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                           .pBufferInfo = &objectInfo}}};
+        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
+    return true;
+}
+
+void MeshPass::destroyViewState(const VulkanContext& context, ViewState& view) {
+    view.clusteredLighting.shutdown();
+    view.reflectionProbeClusters.shutdown();
+    view.decalClusters.shutdown();
+    // The caller idled the device, so every retired fog volume may go.
+    view.volumetricFog.collect(std::numeric_limits<uint64_t>::max());
+    view.volumetricFog.shutdown();
+    view.fogDescriptorGenerations.clear();
+    view.postProcess.shutdown(context);
+    view.depthPyramid.shutdown();
+    view.ambientOcclusion.shutdown();
+    view.transmissionBackground.shutdown();
+    for (ViewCameraSet& camera : view.cameras) {
+        if (camera.uniform.buffer) {
+            vmaDestroyBuffer(context.vmaAllocator(), camera.uniform.buffer, camera.uniform.allocation);
+        }
+        if (camera.objects.buffer) {
+            vmaDestroyBuffer(context.vmaAllocator(), camera.objects.buffer, camera.objects.allocation);
+        }
+    }
+    view.cameras.clear();
+    if (view.descriptorPool) {
+        vkDestroyDescriptorPool(context.device(), view.descriptorPool, nullptr);
+    }
+    view.descriptorPool = VK_NULL_HANDLE;
+    view.depthPrepassFrame.reset();
+    view.depthInitialized = false;
+}
+
+VkDescriptorSet MeshPass::viewCameraSet(const ViewState& view, uint32_t frameIndex) const {
+    return view.sharesFrameSets ? m_cameras[frameIndex].descriptor : view.cameras[frameIndex].descriptor;
+}
+
+std::array<VkDescriptorSet, 2> MeshPass::viewCameraSets(const ViewState& view, uint32_t frameIndex) const {
+    if (view.sharesFrameSets) {
+        return {m_cameras[frameIndex].descriptor, m_cameras[frameIndex].gpuDrivenDescriptor};
+    }
+    return {view.cameras[frameIndex].descriptor, VK_NULL_HANDLE};
+}
+
+void MeshPass::copySharedCameraBindings(const ViewState& view, uint32_t frameIndex) {
+    if (view.sharesFrameSets) {
+        return;
+    }
+
+    struct SharedBinding {
+        uint32_t binding;
+        uint32_t count;
+    };
+
+    const SharedBinding shared[]{{1, 1},
+                                 {3, 1},
+                                 {4, 1},
+                                 {EnvironmentPass::specularBinding, EnvironmentPass::environmentSlots},
+                                 {EnvironmentPass::irradianceBinding, EnvironmentPass::environmentSlots},
+                                 {EnvironmentPass::brdfBinding, 1},
+                                 {IrradianceVolumePass::binding, 1},
+                                 {previousSkinPaletteBinding, 1},
+                                 {LocalShadowPass::atlasBinding, 1},
+                                 {LocalShadowPass::tileBinding, 1},
+                                 {EnvironmentPass::probeSpecularBinding, 1}};
+    std::array<VkCopyDescriptorSet, std::size(shared)> copies{};
+    for (size_t index = 0; index < copies.size(); ++index) {
+        copies[index] = {.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET,
+                         .srcSet = m_cameras[frameIndex].descriptor,
+                         .srcBinding = shared[index].binding,
+                         .dstSet = view.cameras[frameIndex].descriptor,
+                         .dstBinding = shared[index].binding,
+                         .descriptorCount = shared[index].count};
+    }
+    vkUpdateDescriptorSets(m_device, 0, nullptr, static_cast<uint32_t>(copies.size()), copies.data());
 }
 
 bool MeshPass::createGpuDrivenDescriptors() {
@@ -399,9 +711,9 @@ bool MeshPass::createGpuDrivenDescriptors() {
     return true;
 }
 
-void MeshPass::writeClusteredLightingDescriptors() {
+void MeshPass::writeClusteredLightingDescriptors(const ViewState& view) {
     for (uint32_t frame = 0; frame < m_cameras.size(); ++frame) {
-        const ClusteredLightingPass::FrameBuffers buffers = m_clusteredLighting.frameBuffers(frame);
+        const ClusteredLightingPass::FrameBuffers buffers = view.clusteredLighting.frameBuffers(frame);
         // Bindings 9-11: local lights, per-cluster ranges, cluster light indices.
         const std::array<VkDescriptorBufferInfo, 3> infos{{{.buffer = buffers.lights, .range = VK_WHOLE_SIZE},
                                                            {.buffer = buffers.clusterRanges, .range = VK_WHOLE_SIZE},
@@ -409,7 +721,7 @@ void MeshPass::writeClusteredLightingDescriptors() {
         std::array<VkWriteDescriptorSet, 3> writes{};
         for (uint32_t index = 0; index < writes.size(); ++index) {
             writes[index] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                             .dstSet = m_cameras[frame].descriptor,
+                             .dstSet = viewCameraSet(view, frame),
                              .dstBinding = 9 + index,
                              .descriptorCount = 1,
                              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -419,12 +731,12 @@ void MeshPass::writeClusteredLightingDescriptors() {
     }
 }
 
-void MeshPass::writeReflectionProbeDescriptors() {
+void MeshPass::writeReflectionProbeDescriptors(const ViewState& view) {
     for (uint32_t frame = 0; frame < m_cameras.size(); ++frame) {
-        const VkDescriptorBufferInfo probes{.buffer = m_reflectionProbeClusters.frameBuffer(frame),
+        const VkDescriptorBufferInfo probes{.buffer = view.reflectionProbeClusters.frameBuffer(frame),
                                             .range = VK_WHOLE_SIZE};
         const VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                                         .dstSet = m_cameras[frame].descriptor,
+                                         .dstSet = viewCameraSet(view, frame),
                                          .dstBinding = ReflectionProbeClusterPass::cameraBinding,
                                          .descriptorCount = 1,
                                          .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -433,16 +745,16 @@ void MeshPass::writeReflectionProbeDescriptors() {
     }
 }
 
-void MeshPass::writeDecalDescriptors() {
+void MeshPass::writeDecalDescriptors(const ViewState& view) {
     for (uint32_t frame = 0; frame < m_cameras.size(); ++frame) {
-        const DecalClusterPass::FrameBuffers buffers = m_decalClusters.frameBuffers(frame);
+        const DecalClusterPass::FrameBuffers buffers = view.decalClusters.frameBuffers(frame);
         const std::array<VkDescriptorBufferInfo, 2> infos{{{.buffer = buffers.records, .range = VK_WHOLE_SIZE},
                                                            {.buffer = buffers.clusterLists, .range = VK_WHOLE_SIZE}}};
         const std::array<uint32_t, 2> bindings{DecalClusterPass::recordsBinding, DecalClusterPass::clusterListsBinding};
         std::array<VkWriteDescriptorSet, 2> writes{};
         for (uint32_t index = 0; index < writes.size(); ++index) {
             writes[index] = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                             .dstSet = m_cameras[frame].descriptor,
+                             .dstSet = viewCameraSet(view, frame),
                              .dstBinding = bindings[index],
                              .descriptorCount = 1,
                              .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -483,16 +795,16 @@ std::vector<GpuDecal> MeshPass::prepareDecals(const Scene& scene, const AssetMan
     return records;
 }
 
-void MeshPass::writeAmbientOcclusionDescriptors() {
+void MeshPass::writeAmbientOcclusionDescriptors(const ViewState& view) {
     for (uint32_t frame = 0; frame < m_cameras.size(); ++frame) {
-        const VkDescriptorImageInfo occlusion{.sampler = m_ambientOcclusion.sampler(),
-                                              .imageView = m_ambientOcclusion.occlusionView(frame),
+        const VkDescriptorImageInfo occlusion{.sampler = view.ambientOcclusion.sampler(),
+                                              .imageView = view.ambientOcclusion.occlusionView(frame),
                                               .imageLayout = AmbientOcclusionPass::occlusionLayout};
         // The GPU-driven set is written directly: copying would need the
         // CPU-submission set written first on every resize.
         std::array<VkWriteDescriptorSet, 2> writes{};
         uint32_t writeCount = 0;
-        for (VkDescriptorSet set : {m_cameras[frame].descriptor, m_cameras[frame].gpuDrivenDescriptor}) {
+        for (VkDescriptorSet set : viewCameraSets(view, frame)) {
             if (set == VK_NULL_HANDLE) {
                 continue;
             }
@@ -507,14 +819,14 @@ void MeshPass::writeAmbientOcclusionDescriptors() {
     }
 }
 
-void MeshPass::writeTransmissionBackgroundDescriptors() {
-    const VkDescriptorImageInfo background{.sampler = m_transmissionBackground.sampler(),
-                                           .imageView = m_transmissionBackground.view(),
+void MeshPass::writeTransmissionBackgroundDescriptors(const ViewState& view) {
+    const VkDescriptorImageInfo background{.sampler = view.transmissionBackground.sampler(),
+                                           .imageView = view.transmissionBackground.view(),
                                            .imageLayout = TransmissionBackground::readLayout};
-    for (CameraBuffer& camera : m_cameras) {
+    for (uint32_t frame = 0; frame < m_cameras.size(); ++frame) {
         std::array<VkWriteDescriptorSet, 2> writes{};
         uint32_t writeCount = 0;
-        for (VkDescriptorSet set : {camera.descriptor, camera.gpuDrivenDescriptor}) {
+        for (VkDescriptorSet set : viewCameraSets(view, frame)) {
             if (set == VK_NULL_HANDLE) {
                 continue;
             }
@@ -529,17 +841,17 @@ void MeshPass::writeTransmissionBackgroundDescriptors() {
     }
 }
 
-void MeshPass::writeVolumetricFogDescriptors(uint32_t frameIndex) {
-    if (m_fogDescriptorGenerations[frameIndex] == m_volumetricFog.generation()) {
+void MeshPass::writeVolumetricFogDescriptors(ViewState& view, uint32_t frameIndex) {
+    if (view.fogDescriptorGenerations[frameIndex] == view.volumetricFog.generation()) {
         return;
     }
-    const VkDescriptorImageInfo fog{.sampler = m_volumetricFog.sampler(),
-                                    .imageView = m_volumetricFog.integratedView(),
+    const VkDescriptorImageInfo fog{.sampler = view.volumetricFog.sampler(),
+                                    .imageView = view.volumetricFog.integratedView(),
                                     .imageLayout = VolumetricFogPass::volumeLayout};
     // The frame slot's previous submission retired, so its sets are not in use.
     std::array<VkWriteDescriptorSet, 2> writes{};
     uint32_t writeCount = 0;
-    for (VkDescriptorSet set : {m_cameras[frameIndex].descriptor, m_cameras[frameIndex].gpuDrivenDescriptor}) {
+    for (VkDescriptorSet set : viewCameraSets(view, frameIndex)) {
         if (set == VK_NULL_HANDLE) {
             continue;
         }
@@ -551,131 +863,15 @@ void MeshPass::writeVolumetricFogDescriptors(uint32_t frameIndex) {
                                 .pImageInfo = &fog};
     }
     vkUpdateDescriptorSets(m_device, writeCount, writes.data(), 0, nullptr);
-    m_fogDescriptorGenerations[frameIndex] = m_volumetricFog.generation();
-}
-
-bool MeshPass::resize(const VulkanContext& context, VkExtent2D extent, VkImageView depthView) {
-    m_depthInitialized = false;
-    m_cameraHistoryValid = false;
-    m_temporalQuality.invalidateHistory();
-    m_depthPrepassFrame.reset();
-    if (!m_postProcess.resize(context, extent, depthView) || !m_depthPyramid.resize(extent, depthView) ||
-        !m_ambientOcclusion.resize(extent) || !m_transmissionBackground.resize(extent)) {
-        return false;
-    }
-    writeAmbientOcclusionDescriptors();
-    writeTransmissionBackgroundDescriptors();
-    if (m_gpuDrivenSupported) {
-        m_gpuDrivenPass.bindDepthPyramid(m_depthPyramid);
-    }
-    return true;
+    view.fogDescriptorGenerations[frameIndex] = view.volumetricFog.generation();
 }
 
 bool MeshPass::createDescriptors(const VulkanContext& context, uint32_t frameCount) {
-    const VkDescriptorSetLayoutBinding cameraBindings[]{
-        {.binding = 0,
-         .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT},
-        {.binding = 1,
-         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        {.binding = 2,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT},
-        {.binding = 3,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT},
-        {.binding = 4,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        // Image-based lighting, written by EnvironmentPass.
-        {.binding = EnvironmentPass::specularBinding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         .descriptorCount = EnvironmentPass::environmentSlots,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        {.binding = EnvironmentPass::irradianceBinding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = EnvironmentPass::environmentSlots,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        {.binding = EnvironmentPass::brdfBinding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        // Irradiance volume probes, written by IrradianceVolumePass.
-        {.binding = IrradianceVolumePass::binding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        // Clustered local lighting: lights, per-cluster ranges, light indices.
-        {.binding = 9,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        {.binding = 10,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        {.binding = 11,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        {.binding = previousSkinPaletteBinding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT},
-        // Screen-space ambient occlusion, written by AmbientOcclusionPass.
-        {.binding = ambientOcclusionBinding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        // Local-light shadow atlas and tile records, written by LocalShadowPass.
-        {.binding = LocalShadowPass::atlasBinding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        {.binding = LocalShadowPass::tileBinding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT},
-        // Per-pixel reflection probes: the resident probe cube array, written
-        // by EnvironmentPass, and the frame's probe buffer.
-        {.binding = EnvironmentPass::probeSpecularBinding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        {.binding = ReflectionProbeClusterPass::cameraBinding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        // Integrated volumetric fog, owned by VolumetricFogPass.
-        {.binding = volumetricFogBinding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        // Clustered decals: the frame's decal records and per-cluster decal
-        // lists, owned by DecalClusterPass.
-        {.binding = DecalClusterPass::recordsBinding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        {.binding = DecalClusterPass::clusterListsBinding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT},
-        // Opaque scene copy refracted by transmissive surfaces.
-        {.binding = transmissionBackgroundBinding,
-         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-         .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT}};
+    const std::vector<VkDescriptorSetLayoutBinding> cameraBindings = cameraLayoutBindings();
     VkDescriptorSetLayoutCreateInfo layoutInfo{
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = static_cast<uint32_t>(std::size(cameraBindings)),
-        .pBindings = cameraBindings,
+        .pBindings = cameraBindings.data(),
     };
 
     if (!checkVulkan(vkCreateDescriptorSetLayout(m_device, &layoutInfo, nullptr, &m_cameraLayout),
@@ -1933,11 +2129,11 @@ void MeshPass::bindGeometryPage(VkCommandBuffer commandBuffer, uint32_t pageInde
 
 void MeshPass::beginRendering(VkCommandBuffer commandBuffer, VkImageView colorView, VkImageView motionView,
                               VkImage depthImage, VkImageView depthView, VkExtent2D extent,
-                              SceneAttachments attachments) const {
+                              SceneAttachments attachments, bool depthInitialized) const {
     const bool clear = attachments == SceneAttachments::Clear;
     // A preserved pass continues one the caller already transitioned.
     if (clear) {
-        prepareDepthForClear(commandBuffer, depthImage);
+        prepareDepthForClear(commandBuffer, depthImage, depthInitialized);
     }
     const VkAttachmentLoadOp loadOp =
         attachments == SceneAttachments::Preserve ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -1970,23 +2166,23 @@ void MeshPass::beginRendering(VkCommandBuffer commandBuffer, VkImageView colorVi
     vkCmdBeginRendering(commandBuffer, &rendering);
 }
 
-void MeshPass::prepareDepthForClear(VkCommandBuffer commandBuffer, VkImage depthImage) const {
+void MeshPass::prepareDepthForClear(VkCommandBuffer commandBuffer, VkImage depthImage, bool depthInitialized) const {
     // Last frame's post-processing sampled the depth it stored.
     imageBarrier(commandBuffer, depthImage, VK_IMAGE_ASPECT_DEPTH_BIT,
-                 m_depthInitialized ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                 depthInitialized ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                 m_depthInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                 depthInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
                  VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
-                 m_depthInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+                 depthInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
 }
 
 void MeshPass::beginDepthPrepass(VkCommandBuffer commandBuffer, VkImageView normalView, VkImageView specularView,
                                  VkImage depthImage, VkImageView depthView, VkExtent2D extent,
-                                 SceneAttachments attachments) const {
+                                 SceneAttachments attachments, bool depthInitialized) const {
     const bool clear = attachments == SceneAttachments::Clear;
     if (clear) {
-        prepareDepthForClear(commandBuffer, depthImage);
+        prepareDepthForClear(commandBuffer, depthImage, depthInitialized);
     }
     const VkAttachmentLoadOp loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
     const VkRenderingAttachmentInfo colors[]{{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
@@ -2171,10 +2367,11 @@ uint32_t MeshPass::updateRenderItems(const Scene& scene, std::span<const Entity>
     return updated;
 }
 
-void MeshPass::recordLocalShadows(VkCommandBuffer commandBuffer, uint32_t frameIndex, const Scene& scene,
-                                  const AssetManager& assets, const RenderSettings& settings,
-                                  std::span<const LocalLight> lights, const glm::vec3& cameraPosition,
-                                  OptionalPassTimestamps& timestamps, RenderStats& stats) {
+std::vector<int32_t> MeshPass::recordLocalShadows(VkCommandBuffer commandBuffer, uint32_t frameIndex,
+                                                  const Scene& scene, const AssetManager& assets,
+                                                  const RenderSettings& settings, std::span<const LocalLight> lights,
+                                                  const glm::vec3& cameraPosition, OptionalPassTimestamps& timestamps,
+                                                  RenderStats& stats) {
     const auto cpuBegin = std::chrono::steady_clock::now();
     const SceneRevisions& revisions = scene.revisions();
     collectShadowCasterChanges(scene);
@@ -2197,11 +2394,11 @@ void MeshPass::recordLocalShadows(VkCommandBuffer commandBuffer, uint32_t frameI
             return drawLocalShadowCasters(tileCommands, frameIndex, viewProjection, stats);
         },
         stats);
-    m_clusteredLighting.assignShadowTiles(frameIndex, firstTiles);
     m_localShadowRevisions = revisions;
     m_localShadowAssetRevision = assets.revision();
     stats.cpuLocalShadowMilliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuBegin).count();
+    return firstTiles;
 }
 
 void MeshPass::collectShadowCasterChanges(const Scene& scene) {
@@ -2465,12 +2662,132 @@ void MeshPass::recordGpuShadowCascade(VkCommandBuffer commandBuffer, uint32_t fr
     }
 }
 
-bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImageView colorView, VkImage depthImage,
-                      VkImageView depthView, VkExtent2D extent, uint32_t frameIndex, const Scene& scene,
-                      const AssetManager& assets, RenderRuntime& rendering, const MeshPassFramePlan& plan,
-                      FrameTaskExecutor& frameTasks, VkQueryPool timestampQueries, VkImageLayout colorOldLayout) {
+struct MeshPass::FrameState {
+    // Camera data every view starts from: the sun, the environment, the
+    // irradiance volume, and the shadow cascades the leading view placed.
+    CameraData base;
+    DirectionalLightComponent light;
+    EnvironmentLightComponent environment;
+    std::optional<VolumetricFogComponent> fogMedium;
+    glm::vec3 lightDirection{0.0f};
+    uint32_t cascadeCount{0};
+    bool shadowsEnabled{false};
+    bool imageBasedLighting{false};
+    EnvironmentFrameState environmentState;
+    // Probes resident for per-pixel blending, matching environmentState.probeSlots.
+    std::vector<ReflectionProbeVolume> residentProbes;
+    // Local lights: every scene light, the leading view's selection, and the
+    // first shadow tile of each selected light this frame rendered.
+    uint32_t localLightLimit{0};
+    std::vector<LocalLight> sceneLights;
+    std::vector<LocalLight> leadLights;
+    std::vector<int32_t> leadShadowTiles;
+    ShadowCulling shadowCulling{ShadowCulling::Cpu};
+    // Set once GPU-driven records were prepared for the default view.
+    bool gpuDrivenPrepared{false};
+};
+
+namespace {
+// Per-view counters a view's recording accumulates into the frame's stats.
+void addViewCounters(RenderStats& frame, const RenderStats& view) {
+    frame.visibleCount += view.visibleCount;
+    frame.culledCount += view.culledCount;
+    frame.drawCalls += view.drawCalls;
+    frame.triangleCount += view.triangleCount;
+    frame.indirectCommandCount += view.indirectCommandCount;
+    frame.gpuVisibilityMismatches += view.gpuVisibilityMismatches;
+    frame.temporalHistoryBytes += view.temporalHistoryBytes;
+    frame.spatialUpscaleBytes += view.spatialUpscaleBytes;
+    frame.motionVectorBytes += view.motionVectorBytes;
+    frame.ambientOcclusionBytes += view.ambientOcclusionBytes;
+    frame.reflectionBytes += view.reflectionBytes;
+    frame.volumetricFogBytes += view.volumetricFogBytes;
+    frame.depthOfFieldBytes += view.depthOfFieldBytes;
+    frame.motionBlurBytes += view.motionBlurBytes;
+    frame.decalBytes += view.decalBytes;
+}
+} // namespace
+
+MeshPass::ViewFrame MeshPass::prepareViewFrame(ViewState& view, const MeshPassViewRequest& request, const Scene& scene,
+                                               double previousGpuFrameMilliseconds) const {
+    const RenderSettings& settings = *request.settings;
+    ViewFrame frame;
+    frame.verticalFov = glm::radians(60.0f);
+    auto cameras = scene.registry().view<const CameraComponent, const TransformComponent>();
+    for (Entity entity : cameras) {
+        const auto& camera = cameras.get<const CameraComponent>(entity);
+        if (camera.primary) {
+            frame.view = glm::inverse(cameras.get<const TransformComponent>(entity).world);
+            frame.verticalFov = camera.verticalFovRadians;
+            frame.nearPlane = camera.nearPlane;
+            frame.farPlane = camera.farPlane;
+            break;
+        }
+    }
+    if (request.cameraOverride) {
+        const RenderView& override = *request.cameraOverride;
+        frame.view = glm::lookAtRH(override.position, override.position + override.forward, override.up);
+        frame.verticalFov = override.verticalFovRadians;
+        frame.nearPlane = override.nearPlane;
+        frame.farPlane = override.farPlane;
+    }
+    const glm::mat4 inverseView = glm::inverse(frame.view);
+    frame.cameraPosition = glm::vec3(inverseView[3]);
+    frame.cameraForward = -glm::normalize(glm::vec3(inverseView[2]));
+    frame.cameraCut = !view.cameraHistoryValid ||
+                      glm::distance(frame.cameraPosition, view.previousCameraPosition) > 10.0f ||
+                      glm::dot(frame.cameraForward, view.previousCameraForward) < 0.5f;
+    // An upscaler lowers the internal resolution to its preset's scale. FSR 1
+    // without support composites at output resolution (PostProcessPass), so
+    // it renders natively rather than stretching a reduced frame.
+    UpscalerSettings upscaler = settings.upscaler;
+    if (upscaler.mode == UpscalerMode::Fsr1 && !view.postProcess.spatialUpscaleSupported()) {
+        upscaler.mode = UpscalerMode::Off;
+    }
+    const bool temporalAntialiasing = settings.antialiasing == AntialiasingMode::Taa;
+    frame.temporal = view.temporalQuality.beginFrame(
+        request.extent.width, request.extent.height, previousGpuFrameMilliseconds,
+        upscaledDynamicResolution(settings.dynamicResolution, upscaler), temporalAntialiasing, frame.cameraCut);
+    frame.renderExtent = {frame.temporal.internalWidth, frame.temporal.internalHeight};
+    // Swapping the planes yields reversed Z; see DepthConvention.hpp.
+    glm::mat4 projection = glm::perspectiveRH_ZO(
+        frame.verticalFov, static_cast<float>(frame.renderExtent.width) / static_cast<float>(frame.renderExtent.height),
+        frame.farPlane, frame.nearPlane);
+    projection[1][1] *= -1.0f;
+    frame.unjitteredViewProjection = projection * frame.view;
+    if (temporalAntialiasing) {
+        projection = applyProjectionJitter(projection, frame.temporal.jitterNdc);
+    }
+    frame.projection = projection;
+    frame.lodView = makeMeshLodView(frame.cameraPosition, projection[1][1], frame.renderExtent.height,
+                                    settings.lodErrorThresholdPixels);
+    return frame;
+}
+
+bool MeshPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const Scene& scene,
+                      const AssetManager& assets, RenderRuntime& rendering, std::span<const MeshPassViewRequest> views,
+                      FrameTaskExecutor& frameTasks, VkQueryPool timestampQueries) {
     if (frameIndex >= m_cameras.size()) {
         return false;
+    }
+    if (views.empty()) {
+        std::cerr << "A frame must record at least one render view\n";
+        return false;
+    }
+    for (size_t index = 0; index < views.size(); ++index) {
+        const MeshPassViewRequest& request = views[index];
+        const bool duplicate =
+            std::any_of(views.begin(), views.begin() + static_cast<std::ptrdiff_t>(index),
+                        [&](const MeshPassViewRequest& earlier) { return earlier.view == request.view; });
+        if (!hasView(request.view) || duplicate || request.settings == nullptr) {
+            std::cerr << "Render view request " << index << " names view slot " << request.view
+                      << ", which is missing, repeated, or has no settings\n";
+            return false;
+        }
+        if (request.view != 0 && request.plan.gpuDrivenSubmission) {
+            std::cerr << "Only the default render view may use GPU-driven submission\n";
+            return false;
+        }
     }
 
     const double previousGpuFrameMilliseconds = rendering.m_stats.gpuFrameMilliseconds;
@@ -2480,76 +2797,103 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     // one full ring older than this one has completed on the GPU.
     ++m_frameSerial;
     if (m_frameSerial > m_cameras.size()) {
-        m_releaseQueue.collect(m_frameSerial - m_cameras.size());
-        m_volumetricFog.collect(m_frameSerial - m_cameras.size());
-        m_particles.collect(m_frameSerial - m_cameras.size());
+        const uint64_t completedSerial = m_frameSerial - m_cameras.size();
+        m_releaseQueue.collect(completedSerial);
+        m_particles.collect(completedSerial);
+        for (const std::unique_ptr<ViewState>& view : m_views) {
+            if (view) {
+                view->volumetricFog.collect(completedSerial);
+            }
+        }
     }
     pruneUnusedAssets(assets);
     m_textureStreamingBytesPerFrame = rendering.settings().textureStreamingBytesPerFrame;
 
-    glm::mat4 view{1.0f};
-    float fov = glm::radians(60.0f);
-    float nearPlane = 0.1f;
-    float farPlane = 1000.0f;
-    auto cameras = scene.registry().view<const CameraComponent, const TransformComponent>();
+    // Render packets mark the union of every view's outlines; views filter.
+    m_outlinedObjects.clear();
+    for (const MeshPassViewRequest& request : views) {
+        m_outlinedObjects.insert(m_outlinedObjects.end(), request.outlinedObjects.begin(),
+                                 request.outlinedObjects.end());
+    }
+    if (views.size() > 1) {
+        std::ranges::sort(m_outlinedObjects);
+        const auto duplicates = std::ranges::unique(m_outlinedObjects);
+        m_outlinedObjects.erase(duplicates.begin(), duplicates.end());
+    }
 
-    for (Entity entity : cameras) {
-        const auto& camera = cameras.get<const CameraComponent>(entity);
-
-        if (camera.primary) {
-            view = glm::inverse(cameras.get<const TransformComponent>(entity).world);
-            fov = camera.verticalFovRadians;
-            nearPlane = camera.nearPlane;
-            farPlane = camera.farPlane;
-            break;
+    // Fog volumes follow each view's quality. Their descriptors are written
+    // before anything in this command buffer binds the camera sets, since the
+    // default view's sets are the frame's.
+    for (const MeshPassViewRequest& request : views) {
+        ViewState& view = *m_views[request.view];
+        if (!view.volumetricFog.prepare(request.settings->volumetricFog, m_frameSerial)) {
+            return false;
+        }
+        writeVolumetricFogDescriptors(view, frameIndex);
+    }
+    OptionalPassTimestamps passTimestamps(commandBuffer, timestampQueries);
+    const ViewFrame leadFrame =
+        prepareViewFrame(*m_views[views.front().view], views.front(), scene, previousGpuFrameMilliseconds);
+    FrameState frame;
+    if (!recordFrameStage(commandBuffer, frameIndex, scene, assets, rendering, views.front(), leadFrame, frameTasks,
+                          timestampQueries, passTimestamps, frame)) {
+        return false;
+    }
+    // Views after the leading one write no timestamps: each query is written
+    // once per frame.
+    OptionalPassTimestamps noTimestamps(commandBuffer, VK_NULL_HANDLE);
+    for (size_t index = 0; index < views.size(); ++index) {
+        const bool leading = index == 0;
+        const MeshPassViewRequest& request = views[index];
+        const ViewFrame viewFrame =
+            leading ? leadFrame
+                    : prepareViewFrame(*m_views[request.view], request, scene, previousGpuFrameMilliseconds);
+        if (!recordView(commandBuffer, frameIndex, scene, assets, rendering, request, viewFrame, leading, frameTasks,
+                        leading ? timestampQueries : VK_NULL_HANDLE, leading ? passTimestamps : noTimestamps, frame)) {
+            return false;
         }
     }
-    if (rendering.m_viewOverride) {
-        const RenderView& override = *rendering.m_viewOverride;
-        view = glm::lookAtRH(override.position, override.position + override.forward, override.up);
-        fov = override.verticalFovRadians;
-        nearPlane = override.nearPlane;
-        farPlane = override.farPlane;
+    if (std::ranges::none_of(views, [](const MeshPassViewRequest& request) { return request.view == 0; })) {
+        // The shadow passes read the cascades from the frame's camera buffer,
+        // which only the default view writes otherwise.
+        std::memcpy(m_cameras[frameIndex].mapped, &frame.base, sizeof(frame.base));
+        vmaFlushAllocation(m_allocator, m_cameras[frameIndex].buffer.allocation, 0, sizeof(frame.base));
     }
-    const glm::vec3 cameraPosition = glm::vec3(glm::inverse(view)[3]);
-    const glm::vec3 cameraForward = -glm::normalize(glm::vec3(glm::inverse(view)[2]));
-    const bool cameraCut = !m_cameraHistoryValid || glm::distance(cameraPosition, m_previousCameraPosition) > 10.0f ||
-                           glm::dot(cameraForward, m_previousCameraForward) < 0.5f;
-    // An upscaler lowers the internal resolution to its preset's scale. FSR 1
-    // without support composites at output resolution (PostProcessPass), so
-    // it renders natively rather than stretching a reduced frame.
-    UpscalerSettings upscaler = rendering.settings().upscaler;
-    if (upscaler.mode == UpscalerMode::Fsr1 && !m_postProcess.spatialUpscaleSupported()) {
-        upscaler.mode = UpscalerMode::Off;
+    // After post-processing, whose optional passes (depth of field, motion
+    // blur, colour grading) also write through passTimestamps.
+    passTimestamps.closeSkippedPasses();
+    for (RenderItem& item : m_renderItems) {
+        item.previousWorld = item.world;
+        item.previousJointPalette = item.jointPalette;
     }
-    const TemporalFrameState temporal =
-        m_temporalQuality.beginFrame(extent.width, extent.height, previousGpuFrameMilliseconds,
-                                     upscaledDynamicResolution(rendering.settings().dynamicResolution, upscaler),
-                                     rendering.settings().antialiasing == AntialiasingMode::Taa, cameraCut);
-    const VkExtent2D renderExtent{temporal.internalWidth, temporal.internalHeight};
-    // Swapping the planes yields reversed Z; see DepthConvention.hpp.
-    glm::mat4 projection = glm::perspectiveRH_ZO(
-        fov, static_cast<float>(renderExtent.width) / static_cast<float>(renderExtent.height), farPlane, nearPlane);
-    projection[1][1] *= -1.0f;
-    const glm::mat4 unjitteredViewProjection = projection * view;
-    if (rendering.settings().antialiasing == AntialiasingMode::Taa) {
-        projection = applyProjectionJitter(projection, temporal.jitterNdc);
+    if (timestampQueries) {
+        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 4);
     }
-    const DirectionalLightComponent light = resolvePrimary<DirectionalLightComponent>(scene);
-    const EnvironmentLightComponent environment = resolvePrimary<EnvironmentLightComponent>(scene);
-    const std::optional<VolumetricFogComponent> fogMedium = primaryVolumetricFog(scene);
+    return true;
+}
+
+bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameIndex, const Scene& scene,
+                                const AssetManager& assets, RenderRuntime& rendering, const MeshPassViewRequest& lead,
+                                const ViewFrame& leadFrame, FrameTaskExecutor& frameTasks, VkQueryPool timestampQueries,
+                                OptionalPassTimestamps& passTimestamps, FrameState& frame) {
+    const RenderSettings& settings = rendering.settings();
+    RenderStats& stats = rendering.m_stats;
+    ViewState& leadView = *m_views[lead.view];
+    frame.light = resolvePrimary<DirectionalLightComponent>(scene);
+    frame.environment = resolvePrimary<EnvironmentLightComponent>(scene);
+    frame.fogMedium = primaryVolumetricFog(scene);
+    const DirectionalLightComponent& light = frame.light;
+    const EnvironmentLightComponent& environment = frame.environment;
     // Hemisphere lighting reads these flat colors; image-based lighting reads
     // the maps EnvironmentPass binds.
     std::array<glm::vec3, 6> environmentSpecular;
     environmentSpecular.fill((environment.skyColor + environment.groundColor) * 0.5f);
-    const glm::vec3 lightDirection = normalizedLightDirection(light.direction);
-    CameraData cameraData;
-    cameraData.viewProjection = projection * view;
-    cameraData.previousViewProjection = m_previousViewProjection;
-    cameraData.temporalJitter = {temporal.jitterNdc, m_previousJitterNdc};
+    frame.lightDirection = normalizedLightDirection(light.direction);
+    const glm::vec3 lightDirection = frame.lightDirection;
+    CameraData& cameraData = frame.base;
     const float shadowDepthRange = std::max(light.shadows.depthRange, 0.2f);
     uint32_t cascadeCount = 0;
-    switch (rendering.settings().shadows) {
+    switch (settings.shadows) {
     case ShadowQuality::Off:
         break;
     case ShadowQuality::Single:
@@ -2562,19 +2906,17 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         cascadeCount = 3;
         break;
     }
-    const bool depthPrepass = plan.depthPrepass;
-    const MeshPipelineSet* shadingPipelines =
-        meshPipelines({.physicallyBased = rendering.settings().lighting == LightingQuality::PhysicallyBased,
-                       .shadowCascades = cascadeCount,
-                       .depthPrepass = depthPrepass});
-    if (!shadingPipelines) {
-        return false;
-    }
+    frame.cascadeCount = cascadeCount;
+    // The cascades follow the leading view's camera.
+    const float nearPlane = leadFrame.nearPlane;
+    const float farPlane = leadFrame.farPlane;
+    const glm::vec3& cameraPosition = leadFrame.cameraPosition;
+    const glm::vec3& cameraForward = leadFrame.cameraForward;
     const float maximumShadowDistance = std::max(std::min(farPlane, shadowDepthRange), nearPlane + 0.01f);
     const glm::vec3 lightUp =
         std::abs(lightDirection.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
     float cascadeNear = nearPlane;
-    const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+    const float aspect = static_cast<float>(lead.extent.width) / static_cast<float>(lead.extent.height);
     for (uint32_t cascade = 0; cascade < std::max(cascadeCount, 1u); ++cascade) {
         float cascadeFar = maximumShadowDistance;
         float radius = std::max(light.shadows.halfExtent, 0.1f);
@@ -2583,9 +2925,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             const float partition = static_cast<float>(cascade + 1) / static_cast<float>(cascadeCount);
             const float logarithmic = nearPlane * std::pow(maximumShadowDistance / nearPlane, partition);
             const float uniform = nearPlane + (maximumShadowDistance - nearPlane) * partition;
-            const float lambda = std::clamp(rendering.settings().cascadeSplitLambda, 0.0f, 1.0f);
+            const float lambda = std::clamp(settings.cascadeSplitLambda, 0.0f, 1.0f);
             cascadeFar = glm::mix(uniform, logarithmic, lambda);
-            const float halfHeight = std::tan(fov * 0.5f) * cascadeFar;
+            const float halfHeight = std::tan(leadFrame.verticalFov * 0.5f) * cascadeFar;
             const float halfWidth = halfHeight * aspect;
             radius = std::sqrt(halfWidth * halfWidth + halfHeight * halfHeight +
                                (cascadeFar - cascadeNear) * (cascadeFar - cascadeNear) * 0.25f);
@@ -2613,58 +2955,37 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
                                  std::max(environment.diffuseIntensity, 0.0f)};
     cameraData.environmentGround = {glm::max(environment.groundColor, glm::vec3(0.0f)),
                                     std::max(environment.specularIntensity, 0.0f)};
-    const bool shadowsEnabled = light.shadows.enabled && rendering.settings().shadows != ShadowQuality::Off;
-    cameraData.shadowSettings = {std::max(light.shadows.normalBias, 0.0f), shadowsEnabled ? 1.0f : 0.0f,
+    frame.shadowsEnabled = light.shadows.enabled && settings.shadows != ShadowQuality::Off;
+    cameraData.shadowSettings = {std::max(light.shadows.normalBias, 0.0f), frame.shadowsEnabled ? 1.0f : 0.0f,
                                  static_cast<float>(cascadeCount),
-                                 std::clamp(rendering.settings().cascadeBlendFraction, 0.0f, 0.5f)};
-    cameraData.renderingSettings = {
-        rendering.settings().lighting == LightingQuality::PhysicallyBased ? 1.0f : 0.0f,
-        1.0f / static_cast<float>(extent.width),
-        1.0f / static_cast<float>(extent.height),
-        rendering.settings().visualizeShadowCascades ? 1.0f : 0.0f,
-    };
+                                 std::clamp(settings.cascadeBlendFraction, 0.0f, 0.5f)};
     for (size_t level = 0; level < environmentSpecular.size(); ++level) {
         cameraData.environmentSpecular[level] = {glm::max(environmentSpecular[level], glm::vec3(0.0f)), 1.0f};
     }
     // Environment maps are bound before any pass uses this frame's camera sets.
-    const bool imageBasedLighting = rendering.settings().environment != EnvironmentQuality::Hemisphere;
+    frame.imageBasedLighting = settings.environment != EnvironmentQuality::Hemisphere;
     const CameraBuffer& frameCamera = m_cameras[frameIndex];
     const std::array<VkDescriptorSet, 2> environmentSets{frameCamera.descriptor, frameCamera.gpuDrivenDescriptor};
     std::vector<EnvironmentSource> residentProbeSources;
-    const std::vector<ReflectionProbeVolume> residentProbes =
-        plan.perPixelReflectionProbes
-            ? selectPerPixelProbes(scene, assets, environment, cameraPosition, residentProbeSources)
-            : std::vector<ReflectionProbeVolume>{};
-    OptionalPassTimestamps passTimestamps(commandBuffer, timestampQueries);
+    // Probe residency is frame-level, so every view shares the lead's choice.
+    frame.residentProbes = lead.plan.perPixelReflectionProbes
+                               ? selectPerPixelProbes(scene, assets, environment, cameraPosition, residentProbeSources)
+                               : std::vector<ReflectionProbeVolume>{};
     passTimestamps.write(FrameTimestamp::environmentPrecomputeBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-    const std::optional<EnvironmentFrameState> environmentState =
-        m_environmentPass.prepare(commandBuffer, frameIndex, m_frameSerial,
-                                  environmentRequest(scene, assets, environment, rendering.settings(), cameraPosition,
-                                                     plan.perPixelReflectionProbes, std::move(residentProbeSources)),
-                                  std::span(environmentSets.data(), frameCamera.gpuDrivenDescriptor ? 2u : 1u));
+    const std::optional<EnvironmentFrameState> environmentState = m_environmentPass.prepare(
+        commandBuffer, frameIndex, m_frameSerial,
+        environmentRequest(scene, assets, environment, settings, cameraPosition, lead.plan.perPixelReflectionProbes,
+                           std::move(residentProbeSources)),
+        std::span(environmentSets.data(), frameCamera.gpuDrivenDescriptor ? 2u : 1u));
     passTimestamps.write(FrameTimestamp::environmentPrecomputeEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     if (!environmentState) {
         return false;
     }
-    // Probes still waiting for their maps to build are left out this frame.
-    std::vector<GpuReflectionProbe> probeRecords;
-    for (size_t index = 0; index < residentProbes.size() && index < environmentState->probeSlots.size(); ++index) {
-        if (const int32_t slot = environmentState->probeSlots[index]; slot >= 0) {
-            probeRecords.push_back(packReflectionProbe(residentProbes[index], static_cast<uint32_t>(slot), view));
-        }
-    }
-    cameraData.reflectionProbeParams = {probeRecords.empty() ? 0.0f : 1.0f, static_cast<float>(probeRecords.size()),
-                                        0.0f, 0.0f};
-    // GTAO needs the prepass normals; without them the occlusion target is
-    // cleared to unoccluded and any scale samples it correctly.
-    const AmbientOcclusionQuality ambientOcclusion = plan.ambientOcclusion;
-    cameraData.environmentParams = {imageBasedLighting ? 1.0f : 0.0f, environmentState->probeWeight,
-                                    environmentState->specularMaximumLod,
-                                    AmbientOcclusionPass::resolutionScale(ambientOcclusion)};
-    // Irradiance volume (U6): bind the volume nearest the camera and upload its
-    // probes when they change; Environment mode leaves the volume disabled.
+    frame.environmentState = *environmentState;
+    // Irradiance volume (U6): bind the volume nearest the leading camera and
+    // upload its probes when they change; Environment mode leaves it disabled.
     passTimestamps.write(FrameTimestamp::irradianceVolumeBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-    const Entity irradianceVolumeEntity = rendering.settings().indirectDiffuse == IndirectDiffuseMode::ProbeVolume
+    const Entity irradianceVolumeEntity = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume
                                               ? irradiance_volume::selectVolume(scene, cameraPosition)
                                               : entt::null;
     const IrradianceVolumeComponent* irradianceVolume =
@@ -2684,15 +3005,12 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         cameraData.irradianceVolumeBias = {std::max(irradianceVolume->normalBias, 0.0f),
                                            std::max(irradianceVolume->viewBias, 0.0f), 0.0f, 0.0f};
     }
-    const uint32_t localLightLimit =
-        rendering.settings().localLights == LocalLightingQuality::Disabled
-            ? 0u
-            : std::min(rendering.settings().maximumLocalLights, m_clusteredLighting.lightCapacity());
-    std::vector<LocalLight> selectedLights;
-    size_t sceneLightCount = 0;
+    frame.localLightLimit = settings.localLights == LocalLightingQuality::Disabled
+                                ? 0u
+                                : std::min(settings.maximumLocalLights, leadView.clusteredLighting.lightCapacity());
 
     uint64_t outlineRevision = 0;
-    for (RenderObjectId outlined : rendering.m_outlinedObjects) {
+    for (RenderObjectId outlined : m_outlinedObjects) {
         outlineRevision ^=
             static_cast<uint64_t>(outlined) + 0x9e3779b97f4a7c15ull + (outlineRevision << 6) + (outlineRevision >> 2);
     }
@@ -2708,7 +3026,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     if (rebuildPackets) {
         m_renderItems.clear();
         const size_t previousCapacity = m_renderItems.capacity();
-        if (!buildRenderItems(scene, assets, rendering.m_outlinedObjects, m_renderItems)) {
+        if (!buildRenderItems(scene, assets, m_outlinedObjects, m_renderItems)) {
             return false;
         }
         scannedRenderables = static_cast<uint32_t>(scene.registry().view<const MeshRendererComponent>().size());
@@ -2726,9 +3044,6 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     m_sceneRevisions = revisions;
     m_assetRevision = assets.revision();
     m_outlineRevision = outlineRevision;
-    uint32_t sceneDecalCount = 0;
-    const std::vector<GpuDecal> decalRecords =
-        prepareDecals(scene, assets, rendering.settings(), cameraPosition, view, sceneDecalCount);
     writeMaterialRecords(frameIndex, assets);
     streamTextureMips(assets, cameraPosition);
     updateBindlessDescriptor(frameIndex);
@@ -2739,24 +3054,21 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         std::cerr << "Renderable count exceeds the per-frame render capacity\n";
         return false;
     }
-    // Opaque and masked surfaces go through GPU culling; blended surfaces and
-    // editor outlines keep CPU submission within the same frame.
-    const bool gpuDrivenActive = m_gpuDrivenSupported && plan.gpuDrivenSubmission;
     const FrameResourceUse lightResources[]{{"scene.lights", FrameResourceAccess::Read},
                                             {"frame.light_list", FrameResourceAccess::Write}};
     const FrameResourceUse visibilityResources[]{{"renderer.persistent_scene", FrameResourceAccess::Read},
                                                  {"frame.visibility", FrameResourceAccess::Write}};
     FrameTaskGraph taskGraph(++m_taskGeneration);
     taskGraph.add("light-selection", lightResources, [&](const FrameTaskContext&) {
-        if (localLightLimit > 0) {
-            const std::vector<LocalLight> sceneLights = gatherLocalLights(scene);
-            sceneLightCount = sceneLights.size();
-            selectedLights = selectLocalLights(sceneLights, cameraPosition, localLightLimit);
+        if (frame.localLightLimit > 0) {
+            frame.sceneLights = gatherLocalLights(scene);
+            frame.leadLights = selectLocalLights(frame.sceneLights, cameraPosition, frame.localLightLimit);
         }
     });
+    const glm::mat4 leadViewProjection = leadFrame.projection * leadFrame.view;
     taskGraph.add("render-visibility", visibilityResources, [&](const FrameTaskContext&) {
-        m_gpuScene.buildVisibility({.viewProjection = cameraData.viewProjection, .depthHistoryValid = false},
-                                   m_visibility);
+        m_gpuScene.buildVisibility({.viewProjection = leadViewProjection, .depthHistoryValid = false},
+                                   leadView.visibility);
     });
     const FrameTaskResult taskResult = frameTasks.execute(taskGraph);
     if (!taskResult) {
@@ -2764,39 +3076,6 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         return false;
     }
     m_gpuScene.retireDeltas();
-    ClusterLightStatistics clusterStatistics;
-    const uint32_t localLightCount = m_clusteredLighting.beginFrame(frameIndex, selectedLights, clusterStatistics);
-    DecalClusterStatistics decalStatistics;
-    const uint32_t decalCount = m_decalClusters.beginFrame(frameIndex, decalRecords, decalStatistics);
-    const ClusterGrid clusterGrid = makeClusterGrid(m_clusteredLighting.configuration(), projection,
-                                                    {renderExtent.width, renderExtent.height}, nearPlane, farPlane);
-    const glm::vec2 sliceScaleBias = clusterGrid.sliceScaleBias();
-    cameraData.clusterDepth = {sliceScaleBias, projection[3][2], projection[2][2]};
-    cameraData.clusterTileScale = {glm::vec2(clusterGrid.configuration.columns, clusterGrid.configuration.rows) /
-                                       clusterGrid.renderExtent,
-                                   0.0f, 0.0f};
-    cameraData.clusterGrid = {clusterGrid.configuration.columns, clusterGrid.configuration.rows,
-                              clusterGrid.configuration.depthSlices, localLightCount};
-    // Fog volumes follow the quality setting; the scene decides whether there
-    // is a medium to draw at all.
-    if (!m_volumetricFog.prepare(rendering.settings().volumetricFog, m_frameSerial)) {
-        return false;
-    }
-    writeVolumetricFogDescriptors(frameIndex);
-    const bool fogActive = rendering.settings().volumetricFog != VolumetricFogQuality::Off &&
-                           m_volumetricFog.supported() && fogMedium && fogMedium->density > 0.0f;
-    const volumetric_fog::FroxelGrid froxelGrid =
-        volumetric_fog::makeFroxelGrid(clusterGrid, m_volumetricFog.subdivision());
-    if (fogActive) {
-        cameraData.fogVolume = {1.0f, froxelGrid.sliceScaleBias(), static_cast<float>(froxelGrid.dimensions().z)};
-    }
-    // Written every frame: transmissive surfaces map fragments to the
-    // transmission background with it too.
-    cameraData.fogScreen = {1.0f / static_cast<float>(renderExtent.width),
-                            1.0f / static_cast<float>(renderExtent.height), 0.0f, 0.0f};
-    std::memcpy(m_cameras[frameIndex].mapped, &cameraData, sizeof(cameraData));
-    vmaFlushAllocation(m_allocator, m_cameras[frameIndex].buffer.allocation, 0, sizeof(cameraData));
-    RenderStats& stats = rendering.m_stats;
     stats.cpuRenderPacketMilliseconds = packetBuildMilliseconds;
     stats.cpuUploadMilliseconds = m_uploadMilliseconds;
     stats.gpuUploadMilliseconds = m_uploadGpuMilliseconds;
@@ -2811,18 +3090,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.scannedRenderables = scannedRenderables;
     stats.updatedObjectRecords = updatedObjectRecords;
     stats.mainThreadAllocations = allocationCount;
-    stats.localLightCount = localLightCount;
-    stats.reflectionProbeCount = static_cast<uint32_t>(probeRecords.size());
-    stats.discardedLightAssignments = clusterStatistics.discardedAssignments;
-    stats.maximumLightsPerCluster = clusterStatistics.maximumLightsInCluster;
-    stats.droppedLocalLights =
-        sceneLightCount > localLightCount ? static_cast<uint32_t>(sceneLightCount - localLightCount) : 0u;
-    stats.decalCount = decalCount;
-    stats.droppedDecals = sceneDecalCount > decalCount ? sceneDecalCount - decalCount : 0u;
-    stats.discardedDecalAssignments = decalStatistics.discardedAssignments;
-    stats.maximumDecalsPerCluster = decalStatistics.maximumDecalsInCluster;
-    stats.decalBytes = m_decalClusters.allocatedBytes();
-    recordDeferredUploads(rendering.settings(), stats);
+    recordDeferredUploads(settings, stats);
     recordTextureStreaming(assets, stats);
     stats.taskQueueDepth = taskResult.stats.maximumQueueDepth;
     stats.taskStolenJobs = taskResult.stats.stolenJobs;
@@ -2830,17 +3098,6 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.taskMainThreadAssistMilliseconds = taskResult.stats.mainThreadAssistMilliseconds;
     stats.taskGraphLatencyMilliseconds = taskResult.stats.latencyMilliseconds;
     stats.renderableCount = static_cast<uint32_t>(m_renderItems.size());
-    stats.internalRenderWidth = renderExtent.width;
-    stats.internalRenderHeight = renderExtent.height;
-    stats.internalResolutionScale = temporal.resolutionScale;
-    stats.temporalHistoryValid = temporal.historyValid;
-    stats.temporalHistoryInvalidated = temporal.historyInvalidated;
-    stats.temporalHistoryBytes = m_postProcess.temporalHistoryBytes();
-    stats.spatialUpscaleBytes = m_postProcess.spatialUpscaleBytes();
-    stats.motionVectorBytes =
-        static_cast<uint64_t>(extent.width) * extent.height * sizeof(uint16_t) * 4 * m_cameras.size();
-    stats.ambientOcclusionBytes = m_ambientOcclusion.allocatedBytes();
-    stats.volumetricFogBytes = m_volumetricFog.allocatedBytes();
     stats.particleBytes = m_particles.allocatedBytes();
     stats.irradianceVolumeBytes = m_irradianceVolume.allocatedBytes();
     stats.irradianceVolumeProbes =
@@ -2848,7 +3105,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     stats.shadowCacheBytes =
         static_cast<uint64_t>(shadowResolution) * shadowResolution * sizeof(float) * maximumShadowCascades;
     DirectionalLightComponent shadowLight = light;
-    shadowLight.shadows.enabled = shadowsEnabled;
+    shadowLight.shadows.enabled = frame.shadowsEnabled;
     auto* skinMatrices = static_cast<glm::mat4*>(m_cameras[frameIndex].skinPalettesMapped);
     // Last frame's palettes at the same offsets, so skinned motion vectors see
     // joint animation as well as object motion.
@@ -2882,27 +3139,31 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         // this timestamp exposes any queue bubble before the first consumer.
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, timestampQueries, 16);
     }
-    const MeshLodView lodView = makeMeshLodView(cameraPosition, projection[1][1], renderExtent.height,
-                                                rendering.settings().lodErrorThresholdPixels);
-    selectRenderItemLods(lodView);
+    // Shadow cascades reuse the leading view's LOD choice.
+    selectRenderItemLods(leadFrame.lodView);
     // Local shadows may rebind the atlas in the camera sets, so they run before
     // GPU-driven preparation and before anything binds those sets.
-    recordLocalShadows(commandBuffer, frameIndex, scene, assets, rendering.settings(),
-                       std::span<const LocalLight>(selectedLights.data(), localLightCount), cameraPosition,
-                       passTimestamps, stats);
-    if (gpuDrivenActive) {
+    const size_t shadowedLightCount =
+        std::min<size_t>(frame.leadLights.size(), leadView.clusteredLighting.lightCapacity());
+    frame.leadShadowTiles = recordLocalShadows(commandBuffer, frameIndex, scene, assets, settings,
+                                               std::span<const LocalLight>(frame.leadLights.data(), shadowedLightCount),
+                                               cameraPosition, passTimestamps, stats);
+    const bool gpuDrivenLead = lead.view == 0 && m_gpuDrivenSupported && lead.plan.gpuDrivenSubmission;
+    if (gpuDrivenLead) {
         // Shadow cascades cull from the same records before the camera does.
-        if (!prepareGpuDrivenFrame(frameIndex, lodView)) {
+        if (!prepareGpuDrivenFrame(frameIndex, leadFrame.lodView,
+                                   static_cast<uint32_t>(leadView.visibility.visibleInstances.size()))) {
             return false;
         }
         m_gpuDrivenPass.beginFrame(commandBuffer, frameIndex);
         // Every cull dispatch statically references the pyramid.
-        m_depthPyramid.prepareFirstUse(commandBuffer);
+        leadView.depthPyramid.prepareFirstUse(commandBuffer);
+        frame.gpuDrivenPrepared = true;
     }
-    // Cascades cull on the GPU whenever GPU-driven submission is active; the CPU
-    // path is the fallback and the A/B baseline (docs/RENDERER_VALIDATION.md).
-    const ShadowCulling shadowCulling =
-        gpuDrivenActive && plan.gpuShadowCulling ? ShadowCulling::Gpu : ShadowCulling::Cpu;
+    // Cascades cull on the GPU whenever the leading view uses GPU-driven
+    // submission; the CPU path is the fallback and the A/B baseline
+    // (docs/RENDERER_VALIDATION.md).
+    frame.shadowCulling = gpuDrivenLead && lead.plan.gpuShadowCulling ? ShadowCulling::Gpu : ShadowCulling::Cpu;
     const auto shadowCpuBegin = std::chrono::steady_clock::now();
     // ZENITH_DISABLE_SHADOW_CACHE redraws every cascade each frame, so shadow
     // rendering and culling can be measured on a static scene.
@@ -2924,7 +3185,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         dirtyCascades[cascade] = shadowCastersChanged || cascade >= m_cachedCascadeCount || maximumDifference > 0.0001f;
     }
     if (!recordShadow(commandBuffer, frameIndex, m_renderItems, shadowLight, cameraData.lightViewProjections,
-                      cascadeCount, dirtyCascades, shadowCulling, lodView, passTimestamps, stats)) {
+                      cascadeCount, dirtyCascades, frame.shadowCulling, leadFrame.lodView, passTimestamps, stats)) {
         return false;
     }
     m_shadowRevisions = revisions;
@@ -2932,22 +3193,192 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     m_cachedCascadeCount = cascadeCount;
     stats.cpuShadowMilliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - shadowCpuBegin).count();
+    return true;
+}
+
+bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, const Scene& scene,
+                          const AssetManager& assets, RenderRuntime& rendering, const MeshPassViewRequest& request,
+                          const ViewFrame& viewFrame, bool leading, FrameTaskExecutor& frameTasks,
+                          VkQueryPool timestampQueries, OptionalPassTimestamps& passTimestamps, FrameState& frame) {
+    const auto viewCpuBegin = std::chrono::steady_clock::now();
+    ViewState& view = *m_views[request.view];
+    const RenderSettings& settings = *request.settings;
+    const MeshPassFramePlan& plan = request.plan;
+    const VkExtent2D extent = request.extent;
+    const VkExtent2D renderExtent = viewFrame.renderExtent;
+    const TemporalFrameState& temporal = viewFrame.temporal;
+    const glm::mat4& viewMatrix = viewFrame.view;
+    const glm::mat4& projection = viewFrame.projection;
+    const glm::vec3& cameraPosition = viewFrame.cameraPosition;
+    // Counters of this view; merged into the frame's stats at the end.
+    RenderStats stats;
+    RenderStats& frameStats = rendering.m_stats;
+    // Opaque and masked surfaces go through GPU culling; blended surfaces and
+    // editor outlines keep CPU submission within the same frame.
+    const bool gpuDrivenActive = view.sharesFrameSets && m_gpuDrivenSupported && plan.gpuDrivenSubmission;
+    const bool depthPrepass = plan.depthPrepass;
+    const MeshPipelineSet* shadingPipelines =
+        meshPipelines({.physicallyBased = settings.lighting == LightingQuality::PhysicallyBased,
+                       .shadowCascades = frame.cascadeCount,
+                       .depthPrepass = depthPrepass});
+    if (!shadingPipelines) {
+        return false;
+    }
+    CameraData cameraData = frame.base;
+    cameraData.viewProjection = projection * viewMatrix;
+    cameraData.previousViewProjection = view.previousViewProjection;
+    cameraData.temporalJitter = {temporal.jitterNdc, view.previousJitterNdc};
+    cameraData.cameraPosition = {cameraPosition, 1.0f};
+    cameraData.renderingSettings = {
+        settings.lighting == LightingQuality::PhysicallyBased ? 1.0f : 0.0f,
+        1.0f / static_cast<float>(extent.width),
+        1.0f / static_cast<float>(extent.height),
+        settings.visualizeShadowCascades ? 1.0f : 0.0f,
+    };
+    // Probes still waiting for their maps to build are left out this frame.
+    std::vector<GpuReflectionProbe> probeRecords;
+    const std::vector<int32_t>& probeSlots = frame.environmentState.probeSlots;
+    for (size_t index = 0; index < frame.residentProbes.size() && index < probeSlots.size(); ++index) {
+        if (const int32_t slot = probeSlots[index]; slot >= 0) {
+            probeRecords.push_back(
+                packReflectionProbe(frame.residentProbes[index], static_cast<uint32_t>(slot), viewMatrix));
+        }
+    }
+    cameraData.reflectionProbeParams = {probeRecords.empty() ? 0.0f : 1.0f, static_cast<float>(probeRecords.size()),
+                                        0.0f, 0.0f};
+    // GTAO needs the prepass normals; without them the occlusion target is
+    // cleared to unoccluded and any scale samples it correctly.
+    const AmbientOcclusionQuality ambientOcclusion = plan.ambientOcclusion;
+    cameraData.environmentParams = {frame.imageBasedLighting ? 1.0f : 0.0f, frame.environmentState.probeWeight,
+                                    frame.environmentState.specularMaximumLod,
+                                    AmbientOcclusionPass::resolutionScale(ambientOcclusion)};
+    // The leading view's lights and visibility came from the frame stage.
+    std::vector<LocalLight> viewLights;
+    if (!leading) {
+        const FrameResourceUse lightResources[]{{"frame.lights", FrameResourceAccess::Read},
+                                                {"view.light_list", FrameResourceAccess::Write}};
+        const FrameResourceUse visibilityResources[]{{"renderer.persistent_scene", FrameResourceAccess::Read},
+                                                     {"view.visibility", FrameResourceAccess::Write}};
+        FrameTaskGraph taskGraph(++m_taskGeneration);
+        taskGraph.add("view-light-selection", lightResources, [&](const FrameTaskContext&) {
+            if (frame.localLightLimit > 0) {
+                viewLights = selectLocalLights(frame.sceneLights, cameraPosition, frame.localLightLimit);
+            }
+        });
+        taskGraph.add("view-visibility", visibilityResources, [&](const FrameTaskContext&) {
+            m_gpuScene.buildVisibility({.viewProjection = cameraData.viewProjection, .depthHistoryValid = false},
+                                       view.visibility);
+        });
+        const FrameTaskResult taskResult = frameTasks.execute(taskGraph);
+        if (!taskResult) {
+            std::cerr << "View task graph failed: " << taskResult.error << '\n';
+            return false;
+        }
+    }
+    const std::vector<LocalLight>& lights = leading ? frame.leadLights : viewLights;
+    ClusterLightStatistics clusterStatistics;
+    const uint32_t localLightCount = view.clusteredLighting.beginFrame(frameIndex, lights, clusterStatistics);
+    // Only the leading view's lights had shadow tiles rendered; another view
+    // finds a light's tiles by its stable id.
+    view.clusteredLighting.assignShadowTiles(
+        frameIndex,
+        leading ? frame.leadShadowTiles : remapLocalShadowTiles(frame.leadLights, frame.leadShadowTiles, lights));
+    uint32_t sceneDecalCount = 0;
+    const std::vector<GpuDecal> decalRecords =
+        prepareDecals(scene, assets, settings, cameraPosition, viewMatrix, sceneDecalCount);
+    DecalClusterStatistics decalStatistics;
+    const uint32_t decalCount = view.decalClusters.beginFrame(frameIndex, decalRecords, decalStatistics);
+    const ClusterGrid clusterGrid =
+        makeClusterGrid(view.clusteredLighting.configuration(), projection, {renderExtent.width, renderExtent.height},
+                        viewFrame.nearPlane, viewFrame.farPlane);
+    const glm::vec2 sliceScaleBias = clusterGrid.sliceScaleBias();
+    cameraData.clusterDepth = {sliceScaleBias, projection[3][2], projection[2][2]};
+    cameraData.clusterTileScale = {glm::vec2(clusterGrid.configuration.columns, clusterGrid.configuration.rows) /
+                                       clusterGrid.renderExtent,
+                                   0.0f, 0.0f};
+    cameraData.clusterGrid = {clusterGrid.configuration.columns, clusterGrid.configuration.rows,
+                              clusterGrid.configuration.depthSlices, localLightCount};
+    // The fog volumes were prepared before the frame stage (see record()); the
+    // scene decides whether there is a medium to draw at all.
+    const bool fogActive = settings.volumetricFog != VolumetricFogQuality::Off && view.volumetricFog.supported() &&
+                           frame.fogMedium && frame.fogMedium->density > 0.0f;
+    const volumetric_fog::FroxelGrid froxelGrid =
+        volumetric_fog::makeFroxelGrid(clusterGrid, view.volumetricFog.subdivision());
+    if (fogActive) {
+        cameraData.fogVolume = {1.0f, froxelGrid.sliceScaleBias(), static_cast<float>(froxelGrid.dimensions().z)};
+    }
+    // Written every frame: transmissive surfaces map fragments to the
+    // transmission background with it too.
+    cameraData.fogScreen = {1.0f / static_cast<float>(renderExtent.width),
+                            1.0f / static_cast<float>(renderExtent.height), 0.0f, 0.0f};
+    if (view.sharesFrameSets) {
+        std::memcpy(m_cameras[frameIndex].mapped, &cameraData, sizeof(cameraData));
+        vmaFlushAllocation(m_allocator, m_cameras[frameIndex].buffer.allocation, 0, sizeof(cameraData));
+    } else {
+        ViewCameraSet& camera = view.cameras[frameIndex];
+        std::memcpy(camera.uniformMapped, &cameraData, sizeof(cameraData));
+        vmaFlushAllocation(m_allocator, camera.uniform.allocation, 0, sizeof(cameraData));
+        copySharedCameraBindings(view, frameIndex);
+    }
+    if (leading) {
+        frameStats.localLightCount = localLightCount;
+        frameStats.reflectionProbeCount = static_cast<uint32_t>(probeRecords.size());
+        frameStats.discardedLightAssignments = clusterStatistics.discardedAssignments;
+        frameStats.maximumLightsPerCluster = clusterStatistics.maximumLightsInCluster;
+        frameStats.droppedLocalLights = frame.sceneLights.size() > localLightCount
+                                            ? static_cast<uint32_t>(frame.sceneLights.size() - localLightCount)
+                                            : 0u;
+        frameStats.decalCount = decalCount;
+        frameStats.droppedDecals = sceneDecalCount > decalCount ? sceneDecalCount - decalCount : 0u;
+        frameStats.discardedDecalAssignments = decalStatistics.discardedAssignments;
+        frameStats.maximumDecalsPerCluster = decalStatistics.maximumDecalsInCluster;
+        frameStats.internalRenderWidth = renderExtent.width;
+        frameStats.internalRenderHeight = renderExtent.height;
+        frameStats.internalResolutionScale = temporal.resolutionScale;
+        frameStats.temporalHistoryValid = temporal.historyValid;
+        frameStats.temporalHistoryInvalidated = temporal.historyInvalidated;
+    }
+    stats.decalBytes = view.decalClusters.allocatedBytes();
+    stats.temporalHistoryBytes = view.postProcess.temporalHistoryBytes();
+    stats.spatialUpscaleBytes = view.postProcess.spatialUpscaleBytes();
+    stats.motionVectorBytes =
+        static_cast<uint64_t>(extent.width) * extent.height * sizeof(uint16_t) * 4 * m_cameras.size();
+    stats.ambientOcclusionBytes = view.ambientOcclusion.allocatedBytes();
+    stats.volumetricFogBytes = view.volumetricFog.allocatedBytes();
+    if (!leading) {
+        // The frame stage selected the leading view's LODs.
+        selectRenderItemLods(viewFrame.lodView);
+    }
     const DrawContext draw{.commandBuffer = commandBuffer,
                            .frameIndex = frameIndex,
                            .pipelines = shadingPipelines,
                            .timestampQueries = timestampQueries,
                            .passTimestamps = &passTimestamps,
                            .stats = &stats,
-                           .view = view,
-                           .renderExtent = renderExtent};
+                           .view = viewMatrix,
+                           .renderExtent = renderExtent,
+                           .viewState = &view,
+                           .cameraSet = viewCameraSet(view, frameIndex),
+                           .objectBase = view.sharesFrameSets ? mainObjectBase : 0u};
     if (gpuDrivenActive) {
+        if (!frame.gpuDrivenPrepared) {
+            // The default view does not lead this frame, so its records were
+            // not prepared before the shadows.
+            if (!prepareGpuDrivenFrame(frameIndex, viewFrame.lodView,
+                                       static_cast<uint32_t>(view.visibility.visibleInstances.size()))) {
+                return false;
+            }
+            m_gpuDrivenPass.beginFrame(commandBuffer, frameIndex);
+            view.depthPyramid.prepareFirstUse(commandBuffer);
+            frame.gpuDrivenPrepared = true;
+        }
         // Culling time covers the early phase; the depth pyramid and late phase
         // run between the opaque passes and count toward opaque time.
         if (timestampQueries) {
             vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, timestampQueries, 8);
         }
-        m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Early, cameraData.viewProjection, m_depthPyramid,
-                             lodView);
+        m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Early, cameraData.viewProjection,
+                             view.depthPyramid, viewFrame.lodView);
         if (timestampQueries) {
             vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, timestampQueries, 9);
         }
@@ -2955,81 +3386,82 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, timestampQueries, 8);
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, timestampQueries, 9);
     }
-    m_previousCameraPosition = cameraPosition;
-    m_previousCameraForward = cameraForward;
-    m_cameraHistoryValid = true;
+    view.previousCameraPosition = cameraPosition;
+    view.previousCameraForward = viewFrame.cameraForward;
+    view.cameraHistoryValid = true;
     if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 1);
     }
-    if (!collectCpuSubmittedItems(gpuDrivenActive, cameraPosition)) {
+    if (!collectCpuSubmittedItems(view, gpuDrivenActive, cameraPosition, request.outlinedObjects)) {
         return false;
     }
-    uploadCpuSubmittedObjects(frameIndex);
-    stats.culledCount += m_visibility.frustumCulled + (gpuDrivenActive ? 0u : m_visibility.occlusionCulled);
+    uploadCpuSubmittedObjects(draw);
+    stats.culledCount += view.visibility.frustumCulled + (gpuDrivenActive ? 0u : view.visibility.occlusionCulled);
 
     passTimestamps.write(FrameTimestamp::lightClustersBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-    m_clusteredLighting.record(commandBuffer, frameIndex, clusterGrid, view);
+    view.clusteredLighting.record(commandBuffer, frameIndex, clusterGrid, viewMatrix);
     passTimestamps.write(FrameTimestamp::lightClustersEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     if (!probeRecords.empty()) {
         passTimestamps.write(FrameTimestamp::reflectionProbeClustersBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-        m_reflectionProbeClusters.record(commandBuffer, frameIndex, probeRecords,
-                                         m_environmentPass.probeIrradianceBuffer(), clusterGrid);
+        view.reflectionProbeClusters.record(commandBuffer, frameIndex, probeRecords,
+                                            m_environmentPass.probeIrradianceBuffer(), clusterGrid);
         passTimestamps.write(FrameTimestamp::reflectionProbeClustersEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     }
     if (decalCount > 0) {
         passTimestamps.write(FrameTimestamp::decalClustersBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-        m_decalClusters.record(commandBuffer, frameIndex, clusterGrid);
+        view.decalClusters.record(commandBuffer, frameIndex, clusterGrid);
         passTimestamps.write(FrameTimestamp::decalClustersEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     }
+    const ClusteredLightingPass::FrameBuffers clusterBuffers = view.clusteredLighting.frameBuffers(frameIndex);
     if (fogActive) {
-        const ClusteredLightingPass::FrameBuffers clusterBuffers = m_clusteredLighting.frameBuffers(frameIndex);
         const VolumetricFogFrame fogFrame{
             .grid = froxelGrid,
-            .inverseView = glm::inverse(view),
+            .inverseView = glm::inverse(viewMatrix),
             .previousViewProjection = cameraData.previousViewProjection,
-            .historyValid = !cameraCut,
+            .historyValid = !viewFrame.cameraCut,
             .cameraPosition = cameraPosition,
-            .lightDirection = lightDirection,
+            .lightDirection = frame.lightDirection,
             .lightRadiance = glm::vec3(cameraData.lightColor) * cameraData.lightDirection.w,
-            .shadowCascades = shadowsEnabled ? cascadeCount : 0u,
+            .shadowCascades = frame.shadowsEnabled ? frame.cascadeCount : 0u,
             .lightViewProjections = cameraData.lightViewProjections,
             .cascadeSplits = cameraData.cascadeSplits,
             .ambientRadiance = (glm::vec3(cameraData.environmentSky) + glm::vec3(cameraData.environmentGround)) * 0.5f *
                                cameraData.environmentSky.w,
-            .environmentIrradiance = imageBasedLighting,
+            .environmentIrradiance = frame.imageBasedLighting,
             .ambientScale = cameraData.environmentSky.w,
             .irradianceVolumeMinimum = cameraData.irradianceVolumeMinimum,
             .irradianceVolumeCellSize = cameraData.irradianceVolumeCellSize,
             .irradianceVolumeCounts = cameraData.irradianceVolumeCounts,
-            .medium = *fogMedium,
+            .medium = *frame.fogMedium,
             .localLightCount = localLightCount,
             .shadowMap = m_shadowTexture.view,
             .shadowSampler = m_shadowSampler,
             .localLights = clusterBuffers.lights,
             .clusterRanges = clusterBuffers.clusterRanges,
             .clusterLightIndices = clusterBuffers.lightIndices,
-            .environmentIrradianceBuffer = environmentState->primaryIrradiance,
+            .environmentIrradianceBuffer = frame.environmentState.primaryIrradiance,
             .irradianceVolumeProbes = m_irradianceVolume.buffer()};
         recordVolumetricFog(draw, &fogFrame);
     } else {
         recordVolumetricFog(draw, nullptr);
     }
-    {
-        const ClusteredLightingPass::FrameBuffers clusterBuffers = m_clusteredLighting.frameBuffers(frameIndex);
+    if (leading) {
+        // Particles simulate, cull, and sort once per frame, for this view,
+        // lit by its light clusters; every view draws the result.
         const ParticleSimulationFrame particleFrame{
-            .view = view,
+            .view = viewMatrix,
             .projection = projection,
             .cameraPosition = cameraPosition,
             .clusters = clusterGrid,
             .localLightCount = localLightCount,
-            .lightDirection = lightDirection,
+            .lightDirection = frame.lightDirection,
             .lightRadiance = glm::vec3(cameraData.lightColor) * cameraData.lightDirection.w,
-            .shadowCascades = shadowsEnabled ? cascadeCount : 0u,
+            .shadowCascades = frame.shadowsEnabled ? frame.cascadeCount : 0u,
             .lightViewProjections = cameraData.lightViewProjections,
             .cascadeSplits = cameraData.cascadeSplits,
             .ambientRadiance = (glm::vec3(cameraData.environmentSky) + glm::vec3(cameraData.environmentGround)) * 0.5f *
                                cameraData.environmentSky.w,
-            .environmentIrradiance = imageBasedLighting,
+            .environmentIrradiance = frame.imageBasedLighting,
             .ambientScale = cameraData.environmentSky.w,
             .irradianceVolumeMinimum = cameraData.irradianceVolumeMinimum,
             .irradianceVolumeCellSize = cameraData.irradianceVolumeCellSize,
@@ -3039,31 +3471,34 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             .localLights = clusterBuffers.lights,
             .clusterRanges = clusterBuffers.clusterRanges,
             .clusterLightIndices = clusterBuffers.lightIndices,
-            .environmentIrradianceBuffer = environmentState->primaryIrradiance,
+            .environmentIrradianceBuffer = frame.environmentState.primaryIrradiance,
             .irradianceVolumeProbes = m_irradianceVolume.buffer()};
         if (!recordParticleSimulation(draw, scene, assets, rendering.settings().particles, particleFrame)) {
             return false;
         }
     }
+    const VkImage depthImage = request.depthImage;
+    const VkImageView depthView = request.depthView;
     const auto opaqueCpuBegin = std::chrono::steady_clock::now();
     if (depthPrepass) {
         passTimestamps.write(FrameTimestamp::depthPrepassBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-        if (!recordDepthPrepass(draw, gpuDrivenActive, depthImage, depthView, cameraData.viewProjection, lodView)) {
+        if (!recordDepthPrepass(draw, gpuDrivenActive, depthImage, depthView, cameraData.viewProjection,
+                                viewFrame.lodView)) {
             return false;
         }
     }
     const auto prepassCpuEnd = std::chrono::steady_clock::now();
-    m_depthPrepassFrame = depthPrepass ? std::optional<uint32_t>(frameIndex) : std::nullopt;
-    recordAmbientOcclusion(draw, ambientOcclusion, projection,
-                           rendering.settings().antialiasing == AntialiasingMode::Taa);
-    m_postProcess.prepareScene(commandBuffer, frameIndex);
+    view.depthPrepassFrame = depthPrepass ? std::optional<uint32_t>(frameIndex) : std::nullopt;
+    recordAmbientOcclusion(draw, ambientOcclusion, projection, settings.antialiasing == AntialiasingMode::Taa);
+    view.postProcess.prepareScene(commandBuffer, frameIndex);
     // Shading pipelines statically reference the transmission background.
-    m_transmissionBackground.prepareFirstUse(commandBuffer);
-    const VkImageView sceneView = m_postProcess.sceneView(frameIndex);
-    const VkImageView motionView = m_postProcess.motionView(frameIndex);
+    view.transmissionBackground.prepareFirstUse(commandBuffer);
+    const VkImageView sceneView = view.postProcess.sceneView(frameIndex);
+    const VkImageView motionView = view.postProcess.motionView(frameIndex);
     beginRendering(commandBuffer, sceneView, motionView, depthImage, depthView, renderExtent,
-                   depthPrepass ? SceneAttachments::ClearColorKeepDepth : SceneAttachments::Clear);
-    m_depthInitialized = true;
+                   depthPrepass ? SceneAttachments::ClearColorKeepDepth : SceneAttachments::Clear,
+                   view.depthInitialized);
+    view.depthInitialized = true;
     setSceneViewport(draw);
     const OpaquePipelines shadingOpaque{.singleSided = &shadingPipelines->opaque,
                                         .doubleSided = &shadingPipelines->doubleSided};
@@ -3077,13 +3512,13 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             vkCmdEndRendering(commandBuffer);
             passTimestamps.write(FrameTimestamp::depthPyramidBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
             prepareDepthForPyramid(commandBuffer, depthImage);
-            m_depthPyramid.build(commandBuffer, renderExtent);
+            view.depthPyramid.build(commandBuffer, renderExtent);
             passTimestamps.write(FrameTimestamp::depthPyramidEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
             m_gpuDrivenPass.cull(commandBuffer, frameIndex, GpuCullPhase::Late, cameraData.viewProjection,
-                                 m_depthPyramid, lodView);
+                                 view.depthPyramid, viewFrame.lodView);
             restoreDepthAfterPyramid(commandBuffer, depthImage);
             beginRendering(commandBuffer, sceneView, motionView, depthImage, depthView, renderExtent,
-                           SceneAttachments::Preserve);
+                           SceneAttachments::Preserve, view.depthInitialized);
             setSceneViewport(draw);
             recordGpuDrivenGroups(draw, GpuCullPhase::Late, shadingOpaque);
         }
@@ -3093,15 +3528,15 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 2);
         }
         stats.visibleCount = m_gpuDrivenPass.retiredVisibleCount();
-        if (shadowCulling == ShadowCulling::Gpu) {
+        if (frame.shadowCulling == ShadowCulling::Gpu) {
             // Like visibleCount, a retired frame's count: casters drawn into
             // the cascades that frame redrew.
-            stats.shadowCasterCount = m_gpuDrivenPass.retiredFrustumViewVisibleCount();
+            frameStats.shadowCasterCount = m_gpuDrivenPass.retiredFrustumViewVisibleCount();
         }
         stats.indirectCommandCount = static_cast<uint32_t>(m_gpuDrivenBatches.size());
         stats.gpuVisibilityMismatches = m_gpuDrivenPass.visibilityMismatchCount();
     } else {
-        stats.indirectCommandCount = static_cast<uint32_t>(m_visibility.commands.size());
+        stats.indirectCommandCount = static_cast<uint32_t>(view.visibility.commands.size());
     }
     const double prepassCpuMilliseconds =
         std::chrono::duration<double, std::milli>(prepassCpuEnd - opaqueCpuBegin).count();
@@ -3113,24 +3548,24 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     }
     // The background fills what opaque geometry left at far depth, before
     // blended surfaces composite over it.
-    if (imageBasedLighting && rendering.settings().environmentBackground) {
+    if (frame.imageBasedLighting && settings.environmentBackground) {
         passTimestamps.write(FrameTimestamp::skyboxBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-        m_environmentPass.recordSkybox(commandBuffer, frameIndex, frameCamera.descriptor, environment.specularIntensity,
+        m_environmentPass.recordSkybox(commandBuffer, frameIndex, draw.cameraSet, frame.environment.specularIntensity,
                                        cameraData.temporalJitter);
         passTimestamps.write(FrameTimestamp::skyboxEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     }
     // Reflections of opaque surfaces and the background join the scene before
     // blended surfaces and outlines composite over it, and before the temporal
     // resolve accumulates it.
-    if (!recordScreenSpaceReflections(
-            draw, depthImage, depthView,
-            plan.screenSpaceReflections ? rendering.settings().reflections : ReflectionQuality::ProbesOnly,
-            {.projection = projection,
-             .frameNumber = static_cast<uint32_t>(m_frameSerial),
-             .temporalAccumulation = rendering.settings().antialiasing == AntialiasingMode::Taa})) {
+    if (!recordScreenSpaceReflections(draw, depthImage, depthView,
+                                      plan.screenSpaceReflections ? settings.reflections
+                                                                  : ReflectionQuality::ProbesOnly,
+                                      {.projection = projection,
+                                       .frameNumber = static_cast<uint32_t>(m_frameSerial),
+                                       .temporalAccumulation = settings.antialiasing == AntialiasingMode::Taa})) {
         return false;
     }
-    stats.reflectionBytes = m_postProcess.reflectionBytes();
+    stats.reflectionBytes = view.postProcess.reflectionBytes();
     recordTransmissionBackground(draw, depthImage, depthView);
     recordShadedItems(draw, ShadedItems::BlendedOnly);
     recordParticles(draw, depthImage, depthView);
@@ -3144,35 +3579,48 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 3);
     }
     const auto bloomCpuBegin = std::chrono::steady_clock::now();
-    const TemporalResolveFrame temporalResolve{.currentToPreviousClip = m_previousUnjitteredViewProjection *
-                                                                        glm::inverse(unjitteredViewProjection),
+    const TemporalResolveFrame temporalResolve{.currentToPreviousClip =
+                                                   view.previousUnjitteredViewProjection *
+                                                   glm::inverse(viewFrame.unjitteredViewProjection),
                                                .jitterPixels = temporal.jitterPixels,
                                                .historyValid = temporal.historyValid};
-    if (!m_postProcess.record(
-            commandBuffer, frameIndex, colorImage, colorView, depthImage, extent, renderExtent, rendering.settings(),
-            glm::inverse(unjitteredViewProjection), m_previousViewProjection, temporalResolve,
-            depth_of_field::cameraFromProjection(projection), cameraPosition, rendering.m_gridOverlay,
+    if (!view.postProcess.record(
+            commandBuffer, frameIndex, request.colorImage, request.colorView, depthImage, extent, renderExtent,
+            settings, glm::inverse(viewFrame.unjitteredViewProjection), view.previousViewProjection, temporalResolve,
+            depth_of_field::cameraFromProjection(projection), cameraPosition, request.grid,
             {.serial = m_frameSerial, .assetRoot = rendering.assetRoot(), .timestamps = passTimestamps},
-            timestampQueries, stats.cpuBloomMilliseconds, colorOldLayout)) {
+            timestampQueries, stats.cpuBloomMilliseconds, request.colorOldLayout)) {
         return false;
     }
-    // After post-processing, whose optional passes (depth of field, motion
-    // blur, colour grading) also write through passTimestamps.
-    passTimestamps.closeSkippedPasses();
-    stats.depthOfFieldBytes = m_postProcess.depthOfFieldBytes();
-    stats.motionBlurBytes = m_postProcess.motionBlurBytes();
-    m_previousViewProjection = cameraData.viewProjection;
-    m_previousUnjitteredViewProjection = unjitteredViewProjection;
-    m_previousJitterNdc = temporal.jitterNdc;
-    for (RenderItem& item : m_renderItems) {
-        item.previousWorld = item.world;
-        item.previousJointPalette = item.jointPalette;
+    stats.depthOfFieldBytes = view.postProcess.depthOfFieldBytes();
+    stats.motionBlurBytes = view.postProcess.motionBlurBytes();
+    view.previousViewProjection = cameraData.viewProjection;
+    view.previousUnjitteredViewProjection = viewFrame.unjitteredViewProjection;
+    view.previousJitterNdc = temporal.jitterNdc;
+    const auto viewCpuEnd = std::chrono::steady_clock::now();
+    addViewCounters(frameStats, stats);
+    if (leading) {
+        frameStats.cpuOpaqueMilliseconds = stats.cpuOpaqueMilliseconds;
+        frameStats.cpuBlendedMilliseconds = stats.cpuBlendedMilliseconds;
+        frameStats.cpuBloomMilliseconds = stats.cpuBloomMilliseconds;
+        frameStats.cpuPostMilliseconds =
+            std::chrono::duration<double, std::milli>(viewCpuEnd - bloomCpuBegin).count() - stats.cpuBloomMilliseconds;
+        frameStats.particleEmitterCount = stats.particleEmitterCount;
+        frameStats.particleCapacity = stats.particleCapacity;
     }
-    stats.cpuPostMilliseconds =
-        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - bloomCpuBegin).count() -
-        stats.cpuBloomMilliseconds;
-    if (timestampQueries) {
-        vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 4);
+    if (request.stats) {
+        *request.stats = {.rendered = true,
+                          .width = extent.width,
+                          .height = extent.height,
+                          .internalWidth = renderExtent.width,
+                          .internalHeight = renderExtent.height,
+                          .visibleCount = stats.visibleCount,
+                          .culledCount = stats.culledCount,
+                          .drawCalls = stats.drawCalls,
+                          .triangleCount = stats.triangleCount,
+                          .temporalHistoryValid = temporal.historyValid,
+                          .cpuMilliseconds =
+                              std::chrono::duration<double, std::milli>(viewCpuEnd - viewCpuBegin).count()};
     }
     return true;
 }
@@ -3185,7 +3633,7 @@ void MeshPass::selectRenderItemLods(const MeshLodView& view) {
     }
 }
 
-bool MeshPass::prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lodView) {
+bool MeshPass::prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lodView, uint32_t visibleInstanceCount) {
     m_gpuDrivenCandidates.clear();
     m_gpuDrivenKeys.clear();
     m_gpuDrivenKeySources.clear();
@@ -3262,8 +3710,7 @@ bool MeshPass::prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lod
              .skin = {item.skinPaletteOffset, static_cast<uint32_t>(item.jointPalette.size()), item.gpuMaterial->index,
                       0u}});
     }
-    return m_gpuDrivenPass.prepare(frameIndex, m_gpuDrivenObjects, m_gpuDrivenBatches,
-                                   static_cast<uint32_t>(m_visibility.visibleInstances.size()));
+    return m_gpuDrivenPass.prepare(frameIndex, m_gpuDrivenObjects, m_gpuDrivenBatches, visibleInstanceCount);
 }
 
 void MeshPass::bindOpaquePipeline(const DrawContext& draw, const GraphicsPipeline& pipeline, OpaquePipelines pipelines,
@@ -3300,18 +3747,18 @@ bool MeshPass::recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive,
     const VkCommandBuffer commandBuffer = draw.commandBuffer;
     const OpaquePipelines depthNormal{
         .singleSided = &m_depthNormalPipeline, .doubleSided = &m_depthNormalDoubleSidedPipeline, .pushesView = true};
-    m_postProcess.prepareNormals(commandBuffer, draw.frameIndex);
+    draw.viewState->postProcess.prepareNormals(commandBuffer, draw.frameIndex);
     // Only screen-space reflections read specular reflectance, but the
     // depth-normal pipelines always declare the attachment: a null view with a
     // non-UNDEFINED pipeline format needs dynamicRenderingUnusedAttachments,
     // so the target is written whenever the prepass runs.
-    if (!m_postProcess.prepareSpecular(commandBuffer, draw.frameIndex)) {
+    if (!draw.viewState->postProcess.prepareSpecular(commandBuffer, draw.frameIndex)) {
         return false;
     }
-    const VkImageView normalView = m_postProcess.normalView(draw.frameIndex);
-    const VkImageView specularView = m_postProcess.specularView(draw.frameIndex);
+    const VkImageView normalView = draw.viewState->postProcess.normalView(draw.frameIndex);
+    const VkImageView specularView = draw.viewState->postProcess.specularView(draw.frameIndex);
     beginDepthPrepass(commandBuffer, normalView, specularView, depthImage, depthView, draw.renderExtent,
-                      SceneAttachments::Clear);
+                      SceneAttachments::Clear, draw.viewState->depthInitialized);
     setSceneViewport(draw);
     if (gpuDrivenActive) {
         // Two-phase occlusion culling runs here, so the shading pass reuses
@@ -3319,19 +3766,19 @@ bool MeshPass::recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive,
         recordGpuDrivenGroups(draw, GpuCullPhase::Early, depthNormal);
         vkCmdEndRendering(commandBuffer);
         prepareDepthForPyramid(commandBuffer, depthImage);
-        m_depthPyramid.build(commandBuffer, draw.renderExtent);
-        m_gpuDrivenPass.cull(commandBuffer, draw.frameIndex, GpuCullPhase::Late, viewProjection, m_depthPyramid,
-                             lodView);
+        draw.viewState->depthPyramid.build(commandBuffer, draw.renderExtent);
+        m_gpuDrivenPass.cull(commandBuffer, draw.frameIndex, GpuCullPhase::Late, viewProjection,
+                             draw.viewState->depthPyramid, lodView);
         restoreDepthAfterPyramid(commandBuffer, depthImage);
         beginDepthPrepass(commandBuffer, normalView, specularView, depthImage, depthView, draw.renderExtent,
-                          SceneAttachments::Preserve);
+                          SceneAttachments::Preserve, false);
         setSceneViewport(draw);
         recordGpuDrivenGroups(draw, GpuCullPhase::Late, depthNormal);
     } else {
         recordDepthNormalItems(draw);
     }
     vkCmdEndRendering(commandBuffer);
-    m_postProcess.finishNormals(commandBuffer, draw.frameIndex);
+    draw.viewState->postProcess.finishNormals(commandBuffer, draw.frameIndex);
     draw.passTimestamps->write(FrameTimestamp::depthPrepassEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     // Screen-space consumers get the pyramid of the complete opaque depth.
     // With GPU-driven culling the occlusion build above already covers it
@@ -3343,8 +3790,9 @@ bool MeshPass::recordDepthPrepass(const DrawContext& draw, bool gpuDrivenActive,
     // would be culled for a frame.
     draw.passTimestamps->write(FrameTimestamp::depthPyramidBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     prepareDepthForPyramid(commandBuffer, depthImage);
-    m_depthPyramid.build(commandBuffer, draw.renderExtent,
-                         gpuDrivenActive ? std::optional(m_gpuDrivenPass.lateEmittedCount()) : std::nullopt);
+    draw.viewState->depthPyramid.build(commandBuffer, draw.renderExtent,
+                                       gpuDrivenActive ? std::optional(m_gpuDrivenPass.lateEmittedCount())
+                                                       : std::nullopt);
     draw.passTimestamps->write(FrameTimestamp::depthPyramidEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     restoreDepthAfterPyramid(commandBuffer, depthImage);
     return true;
@@ -3356,14 +3804,14 @@ void MeshPass::recordDepthNormalItems(const DrawContext& draw) {
     const GraphicsPipeline* boundPipeline = nullptr;
     std::optional<uint32_t> boundPage;
     // Opaque items precede blended ones (collectCpuSubmittedItems).
-    for (size_t itemIndex = 0; itemIndex < m_visibleItems.size();) {
-        const RenderItem& item = *m_visibleItems[itemIndex];
+    for (size_t itemIndex = 0; itemIndex < draw.viewState->visibleItems.size();) {
+        const RenderItem& item = *draw.viewState->visibleItems[itemIndex];
         if (item.material->translucent()) {
             break;
         }
         size_t batchEnd = itemIndex + 1;
-        while (batchEnd < m_visibleItems.size()) {
-            const RenderItem& candidate = *m_visibleItems[batchEnd];
+        while (batchEnd < draw.viewState->visibleItems.size()) {
+            const RenderItem& candidate = *draw.viewState->visibleItems[batchEnd];
             // The shading pass must test EQUAL against the same LOD's depth.
             if (candidate.gpuMesh != item.gpuMesh || candidate.lod.firstIndex != item.lod.firstIndex ||
                 candidate.lod.indexCount != item.lod.indexCount || candidate.material->translucent() ||
@@ -3375,13 +3823,13 @@ void MeshPass::recordDepthNormalItems(const DrawContext& draw) {
         const GraphicsPipeline& pipeline =
             item.material->doubleSided ? m_depthNormalDoubleSidedPipeline : m_depthNormalPipeline;
         if (&pipeline != boundPipeline) {
-            bindOpaquePipeline(draw, pipeline, depthNormal, m_cameras[draw.frameIndex].descriptor);
+            bindOpaquePipeline(draw, pipeline, depthNormal, draw.cameraSet);
             boundPipeline = &pipeline;
         }
         bindGeometry(draw.commandBuffer, *item.gpuMesh, boundPage);
         vkCmdDrawIndexed(draw.commandBuffer, item.lod.indexCount, static_cast<uint32_t>(batchEnd - itemIndex),
                          item.gpuMesh->geometry.firstIndex + item.lod.firstIndex, item.gpuMesh->geometry.vertexOffset,
-                         mainObjectBase + static_cast<uint32_t>(itemIndex));
+                         draw.objectBase + static_cast<uint32_t>(itemIndex));
         ++draw.stats->drawCalls;
         itemIndex = batchEnd;
     }
@@ -3389,13 +3837,13 @@ void MeshPass::recordDepthNormalItems(const DrawContext& draw) {
 
 bool MeshPass::recordScreenSpaceReflections(const DrawContext& draw, VkImage depthImage, VkImageView depthView,
                                             ReflectionQuality reflections, const ScreenSpaceReflectionCamera& camera) {
-    const SceneGeometryViews geometry = sceneGeometry(draw.frameIndex);
+    const SceneGeometryViews geometry = sceneGeometry(*draw.viewState, draw.frameIndex);
     const bool traces = PostProcessPass::tracesReflections(geometry, reflections);
     if (traces) {
         vkCmdEndRendering(draw.commandBuffer);
     }
-    if (!m_postProcess.recordReflections(draw.commandBuffer, draw.frameIndex, geometry, reflections, camera,
-                                         draw.timestampQueries)) {
+    if (!draw.viewState->postProcess.recordReflections(draw.commandBuffer, draw.frameIndex, geometry, reflections,
+                                                       camera, draw.timestampQueries)) {
         return false;
     }
     if (traces) {
@@ -3414,23 +3862,25 @@ bool MeshPass::recordScreenSpaceReflections(const DrawContext& draw, VkImage dep
         const VkDependencyInfo dependency{
             .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &attachments};
         vkCmdPipelineBarrier2(draw.commandBuffer, &dependency);
-        beginRendering(draw.commandBuffer, m_postProcess.sceneView(draw.frameIndex),
-                       m_postProcess.motionView(draw.frameIndex), depthImage, depthView, draw.renderExtent,
-                       SceneAttachments::Preserve);
+        beginRendering(draw.commandBuffer, draw.viewState->postProcess.sceneView(draw.frameIndex),
+                       draw.viewState->postProcess.motionView(draw.frameIndex), depthImage, depthView,
+                       draw.renderExtent, SceneAttachments::Preserve, false);
         setSceneViewport(draw);
     }
     return true;
 }
 
 void MeshPass::recordTransmissionBackground(const DrawContext& draw, VkImage depthImage, VkImageView depthView) {
-    const bool transmissive = std::ranges::any_of(
-        m_visibleItems, [](const RenderItem* item) { return item->material->transmission.factor > 0.0f; });
+    const bool transmissive = std::ranges::any_of(draw.viewState->visibleItems, [](const RenderItem* item) {
+        return item->material->transmission.factor > 0.0f;
+    });
     if (!transmissive) {
         return;
     }
     draw.passTimestamps->write(FrameTimestamp::transmissionBackgroundBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     vkCmdEndRendering(draw.commandBuffer);
-    m_transmissionBackground.capture(draw.commandBuffer, m_postProcess.sceneImage(draw.frameIndex), draw.renderExtent);
+    draw.viewState->transmissionBackground.capture(
+        draw.commandBuffer, draw.viewState->postProcess.sceneImage(draw.frameIndex), draw.renderExtent);
     // The resumed pass loads the motion and depth attachments stored above;
     // capture() ordered the HDR target itself.
     const VkMemoryBarrier2 attachments{
@@ -3446,35 +3896,35 @@ void MeshPass::recordTransmissionBackground(const DrawContext& draw, VkImage dep
     const VkDependencyInfo dependency{
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &attachments};
     vkCmdPipelineBarrier2(draw.commandBuffer, &dependency);
-    beginRendering(draw.commandBuffer, m_postProcess.sceneView(draw.frameIndex),
-                   m_postProcess.motionView(draw.frameIndex), depthImage, depthView, draw.renderExtent,
-                   SceneAttachments::Preserve);
+    beginRendering(draw.commandBuffer, draw.viewState->postProcess.sceneView(draw.frameIndex),
+                   draw.viewState->postProcess.motionView(draw.frameIndex), depthImage, depthView, draw.renderExtent,
+                   SceneAttachments::Preserve, false);
     setSceneViewport(draw);
     draw.passTimestamps->write(FrameTimestamp::transmissionBackgroundEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
 }
 
-SceneGeometryViews MeshPass::sceneGeometry(uint32_t frameIndex) const {
-    if (m_depthPrepassFrame != frameIndex) {
+SceneGeometryViews MeshPass::sceneGeometry(const ViewState& view, uint32_t frameIndex) const {
+    if (view.depthPrepassFrame != frameIndex) {
         return {};
     }
-    return {.normals = m_postProcess.normalView(frameIndex),
-            .specular = m_postProcess.specularView(frameIndex),
-            .depthPyramid = m_depthPyramid.view(),
-            .depthPyramidSampler = m_depthPyramid.sampler(),
-            .depthPyramidLevels = m_depthPyramid.levelCount(),
-            .renderExtent = m_depthPyramid.renderExtent(),
-            .storageExtent = m_depthPyramid.storageExtent()};
+    return {.normals = view.postProcess.normalView(frameIndex),
+            .specular = view.postProcess.specularView(frameIndex),
+            .depthPyramid = view.depthPyramid.view(),
+            .depthPyramidSampler = view.depthPyramid.sampler(),
+            .depthPyramidLevels = view.depthPyramid.levelCount(),
+            .renderExtent = view.depthPyramid.renderExtent(),
+            .storageExtent = view.depthPyramid.storageExtent()};
 }
 
 void MeshPass::recordVolumetricFog(const DrawContext& draw, const VolumetricFogFrame* frame) {
     if (frame == nullptr) {
         // Keeps the bound volume free of fog; records nothing once cleared.
-        m_volumetricFog.recordCleared(draw.commandBuffer);
+        draw.viewState->volumetricFog.recordCleared(draw.commandBuffer);
         return;
     }
     prepareShadowMapForSampling(draw.commandBuffer);
     draw.passTimestamps->write(FrameTimestamp::volumetricFogBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-    m_volumetricFog.record(draw.commandBuffer, draw.frameIndex, *frame);
+    draw.viewState->volumetricFog.record(draw.commandBuffer, draw.frameIndex, *frame);
     draw.passTimestamps->write(FrameTimestamp::volumetricFogEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
 }
 
@@ -3535,19 +3985,19 @@ void MeshPass::recordParticles(const DrawContext& draw, VkImage depthImage, VkIm
     }
     vkCmdEndRendering(draw.commandBuffer);
     draw.passTimestamps->write(FrameTimestamp::particleDrawBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-    m_particles.recordDraw(draw.commandBuffer, {.sceneColor = m_postProcess.sceneView(draw.frameIndex),
-                                                .motion = m_postProcess.motionView(draw.frameIndex),
+    m_particles.recordDraw(draw.commandBuffer, {.sceneColor = draw.viewState->postProcess.sceneView(draw.frameIndex),
+                                                .motion = draw.viewState->postProcess.motionView(draw.frameIndex),
                                                 .depthImage = depthImage,
                                                 .depthView = depthView,
                                                 .renderExtent = draw.renderExtent,
-                                                .cameraSet = m_cameras[draw.frameIndex].descriptor,
+                                                .cameraSet = draw.cameraSet,
                                                 .view = draw.view,
                                                 .spriteViews = m_particleSpriteViews,
                                                 .spriteSampler = m_sampler});
     draw.passTimestamps->write(FrameTimestamp::particleDrawEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-    beginRendering(draw.commandBuffer, m_postProcess.sceneView(draw.frameIndex),
-                   m_postProcess.motionView(draw.frameIndex), depthImage, depthView, draw.renderExtent,
-                   SceneAttachments::Preserve);
+    beginRendering(draw.commandBuffer, draw.viewState->postProcess.sceneView(draw.frameIndex),
+                   draw.viewState->postProcess.motionView(draw.frameIndex), depthImage, depthView, draw.renderExtent,
+                   SceneAttachments::Preserve, false);
     setSceneViewport(draw);
 }
 
@@ -3556,11 +4006,11 @@ void MeshPass::recordAmbientOcclusion(const DrawContext& draw, AmbientOcclusionQ
     if (draw.timestampQueries) {
         vkCmdWriteTimestamp2(draw.commandBuffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, draw.timestampQueries, 10);
     }
-    const SceneGeometryViews geometry = sceneGeometry(draw.frameIndex);
+    const SceneGeometryViews geometry = sceneGeometry(*draw.viewState, draw.frameIndex);
     if (quality == AmbientOcclusionQuality::Off || !geometry.valid()) {
-        m_ambientOcclusion.recordUnoccluded(draw.commandBuffer, draw.frameIndex);
+        draw.viewState->ambientOcclusion.recordUnoccluded(draw.commandBuffer, draw.frameIndex);
     } else {
-        m_ambientOcclusion.record(
+        draw.viewState->ambientOcclusion.record(
             draw.commandBuffer, draw.frameIndex, quality,
             {.normals = geometry.normals,
              .depthPyramid = geometry.depthPyramid,
@@ -3601,9 +4051,16 @@ void MeshPass::restoreDepthAfterPyramid(VkCommandBuffer commandBuffer, VkImage d
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
 }
 
-bool MeshPass::collectCpuSubmittedItems(bool gpuDrivenActive, const glm::vec3& cameraPosition) {
-    m_visibleItems.clear();
-    for (GpuSceneHandle handle : m_visibility.visibleInstances) {
+bool MeshPass::collectCpuSubmittedItems(ViewState& view, bool gpuDrivenActive, const glm::vec3& cameraPosition,
+                                        std::span<const RenderObjectId> outlinedObjects) {
+    // RenderItem::outlined marks every recorded view's outlines; this view
+    // keeps only its own.
+    const auto outlinedHere = [&](const RenderItem& item) {
+        return item.outlined &&
+               std::ranges::binary_search(outlinedObjects, static_cast<RenderObjectId>(entt::to_integral(item.entity)));
+    };
+    view.visibleItems.clear();
+    for (GpuSceneHandle handle : view.visibility.visibleInstances) {
         const auto found = m_gpuHandleItems.find(handleKey(handle));
         if (found == m_gpuHandleItems.end()) {
             continue;
@@ -3611,12 +4068,12 @@ bool MeshPass::collectCpuSubmittedItems(bool gpuDrivenActive, const glm::vec3& c
         const RenderItem& item = m_renderItems[found->second];
         // With GPU culling the CPU only submits what the indirect path cannot:
         // blended surfaces and the editor's outline passes.
-        if (gpuDrivenActive && !item.material->translucent() && !item.outlined) {
+        if (gpuDrivenActive && !item.material->translucent() && !outlinedHere(item)) {
             continue;
         }
-        m_visibleItems.push_back(&item);
+        view.visibleItems.push_back(&item);
     }
-    std::stable_sort(m_visibleItems.begin(), m_visibleItems.end(),
+    std::stable_sort(view.visibleItems.begin(), view.visibleItems.end(),
                      [&cameraPosition](const RenderItem* first, const RenderItem* second) {
                          const bool firstBlended = first->material->translucent();
                          const bool secondBlended = second->material->translucent();
@@ -3636,49 +4093,58 @@ bool MeshPass::collectCpuSubmittedItems(bool gpuDrivenActive, const glm::vec3& c
                          const glm::vec3 secondOffset = second->boundsCenter - cameraPosition;
                          return glm::dot(firstOffset, firstOffset) > glm::dot(secondOffset, secondOffset);
                      });
-    if (m_visibleItems.size() > maximumObjectsPerFrame) {
+    if (view.visibleItems.size() > maximumObjectsPerFrame) {
         std::cerr << "Visible object count exceeds the per-frame render capacity\n";
         return false;
+    }
+    view.visibleOutlined.clear();
+    for (const RenderItem* item : view.visibleItems) {
+        view.visibleOutlined.push_back(outlinedHere(*item) ? 1u : 0u);
     }
     return true;
 }
 
-void MeshPass::uploadCpuSubmittedObjects(uint32_t frameIndex) {
-    auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped) + mainObjectBase;
-    for (size_t index = 0; index < m_visibleItems.size(); ++index) {
-        const RenderItem& item = *m_visibleItems[index];
+void MeshPass::uploadCpuSubmittedObjects(const DrawContext& draw) {
+    const ViewState& view = *draw.viewState;
+    void* mapped =
+        view.sharesFrameSets ? m_cameras[draw.frameIndex].objectsMapped : view.cameras[draw.frameIndex].objectsMapped;
+    const VmaAllocation allocation = view.sharesFrameSets ? m_cameras[draw.frameIndex].objects.allocation
+                                                          : view.cameras[draw.frameIndex].objects.allocation;
+    auto* objectData = static_cast<ObjectData*>(mapped) + draw.objectBase;
+    for (size_t index = 0; index < view.visibleItems.size(); ++index) {
+        const RenderItem& item = *view.visibleItems[index];
         objectData[index].model = item.world;
         objectData[index].previousModel = item.previousWorld;
         objectData[index].skin = {item.skinPaletteOffset, static_cast<uint32_t>(item.jointPalette.size()),
                                   item.gpuMaterial->index, 0};
     }
-    vmaFlushAllocation(m_allocator, m_cameras[frameIndex].objects.allocation, sizeof(ObjectData) * mainObjectBase,
-                       sizeof(ObjectData) * std::max<size_t>(m_visibleItems.size(), 1));
+    vmaFlushAllocation(m_allocator, allocation, sizeof(ObjectData) * draw.objectBase,
+                       sizeof(ObjectData) * std::max<size_t>(view.visibleItems.size(), 1));
 }
 
 void MeshPass::recordSelectionMask(const DrawContext& draw) {
-    if (std::ranges::none_of(m_visibleItems, [](const RenderItem* item) { return item->outlined; })) {
+    if (std::ranges::none_of(draw.viewState->visibleOutlined, [](uint8_t outlined) { return outlined != 0; })) {
         return;
     }
     vkCmdBindPipeline(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_selectionMaskPipeline.handle());
     vkCmdBindDescriptorSets(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_selectionMaskPipeline.layout(), 0, 1,
-                            &m_cameras[draw.frameIndex].descriptor, 0, nullptr);
+                            &draw.cameraSet, 0, nullptr);
     std::optional<uint32_t> boundPage;
-    for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
-        const RenderItem& item = *m_visibleItems[itemIndex];
-        if (!item.outlined) {
+    for (size_t itemIndex = 0; itemIndex < draw.viewState->visibleItems.size(); ++itemIndex) {
+        const RenderItem& item = *draw.viewState->visibleItems[itemIndex];
+        if (draw.viewState->visibleOutlined[itemIndex] == 0) {
             continue;
         }
         bindGeometry(draw.commandBuffer, *item.gpuMesh, boundPage);
         vkCmdDrawIndexed(draw.commandBuffer, item.lod.indexCount, 1,
                          item.gpuMesh->geometry.firstIndex + item.lod.firstIndex, item.gpuMesh->geometry.vertexOffset,
-                         mainObjectBase + static_cast<uint32_t>(itemIndex));
+                         draw.objectBase + static_cast<uint32_t>(itemIndex));
         ++draw.stats->drawCalls;
     }
 }
 
 void MeshPass::recordShadedItems(const DrawContext& draw, ShadedItems selection) {
-    const VkDescriptorSet sets[]{m_cameras[draw.frameIndex].descriptor, m_cameras[draw.frameIndex].bindlessDescriptor};
+    const VkDescriptorSet sets[]{draw.cameraSet, m_cameras[draw.frameIndex].bindlessDescriptor};
     const bool blendedOnly = selection == ShadedItems::BlendedOnly;
     const bool opaqueOnly = selection == ShadedItems::OpaqueOnly;
     const GraphicsPipeline* boundPipeline = nullptr;
@@ -3688,8 +4154,8 @@ void MeshPass::recordShadedItems(const DrawContext& draw, ShadedItems selection)
     // With GPU culling the opaque timestamp was already written after the
     // indirect draws.
     bool opaqueFinished = blendedOnly;
-    for (size_t itemIndex = 0; itemIndex < m_visibleItems.size();) {
-        const RenderItem& item = *m_visibleItems[itemIndex];
+    for (size_t itemIndex = 0; itemIndex < draw.viewState->visibleItems.size();) {
+        const RenderItem& item = *draw.viewState->visibleItems[itemIndex];
         const bool blended = item.material->translucent();
         if ((blendedOnly && !blended) || (opaqueOnly && blended)) {
             ++itemIndex;
@@ -3706,8 +4172,8 @@ void MeshPass::recordShadedItems(const DrawContext& draw, ShadedItems selection)
             opaqueFinished = true;
         }
         size_t batchEnd = itemIndex + 1;
-        while (batchEnd < m_visibleItems.size()) {
-            const RenderItem& candidate = *m_visibleItems[batchEnd];
+        while (batchEnd < draw.viewState->visibleItems.size()) {
+            const RenderItem& candidate = *draw.viewState->visibleItems[batchEnd];
             if (candidate.gpuMesh != item.gpuMesh || candidate.lod.firstIndex != item.lod.firstIndex ||
                 candidate.lod.indexCount != item.lod.indexCount ||
                 candidate.material->alphaMode != item.material->alphaMode ||
@@ -3733,7 +4199,7 @@ void MeshPass::recordShadedItems(const DrawContext& draw, ShadedItems selection)
         const uint32_t instanceCount = static_cast<uint32_t>(batchEnd - itemIndex);
         vkCmdDrawIndexed(draw.commandBuffer, item.lod.indexCount, instanceCount,
                          item.gpuMesh->geometry.firstIndex + item.lod.firstIndex, item.gpuMesh->geometry.vertexOffset,
-                         mainObjectBase + static_cast<uint32_t>(itemIndex));
+                         draw.objectBase + static_cast<uint32_t>(itemIndex));
         ++draw.stats->drawCalls;
         draw.stats->visibleCount += instanceCount;
         draw.stats->triangleCount += static_cast<uint64_t>(item.lod.indexCount / 3) * instanceCount;
@@ -3751,16 +4217,16 @@ void MeshPass::recordShadedItems(const DrawContext& draw, ShadedItems selection)
 }
 
 void MeshPass::recordOutlines(const DrawContext& draw) {
-    if (std::ranges::none_of(m_visibleItems, [](const RenderItem* item) { return item->outlined; })) {
+    if (std::ranges::none_of(draw.viewState->visibleOutlined, [](uint8_t outlined) { return outlined != 0; })) {
         return;
     }
     vkCmdBindPipeline(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlinePipeline.handle());
     vkCmdBindDescriptorSets(draw.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_outlinePipeline.layout(), 0, 1,
-                            &m_cameras[draw.frameIndex].descriptor, 0, nullptr);
+                            &draw.cameraSet, 0, nullptr);
     std::optional<uint32_t> boundPage;
-    for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
-        const RenderItem& item = *m_visibleItems[itemIndex];
-        if (!item.outlined) {
+    for (size_t itemIndex = 0; itemIndex < draw.viewState->visibleItems.size(); ++itemIndex) {
+        const RenderItem& item = *draw.viewState->visibleItems[itemIndex];
+        if (draw.viewState->visibleOutlined[itemIndex] == 0) {
             continue;
         }
         bindGeometry(draw.commandBuffer, *item.gpuMesh, boundPage);
@@ -3769,7 +4235,7 @@ void MeshPass::recordOutlines(const DrawContext& draw) {
                            sizeof(outlineSettings), &outlineSettings);
         vkCmdDrawIndexed(draw.commandBuffer, item.lod.indexCount, 1,
                          item.gpuMesh->geometry.firstIndex + item.lod.firstIndex, item.gpuMesh->geometry.vertexOffset,
-                         mainObjectBase + static_cast<uint32_t>(itemIndex));
+                         draw.objectBase + static_cast<uint32_t>(itemIndex));
         ++draw.stats->drawCalls;
     }
 }
@@ -3831,9 +4297,12 @@ void MeshPass::shutdown(const VulkanContext& context) {
         m_gpuDrivenPass.shutdown(context);
     }
     m_gpuDrivenSupported = false;
-    m_clusteredLighting.shutdown();
-    m_reflectionProbeClusters.shutdown();
-    m_decalClusters.shutdown();
+    for (std::unique_ptr<ViewState>& view : m_views) {
+        if (view) {
+            destroyViewState(context, *view);
+        }
+    }
+    m_views.clear();
     m_uploadContext.shutdown();
     m_textureUploadContext.shutdown();
     for (auto& [variant, pipelines] : m_meshPipelines) {
@@ -3850,15 +4319,8 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_irradianceVolume.shutdown();
     m_depthNormalPipeline.shutdown(context.device());
     m_depthNormalDoubleSidedPipeline.shutdown(context.device());
-    m_postProcess.shutdown(context);
-    m_depthPyramid.shutdown();
-    m_ambientOcclusion.shutdown();
-    m_transmissionBackground.shutdown();
-    m_volumetricFog.shutdown();
-    m_fogDescriptorGenerations.clear();
     m_particles.shutdown();
     m_particleSpriteViews.fill(VK_NULL_HANDLE);
-    m_depthPrepassFrame.reset();
     m_meshes.clear();
     m_unpackableMeshes.clear();
     m_rejectedTextures.clear();
@@ -3955,5 +4417,4 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_sampler = VK_NULL_HANDLE;
     m_shadowSampler = VK_NULL_HANDLE;
     m_shadowInitialized = false;
-    m_depthInitialized = false;
 }

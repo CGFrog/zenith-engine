@@ -410,7 +410,8 @@ void ParticlePass::recordDraw(VkCommandBuffer commandBuffer, const ParticleDrawT
     if (!m_drawPending) {
         return;
     }
-    m_drawPending = false;
+    // Every render view of the frame draws the same sorted keys, so the
+    // pending draw stays until the next recordSimulation.
     // Depth becomes read-only so the fragment shader can sample it for soft
     // particles while the depth test still uses it.
     depthBarrier(commandBuffer, targets.depthImage, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,

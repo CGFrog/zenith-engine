@@ -1,5 +1,6 @@
 #include "Renderer.hpp"
 #include "ColorGrading.hpp"
+#include "RenderViewPlanning.hpp"
 #include "vulkan/VulkanCheck.hpp"
 
 #include <algorithm>
@@ -119,41 +120,56 @@ RenderCapabilities detectRenderCapabilities(VkPhysicalDevice device) {
             .gpuDrivenPath = false};
 }
 
-// Settings-driven choices come from `settings`; every choice MeshPass makes
-// while recording comes from the frame's `plan`, never re-derived here.
-RenderGraphShape renderGraphShape(VkExtent2D extent, bool viewport, const RenderSettings& settings,
-                                  const RenderCapabilities& capabilities, const MeshPassFramePlan& plan) {
+// Settings-driven choices come from the frame's and each view's settings;
+// every choice MeshPass makes while recording comes from the view's plan,
+// never re-derived here.
+void fillRenderGraphShape(std::span<const MeshPassViewRequest> views, bool defaultViewOffscreen,
+                          const RenderSettings& settings, const RenderCapabilities& capabilities,
+                          RenderGraphShape& shape) {
+    const MeshPassFramePlan& leadPlan = views.front().plan;
     const bool imageBasedLighting = settings.environment != EnvironmentQuality::Hemisphere;
-    return {.width = extent.width,
-            .height = extent.height,
-            .viewport = viewport,
-            .antialiasing = settings.antialiasing,
-            .ambientOcclusion = plan.ambientOcclusion,
-            .bloom = settings.bloom,
-            .exposure = settings.exposure.mode,
-            .shadows = settings.shadows != ShadowQuality::Off,
-            .imageBasedLighting = imageBasedLighting,
-            .environmentBackground = imageBasedLighting && settings.environmentBackground,
-            .localLights = settings.localLights != LocalLightingQuality::Disabled,
-            .localShadows = settings.localLights != LocalLightingQuality::Disabled &&
-                            settings.localShadows != LocalShadowQuality::Off,
-            // The pass also skips frames whose scene has no resident probe.
-            .perPixelReflectionProbes = plan.perPixelReflectionProbes,
-            .depthPrepass = plan.depthPrepass,
-            .gpuDriven = plan.gpuDrivenSubmission,
-            .gpuShadowCulling = plan.gpuShadowCulling,
-            .screenSpaceReflections = plan.screenSpaceReflections,
-            .volumetricFog = settings.volumetricFog != VolumetricFogQuality::Off,
-            .irradianceVolume = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume,
-            .motionBlur = settings.motionBlur != MotionBlurQuality::Off,
-            .depthOfField = settings.depthOfField.quality != DepthOfFieldQuality::Off,
-            .colorGrade = color_grading::lutRequested(settings.colorLut) ||
-                          color_grading::vignetteActive(settings.vignette) ||
-                          color_grading::filmGrainActive(settings.filmGrain),
-            // Mirrors the spatialUpscale decision in PostProcessPass::record.
-            .spatialUpscale = settings.upscaler.mode == UpscalerMode::Fsr1 && capabilities.spatialUpscaling,
-            .decals = settings.decals != DecalQuality::Off,
-            .particles = settings.particles != ParticleQuality::Off};
+    shape.shadows = settings.shadows != ShadowQuality::Off;
+    shape.imageBasedLighting = imageBasedLighting;
+    shape.localLights = settings.localLights != LocalLightingQuality::Disabled;
+    shape.localShadows =
+        settings.localLights != LocalLightingQuality::Disabled && settings.localShadows != LocalShadowQuality::Off;
+    // The pass also skips frames whose scene has no resident probe.
+    shape.perPixelReflectionProbes = leadPlan.perPixelReflectionProbes;
+    // Only a leading default view culls the cascades on the GPU.
+    shape.gpuShadowCulling = views.front().view == 0 && leadPlan.gpuShadowCulling;
+    shape.irradianceVolume = settings.indirectDiffuse == IndirectDiffuseMode::ProbeVolume;
+    shape.particles = settings.particles != ParticleQuality::Off;
+    shape.views.clear();
+    for (const MeshPassViewRequest& view : views) {
+        const RenderSettings& viewSettings = *view.settings;
+        const MeshPassFramePlan& plan = view.plan;
+        shape.views.push_back(
+            {.slot = view.view,
+             .width = view.extent.width,
+             .height = view.extent.height,
+             .offscreen = view.view != 0 || defaultViewOffscreen,
+             .antialiasing = viewSettings.antialiasing,
+             .ambientOcclusion = plan.ambientOcclusion,
+             .bloom = viewSettings.bloom,
+             .exposure = viewSettings.exposure.mode,
+             .environmentBackground = imageBasedLighting && viewSettings.environmentBackground,
+             .depthPrepass = plan.depthPrepass,
+             .gpuDriven = plan.gpuDrivenSubmission,
+             .screenSpaceReflections = plan.screenSpaceReflections,
+             .volumetricFog = viewSettings.volumetricFog != VolumetricFogQuality::Off,
+             .motionBlur = viewSettings.motionBlur != MotionBlurQuality::Off,
+             .depthOfField = viewSettings.depthOfField.quality != DepthOfFieldQuality::Off,
+             .colorGrade = color_grading::lutRequested(viewSettings.colorLut) ||
+                           color_grading::vignetteActive(viewSettings.vignette) ||
+                           color_grading::filmGrainActive(viewSettings.filmGrain),
+             // Mirrors the spatialUpscale decision in PostProcessPass::record.
+             .spatialUpscale = viewSettings.upscaler.mode == UpscalerMode::Fsr1 && capabilities.spatialUpscaling,
+             .decals = viewSettings.decals != DecalQuality::Off});
+    }
+}
+
+VkExtent2D clampedViewExtent(uint32_t width, uint32_t height) {
+    return {std::clamp(width, 16u, 8192u), std::clamp(height, 16u, 8192u)};
 }
 } // namespace
 
@@ -314,11 +330,17 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
         return false;
     }
     const uint64_t submittedFrame = ++m_submittedFrames;
-    frame.markSubmitted(submittedFrame, m_rendering->m_settings.bloom != BloomQuality::Off,
-                        m_rendering->m_settings.antialiasing == AntialiasingMode::Taa,
-                        m_rendering->m_settings.ambientOcclusion != AmbientOcclusionQuality::Off,
-                        m_rendering->m_settings.reflections != ReflectionQuality::ProbesOnly,
-                        m_rendering->m_stats.uploadBytes != 0);
+    for (RenderRuntime::ViewSlot& view : m_rendering->m_views) {
+        if (view.stats.rendered) {
+            view.stats.submittedFrame = submittedFrame;
+        }
+    }
+    // The leading view wrote the frame's per-view timestamps.
+    const RenderSettings& timedSettings = *m_viewRequests.front().settings;
+    frame.markSubmitted(
+        submittedFrame, timedSettings.bloom != BloomQuality::Off, timedSettings.antialiasing == AntialiasingMode::Taa,
+        timedSettings.ambientOcclusion != AmbientOcclusionQuality::Off,
+        timedSettings.reflections != ReflectionQuality::ProbesOnly, m_rendering->m_stats.uploadBytes != 0);
     if (m_capturePrepared) {
         finishCapture(frame);
     }
@@ -426,9 +448,9 @@ bool Renderer::recreateSwapchain(const Window& window) {
     if (!createSwapchainResources(window)) {
         return false;
     }
-    if (!m_rendering->m_viewportRequested) {
+    if (!m_rendering->m_views.front().sizeRequested) {
         if (!m_viewportTarget.resize(m_context, m_uiPass, m_swapchain.extent()) ||
-            !m_meshPass.resize(m_context, m_viewportTarget.extent(), m_viewportTarget.depthView())) {
+            !m_meshPass.resizeView(m_context, 0, m_viewportTarget.extent(), m_viewportTarget.depthView())) {
             return false;
         }
     }
@@ -437,11 +459,11 @@ bool Renderer::recreateSwapchain(const Window& window) {
 }
 
 bool Renderer::prepareViewport() {
-    if (!m_rendering->m_viewportRequested) {
+    const RenderRuntime::ViewSlot& view = m_rendering->m_views.front();
+    if (!view.sizeRequested) {
         return true;
     }
-    const VkExtent2D requested{std::clamp(m_rendering->m_requestedViewportWidth, 16u, 8192u),
-                               std::clamp(m_rendering->m_requestedViewportHeight, 16u, 8192u)};
+    const VkExtent2D requested = clampedViewExtent(view.requestedWidth, view.requestedHeight);
     if (requested.width == m_viewportTarget.extent().width && requested.height == m_viewportTarget.extent().height) {
         return true;
     }
@@ -449,7 +471,80 @@ bool Renderer::prepareViewport() {
         return false;
     }
     return m_viewportTarget.resize(m_context, m_uiPass, requested) &&
-           m_meshPass.resize(m_context, requested, m_viewportTarget.depthView());
+           m_meshPass.resizeView(m_context, 0, requested, m_viewportTarget.depthView());
+}
+
+bool Renderer::prepareViews() {
+    if (!prepareViewport()) {
+        return false;
+    }
+    std::vector<RenderRuntime::ViewSlot>& slots = m_rendering->m_views;
+    if (m_viewTargets.size() < slots.size()) {
+        m_viewTargets.resize(slots.size());
+    }
+    // Targets of destroyed, replaced, or resized views may still be read by
+    // submitted frames, so they change only after one device idle.
+    const auto wanted = [&](uint32_t slot) {
+        return slot < slots.size() && slots[slot].alive && slots[slot].sizeRequested;
+    };
+    bool idleNeeded = false;
+    for (uint32_t slot = 1; slot < m_viewTargets.size(); ++slot) {
+        const ViewTargets* targets = m_viewTargets[slot].get();
+        if (targets == nullptr) {
+            continue;
+        }
+        if (!wanted(slot) || targets->generation != slots[slot].generation) {
+            idleNeeded = true;
+            continue;
+        }
+        const VkExtent2D requested = clampedViewExtent(slots[slot].requestedWidth, slots[slot].requestedHeight);
+        const VkExtent2D current = targets->target.extent();
+        idleNeeded = idleNeeded || requested.width != current.width || requested.height != current.height;
+    }
+    if (idleNeeded && !checkVulkan(vkDeviceWaitIdle(m_context.device()), "Wait before render view changes")) {
+        return false;
+    }
+    for (uint32_t slot = 1; slot < m_viewTargets.size(); ++slot) {
+        std::unique_ptr<ViewTargets>& targets = m_viewTargets[slot];
+        if (targets && (!wanted(slot) || targets->generation != slots[slot].generation)) {
+            destroyViewTargets(*targets, slot);
+            targets.reset();
+        }
+        if (!wanted(slot)) {
+            continue;
+        }
+        RenderRuntime::ViewSlot& view = slots[slot];
+        const VkExtent2D requested = clampedViewExtent(view.requestedWidth, view.requestedHeight);
+        if (!targets) {
+            targets = std::make_unique<ViewTargets>();
+            targets->generation = view.generation;
+            if (!targets->target.init(m_context, m_uiPass, m_swapchain.format(), m_swapchain.depthFormat(),
+                                      framesInFlight, requested) ||
+                !m_meshPass.createView(m_context, slot, requested, targets->target.depthView())) {
+                std::cerr << "Could not create render view " << slot << " at " << requested.width << 'x'
+                          << requested.height << '\n';
+                destroyViewTargets(*targets, slot);
+                targets.reset();
+                return false;
+            }
+        } else if (requested.width != targets->target.extent().width ||
+                   requested.height != targets->target.extent().height) {
+            if (!targets->target.resize(m_context, m_uiPass, requested) ||
+                !m_meshPass.resizeView(m_context, slot, requested, targets->target.depthView())) {
+                std::cerr << "Could not resize render view " << slot << '\n';
+                return false;
+            }
+        }
+        view.texture = {targets->target.texture(m_currentFrame)};
+        view.width = targets->target.extent().width;
+        view.height = targets->target.extent().height;
+    }
+    return true;
+}
+
+void Renderer::destroyViewTargets(ViewTargets& targets, uint32_t slot) {
+    m_meshPass.destroyView(m_context, slot);
+    targets.target.shutdown(m_context, m_uiPass);
 }
 
 Renderer::FrameStatus Renderer::acquireImage(const FrameResources& frame, uint32_t& imageIndex) {
@@ -475,20 +570,14 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
     }
     const VkImage image = m_swapchain.swapchainImages()[imageIndex];
     const VkImageView view = m_swapchain.swapchainImageViews()[imageIndex];
-    const bool useViewport = m_rendering->m_viewportRequested;
-    const VkImage colorImage = useViewport ? m_viewportTarget.image(m_currentFrame) : image;
-    const VkImageView colorView = useViewport ? m_viewportTarget.view(m_currentFrame) : view;
-    const VkExtent2D extent = useViewport ? m_viewportTarget.extent() : m_swapchain.extent();
-    // One plan drives both the descriptive graph and the recorded passes.
-    const MeshPassFramePlan meshPassPlan = m_meshPass.planFrame(m_rendering->settings(), m_rendering->capabilities());
-    if (!updateRenderGraphPlan(extent, useViewport, meshPassPlan)) {
+    const bool defaultViewOffscreen = m_rendering->m_views.front().sizeRequested;
+    // One plan per view drives both the descriptive graph and the recorded passes.
+    collectViewRequests(image, view);
+    if (!updateRenderGraphPlan()) {
         return false;
     }
-    const VkImageLayout oldLayout =
-        useViewport ? m_viewportTarget.oldLayout(m_currentFrame) : VK_IMAGE_LAYOUT_UNDEFINED;
-    if (!m_meshPass.record(frame.commandBuffer(), colorImage, colorView, m_viewportTarget.depthImage(),
-                           m_viewportTarget.depthView(), extent, m_currentFrame, scene, assets, *m_rendering,
-                           meshPassPlan, *m_frameTasks, frame.timestampQueries(), oldLayout)) {
+    if (!m_meshPass.record(frame.commandBuffer(), m_currentFrame, scene, assets, *m_rendering, m_viewRequests,
+                           *m_frameTasks, frame.timestampQueries())) {
         return false;
     }
     RenderStats& graphStats = m_rendering->m_stats;
@@ -498,21 +587,27 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
     graphStats.transientCommittedBytes = m_renderGraphStatistics.committedTransientBytes;
     graphStats.transientAliasedBytes = m_renderGraphStatistics.aliasedTransientBytes;
     graphStats.transientPeakBytes = m_renderGraphStatistics.peakTransientBytes;
-    if (useViewport) {
-        if (!m_viewportToUiBarrier || !m_swapchainToUiBarrier) {
-            return false;
-        }
-        applyGraphBarrier(frame.commandBuffer(), colorImage, *m_viewportToUiBarrier);
-        m_viewportTarget.markWritten(m_currentFrame);
-        applyGraphBarrier(frame.commandBuffer(), image, *m_swapchainToUiBarrier);
-    } else {
-        if (!m_swapchainToUiBarrier) {
-            return false;
-        }
-        applyGraphBarrier(frame.commandBuffer(), image, *m_swapchainToUiBarrier);
+    if (!m_swapchainToUiBarrier) {
+        return false;
     }
+    for (size_t index = 0; index < m_viewRequests.size(); ++index) {
+        const MeshPassViewRequest& request = m_viewRequests[index];
+        if (request.colorImage == image) {
+            continue;
+        }
+        if (!m_viewToUiBarriers[index]) {
+            return false;
+        }
+        applyGraphBarrier(frame.commandBuffer(), request.colorImage, *m_viewToUiBarriers[index]);
+        if (request.view == 0) {
+            m_viewportTarget.markWritten(m_currentFrame);
+        } else {
+            m_viewTargets[request.view]->target.markWritten(m_currentFrame);
+        }
+    }
+    applyGraphBarrier(frame.commandBuffer(), image, *m_swapchainToUiBarrier);
     const auto uiCpuBegin = std::chrono::steady_clock::now();
-    if (!m_uiPass.record(frame.commandBuffer(), image, view, m_swapchain.extent(), useViewport)) {
+    if (!m_uiPass.record(frame.commandBuffer(), image, view, m_swapchain.extent(), defaultViewOffscreen)) {
         return false;
     }
     m_rendering->m_stats.cpuUiMilliseconds =
@@ -524,13 +619,81 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
     return frame.endRecording();
 }
 
-bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport, const MeshPassFramePlan& meshPassPlan) {
-    const RenderGraphShape shape = renderGraphShape(extent, useViewport, m_rendering->settings(),
-                                                    m_rendering->capabilities(), meshPassPlan);
+void Renderer::collectViewRequests(VkImage swapchainImage, VkImageView swapchainView) {
+    std::vector<RenderRuntime::ViewSlot>& slots = m_rendering->m_views;
+    // The default view always renders; a created view renders when its size
+    // was requested since the previous frame and its targets match it.
+    m_renderedViews.clear();
+    for (uint32_t slot = 0; slot < slots.size(); ++slot) {
+        RenderRuntime::ViewSlot& view = slots[slot];
+        view.stats = {};
+        if (slot == 0) {
+            m_renderedViews.push_back(slot);
+            continue;
+        }
+        const ViewTargets* targets = slot < m_viewTargets.size() ? m_viewTargets[slot].get() : nullptr;
+        const bool ready =
+            view.alive && view.renderRequested && targets != nullptr && targets->generation == view.generation;
+        view.renderRequested = false;
+        if (ready) {
+            m_renderedViews.push_back(slot);
+        }
+    }
+    const RenderViewId active = m_rendering->activeView();
+    orderRenderedViews(m_renderedViews, m_rendering->viewAlive(active) ? active.index : 0u);
+    const bool defaultViewOffscreen = slots.front().sizeRequested;
+    m_viewRequests.clear();
+    for (uint32_t slot : m_renderedViews) {
+        RenderRuntime::ViewSlot& view = slots[slot];
+        MeshPassViewRequest request{.view = slot,
+                                    .cameraOverride = view.cameraOverride,
+                                    .grid = view.grid,
+                                    .outlinedObjects = view.outlinedObjects,
+                                    .stats = &view.stats};
+        if (slot == 0) {
+            request.colorImage = defaultViewOffscreen ? m_viewportTarget.image(m_currentFrame) : swapchainImage;
+            request.colorView = defaultViewOffscreen ? m_viewportTarget.view(m_currentFrame) : swapchainView;
+            request.colorOldLayout =
+                defaultViewOffscreen ? m_viewportTarget.oldLayout(m_currentFrame) : VK_IMAGE_LAYOUT_UNDEFINED;
+            request.depthImage = m_viewportTarget.depthImage();
+            request.depthView = m_viewportTarget.depthView();
+            request.extent = defaultViewOffscreen ? m_viewportTarget.extent() : m_swapchain.extent();
+        } else {
+            const ViewportTarget& target = m_viewTargets[slot]->target;
+            request.colorImage = target.image(m_currentFrame);
+            request.colorView = target.view(m_currentFrame);
+            request.colorOldLayout = target.oldLayout(m_currentFrame);
+            request.depthImage = target.depthImage();
+            request.depthView = target.depthView();
+            request.extent = target.extent();
+        }
+        // Views without an override read the frame settings in place.
+        if (view.settings) {
+            m_composedViewSettings[slot] = composeViewSettings(m_rendering->m_settings, view.settings);
+            request.settings = &m_composedViewSettings[slot];
+        } else {
+            request.settings = &m_rendering->m_settings;
+        }
+        request.plan = m_meshPass.planFrame(*request.settings, m_rendering->capabilities());
+        if (slot != 0) {
+            // GPU-driven submission and its occlusion history belong to the
+            // default view.
+            request.plan.gpuDrivenSubmission = false;
+            request.plan.gpuShadowCulling = false;
+        }
+        m_viewRequests.push_back(request);
+    }
+}
+
+bool Renderer::updateRenderGraphPlan() {
+    const bool defaultViewOffscreen = m_rendering->m_views.front().sizeRequested;
+    // Filled in place so a steady frame reuses the shape's storage.
+    RenderGraphShape& shape = m_frameGraphShape;
+    fillRenderGraphShape(m_viewRequests, defaultViewOffscreen, m_rendering->settings(), m_rendering->capabilities(),
+                         shape);
     if (shape != m_renderGraphShape) {
         RenderGraph graph;
-        const uint64_t pixels = static_cast<uint64_t>(extent.width) * extent.height;
-        const auto image = [&](uint32_t format, uint64_t usage, uint64_t bytes) {
+        const auto image = [](uint32_t format, VkExtent2D extent, uint64_t usage, uint64_t bytes) {
             return RenderGraphImageDescription{.format = format,
                                                .width = extent.width,
                                                .height = extent.height,
@@ -538,60 +701,33 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport, const 
                                                .requestedBytes = bytes,
                                                .alignment = 256};
         };
+        const VkExtent2D outputExtent = m_swapchain.extent();
         const auto swapchain =
-            graph.importImage("swapchain", image(m_swapchain.format(), 1, 0), VK_IMAGE_LAYOUT_UNDEFINED);
-        const auto output = useViewport ? graph.importImage("editor viewport", image(m_swapchain.format(), 3, 0),
-                                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                                        : swapchain;
-        const auto depth =
-            graph.importImage("scene depth", image(m_swapchain.depthFormat(), 5, 0), VK_IMAGE_LAYOUT_UNDEFINED);
-        const auto shadow = graph.importImage("shadow atlas", image(VK_FORMAT_D32_SFLOAT, 5, 0),
+            graph.importImage("swapchain", image(m_swapchain.format(), outputExtent, 1, 0), VK_IMAGE_LAYOUT_UNDEFINED);
+        // Resources every view shares, written once per frame.
+        const auto shadow = graph.importImage("shadow atlas", image(VK_FORMAT_D32_SFLOAT, outputExtent, 5, 0),
                                               VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
-        const auto history = graph.importImage("temporal history", image(TemporalResolvePass::historyFormat, 5, 0),
-                                               TemporalResolvePass::resolvedLayout);
-        const auto probeCache = graph.importImage("reflection probe cache", image(PostProcessPass::sceneFormat, 5, 0),
-                                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        const auto probeCache =
+            graph.importImage("reflection probe cache", image(PostProcessPass::sceneFormat, outputExtent, 5, 0),
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         const RenderGraphQueue uploadQueue = m_rendering->capabilities().dedicatedTransferQueue
                                                  ? RenderGraphQueue::Transfer
                                                  : RenderGraphQueue::Graphics;
         const auto meshAssets =
             graph.importBuffer("mesh asset buffers", {.size = 0, .usage = 1, .alignment = 256}, uploadQueue);
-        const auto textureAssets = graph.importImage("texture asset images", image(VK_FORMAT_R8G8B8A8_UNORM, 5, 0),
-                                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, uploadQueue);
+        const auto textureAssets =
+            graph.importImage("texture asset images", image(VK_FORMAT_R8G8B8A8_UNORM, outputExtent, 5, 0),
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, uploadQueue);
         // Persistent renderer resources the scene passes exchange. Their sizes
         // are owned by the passes, so the model records zero bytes for them.
-        const auto environmentMaps = graph.importImage("environment maps", image(PostProcessPass::sceneFormat, 5, 0),
-                                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        const auto lightClusters = graph.importBuffer("light clusters", {.size = 0, .usage = 1, .alignment = 256});
+        const auto environmentMaps =
+            graph.importImage("environment maps", image(PostProcessPass::sceneFormat, outputExtent, 5, 0),
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         // Persistent: cached tiles keep their depth across frames.
-        const auto localShadowAtlas = graph.importImage("local shadow atlas", image(m_swapchain.depthFormat(), 5, 0),
-                                                        VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
-        const auto probeClusters =
-            graph.importBuffer("reflection probe clusters", {.size = 0, .usage = 1, .alignment = 256});
-        const auto decalClusters = graph.importBuffer("decal clusters", {.size = 0, .usage = 1, .alignment = 256});
+        const auto localShadowAtlas =
+            graph.importImage("local shadow atlas", image(m_swapchain.depthFormat(), outputExtent, 5, 0),
+                              VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
         const auto gpuDrivenDraws = graph.importBuffer("GPU-driven draws", {.size = 0, .usage = 1, .alignment = 256});
-        const auto normals =
-            graph.importImage("scene normals", image(PostProcessPass::normalFormat, 5, 0), VK_IMAGE_LAYOUT_UNDEFINED);
-        // Written by the prepass only on frames that trace screen-space reflections.
-        const auto specular = graph.importImage("scene specular", image(PostProcessPass::specularFormat, 5, 0),
-                                                VK_IMAGE_LAYOUT_UNDEFINED);
-        const auto depthPyramid =
-            graph.importImage("depth pyramid", image(DepthPyramid::format, 5, 0), VK_IMAGE_LAYOUT_GENERAL);
-        const auto hdr = graph.createTransientImage(
-            "HDR scene", image(PostProcessPass::sceneFormat, 7, pixels * sizeof(uint16_t) * 4));
-        const auto motion = graph.createTransientImage(
-            "motion and reactive mask", image(PostProcessPass::motionFormat, 5, pixels * sizeof(uint16_t) * 4));
-        // Persistent per frame slot; AmbientOcclusionPass keeps it in GENERAL.
-        const auto ambientOcclusion =
-            graph.importImage("ambient occlusion", image(AmbientOcclusionPass::occlusionFormat, 5, 0),
-                              AmbientOcclusionPass::occlusionLayout);
-        // Persistent and shared by consecutive frames, like the temporal history.
-        const auto reflections =
-            graph.importImage("screen-space reflection target", image(ScreenSpaceReflectionPass::targetFormat, 5, 0),
-                              VK_IMAGE_LAYOUT_GENERAL);
-        // Persistent froxel volumes; VolumetricFogPass keeps them in GENERAL.
-        const auto fogVolume = graph.importImage("volumetric fog volume", image(VolumetricFogPass::volumeFormat, 5, 0),
-                                                 VK_IMAGE_LAYOUT_GENERAL);
         const RenderGraphAccess uploadAccesses[]{
             {meshAssets, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
              VK_IMAGE_LAYOUT_UNDEFINED},
@@ -658,395 +794,458 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport, const 
                 {meshAssets, RenderGraphAccessMode::Read, geometryStages, geometryAccess, VK_IMAGE_LAYOUT_UNDEFINED}};
             graph.addPass("local light shadows", RenderGraphQueue::Graphics, localShadowAccesses);
         }
-        if (shape.gpuDriven) {
-            // The early phase emits last frame's visible set; it binds the
-            // pyramid statically but only the late phase samples it.
-            const RenderGraphAccess earlyCullAccesses[]{
-                {gpuDrivenDraws, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
-            graph.addPass("GPU culling (early)", RenderGraphQueue::Graphics, earlyCullAccesses);
-        }
-        if (shape.localLights) {
-            const RenderGraphAccess clusterAccesses[]{
-                {lightClusters, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
-            graph.addPass("light cluster assignment", RenderGraphQueue::Graphics, clusterAccesses);
-        }
-        if (shape.perPixelReflectionProbes) {
-            const RenderGraphAccess probeClusterAccesses[]{
-                {probeClusters, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
-            graph.addPass("reflection probe cluster assignment", RenderGraphQueue::Graphics, probeClusterAccesses);
-        }
-        if (shape.decals) {
-            // Skipped on frames whose scene has no decal.
-            const RenderGraphAccess decalClusterAccesses[]{
-                {decalClusters, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
-            graph.addPass("decal cluster assignment", RenderGraphQueue::Graphics, decalClusterAccesses);
-        }
-        if (shape.volumetricFog) {
-            // Injects the medium lit by the shadowed sun and clustered lights,
-            // reprojects last frame's volume, and integrates along depth.
-            std::vector<RenderGraphAccess> fogAccesses{
-                {fogVolume, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | computeReadWrite, VK_IMAGE_LAYOUT_GENERAL}};
-            if (shape.shadows) {
-                fogAccesses.push_back({shadow, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                       VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL});
-            }
-            if (shape.localLights) {
-                fogAccesses.push_back({lightClusters, RenderGraphAccessMode::Read,
-                                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-                                       VK_IMAGE_LAYOUT_UNDEFINED});
-            }
-            if (shape.irradianceVolume) {
-                // Ambient in-scattering inside the volume comes from its probes.
-                fogAccesses.push_back({irradianceProbes, RenderGraphAccessMode::Read,
-                                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-                                       VK_IMAGE_LAYOUT_UNDEFINED});
-            }
-            graph.addPass("volumetric fog", RenderGraphQueue::Graphics, fogAccesses);
-        }
         // Persistent particle pool, sort keys, and indirect draw arguments owned
         // by ParticlePass; the passes record work only when the scene has emitters.
         const auto particlePool = graph.importBuffer("particle pool", {.size = 0, .usage = 1, .alignment = 256});
-        if (shape.particles) {
-            // Emits, simulates, lights (sun shadows, clustered lights, ambient
-            // probes), and sorts the particles.
-            std::vector<RenderGraphAccess> particleAccesses{
-                {particlePool, RenderGraphAccessMode::ReadWrite,
-                 VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_TRANSFER_WRITE_BIT | computeReadWrite, VK_IMAGE_LAYOUT_UNDEFINED}};
-            if (shape.shadows) {
-                particleAccesses.push_back({shadow, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                                            VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL});
+        std::vector<RenderGraphResourceHandle> viewOutputs;
+        viewOutputs.reserve(shape.views.size());
+        for (size_t viewIndex = 0; viewIndex < shape.views.size(); ++viewIndex) {
+            const RenderGraphViewShape& view = shape.views[viewIndex];
+            // The default view keeps the single-view resource and pass names.
+            const std::string prefix = view.slot == 0 ? std::string{} : "view " + std::to_string(view.slot) + ": ";
+            const auto name = [&](const char* resource) { return prefix + resource; };
+            const VkExtent2D extent{view.width, view.height};
+            const uint64_t pixels = static_cast<uint64_t>(extent.width) * extent.height;
+            const auto viewImage = [&](uint32_t format, uint64_t usage, uint64_t bytes) {
+                return image(format, extent, usage, bytes);
+            };
+            const auto output = view.offscreen
+                                    ? graph.importImage(name("editor viewport"), viewImage(m_swapchain.format(), 3, 0),
+                                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                                    : swapchain;
+            viewOutputs.push_back(output);
+            const auto depth = graph.importImage(name("scene depth"), viewImage(m_swapchain.depthFormat(), 5, 0),
+                                                 VK_IMAGE_LAYOUT_UNDEFINED);
+            const auto history =
+                graph.importImage(name("temporal history"), viewImage(TemporalResolvePass::historyFormat, 5, 0),
+                                  TemporalResolvePass::resolvedLayout);
+            const auto lightClusters =
+                graph.importBuffer(name("light clusters"), {.size = 0, .usage = 1, .alignment = 256});
+            const auto probeClusters =
+                graph.importBuffer(name("reflection probe clusters"), {.size = 0, .usage = 1, .alignment = 256});
+            const auto decalClusters =
+                graph.importBuffer(name("decal clusters"), {.size = 0, .usage = 1, .alignment = 256});
+            const auto normals = graph.importImage(
+                name("scene normals"), viewImage(PostProcessPass::normalFormat, 5, 0), VK_IMAGE_LAYOUT_UNDEFINED);
+            // Written by the prepass only on frames that trace screen-space reflections.
+            const auto specular = graph.importImage(
+                name("scene specular"), viewImage(PostProcessPass::specularFormat, 5, 0), VK_IMAGE_LAYOUT_UNDEFINED);
+            const auto depthPyramid = graph.importImage(name("depth pyramid"), viewImage(DepthPyramid::format, 5, 0),
+                                                        VK_IMAGE_LAYOUT_GENERAL);
+            const auto hdr = graph.createTransientImage(
+                name("HDR scene"), viewImage(PostProcessPass::sceneFormat, 7, pixels * sizeof(uint16_t) * 4));
+            const auto motion =
+                graph.createTransientImage(name("motion and reactive mask"),
+                                           viewImage(PostProcessPass::motionFormat, 5, pixels * sizeof(uint16_t) * 4));
+            // Persistent per frame slot; AmbientOcclusionPass keeps it in GENERAL.
+            const auto ambientOcclusion =
+                graph.importImage(name("ambient occlusion"), viewImage(AmbientOcclusionPass::occlusionFormat, 5, 0),
+                                  AmbientOcclusionPass::occlusionLayout);
+            // Persistent and shared by consecutive frames, like the temporal history.
+            const auto reflections =
+                graph.importImage(name("screen-space reflection target"),
+                                  viewImage(ScreenSpaceReflectionPass::targetFormat, 5, 0), VK_IMAGE_LAYOUT_GENERAL);
+            // Persistent froxel volumes; VolumetricFogPass keeps them in GENERAL.
+            const auto fogVolume =
+                graph.importImage(name("volumetric fog volume"), viewImage(VolumetricFogPass::volumeFormat, 5, 0),
+                                  VK_IMAGE_LAYOUT_GENERAL);
+            if (view.gpuDriven) {
+                // The early phase emits last frame's visible set; it binds the
+                // pyramid statically but only the late phase samples it.
+                const RenderGraphAccess earlyCullAccesses[]{
+                    {gpuDrivenDraws, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
+                graph.addPass(name("GPU culling (early)"), RenderGraphQueue::Graphics, earlyCullAccesses);
             }
             if (shape.localLights) {
-                particleAccesses.push_back({lightClusters, RenderGraphAccessMode::Read,
-                                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-                                            VK_IMAGE_LAYOUT_UNDEFINED});
+                const RenderGraphAccess clusterAccesses[]{
+                    {lightClusters, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
+                graph.addPass(name("light cluster assignment"), RenderGraphQueue::Graphics, clusterAccesses);
+            }
+            if (shape.perPixelReflectionProbes) {
+                const RenderGraphAccess probeClusterAccesses[]{
+                    {probeClusters, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
+                graph.addPass(name("reflection probe cluster assignment"), RenderGraphQueue::Graphics,
+                              probeClusterAccesses);
+            }
+            if (view.decals) {
+                // Skipped on frames whose scene has no decal.
+                const RenderGraphAccess decalClusterAccesses[]{
+                    {decalClusters, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
+                graph.addPass(name("decal cluster assignment"), RenderGraphQueue::Graphics, decalClusterAccesses);
+            }
+            // Reads of the frame's shared lighting by a compute pass of this view.
+            const auto addLightingReads = [&](std::vector<RenderGraphAccess>& accesses) {
+                if (shape.shadows) {
+                    accesses.push_back({shadow, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                        VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL});
+                }
+                if (shape.localLights) {
+                    accesses.push_back({lightClusters, RenderGraphAccessMode::Read,
+                                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                        VK_IMAGE_LAYOUT_UNDEFINED});
+                }
+                if (shape.irradianceVolume) {
+                    accesses.push_back({irradianceProbes, RenderGraphAccessMode::Read,
+                                        VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                        VK_IMAGE_LAYOUT_UNDEFINED});
+                }
+            };
+            if (view.volumetricFog) {
+                // Injects the medium lit by the shadowed sun and clustered lights,
+                // reprojects last frame's volume, and integrates along depth.
+                std::vector<RenderGraphAccess> fogAccesses{
+                    {fogVolume, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | computeReadWrite, VK_IMAGE_LAYOUT_GENERAL}};
+                // Ambient in-scattering inside an irradiance volume comes from its probes.
+                addLightingReads(fogAccesses);
+                graph.addPass(name("volumetric fog"), RenderGraphQueue::Graphics, fogAccesses);
+            }
+            if (viewIndex == 0 && shape.particles) {
+                // Emits, simulates, lights (sun shadows, the leading view's
+                // clustered lights, ambient probes), and sorts the particles
+                // once per frame for the leading view.
+                std::vector<RenderGraphAccess> particleAccesses{
+                    {particlePool, RenderGraphAccessMode::ReadWrite,
+                     VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_TRANSFER_WRITE_BIT | computeReadWrite, VK_IMAGE_LAYOUT_UNDEFINED}};
+                addLightingReads(particleAccesses);
+                graph.addPass("particle simulation", RenderGraphQueue::Graphics, particleAccesses);
+            }
+            const auto addDepthPyramidBuild = [&](const char* passName) {
+                const RenderGraphAccess pyramidAccesses[]{
+                    {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+                    {depthPyramid, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL}};
+                graph.addPass(name(passName), RenderGraphQueue::Graphics, pyramidAccesses);
+            };
+            const auto addLateCull = [&] {
+                const RenderGraphAccess lateCullAccesses[]{
+                    {depthPyramid, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL},
+                    {gpuDrivenDraws, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     computeReadWrite, VK_IMAGE_LAYOUT_UNDEFINED}};
+                graph.addPass(name("GPU culling (late)"), RenderGraphQueue::Graphics, lateCullAccesses);
+            };
+            const RenderGraphAccess indirectDrawRead{gpuDrivenDraws, RenderGraphAccessMode::Read,
+                                                     VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
+                                                     VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED};
+            if (view.depthPrepass) {
+                std::vector<RenderGraphAccess> prepassAccesses{
+                    {depth, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL},
+                    {normals, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                    {meshAssets, RenderGraphAccessMode::Read, geometryStages, geometryAccess,
+                     VK_IMAGE_LAYOUT_UNDEFINED}};
+                if (view.gpuDriven) {
+                    prepassAccesses.push_back(indirectDrawRead);
+                }
+                if (view.screenSpaceReflections) {
+                    prepassAccesses.push_back(
+                        {specular, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
+                }
+                graph.addPass(name("depth and normal prepass"), RenderGraphQueue::Graphics, prepassAccesses);
+                if (view.gpuDriven) {
+                    // Two-phase occlusion culling runs inside the prepass.
+                    addDepthPyramidBuild("occlusion depth pyramid");
+                    addLateCull();
+                    graph.addPass(name("depth and normal prepass (late phase)"), RenderGraphQueue::Graphics,
+                                  prepassAccesses);
+                }
+                // Screen-space effects read this pyramid of the complete opaque depth.
+                addDepthPyramidBuild("depth pyramid");
+            }
+            // GTAO runs between the depth prepass and shading. It always records:
+            // without the prepass or with AO off it writes unoccluded values.
+            std::vector<RenderGraphAccess> ambientOcclusionAccesses{
+                {ambientOcclusion, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, AmbientOcclusionPass::occlusionLayout}};
+            if (view.ambientOcclusion != AmbientOcclusionQuality::Off) {
+                ambientOcclusionAccesses.push_back(
+                    {normals, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+                ambientOcclusionAccesses.push_back({depthPyramid, RenderGraphAccessMode::Read,
+                                                    VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL});
+            }
+            graph.addPass(name("ambient occlusion"), RenderGraphQueue::Graphics, ambientOcclusionAccesses);
+            std::vector<RenderGraphAccess> opaqueAccesses{
+                {ambientOcclusion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, AmbientOcclusionPass::occlusionLayout},
+                {hdr, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                {motion, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                {meshAssets, RenderGraphAccessMode::Read, geometryStages, geometryAccess, VK_IMAGE_LAYOUT_UNDEFINED},
+                {textureAssets, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                {probeCache, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+            // After a prepass, shading tests the finished opaque depth; blended
+            // surfaces and outlines still test it in the same pass.
+            opaqueAccesses.push_back(view.depthPrepass
+                                         ? RenderGraphAccess{depth, RenderGraphAccessMode::Read,
+                                                             VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                                                                 VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                                                             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+                                                             VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}
+                                         : RenderGraphAccess{depth, RenderGraphAccessMode::Write,
+                                                             VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                                                             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                                                             VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL});
+            if (shape.shadows) {
+                opaqueAccesses.push_back({shadow, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                          VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                          VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL});
+            }
+            if (shape.imageBasedLighting) {
+                // Shading and the skybox sample the prefiltered maps.
+                opaqueAccesses.push_back({environmentMaps, RenderGraphAccessMode::Read,
+                                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
+            }
+            if (shape.localShadows) {
+                opaqueAccesses.push_back({localShadowAtlas, RenderGraphAccessMode::Read,
+                                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                          VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL});
+            }
+            if (shape.localLights) {
+                opaqueAccesses.push_back({lightClusters, RenderGraphAccessMode::Read,
+                                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                          VK_IMAGE_LAYOUT_UNDEFINED});
+            }
+            if (shape.perPixelReflectionProbes) {
+                opaqueAccesses.push_back({probeClusters, RenderGraphAccessMode::Read,
+                                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                          VK_IMAGE_LAYOUT_UNDEFINED});
+            }
+            if (view.decals) {
+                opaqueAccesses.push_back({decalClusters, RenderGraphAccessMode::Read,
+                                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                          VK_IMAGE_LAYOUT_UNDEFINED});
+            }
+            if (view.gpuDriven) {
+                opaqueAccesses.push_back(indirectDrawRead);
+            }
+            if (view.volumetricFog) {
+                // Opaque, blended, and sky shading composite the integrated fog.
+                opaqueAccesses.push_back({fogVolume, RenderGraphAccessMode::Read,
+                                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                          VK_IMAGE_LAYOUT_GENERAL});
             }
             if (shape.irradianceVolume) {
-                particleAccesses.push_back({irradianceProbes, RenderGraphAccessMode::Read,
-                                            VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-                                            VK_IMAGE_LAYOUT_UNDEFINED});
+                opaqueAccesses.push_back({irradianceProbes, RenderGraphAccessMode::Read,
+                                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                                          VK_IMAGE_LAYOUT_UNDEFINED});
             }
-            graph.addPass("particle simulation", RenderGraphQueue::Graphics, particleAccesses);
-        }
-        const auto addDepthPyramidBuild = [&](const char* name) {
-            const RenderGraphAccess pyramidAccesses[]{
-                {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
-                {depthPyramid, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL}};
-            graph.addPass(name, RenderGraphQueue::Graphics, pyramidAccesses);
-        };
-        const auto addLateCull = [&] {
-            const RenderGraphAccess lateCullAccesses[]{
-                {depthPyramid, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL},
-                {gpuDrivenDraws, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 computeReadWrite, VK_IMAGE_LAYOUT_UNDEFINED}};
-            graph.addPass("GPU culling (late)", RenderGraphQueue::Graphics, lateCullAccesses);
-        };
-        const RenderGraphAccess indirectDrawRead{gpuDrivenDraws, RenderGraphAccessMode::Read,
-                                                 VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT,
-                                                 VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED};
-        if (shape.depthPrepass) {
-            std::vector<RenderGraphAccess> prepassAccesses{
-                {depth, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL},
-                {normals, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                {meshAssets, RenderGraphAccessMode::Read, geometryStages, geometryAccess, VK_IMAGE_LAYOUT_UNDEFINED}};
-            if (shape.gpuDriven) {
-                prepassAccesses.push_back(indirectDrawRead);
-            }
-            if (shape.screenSpaceReflections) {
-                prepassAccesses.push_back(
-                    {specular, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
-            }
-            graph.addPass("depth and normal prepass", RenderGraphQueue::Graphics, prepassAccesses);
-            if (shape.gpuDriven) {
-                // Two-phase occlusion culling runs inside the prepass.
+            if (view.gpuDriven && !view.depthPrepass) {
+                // Without a prepass two-phase culling splits the shading pass.
+                graph.addPass(name("opaque scene (early phase)"), RenderGraphQueue::Graphics, opaqueAccesses);
                 addDepthPyramidBuild("occlusion depth pyramid");
                 addLateCull();
-                graph.addPass("depth and normal prepass (late phase)", RenderGraphQueue::Graphics, prepassAccesses);
             }
-            // Screen-space effects read this pyramid of the complete opaque depth.
-            addDepthPyramidBuild("depth pyramid");
-        }
-        // GTAO runs between the depth prepass and shading. It always records:
-        // without the prepass or with AO off it writes unoccluded values.
-        std::vector<RenderGraphAccess> ambientOcclusionAccesses{
-            {ambientOcclusion, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, AmbientOcclusionPass::occlusionLayout}};
-        if (shape.ambientOcclusion != AmbientOcclusionQuality::Off) {
-            ambientOcclusionAccesses.push_back(
-                {normals, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-            ambientOcclusionAccesses.push_back({depthPyramid, RenderGraphAccessMode::Read,
-                                                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL});
-        }
-        graph.addPass("ambient occlusion", RenderGraphQueue::Graphics, ambientOcclusionAccesses);
-        std::vector<RenderGraphAccess> opaqueAccesses{
-            {ambientOcclusion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, AmbientOcclusionPass::occlusionLayout},
-            {hdr, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-            {motion, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-            {meshAssets, RenderGraphAccessMode::Read, geometryStages, geometryAccess, VK_IMAGE_LAYOUT_UNDEFINED},
-            {textureAssets, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            {probeCache, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-        // After a prepass, shading tests the finished opaque depth; blended
-        // surfaces and outlines still test it in the same pass.
-        opaqueAccesses.push_back(shape.depthPrepass ? RenderGraphAccess{depth, RenderGraphAccessMode::Read,
-                                                                        VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
-                                                                            VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                                                                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT,
-                                                                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL}
-                                                    : RenderGraphAccess{depth, RenderGraphAccessMode::Write,
-                                                                        VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                                                                        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                                                                        VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL});
-        if (shape.shadows) {
-            opaqueAccesses.push_back({shadow, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL});
-        }
-        if (shape.imageBasedLighting) {
-            // Shading and the skybox sample the prefiltered maps.
-            opaqueAccesses.push_back({environmentMaps, RenderGraphAccessMode::Read,
-                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-        }
-        if (shape.localShadows) {
-            opaqueAccesses.push_back({localShadowAtlas, RenderGraphAccessMode::Read,
-                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                                      VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL});
-        }
-        if (shape.localLights) {
-            opaqueAccesses.push_back({lightClusters, RenderGraphAccessMode::Read,
-                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-                                      VK_IMAGE_LAYOUT_UNDEFINED});
-        }
-        if (shape.perPixelReflectionProbes) {
-            opaqueAccesses.push_back({probeClusters, RenderGraphAccessMode::Read,
-                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-                                      VK_IMAGE_LAYOUT_UNDEFINED});
-        }
-        if (shape.decals) {
-            opaqueAccesses.push_back({decalClusters, RenderGraphAccessMode::Read,
-                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-                                      VK_IMAGE_LAYOUT_UNDEFINED});
-        }
-        if (shape.gpuDriven) {
-            opaqueAccesses.push_back(indirectDrawRead);
-        }
-        if (shape.volumetricFog) {
-            // Opaque, blended, and sky shading composite the integrated fog.
-            opaqueAccesses.push_back({fogVolume, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL});
-        }
-        if (shape.irradianceVolume) {
-            opaqueAccesses.push_back({irradianceProbes, RenderGraphAccessMode::Read,
-                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-                                      VK_IMAGE_LAYOUT_UNDEFINED});
-        }
-        if (shape.gpuDriven && !shape.depthPrepass) {
-            // Without a prepass two-phase culling splits the shading pass.
-            graph.addPass("opaque scene (early phase)", RenderGraphQueue::Graphics, opaqueAccesses);
-            addDepthPyramidBuild("occlusion depth pyramid");
-            addLateCull();
-        }
-        graph.addPass("opaque and blended scene", RenderGraphQueue::Graphics, opaqueAccesses);
-        if (shape.screenSpaceReflections) {
-            // Traces the prepass
-            // normals and depth pyramid into the reflection target and blends it
-            // into the scene in place. It runs inside the scene pass, after
-            // opaque surfaces and the background and before blended ones, which
-            // this graph models as one pass.
-            const RenderGraphAccess reflectionAccesses[]{
-                {hdr, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
-                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                 VK_IMAGE_LAYOUT_GENERAL},
-                {normals, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                {specular, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                {depthPyramid, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL},
-                {reflections, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL}};
-            graph.addPass("screen-space reflections", RenderGraphQueue::Graphics, reflectionAccesses);
-        }
-        if (shape.particles) {
-            // Inside the scene pass after blended surfaces, in its own rendering
-            // scope: premultiplied quads over the HDR target, the reactive mask
-            // in the motion target, and the opaque depth read-only (tested and
-            // sampled for soft particles).
-            std::vector<RenderGraphAccess> particleDrawAccesses{
-                {particlePool, RenderGraphAccessMode::Read,
-                 VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
-                 VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-                 VK_IMAGE_LAYOUT_UNDEFINED},
-                {hdr, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                 VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                {motion, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                 VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
-                {depth, RenderGraphAccessMode::Read,
-                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                 VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
-                {textureAssets, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
-            if (shape.volumetricFog) {
-                particleDrawAccesses.push_back({fogVolume, RenderGraphAccessMode::Read,
-                                                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL});
+            graph.addPass(name("opaque and blended scene"), RenderGraphQueue::Graphics, opaqueAccesses);
+            if (view.screenSpaceReflections) {
+                // Traces the prepass normals and depth pyramid into the
+                // reflection target and blends it into the scene in place. It
+                // runs inside the scene pass, after opaque surfaces and the
+                // background and before blended ones, which this graph models
+                // as one pass.
+                const RenderGraphAccess reflectionAccesses[]{
+                    {hdr, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                         VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_GENERAL},
+                    {normals, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                    {specular, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                    {depthPyramid, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL},
+                    {reflections, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_GENERAL}};
+                graph.addPass(name("screen-space reflections"), RenderGraphQueue::Graphics, reflectionAccesses);
             }
-            graph.addPass("particles", RenderGraphQueue::Graphics, particleDrawAccesses);
-        }
-        const bool temporalResolve = shape.antialiasing == AntialiasingMode::Taa;
-        if (temporalResolve) {
-            // Also reads the previous frame's motion target, which is outside
-            // this frame's transient lifetimes.
-            const RenderGraphAccess resolveAccesses[]{
-                {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                {history, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                 TemporalResolvePass::resolvedLayout}};
-            graph.addPass("temporal resolve", RenderGraphQueue::Graphics, resolveAccesses);
-        }
-        // The scene the later passes read: the resolved history with TAA, the
-        // HDR target otherwise, or the depth of field output when it runs.
-        RenderGraphAccess sceneComputeRead =
-            temporalResolve
-                ? RenderGraphAccess{history, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, TemporalResolvePass::resolvedLayout}
-                : RenderGraphAccess{hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        // Persistent and shared by consecutive frames; DepthOfFieldPass keeps
-        // its gather targets and output in GENERAL.
-        const auto focusedScene = graph.importImage(
-            "depth of field targets", image(DepthOfFieldPass::imageFormat, 5, 0), DepthOfFieldPass::outputLayout);
-        if (shape.depthOfField) {
-            const RenderGraphAccess depthOfFieldAccesses[]{
-                sceneComputeRead,
-                {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                {focusedScene, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, DepthOfFieldPass::outputLayout}};
-            graph.addPass("depth of field", RenderGraphQueue::Graphics, depthOfFieldAccesses);
-            sceneComputeRead = {focusedScene, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, DepthOfFieldPass::outputLayout};
-        }
-        // Persistent blurred scene and velocity tiles; MotionBlurPass keeps
-        // them in GENERAL and synchronizes them across frames. Motion blur
-        // reads the focused scene when depth of field runs.
-        const auto motionBlurred = graph.importImage("motion blur target", image(MotionBlurPass::colorFormat, 5, 0),
-                                                     MotionBlurPass::blurredLayout);
-        if (shape.motionBlur) {
-            const RenderGraphAccess motionBlurAccesses[]{
-                sceneComputeRead,
-                {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                {motionBlurred, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, MotionBlurPass::blurredLayout}};
-            graph.addPass("motion blur", RenderGraphQueue::Graphics, motionBlurAccesses);
-            sceneComputeRead = {motionBlurred, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, MotionBlurPass::blurredLayout};
-        }
-        if (shape.exposure == ExposureMode::Auto) {
-            graph.addPass("luminance histogram", RenderGraphQueue::Graphics, {&sceneComputeRead, 1});
-        }
-        if (shape.bloom != BloomQuality::Off) {
-            graph.addPass("bloom chain", RenderGraphQueue::Graphics, {&sceneComputeRead, 1});
-        }
-        // With a grade effect, tone mapping writes the grade's persistent
-        // display target and the grade writes the output.
-        const auto displayTarget =
-            graph.importImage("colour-grade display target", image(ColorGradePass::displayFormat, 5, 0),
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        // With FSR 1 the composite renders at render resolution into the
-        // upscaler's persistent input target instead, and RCAS writes what
-        // the composite would have.
-        const auto upscaleInput = shape.spatialUpscale
-                                      ? graph.importImage("FSR input", image(m_swapchain.format(), 5, 0),
-                                                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-                                      : output;
-        const auto gradeInput = shape.colorGrade ? displayTarget : output;
-        const auto toneMapTarget = shape.spatialUpscale ? upscaleInput : gradeInput;
-        std::vector<RenderGraphAccess> postAccesses{
-            {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-            {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
-            {history, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, TemporalResolvePass::resolvedLayout},
-            {motionBlurred, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, MotionBlurPass::blurredLayout},
-            {toneMapTarget, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
-        if (shape.depthOfField) {
-            postAccesses.push_back({focusedScene, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, DepthOfFieldPass::outputLayout});
-        }
-        graph.addPass("post-process and tone map", RenderGraphQueue::Graphics, postAccesses);
-        if (shape.spatialUpscale) {
-            // Persistent output-resolution EASU result; SpatialUpscalePass
-            // writes it in GENERAL and RCAS samples it read-only.
-            const auto upscaled =
-                graph.importImage("FSR upscaled scene", image(SpatialUpscalePass::upscaledFormat, 5, 0),
+            if (shape.particles) {
+                // Inside the scene pass after blended surfaces, in its own
+                // rendering scope: premultiplied quads over the HDR target, the
+                // reactive mask in the motion target, and the opaque depth
+                // read-only (tested and sampled for soft particles).
+                std::vector<RenderGraphAccess> particleDrawAccesses{
+                    {particlePool, RenderGraphAccessMode::Read,
+                     VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                     VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED},
+                    {hdr, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                    {motion, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+                    {depth, RenderGraphAccessMode::Read,
+                     VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+                    {textureAssets, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+                if (view.volumetricFog) {
+                    particleDrawAccesses.push_back({fogVolume, RenderGraphAccessMode::Read,
+                                                    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL});
+                }
+                graph.addPass(name("particles"), RenderGraphQueue::Graphics, particleDrawAccesses);
+            }
+            const bool temporalResolve = view.antialiasing == AntialiasingMode::Taa;
+            if (temporalResolve) {
+                // Also reads the previous frame's motion target, which is outside
+                // this frame's transient lifetimes.
+                const RenderGraphAccess resolveAccesses[]{
+                    {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                    {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                    {history, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                     TemporalResolvePass::resolvedLayout}};
+                graph.addPass(name("temporal resolve"), RenderGraphQueue::Graphics, resolveAccesses);
+            }
+            // The scene the later passes read: the resolved history with TAA,
+            // the HDR target otherwise, or the depth of field output when it runs.
+            RenderGraphAccess sceneComputeRead =
+                temporalResolve
+                    ? RenderGraphAccess{history, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                        VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, TemporalResolvePass::resolvedLayout}
+                    : RenderGraphAccess{hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                        VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            // Persistent and shared by consecutive frames; DepthOfFieldPass
+            // keeps its gather targets and output in GENERAL.
+            const auto focusedScene =
+                graph.importImage(name("depth of field targets"), viewImage(DepthOfFieldPass::imageFormat, 5, 0),
+                                  DepthOfFieldPass::outputLayout);
+            if (view.depthOfField) {
+                const RenderGraphAccess depthOfFieldAccesses[]{
+                    sceneComputeRead,
+                    {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                    {focusedScene, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, DepthOfFieldPass::outputLayout}};
+                graph.addPass(name("depth of field"), RenderGraphQueue::Graphics, depthOfFieldAccesses);
+                sceneComputeRead = {focusedScene, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, DepthOfFieldPass::outputLayout};
+            }
+            // Persistent blurred scene and velocity tiles; MotionBlurPass keeps
+            // them in GENERAL and synchronizes them across frames. Motion blur
+            // reads the focused scene when depth of field runs.
+            const auto motionBlurred =
+                graph.importImage(name("motion blur target"), viewImage(MotionBlurPass::colorFormat, 5, 0),
+                                  MotionBlurPass::blurredLayout);
+            if (view.motionBlur) {
+                const RenderGraphAccess motionBlurAccesses[]{
+                    sceneComputeRead,
+                    {motion, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                    {motionBlurred, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, MotionBlurPass::blurredLayout}};
+                graph.addPass(name("motion blur"), RenderGraphQueue::Graphics, motionBlurAccesses);
+                sceneComputeRead = {motionBlurred, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, MotionBlurPass::blurredLayout};
+            }
+            if (view.exposure == ExposureMode::Auto) {
+                graph.addPass(name("luminance histogram"), RenderGraphQueue::Graphics, {&sceneComputeRead, 1});
+            }
+            if (view.bloom != BloomQuality::Off) {
+                graph.addPass(name("bloom chain"), RenderGraphQueue::Graphics, {&sceneComputeRead, 1});
+            }
+            // With a grade effect, tone mapping writes the grade's persistent
+            // display target and the grade writes the output.
+            const auto displayTarget =
+                graph.importImage(name("colour-grade display target"), viewImage(ColorGradePass::displayFormat, 5, 0),
                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            const RenderGraphAccess easuAccesses[]{
-                {upscaleInput, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            // With FSR 1 the composite renders at render resolution into the
+            // upscaler's persistent input target instead, and RCAS writes what
+            // the composite would have.
+            const auto upscaleInput = view.spatialUpscale
+                                          ? graph.importImage(name("FSR input"), viewImage(m_swapchain.format(), 5, 0),
+                                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                                          : output;
+            const auto gradeInput = view.colorGrade ? displayTarget : output;
+            const auto toneMapTarget = view.spatialUpscale ? upscaleInput : gradeInput;
+            std::vector<RenderGraphAccess> postAccesses{
+                {hdr, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                {upscaled, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL}};
-            graph.addPass("FSR EASU upsample", RenderGraphQueue::Graphics, easuAccesses);
-            const RenderGraphAccess rcasAccesses[]{
-                {upscaled, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                {gradeInput, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+                {history, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, TemporalResolvePass::resolvedLayout},
+                {motionBlurred, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, MotionBlurPass::blurredLayout},
+                {toneMapTarget, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
-            graph.addPass("FSR RCAS sharpen", RenderGraphQueue::Graphics, rcasAccesses);
+            if (view.depthOfField) {
+                postAccesses.push_back({focusedScene, RenderGraphAccessMode::Read,
+                                        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                        DepthOfFieldPass::outputLayout});
+            }
+            graph.addPass(name("post-process and tone map"), RenderGraphQueue::Graphics, postAccesses);
+            if (view.spatialUpscale) {
+                // Persistent output-resolution EASU result; SpatialUpscalePass
+                // writes it in GENERAL and RCAS samples it read-only.
+                const auto upscaled =
+                    graph.importImage(name("FSR upscaled scene"), viewImage(SpatialUpscalePass::upscaledFormat, 5, 0),
+                                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                const RenderGraphAccess easuAccesses[]{
+                    {upscaleInput, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                    {upscaled, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL}};
+                graph.addPass(name("FSR EASU upsample"), RenderGraphQueue::Graphics, easuAccesses);
+                const RenderGraphAccess rcasAccesses[]{
+                    {upscaled, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                    {gradeInput, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+                graph.addPass(name("FSR RCAS sharpen"), RenderGraphQueue::Graphics, rcasAccesses);
+            }
+            if (view.colorGrade) {
+                const RenderGraphAccess gradeAccesses[]{
+                    {displayTarget, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+                    {output, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+                graph.addPass(name("colour grade"), RenderGraphQueue::Graphics, gradeAccesses);
+            }
         }
-        if (shape.colorGrade) {
-            const RenderGraphAccess gradeAccesses[]{
-                {displayTarget, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                {output, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
-            graph.addPass("colour grade", RenderGraphQueue::Graphics, gradeAccesses);
+        // The UI samples every offscreen view and draws into the swapchain,
+        // over the default view when that renders into the swapchain.
+        std::vector<RenderGraphAccess> uiAccesses;
+        bool swapchainHoldsScene = false;
+        for (size_t viewIndex = 0; viewIndex < shape.views.size(); ++viewIndex) {
+            if (!shape.views[viewIndex].offscreen) {
+                swapchainHoldsScene = true;
+                continue;
+            }
+            uiAccesses.push_back({viewOutputs[viewIndex], RenderGraphAccessMode::Read,
+                                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
         }
-        RenderGraphPassHandle uiPass;
-        if (useViewport) {
-            const RenderGraphAccess uiAccesses[]{
-                {output, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-                {swapchain, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
-            uiPass = graph.addPass("editor UI", RenderGraphQueue::Graphics, uiAccesses);
-        } else {
-            const RenderGraphAccess uiAccesses[]{
-                {swapchain, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                 VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
-            uiPass = graph.addPass("runtime UI", RenderGraphQueue::Graphics, uiAccesses);
-        }
+        uiAccesses.push_back(
+            swapchainHoldsScene
+                ? RenderGraphAccess{swapchain, RenderGraphAccessMode::ReadWrite,
+                                    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                    VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}
+                : RenderGraphAccess{swapchain, RenderGraphAccessMode::Write,
+                                    VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
+        const RenderGraphPassHandle uiPass =
+            graph.addPass(swapchainHoldsScene ? "runtime UI" : "editor UI", RenderGraphQueue::Graphics, uiAccesses);
         const RenderGraphCompileResult compiled = graph.compile();
         if (!compiled) {
             std::cerr << "Could not compile render graph: " << compiled.error << '\n';
@@ -1061,14 +1260,11 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport, const 
         }
 #endif
         m_renderGraphStatistics = compiled.graph.statistics;
-        m_viewportToUiBarrier.reset();
+        m_viewToUiBarriers.assign(shape.views.size(), std::nullopt);
         m_swapchainToUiBarrier.reset();
         for (const RenderGraphBarrier& barrier : compiled.graph.barriers) {
             if (barrier.destinationPass != uiPass) {
                 continue;
-            }
-            if (useViewport && barrier.resource == output) {
-                m_viewportToUiBarrier = barrier;
             }
             if (barrier.resource == swapchain) {
                 m_swapchainToUiBarrier = barrier;
@@ -1077,6 +1273,12 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport, const 
                 // transition races the presentation engine's read.
                 if (static_cast<VkImageLayout>(barrier.oldLayout) == VK_IMAGE_LAYOUT_UNDEFINED) {
                     m_swapchainToUiBarrier->sourceStages |= VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+                }
+                continue;
+            }
+            for (size_t viewIndex = 0; viewIndex < shape.views.size(); ++viewIndex) {
+                if (shape.views[viewIndex].offscreen && barrier.resource == viewOutputs[viewIndex]) {
+                    m_viewToUiBarriers[viewIndex] = barrier;
                 }
             }
         }
@@ -1097,13 +1299,13 @@ void Renderer::processUiEvent(const SDL_Event& event) {
 }
 
 void Renderer::beginUiFrame(const AssetManager& assets) {
-    if (!prepareViewport()) {
+    if (!prepareViews()) {
         m_viewportFailed = true;
     }
-    if (m_rendering->m_viewportRequested) {
-        m_rendering->m_viewportTexture = {m_viewportTarget.texture(m_currentFrame)};
-        m_rendering->m_viewportWidth = m_viewportTarget.extent().width;
-        m_rendering->m_viewportHeight = m_viewportTarget.extent().height;
+    if (RenderRuntime::ViewSlot& view = m_rendering->m_views.front(); view.sizeRequested) {
+        view.texture = {m_viewportTarget.texture(m_currentFrame)};
+        view.width = m_viewportTarget.extent().width;
+        view.height = m_viewportTarget.extent().height;
     }
     m_uiPass.syncFonts(assets);
     m_uiPass.beginFrame();
@@ -1158,7 +1360,7 @@ void Renderer::pruneUnusedUiTextures(const AssetManager& assets) {
 }
 
 InputCapture Renderer::uiInputCapture() const {
-    const bool viewportInput = m_rendering != nullptr && m_rendering->m_viewportInputActive;
+    const bool viewportInput = m_rendering != nullptr && m_rendering->anyViewInputActive();
     return {.keyboard = m_uiPass.wantsKeyboardCapture() && !viewportInput,
             .mouse = m_uiPass.wantsMouseCapture() && !viewportInput};
 }
@@ -1218,6 +1420,12 @@ void Renderer::shutdown() {
         for (FrameResources& frame : m_frames) {
             frame.shutdown(device);
         }
+        for (uint32_t slot = 1; slot < m_viewTargets.size(); ++slot) {
+            if (m_viewTargets[slot]) {
+                destroyViewTargets(*m_viewTargets[slot], slot);
+            }
+        }
+        m_viewTargets.clear();
         m_meshPass.shutdown(m_context);
         m_viewportTarget.shutdown(m_context, m_uiPass);
         m_uiPass.shutdown();
