@@ -252,6 +252,7 @@ void PropertiesPanel::drawObjectTab(EditorContext& context) {
         return;
     }
     m_view.drawName(context, *entityId);
+    m_view.drawPrefabHeader(context, *entityId);
     ImGui::Separator();
     m_view.drawFilter("##PropertiesFilter", m_filter);
     m_view.drawTransform(context, *entityId, m_filter);

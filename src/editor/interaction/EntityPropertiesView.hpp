@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/document/PrefabAuthoring.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <cstdint>
@@ -104,6 +105,15 @@ class EntityPropertiesView {
     void drawAssetWarnings(EditorContext& context, SceneEntityId entityId) const;
     // A drop target placing a dragged model asset as a child of the entity.
     void drawModelDropTarget(EditorContext& context, SceneEntityId entityId) const;
+    // For an entity of a prefab instance: the prefab asset's name, the
+    // instance's override summary, and Apply, Revert, Unpack, and Select
+    // Prefab Asset (the prefab operators, acting on the active entity's
+    // instance). Draws nothing for other entities.
+    void drawPrefabHeader(EditorContext& context, SceneEntityId entityId) const;
+
+    // How the entity differs from its prefab, as the view highlights it;
+    // cached until the document revision or the prefab file changes.
+    const PrefabEntityOverrides& prefabOverrides(const EditorContext& context, SceneEntityId entityId) const;
 
   private:
     // An operator the component header requested, run after the component is
@@ -114,12 +124,16 @@ class EntityPropertiesView {
     };
 
     std::optional<HeaderAction> drawComponentMenu(EditorContext& context, const ComponentType& type,
-                                                  const ComponentDrawOptions& options) const;
+                                                  const ComponentDrawOptions& options,
+                                                  std::optional<SceneEntityId> overriddenEntity) const;
     // Draws the values of the first target, copying edits to the others, and
-    // records a change as one undo step.
-    void drawComponentValues(EditorContext& context, const ComponentType& type, std::span<const Entity> shown,
-                             std::string_view filter) const;
+    // records a change as one undo step. Returns a field's "Revert to Prefab"
+    // request, run after drawing.
+    std::optional<HeaderAction> drawComponentValues(EditorContext& context, const ComponentType& type,
+                                                    std::span<const Entity> shown, std::string_view filter) const;
 
     ComponentInspectorLayout& m_layout;
     std::unordered_map<std::string, CustomEditor> m_customEditors;
+    // Override highlighting reads the prefab; kept between frames.
+    mutable PrefabOverrideCache m_prefabOverrides;
 };

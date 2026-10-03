@@ -328,8 +328,13 @@ node hierarchy instantiated.
 
 Overrides are `{entity, component, field, value}` with `field` an RFC 6901
 pointer into the component's document object (empty for a whole component;
-value null removes it), or `/name` and `/local_transform` with an empty
-component. Instances persist their link: the root holds `prefab_instance`
+value null removes it), or, with an empty component, `/name`,
+`/local_transform`, `/parent` (a prefab-local id: moved within the instance),
+or `/removed` (value true: deleted from the instance, recorded by
+`recordPrefabEntityRemoval` from the editor's delete commands). Collection
+membership and collection instances are scene-local: never stored in a
+prefab, kept on instance entities through refreshes, never overrides.
+Instances persist their link: the root holds `prefab_instance`
 (the prefab as a `{guid, path}` asset reference, the overrides as of the last
 prefab operation, and the nested record it came from) and every entity created
 from the prefab holds `prefab_entity` (its prefab-local id); both are internal
@@ -342,8 +347,17 @@ objects kept or removed), reports live overrides by diffing the instance's
 serialized entities against the prefab's normalized entities, and captures a
 scene subtree as a document. It is runtime code, so primary and additive
 scenes share definitions without editor state. Entity references inside
-component JSON are remapped through a small table (`model_node` and `skin`
-`instance_root`).
+component JSON are remapped by `EntityReferenceRemap` (below): capture clears
+references outside the prefab with a diagnostic.
+
+### `src/engine/scene/EntityReferenceRemap.*`
+
+One generic pass rewriting the entity references held by a scene document
+entity's component objects when a set of entities is copied: every reflected
+`FieldKind::EntityReference` field of the registered types (nested `Struct`
+fields included, addressed by JSON pointer) plus the custom-codec
+`model_node`/`skin` `instance_root`. Prefab capture, instantiate, refresh, and
+the editor's duplicate/paste (`SceneFragment`) all use it.
 
 ### `src/engine/application/Application.*`
 
@@ -681,11 +695,19 @@ to selected, move), tested in `tests/editor/ComponentOperatorTests.cpp`.
 (`ui.eyedropper_pick`, one undo step), and cancels (`ui.eyedropper_cancel`) the
 session's `interaction/EntityEyedropper`.
 `PrefabOperators` holds `prefab.create_from_selection`, `prefab.instantiate`,
-`prefab.apply`, `prefab.revert`, `prefab.unpack`, and `prefab.revert_field`,
-built on `document/PrefabAuthoring` (which also answers
-`PrefabAuthoring::overrides(entity)` for override highlighting); they run
-headless in `tests/editor/PrefabTests.cpp`. Each is one undo step for its
-scene changes, while the prefab files they write stay as written on undo.
+`prefab.apply`, `prefab.revert`, `prefab.unpack`, `prefab.revert_field`, and
+`prefab.select_asset` (reveals the prefab in the primary Asset Browser through
+`ProjectAssets::requestReveal`), built on `document/PrefabAuthoring` (which
+also answers `PrefabAuthoring::overrides(entity)` for override highlighting,
+cached per document revision and prefab write time by `PrefabOverrideCache`,
+and suggests `prefabs/<name>.prefab` when create gets no path); they run
+headless in `tests/editor/PrefabTests.cpp`, and the UI flows (field override
+marks and Revert to Prefab, the instance header, Add > Prefab, asset drops) in
+`tests/editor/PrefabUiTests.cpp`. Each is one undo step for its scene changes,
+while the prefab files they write stay as written on undo. The Add menu's
+Prefab section lists the asset catalog's `.prefab` files
+(`EditorAssetKind::Prefab`), and the Asset Browser drags them with the
+`ZENITH_PREFAB_ASSET` payload (`panels/AssetDragPayloads.hpp`).
 
 ### `src/editor/menus/`
 

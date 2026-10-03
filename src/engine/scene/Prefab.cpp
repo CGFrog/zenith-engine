@@ -296,8 +296,10 @@ PrefabResult prefabOverrideFromJson(const Json& json, PrefabOverride& output) {
     if (!parsed.entity) {
         return {.error = "Prefab overrides require an entity ID"};
     }
-    if (parsed.component.empty() && parsed.field != "/name" && parsed.field != "/local_transform") {
-        return {.error = "Entity overrides must target /name or /local_transform, not '" + parsed.field + "'"};
+    if (parsed.component.empty() && parsed.field != "/name" && parsed.field != "/local_transform" &&
+        parsed.field != "/parent" && parsed.field != "/removed") {
+        return {.error = "Entity overrides must target /name, /local_transform, /parent, or /removed, not '" +
+                         parsed.field + "'"};
     }
     if (!parsed.field.empty()) {
         try {

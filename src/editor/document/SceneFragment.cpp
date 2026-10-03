@@ -1,6 +1,8 @@
 #include "SceneFragment.hpp"
 
 #include "engine/assets/Assets.hpp"
+#include "engine/scene/ComponentTypes.hpp"
+#include "engine/scene/EntityReferenceRemap.hpp"
 
 #include <algorithm>
 #include <nlohmann/json.hpp>
@@ -172,8 +174,16 @@ SceneDocumentResult SceneFragment::paste(std::string_view fragment, Scene& scene
         for (const Json& collection : source.value("collections", Json::array())) {
             sourceCollections.emplace(collection.at("id").get<uint64_t>(), collection.at("name").get<std::string>());
         }
+        const ComponentTypeRegistry& types = componentTypesFor(options);
         for (Json entity : source.at("entities")) {
             remapCollections(scene.collections(), sourceCollections, entity);
+            // References between pasted entities follow to the copies;
+            // references to anything else keep naming the same entity.
+            remapEntityReferences(entity.at("components"), types,
+                                  [&remap](uint64_t id, const EntityReferenceSite&) -> std::optional<uint64_t> {
+                                      const auto found = remap.find(id);
+                                      return found == remap.end() ? std::nullopt : std::optional(found->second);
+                                  });
             const uint64_t oldId = entity.at("id").get<uint64_t>();
             entity["id"] = remap.at(oldId);
             if (entity.at("parent").is_null()) {

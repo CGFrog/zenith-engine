@@ -113,6 +113,11 @@ class ProjectAssets {
     void releasePrimaryView(uint64_t view);
     bool isPrimaryView(uint64_t view) const;
     bool hasPrimaryView() const;
+    // Asks the primary browser to show item (an absolute path): its folder
+    // opened and the item selected. A later request replaces an untaken one.
+    void requestReveal(std::filesystem::path item);
+    // The pending reveal when view is the primary; it is handed out once.
+    std::optional<std::filesystem::path> takeRevealRequest(uint64_t view);
 
     // File operations. Each reports its outcome through diagnostics and
     // rescans the catalog. The returned path is what the operation produced,
@@ -161,6 +166,7 @@ class ProjectAssets {
     float m_refreshElapsed{0.0f};
     uint64_t m_lastViewId{0};
     std::optional<uint64_t> m_primaryView;
+    std::optional<std::filesystem::path> m_revealRequest;
     // Frames are counted by pollChanges; the primary records the last frame
     // it claimed (was shown) in.
     uint64_t m_frame{0};

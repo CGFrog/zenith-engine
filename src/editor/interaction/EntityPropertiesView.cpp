@@ -98,6 +98,11 @@ bool customValuesDiffer(const EditorContext& context, const ComponentType& type,
                                [&](Entity target) { return componentJson(context, type, target) != shown; });
 }
 
+// Properties of prefab.revert_field for one value of entity.
+std::string revertFieldProperties(SceneEntityId entity, std::string_view component, std::string_view field) {
+    return Json{{"entity", std::to_string(entity.value)}, {"component", component}, {"field", field}}.dump();
+}
+
 // "component:<id>,<id>:<key>", so a drag over the same entities merges.
 std::string editCoalesceKey(const Scene& scene, std::span<const Entity> targets, const ComponentType& type) {
     std::string key = "component:";
@@ -168,7 +173,79 @@ void EntityPropertiesView::drawName(EditorContext& context, SceneEntityId entity
             context.editing.commit("Rename Entity", "name:" + std::to_string(entityId.value), std::move(beforeName));
         }
     }
+    bool revert = false;
+    if (prefabOverrides(context, entityId).overridden("", "/name")) {
+        markPrefabOverride("Name");
+        revert = prefabOverrideMenu("##NameOverride");
+    }
     ImGui::TextDisabled("ID %llu", static_cast<unsigned long long>(entityId.value));
+    if (revert) {
+        context.invoke("prefab.revert_field", revertFieldProperties(entityId, "", "/name"));
+    }
+}
+
+const PrefabEntityOverrides& EntityPropertiesView::prefabOverrides(const EditorContext& context,
+                                                                   SceneEntityId entityId) const {
+    const PrefabAuthoring authoring(context.editing.assets(), context.editing.document().options());
+    return m_prefabOverrides.get(authoring, context.app.scene, entityId, context.editing.revision());
+}
+
+void EntityPropertiesView::drawPrefabHeader(EditorContext& context, SceneEntityId entityId) const {
+    // Copied: running an operator below changes the revision the cache keys on.
+    const PrefabEntityOverrides overrides = prefabOverrides(context, entityId);
+    if (!overrides.linked) {
+        return;
+    }
+    ImGui::PushID("##PrefabHeader");
+    ImGui::SeparatorText("Prefab");
+    const std::filesystem::path prefab(overrides.prefab);
+    widgets::CaptionText(prefab.stem().generic_string().c_str(), palette::prefabOverrideInk);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", overrides.prefab.c_str());
+    }
+    if (!m_prefabOverrides.error().empty()) {
+        ImGui::TextColored(problemColor, "%s", m_prefabOverrides.error().c_str());
+    } else if (overrides.added) {
+        ImGui::TextDisabled("Added to the instance in this scene");
+    } else if (overrides.instanceOverrides == 0) {
+        ImGui::TextDisabled("Matches its prefab");
+    } else {
+        ImGui::TextDisabled("%zu override%s on the instance", overrides.instanceOverrides,
+                            overrides.instanceOverrides == 1 ? "" : "s");
+        if (overrides.removedEntities > 0) {
+            ImGui::TextDisabled("%zu prefab object%s deleted (Revert restores)", overrides.removedEntities,
+                                overrides.removedEntities == 1 ? "" : "s");
+        }
+    }
+    std::optional<std::pair<const char*, std::string>> action;
+    if (overrides.parent) {
+        ImGui::TextUnformatted("Moved under another parent");
+        markPrefabOverride({});
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Revert Parent")) {
+            action.emplace("prefab.revert_field", revertFieldProperties(entityId, "", "/parent"));
+        }
+    }
+    // Apply, Revert, and Unpack act on the active entity's instance.
+    const bool active = context.selection.active() == entityId;
+    ImGui::BeginDisabled(!active);
+    for (const auto& [label, operatorId] : {std::pair{"Apply", "prefab.apply"}, std::pair{"Revert", "prefab.revert"},
+                                            std::pair{"Unpack", "prefab.unpack"}}) {
+        if (widgets::Button(label)) {
+            action.emplace(operatorId, std::string{});
+        }
+        ImGui::SameLine();
+    }
+    ImGui::BeginDisabled(!context.canInvoke("prefab.select_asset"));
+    if (widgets::Button("Select Prefab Asset")) {
+        action.emplace("prefab.select_asset", std::string{});
+    }
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+    ImGui::PopID();
+    if (action) {
+        context.invoke(action->first, action->second);
+    }
 }
 
 void EntityPropertiesView::drawFilter(const char* id, std::string& filter) const {
@@ -178,8 +255,15 @@ void EntityPropertiesView::drawFilter(const char* id, std::string& filter) const
 
 void EntityPropertiesView::drawTransform(EditorContext& context, SceneEntityId entityId,
                                          std::string_view filter) const {
-    if (!widgets::SectionHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen) ||
-        !matchesInspectorFilter("Transform", filter)) {
+    const bool open = widgets::SectionHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
+    if (prefabOverrides(context, entityId).overridden("", "/local_transform")) {
+        markPrefabOverride({});
+        if (prefabOverrideMenu("##TransformOverride")) {
+            context.invoke("prefab.revert_field", revertFieldProperties(entityId, "", "/local_transform"));
+            return;
+        }
+    }
+    if (!open || !matchesInspectorFilter("Transform", filter)) {
         return;
     }
     Scene& scene = context.app.scene;
@@ -265,12 +349,22 @@ void EntityPropertiesView::drawComponent(EditorContext& context, const Component
     ImGui::SetNextItemOpen(!m_layout.collapsed(type.key()), ImGuiCond_Always);
     const bool open = widgets::SectionHeader(type.displayName().c_str(), ImGuiTreeNodeFlags_NoAutoOpenOnLog);
     m_layout.setCollapsed(type.key(), !open);
+    // The shown (first) entity's values are the ones highlighted.
+    const SceneEntityId shownId = scene.id(shown.front());
+    std::optional<SceneEntityId> overriddenEntity;
+    if (prefabOverrides(context, shownId).overridden(type.key(), "")) {
+        markPrefabOverride({});
+        overriddenEntity = shownId;
+    }
     std::optional<HeaderAction> action;
     if (options.actions != HeaderActions::None) {
-        action = drawComponentMenu(context, type, options);
+        action = drawComponentMenu(context, type, options, overriddenEntity);
+    } else if (overriddenEntity && prefabOverrideMenu("##PrefabOverride")) {
+        action = HeaderAction{.operatorId = "prefab.revert_field",
+                              .properties = revertFieldProperties(*overriddenEntity, type.key(), "")};
     }
     if (open && !action) {
-        drawComponentValues(context, type, shown, nameMatches ? std::string_view{} : filter);
+        action = drawComponentValues(context, type, shown, nameMatches ? std::string_view{} : filter);
     }
     if (action) {
         context.invoke(action->operatorId, action->properties);
@@ -280,7 +374,8 @@ void EntityPropertiesView::drawComponent(EditorContext& context, const Component
 
 std::optional<EntityPropertiesView::HeaderAction>
 EntityPropertiesView::drawComponentMenu(EditorContext& context, const ComponentType& type,
-                                        const ComponentDrawOptions& options) const {
+                                        const ComponentDrawOptions& options,
+                                        std::optional<SceneEntityId> overriddenEntity) const {
     const std::string properties = componentProperties(type.key());
     const auto run = [&properties](const char* operatorId) {
         return std::optional<HeaderAction>(HeaderAction{.operatorId = operatorId, .properties = properties});
@@ -295,6 +390,13 @@ EntityPropertiesView::drawComponentMenu(EditorContext& context, const ComponentT
     // Right-clicking the header or pressing "..." opens the same menu.
     std::optional<HeaderAction> action;
     if (ImGui::BeginPopupContextItem("##ComponentMenu")) {
+        if (overriddenEntity) {
+            if (ImGui::MenuItem("Revert to Prefab")) {
+                action = HeaderAction{.operatorId = "prefab.revert_field",
+                                      .properties = revertFieldProperties(*overriddenEntity, type.key(), "")};
+            }
+            ImGui::Separator();
+        }
         if (wholeSelection && ImGui::MenuItem("Remove")) {
             action = run("object.component_remove");
         }
@@ -341,9 +443,11 @@ EntityPropertiesView::drawComponentMenu(EditorContext& context, const ComponentT
     return action;
 }
 
-void EntityPropertiesView::drawComponentValues(EditorContext& context, const ComponentType& type,
-                                               std::span<const Entity> shown, std::string_view filter) const {
+std::optional<EntityPropertiesView::HeaderAction>
+EntityPropertiesView::drawComponentValues(EditorContext& context, const ComponentType& type,
+                                          std::span<const Entity> shown, std::string_view filter) const {
     Scene& scene = context.app.scene;
+    std::optional<HeaderAction> revert;
     // Alt applies the edit to every selected entity with the component, not
     // only to those shown; their values are not compared. A component of an
     // entity outside the selection (the World tab) is edited alone.
@@ -377,9 +481,11 @@ void EntityPropertiesView::drawComponentValues(EditorContext& context, const Com
     } else {
         // The eyedropper fills the active entity's field; the multi-edit copy
         // below carries the change to the other targets.
-        const EntityReferenceFieldContext entityReferences =
-            entityReferenceFieldContext(context, scene.id(targets.front()), type);
-        const ReflectedFieldEditorOptions fieldOptions{
+        const SceneEntityId shownId = scene.id(targets.front());
+        const EntityReferenceFieldContext entityReferences = entityReferenceFieldContext(context, shownId, type);
+        // Copied: an edit below changes the revision the cache keys on.
+        const PrefabEntityOverrides overrides = prefabOverrides(context, shownId);
+        ReflectedFieldEditorOptions fieldOptions{
             .filter = filter,
             .assetLoaded =
                 [&type, &scene, entity = targets.front()](std::string_view fieldKey) {
@@ -387,6 +493,15 @@ void EntityPropertiesView::drawComponentValues(EditorContext& context, const Com
                 },
             .entityReferences = &entityReferences,
             .showMixedValues = targets.size() == shown.size()};
+        if (overrides.linked && !overrides.added) {
+            fieldOptions.overridden = [&overrides, &type](std::string_view pointer) {
+                return overrides.overridden(type.key(), pointer);
+            };
+            fieldOptions.revertOverride = [&revert, &type, shownId](std::string_view pointer) {
+                revert = HeaderAction{.operatorId = "prefab.revert_field",
+                                      .properties = revertFieldProperties(shownId, type.key(), pointer)};
+            };
+        }
         changed = drawReflectedFields(components, type.fields(), fieldOptions);
     }
     if (changed) {
@@ -411,6 +526,7 @@ void EntityPropertiesView::drawComponentValues(EditorContext& context, const Com
     if (const std::string problem = type.validate(type.find(scene, targets.front())); !problem.empty()) {
         ImGui::TextColored(problemColor, "%s", problem.c_str());
     }
+    return revert;
 }
 
 void EntityPropertiesView::drawPreservedComponents(EditorContext& context, SceneEntityId entityId) const {

@@ -34,6 +34,7 @@ void InspectorPanel::draw(EditorContext& context) {
         return;
     }
     m_view.drawName(context, entityId);
+    m_view.drawPrefabHeader(context, entityId);
     ImGui::Separator();
     m_view.drawFilter("##InspectorFilter", m_filter);
     m_view.drawTransform(context, entityId, m_filter);

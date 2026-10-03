@@ -47,6 +47,14 @@ class SceneEditing {
 
     void undo() const;
     void redo() const;
+
+    // The history's revision (CommandHistory::revision): it changes with every
+    // recorded edit, undo, and redo, so views can cache what they derive from
+    // the scene.
+    uint64_t revision() const {
+        return m_history.revision();
+    }
+
     void syncDirtyState() const;
     EditorCommandContext commandContext() const;
 

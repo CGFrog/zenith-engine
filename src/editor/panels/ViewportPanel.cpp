@@ -1,6 +1,7 @@
 #include "ViewportPanel.hpp"
 
 #include "editor/interaction/ComponentEditors.hpp"
+#include "editor/panels/AssetDragPayloads.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
@@ -339,6 +340,9 @@ void ViewportPanel::draw(EditorContext& context) {
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ZENITH_MODEL_ASSET")) {
             context.placeModel(static_cast<const char*>(payload->Data), entt::null);
+        }
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(prefabAssetPayload)) {
+            context.placePrefab(static_cast<const char*>(payload->Data), entt::null);
         }
         ImGui::EndDragDropTarget();
     }

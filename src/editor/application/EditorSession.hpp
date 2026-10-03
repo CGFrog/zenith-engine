@@ -164,6 +164,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     ProjectAssetActions projectAssetActions(ApplicationContext& context);
     void updateSmokeScenario(ApplicationContext& context);
     void updateSmokeHide(ApplicationContext& context);
+    // Prefab create, instantiate, structural override, and apply on a
+    // staging scene under a temporary asset root.
+    void updateSmokePrefabs(ApplicationContext& context);
     void updateSmokeModuleReload(ApplicationContext& context);
     // Enters Simulate, checks that physics-step systems run and disabled
     // Update systems do not, and that Stop restores the scene; true when done.

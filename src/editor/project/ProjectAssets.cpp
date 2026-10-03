@@ -227,6 +227,17 @@ bool ProjectAssets::hasPrimaryView() const {
     return m_primaryView.has_value();
 }
 
+void ProjectAssets::requestReveal(std::filesystem::path item) {
+    m_revealRequest = std::move(item);
+}
+
+std::optional<std::filesystem::path> ProjectAssets::takeRevealRequest(uint64_t view) {
+    if (!isPrimaryView(view) || !m_revealRequest) {
+        return std::nullopt;
+    }
+    return std::exchange(m_revealRequest, std::nullopt);
+}
+
 void ProjectAssets::saveSettings(EditorDiagnostics& diagnostics) {
     if (const AssetBrowserSettingsResult saved = saveAssetBrowserSettings(m_settingsPath, m_settings); !saved) {
         diagnostics.reportError(saved.error);

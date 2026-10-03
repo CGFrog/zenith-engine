@@ -137,6 +137,11 @@ inline constexpr ThemeColor overlaySelected = ThemeColor::hex(0xFF9A3C);
 inline constexpr ThemeColor overlayActive = ThemeColor::hex(0xFFE0A8);
 inline constexpr ThemeColor overlayLabel = ThemeColor::hex(0xE6FFF7);
 
+
+// Prefab instances: the bar beside an overridden value and its bold ink.
+inline constexpr ThemeColor prefabOverride = ThemeColor::hex(0x4FA8FF);
+inline constexpr ThemeColor prefabOverrideInk = ThemeColor::hex(0xCFE6FF);
+
 // Pixel icon hues, chosen by meaning.
 inline constexpr ThemeColor iconOutline = ThemeColor::hex(0x00060C);
 inline constexpr ThemeColor iconGloss = ThemeColor::hex(0xFFFFFF, 0.55f);

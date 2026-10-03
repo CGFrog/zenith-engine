@@ -312,15 +312,47 @@ void applyToOthers(std::span<void* const> objects, const FieldDescriptor& field,
     }
 }
 
+std::string escapePointerToken(std::string_view key) {
+    std::string escaped;
+    for (const char character : key) {
+        if (character == '~') {
+            escaped += "~0";
+        } else if (character == '/') {
+            escaped += "~1";
+        } else {
+            escaped += character;
+        }
+    }
+    return escaped;
+}
+
+// Marks the field just drawn when it is a prefab override, and offers its
+// revert. Struct fields (tree nodes) and read-only text draw their label at
+// the left, so only the bar marks them.
+void decoratePrefabOverride(const FieldDescriptor& field, const std::string& pointer,
+                            const ReflectedFieldEditorOptions& options) {
+    if (!options.overridden || !options.overridden(pointer)) {
+        return;
+    }
+    const bool labelAtRight =
+        field.kind != FieldKind::Struct && !(field.kind == FieldKind::String && field.presentation.readOnly);
+    markPrefabOverride(labelAtRight ? std::string_view(field.presentation.label) : std::string_view{});
+    if (options.revertOverride && prefabOverrideMenu("##PrefabOverride")) {
+        options.revertOverride(pointer);
+    }
+}
+
 bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
                const ReflectedFieldEditorOptions& options) {
     void* object = objects.front();
     const FieldPresentation& presentation = field.presentation;
     const char* label = presentation.label.c_str();
     const MixedValue mixed = options.showMixedValues ? mixedValue(objects, field) : MixedValue{};
+    const std::string pointer = options.pointerPrefix + "/" + escapePointerToken(field.key);
     if (field.kind == FieldKind::String && presentation.readOnly) {
         const std::optional<bool> loaded = options.assetLoaded ? options.assetLoaded(field.key) : std::nullopt;
         drawReadOnlyText(label, field.value<std::string>(object), loaded, mixed.any);
+        decoratePrefabOverride(field, pointer, options);
         return false;
     }
     const Json before = objects.size() > 1 ? fieldValue(object, field) : Json{};
@@ -389,10 +421,14 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
     case FieldKind::EntityReference:
         changed = drawEntityReferenceField(label, field.value<SceneEntityId>(object), field, options.entityReferences);
         break;
-    case FieldKind::Struct:
-        if (ImGui::TreeNode(label)) {
+    case FieldKind::Struct: {
+        const bool open = ImGui::TreeNode(label);
+        // Marked before the children are drawn, while the node is the last item.
+        decoratePrefabOverride(field, pointer, options);
+        if (open) {
             // A struct matched by its own label shows all of its fields.
             ReflectedFieldEditorOptions childOptions = options;
+            childOptions.pointerPrefix = pointer;
             if (matchesInspectorFilter(presentation.label, options.filter)) {
                 childOptions.filter = {};
             }
@@ -407,9 +443,13 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
         }
         break;
     }
+    }
     ImGui::EndDisabled();
     if (!presentation.tooltip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip("%s", presentation.tooltip.c_str());
+    }
+    if (field.kind != FieldKind::Struct) {
+        decoratePrefabOverride(field, pointer, options);
     }
     if (changed && objects.size() > 1 && field.kind != FieldKind::Struct) {
         applyToOthers(objects, field, before, fieldValue(object, field));
@@ -435,6 +475,45 @@ bool matchesInspectorFilter(std::string_view label, std::string_view filter) {
     std::ranges::transform(lowerLabel, lowerLabel.begin(), lower);
     std::ranges::transform(lowerFilter, lowerFilter.begin(), lower);
     return lowerLabel.find(lowerFilter) != std::string::npos;
+}
+
+void markPrefabOverride(std::string_view label) {
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const ImVec2 itemMin = ImGui::GetItemRectMin();
+    const ImVec2 itemMax = ImGui::GetItemRectMax();
+    const float pixel = editorArtPixel();
+    // The bar sits in the gutter left of the row; the window padding is
+    // partly clipped, so it gets its own clip rectangle.
+    const ImGuiWindow* window = ImGui::GetCurrentWindow();
+    drawList->PushClipRect(window->OuterRectClipped.Min, window->OuterRectClipped.Max, false);
+    const float barRight = itemMin.x - pixel;
+    drawList->AddRectFilled({barRight - pixel * 2.0f, itemMin.y}, {barRight, itemMax.y},
+                            ImGui::GetColorU32(toImVec4(palette::prefabOverride)));
+    drawList->PopClipRect();
+    if (label.empty()) {
+        return;
+    }
+    const char* text = label.data();
+    const char* textEnd = ImGui::FindRenderedTextEnd(text, text + label.size());
+    if (textEnd == text) {
+        return;
+    }
+    // Pixel fonts have no bold face: the label is drawn again in override ink,
+    // once in place and once an art pixel to the right.
+    const float labelWidth = ImGui::CalcTextSize(text, textEnd).x;
+    const ImVec2 position{itemMax.x - labelWidth, itemMin.y + ImGui::GetStyle().FramePadding.y};
+    const ImU32 ink = ImGui::GetColorU32(toImVec4(palette::prefabOverrideInk));
+    drawList->AddText(position, ink, text, textEnd);
+    drawList->AddText({position.x + pixel, position.y}, ink, text, textEnd);
+}
+
+bool prefabOverrideMenu(const char* id) {
+    bool chosen = false;
+    if (ImGui::BeginPopupContextItem(id)) {
+        chosen = ImGui::MenuItem("Revert to Prefab");
+        ImGui::EndPopup();
+    }
+    return chosen;
 }
 
 bool drawReflectedFields(void* object, std::span<const FieldDescriptor> fields,

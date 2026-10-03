@@ -4,6 +4,7 @@
 #include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/EntityReferenceField.hpp"
 #include "editor/operators/OutlinerOperators.hpp"
+#include "editor/panels/AssetDragPayloads.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/outliner/OutlinerRowWidgets.hpp"
 #include "editor/project/ProjectAssets.hpp"
@@ -437,6 +438,10 @@ void HierarchyPanel::acceptEntityDrop(EditorContext& context, SceneEntityId pare
             properties["parent"] = parent ? nlohmann::json(parent.value) : nlohmann::json(nullptr);
             context.invoke("outliner.parent_drop", properties.dump());
         }
+    }
+    // A prefab dragged from the Asset Browser is instantiated under the row.
+    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(prefabAssetPayload)) {
+        context.placePrefab(static_cast<const char*>(payload->Data), parent);
     }
     ImGui::EndDragDropTarget();
 }

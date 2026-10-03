@@ -16,6 +16,7 @@ enum class EditorAssetKind {
     Texture,
     Audio,
     Scene,
+    Prefab,
 };
 
 // Paths in records and folders are absolute and lexically normal, so they can

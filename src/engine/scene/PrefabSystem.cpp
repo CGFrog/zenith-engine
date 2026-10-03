@@ -2,6 +2,7 @@
 
 #include "../assets/Assets.hpp"
 #include "ComponentTypes.hpp"
+#include "EntityReferenceRemap.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
 #include <nlohmann/json.hpp>
@@ -28,21 +29,53 @@ using IdMap = std::unordered_map<uint64_t, uint64_t>;
 constexpr const char* instanceKey = "prefab_instance";
 constexpr const char* entityKey = "prefab_entity";
 
-// Built-in component fields holding the stable id of another entity. Prefabs
-// store them as prefab-local ids.
-struct EntityReferenceField {
+// Built-in custom-codec fields naming the instance root of a model's node
+// entities; a model whose nodes a prefab lists names its entity in one.
+struct ModelRootField {
     const char* component;
     const char* field;
 };
 
-constexpr std::array<EntityReferenceField, 2> entityReferenceFields{{
+constexpr std::array<ModelRootField, 2> modelRootFields{{
     {"model_node", "instance_root"},
     {"skin", "instance_root"},
 }};
 
+// Components holding scene organization rather than prefab content: a prefab
+// never stores them, an instance keeps its own through every refresh, and they
+// are never overrides. Collection ids are per scene.
+constexpr std::array<const char*, 2> sceneLocalKeys{"collection_membership", "collection_instance"};
+
+bool isSceneLocal(std::string_view key) {
+    return std::ranges::find(sceneLocalKeys, key) != sceneLocalKeys.end();
+}
+
+// Marks a scene id inside prefab-local data (an instance's override of a
+// reference to an entity outside the instance), so it cannot be mistaken for
+// a prefab-local id. Stable ids never reach this bit.
+constexpr uint64_t sceneReferenceTag = uint64_t{1} << 63u;
+
+// What becomes of an entity reference whose target the id map lacks.
+enum class UnmappedReferences : uint8_t {
+    // Scene to prefab-local, for a capture: cleared to none and reported,
+    // because a prefab names only its own entities.
+    Clear,
+    // Scene to prefab-local, for comparing an instance with its prefab:
+    // tagged with sceneReferenceTag, as it names an entity outside the
+    // instance.
+    TagScene,
+    // Prefab-local to scene, for rebuilding an instance: tagged scene ids are
+    // untagged, and other ids (prefab entities the instance removed) become
+    // none where a reference may be none.
+    Resolve,
+};
+
 // Rewrites the ids an entity document object holds (its id, its parent, and
-// entity reference fields) through map. Ids the map lacks are kept.
-void remapIds(Json& entity, const IdMap& map) {
+// every entity reference its components hold, see remapEntityReferences)
+// through map. Ids the map lacks keep their id and parent; references are
+// handled as unmapped says.
+void remapIds(Json& entity, const IdMap& map, const ComponentTypeRegistry& types, UnmappedReferences unmapped,
+              std::vector<std::string>* diagnostics = nullptr) {
     const auto remap = [&map](Json& value) {
         if (!value.is_number_unsigned()) {
             return;
@@ -53,21 +86,62 @@ void remapIds(Json& entity, const IdMap& map) {
     };
     remap(entity["id"]);
     remap(entity["parent"]);
+    const std::string name = entity.value("name", std::string{});
+    remapEntityReferences(
+        entity["components"], types, [&](uint64_t id, const EntityReferenceSite& site) -> std::optional<uint64_t> {
+            if (unmapped == UnmappedReferences::Resolve && (id & sceneReferenceTag) != 0) {
+                return id & ~sceneReferenceTag;
+            }
+            if (const auto found = map.find(id); found != map.end()) {
+                return found->second;
+            }
+            if (unmapped == UnmappedReferences::TagScene) {
+                return id | sceneReferenceTag;
+            }
+            if (!site.nullable) {
+                return std::nullopt;
+            }
+            if (unmapped == UnmappedReferences::Resolve) {
+                return uint64_t{0};
+            }
+            if (diagnostics != nullptr) {
+                diagnostics->push_back("'" + name + "' " + std::string(site.component) + std::string(site.field) +
+                                       " referenced an entity outside the prefab; the prefab "
+                                       "stores no reference there");
+            }
+            return uint64_t{0};
+        });
+}
+
+// Removes what is not prefab content: the link components and the
+// scene-local components.
+void stripNonContentComponents(Json& entity) {
     Json& components = entity["components"];
-    for (const EntityReferenceField& reference : entityReferenceFields) {
-        const auto component = components.find(reference.component);
-        if (component == components.end() || !component->is_object()) {
-            continue;
-        }
-        if (const auto field = component->find(reference.field); field != component->end()) {
-            remap(*field);
-        }
+    components.erase(instanceKey);
+    components.erase(entityKey);
+    for (const char* key : sceneLocalKeys) {
+        components.erase(key);
     }
 }
 
-void stripLinkComponents(Json& entity) {
-    entity["components"].erase(instanceKey);
-    entity["components"].erase(entityKey);
+// The scene-local component objects entity holds now, keyed by component key.
+PrefabResult sceneLocalComponents(const Scene& scene, Entity entity, const AssetManager& assets,
+                                  const SceneDocumentOptions& options, Json& output) {
+    output = Json::object();
+    const ComponentTypeRegistry& types = componentTypesFor(options);
+    for (const char* key : sceneLocalKeys) {
+        const ComponentType* type = types.find(key);
+        if (type == nullptr || !type->has(scene, entity)) {
+            continue;
+        }
+        Json value = Json::object();
+        if (SceneDocumentResult saved = type->save(scene, entity, {.assets = assets, .options = options}, value);
+            !saved) {
+            return {.error = saved.error};
+        }
+        output[key] = std::move(value);
+    }
+    return {.success = true};
 }
 
 std::string normalizedReference(const std::filesystem::path& reference) {
@@ -106,7 +180,8 @@ std::vector<Entity> subtree(const Scene& scene, Entity entity) {
 
 // Serializes entities, with their scene ids, exactly as SceneDocument writes
 // them, by copying them into a staging scene. Parents outside the set are
-// written as null. Keyed by scene id.
+// written as null. Scene-local components are left out: the staging scene
+// defines no collections for them to name. Keyed by scene id.
 PrefabResult serializeEntities(const Scene& scene, std::span<const Entity> entities, const AssetManager& assets,
                                const SceneDocumentOptions& options, std::map<uint64_t, Json>& output) {
     Scene staging;
@@ -121,6 +196,9 @@ PrefabResult serializeEntities(const Scene& scene, std::span<const Entity> entit
         }
         staging.registry().get<TransformComponent>(copy).local = scene.registry().get<TransformComponent>(entity).local;
         for (const ComponentType& type : types.types()) {
+            if (isSceneLocal(type.key())) {
+                continue;
+            }
             if (const void* component = type.find(scene, entity)) {
                 type.addDefault(staging, copy);
                 type.assign(type.find(staging, copy), type.copy(component));
@@ -163,6 +241,8 @@ PrefabResult normalizedEntities(const PrefabDocument& document, AssetManager& as
         if (PrefabResult result = prefabEntityToJson(entity, json); !result) {
             return result;
         }
+        // Older prefabs may hold collection ids no staging scene defines.
+        stripNonContentComponents(json);
         changes.entities.push_back({.id = {entity.id.value}, .after = json.dump()});
     }
     Scene staging;
@@ -179,13 +259,15 @@ PrefabResult normalizedEntities(const PrefabDocument& document, AssetManager& as
         return result;
     }
     for (auto& [id, json] : output) {
-        stripLinkComponents(json);
+        stripNonContentComponents(json);
     }
     return {.success = true};
 }
 
 // The mapped instance members' document objects, keyed by prefab-local id,
-// with prefab-local ids and without link components.
+// with prefab-local ids and only prefab content. A parent that is not a mapped
+// member (an entity added in the scene) is written as null, since no
+// prefab-local id names it.
 PrefabResult instanceLocalEntities(const Scene& scene, Entity root, const AssetManager& assets,
                                    const SceneDocumentOptions& options, std::map<uint64_t, Json>& output) {
     std::vector<Entity> mapped;
@@ -205,8 +287,13 @@ PrefabResult instanceLocalEntities(const Scene& scene, Entity root, const AssetM
         return result;
     }
     for (auto& [sceneId, json] : serialized) {
-        remapIds(json, sceneToLocal);
-        stripLinkComponents(json);
+        const bool parentMapped =
+            json["parent"].is_number_unsigned() && sceneToLocal.contains(json["parent"].get<uint64_t>());
+        remapIds(json, sceneToLocal, componentTypesFor(options), UnmappedReferences::TagScene);
+        if (!parentMapped) {
+            json["parent"] = nullptr;
+        }
+        stripNonContentComponents(json);
         output[sceneToLocal.at(sceneId)] = std::move(json);
     }
     return {.success = true};
@@ -269,6 +356,11 @@ void diffEntity(PrefabEntityId id, const Json& source, const Json& instance, boo
         output.push_back(
             {.entity = id, .field = "/local_transform", .jsonValue = instance.at("local_transform").dump()});
     }
+    // Moved under another entity of the instance. A parent that is not a
+    // prefab entity (null here) cannot be named, so it is not an override.
+    if (!isRoot && instance.at("parent").is_number_unsigned() && source.at("parent") != instance.at("parent")) {
+        output.push_back({.entity = id, .field = "/parent", .jsonValue = instance.at("parent").dump()});
+    }
     const Json& sourceComponents = source.at("components");
     const Json& instanceComponents = instance.at("components");
     std::set<std::string> keys;
@@ -302,7 +394,8 @@ std::string describe(const PrefabOverride& value) {
            (value.component.empty() ? std::string() : value.component) + value.field;
 }
 
-// Applies one override to a prefab-local entity object.
+// Applies one value override to a prefab-local entity object. Structural
+// overrides (parent, removed) are applied by applyOverrides.
 void applyOverride(Json& target, const PrefabOverride& overrideValue, std::vector<std::string>& diagnostics) {
     Json value = Json::parse(overrideValue.jsonValue, nullptr, false);
     if (value.is_discarded()) {
@@ -337,11 +430,101 @@ void applyOverride(Json& target, const PrefabOverride& overrideValue, std::vecto
     (*component)[pointer] = std::move(value);
 }
 
-// Applies overrides to prefab-local entity objects. Overrides whose entity,
-// component, or parent value no longer exists are reported and skipped.
-void applyOverrides(std::map<uint64_t, Json>& entities, std::span<const PrefabOverride> overrides,
+bool isParentOverride(const PrefabOverride& value) {
+    return value.component.empty() && value.field == "/parent";
+}
+
+bool isRemovedOverride(const PrefabOverride& value) {
+    return value.component.empty() && value.field == "/removed";
+}
+
+// Whether making parent the parent of entity would put entity above itself.
+bool makesCycle(const std::map<uint64_t, Json>& entities, uint64_t entity, uint64_t parent) {
+    for (uint64_t current = parent;;) {
+        if (current == entity) {
+            return true;
+        }
+        const auto found = entities.find(current);
+        if (found == entities.end() || !found->second.at("parent").is_number_unsigned()) {
+            return false;
+        }
+        current = found->second.at("parent").get<uint64_t>();
+    }
+}
+
+void applyParentOverride(std::map<uint64_t, Json>& entities, const PrefabOverride& overrideValue, uint64_t rootLocal,
+                         std::vector<std::string>& diagnostics) {
+    const Json value = Json::parse(overrideValue.jsonValue, nullptr, false);
+    const uint64_t entity = overrideValue.entity.value;
+    if (entity == rootLocal || !value.is_number_unsigned()) {
+        diagnostics.push_back("Invalid override for " + describe(overrideValue));
+        return;
+    }
+    const uint64_t parent = value.get<uint64_t>();
+    if (!entities.contains(parent)) {
+        diagnostics.push_back("Orphaned override for " + describe(overrideValue) +
+                              ": the prefab no longer has the new parent");
+        return;
+    }
+    if (makesCycle(entities, entity, parent)) {
+        diagnostics.push_back("Skipped override for " + describe(overrideValue) +
+                              ": the prefab now holds the entity above its new parent");
+        return;
+    }
+    entities.at(entity)["parent"] = parent;
+}
+
+// Removes the entities named by removed overrides, with their descendants.
+void applyRemovals(std::map<uint64_t, Json>& entities, std::span<const PrefabOverride> overrides, uint64_t rootLocal,
+                   std::vector<std::string>& diagnostics) {
+    std::unordered_set<uint64_t> removed;
+    for (const PrefabOverride& overrideValue : overrides) {
+        if (!isRemovedOverride(overrideValue) || !entities.contains(overrideValue.entity.value)) {
+            continue;
+        }
+        if (overrideValue.entity.value == rootLocal || overrideValue.jsonValue != "true") {
+            diagnostics.push_back("Invalid override for " + describe(overrideValue));
+            continue;
+        }
+        removed.insert(overrideValue.entity.value);
+    }
+    if (removed.empty()) {
+        return;
+    }
+    const auto underRemoved = [&](uint64_t local) {
+        for (uint64_t current = local;;) {
+            if (removed.contains(current)) {
+                return true;
+            }
+            const Json& parent = entities.at(current).at("parent");
+            if (!parent.is_number_unsigned() || !entities.contains(parent.get<uint64_t>())) {
+                return false;
+            }
+            current = parent.get<uint64_t>();
+        }
+    };
+    std::vector<uint64_t> doomed;
+    for (const auto& [local, json] : entities) {
+        if (underRemoved(local)) {
+            doomed.push_back(local);
+        }
+    }
+    for (const uint64_t local : doomed) {
+        entities.erase(local);
+    }
+}
+
+// Applies overrides to prefab-local entity objects: values first, then
+// parents, then removals (which take the removed entities' descendants
+// along). Overrides whose entity, component, or parent value no longer exists
+// are reported and skipped, except removals of entities the prefab no longer
+// has, which already hold. Scene-local components are never overrides.
+void applyOverrides(std::map<uint64_t, Json>& entities, std::span<const PrefabOverride> overrides, uint64_t rootLocal,
                     std::vector<std::string>& diagnostics) {
     for (const PrefabOverride& overrideValue : overrides) {
+        if (isSceneLocal(overrideValue.component) || isRemovedOverride(overrideValue)) {
+            continue;
+        }
         const auto entity = entities.find(overrideValue.entity.value);
         if (entity == entities.end()) {
             diagnostics.push_back("Orphaned override for " + describe(overrideValue) +
@@ -349,11 +532,16 @@ void applyOverrides(std::map<uint64_t, Json>& entities, std::span<const PrefabOv
             continue;
         }
         try {
-            applyOverride(entity->second, overrideValue, diagnostics);
+            if (isParentOverride(overrideValue)) {
+                applyParentOverride(entities, overrideValue, rootLocal, diagnostics);
+            } else {
+                applyOverride(entity->second, overrideValue, diagnostics);
+            }
         } catch (const Json::exception& error) {
             diagnostics.push_back("Invalid override for " + describe(overrideValue) + ": " + error.what());
         }
     }
+    applyRemovals(entities, overrides, rootLocal, diagnostics);
 }
 
 bool hasModelNodes(const Scene& scene, Entity entity) {
@@ -380,7 +568,7 @@ PrefabResult expandModels(const std::map<uint64_t, Json>& entities, const IdMap&
     uint64_t nextLocal = entities.empty() ? 1 : entities.rbegin()->first + 1;
     std::unordered_set<uint64_t> listedRoots;
     for (const auto& [local, json] : entities) {
-        for (const EntityReferenceField& reference : entityReferenceFields) {
+        for (const ModelRootField& reference : modelRootFields) {
             const Json& components = json.at("components");
             if (const auto component = components.find(reference.component);
                 component != components.end() && component->contains(reference.field)) {
@@ -444,7 +632,9 @@ PrefabResult mergeNestedOverrides(const PrefabSystem& prefabs, const Scene& scen
         }
     };
     for (const PrefabOverride& value : live) {
-        if (std::ranges::find(instance.overrides, value) == instance.overrides.end()) {
+        // A removal is only ever recorded on the instance itself (deleting an
+        // entity in the scene), so it always stays.
+        if (isRemovedOverride(value) || std::ranges::find(instance.overrides, value) == instance.overrides.end()) {
             upsert(value);
         }
     }
@@ -525,6 +715,34 @@ void unpackPrefabInstance(Scene& scene, Entity root) {
     for (const Entity nested : nestedRoots) {
         scene.registry().get<PrefabInstanceComponent>(nested).nestedId = 0;
     }
+}
+
+bool recordPrefabEntityRemoval(Scene& scene, Entity entity) {
+    if (entity == entt::null || !scene.registry().valid(entity)) {
+        return false;
+    }
+    const Entity root = prefabInstanceRoot(scene, entity);
+    const auto* marker = scene.registry().try_get<PrefabEntityComponent>(entity);
+    if (root == entt::null || root == entity || marker == nullptr || !marker->entity) {
+        return false;
+    }
+    // A copy pasted into the instance claims a local id another member holds;
+    // only the member the instance maps the id to stands for the prefab entity.
+    for (const Entity member : prefabInstanceMembers(scene, root)) {
+        const auto* memberMarker = scene.registry().try_get<PrefabEntityComponent>(member);
+        if (memberMarker != nullptr && memberMarker->entity == marker->entity) {
+            if (member != entity) {
+                return false;
+            }
+            break;
+        }
+    }
+    auto& instance = scene.registry().get<PrefabInstanceComponent>(root);
+    const PrefabOverride removal{.entity = marker->entity, .field = "/removed", .jsonValue = "true"};
+    if (std::ranges::find(instance.overrides, removal) == instance.overrides.end()) {
+        instance.overrides.push_back(removal);
+    }
+    return true;
 }
 
 PrefabInstanceResult PrefabSystem::transact(Scene& scene, const std::function<PrefabInstanceResult()>& change) {
@@ -644,11 +862,14 @@ PrefabInstanceResult PrefabSystem::build(const std::filesystem::path& reference,
 
     std::map<uint64_t, Json> entities;
     for (const PrefabEntity& entity : document.entities) {
-        if (PrefabResult encoded = prefabEntityToJson(entity, entities[entity.id.value]); !encoded) {
+        Json& json = entities[entity.id.value];
+        if (PrefabResult encoded = prefabEntityToJson(entity, json); !encoded) {
             return {.error = encoded.error};
         }
+        // Older prefabs may hold collection ids of the scene they came from.
+        stripNonContentComponents(json);
     }
-    applyOverrides(entities, overrides, result.diagnostics);
+    applyOverrides(entities, overrides, rootLocal, result.diagnostics);
     const bool rootTransformOverridden = std::ranges::any_of(overrides, [rootLocal](const PrefabOverride& value) {
         return value.entity.value == rootLocal && value.component.empty() && value.field == "/local_transform";
     });
@@ -712,15 +933,29 @@ PrefabInstanceResult PrefabSystem::build(const std::filesystem::path& reference,
         }
     }
 
+    // Rebuilt entities keep their scene organization (collection links).
+    std::unordered_map<uint64_t, Json> keptSceneLocal;
+    for (const auto& [local, sceneId] : localToScene) {
+        if (PrefabResult saved =
+                sceneLocalComponents(scene, scene.findEntity({sceneId}), m_assets, m_options, keptSceneLocal[local]);
+            !saved) {
+            return {.error = saved.error};
+        }
+    }
+
     for (const auto& [local, json] : entities) {
         if (!localToScene.contains(local)) {
             localToScene.emplace(local, scene.reserveEntityId().value);
         }
     }
 
+    const ComponentTypeRegistry& types = componentTypesFor(m_options);
     for (const auto& [local, json] : entities) {
         Json target = json;
-        remapIds(target, localToScene);
+        remapIds(target, localToScene, types, UnmappedReferences::Resolve);
+        if (const auto kept = keptSceneLocal.find(local); kept != keptSceneLocal.end()) {
+            target["components"].update(kept->second);
+        }
         target["components"][entityKey] = {{"entity", local}};
         if (local == rootLocal) {
             const Entity rootParent = existingRoot != entt::null ? parentOf(scene, existingRoot) : parent;
@@ -765,8 +1000,12 @@ PrefabInstanceResult PrefabSystem::build(const std::filesystem::path& reference,
             }
             child = build(nestedReference, scene, kept->second, entt::null, nestedOverrides, record.id, mode, stack);
         } else {
-            const Entity nestedParent =
-                scene.findEntity({localToScene.at(record.parent ? record.parent->value : rootLocal)});
+            const uint64_t parentLocal = record.parent ? record.parent->value : rootLocal;
+            if (!entities.contains(parentLocal)) {
+                // The instance removed the entity the record is parented to.
+                continue;
+            }
+            const Entity nestedParent = scene.findEntity({localToScene.at(parentLocal)});
             child = build(nestedReference, scene, entt::null, nestedParent, record.overrides, record.id, mode, stack);
         }
         if (!child) {
@@ -815,6 +1054,17 @@ PrefabResult PrefabSystem::overrides(const Scene& scene, Entity root, const Pref
         }
     } catch (const Json::exception& error) {
         return {.error = std::string("Could not compare the instance with its prefab: ") + error.what()};
+    }
+    // A prefab entity the instance lacks was deleted in the scene only when
+    // the deletion was recorded; otherwise the prefab gained it since the
+    // instance was last refreshed, which is not an override.
+    if (const auto* instance = scene.registry().try_get<PrefabInstanceComponent>(root)) {
+        for (const PrefabOverride& value : instance->overrides) {
+            if (isRemovedOverride(value) && sourceEntities.contains(value.entity.value) &&
+                !instanceEntities.contains(value.entity.value) && std::ranges::find(found, value) == found.end()) {
+                found.push_back(value);
+            }
+        }
     }
     std::ranges::sort(found, {}, [](const PrefabOverride& value) {
         return std::tie(value.entity.value, value.component, value.field);
@@ -881,10 +1131,11 @@ PrefabResult PrefabSystem::capture(const Scene& scene, Entity root, const std::f
     if (PrefabResult result = serializeEntities(scene, members, m_assets, m_options, serialized); !result) {
         return result;
     }
+    std::vector<std::string> diagnostics;
     for (const Entity member : members) {
         Json& json = serialized.at(scene.id(member).value);
-        remapIds(json, sceneToLocal);
-        stripLinkComponents(json);
+        remapIds(json, sceneToLocal, componentTypesFor(m_options), UnmappedReferences::Clear, &diagnostics);
+        stripNonContentComponents(json);
         PrefabEntity entity;
         if (PrefabResult read = prefabEntityFromJson(json, entity); !read) {
             return read;
@@ -942,7 +1193,7 @@ PrefabResult PrefabSystem::capture(const Scene& scene, Entity root, const std::f
         return checked;
     }
     output = std::move(captured);
-    return {.success = true};
+    return {.success = true, .diagnostics = std::move(diagnostics)};
 }
 
 PrefabResult PrefabSystem::checkNestedGraph(const std::filesystem::path& reference,
