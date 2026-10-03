@@ -36,6 +36,9 @@ enum class EditorIcon : uint8_t {
     Folder,
     Texture,
     AudioClip,
+    // Outliner groups: a collection and a prefab asset.
+    Collection,
+    Prefab,
     // Properties tabs and panels.
     Components,
     Outliner,

@@ -121,6 +121,17 @@ empty that draws a collection's objects at its own transform, offset by the
 collection's instance offset; hide the source collection and its instances
 still show. Collections are saved with the scene and every change undoes.
 
+The Hierarchy's dropdown switches what it lists, remembered per area:
+**View Layer** (objects grouped by collection), **Collections**, **Prefabs**
+(instances under their prefab), and **Orphan Data** (project assets the scene
+does not use, and empty collections). Ctrl+click adds to the selection and
+Shift+click selects every row between the last clicked row and this one. The
+eye, arrow, and camera icons at the right of each row hide an object or
+collection in the viewport, make it unselectable, or stop it rendering. Drag
+selected rows onto an object to parent them, or onto a collection to link
+them; right-click a row for the collection and prefab commands. Search
+ignores case and shows matches inside closed parents.
+
 With the mouse over the viewport or Hierarchy, `H` hides the selected objects,
 `Shift+H` hides everything else, and `Alt+H` reveals and selects every hidden
 object. Hiding is an editor aid: hidden objects are saved as hidden, cannot be

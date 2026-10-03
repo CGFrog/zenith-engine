@@ -53,6 +53,30 @@ void Selection::click(SceneEntityId id, SelectionClickMode mode) {
     }
 }
 
+void Selection::clickRange(std::span<const SceneEntityId> displayed, SceneEntityId anchor, SceneEntityId clicked,
+                           SelectionClickMode mode) {
+    const std::vector<SceneEntityId> range = displayedRange(displayed, anchor, clicked);
+    if (range.empty()) {
+        return;
+    }
+    // The anchor stays active; without one in the range, the clicked row is.
+    const SceneEntityId active = std::ranges::find(range, anchor) != range.end() ? anchor : clicked;
+    std::vector<SceneEntityId> ids{active};
+    if (mode == SelectionClickMode::Extend) {
+        for (const SceneEntityId id : m_ids) {
+            if (id != active) {
+                ids.push_back(id);
+            }
+        }
+    }
+    for (const SceneEntityId id : range) {
+        if (std::ranges::find(ids, id) == ids.end()) {
+            ids.push_back(id);
+        }
+    }
+    m_ids = std::move(ids);
+}
+
 void Selection::selectAll(const Scene& scene) {
     std::vector<SceneEntityId> all;
     if (!m_ids.empty() && scene.findEntity(m_ids.front()) != entt::null) {
@@ -104,4 +128,25 @@ std::vector<SceneEntityId> Selection::transformRoots(const Scene& scene) const {
         }
     }
     return roots;
+}
+
+std::vector<SceneEntityId> displayedRange(std::span<const SceneEntityId> displayed, SceneEntityId anchor,
+                                          SceneEntityId clicked) {
+    const auto clickedRow = std::ranges::find(displayed, clicked);
+    if (clickedRow == displayed.end()) {
+        return {};
+    }
+    const auto anchorRow = std::ranges::find(displayed, anchor);
+    if (anchorRow == displayed.end()) {
+        return {clicked};
+    }
+    const auto first = std::min(anchorRow, clickedRow);
+    const auto last = std::max(anchorRow, clickedRow);
+    std::vector<SceneEntityId> range;
+    for (auto row = first; row <= last; ++row) {
+        if (std::ranges::find(range, *row) == range.end()) {
+            range.push_back(*row);
+        }
+    }
+    return range;
 }

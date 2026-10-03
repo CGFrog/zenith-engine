@@ -96,6 +96,14 @@ constexpr std::array<IconBitmap, editorIconCount> bitmaps{{
     {iconPurple,
      {"....oo....", "....o3o...", "....o33o..", "....o1o3o.", "....o1oo3o", "....o1o.oo", ".oooo1o...", "o3331o....",
       "o2211o....", ".oooo....."}},
+    // Collection: a lidded box.
+    {iconWhite,
+     {"..........", ".oooooooo.", "o33333333o", "oooooooooo", "o31111113o", "o31oooo13o", "o31111113o", "o21111112o",
+      "o22222222o", "oooooooooo"}},
+    // Prefab: a cube with a linked face.
+    {iconBlue,
+     {"...oooo...", ".oo3333oo.", "o33333333o", "oo333333oo", "o1oowwoo2o", "o11ow2o22o", "o11ow2o22o", "o111oo222o",
+      ".oo1o22oo.", "...oooo..."}},
     // Components: a puzzle piece.
     {iconTeal,
      {"...oo.....", "..o33o....", "ooo33oooo.", "o3333333o.", "o3111111oo", "o31111113o", "o31111111o", "o3111111oo",

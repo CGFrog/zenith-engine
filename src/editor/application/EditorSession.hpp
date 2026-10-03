@@ -142,6 +142,7 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void drawAreaMenuItems(ApplicationContext& context);
     void drawWorkspaceTabs(ApplicationContext& context);
     bool updateSmokeAreas(ApplicationContext& context);
+    bool updateSmokeOutliner(ApplicationContext& context);
 
     SceneResult prepareSmokeScenario(ApplicationContext& context);
     // What the editor does when project files change; dispatched by m_projectAssets.
@@ -327,6 +328,12 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     std::string m_smokeLayout;
     // Entities in the scene before the menu smoke added one.
     size_t m_smokeEntityCount{0};
+    // The outliner smoke: the Hierarchy area whose display mode it switched
+    // (and that area's previous state), and the undo steps it recorded.
+    std::string m_smokeOutlinerArea;
+    std::string m_smokeOutlinerState;
+    size_t m_smokeOutlinerUndoSteps{0};
+    SceneEntityId m_smokeOutlinerEntity;
 
     struct ActiveTransform {
         ModalTransform transform;
