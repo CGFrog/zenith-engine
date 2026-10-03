@@ -169,6 +169,12 @@ naming the project it renders, plus the reference PNGs.
   depth-tested lines partly hidden by and intersecting them, always-on-top
   lines across them, and an alpha-blended circle, natively and with FSR 1 at
   its Performance preset (lines against lower-resolution scene depth).
+- `scene_gizmos/` renders `zenith_scene_gizmo_smoke_tests` (no project,
+  fixed lens on the default view): every editor viewport scene gizmo
+  (`editor/viewport/SceneGizmoDraw`) with its category set to All over a small
+  scene with lights, two cameras, colliders, a reflection probe, a decal, an
+  irradiance volume, and an active plus a selected cube. Running it with
+  `ZENITH_SCENE_GIZMOS=off` records no gizmos, which must fail the comparison.
 
 Each view
 names a capture frame, a camera pose and optional motion (both optional for a
@@ -227,7 +233,8 @@ The `zenith_editor_vulkan_smoke` CTest runs a bounded editor scenario that
 resizes the offscreen viewport twice and exercises Play, Pause, Single Step,
 and Stop, then opens a second Viewport beside the first with another camera and
 Wireframe shading, checks that both render views rendered with their own
-shading while the project settings stay Rendered, and closes it again,
+shading while the project settings stay Rendered (the first with every scene
+overlay set to All, checking it projected name labels), and closes it again,
 checking its view was destroyed. It is labeled `vulkan;smoke` so headless CI can exclude it while a
 Vulkan-capable workstation runs it explicitly.
 
@@ -236,6 +243,9 @@ validation) records the debug-draw primitive set into the default view and two
 created views every frame, one of them upscaled with FSR 1, and checks that the
 renderer clears the lists after each frame and that each view publishes its
 projected labels (shared and own, none behind the camera).
+`zenith_scene_gizmo_vulkan_smoke` (`vulkan;smoke`, strict validation) records
+the editor's scene gizmos into the default view's own list every frame and
+checks the list is cleared and the active object's name label is projected.
 
 `zenith_picking_vulkan_smoke` (`tests/engine/PickingSmokeTests.cpp`) picks two
 cubes through a created view and the default view: a 3x3 pick at the centre

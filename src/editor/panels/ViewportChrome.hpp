@@ -1,9 +1,12 @@
 #pragma once
 
 #include "editor/operators/Operator.hpp"
+#include "editor/viewport/SceneGizmoDraw.hpp"
 
 #include <cstdint>
 #include <functional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 class EditorCamera;
@@ -51,7 +54,36 @@ struct ViewportOverlays {
     // The active object's name in the top-left corner.
     bool activeName{true};
     bool gizmo{true};
+    // Scene gizmos recorded into the viewport's render view (lights, cameras,
+    // colliders, volumes, selection bounds, names).
+    SceneGizmoOverlays scene;
+    // Whether the scene gizmos also draw in Play mode. Even then a viewport
+    // looking through a scene camera shows the game's image untouched.
+    bool sceneInPlay{false};
 };
+
+// One overlay of ViewportOverlays, as named by the overlay operators and the
+// saved area state.
+enum class ViewportOverlay : uint8_t {
+    Grid,
+    SelectionOutline,
+    ActiveName,
+    TransformGizmo,
+    Lights,
+    Cameras,
+    Colliders,
+    ReflectionProbes,
+    Decals,
+    IrradianceVolumes,
+    Names,
+    SelectionBounds,
+    SceneInPlay,
+};
+
+// The overlay's on/off flag, or null for a scoped (Off/Selected/All) overlay.
+bool* viewportOverlayFlag(ViewportOverlays& overlays, ViewportOverlay overlay);
+// The overlay's scope, or null for an on/off overlay.
+OverlayScope* viewportOverlayScope(ViewportOverlays& overlays, ViewportOverlay overlay);
 
 // Per-viewport presentation: which regions surround the 3D view (Blender's N
 // sidebar and T tool shelf) and what the view draws.
@@ -68,10 +100,20 @@ const char* viewportShadingLabel(ViewportShading shading);
 // when there is none.
 using ViewportChromeTarget = std::function<ViewportChromeState*()>;
 
-// view3d.toggle_sidebar, view3d.toggle_toolbar, and view3d.shading_set acting
-// on target's chrome. They poll false, and fail if run anyway, while target
-// returns null. They need no window, so they also run headless.
+// view3d.toggle_sidebar, view3d.toggle_toolbar, view3d.shading_set,
+// view3d.overlay_toggle {overlay} (an on/off overlay flips; a scoped one
+// switches between Off and its default scope), and view3d.overlay_scope_set
+// {overlay, scope} acting on target's chrome. They poll false, and fail if
+// run anyway, while target returns null. They need no window, so they also
+// run headless.
 std::vector<Operator> viewportChromeOperators(ViewportChromeTarget target);
+
+// The viewport's per-area state saved in workspaces.json: a JSON object whose
+// "overlays" member holds every overlay by its operator name. Restoring
+// ignores text it does not understand and keeps the defaults of missing
+// overlays, so an empty state restores the defaults.
+std::string viewportAreaState(const ViewportChromeState& chrome);
+void restoreViewportAreaState(std::string_view state, ViewportChromeState& chrome);
 
 // Widgets for the viewport's header, tool shelf, and sidebar. Each draws into
 // the current ImGui window and edits the referenced settings directly.

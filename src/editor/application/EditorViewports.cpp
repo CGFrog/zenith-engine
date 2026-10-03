@@ -129,6 +129,17 @@ bool EditorSession::updateSmokeViewports(ApplicationContext& context) {
         m_viewports.activate(m_smokeFirstViewport);
         invokeOperator(context, "view3d.shading_set", R"({"type":"rendered"})", KeymapRegion::Viewport);
         invokeOperator(context, "view3d.view_axis", R"({"type":"front"})", KeymapRegion::Viewport);
+        // Every scene overlay on, for every object, in the first viewport.
+        m_viewports.activate(m_smokeFirstViewport);
+        m_smokeOverlayState = (*first)->areaState();
+        for (const char* overlay :
+             {"lights", "cameras", "colliders", "reflection_probes", "decals", "irradiance_volumes", "names"}) {
+            const std::string properties = nlohmann::json{{"overlay", overlay}, {"scope", "all"}}.dump();
+            if (invokeOperator(context, "view3d.overlay_scope_set", properties, KeymapRegion::Viewport).status !=
+                OperatorStatus::Finished) {
+                fail(std::string("view3d.overlay_scope_set failed for ") + overlay);
+            }
+        }
         m_viewports.activate(m_smokeSecondViewport);
         invokeOperator(context, "view3d.shading_set", R"({"type":"wireframe"})", KeymapRegion::Viewport);
         invokeOperator(context, "view3d.view_axis", R"({"type":"top"})", KeymapRegion::Viewport);
@@ -163,6 +174,14 @@ bool EditorSession::updateSmokeViewports(ApplicationContext& context) {
         if (glm::length(first->lens(context.scene).position - second->lens(context.scene).position) < 1e-3f) {
             fail("the viewports should look from different cameras");
         }
+        // With every name shown, the first view projects labels for the
+        // scene's objects; the second (names of the selection only) has its
+        // own list.
+        if (context.scene.registry().view<const NameComponent>().size() != 0 &&
+            rendering.viewDebugLabels(first->renderView()).empty()) {
+            fail("the scene overlays published no name labels in the first viewport");
+        }
+        first->restoreAreaState(m_smokeOverlayState);
         // Camera view through a scene camera, when the scene has one.
         if (!context.scene.registry().view<const CameraComponent>().empty()) {
             m_viewports.activate(m_smokeSecondViewport);
