@@ -622,6 +622,9 @@ struct RenderStats {
     uint32_t droppedLocalLights{0};
 };
 
+// A camera that replaces the scene's primary CameraComponent for one render
+// view. Positions are world-space meters; the projection is a reversed-Z
+// perspective with the view's aspect ratio.
 struct RenderView {
     glm::vec3 position{0.0f, 0.0f, 5.0f};
     glm::vec3 forward{0.0f, 0.0f, -1.0f};
@@ -637,8 +640,74 @@ struct GridOverlay {
     float fadeDistance{40.0f};
 };
 
+// Generational handle of a render view (RenderRuntime::createView). A handle
+// whose view was destroyed never matches a later view in the same slot.
+struct RenderViewId {
+    uint32_t index{0};
+    uint32_t generation{0};
+
+    explicit operator bool() const {
+        return generation != 0;
+    }
+
+    bool operator==(const RenderViewId&) const = default;
+};
+
+// What the renderer did with one view in the latest submitted frame. Counts
+// cover that view's own passes; work shared by every view (shadows, uploads,
+// environment) is reported once in RenderStats.
+struct RenderViewStats {
+    bool rendered{false};
+    // RenderStats::submittedFrame of the frame that rendered the view.
+    uint64_t submittedFrame{0};
+    uint32_t width{0};
+    uint32_t height{0};
+    uint32_t internalWidth{0};
+    uint32_t internalHeight{0};
+    uint32_t visibleCount{0};
+    uint32_t culledCount{0};
+    uint32_t drawCalls{0};
+    uint64_t triangleCount{0};
+    bool temporalHistoryValid{false};
+    // CPU time recording the view's passes.
+    double cpuMilliseconds{0.0};
+};
+
+// Settings a view may override (RenderRuntime::setViewSettings) keep their
+// view's value; the rest describe work every view shares once per frame and
+// always come from the frame settings: directional shadows and their cascade
+// split, environment quality, reflection probes, indirect diffuse, local
+// lights and their shadows, particles, GPU-driven submission, texture
+// streaming, upload diagnostics, and budgets.
+RenderSettings composeViewSettings(const RenderSettings& frameSettings,
+                                   const std::optional<RenderSettings>& viewSettings);
+
+// Render-state owner shared by the application and the renderer. It holds
+// requests and published results only; the Renderer owns every GPU resource.
+//
+// Render views: the default view always exists and is what the
+// single-viewport calls (requestViewportSize, viewportTexture,
+// setViewOverride, ...) address. Until a size is requested it renders into
+// the swapchain; afterwards it renders offscreen every frame. Further views
+// come from createView and render offscreen only on frames whose
+// requestViewSize ran since the previous frame, so a hidden panel costs
+// nothing. Each view owns its camera, size, grid, outlines, optional
+// settings override, history (temporal, exposure, fog), and GPU targets.
+// Directional shadow cascades, texture streaming priority, reflection-probe
+// residency, the irradiance volume, and particle sorting follow the active
+// view (setActiveView) when it renders, otherwise the default view.
+//
+// Lifetime: requests apply at the next Renderer::beginUiFrame, which creates,
+// resizes, or destroys the view's GPU targets and then publishes its texture.
+// A texture stays valid until the beginUiFrame after its view is resized or
+// destroyed, so UI draw data recorded in the same frame can still sample it.
 class RenderRuntime {
   public:
+    // Views alive at once, including the default view.
+    static constexpr uint32_t maximumViews = 16;
+
+    RenderRuntime();
+
     const RenderSettings& settings() const {
         return m_settings;
     }
@@ -665,67 +734,129 @@ class RenderRuntime {
         return m_stats;
     }
 
+    // Default-view shorthands, kept for single-viewport callers.
     void requestViewportSize(uint32_t width, uint32_t height) {
-        m_viewportRequested = true;
-        m_requestedViewportWidth = width;
-        m_requestedViewportHeight = height;
+        requestViewSize(defaultView(), width, height);
     }
 
     void setViewportInputActive(bool active) {
-        m_viewportInputActive = active;
+        setViewInputActive(defaultView(), active);
     }
 
     void setViewOverride(RenderView view) {
-        m_viewOverride = view;
+        setViewOverride(defaultView(), view);
     }
 
     void clearViewOverride() {
-        m_viewOverride.reset();
+        clearViewOverride(defaultView());
     }
 
     void setGridOverlay(std::optional<GridOverlay> grid) {
-        m_gridOverlay = grid;
+        setViewGridOverlay(defaultView(), grid);
     }
 
     void setOutlinedObjects(std::span<const RenderObjectId> objects) {
-        m_outlinedObjects.assign(objects.begin(), objects.end());
-        std::ranges::sort(m_outlinedObjects);
-        m_outlinedObjects.erase(std::unique(m_outlinedObjects.begin(), m_outlinedObjects.end()),
-                                m_outlinedObjects.end());
+        setViewOutlinedObjects(defaultView(), objects);
     }
 
     void clearOutlinedObjects() {
-        m_outlinedObjects.clear();
+        setViewOutlinedObjects(defaultView(), {});
     }
 
     UiTextureHandle viewportTexture() const {
-        return m_viewportTexture;
+        return viewTexture(defaultView());
     }
 
     uint32_t viewportWidth() const {
-        return m_viewportWidth;
+        return viewWidth(defaultView());
     }
 
     uint32_t viewportHeight() const {
-        return m_viewportHeight;
+        return viewHeight(defaultView());
     }
+
+    // View registry. Every call taking a RenderViewId ignores a stale or
+    // invalid handle; setters report that by returning false.
+    RenderViewId defaultView() const {
+        return {.index = 0, .generation = m_views.front().generation};
+    }
+
+    // An empty handle when maximumViews views are alive.
+    RenderViewId createView();
+    // The default view cannot be destroyed. Its GPU targets are released at
+    // the next Renderer::beginUiFrame (see the class comment).
+    bool destroyView(RenderViewId view);
+    bool viewAlive(RenderViewId view) const;
+    // Alive views, including the default view.
+    uint32_t viewCount() const;
+    // The view whose camera places the shadow cascades and prioritizes
+    // streaming on frames it renders. Defaults to the default view; destroying
+    // the active view makes the default view active again.
+    bool setActiveView(RenderViewId view);
+
+    RenderViewId activeView() const {
+        return m_activeView;
+    }
+
+    // Requests the view's output size in pixels (clamped to 16..8192). For a
+    // created view it also requests rendering on the current frame.
+    bool requestViewSize(RenderViewId view, uint32_t width, uint32_t height);
+    // While any view's input is active, UI capture does not swallow input.
+    bool setViewInputActive(RenderViewId view, bool active);
+    bool setViewOverride(RenderViewId view, RenderView camera);
+    bool clearViewOverride(RenderViewId view);
+    bool setViewGridOverlay(RenderViewId view, std::optional<GridOverlay> grid);
+    // Sorted and deduplicated on assignment.
+    bool setViewOutlinedObjects(RenderViewId view, std::span<const RenderObjectId> objects);
+    // Overrides the per-view settings (see composeViewSettings); nullopt
+    // follows the frame settings. Cheap views can disable temporal
+    // anti-aliasing, ambient occlusion, reflections, fog, bloom, and the rest.
+    bool setViewSettings(RenderViewId view, std::optional<RenderSettings> settings);
+
+    UiTextureHandle viewTexture(RenderViewId view) const;
+    uint32_t viewWidth(RenderViewId view) const;
+    uint32_t viewHeight(RenderViewId view) const;
+    RenderViewStats viewStats(RenderViewId view) const;
 
   private:
     friend class Renderer;
     friend class MeshPass;
 
+    // Requests and published results of one view slot. A slot keeps its
+    // generation when its view is destroyed, then increments it, so stale
+    // handles stop matching.
+    struct ViewSlot {
+        uint32_t generation{0};
+        bool alive{false};
+        // Set once a size was requested; the default view then renders
+        // offscreen for the rest of the session.
+        bool sizeRequested{false};
+        // A created view renders on frames where this is set; the Renderer
+        // clears it after each recorded frame.
+        bool renderRequested{false};
+        uint32_t requestedWidth{0};
+        uint32_t requestedHeight{0};
+        bool inputActive{false};
+        std::optional<RenderView> cameraOverride;
+        std::optional<GridOverlay> grid;
+        std::vector<RenderObjectId> outlinedObjects;
+        std::optional<RenderSettings> settings;
+        // Published by the Renderer.
+        UiTextureHandle texture;
+        uint32_t width{0};
+        uint32_t height{0};
+        RenderViewStats stats;
+    };
+
+    ViewSlot* findView(RenderViewId view);
+    const ViewSlot* findView(RenderViewId view) const;
+    bool anyViewInputActive() const;
+
     RenderSettings m_settings;
     std::filesystem::path m_assetRoot;
     RenderCapabilities m_capabilities;
     RenderStats m_stats;
-    UiTextureHandle m_viewportTexture;
-    uint32_t m_requestedViewportWidth{0};
-    uint32_t m_requestedViewportHeight{0};
-    uint32_t m_viewportWidth{0};
-    uint32_t m_viewportHeight{0};
-    bool m_viewportRequested{false};
-    bool m_viewportInputActive{false};
-    std::optional<RenderView> m_viewOverride;
-    std::optional<GridOverlay> m_gridOverlay;
-    std::vector<RenderObjectId> m_outlinedObjects;
+    // Slot 0 is the default view; other slots are reused after destruction.
+    std::vector<ViewSlot> m_views;
+    RenderViewId m_activeView;
 };

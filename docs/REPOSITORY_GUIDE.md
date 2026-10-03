@@ -850,7 +850,24 @@ Renderer
 Coordinates initialization, per-frame work, resize recovery, and shutdown. A
 frame waits for its reusable slot, acquires a swapchain image, records mesh and
 post-processing commands, submits them, and presents. Out-of-date/suboptimal
-surfaces trigger recreation; zero-sized surfaces are skipped until usable.
+surfaces trigger recreation; zero-sized surfaces are skipped until usable. It
+owns the offscreen targets of every render view and turns the `RenderRuntime`
+view requests into the frame's ordered `MeshPassViewRequest` list.
+
+### `src/engine/graphics/Rendering.*`
+
+Plain render-state types shared by applications and the renderer:
+`RenderSettings`, capabilities, statistics, and `RenderRuntime`, which holds the
+render-view registry (generational `RenderViewId`s, per-view size, camera
+override, grid, outlines, settings override, published texture and
+`RenderViewStats`). `composeViewSettings` defines which settings a view may
+override. `tests/engine/RenderViewTests.cpp` covers the registry.
+
+### `src/engine/graphics/RenderViewPlanning.*`
+
+Pure multi-view decisions: the recording order that puts the active view first
+(it leads the frame's shared work) and the remap of the leading view's
+local-shadow tiles onto another view's light selection.
 
 ### `src/engine/graphics/vulkan/VulkanContext.*`
 
@@ -974,7 +991,8 @@ The per-frame mesh-pass decisions that change the render graph's passes,
 computed by the pure `planMeshPassFrame()` from validated settings,
 capabilities, and the diagnostic overrides read once at renderer startup.
 `MeshPass::record` and `Renderer::updateRenderGraphPlan` consume the same
-plan; `tests/engine/MeshPassFramePlanTests.cpp` covers it.
+plan; `tests/engine/MeshPassFramePlanTests.cpp` covers it. Each render view has
+its own plan; only the default view may plan GPU-driven submission.
 
 ### `src/engine/graphics/ViewShading.*`
 
@@ -1107,7 +1125,11 @@ scene into a floating-point HDR target using Cook-Torrance GGX lighting plus
 split-sum image-based (or, at the lowest environment quality, hemispherical
 sky/ground) indirect lighting. Directional and environment scene components
 supply lighting and
-shadow settings. Fallback textures fill missing maps.
+shadow settings. Fallback textures fill missing maps. A frame records the shared
+stage once (packets, uploads, environment, shadows), placed by its leading view,
+and then each requested render view; a view's GPU state (`ViewState`: camera
+sets, clusters, fog, depth pyramid, AO, post-process targets, history) lives
+from `createView` to `destroyView`.
 
 Local point and spot lights use clustered forward shading: up to the configured
 light limit (nearest first) is uploaded each frame, and mesh.frag shades only

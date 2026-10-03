@@ -460,10 +460,12 @@ editor's Graphics panel. `Renderer::updateRenderGraphPlan` mirrors this list as
 a declarative render-graph model whose shape (`RenderGraphShape`) follows the
 settings that add or remove passes: anti-aliasing, AO and reflection quality,
 bloom, exposure mode, shadows, environment quality and background, local
-lighting, the depth prepass, depth of field, and GPU-driven submission. Every choice the mesh
+lighting, the depth prepass, depth of field, and GPU-driven submission. The
+shared passes appear once and the per-view passes (clusters onward) once per
+recorded render view (see Render views). Every choice the mesh
 pass makes while recording (prepass, GPU-driven submission, GPU shadow
 culling, effective AO quality, screen-space reflections, per-pixel probes)
-comes from one `MeshPassFramePlan` (`MeshPassFramePlan.*`) that
+comes from one `MeshPassFramePlan` (`MeshPassFramePlan.*`) per view that
 `MeshPass::planFrame` computes once per frame; `MeshPass::record` consumes it
 and the Renderer copies it into `RenderGraphShape`, so the model never
 re-derives a pass decision. The model validates
@@ -664,6 +666,71 @@ Neither path is exposed as a quality setting until the persistent GPU scene is
 stable and repeated measurements justify a separate implementation and memory
 budget; conventional rasterization therefore remains the explicit path.
 
+### Render views
+
+A frame can render several views of one scene, each with its own camera, size,
+and history. `RenderRuntime` keeps the view registry: the default view always
+exists (the single-viewport calls `requestViewportSize`, `viewportTexture`,
+`setViewOverride`, `setGridOverlay`, `setOutlinedObjects`, and
+`setViewportInputActive` address it), and `createView`/`destroyView` hand out
+generational `RenderViewId`s for more. Per view the application sets a size, a
+camera override (`RenderView`: position, orientation, vertical FOV, near and
+far planes), a grid, outlines, input focus, and optionally a settings override;
+the renderer publishes the view's texture, size, and `RenderViewStats`.
+`composeViewSettings` decides what a view may override: anti-aliasing, the
+upscaler and dynamic resolution, AO, reflections, fog, bloom, exposure and tone
+mapping, depth of field, motion blur, colour grading, decals, the depth
+prepass, lighting quality, and LOD threshold are per view, so a cheap view can
+skip all temporal and screen-space work. Shadows, environment and probe
+quality, indirect diffuse, local lights and their shadows, particles,
+GPU-driven submission, and streaming stay frame settings.
+
+The default view renders into the swapchain until a size is requested and
+offscreen every frame after that. A created view renders only on frames that
+called `requestViewSize` for it, so hidden panels cost nothing. The Renderer
+orders the frame's views with the active view (`setActiveView`) first when it
+renders, else the default view first; that leading view places the shared
+work:
+
+```text
+MeshPass::record
+  frame stage (once): render packets and uploads, materials, texture streaming
+    (leading camera's priority), environment and probe residency, irradiance
+    volume, light gathering, local-light shadow tiles for the leading view's
+    lights, GPU-driven preparation (when the default view leads), directional
+    shadow cascades fitted to the leading view's frustum
+  each view, in order: camera buffer, light/probe/decal clusters, fog, CPU
+    visibility, (leading view: particle simulation and sort), prepass, depth
+    pyramid, AO, shading, SSR, transmission, particles, outlines, post chain
+    into the view's target
+```
+
+Each view owns a `MeshPass::ViewState`: per-frame-slot camera sets (uniform
+buffer and an object buffer for its own CPU-submitted draws), its clustered
+lighting, probe and decal clusters, volumetric fog volumes and history, depth
+pyramid, AO targets, transmission background, and a `PostProcessPass` with its
+HDR, motion, normal and specular targets, TAA and SSR history, exposure, bloom,
+depth of field, motion blur, FSR, and colour-grade targets. Views of different
+sizes therefore never invalidate each other's history. The default view reuses
+the frame's camera sets, whose object buffer also holds the shadow regions; a
+created view's sets copy the shared bindings (shadow map, skin palettes,
+materials, environment, irradiance volume, local-shadow atlas) from the
+frame's set of the same slot before it records. GPU-driven submission and its
+occlusion history belong to the default view. A view that does not lead
+reuses the cascades, particle sort, probe residency, and local-shadow tiles of
+the leading view; its own light selection finds those tiles by stable light
+id. Only the leading view writes GPU timestamps, so pass timings describe the
+frame stage plus that view (other views count toward the frame total).
+
+Creating a view also creates its passes' pipelines through the pipeline cache.
+Its targets are created, resized, or destroyed at `Renderer::beginUiFrame`,
+after one device idle when an existing view changes, so the UI draw data of
+the frame that released a view can still sample its texture. The renderer's
+per-view stats add up the views' draws; `RenderViewStats` reports each view's
+own counts and CPU recording time. `tests/engine/RenderViewTests.cpp` covers the
+registry and planning; `tests/engine/MultiViewSmokeTests.cpp` renders two
+created views beside the default one under strict validation.
+
 ### Editor viewport
 
 The editor requests a viewport size through `RenderRuntime`; it never receives
@@ -672,7 +739,8 @@ per-frame offscreen color target plus its depth target and exposes only an
 opaque `UiTextureHandle`. Viewport resize recreates those targets and the
 size-dependent mesh/post-process targets without recreating the swapchain.
 Descriptor replacement happens before the next ImGui frame so queued UI draw
-data cannot retain a destroyed texture.
+data cannot retain a destroyed texture. Further editor viewports are created
+render views (see Render views) with the same contract.
 
 Editor camera policy, selection, and gizmo state remain in `src/editor/`.
 `RenderView` is the narrow engine-facing camera override. Picking uses a

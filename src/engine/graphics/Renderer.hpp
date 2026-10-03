@@ -16,34 +16,32 @@
 #include "swapchain/Swapchain.hpp"
 #include "vulkan/VulkanContext.hpp"
 #include <array>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
-// Every input that changes the planned frame graph's passes. Settings that only
-// change pass parameters are deliberately absent. Decisions MeshPass makes
-// while recording are copied from its MeshPassFramePlan, never re-derived.
-struct RenderGraphShape {
+// The passes one render view adds to the planned frame graph. Settings that
+// only change pass parameters are deliberately absent. Decisions MeshPass
+// makes while recording are copied from the view's MeshPassFramePlan, never
+// re-derived.
+struct RenderGraphViewShape {
+    // View slot (RenderViewId::index); names the view's resources.
+    uint32_t slot{0};
     uint32_t width{0};
     uint32_t height{0};
-    bool viewport{false};
+    // Renders into an offscreen target the UI samples, else into the swapchain.
+    bool offscreen{false};
     AntialiasingMode antialiasing{AntialiasingMode::Off};
     AmbientOcclusionQuality ambientOcclusion{AmbientOcclusionQuality::Off};
     BloomQuality bloom{BloomQuality::Off};
     ExposureMode exposure{ExposureMode::Auto};
-    bool shadows{false};
-    bool imageBasedLighting{false};
     bool environmentBackground{false};
-    bool localLights{false};
-    bool localShadows{false};
-    bool perPixelReflectionProbes{false};
     bool depthPrepass{false};
     bool gpuDriven{false};
-    bool gpuShadowCulling{false};
     bool screenSpaceReflections{false};
     bool volumetricFog{false};
-    // Irradiance volume (U6)
-    bool irradianceVolume{false};
     bool motionBlur{false};
     bool depthOfField{false};
     // Any colour-grade effect requested (ColorGradePass); a LUT whose file
@@ -52,7 +50,24 @@ struct RenderGraphShape {
     // FSR 1: the composite renders into the upscaler's input, then EASU and RCAS.
     bool spatialUpscale{false};
     bool decals{false};
+
+    bool operator==(const RenderGraphViewShape&) const = default;
+};
+
+// Every input that changes the planned frame graph's passes: the work all
+// views share once per frame, then each recorded view in recording order.
+struct RenderGraphShape {
+    bool shadows{false};
+    bool imageBasedLighting{false};
+    bool localLights{false};
+    bool localShadows{false};
+    bool perPixelReflectionProbes{false};
+    bool gpuShadowCulling{false};
+    // Irradiance volume (U6)
+    bool irradianceVolume{false};
     bool particles{false};
+    // views[0] leads the frame (see MeshPass).
+    std::vector<RenderGraphViewShape> views;
 
     bool operator==(const RenderGraphShape&) const = default;
 };
@@ -142,16 +157,33 @@ class Renderer {
     bool initContext(const Window& window, const GraphicsValidationOptions& validation);
     bool createSwapchainResources(const Window& window);
     void destroySwapchainResources();
+
+    // Offscreen targets of a created render view (slot >= 1), for the
+    // RenderRuntime generation they were created for. The default view uses
+    // m_viewportTarget. Destroyed only after the device idles, at a
+    // beginUiFrame, so UI draw data of the frame that released the view could
+    // still sample its texture.
+    struct ViewTargets {
+        uint32_t generation{0};
+        ViewportTarget target;
+    };
+
     FrameStatus prepareSurface(const Window& window);
     bool recreateSwapchain(const Window& window);
     bool prepareViewport();
+    // Creates, resizes, and destroys created views' targets to match the
+    // RenderRuntime requests, then publishes their textures.
+    bool prepareViews();
+    void destroyViewTargets(ViewTargets& targets, uint32_t slot);
     FrameStatus acquireImage(const FrameResources& frame, uint32_t& imageIndex);
     bool recordFrame(const FrameResources& frame, uint32_t imageIndex, const Scene& scene, const AssetManager& assets);
+    // Fills m_viewRequests with this frame's views in recording order.
+    void collectViewRequests(VkImage swapchainImage, VkImageView swapchainView);
     bool presentFrame(uint32_t imageIndex);
     void prepareCapture();
     void finishCapture(const FrameResources& frame);
     void pruneUnusedUiTextures(const AssetManager& assets);
-    bool updateRenderGraphPlan(VkExtent2D extent, bool useViewport, const MeshPassFramePlan& meshPassPlan);
+    bool updateRenderGraphPlan();
 
     VulkanContext m_context;
     Surface m_surface;
@@ -159,6 +191,15 @@ class Renderer {
     MeshPass m_meshPass;
     UiPass m_uiPass;
     ViewportTarget m_viewportTarget;
+    // Indexed by view slot; slot 0 is unused (the default view's targets are
+    // m_viewportTarget and the swapchain).
+    std::vector<std::unique_ptr<ViewTargets>> m_viewTargets;
+    // Per-frame scratch, reused to keep allocations off the frame loop. The
+    // settings array holds composed settings of views that override them, so
+    // requests can point into it.
+    std::vector<MeshPassViewRequest> m_viewRequests;
+    std::vector<uint32_t> m_renderedViews;
+    std::array<RenderSettings, RenderRuntime::maximumViews> m_composedViewSettings;
     static constexpr uint32_t framesInFlight = 3;
     std::array<FrameResources, framesInFlight> m_frames;
     std::array<AssetLeaseSet, framesInFlight> m_frameAssets;
@@ -173,8 +214,12 @@ class Renderer {
     std::unordered_map<uint64_t, uint64_t> m_gameUiTextures;
     // Empty until the first plan, so the first frame always plans.
     std::optional<RenderGraphShape> m_renderGraphShape;
+    // This frame's shape, compared against m_renderGraphShape.
+    RenderGraphShape m_frameGraphShape;
     RenderGraphStatistics m_renderGraphStatistics;
-    std::optional<RenderGraphBarrier> m_viewportToUiBarrier;
+    // Per entry of m_viewRequests: the barrier that hands an offscreen view's
+    // output to the UI pass (empty for a view rendering into the swapchain).
+    std::vector<std::optional<RenderGraphBarrier>> m_viewToUiBarriers;
     std::optional<RenderGraphBarrier> m_swapchainToUiBarrier;
     double m_pipelineCreationMilliseconds{0.0};
     double m_pipelineFirstUseMilliseconds{0.0};
