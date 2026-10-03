@@ -52,6 +52,8 @@ class FrameResources {
     void shutdown(VkDevice device);
 
     bool waitUntilAvailable(VkDevice device) const;
+    // Whether the slot's latest submission finished, without waiting.
+    bool completed(VkDevice device) const;
     bool beginRecording() const;
     bool endRecording() const;
     bool submit(VkDevice device, VkQueue queue, VkSemaphore renderComplete, VkSemaphore uploadTimeline = VK_NULL_HANDLE,

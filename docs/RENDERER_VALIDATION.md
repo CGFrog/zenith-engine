@@ -223,6 +223,16 @@ shading while the project settings stay Rendered, and closes it again,
 checking its view was destroyed. It is labeled `vulkan;smoke` so headless CI can exclude it while a
 Vulkan-capable workstation runs it explicitly.
 
+`zenith_picking_vulkan_smoke` (`tests/engine/PickingSmokeTests.cpp`) picks two
+cubes through a created view and the default view: a 3x3 pick at the centre
+cube's projected centre must name it and reconstruct its front face from the
+depth plane, a pick on empty space must return no object, a pick larger than
+the view must clamp and name both cubes, and `RenderStats::pickPasses` must be
+zero on every frame without a request. Picks whose view is resized or
+destroyed first must resolve to Cancelled. `zenith_validation_picking` and
+`zenith_validation_picking_gpu_driven` run it under strict validation on both
+submission paths.
+
 ## Strict Vulkan validation
 
 `VulkanContext` enables `VK_LAYER_KHRONOS_validation` whenever it is

@@ -64,6 +64,7 @@ bool RenderRuntime::destroyView(RenderViewId view) {
     if (m_activeView == view) {
         m_activeView = defaultView();
     }
+    m_picks.cancelView(view);
     return true;
 }
 
@@ -170,6 +171,25 @@ uint32_t RenderRuntime::viewHeight(RenderViewId view) const {
 RenderViewStats RenderRuntime::viewStats(RenderViewId view) const {
     const ViewSlot* slot = findView(view);
     return slot != nullptr ? slot->stats : RenderViewStats{};
+}
+
+PickTicket RenderRuntime::requestPick(RenderViewId view, PickRect rect) {
+    if (findView(view) == nullptr) {
+        return {};
+    }
+    return m_picks.request(view, rect);
+}
+
+PickStatus RenderRuntime::pickStatus(PickTicket ticket) const {
+    return m_picks.status(ticket);
+}
+
+PickResult RenderRuntime::pickResult(PickTicket ticket) {
+    return m_picks.take(ticket);
+}
+
+bool RenderRuntime::cancelPick(PickTicket ticket) {
+    return m_picks.cancel(ticket);
 }
 
 RenderRuntime::ViewSlot* RenderRuntime::findView(RenderViewId view) {

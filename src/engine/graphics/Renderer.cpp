@@ -185,7 +185,8 @@ void fillRenderGraphShape(std::span<const MeshPassViewRequest> views, bool defau
                            color_grading::filmGrainActive(viewSettings.filmGrain),
              // Mirrors the spatialUpscale decision in PostProcessPass::record.
              .spatialUpscale = viewSettings.upscaler.mode == UpscalerMode::Fsr1 && capabilities.spatialUpscaling,
-             .decals = viewSettings.decals != DecalQuality::Off});
+             .decals = viewSettings.decals != DecalQuality::Off,
+             .idBuffer = !view.picks.empty()});
     }
 }
 
@@ -310,6 +311,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     }
     const double frameWaitMilliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameWaitBegin).count();
+    collectPicks();
     GpuFrameTimings gpuTimings;
     if (!frame.collectTimings(m_context.device(), gpuTimings)) {
         m_uiPass.cancelFrame();
@@ -343,6 +345,7 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     }
     const auto recordBegin = std::chrono::steady_clock::now();
     if (!recordFrame(frame, imageIndex, scene, assets)) {
+        failFramePicks("The frame that would draw the pick failed to record");
         m_uiPass.cancelFrame();
         return false;
     }
@@ -355,9 +358,12 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     if (!frame.submit(m_context.device(), m_context.gfxQueue(), m_swapchain.renderComplete(imageIndex),
                       m_meshPass.uploadTimelineSemaphore(), m_meshPass.requiredUploadTimelineValue(),
                       m_meshPass.textureUploadTimelineSemaphore(), m_meshPass.requiredTextureUploadTimelineValue())) {
+        failFramePicks("The frame that would draw the pick failed to submit");
         return false;
     }
     const uint64_t submittedFrame = ++m_submittedFrames;
+    m_slotSubmittedFrames[m_currentFrame] = submittedFrame;
+    submitPicks(submittedFrame);
     for (RenderRuntime::ViewSlot& view : m_rendering->m_views) {
         if (view.stats.rendered) {
             view.stats.submittedFrame = submittedFrame;
@@ -474,11 +480,18 @@ bool Renderer::recreateSwapchain(const Window& window) {
     if (!checkVulkan(vkDeviceWaitIdle(m_context.device()), "Wait before resize")) {
         return false;
     }
+    const VkExtent2D previousExtent = m_swapchain.extent();
     destroySwapchainResources();
     if (!createSwapchainResources(window)) {
         return false;
     }
+    const VkExtent2D extent = m_swapchain.extent();
+    const bool resized = extent.width != previousExtent.width || extent.height != previousExtent.height;
     if (!m_rendering->m_views.front().sizeRequested) {
+        // Picks of the swapchain-sized default view address the old size.
+        if (resized) {
+            m_rendering->m_picks.cancelView(m_rendering->defaultView());
+        }
         if (!m_viewportTarget.resize(m_context, m_uiPass, m_swapchain.extent()) ||
             !m_meshPass.resizeView(m_context, 0, m_viewportTarget.extent(), m_viewportTarget.depthView())) {
             return false;
@@ -500,6 +513,7 @@ bool Renderer::prepareViewport() {
     if (!checkVulkan(vkDeviceWaitIdle(m_context.device()), "Wait before viewport resize")) {
         return false;
     }
+    m_rendering->m_picks.cancelView(m_rendering->defaultView());
     return m_viewportTarget.resize(m_context, m_uiPass, requested) &&
            m_meshPass.resizeView(m_context, 0, requested, m_viewportTarget.depthView());
 }
@@ -559,6 +573,7 @@ bool Renderer::prepareViews() {
             }
         } else if (requested.width != targets->target.extent().width ||
                    requested.height != targets->target.extent().height) {
+            m_rendering->m_picks.cancelView({.index = slot, .generation = view.generation});
             if (!targets->target.resize(m_context, m_uiPass, requested) ||
                 !m_meshPass.resizeView(m_context, slot, requested, targets->target.depthView())) {
                 m_context.log().error("Could not resize render view " + std::to_string(slot));
@@ -609,6 +624,7 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
     const bool defaultViewOffscreen = m_rendering->m_views.front().sizeRequested;
     // One plan per view drives both the descriptive graph and the recorded passes.
     collectViewRequests(image, view);
+    attachPicks();
     if (!updateRenderGraphPlan()) {
         return false;
     }
@@ -892,6 +908,15 @@ bool Renderer::updateRenderGraphPlan() {
                     {gpuDrivenDraws, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                      VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED}};
                 graph.addPass(name("GPU culling (early)"), RenderGraphQueue::Graphics, earlyCullAccesses);
+            }
+            if (view.idBuffer) {
+                // One region per pick request, read back after the frame's fence.
+                const auto ids = graph.importImage(name("pick id buffer"), viewImage(IdBufferPass::idFormat, 5, 0),
+                                                   VK_IMAGE_LAYOUT_UNDEFINED);
+                const RenderGraphAccess idBufferAccesses[]{
+                    {ids, RenderGraphAccessMode::Write, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+                graph.addPass(name("id buffer (picking)"), RenderGraphQueue::Graphics, idBufferAccesses);
             }
             if (shape.localLights) {
                 const RenderGraphAccess clusterAccesses[]{
@@ -1330,6 +1355,110 @@ bool Renderer::updateRenderGraphPlan() {
     return true;
 }
 
+void Renderer::attachPicks() {
+    m_framePicks.clear();
+    m_framePickStates.clear();
+    std::vector<std::pair<size_t, size_t>> requestRanges(m_viewRequests.size());
+    for (size_t requestIndex = 0; requestIndex < m_viewRequests.size(); ++requestIndex) {
+        const MeshPassViewRequest& request = m_viewRequests[requestIndex];
+        const RenderViewId view{.index = request.view, .generation = m_rendering->m_views[request.view].generation};
+        requestRanges[requestIndex].first = m_framePicks.size();
+        for (const PickRequestBook::Recording& recording : m_rendering->m_picks.startRecording(view)) {
+            const std::optional<PickRect> region =
+                clampPickRect(recording.rect, request.extent.width, request.extent.height);
+            if (!region) {
+                // Nothing of the view lies under the rectangle.
+                m_rendering->m_picks.complete(
+                    recording.ticket,
+                    {.region = {.x = recording.rect.x, .y = recording.rect.y, .width = 0, .height = 0},
+                     .viewWidth = request.extent.width,
+                     .viewHeight = request.extent.height});
+                continue;
+            }
+            auto readback = std::make_unique<IdReadback>();
+            if (const std::string error = readback->prepare(m_context.vmaAllocator(), region->width, region->height);
+                !error.empty()) {
+                m_rendering->m_picks.fail(recording.ticket, error);
+                continue;
+            }
+            m_framePicks.push_back({.region = *region, .readback = readback.get()});
+            m_framePickStates.push_back({.ticket = recording.ticket,
+                                         .region = *region,
+                                         .viewExtent = request.extent,
+                                         .readback = std::move(readback)});
+        }
+        requestRanges[requestIndex].second = m_framePicks.size() - requestRanges[requestIndex].first;
+    }
+    // Spans are taken once m_framePicks stopped growing.
+    for (size_t requestIndex = 0; requestIndex < m_viewRequests.size(); ++requestIndex) {
+        const auto [first, count] = requestRanges[requestIndex];
+        m_viewRequests[requestIndex].picks = std::span(m_framePicks).subspan(first, count);
+    }
+}
+
+void Renderer::submitPicks(uint64_t submittedFrame) {
+    for (size_t index = 0; index < m_framePickStates.size(); ++index) {
+        InFlightPick& pick = m_framePickStates[index];
+        if (!m_framePicks[index].recorded) {
+            m_rendering->m_picks.fail(pick.ticket, "The id buffer for the pick region could not be allocated");
+            continue;
+        }
+        pick.objects = std::move(m_framePicks[index].objects);
+        pick.viewProjection = m_framePicks[index].viewProjection;
+        pick.submittedFrame = submittedFrame;
+        m_inFlightPicks.push_back(std::move(pick));
+    }
+    m_framePicks.clear();
+    m_framePickStates.clear();
+}
+
+void Renderer::failFramePicks(const std::string& error) {
+    for (const InFlightPick& pick : m_framePickStates) {
+        m_rendering->m_picks.fail(pick.ticket, error);
+    }
+    // A failed recording or submission never runs, so nothing reads the
+    // readbacks.
+    m_framePicks.clear();
+    m_framePickStates.clear();
+}
+
+void Renderer::collectPicks() {
+    if (m_inFlightPicks.empty()) {
+        return;
+    }
+    // One queue executes frames in submission order, so a slot whose latest
+    // submission finished implies every earlier frame finished too.
+    uint64_t completedFrame = 0;
+    for (uint32_t slot = 0; slot < framesInFlight; ++slot) {
+        if (m_slotSubmittedFrames[slot] > completedFrame && m_frames[slot].completed(m_context.device())) {
+            completedFrame = m_slotSubmittedFrames[slot];
+        }
+    }
+    std::erase_if(m_inFlightPicks, [&](InFlightPick& pick) {
+        if (pick.submittedFrame > completedFrame) {
+            return false;
+        }
+        // Cancelled picks (view destroyed or resized, or the caller gave up)
+        // only release their readback.
+        if (!m_rendering->m_picks.awaitingResult(pick.ticket)) {
+            return true;
+        }
+        PickResult result{.region = pick.region,
+                          .viewWidth = pick.viewExtent.width,
+                          .viewHeight = pick.viewExtent.height,
+                          .objects = std::move(pick.objects),
+                          .viewProjection = pick.viewProjection,
+                          .inverseViewProjection = glm::inverse(pick.viewProjection),
+                          .submittedFrame = pick.submittedFrame};
+        if (const std::string error = pick.readback->read(result.ids, result.depth); !error.empty()) {
+            m_rendering->m_picks.fail(pick.ticket, error);
+        } else {
+            m_rendering->m_picks.complete(pick.ticket, std::move(result));
+        }
+        return true;
+    });
+}
+
 void Renderer::processUiEvent(const SDL_Event& event) {
     m_uiPass.processEvent(event);
 }
@@ -1454,6 +1583,11 @@ void Renderer::shutdown() {
         m_gameUiTextures.clear();
         m_uiImages.shutdown();
         m_readback.release();
+        // The device idles, so every recorded pick finished; publish them
+        // before their readbacks go.
+        collectPicks();
+        m_inFlightPicks.clear();
+        failFramePicks("The renderer shut down");
         for (FrameResources& frame : m_frames) {
             frame.shutdown(device);
         }
