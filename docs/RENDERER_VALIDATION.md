@@ -257,8 +257,13 @@ The `vulkan;validation` CTest label runs every combination of
 | Submission | CPU, `ZENITH_FORCE_GPU_DRIVEN=1` |
 | Quality | project default, `ZENITH_FORCE_HIGH_QUALITY=1` + `ZENITH_FORCE_DYNAMIC_RESOLUTION=1`, the same plus `ZENITH_FORCE_UPSCALER=fsr1` + `ZENITH_FORCE_UPSCALER_QUALITY=performance` (`fsr1_dynamic`), `ZENITH_FORCE_HIGH_QUALITY=1` with every device-fallback switch below and FSR 1 requested (`device_fallbacks`) |
 
-for 120 frames each, plus the scripted editor smoke
-(`zenith_validation_editor`), all with `ZENITH_VALIDATION_STRICT=1`:
+for 120 frames each; each content and submission pair again with
+`ZENITH_FORCE_HIGH_QUALITY=1` and each view shading mode other than Rendered
+(`ZENITH_FORCE_VIEW_SHADING=material_preview|solid|wireframe`, tests named
+`..._shading_<mode>`); Wireframe with `ZENITH_DISABLE_WIREFRAME=1`
+(`zenith_validation_demo_cpu_shading_wireframe_fallback`, the Solid
+fallback); and the scripted editor smoke (`zenith_validation_editor`), all
+with `ZENITH_VALIDATION_STRICT=1`:
 
 ```powershell
 ctest --test-dir build -C Debug --output-on-failure -L validation
@@ -298,6 +303,8 @@ decisions from.
 | `ZENITH_FORCE_DYNAMIC_RESOLUTION` | Dynamic resolution with an unreachable 0.01 ms target, so the scale drops to its minimum. |
 | `ZENITH_FORCE_UPSCALER=off\|taau\|fsr1` | Sets `RenderSettings::upscaler.mode` (`native` is an alias of `off`); `taau` also forces TAA. Unknown values are ignored. Forced FSR 1 on a device without support renders at native resolution. |
 | `ZENITH_FORCE_UPSCALER_QUALITY=quality\|balanced\|performance` | Sets the upscaler preset (1.5x, 1.7x, 2x per axis). |
+| `ZENITH_FORCE_VIEW_SHADING=rendered\|material_preview\|solid\|wireframe` | Sets `RenderSettings::viewShading` (see [View shading modes](#view-shading-modes)). Unknown values are ignored; forced Wireframe still draws Solid without the wireframe capability. |
+| `ZENITH_DISABLE_WIREFRAME` | Device fallback: leaves `fillModeNonSolid` disabled on devices that support it, so Wireframe view shading falls back to Solid. |
 | `ZENITH_FORCE_GPU_DRIVEN` | GPU-driven submission (two-phase occlusion culling and indirect draws) when the device supports it. Shadow cascades are then culled on the GPU too. |
 | `ZENITH_DISABLE_GPU_SHADOW_CULLING` | Keeps CPU shadow-cascade culling while GPU-driven submission is active (A/B baseline). |
 | `ZENITH_DISABLE_SHADOW_CACHE` | Redraws every shadow cascade each frame, so shadow culling and rendering can be measured on a static scene. |
@@ -1019,3 +1026,50 @@ centre (scene plus editor grid), so grid lines are antialiased with the scene
 instead of being blended against grid-free neighbours, and taps stay one
 scene-image texel apart. With the grid off and full resolution the result is
 unchanged. TAA frames do not run FXAA.
+
+## View shading modes
+
+`RenderSettings::viewShading` selects Rendered, Material Preview, Solid or
+Wireframe, after Blender's viewport shading. It is global for now (the editor's
+Graphics Settings panel has a "Viewport shading" combo) and serialized by
+value; documents written before it load as Rendered. Every mode is one
+recording path with a reduced feature set:
+
+- `viewShadingFrameSettings` (`ViewShading.hpp`) turns the requested settings
+  into the frame's. Rendered returns them unchanged, so its output is
+  untouched. The other modes drop shadows, local lights and their shadows,
+  reflection probes, the irradiance volume, image-based lighting and the
+  environment background, ambient occlusion, screen-space reflections,
+  volumetric fog, bloom, motion blur, depth of field and colour grading, and
+  fix exposure at 0 EV manual. Material Preview keeps decals, particles and
+  temporal anti-aliasing; Solid and Wireframe drop decals and particles, and
+  Wireframe swaps TAA (and TAA upsampling) for FXAA because jitter smears
+  one-pixel edges. The tone-mapping operator, anti-aliasing, the upscaler,
+  resolution, the depth prepass, GPU-driven submission and LOD stay as
+  requested, so the editor grid, selection mask and outlines work unchanged.
+- `Renderer::recordFrame` substitutes those settings for the frame through
+  `ScopedViewShadingSettings`, so the frame plan, the render-graph shape and
+  every pass agree, while the editor and serialization keep seeing the request.
+- `MeshPass` replaces the scene's directional and hemisphere light in the
+  camera constants with a camera-relative studio rig (`studioLighting`: a key
+  light above, behind and left of the camera plus a neutral sky and ground),
+  so Material Preview shades textured materials through the ordinary
+  hemisphere path.
+- Solid and Wireframe select the `SOLID_SURFACES` specialization of
+  `mesh.frag`: one 0.8 clay albedo, geometric normals, the studio key and
+  hemisphere and a faint rim, with no texture reads except base-colour alpha
+  for cutouts and blending.
+- Wireframe also builds polygon-mode LINE overlay pipelines
+  (`mesh_wireframe.frag`) and draws every surface's edges after the blended
+  surfaces, from both the GPU-driven indirect groups and the CPU-submitted
+  items. Edges test against the shaded depth (greater-or-equal, biased toward
+  the camera) without writing it and write only scene RGB, so motion vectors
+  and the selection mask are the surface's. Line width is 1 (`wideLines` is
+  not used).
+
+Wireframe needs `fillModeNonSolid`. `RenderCapabilities::wireframe` reports
+it; `validateRenderSettings` falls back to Solid with a message, and the frame
+settings resolve the same way for settings forced past validation.
+`ZENITH_DISABLE_WIREFRAME=1` exercises that fallback on capable devices.
+`ZENITH_FORCE_VIEW_SHADING` selects a mode for smoke runs; the validation
+matrix runs each mode on both submission paths with every feature requested.

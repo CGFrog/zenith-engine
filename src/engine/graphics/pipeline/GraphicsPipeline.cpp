@@ -8,6 +8,10 @@
 
 namespace {
 constexpr float rasterLineWidth = 1.0f;
+// Depth bias of wireframe overlay edges, in the units of
+// VkPipelineRasterizationStateCreateInfo (positive is toward the camera).
+constexpr float wireframeDepthBiasConstant = 1.0f;
+constexpr float wireframeDepthBiasSlope = 1.0f;
 constexpr const char* shaderEntryPoint = "main";
 
 // Shader locations: 0 position, 1 octahedral normal, 2 UV, 3 octahedral
@@ -202,6 +206,54 @@ bool GraphicsPipeline::initGraphicsPipeline(VkDevice device, VkFormat colorForma
     info.layout = m_pipelineLayout;
     return checkVulkan(vkCreateGraphicsPipelines(device, pipelineCache, 1, &info, nullptr, &m_pipeline),
                        "Create graphics pipeline");
+}
+
+bool GraphicsPipeline::initWireframeOverlayPipeline(VkDevice device, VkFormat colorFormat,
+                                                    VkFormat auxiliaryColorFormat, VkFormat depthFormat,
+                                                    VkDescriptorSetLayout cameraLayout,
+                                                    VkDescriptorSetLayout materialLayout, VkShaderModule vertex,
+                                                    VkShaderModule fragment, VkPipelineCache pipelineCache,
+                                                    bool doubleSided) {
+    // Same layout as the shading pipelines, so the overlay binds their sets.
+    const VkDescriptorSetLayout setLayouts[]{cameraLayout, materialLayout};
+    VkPipelineLayoutCreateInfo layout{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+                                      .setLayoutCount = static_cast<uint32_t>(std::size(setLayouts)),
+                                      .pSetLayouts = setLayouts};
+    if (!checkVulkan(vkCreatePipelineLayout(device, &layout, nullptr, &m_pipelineLayout),
+                     "Create wireframe pipeline layout")) {
+        return false;
+    }
+    const VkPipelineShaderStageCreateInfo stages[]{shaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertex),
+                                                   shaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, fragment)};
+    const VkFormat colorFormats[]{colorFormat, auxiliaryColorFormat};
+    VkPipelineRenderingCreateInfo rendering{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+                                            .colorAttachmentCount = 2,
+                                            .pColorAttachmentFormats = colorFormats,
+                                            .depthAttachmentFormat = depthFormat};
+    // The vertex stage is mesh.vert, which reads every stream.
+    FixedFunctionState state{MeshVertexInputs::Shaded};
+    state.raster.polygonMode = VK_POLYGON_MODE_LINE;
+    state.raster.cullMode = doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
+    // Edge pixels may land on a neighbouring triangle slightly in front, so
+    // edges move toward the camera (larger reversed-Z depth) by a depth step
+    // plus their polygon's slope.
+    state.raster.depthBiasEnable = VK_TRUE;
+    state.raster.depthBiasConstantFactor = wireframeDepthBiasConstant;
+    state.raster.depthBiasSlopeFactor = wireframeDepthBiasSlope;
+    state.depth.depthWriteEnable = VK_FALSE;
+    state.depth.depthCompareOp = scene_depth::compareOrEqualOp;
+    state.colorAttachment.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
+    const VkPipelineColorBlendAttachmentState colorAttachments[]{state.colorAttachment, {.colorWriteMask = 0}};
+    state.blend.attachmentCount = static_cast<uint32_t>(std::size(colorAttachments));
+    state.blend.pAttachments = colorAttachments;
+    VkGraphicsPipelineCreateInfo info = state.pipelineInfo();
+    info.pNext = &rendering;
+    info.stageCount = static_cast<uint32_t>(std::size(stages));
+    info.pStages = stages;
+    info.layout = m_pipelineLayout;
+    return checkVulkan(vkCreateGraphicsPipelines(device, pipelineCache, 1, &info, nullptr, &m_pipeline),
+                       "Create wireframe pipeline");
 }
 
 void GraphicsPipeline::shutdown(VkDevice device) {

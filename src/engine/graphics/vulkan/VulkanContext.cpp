@@ -353,9 +353,15 @@ bool VulkanContext::initDevice() {
     }
     // Optional: the single-pass depth-pyramid build indexes its level array.
     m_storageImageArrayDynamicIndexingSupported = supported.features.shaderStorageImageArrayDynamicIndexing == VK_TRUE;
+    // Optional: wireframe view shading draws polygon-mode LINE pipelines.
+    // ZENITH_DISABLE_WIREFRAME leaves it off so the Solid fallback can be
+    // validated on devices that have it.
+    m_fillModeNonSolidSupported =
+        supported.features.fillModeNonSolid == VK_TRUE && SDL_getenv("ZENITH_DISABLE_WIREFRAME") == nullptr;
     VkPhysicalDeviceFeatures enabledFeatures{.imageCubeArray = VK_TRUE,
                                              .independentBlend = VK_TRUE,
                                              .multiDrawIndirect = supported.features.multiDrawIndirect,
+                                             .fillModeNonSolid = m_fillModeNonSolidSupported ? VK_TRUE : VK_FALSE,
                                              .samplerAnisotropy = VK_TRUE,
                                              .textureCompressionBC = m_blockCompressionSupported ? VK_TRUE : VK_FALSE,
                                              .shaderStorageImageArrayDynamicIndexing =

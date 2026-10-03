@@ -306,6 +306,10 @@ class MeshPass {
         uint32_t shadowCascades{0};
         // Opaque pipelines test EQUAL against prepass depth without writing it.
         bool depthPrepass{false};
+        // View shading (ViewShading.hpp): untextured clay surfaces, and the
+        // polygon-mode LINE overlay pipelines for Wireframe.
+        bool solidSurfaces{false};
+        bool wireframeOverlay{false};
         auto operator<=>(const MeshShadingVariant&) const = default;
     };
 
@@ -314,6 +318,15 @@ class MeshPass {
         GraphicsPipeline doubleSided;
         GraphicsPipeline blend;
         GraphicsPipeline blendDoubleSided;
+        // Created only for wireframeOverlay variants.
+        GraphicsPipeline wireframe;
+        GraphicsPipeline wireframeDoubleSided;
+
+        bool hasWireframeOverlay() const {
+            return wireframe.handle() != VK_NULL_HANDLE;
+        }
+
+        void shutdown(VkDevice device);
     };
 
     // Per-frame state shared by the draw-recording helpers.
@@ -340,6 +353,7 @@ class MeshPass {
     bool createPipeline(VkFormat colorFormat, VkFormat depthFormat);
     // Returns the cached pipelines for a variant, compiling them on first use.
     const MeshPipelineSet* meshPipelines(MeshShadingVariant variant);
+    bool createWireframeOverlay(MeshPipelineSet& pipelines, VkShaderModule meshVertex);
     bool createShadowResources(VkFormat depthFormat);
     bool buildRenderItems(const Scene& scene, const AssetManager& assets,
                           const std::vector<RenderObjectId>& outlinedObjects, std::vector<RenderItem>& items);
@@ -429,6 +443,10 @@ class MeshPass {
     void recordSelectionMask(const DrawContext& draw);
     void recordShadedItems(const DrawContext& draw, ShadedItems selection);
     void recordOutlines(const DrawContext& draw);
+    // Wireframe view shading: draws the edges of every surface drawn this
+    // frame (GPU-driven groups and CPU-submitted items) over them, inside the
+    // scene pass. Does nothing unless draw.pipelines has the overlay.
+    void recordWireframeOverlay(const DrawContext& draw, bool gpuDrivenActive);
     // Inside the scene pass, after opaque surfaces, the background and
     // screen-space reflections: when a transmissive surface will draw, ends
     // the pass, copies the scene into the transmission background and resumes.

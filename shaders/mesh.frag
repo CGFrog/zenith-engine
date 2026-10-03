@@ -6,6 +6,9 @@ const float PI = 3.14159265359;
 // Quality variants baked in by MeshPass::meshPipelines so disabled paths compile out.
 layout(constant_id = 0) const bool PHYSICALLY_BASED_LIGHTING = true;
 layout(constant_id = 1) const int SHADOW_CASCADE_COUNT = 3;
+// Solid and Wireframe view shading (ViewShading.hpp): one untextured clay
+// material lit by the camera constants' studio rig.
+layout(constant_id = 2) const bool SOLID_SURFACES = false;
 
 layout(set = 0, binding = 0) uniform CameraData {
     mat4 viewProjection;
@@ -304,7 +307,9 @@ float shadowVisibility(vec3 position, vec3 normal, vec3 lightDirection) {
             visibility = mix(visibility, sampleShadowCascade(position, normal, lightDirection, cascade + 1), blend);
         }
     } else if (cascadeCount > 1) {
-        float lastSplit = camera.cascadeSplits[cascadeCount - 1];
+        // Clamped so the zero-cascade specialization, where this branch is
+        // dead, still indexes in range (spirv-val rejects a constant -1).
+        float lastSplit = camera.cascadeSplits[max(cascadeCount - 1, 0)];
         float fadeWidth = max(lastSplit * 0.1, 0.001);
         visibility = mix(visibility, 1.0, smoothstep(lastSplit - fadeWidth, lastSplit, cameraDistance));
     }
@@ -1026,12 +1031,53 @@ vec3 transmittedRadiance(MaterialRecord material, SurfaceLobes lobes, vec3 norma
     return lobes.transmission * (1.0 - metallic) * (vec3(1.0) - reflected) * albedo * absorption * background;
 }
 
+// Screen-space motion (xy), reactive mask (z) and depth (w) for the temporal
+// resolve.
+vec4 motionReactive(float reactive) {
+    // Jitter moved each projected point by -jitter in NDC; adding it back gives
+    // unjittered positions, so a static scene has zero motion (mirrored by
+    // unjitteredMotionUv in TemporalQuality.cpp).
+    vec2 currentUv =
+        (currentClipPosition.xy / max(abs(currentClipPosition.w), 0.00001) + camera.temporalJitter.xy) * 0.5 + 0.5;
+    vec2 previousUv =
+        (previousClipPosition.xy / max(abs(previousClipPosition.w), 0.00001) + camera.temporalJitter.zw) * 0.5 + 0.5;
+    // Surfaces revealed by camera motion are detected in taa_resolve.comp against
+    // the previous frame's depth (stored in .w); only off-screen history is known here.
+    bool previousOffscreen = previousClipPosition.w <= 0.0 || any(lessThan(previousUv, vec2(0.0))) ||
+                             any(greaterThan(previousUv, vec2(1.0)));
+    return vec4(currentUv - previousUv, previousOffscreen ? 1.0 : reactive, gl_FragCoord.z);
+}
+
+// Solid view shading: a neutral clay albedo under the studio key light and
+// hemisphere, plus a faint rim that keeps silhouettes readable against the
+// flat background. Normals are geometric; back faces of double-sided surfaces
+// face the viewer.
+vec3 solidSurfaceColor() {
+    const vec3 clay = vec3(0.8);
+    const float rimStrength = 0.12;
+    vec3 normal = normalize(worldNormal) * (gl_FrontFacing ? 1.0 : -1.0);
+    vec3 viewDirection = normalize(camera.cameraPosition.xyz - worldPosition);
+    vec3 lightDirection = normalize(camera.lightDirection.xyz);
+    vec3 key = camera.lightColor.rgb * camera.lightDirection.w * max(dot(normal, lightDirection), 0.0);
+    vec3 ambient = mix(camera.environmentGround.rgb, camera.environmentSky.rgb, normal.y * 0.5 + 0.5) *
+                   camera.environmentSky.w;
+    float rim = pow(1.0 - max(dot(normal, viewDirection), 0.0), 3.0) * rimStrength;
+    return clay * (key / PI + ambient) + rim;
+}
+
 void main() {
     MaterialRecord material = materials.values[materialIndex];
     vec4 sampledBase = sampleMaterialTexture(material.textures.x, texCoord);
     float alpha = sampledBase.a * material.baseColor.a;
     if (material.surface.y > 0.5 && material.surface.y < 1.5 && alpha < material.surface.x) {
         discard;
+    }
+    if (SOLID_SURFACES) {
+        // Coverage still follows the material, so cutouts and blended
+        // surfaces keep their shape.
+        outColor = vec4(solidSurfaceColor(), alpha);
+        outMotionReactive = motionReactive(material.surface.y > 1.5 ? alpha : 0.0);
+        return;
     }
     vec3 albedo = sampledBase.rgb * material.baseColor.rgb;
     vec4 orm = sampleMaterialTexture(material.textures.z, texCoord);
@@ -1140,18 +1186,7 @@ void main() {
         color = mix(color, color * cascadeColors[shadowCascade(worldPosition)], 0.45);
     }
     outColor = vec4(applyVolumetricFog(color) + transmitted, alpha);
-    // Jitter moved each projected point by -jitter in NDC; adding it back gives
-    // unjittered positions, so a static scene has zero motion (mirrored by
-    // unjitteredMotionUv in TemporalQuality.cpp).
-    vec2 currentUv =
-        (currentClipPosition.xy / max(abs(currentClipPosition.w), 0.00001) + camera.temporalJitter.xy) * 0.5 + 0.5;
-    vec2 previousUv =
-        (previousClipPosition.xy / max(abs(previousClipPosition.w), 0.00001) + camera.temporalJitter.zw) * 0.5 + 0.5;
     float reactive = max(material.surface.y > 1.5 ? alpha : 0.0,
                          smoothstep(1.0, 4.0, dot(emissive, vec3(0.2126, 0.7152, 0.0722))));
-    // Surfaces revealed by camera motion are detected in taa_resolve.comp against
-    // the previous frame's depth (stored in .w); only off-screen history is known here.
-    bool previousOffscreen = previousClipPosition.w <= 0.0 || any(lessThan(previousUv, vec2(0.0))) ||
-                             any(greaterThan(previousUv, vec2(1.0)));
-    outMotionReactive = vec4(currentUv - previousUv, previousOffscreen ? 1.0 : reactive, gl_FragCoord.z);
+    outMotionReactive = motionReactive(reactive);
 }

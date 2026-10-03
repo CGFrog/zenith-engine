@@ -345,6 +345,7 @@ add_library(zenith_engine SHARED
     src/engine/graphics/RenderSubmission.cpp
     src/engine/graphics/MeshLodSelection.cpp
     src/engine/graphics/MeshPassFramePlan.cpp
+    src/engine/graphics/ViewShading.cpp
     src/engine/graphics/GpuCullLayout.cpp
     src/engine/graphics/TemporalQuality.cpp
     src/engine/graphics/ToneMapping.cpp
@@ -1054,6 +1055,10 @@ if(BUILD_TESTING)
     target_link_libraries(zenith_mesh_pass_frame_plan_tests PRIVATE zenith_engine)
     add_test(NAME zenith_mesh_pass_frame_plan COMMAND zenith_mesh_pass_frame_plan_tests)
 
+    add_executable(zenith_view_shading_tests tests/engine/ViewShadingTests.cpp)
+    target_link_libraries(zenith_view_shading_tests PRIVATE zenith_engine)
+    add_test(NAME zenith_view_shading COMMAND zenith_view_shading_tests)
+
     add_executable(zenith_deferred_upload_tracker_tests tests/engine/DeferredUploadTrackerTests.cpp)
     target_link_libraries(zenith_deferred_upload_tracker_tests PRIVATE zenith_engine)
     add_test(NAME zenith_deferred_upload_tracker COMMAND zenith_deferred_upload_tracker_tests)
@@ -1520,6 +1525,26 @@ if(BUILD_TESTING)
             endforeach()
         endforeach()
     endforeach()
+    # View shading modes (ZENITH_FORCE_VIEW_SHADING) on both submission paths,
+    # with every feature requested so each mode strips the most, plus
+    # Wireframe on a device without fillModeNonSolid (the Solid fallback).
+    set(ZENITH_VALIDATION_VIEW_SHADINGS material_preview solid wireframe)
+    foreach(scene IN LISTS ZENITH_VALIDATION_SCENES)
+        foreach(submission IN LISTS ZENITH_VALIDATION_SUBMISSIONS)
+            foreach(shading IN LISTS ZENITH_VALIDATION_VIEW_SHADINGS)
+                zenith_add_validation_smoke(zenith_validation_${scene}_${submission}_shading_${shading}
+                    COMMAND ${ZENITH_VALIDATION_COMMAND_${scene}}
+                    ENVIRONMENT ZENITH_SMOKE_FRAMES=120 ZENITH_FORCE_HIGH_QUALITY=1
+                        ZENITH_FORCE_VIEW_SHADING=${shading}
+                        ${ZENITH_VALIDATION_ENVIRONMENT_${submission}}
+                )
+            endforeach()
+        endforeach()
+    endforeach()
+    zenith_add_validation_smoke(zenith_validation_demo_cpu_shading_wireframe_fallback
+        COMMAND zenith
+        ENVIRONMENT ZENITH_SMOKE_FRAMES=120 ZENITH_FORCE_VIEW_SHADING=wireframe ZENITH_DISABLE_WIREFRAME=1
+    )
     zenith_add_validation_smoke(zenith_validation_editor
         COMMAND zenith_editor
         ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=600

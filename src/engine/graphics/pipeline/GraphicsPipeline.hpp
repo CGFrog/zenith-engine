@@ -36,6 +36,15 @@ class GraphicsPipeline {
                               VkPipelineCache pipelineCache, bool doubleSided = false, bool blending = false,
                               const VkSpecializationInfo* fragmentSpecialization = nullptr,
                               SceneDepthUsage depthUsage = SceneDepthUsage::TestAndWrite);
+    // Wireframe view shading overlay: the mesh pipelines' layout and vertex
+    // input with polygons rasterized as lines (needs fillModeNonSolid). Edges
+    // are depth tested, biased toward the camera, against the surfaces already
+    // drawn without writing depth; only the scene color's RGB is written, so
+    // the selection mask (scene alpha) and motion vectors stay the surface's.
+    bool initWireframeOverlayPipeline(VkDevice device, VkFormat colorFormat, VkFormat auxiliaryColorFormat,
+                                      VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
+                                      VkDescriptorSetLayout materialLayout, VkShaderModule vertex,
+                                      VkShaderModule fragment, VkPipelineCache pipelineCache, bool doubleSided);
     // Depth prepass: writes scene depth and two color targets, normals
     // (normalFormat) then specular reflectance (specularFormat). The vertex
     // stage takes a mat4 push constant (the view matrix).

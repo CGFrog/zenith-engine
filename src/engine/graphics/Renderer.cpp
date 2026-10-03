@@ -1,5 +1,6 @@
 #include "Renderer.hpp"
 #include "ColorGrading.hpp"
+#include "ViewShading.hpp"
 #include "vulkan/VulkanCheck.hpp"
 
 #include <algorithm>
@@ -35,6 +36,25 @@ void applyUpscalerOverrides(RenderSettings& settings) {
         } else if (value == "performance") {
             settings.upscaler.quality = UpscalerQuality::Performance;
         }
+    }
+}
+
+// ZENITH_FORCE_VIEW_SHADING=rendered|material_preview|solid|wireframe;
+// documented in docs/RENDERER_VALIDATION.md. Unknown values are ignored.
+void applyViewShadingOverride(RenderSettings& settings) {
+    const char* mode = SDL_getenv("ZENITH_FORCE_VIEW_SHADING");
+    if (mode == nullptr) {
+        return;
+    }
+    const std::string_view value{mode};
+    if (value == "rendered") {
+        settings.viewShading = ViewShading::Rendered;
+    } else if (value == "material_preview") {
+        settings.viewShading = ViewShading::MaterialPreview;
+    } else if (value == "solid") {
+        settings.viewShading = ViewShading::Solid;
+    } else if (value == "wireframe") {
+        settings.viewShading = ViewShading::Wireframe;
     }
 }
 
@@ -82,6 +102,7 @@ void applyDiagnosticOverrides(RenderRuntime& rendering) {
         settings.dynamicResolution.targetGpuMilliseconds = 0.01f;
     }
     applyUpscalerOverrides(settings);
+    applyViewShadingOverride(settings);
     rendering.setSettings(settings);
 }
 
@@ -179,6 +200,7 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
     rendering.m_capabilities.irradianceVolumes = true;
     rendering.m_capabilities.dedicatedTransferQueue = m_context.hasDedicatedTransferQueue();
     rendering.m_capabilities.timelineTransfers = m_context.timelineSemaphoreSupported();
+    rendering.m_capabilities.wireframe = m_context.fillModeNonSolidSupported();
     if (!createSwapchainResources(window)) {
         return false;
     }
@@ -314,11 +336,12 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
         return false;
     }
     const uint64_t submittedFrame = ++m_submittedFrames;
-    frame.markSubmitted(submittedFrame, m_rendering->m_settings.bloom != BloomQuality::Off,
-                        m_rendering->m_settings.antialiasing == AntialiasingMode::Taa,
-                        m_rendering->m_settings.ambientOcclusion != AmbientOcclusionQuality::Off,
-                        m_rendering->m_settings.reflections != ReflectionQuality::ProbesOnly,
-                        m_rendering->m_stats.uploadBytes != 0);
+    // The settings the frame was recorded with (see ScopedViewShadingSettings).
+    const RenderSettings recorded = viewShadingFrameSettings(m_rendering->m_settings, m_rendering->m_capabilities);
+    frame.markSubmitted(submittedFrame, recorded.bloom != BloomQuality::Off,
+                        recorded.antialiasing == AntialiasingMode::Taa,
+                        recorded.ambientOcclusion != AmbientOcclusionQuality::Off,
+                        recorded.reflections != ReflectionQuality::ProbesOnly, m_rendering->m_stats.uploadBytes != 0);
     if (m_capturePrepared) {
         finishCapture(frame);
     }
@@ -473,6 +496,9 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
     if (!frame.beginRecording()) {
         return false;
     }
+    // View shading: the plan, the graph shape and every recorded pass read the
+    // shading mode's reduced settings until this frame is recorded.
+    const ScopedViewShadingSettings viewShading{*m_rendering};
     const VkImage image = m_swapchain.swapchainImages()[imageIndex];
     const VkImageView view = m_swapchain.swapchainImageViews()[imageIndex];
     const bool useViewport = m_rendering->m_viewportRequested;

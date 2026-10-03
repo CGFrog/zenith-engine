@@ -20,6 +20,23 @@ struct UiTextureHandle {
     }
 };
 
+// How the view draws surfaces, after Blender's viewport shading modes.
+// Serialized by value. Every mode other than Rendered draws with a reduced
+// feature set and a fixed studio light rig instead of the scene's lights; see
+// viewShadingFrameSettings in ViewShading.hpp for the exact contract.
+enum class ViewShading : uint8_t {
+    // Every enabled feature, lit by the scene.
+    Rendered,
+    // Textured materials lit by the studio rig: no shadows, fog, local lights,
+    // screen-space effects or camera post effects.
+    MaterialPreview,
+    // One untextured clay material lit by the studio rig.
+    Solid,
+    // Solid shading with the triangle edges drawn over it. Needs the
+    // wireframe capability (fillModeNonSolid); falls back to Solid without it.
+    Wireframe,
+};
+
 enum class AntialiasingMode : uint8_t {
     Off,
     Fxaa,
@@ -316,6 +333,8 @@ struct UpscalerSettings {
 };
 
 struct RenderSettings {
+    // Global for now; the other settings below are what Rendered draws with.
+    ViewShading viewShading{ViewShading::Rendered};
     AntialiasingMode antialiasing{AntialiasingMode::Fxaa};
     UpscalerSettings upscaler;
     ShadowQuality shadows{ShadowQuality::Single};
@@ -404,6 +423,8 @@ struct RenderCapabilities {
     bool decals{true};
     // Needs the particle compute and draw pipelines.
     bool particles{true};
+    // Wireframe view shading: polygon-mode LINE pipelines (fillModeNonSolid).
+    bool wireframe{false};
     bool meshShaders{false};
     bool rayTracing{false};
     bool dedicatedTransferQueue{false};
