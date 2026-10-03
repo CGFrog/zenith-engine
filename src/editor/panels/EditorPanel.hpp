@@ -1,5 +1,8 @@
 #pragma once
 
+#include <string>
+#include <string_view>
+
 struct EditorContext;
 struct InputState;
 
@@ -29,8 +32,23 @@ class EditorPanel {
     virtual void draw(EditorContext& context) = 0;
     // Runs on frames where the user has closed the panel.
     virtual void hidden(EditorContext& context);
+
+    // Per-area view state saved with the area in workspaces.json, for
+    // example which Properties tab it shows. Only panels created per area
+    // (AreaInstancing::Multiple) should override these; a shared panel is
+    // shown by every workspace and has no per-area state. The text is the
+    // panel's own format; restoreAreaState ignores text it does not
+    // understand, and an empty state means the panel's defaults.
+    virtual std::string areaState() const;
+    virtual void restoreAreaState(std::string_view state);
 };
 
 inline void EditorPanel::update(EditorContext&, const InputState&, float) {}
 
 inline void EditorPanel::hidden(EditorContext&) {}
+
+inline std::string EditorPanel::areaState() const {
+    return {};
+}
+
+inline void EditorPanel::restoreAreaState(std::string_view) {}

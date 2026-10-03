@@ -55,8 +55,9 @@ Important boundaries:
   `SceneEntityId`s because restored entities receive new handles. Patched
   entities are placed among their siblings in stable-id order, which is the
   order a full document load produces. Workspaces, their areas (editor-type
-  windows, see `src/editor/areas/`), and each workspace's docking layout are
-  user data in `workspaces.json`, stored separately from runtime scene data,
+  windows, see `src/editor/areas/`), each area's view state (such as the
+  Properties tab), and each workspace's docking layout are user data in
+  `workspaces.json`, stored separately from runtime scene data,
   so changing the workspace cannot mutate the scene.
 
 ## Shared engine library and game modules

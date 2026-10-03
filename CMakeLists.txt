@@ -489,6 +489,7 @@ endif()
 
 add_library(zenith_editor_app STATIC
     src/editor/application/EditorApplication.cpp
+    src/editor/application/EditorAreaTypes.cpp
     src/editor/application/EditorAreas.cpp
     src/editor/application/EditorDiagnostics.cpp
     src/editor/application/EditorModuleCommands.cpp
@@ -1484,6 +1485,15 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_workspaces COMMAND zenith_workspace_tests)
 
+    add_executable(zenith_editor_area_types_tests tests/editor/EditorAreaTypesTests.cpp)
+    target_link_libraries(zenith_editor_area_types_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_editor_area_types_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_editor_area_types_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_editor_area_types COMMAND zenith_editor_area_types_tests)
+
     add_executable(zenith_info_panel_tests tests/editor/InfoPanelTests.cpp)
     target_link_libraries(zenith_info_panel_tests PRIVATE zenith_editor_app)
     if(MSVC)
@@ -1520,13 +1530,21 @@ if(BUILD_TESTING)
     endforeach()
     add_test(NAME zenith_game_module_host COMMAND zenith_game_module_host_tests)
 
+    # Editor runs keep their settings (workspaces.json, the smoke scene, ...)
+    # in their own directory under the build tree, never the user's, starting
+    # from an empty one each ctest run so they open the default workspaces.
+    set(ZENITH_EDITOR_TEST_SETTINGS_DIR "${CMAKE_CURRENT_BINARY_DIR}/editor-test-settings")
+    add_test(NAME zenith_editor_test_settings_reset
+        COMMAND "${CMAKE_COMMAND}" -E rm -rf "${ZENITH_EDITOR_TEST_SETTINGS_DIR}")
+    set_tests_properties(zenith_editor_test_settings_reset PROPERTIES FIXTURES_SETUP zenith_editor_test_settings)
+
     add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
     set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES
-        ENVIRONMENT "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600"
+        ENVIRONMENT
+            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/vulkan_smoke"
         LABELS "vulkan;smoke"
         TIMEOUT 45
-        # Editor runs share the user settings directory and its smoke scene.
-        RESOURCE_LOCK zenith_editor_user_data
+        FIXTURES_REQUIRED zenith_editor_test_settings
     )
 
     # The editor smoke on the demo scene with a game module, which the smoke
@@ -1551,10 +1569,11 @@ if(BUILD_TESTING)
     add_test(NAME zenith_editor_module_smoke
         COMMAND zenith_editor "${CMAKE_CURRENT_BINARY_DIR}/editor-module-smoke-$<CONFIG>.zenith-project")
     set_tests_properties(zenith_editor_module_smoke PROPERTIES
-        ENVIRONMENT "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600"
+        ENVIRONMENT
+            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/module_smoke"
         LABELS "vulkan;smoke"
         TIMEOUT 60
-        RESOURCE_LOCK zenith_editor_user_data
+        FIXTURES_REQUIRED zenith_editor_test_settings
     )
 
     add_executable(zenith_graphics_validation_tests tests/engine/GraphicsValidationTests.cpp)
@@ -1627,8 +1646,9 @@ if(BUILD_TESTING)
     zenith_add_validation_smoke(zenith_validation_editor
         COMMAND zenith_editor
         ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=600
+            ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/validation_editor
     )
-    set_tests_properties(zenith_validation_editor PROPERTIES RESOURCE_LOCK zenith_editor_user_data)
+    set_tests_properties(zenith_validation_editor PROPERTIES FIXTURES_REQUIRED zenith_editor_test_settings)
     zenith_add_validation_smoke(zenith_validation_multi_view
         COMMAND zenith_multi_view_smoke_tests
         ENVIRONMENT ZENITH_SMOKE_FRAMES=120

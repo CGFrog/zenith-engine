@@ -4,15 +4,11 @@
 
 #include "EditorSession.hpp"
 
+#include "editor/application/EditorAreaTypes.hpp"
 #include "editor/areas/AreaWindows.hpp"
 #include "editor/areas/DefaultWorkspaces.hpp"
 #include "editor/areas/WorkspaceFile.hpp"
-#include "editor/panels/DiagnosticsPanel.hpp"
 #include "editor/panels/GameModulePanel.hpp"
-#include "editor/panels/HierarchyPanel.hpp"
-#include "editor/panels/InspectorPanel.hpp"
-#include "editor/panels/PropertiesPanel.hpp"
-#include "editor/panels/RenderStatisticsPanel.hpp"
 
 #include <imgui.h>
 #include <nlohmann/json.hpp>
@@ -75,11 +71,22 @@ std::string readText(const std::filesystem::path& path) {
     return text.str();
 }
 
+// Renames path to path + suffix, replacing an earlier copy, so the next save
+// does not overwrite it. Returns " and keeping the file as <copy>", or empty
+// when it could not be kept.
+std::string keepWorkspaceFile(const std::filesystem::path& path, const char* suffix) {
+    std::filesystem::path copy = path;
+    copy += suffix;
+    std::error_code error;
+    std::filesystem::rename(path, copy, error);
+    return error ? std::string() : " and keeping the file as " + copy.string();
+}
+
 Workspace defaultWorkspace(std::string_view name) {
     const WorkspaceRecord record = defaultWorkspaceRecord(defaultWorkspaceFor(name));
     Workspace workspace{std::string(name)};
     for (const AreaRecord& area : record.areas) {
-        workspace.addStoredArea(area.type, area.instance, area.visible);
+        workspace.addStoredArea(area.type, area.instance, area.visible, area.state);
     }
     return workspace;
 }
@@ -93,26 +100,13 @@ void EditorSession::addAreaType(AreaType type) {
 
 void EditorSession::registerAreaTypes() {
     addAreaType(AreaType::shared("viewport", m_viewport));
-    addAreaType({.id = "hierarchy", .title = "Hierarchy", .instancing = AreaInstancing::Multiple, .create = [] {
-                     return std::make_unique<HierarchyPanel>();
-                 }});
-    addAreaType({.id = "inspector", .title = "Inspector", .instancing = AreaInstancing::Multiple, .create = [] {
-                     return std::make_unique<InspectorPanel>();
-                 }});
-    addAreaType({.id = "properties", .title = "Properties", .instancing = AreaInstancing::Multiple, .create = [this] {
-                     return std::make_unique<PropertiesPanel>(m_renderSettings);
-                 }});
-    addAreaType({.id = "diagnostics", .title = "Diagnostics", .instancing = AreaInstancing::Multiple, .create = [this] {
-                     return std::make_unique<DiagnosticsPanel>(m_settings.tools());
-                 }});
-    addAreaType(
-        {.id = "render_statistics", .title = "Render Statistics", .instancing = AreaInstancing::Multiple, .create = [] {
-             return std::make_unique<RenderStatisticsPanel>();
-         }});
-    addAreaType(AreaType::shared("asset_browser", m_assetBrowser));
-    addAreaType(AreaType::shared("graphics", m_graphics));
-    addAreaType(AreaType::shared("build", m_buildPanel));
-    addAreaType(AreaType::shared("info", m_infoPanel));
+    for (AreaType& type : builtInAreaTypes({.projectAssets = m_projectAssets,
+                                            .renderSettings = m_renderSettings,
+                                            .tools = m_settings.tools(),
+                                            .build = m_buildPanel,
+                                            .info = m_infoPanel})) {
+        addAreaType(std::move(type));
+    }
 }
 
 void EditorSession::registerAreaOperators() {
@@ -217,14 +211,19 @@ void EditorSession::loadWorkspaces() {
     if (!loaded) {
         // Keep the unreadable file for the user to repair; the next save
         // would otherwise replace it with the defaults.
-        std::filesystem::path backup = m_workspacesPath;
-        backup += ".bad";
-        std::error_code error;
-        std::filesystem::rename(m_workspacesPath, backup, error);
+        const std::string kept = keepWorkspaceFile(m_workspacesPath, ".bad");
         m_diagnostics.add(EditorDiagnosticSeverity::Warning, workspaceDiagnosticSource,
-                          loaded.error + "; using the default workspaces" +
-                              (error ? "." : " and keeping the file as " + backup.string() + "."));
+                          loaded.error + "; using the default workspaces" + kept + ".");
         contents = defaultWorkspaceFile();
+    } else if (loaded.outdated) {
+        // The old file is kept so customized workspaces are not lost.
+        const std::string kept = keepWorkspaceFile(m_workspacesPath, ".old");
+        m_diagnostics.add(EditorDiagnosticSeverity::Info, workspaceDiagnosticSource,
+                          "The default workspaces changed in this editor version; using the new Layout, "
+                          "Lighting, and Debug workspaces" +
+                              kept + ".");
+        contents = defaultWorkspaceFile();
+        m_workspacesDirty = true;
     } else if (!loaded.found) {
         contents = migrateLegacyLayout({.panels = m_settings.panels(),
                                         .layoutVersion = m_settings.layoutVersion(),
@@ -386,8 +385,8 @@ void EditorSession::drawWorkspaceTabs(ApplicationContext& context) {
 
 bool EditorSession::updateSmokeAreas(ApplicationContext& context) {
     // Frames 6-9: open a second Hierarchy, switch workspace and back, check
-    // the area survived, and restore the areas it changed (the smoke shares
-    // the user's workspaces.json).
+    // the area survived, and restore the areas it changed (a manual smoke
+    // run may use the user's workspaces.json; ctest gives it its own).
     constexpr uint32_t firstFrame = 6;
     const auto fail = [&](const std::string& message) {
         const std::string error = "Workspace smoke failed: " + message;

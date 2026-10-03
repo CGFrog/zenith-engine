@@ -3,6 +3,17 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
+
+// The environment variable that points the editor at another settings
+// directory (settings.ini, workspaces.json, keymap.json, ...), so automated
+// runs such as the smoke tests never touch the user's settings.
+inline constexpr const char* editorSettingsDirectoryVariable = "ZENITH_EDITOR_SETTINGS_DIR";
+
+// The editor's settings directory: utf8Override (the variable's value) when
+// it is non-empty, otherwise userDirectory.
+std::filesystem::path resolveEditorSettingsDirectory(std::string_view utf8Override,
+                                                     std::filesystem::path userDirectory);
 
 // Panel visibility as editors before workspaces.json stored it in
 // settings.ini (panel.* keys). Read only, to migrate it into the Layout

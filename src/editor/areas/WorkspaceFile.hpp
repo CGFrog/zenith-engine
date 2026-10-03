@@ -11,19 +11,31 @@ class WorkspaceSet;
 // ImGui docking layout. It is editor user data and never part of a scene.
 //
 // {
-//   "version": 1,
+//   "version": 2,
 //   "activeWorkspace": "Layout",
 //   "workspaces": [
 //     {"name": "Layout",
-//      "areas": [{"type": "hierarchy", "instance": 1, "visible": true}, ...],
+//      "areas": [{"type": "hierarchy", "instance": 1, "visible": true},
+//                {"type": "properties", "instance": 1, "visible": true, "state": "world"}, ...],
 //      "imguiLayout": "[Window][Hierarchy##hierarchy.1]\n..."}
 //   ]
 // }
+//
+// The version changes whenever the default workspaces change, so files from
+// older editors (which hold the old defaults, usually untouched) are replaced
+// by the new defaults rather than migrated. Version 1 (phase 5 development)
+// had the same format without "state".
+
+// The version saveWorkspaceFile writes.
+inline constexpr int currentWorkspaceFileVersion = 2;
 
 struct AreaRecord {
     std::string type;
     uint32_t instance{1};
     bool visible{true};
+    // The panel's per-area view state (EditorPanel::areaState); empty for
+    // none, and then omitted from the file.
+    std::string state;
 
     bool operator==(const AreaRecord&) const = default;
 };
@@ -49,6 +61,10 @@ struct WorkspaceFileResult {
     std::string error;
     // False when loading found no file; the contents are then untouched.
     bool found{true};
+    // True when loading found a file from an older version, whose default
+    // workspaces this editor has replaced; the contents are then untouched
+    // and the caller starts from the current defaults.
+    bool outdated{false};
 
     explicit operator bool() const {
         return success;
@@ -56,7 +72,8 @@ struct WorkspaceFileResult {
 };
 
 // Reads the file into contents. A missing file succeeds with found false; an
-// invalid file fails and leaves contents untouched.
+// older version succeeds with outdated true; an invalid file or a newer
+// version fails. Only a current file changes contents.
 WorkspaceFileResult loadWorkspaceFile(const std::filesystem::path& path, WorkspaceFileContents& contents);
 // Writes through a temporary file, so an interrupted save keeps the old file.
 WorkspaceFileResult saveWorkspaceFile(const std::filesystem::path& path, const WorkspaceFileContents& contents);

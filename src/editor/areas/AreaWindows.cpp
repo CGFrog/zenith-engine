@@ -9,6 +9,9 @@
 
 #include <algorithm>
 #include <array>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 AreaWindowRequest drawAreaHeader(const AreaType& type, const AreaRegistry& registry) {
@@ -91,10 +94,17 @@ bool applyRequestedWorkspace(WorkspaceSet& workspaces) {
 void buildDefaultDockLayout(uint32_t dockspaceId, const DefaultWorkspace& defaults, const Workspace& workspace,
                             const AreaRegistry& registry) {
     using enum DefaultDockSlot;
+    // The default placement of each visible area of a registered type.
+    std::vector<std::pair<std::string, DefaultDockSlot>> placements;
+    for (const AreaInstance& area : workspace.areas()) {
+        const AreaType* type = registry.find(area.typeId);
+        const DefaultArea* placement = defaultAreaFor(defaults, area.typeId, area.number);
+        if (area.visible && type != nullptr && placement != nullptr && placement->slot != Floating) {
+            placements.emplace_back(area.windowName(type->title), placement->slot);
+        }
+    }
     const auto slotUsed = [&](DefaultDockSlot slot) {
-        return std::ranges::any_of(defaults.areas, [&](const DefaultArea& area) {
-            return area.slot == slot && workspace.anyVisible(area.type) && registry.find(area.type) != nullptr;
-        });
+        return std::ranges::any_of(placements, [slot](const auto& placement) { return placement.second == slot; });
     };
 
     ImGui::DockBuilderRemoveNode(dockspaceId);
@@ -122,13 +132,8 @@ void buildDefaultDockLayout(uint32_t dockspaceId, const DefaultWorkspace& defaul
     }
     nodes[static_cast<size_t>(Center)] = center;
 
-    for (const AreaInstance& area : workspace.areas()) {
-        const AreaType* type = registry.find(area.typeId);
-        const auto slot = std::ranges::find(defaults.areas, area.typeId, &DefaultArea::type);
-        if (!area.visible || type == nullptr || slot == defaults.areas.end() || slot->slot == Floating) {
-            continue;
-        }
-        ImGui::DockBuilderDockWindow(area.windowName(type->title).c_str(), nodes[static_cast<size_t>(slot->slot)]);
+    for (const auto& [windowName, slot] : placements) {
+        ImGui::DockBuilderDockWindow(windowName.c_str(), nodes[static_cast<size_t>(slot)]);
     }
     ImGui::DockBuilderFinish(dockspaceId);
 }

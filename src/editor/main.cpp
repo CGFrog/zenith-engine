@@ -1,10 +1,13 @@
 #include "editor/application/EditorApplication.hpp"
 #include "editor/project/IrradianceVolumeBaker.hpp"
+#include "editor/settings/EditorSettings.hpp"
 #include "engine/Engine.hpp"
 #include "engine/platform/PlatformServices.hpp"
 #include "engine/project/ProjectConfig.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 #include "engine/scene/SceneDocument.hpp"
+
+#include <SDL3/SDL_stdinc.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -95,7 +98,11 @@ int main(int argc, char** argv) {
             return loadStartupScene(project, options, context.assets, context.scene);
         };
     }
-    EditorApplication application(userDataDirectory("Zenith", "Editor"),
+    // Automated runs pass their own settings directory so they never read or
+    // replace the user's workspaces and preferences.
+    const char* settingsOverride = SDL_getenv(editorSettingsDirectoryVariable);
+    EditorApplication application(resolveEditorSettingsDirectory(settingsOverride != nullptr ? settingsOverride : "",
+                                                                 userDataDirectory("Zenith", "Editor")),
                                   resourceRoot() / "editor" / "fonts" / "Inter-Regular.ttf", std::move(project),
                                   std::move(initialSceneLoader));
     const bool success = engine.run(application);

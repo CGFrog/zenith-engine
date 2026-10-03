@@ -2,6 +2,7 @@
 
 #include "editor/areas/WorkspaceFile.hpp"
 
+#include <cstdint>
 #include <span>
 #include <string_view>
 
@@ -20,9 +21,14 @@ enum class DefaultDockSlot {
     Floating,
 };
 
+// One area of a default workspace. A type listed n times gets areas numbered
+// 1 to n in list order (only multiple-instance types may repeat).
 struct DefaultArea {
     std::string_view type;
     DefaultDockSlot slot;
+    // The panel's initial per-area state (EditorPanel::restoreAreaState),
+    // for example the Properties tab; empty for the panel's defaults.
+    std::string_view state{};
 };
 
 // A workspace the editor creates for new users and when a workspace is reset.
@@ -32,11 +38,16 @@ struct DefaultWorkspace {
     std::span<const DefaultArea> areas;
 };
 
-// Layout, Lighting, and Debug, in tab order.
+// Layout, Lighting, and Debug, in tab order. Changing them requires bumping
+// currentWorkspaceFileVersion so saved workspaces pick up the new defaults.
 std::span<const DefaultWorkspace> defaultWorkspaces();
 // The default named name, or the first default for a workspace the editor
 // does not define.
 const DefaultWorkspace& defaultWorkspaceFor(std::string_view name);
+// The default area that places area number of typeId (the number-th listed
+// area of the type, or the first when there are fewer); null when the
+// workspace does not list the type.
+const DefaultArea* defaultAreaFor(const DefaultWorkspace& workspace, std::string_view typeId, uint32_t number);
 WorkspaceRecord defaultWorkspaceRecord(const DefaultWorkspace& workspace);
 WorkspaceFileContents defaultWorkspaceFile();
 

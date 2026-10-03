@@ -45,17 +45,31 @@ a new key chord to rebind it (conflicts in the same region are refused), `+`
 adds a shortcut, and **Reset** restores the defaults. Your changes are saved to
 `keymap.json` in the editor settings folder.
 
-The tabs at the right of the main menu bar are workspaces: **Layout** for
-general editing, **Lighting** with the Graphics settings beside the viewport,
-and **Debug** with Diagnostics, Build, and Render Statistics. Each remembers
-its own windows and docking. Every window is an area with a header menu named
-after its editor type: pick another type to show it in the same place, **New
-Area** to open a second Hierarchy, Inspector, Diagnostics, or Render Statistics
-beside it, or **Close Area**. **View** shows or hides each editor type in the
-current workspace, and **View > Reset Workspace** restores its default layout.
-Workspaces are saved to `workspaces.json` in the editor settings folder; the
-panel layout of older editor versions is migrated into the Layout workspace
-the first time.
+The tabs at the right of the main menu bar are workspaces:
+
+- **Layout** for general editing: the Hierarchy on the left, the Inspector and
+  Properties on the right, and the Asset Browser and Info log below the
+  viewport.
+- **Lighting** for lights and rendering: one Properties area on the **World**
+  tab (sun, environment, fog, irradiance volumes) above a second on the
+  **Render** tab, beside the Graphics panel's GPU timings.
+- **Debug** for investigating problems: Render Statistics beside the viewport,
+  and Info, Diagnostics, and Build below it.
+
+Each workspace remembers its own windows and docking. Every window is an area
+with a header menu named after its editor type: pick another type to show it
+in the same place, **New Area** to open another Hierarchy, Inspector,
+Properties, Diagnostics, Render Statistics, Asset Browser, or Graphics beside
+it, or **Close Area**. Each area keeps its own view: two Asset Browsers can
+show different folders, and each Properties area remembers its tab. The first
+Asset Browser you use is the one whose folder is remembered for next time.
+**View** shows or hides each editor type in the current workspace, and **View
+> Reset Workspace** restores its default layout. Workspaces are saved to
+`workspaces.json` in the editor settings folder; the panel layout of older
+editor versions is migrated into the Layout workspace the first time, and
+workspaces saved by an editor with different default workspaces are replaced
+by the new defaults (an Info message says so, and the old file is kept as
+`workspaces.json.old`).
 
 The viewport is laid out like Blender's 3D view. Its header holds the
 **View** menu (sidebar and toolbar toggles), **Shading** (Rendered, Material
@@ -78,6 +92,10 @@ For contributor checks, run:
 ctest --test-dir build -C Debug --output-on-failure
 $env:ZENITH_EDITOR_SMOKE='1'; $env:ZENITH_SMOKE_FRAMES='12'; build\Debug\zenith_editor.exe
 ```
+
+Set `ZENITH_EDITOR_SETTINGS_DIR` to a scratch folder to run the editor without
+reading or changing your own workspaces and preferences; the ctest smoke runs
+do this automatically.
 
 The second command is the bounded Vulkan smoke scenario for viewport resize
 and Edit/Play resource transitions.

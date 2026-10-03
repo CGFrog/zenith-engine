@@ -17,6 +17,10 @@ std::string AreaInstance::windowName(std::string_view title) const {
     return std::string(title) + "##" + id();
 }
 
+std::string AreaInstance::state() const {
+    return panel ? panel->areaState() : storedState;
+}
+
 Workspace::Workspace(std::string name)
     : m_name(std::move(name)) {}
 
@@ -55,7 +59,7 @@ bool Workspace::anyVisible(std::string_view typeId) const {
                                [typeId](const AreaInstance& area) { return area.typeId == typeId && area.visible; });
 }
 
-AreaResult Workspace::addStoredArea(std::string typeId, uint32_t number, bool visible) {
+AreaResult Workspace::addStoredArea(std::string typeId, uint32_t number, bool visible, std::string state) {
     if (typeId.empty() || typeId.find_first_of(".#") != std::string::npos || number == 0) {
         return {.error = "Invalid area \"" + areaId(typeId, number) + "\" in workspace \"" + m_name + "\""};
     }
@@ -67,7 +71,8 @@ AreaResult Workspace::addStoredArea(std::string typeId, uint32_t number, bool vi
         // Keep at most one hidden area per type; a second carries no state.
         return {.success = true};
     }
-    m_areas.push_back({.typeId = std::move(typeId), .number = number, .visible = visible});
+    m_areas.push_back(
+        {.typeId = std::move(typeId), .number = number, .visible = visible, .storedState = std::move(state)});
     return {.success = true, .areaId = std::move(id)};
 }
 
@@ -88,9 +93,16 @@ void Workspace::sync(const AreaRegistry& registry) {
     for (AreaInstance& area : m_areas) {
         const AreaType* type = registry.find(area.typeId);
         if (type == nullptr) {
-            area.panel.reset();
+            if (area.panel) {
+                // Keep the state for when the type is registered again.
+                area.storedState = area.panel->areaState();
+                area.panel.reset();
+            }
         } else if (!area.panel) {
             area.panel = type->create();
+            if (area.panel && !area.storedState.empty()) {
+                area.panel->restoreAreaState(area.storedState);
+            }
         }
     }
     for (const AreaType& type : registry.types()) {

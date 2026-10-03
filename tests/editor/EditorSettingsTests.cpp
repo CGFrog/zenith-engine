@@ -73,6 +73,15 @@ int main() {
     expect(!restored.load().success, "malformed settings should fail descriptively");
     expect(restored.panels() == before, "failed load should preserve current settings");
 
+    // ZENITH_EDITOR_SETTINGS_DIR replaces the user's directory when set.
+    const std::filesystem::path user = directory / "user";
+    expect(resolveEditorSettingsDirectory("", user) == user, "without an override the user directory should be used");
+    expect(resolveEditorSettingsDirectory("C:/ci/editor-settings", user) ==
+               std::filesystem::path("C:/ci/editor-settings"),
+           "an override should replace the user directory");
+    expect(resolveEditorSettingsDirectory("D:/caf\xC3\xA9", user) == std::filesystem::path(u8"D:/caf\u00e9"),
+           "an override should be read as UTF-8");
+
     std::filesystem::remove_all(directory, error);
     return failures == 0 ? 0 : 1;
 }

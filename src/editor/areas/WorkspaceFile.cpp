@@ -11,7 +11,8 @@
 namespace {
 using Json = nlohmann::json;
 
-constexpr int currentVersion = 1;
+// The first version; files from 1 up to the current one are outdated.
+constexpr int firstVersion = 1;
 
 WorkspaceFileResult parseArea(const Json& entry, AreaRecord& area) {
     if (!entry.is_object()) {
@@ -34,6 +35,12 @@ WorkspaceFileResult parseArea(const Json& entry, AreaRecord& area) {
             return {.error = "area \"" + area.type + "\" visible must be true or false"};
         }
         area.visible = visible->get<bool>();
+    }
+    if (const auto state = entry.find("state"); state != entry.end()) {
+        if (!state->is_string()) {
+            return {.error = "area \"" + area.type + "\" state must be a string"};
+        }
+        area.state = state->get<std::string>();
     }
     return {.success = true};
 }
@@ -76,8 +83,12 @@ WorkspaceFileResult parse(const std::string& text, WorkspaceFileContents& conten
         return {.error = "the file is not a JSON object"};
     }
     const auto version = document.find("version");
-    if (version == document.end() || !version->is_number_integer() || version->get<int>() != currentVersion) {
-        return {.error = "unsupported version (expected " + std::to_string(currentVersion) + ")"};
+    if (version == document.end() || !version->is_number_integer() || version->get<int64_t>() < firstVersion ||
+        version->get<int64_t>() > currentWorkspaceFileVersion) {
+        return {.error = "unsupported version (expected " + std::to_string(currentWorkspaceFileVersion) + ")"};
+    }
+    if (version->get<int64_t>() < currentWorkspaceFileVersion) {
+        return {.success = true, .outdated = true};
     }
     WorkspaceFileContents parsed;
     const auto workspaces = document.find("workspaces");
@@ -111,12 +122,16 @@ Json toJson(const WorkspaceFileContents& contents) {
     for (const WorkspaceRecord& workspace : contents.workspaces) {
         Json areas = Json::array();
         for (const AreaRecord& area : workspace.areas) {
-            areas.push_back({{"type", area.type}, {"instance", area.instance}, {"visible", area.visible}});
+            Json entry{{"type", area.type}, {"instance", area.instance}, {"visible", area.visible}};
+            if (!area.state.empty()) {
+                entry["state"] = area.state;
+            }
+            areas.push_back(std::move(entry));
         }
         workspaces.push_back(
             {{"name", workspace.name}, {"areas", std::move(areas)}, {"imguiLayout", workspace.imguiLayout}});
     }
-    return {{"version", currentVersion},
+    return {{"version", currentWorkspaceFileVersion},
             {"activeWorkspace", contents.activeWorkspace},
             {"workspaces", std::move(workspaces)}};
 }
@@ -136,10 +151,11 @@ WorkspaceFileResult loadWorkspaceFile(const std::filesystem::path& path, Workspa
     }
     std::ostringstream text;
     text << input.rdbuf();
-    if (WorkspaceFileResult result = parse(text.str(), contents); !result) {
+    WorkspaceFileResult result = parse(text.str(), contents);
+    if (!result) {
         return {.error = "Invalid workspaces in " + path.string() + " (" + result.error + ")"};
     }
-    return {.success = true};
+    return result;
 }
 
 WorkspaceFileResult saveWorkspaceFile(const std::filesystem::path& path, const WorkspaceFileContents& contents) {
@@ -180,7 +196,8 @@ WorkspaceFileContents captureWorkspaces(const WorkspaceSet& workspaces) {
     for (const Workspace& workspace : workspaces.workspaces()) {
         WorkspaceRecord record{.name = workspace.name(), .imguiLayout = workspace.layout()};
         for (const AreaInstance& area : workspace.areas()) {
-            record.areas.push_back({.type = area.typeId, .instance = area.number, .visible = area.visible});
+            record.areas.push_back(
+                {.type = area.typeId, .instance = area.number, .visible = area.visible, .state = area.state()});
         }
         contents.workspaces.push_back(std::move(record));
     }
@@ -194,7 +211,8 @@ void restoreWorkspaces(const WorkspaceFileContents& contents, WorkspaceSet& work
         Workspace& workspace = restored.emplace_back(record.name);
         workspace.setLayout(record.imguiLayout);
         for (const AreaRecord& area : record.areas) {
-            if (AreaResult result = workspace.addStoredArea(area.type, area.instance, area.visible); !result) {
+            if (AreaResult result = workspace.addStoredArea(area.type, area.instance, area.visible, area.state);
+                !result) {
                 warnings.push_back(result.error);
             }
         }

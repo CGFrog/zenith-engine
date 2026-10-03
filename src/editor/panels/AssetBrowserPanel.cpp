@@ -101,12 +101,19 @@ std::string fitText(const std::string& text, float width) {
 
 AssetBrowserPanel::AssetBrowserPanel(ProjectAssets& project, AssetBrowserRole role)
     : m_project(project)
-    , m_role(role)
+    , m_viewId(project.registerView())
     , m_viewMode(project.settings().viewMode)
     , m_followedItemMove(project.latestItemMoveSequence()) {
+    if (role == AssetBrowserRole::Primary) {
+        m_project.claimPrimaryView(m_viewId);
+    }
     const std::string& lastFolder = project.settings().lastFolder;
     m_currentFolder = lastFolder.empty() ? project.catalog().roots().front() : project.resolveFolderKey(lastFolder);
     keepStateValid();
+}
+
+AssetBrowserPanel::~AssetBrowserPanel() {
+    m_project.releasePrimaryView(m_viewId);
 }
 
 const char* AssetBrowserPanel::title() const {
@@ -181,7 +188,7 @@ void AssetBrowserPanel::select(const std::optional<std::filesystem::path>& produ
 }
 
 void AssetBrowserPanel::rememberView(EditorDiagnostics& diagnostics) {
-    if (m_role == AssetBrowserRole::Primary) {
+    if (m_project.isPrimaryView(m_viewId)) {
         m_project.rememberView(m_currentFolder, m_viewMode, diagnostics);
     }
 }
@@ -200,7 +207,7 @@ const AssetCatalog& AssetBrowserPanel::catalog() const {
 }
 
 AssetBrowserRole AssetBrowserPanel::role() const {
-    return m_role;
+    return m_project.isPrimaryView(m_viewId) ? AssetBrowserRole::Primary : AssetBrowserRole::Secondary;
 }
 
 const std::filesystem::path& AssetBrowserPanel::currentFolder() const {
@@ -295,9 +302,19 @@ void AssetBrowserPanel::draw(EditorContext& context) {
     drawBrowser(context.diagnostics, sessionActions(context));
 }
 
+void AssetBrowserPanel::hidden(EditorContext&) {
+    // A shown browser takes over as the primary.
+    m_project.releasePrimaryView(m_viewId);
+}
+
 void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetBrowserActions& actions) {
     m_project.reportPendingSettingsError(diagnostics);
     syncWithProject();
+    const bool wasPrimary = m_project.isPrimaryView(m_viewId);
+    if (m_project.claimPrimaryView(m_viewId) && !wasPrimary) {
+        // Promoted: this browser's view is now the one remembered.
+        rememberView(diagnostics);
+    }
     if (ImGui::Button("Refresh")) {
         refresh(diagnostics);
     }

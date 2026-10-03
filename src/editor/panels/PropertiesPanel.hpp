@@ -56,6 +56,12 @@ class PropertiesPanel final : public EditorPanel {
     // Remembers tab; it is shown whenever it is available.
     void selectTab(PropertiesTab tab);
 
+    // The remembered tab, so each Properties area keeps its own: "object",
+    // "world", "render", "scene", or "components:<category>". Restoring
+    // selects that tab; unknown text leaves the selection unchanged.
+    std::string areaState() const override;
+    void restoreAreaState(std::string_view state) override;
+
   private:
     void drawTabStrip(const std::vector<PropertiesTab>& tabs, const PropertiesTab& active);
     void drawObjectTab(EditorContext& context);

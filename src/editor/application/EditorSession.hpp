@@ -19,10 +19,8 @@
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/operators/OperatorRunner.hpp"
 #include "editor/operators/OperatorSearch.hpp"
-#include "editor/panels/AssetBrowserPanel.hpp"
 #include "editor/panels/BuildPanel.hpp"
 #include "editor/panels/EditorContext.hpp"
-#include "editor/panels/GraphicsPanel.hpp"
 #include "editor/panels/InfoPanel.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/project/ProjectAssets.hpp"
@@ -213,17 +211,16 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     KeymapEditor m_keymapEditor;
     LastOperatorPanel m_lastOperatorPanel;
     bool m_showKeymapEditor{false};
-    // The project's asset service, shared by every asset browser; declared
-    // before the panels that reference it.
+    // The project's asset service, shared by every Asset Browser area;
+    // declared before the areas that reference it.
     ProjectAssets m_projectAssets;
 
-    // Shared by the Graphics and Properties panels, so declared before them.
+    // Shared by the Graphics and Properties areas, so declared before them.
     RenderSettingsController m_renderSettings;
     // Panels holding editor-wide state, shown by single-instance area types.
-    // Per-area panels (Hierarchy, Inspector, ...) are created by their types.
+    // Per-area panels (Hierarchy, Asset Browser, Graphics, ...) are created by
+    // their types (EditorAreaTypes.hpp).
     ViewportPanel m_viewport;
-    AssetBrowserPanel m_assetBrowser;
-    GraphicsPanel m_graphics{m_renderSettings};
     BuildPanel m_buildPanel{m_settings.tools()};
     // Shows the engine log, diagnostics, and operator history.
     InfoPanel m_infoPanel{m_operatorRunner.history()};

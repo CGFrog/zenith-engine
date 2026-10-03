@@ -12,6 +12,7 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -209,6 +210,74 @@ std::filesystem::path testDirectory() {
     return directory;
 }
 
+// A per-area panel that keeps its state text.
+class StatefulPanel final : public EditorPanel {
+  public:
+    const char* title() const override {
+        return "Stateful";
+    }
+
+    void draw(EditorContext&) override {}
+
+    std::string areaState() const override {
+        return m_state;
+    }
+
+    void restoreAreaState(std::string_view state) override {
+        m_state = state;
+    }
+
+    std::string m_state;
+};
+
+void testAreaState() {
+    AreaRegistry registry;
+    const AreaType stateful{.id = "stateful",
+                            .title = "Stateful",
+                            .instancing = AreaInstancing::Multiple,
+                            .create = [] { return std::make_unique<StatefulPanel>(); }};
+    registry.add(stateful);
+    Workspace workspace("Test");
+    expect(workspace.addStoredArea("stateful", 1, true, "tab=world").success &&
+               workspace.addStoredArea("stateful", 2, true).success,
+           "stored areas with and without state should be added");
+    workspace.sync(registry);
+    expect(workspace.find("stateful.1")->state() == "tab=world" && workspace.find("stateful.2")->state().empty(),
+           "sync should hand each panel its stored state");
+    static_cast<StatefulPanel&>(*workspace.find("stateful.2")->panel).m_state = "tab=render";
+    WorkspaceSet set;
+    std::vector<Workspace> list;
+    list.push_back(std::move(workspace));
+    set.assign(std::move(list), "Test");
+    const WorkspaceFileContents captured = captureWorkspaces(set);
+    expect(captured.workspaces.front().areas.size() == 2 && captured.workspaces.front().areas[1].state == "tab=render",
+           "capturing should record each panel's current state");
+
+    // An unregistered type keeps its areas' state until it returns.
+    registry.remove("stateful");
+    set.sync(registry);
+    expect(set.active().find("stateful.2")->panel == nullptr &&
+               set.active().find("stateful.2")->state() == "tab=render",
+           "an area without a panel should keep its state");
+    registry.add(stateful);
+    set.sync(registry);
+    expect(set.active().find("stateful.2")->panel != nullptr &&
+               set.active().find("stateful.2")->state() == "tab=render",
+           "a re-registered type's panel should get the kept state back");
+
+    // Default workspaces number repeated types and place each instance.
+    constexpr std::array areas{DefaultArea{"stateful", DefaultDockSlot::Right, "tab=world"},
+                               DefaultArea{"stateful", DefaultDockSlot::Bottom}};
+    const DefaultWorkspace defaults{"Defaults", areas};
+    const WorkspaceRecord record = defaultWorkspaceRecord(defaults);
+    expect(record.areas.size() == 2 && record.areas[0] == AreaRecord{"stateful", 1, true, "tab=world"} &&
+               record.areas[1] == AreaRecord{"stateful", 2, true, ""},
+           "a repeated default type should get numbered areas with their states");
+    expect(defaultAreaFor(defaults, "stateful", 2) == &areas[1] &&
+               defaultAreaFor(defaults, "stateful", 7) == &areas[0] && defaultAreaFor(defaults, "other", 1) == nullptr,
+           "each instance should find its own default placement, falling back to the first");
+}
+
 void writeText(const std::filesystem::path& path, std::string_view text) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     output << text;
@@ -248,13 +317,22 @@ void testWorkspaceFileRoundTrip(const std::filesystem::path& directory) {
     expect(loadWorkspaceFile(directory / "missing.json", untouched).success &&
                !loadWorkspaceFile(directory / "missing.json", untouched).found && untouched == saved,
            "a missing file should load as not found");
-    writeText(path, R"({"version":2,"workspaces":[{"name":"A"}]})");
-    expect(!loadWorkspaceFile(path, untouched).success && untouched == saved, "an unknown version should be refused");
-    writeText(path, R"({"version":1,"workspaces":[{"name":"A"},{"name":"A"}]})");
+    writeText(path, R"({"version":3,"workspaces":[{"name":"A"}]})");
+    expect(!loadWorkspaceFile(path, untouched).success && untouched == saved, "a newer version should be refused");
+    writeText(path, R"({"version":0,"workspaces":[{"name":"A"}]})");
+    expect(!loadWorkspaceFile(path, untouched).success && untouched == saved, "version 0 should be refused");
+    // Version 1 files hold the defaults before the final phase 5 workspaces.
+    writeText(path, R"({"version":1,"activeWorkspace":"Debug","workspaces":[{"name":"Debug","areas":[]}]})");
+    const WorkspaceFileResult outdated = loadWorkspaceFile(path, untouched);
+    expect(outdated.success && outdated.found && outdated.outdated && untouched == saved,
+           "an older version should load as outdated without changing the contents");
+    writeText(path, R"({"version":2,"workspaces":[{"name":"A"},{"name":"A"}]})");
     expect(!loadWorkspaceFile(path, untouched).success, "duplicate workspace names should be refused");
-    writeText(path, R"({"version":1,"workspaces":[{"name":"A","areas":[{"type":"alpha","instance":0}]}]})");
+    writeText(path, R"({"version":2,"workspaces":[{"name":"A","areas":[{"type":"alpha","instance":0}]}]})");
     expect(!loadWorkspaceFile(path, untouched).success, "an area instance of 0 should be refused");
-    writeText(path, R"({"version":1,"activeWorkspace":"B","workspaces":[{"name":"A","areas":[{"type":"x.y"}]}]})");
+    writeText(path, R"({"version":2,"workspaces":[{"name":"A","areas":[{"type":"alpha","state":3}]}]})");
+    expect(!loadWorkspaceFile(path, untouched).success, "a non-string area state should be refused");
+    writeText(path, R"({"version":2,"activeWorkspace":"B","workspaces":[{"name":"A","areas":[{"type":"x.y"}]}]})");
     expect(loadWorkspaceFile(path, untouched).success, "a structurally valid file should load");
     WorkspaceSet lenient;
     std::vector<std::string> lenientWarnings;
@@ -446,6 +524,7 @@ int main() {
     testWorkspaceAreas();
     testChangeType();
     testWorkspaceSet();
+    testAreaState();
     const std::filesystem::path directory = testDirectory();
     testWorkspaceFileRoundTrip(directory);
     testMigration(directory);
