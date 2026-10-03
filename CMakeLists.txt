@@ -618,6 +618,9 @@ add_library(zenith_editor_app STATIC
     src/editor/project/IrradianceVolumeBaker.cpp
     src/editor/project/ProjectAssets.cpp
     src/editor/project/ProjectFileOperations.cpp
+    src/editor/project/ProjectHub.cpp
+    src/editor/project/ProjectTemplate.cpp
+    src/editor/project/RecentProjects.cpp
     src/editor/project/ReflectionProbeBaker.cpp
     src/editor/project/ThumbnailCache.cpp
     src/editor/settings/AssetBrowserSettings.cpp
@@ -661,6 +664,39 @@ add_custom_target(zenith_editor_resources
     COMMENT "Copying Zenith editor resources"
 )
 add_dependencies(zenith_editor zenith_editor_resources)
+
+# Project templates for the editor's Project Hub (New from Template). The
+# editor looks in <resource root>/templates, where the build copies them, and
+# then in the source tree's templates/. Generated projects build their game
+# module against this build directory (ZenithEngineConfig.cmake below) in the
+# editor's own configuration.
+set(ZENITH_TEMPLATE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/templates")
+add_custom_target(zenith_editor_templates
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${ZENITH_TEMPLATE_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/templates"
+    COMMENT "Copying Zenith project templates"
+)
+add_dependencies(zenith_editor zenith_editor_templates)
+target_compile_definitions(zenith_editor PRIVATE
+    ZENITH_SOURCE_TEMPLATE_DIR="${ZENITH_TEMPLATE_SOURCE_DIR}"
+    ZENITH_ENGINE_BUILD_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+    ZENITH_EDITOR_CONFIGURATION="$<CONFIG>"
+)
+
+# The engine as an imported target for game modules built outside this tree
+# (a project generated from templates/cpp_game includes
+# <build>/ZenithEngineConfig.cmake and links Zenith::Engine): the engine's
+# usage requirements (include directories and definitions, evaluated
+# transitively) and, per configuration, the engine and SDL libraries.
+# zenith-engine.json records the generator and compiler, which a generated
+# project's CMakePresets.json repeats so its module's build hash matches.
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ZenithEngineConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/ZenithEngineConfig.cmake.genex" @ONLY)
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ZenithEngineConfig.cmake"
+    INPUT "${CMAKE_CURRENT_BINARY_DIR}/ZenithEngineConfig.cmake.genex" TARGET zenith_engine)
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ZenithEngineTargets-$<CONFIG>.cmake"
+    INPUT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ZenithEngineTargets.cmake.in" TARGET zenith_engine)
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/zenith-engine.json.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/zenith-engine.json" @ONLY)
 
 add_executable(zenith_asset_build src/asset_build_main.cpp)
 target_link_libraries(zenith_asset_build PRIVATE zenith_engine)
@@ -1708,6 +1744,27 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_build_workflow COMMAND zenith_build_workflow_tests)
 
+    # The Project Hub, recent projects, and the C++ game template. The second
+    # test also configures and builds a generated project's game module
+    # against this build with CMake, which takes a while.
+    add_executable(zenith_project_hub_tests tests/editor/ProjectHubTests.cpp)
+    target_link_libraries(zenith_project_hub_tests PRIVATE zenith_editor_app)
+    target_compile_definitions(zenith_project_hub_tests PRIVATE
+        ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}"
+        ZENITH_TEMPLATE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/templates"
+        ZENITH_ENGINE_BUILD_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+        ZENITH_EDITOR_CONFIGURATION="$<CONFIG>"
+        ZENITH_TEST_CMAKE="${CMAKE_COMMAND}")
+    add_dependencies(zenith_project_hub_tests zenith_assets)
+    if(MSVC)
+        target_compile_options(zenith_project_hub_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_project_hub_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_project_hub COMMAND zenith_project_hub_tests)
+    add_test(NAME zenith_project_template_module_build COMMAND zenith_project_hub_tests --build-generated-module)
+    set_tests_properties(zenith_project_template_module_build PROPERTIES LABELS "slow" TIMEOUT 600)
+
     add_executable(zenith_asset_browser_tests tests/editor/AssetBrowserTests.cpp)
     target_link_libraries(zenith_asset_browser_tests PRIVATE zenith_editor_app)
     if(MSVC)
@@ -1775,6 +1832,7 @@ if(BUILD_TESTING)
     target_link_libraries(zenith_editor_session_tests PRIVATE zenith_editor_app)
     target_compile_definitions(zenith_editor_session_tests PRIVATE
         ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}"
+        ZENITH_TEMPLATE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/templates"
         ZENITH_EDITOR_FONT="${inter_SOURCE_DIR}/extras/ttf/Inter-Regular.ttf")
     add_dependencies(zenith_editor_session_tests zenith_assets)
     if(MSVC)

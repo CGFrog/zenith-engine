@@ -169,6 +169,31 @@ Also run the bounded smoke test for graphics/window changes. Documentation-only
 changes need link/path review and `git diff --check`, but not a rebuild when
 they do not alter generated inputs.
 
+## Game projects outside the repository
+
+The editor's Project Hub generates C++ game projects from
+`templates/cpp_game/` (see the [editor tutorial](EDITOR_TUTORIAL.md)). A
+generated project builds its game module against a configured and built
+Zenith build directory, which configuration writes two files into:
+
+- `ZenithEngineConfig.cmake` (with `ZenithEngineTargets-<config>.cmake`)
+  defines the imported `Zenith::Engine` target: the engine's include
+  directories and definitions and, per configuration, the engine and SDL
+  libraries. The project's `CMakeLists.txt` includes it from `ZENITH_ROOT`
+  and refuses a compiler other than the engine's.
+- `zenith-engine.json` records the CMake generator, generator instance, and
+  compiler; the generator repeats them in the project's `CMakePresets.json`
+  (the `zenith` preset), because a module only loads into an engine built
+  with the same compiler and runtime (the module build hash).
+
+The editor finds templates in `<resource root>/templates` (the build copies
+`templates/` there) and then in the source tree's `templates/`, and uses the
+resource root as `ZENITH_ROOT` when it is a Zenith build directory, else the
+build it was compiled in. New projects build the editor's own configuration.
+`zenith_project_template_module_build` (label `slow`) generates a project and
+builds and loads its module; pass a folder to keep the result:
+`build\Debug\zenith_project_hub_tests.exe --build-generated-module <folder>`.
+
 ## Where to make a change
 
 | Change | Primary location | Boundary to preserve |

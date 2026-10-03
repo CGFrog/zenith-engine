@@ -25,6 +25,8 @@ objectives and their measurement gates are in
 | `tools/irradiance_room/` | Standard-library Python script that regenerates the irradiance-volume test interior. |
 | `tools/color_grading/` | Standard-library Python script that regenerates the example `.cube` colour grade. |
 | `projects/` | Project manifests and scene documents (`demo`, the renderer `showcase`, and the `irradiance_room` interior). |
+| `templates/` | Project templates the editor's Project Hub generates projects from; `cpp_game/` is a C++ game project (CMake game module, example component and system). `{{UPPER_CASE}}` tokens are substituted. The build copies it to `build/templates/`. |
+| `cmake/` | Packaging scripts and the inputs of the files configuration writes for out-of-tree game modules (`ZenithEngineConfig.cmake`, `ZenithEngineTargets-<config>.cmake`, `zenith-engine.json`). |
 | `build/` | Generated configuration, dependencies, binaries, copied assets, and compiled shaders. Do not edit generated contents. |
 
 ## Workspace layout
@@ -73,7 +75,8 @@ explicit, so a file move must update `CMakeLists.txt` as well as include sites.
 | `zenith_demo` | Static library | Game executable composition: application, menus, settings, audio, scene factory, and the statically linked gameplay. |
 | `zenith` | Executable | Thin composition root that initializes `Engine` and runs `DemoApplication`. |
 | `zenith_editor_app` | Static library | Editor lifecycle, documents, history, interaction, and settings. |
-| `zenith_editor` | Executable | Thin editor composition root. |
+| `zenith_editor` | Executable | Thin editor composition root. Knows the source `templates/`, its build directory, and its configuration, for the Project Hub. |
+| `zenith_editor_templates` | Custom target | Copies `templates/` to `build/templates/` for the Project Hub. |
 | `zenith_shaders` | Custom target | Recursively finds recognized GLSL stages in `shaders/` and compiles each file with glslang for Vulkan 1.4. |
 | `zenith_assets` | Custom target | Copies `assets/` to `build/assets/` so runtime paths do not depend on the process working directory. |
 | `zenith_cooked_textures` | Custom target | Runs `zenith_asset_build cook-model-textures` on every `assets/*.gltf`, writing BC7/BC5 KTX2 entries to `build/derived/`. |
@@ -460,7 +463,17 @@ rebakes the volume and saves the scene.
 
 ## Editor
 
-`src/editor/main.cpp` is the editor composition root. `application/` owns the
+`src/editor/main.cpp` is the editor composition root: it opens the project
+argument, or starts `EditorApplication` in the Project Hub. `EditorApplication`
+owns what outlives one project (the ImGui theme and fonts, the recent
+projects list, the current `ProjectConfig`) and shows either the hub
+(`project/ProjectHub`, drawn as an application scene) or one `EditorSession`.
+Switching projects replaces the session: **File > Project Hub** asks about
+unsaved changes, the hub scene unloads the session, and choosing a project
+creates a new session for it. `project/ProjectTemplate` generates projects
+from `templates/` and derives a generated project's build (its `zenith` CMake
+preset, which the Build panel runs while the build settings are unchanged);
+`project/RecentProjects` persists `recent-projects.json`. `application/` owns the
 editor lifecycle, the session coordinator, undoable scene editing
 (`SceneEditing`), and shared entity commands; `document/` owns scene file state
 and command history; `interaction/` owns camera, picking, selection, gizmos,

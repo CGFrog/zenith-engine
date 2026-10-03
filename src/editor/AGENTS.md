@@ -16,7 +16,7 @@ depend on this subtree.
 | `interaction/` | Editor camera, picking, selection, gizmos, component editing widgets (including entity reference fields), and the entity eyedropper. |
 | `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object, component, collection, visibility (hide), and prefab operators, the per-region keymap with `keymap.json` overrides, F3 search, and the keymap editor. |
 | `panels/` | One class per dockable window, drawn from an `EditorContext`. |
-| `project/` | Project tooling: the shared asset service (`ProjectAssets`: catalog, watchers, change dispatch, favourites), asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, and IDE launching. |
+| `project/` | Project tooling: the shared asset service (`ProjectAssets`: catalog, watchers, change dispatch, favourites), asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, IDE launching, the Project Hub (`ProjectHub`), the recent projects list, and the project template generator (`ProjectTemplate`, from `templates/`). |
 | `settings/` | Persistent editor preferences, including the component inspector's section order and collapse state (legacy panel flags are only read, for migration). |
 | `theme/` | The "Pixel Aero Night" look: palette, art-pixel metrics, pixel fonts, the procedural wallpaper and frosted glass, window chrome, themed widget wrappers, and pixel-art icons. |
 
@@ -77,7 +77,11 @@ depend on this subtree.
   editor-only: anything that picks or selects in the viewport uses
   `SceneVisibility` in `Editor` mode, and Play mode renders in `Runtime` mode.
 - Automated editor runs must set `ZENITH_EDITOR_SETTINGS_DIR` so they never
-  read or replace the user's settings directory.
+  read or replace the user's settings directory. They also set
+  `ZENITH_EDITOR_SMOKE`, which keeps the Project Hub away.
+- State that must survive a project switch (the ImGui theme and fonts, the
+  recent projects) belongs to `EditorApplication`; everything per project
+  belongs to `EditorSession`, which is destroyed when the user switches.
 - Viewports are multiple-instance areas registered with the session's
   `ViewportRegistry`. Code acting on "the viewport" (view3d operators, modal
   transforms, the status bar) uses `ViewportRegistry::active()` and must

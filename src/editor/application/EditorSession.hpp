@@ -26,6 +26,7 @@
 #include "editor/panels/InfoPanel.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/project/ProjectAssets.hpp"
+#include "editor/project/ProjectHub.hpp"
 #include "editor/settings/ComponentInspectorLayout.hpp"
 #include "editor/settings/EditorRenderSettings.hpp"
 #include "editor/settings/EditorSettings.hpp"
@@ -51,6 +52,17 @@
 // types when the project has a module).
 using EditorSceneLoader = std::function<SceneResult(ApplicationContext&, const SceneDocumentOptions&)>;
 
+// What the session gets from the editor application about the open project
+// beyond its folders.
+struct EditorProjectServices {
+    // The project's own build (a generated project's CMake preset), which the
+    // Build panel runs while build.command and build.directory are unchanged.
+    std::optional<BuildRequest> build;
+    // Ends the session and shows the Project Hub; the session asks about
+    // unsaved changes first. Empty when the editor runs without a hub.
+    std::function<void(ApplicationContext&, ProjectHubEntry)> leaveForProjectHub;
+};
+
 // Composes the editor: owns the document, history, selection, camera, the
 // panels that hold editor-wide state, the area types and workspaces that show
 // panels, the operator registry and keymap, and the project's game module,
@@ -62,8 +74,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
   public:
     // gameModule is the project's module library, or empty for none.
     EditorSession(std::filesystem::path settingsDirectory, std::filesystem::path assetRoot,
-                  std::filesystem::path sceneRoot, std::filesystem::path fontPath, EditorRenderSettings renderSettings,
-                  EditorSceneLoader initialSceneLoader = {}, std::filesystem::path gameModule = {});
+                  std::filesystem::path sceneRoot, EditorRenderSettings renderSettings,
+                  EditorSceneLoader initialSceneLoader = {}, std::filesystem::path gameModule = {},
+                  EditorProjectServices projectServices = {});
     // Area types and operators refer to the session's members by address.
     EditorSession(const EditorSession&) = delete;
     EditorSession& operator=(const EditorSession&) = delete;
@@ -175,6 +188,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void requestNew(ApplicationContext& context);
     void requestOpen(ApplicationContext& context);
     void requestClose(ApplicationContext& context);
+    // Leaves the project for the Project Hub, asking about unsaved changes.
+    void requestProjectHub(ApplicationContext& context, ProjectHubEntry entry);
     void finishPendingAction(ApplicationContext& context);
     bool saveDocument(ApplicationContext& context);
     OperatorResult copySelection(ApplicationContext& context);
@@ -210,7 +225,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
         None,
         NewDocument,
         OpenDocument,
-        CloseEditor
+        CloseEditor,
+        LeaveForProjectHub
     };
 
     EditorSettings m_settings;
@@ -279,7 +295,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     bool m_workspacesDirty{false};
 
     std::filesystem::path m_sceneRoot;
-    std::filesystem::path m_fontPath;
     // The wallpaper and glass behind every window.
     ThemeChrome m_themeChrome;
     EditorSceneLoader m_initialSceneLoader;
@@ -290,6 +305,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     bool m_openRecoveryDialog{false};
     bool m_continuePendingAfterSaveAs{false};
     PendingAction m_pendingAction{PendingAction::None};
+    ProjectHubEntry m_pendingHubEntry{ProjectHubEntry::Hub};
+    std::function<void(ApplicationContext&, ProjectHubEntry)> m_leaveForProjectHub;
     std::optional<std::filesystem::path> m_pendingOpenPath;
     bool m_pathDialogSaves{false};
     float m_autosaveElapsed{0.0f};

@@ -8,9 +8,40 @@ cmake --build build --config Debug --parallel 4
 build\Debug\zenith_editor.exe
 ```
 
-The editor opens the default project when no project file is supplied. To use
-another project, pass its `.zenith-project` file as the first argument. Project
-asset and scene roots are relative to that file.
+## Getting started: the Project Hub
+
+Started without a project file, the editor opens the **Project Hub**:
+
+- **Recent Projects** lists every project the editor opened (name, path, and
+  when it was last opened), most recent first. **Open** opens one; a project
+  whose file is gone is marked *(missing)* and **Remove** drops it from the
+  list (its files are never touched). The list is `recent-projects.json` in
+  the editor settings folder.
+- **New from Template** creates a C++ game project in a new folder named
+  after the project: a `.zenith-project` file, `assets/` with a starter model,
+  `scenes/main.zenith-scene` (ground, cube, sun, sky, and camera), and `src/`
+  with a CMake game module holding an example component (Spinner) and
+  system. The new project opens right away.
+- **Open Project...** chooses any `.zenith-project` file.
+- **Open in IDE** opens a project's folder (which holds its `CMakeLists.txt`)
+  with the IDE command from the Build panel's settings (`ide.command`).
+
+In a project made from the template, press **Build** in the Build panel: it
+runs the project's CMake preset (`cmake --preset zenith && cmake --build
+--preset zenith`) from the project folder and the editor loads the game
+module when the build finishes, then hot reloads it after every later build.
+Select the cube, add **Gameplay > Spinner**, and press `F5` to see it turn.
+The project builds against the Zenith build the editor runs from (its
+`ZENITH_ROOT`); see the project's `README.md`.
+
+**File > Project Hub** returns to the hub and **File > Open Project...**
+chooses another project file; both ask about unsaved scene changes first and
+switch projects without restarting the editor.
+
+To skip the hub, pass a `.zenith-project` file as the first argument. Project
+asset and scene roots are relative to that file. Automated runs
+(`ZENITH_EDITOR_SMOKE`) never show the hub: without a project they open the
+default project.
 
 1. Choose **File > New** and use the Hierarchy panel's **Create Entity** button.
 2. Rename the entity, then edit its position, rotation, and scale in the

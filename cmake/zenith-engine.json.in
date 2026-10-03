@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "sourceDir": "@CMAKE_CURRENT_SOURCE_DIR@",
+  "buildDir": "@CMAKE_CURRENT_BINARY_DIR@",
+  "generator": "@CMAKE_GENERATOR@",
+  "generatorInstance": "@CMAKE_GENERATOR_INSTANCE@",
+  "generatorPlatform": "@CMAKE_GENERATOR_PLATFORM@",
+  "generatorToolset": "@CMAKE_GENERATOR_TOOLSET@",
+  "cxxCompilerId": "@CMAKE_CXX_COMPILER_ID@",
+  "cxxCompilerVersion": "@CMAKE_CXX_COMPILER_VERSION@"
+}
