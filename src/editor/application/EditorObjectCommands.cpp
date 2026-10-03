@@ -199,6 +199,9 @@ void EditorSession::registerObjectModeOperators() {
     registerOperator(applicationOperator(
         "view3d.toggle_snapping", "Toggle Snapping", "Turn transform snapping on or off", {},
         [this](ApplicationContext&) { m_viewport.tools().snapping = !m_viewport.tools().snapping; }));
+    for (Operator& op : m_viewport.chromeOperators()) {
+        registerOperator(std::move(op));
+    }
     registerOperator(applicationOperator(
         "view3d.frame_selected", "Frame Selected", "Move the view to show the selected objects",
         [](const OperatorContext& context) { return !context.selection.empty(); },

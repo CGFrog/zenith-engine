@@ -524,6 +524,7 @@ add_library(zenith_editor_app STATIC
     src/editor/panels/HierarchyPanel.cpp
     src/editor/panels/InspectorPanel.cpp
     src/editor/panels/RenderStatisticsPanel.cpp
+    src/editor/panels/ViewportChrome.cpp
     src/editor/panels/ViewportPanel.cpp
     src/editor/project/AssetCatalog.cpp
     src/editor/project/AssetRelocation.cpp
@@ -1240,6 +1241,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_editor_camera_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_editor_camera COMMAND zenith_editor_camera_tests)
+
+    add_executable(zenith_viewport_chrome_tests tests/editor/ViewportChromeTests.cpp)
+    target_link_libraries(zenith_viewport_chrome_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_viewport_chrome_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_viewport_chrome_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_viewport_chrome COMMAND zenith_viewport_chrome_tests)
 
     add_executable(zenith_project_asset_tests
         tests/editor/ProjectAssetTests.cpp

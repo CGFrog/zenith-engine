@@ -119,7 +119,11 @@ void EditorCamera::focusOnBounds(const glm::vec3& center, float radius) {
 }
 
 RenderView EditorCamera::renderView() const {
-    return {.position = m_position, .forward = forward()};
+    return {.position = m_position,
+            .forward = forward(),
+            .verticalFovRadians = m_verticalFovRadians,
+            .nearPlane = m_nearPlane,
+            .farPlane = m_farPlane};
 }
 
 glm::mat4 EditorCamera::viewMatrix() const {
@@ -127,13 +131,13 @@ glm::mat4 EditorCamera::viewMatrix() const {
 }
 
 glm::mat4 EditorCamera::projectionMatrix(float aspectRatio) const {
-    glm::mat4 projection = glm::perspectiveRH_ZO(glm::radians(60.0f), aspectRatio, 0.1f, 1000.0f);
+    glm::mat4 projection = glm::perspectiveRH_ZO(m_verticalFovRadians, aspectRatio, m_nearPlane, m_farPlane);
     projection[1][1] *= -1.0f;
     return projection;
 }
 
 glm::mat4 EditorCamera::gizmoProjectionMatrix(float aspectRatio) const {
-    return glm::perspectiveRH_NO(glm::radians(60.0f), aspectRatio, 0.1f, 1000.0f);
+    return glm::perspectiveRH_NO(m_verticalFovRadians, aspectRatio, m_nearPlane, m_farPlane);
 }
 
 Entity EditorCamera::pick(const Scene& scene, const AssetManager& assets, glm::vec2 normalizedViewportPosition,
@@ -202,6 +206,31 @@ float EditorCamera::speed() const {
 
 void EditorCamera::setSpeed(float speed) {
     m_speed = std::clamp(speed, m_configuration.minimumSpeed, m_configuration.maximumSpeed);
+}
+
+float EditorCamera::verticalFovRadians() const {
+    return m_verticalFovRadians;
+}
+
+void EditorCamera::setVerticalFovRadians(float verticalFovRadians) {
+    m_verticalFovRadians = std::clamp(verticalFovRadians, m_configuration.minimumVerticalFovRadians,
+                                      m_configuration.maximumVerticalFovRadians);
+}
+
+float EditorCamera::nearPlane() const {
+    return m_nearPlane;
+}
+
+float EditorCamera::farPlane() const {
+    return m_farPlane;
+}
+
+void EditorCamera::setClipPlanes(float nearPlane, float farPlane) {
+    // The smallest far/near ratio keeps the projection's depth range finite.
+    constexpr float minimumDepthRatio = 1.001f;
+    const float maximumNear = m_configuration.maximumFarPlane / minimumDepthRatio;
+    m_nearPlane = std::clamp(nearPlane, m_configuration.minimumNearPlane, maximumNear);
+    m_farPlane = std::clamp(farPlane, m_nearPlane * minimumDepthRatio, m_configuration.maximumFarPlane);
 }
 
 float EditorCamera::distance() const {

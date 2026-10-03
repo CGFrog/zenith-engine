@@ -93,6 +93,38 @@ int main() {
     expect(camera.projectionMatrix(1.0f)[1][1] < 0.0f && camera.gizmoProjectionMatrix(1.0f)[1][1] > 0.0f,
            "rendering and screen-space gizmos should use their respective vertical projection conventions");
 
+    // The lens fields feed the render view and both projections alike.
+    EditorCamera lens;
+    expect(std::abs(lens.verticalFovRadians() - glm::radians(60.0f)) < 0.0001f && lens.nearPlane() == 0.1f &&
+               lens.farPlane() == 1000.0f,
+           "the editor camera should keep the previous 60 degree, 0.1 to 1000 lens by default");
+    const float defaultFocalScale = lens.projectionMatrix(1.0f)[0][0];
+    lens.setVerticalFovRadians(glm::radians(30.0f));
+    lens.setClipPlanes(0.5f, 250.0f);
+    const RenderView lensView = lens.renderView();
+    expect(std::abs(lensView.verticalFovRadians - glm::radians(30.0f)) < 0.0001f && lensView.nearPlane == 0.5f &&
+               lensView.farPlane == 250.0f,
+           "the render view should carry the camera's field of view and clip planes");
+    const glm::mat4 narrow = lens.projectionMatrix(1.0f);
+    const float expectedFocalScale = 1.0f / std::tan(glm::radians(15.0f));
+    expect(std::abs(narrow[0][0] - expectedFocalScale) < 0.0001f && narrow[0][0] > defaultFocalScale &&
+               std::abs(lens.gizmoProjectionMatrix(1.0f)[1][1] - expectedFocalScale) < 0.0001f,
+           "a narrower field of view should magnify both the render and gizmo projections");
+    const glm::vec4 nearClip = narrow * glm::vec4(0.0f, 0.0f, -0.5f, 1.0f);
+    const glm::vec4 farClip = narrow * glm::vec4(0.0f, 0.0f, -250.0f, 1.0f);
+    expect(std::abs(nearClip.z / nearClip.w) < 0.0001f && std::abs(farClip.z / farClip.w - 1.0f) < 0.0001f,
+           "the render projection should map the clip planes to depth 0 and 1");
+    lens.setVerticalFovRadians(10.0f);
+    expect(lens.verticalFovRadians() < glm::radians(180.0f), "the field of view should clamp below 180 degrees");
+    lens.setVerticalFovRadians(-1.0f);
+    expect(lens.verticalFovRadians() > 0.0f, "the field of view should clamp above zero");
+    lens.setClipPlanes(-1.0f, -5.0f);
+    expect(lens.nearPlane() > 0.0f && lens.farPlane() > lens.nearPlane(),
+           "invalid clip planes should clamp to a positive, non-empty depth range");
+    lens.setClipPlanes(10.0f, 2.0f);
+    expect(lens.nearPlane() == 10.0f && lens.farPlane() > 10.0f,
+           "a far plane before the near plane should move past it");
+
     camera.focus({0.0f, 0.0f, 0.0f}, 2.0f);
 
     AssetManager assets;
@@ -107,6 +139,18 @@ int main() {
         scene.updateWorldTransforms();
         expect(camera.pick(scene, assets, {0.5f, 0.5f}, 1.0f) != entt::null,
                "center viewport ray should select visible model geometry");
+
+        // Picking follows the lens: a point near the image edge looks almost
+        // straight ahead through a narrow lens and hits the model, while the
+        // same point through a wide lens looks far past it.
+        const glm::vec2 edge{0.5f, 0.1f};
+        EditorCamera wideLens = camera;
+        wideLens.setVerticalFovRadians(glm::radians(120.0f));
+        EditorCamera narrowLens = camera;
+        narrowLens.setVerticalFovRadians(glm::radians(5.0f));
+        expect(narrowLens.pick(scene, assets, edge, 1.0f) != entt::null &&
+                   wideLens.pick(scene, assets, edge, 1.0f) == entt::null,
+               "picking should cast through the camera's field of view");
 
         const ModelAsset* modelAsset = assets.model(model.handle);
         MeshHandle sharedMesh{};

@@ -36,6 +36,18 @@ a new key chord to rebind it (conflicts in the same region are refused), `+`
 adds a shortcut, and **Reset** restores the defaults. Your changes are saved to
 `keymap.json` in the editor settings folder.
 
+The viewport is laid out like Blender's 3D view. Its header holds the
+**View** menu (sidebar and toolbar toggles), **Shading** (Rendered, Material
+Preview, Solid, Wireframe; the choice is stored per viewport and the renderer
+currently draws every mode fully shaded), **Overlays** (grid, selection
+outline, active object name, transform gizmo), and **Gizmos** (Global or Local
+orientation, snapping and its increments). With the mouse over the viewport,
+`T` shows or hides the tool shelf on the left (Tweak, Move, Rotate, Scale) and
+`N` shows or hides the sidebar on the right: **Item** edits the active
+object's transform, **Tool** the transform tool and snapping, and **View** the
+camera's field of view, clip start and end, and fly speed. Clicks on the
+header, shelf, or sidebar never select through to the scene.
+
 New, Open, Exit, and the native window close button ask what to do when the
 scene has unsaved changes. **Cancel** always leaves the active document intact.
 
