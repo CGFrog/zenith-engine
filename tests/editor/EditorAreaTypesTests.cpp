@@ -9,6 +9,7 @@
 #include "editor/areas/WorkspaceFile.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
+#include "editor/menus/EditorMenus.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/operators/OperatorRunner.hpp"
 #include "editor/panels/AssetBrowserPanel.hpp"
@@ -114,6 +115,7 @@ struct SessionFixture {
     EditorDiagnostics diagnostics;
     Selection selection;
     NoSessionActions actions;
+    EditorMenus menus;
     OperatorRegistry operators;
     OperatorRunner runner{operators, history};
     EditorToolSettings tools;
@@ -161,7 +163,8 @@ struct SessionFixture {
                 .selection = selection,
                 .diagnostics = diagnostics,
                 .mode = EditorMode::Edit,
-                .actions = actions};
+                .actions = actions,
+                .menus = menus};
     }
 
     // One headless frame updating and drawing panel in its own window, as

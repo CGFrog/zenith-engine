@@ -14,6 +14,11 @@
 // matches everything with score 0.
 std::optional<int> fuzzyMatchScore(std::string_view query, std::string_view text);
 
+// A full-width search field for a popup listing resultCount results: Up and
+// Down move highlighted through them (wrapping) while the field keeps
+// keyboard focus. Returns whether Enter was pressed.
+bool searchField(const char* id, const char* hint, std::string& query, int& highlighted, int resultCount);
+
 struct OperatorSearchEntry {
     const Operator* op{nullptr};
     std::string shortcut;

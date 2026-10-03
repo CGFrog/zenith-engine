@@ -5,6 +5,7 @@
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/EntityPropertiesView.hpp"
+#include "editor/menus/EditorMenus.hpp"
 #include "editor/operators/ObjectOperators.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/operators/OperatorRunner.hpp"
@@ -125,6 +126,7 @@ struct PanelFixture {
     OperatorRegistry operators;
     OperatorRunner runner{operators, history};
     OperatorActions actions{runner, [this] { return operatorContext(); }};
+    EditorMenus menus;
     RenderSettingsController renderSettings{EditorRenderSettings(
         ProjectConfig{}, std::filesystem::temp_directory_path() / "zenith-properties-panel-render.json")};
 
@@ -147,7 +149,8 @@ struct PanelFixture {
                 .selection = selection,
                 .diagnostics = diagnostics,
                 .mode = EditorMode::Edit,
-                .actions = actions};
+                .actions = actions,
+                .menus = menus};
     }
 
     // An entity with components from several built-in categories and both

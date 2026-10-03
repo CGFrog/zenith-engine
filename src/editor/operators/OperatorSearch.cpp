@@ -70,6 +70,14 @@ std::optional<int> fuzzyMatchScore(std::string_view query, std::string_view text
     return score;
 }
 
+bool searchField(const char* id, const char* hint, std::string& query, int& highlighted, int resultCount) {
+    SearchNavigation navigation{.highlighted = &highlighted, .count = resultCount};
+    ImGui::SetNextItemWidth(-1.0f);
+    return ImGui::InputTextWithHint(id, hint, &query,
+                                    ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory,
+                                    moveHighlight, &navigation);
+}
+
 std::vector<OperatorSearchEntry> searchOperators(const OperatorRegistry& registry, const Keymap& keymap,
                                                  const OperatorContext& context, std::string_view query) {
     std::vector<OperatorSearchEntry> entries;
@@ -123,11 +131,8 @@ std::optional<std::string> OperatorSearch::draw(const OperatorRegistry& registry
         m_focusQuery = false;
     }
     const int highlightedBefore = m_highlighted;
-    SearchNavigation navigation{.highlighted = &m_highlighted, .count = static_cast<int>(entries.size())};
-    ImGui::SetNextItemWidth(-1.0f);
-    const bool entered = ImGui::InputTextWithHint(
-        "##OperatorSearchQuery", "Search operators...", &m_query,
-        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackHistory, moveHighlight, &navigation);
+    const bool entered = searchField("##OperatorSearchQuery", "Search operators...", m_query, m_highlighted,
+                                     static_cast<int>(entries.size()));
     if (m_query != m_previousQuery) {
         entries = searchOperators(registry, keymap, context, m_query);
         m_previousQuery = m_query;

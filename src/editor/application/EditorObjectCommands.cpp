@@ -1,7 +1,8 @@
 // Blender object-mode operators that need the running editor: modal G/R/S
-// transforms and the Add/Delete/Rename popups. Operators that only edit the
-// document live in editor/operators/ObjectOperators, and the view3d ones in
-// editor/panels/ViewportOperators.
+// transforms and the Delete/Rename popups, and drawing the menu opened with
+// wm.call_menu (the Add menu is defined in editor/menus). Operators that only
+// edit the document live in editor/operators/ObjectOperators, and the view3d
+// ones in editor/panels/ViewportOperators.
 
 #include "EditorSession.hpp"
 
@@ -12,14 +13,16 @@
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
+#include <iostream>
+#include <limits>
 #include <optional>
 #include <utility>
 
 namespace {
-constexpr const char* addMenuPopup = "ObjectAddMenu";
 constexpr const char* deleteMenuPopup = "ObjectDeleteMenu";
 constexpr const char* renamePopup = "ObjectRename";
 
@@ -116,13 +119,10 @@ void EditorSession::registerObjectModeOperators() {
              return OperatorResult::finished();
          }});
 
-    const auto inEditMode = [](const OperatorContext& context) { return context.app != nullptr && context.editMode(); };
     registerOperator(applicationOperator(
         "object.delete_menu", "Delete...", "Ask before deleting the selected objects",
         [](const OperatorContext& context) { return context.editMode() && !context.selection.empty(); },
         [this](ApplicationContext&) { m_openDeleteMenu = true; }));
-    registerOperator(applicationOperator("object.add_menu", "Add...", "Open the Add menu at the mouse", inEditMode,
-                                         [this](ApplicationContext&) { m_openAddMenu = true; }));
     registerOperator(applicationOperator(
         "object.rename_popup", "Rename...", "Type a new name for the active object",
         [](const OperatorContext& context) {
@@ -138,26 +138,9 @@ void EditorSession::registerObjectModeOperators() {
 }
 
 void EditorSession::drawObjectPopups(ApplicationContext& context) {
-    if (m_openAddMenu) {
-        ImGui::OpenPopup(addMenuPopup);
-        m_openAddMenu = false;
-    }
-    if (ImGui::BeginPopup(addMenuPopup)) {
-        ImGui::TextDisabled("Add");
-        ImGui::Separator();
-        if (ImGui::BeginMenu("Mesh")) {
-            operatorMenuItem(context, "object.add_cube", "Cube");
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Light")) {
-            operatorMenuItem(context, "object.add_sun", "Sun");
-            ImGui::EndMenu();
-        }
-        operatorMenuItem(context, "object.add_environment", "Environment");
-        operatorMenuItem(context, "object.add_fog", "Fog");
-        operatorMenuItem(context, "object.add_empty", "Empty");
-        ImGui::EndPopup();
-    }
+    // The Add menu and any other menu opened with wm.call_menu.
+    EditorContext editor = editorContext(context);
+    m_menus.draw(editor);
 
     if (m_openDeleteMenu) {
         ImGui::OpenPopup(deleteMenuPopup);
@@ -391,4 +374,48 @@ void EditorSession::drawModalTransformOverlay(const ViewportPanel& viewport, con
     drawList->AddText(position, ImGui::GetColorU32(ImGuiCol_Text), result.description.c_str());
     drawList->AddText({position.x, position.y + lineHeight}, ImGui::GetColorU32(ImGuiCol_TextDisabled), hint);
     drawList->PopClipRect();
+}
+
+bool EditorSession::updateSmokeMenus(ApplicationContext& context) {
+    // Frames 30-32: open the Add menu with wm.call_menu, choose Empty from its
+    // search as typing "empty" would, check the entity was added and
+    // selected, then undo it.
+    constexpr uint32_t firstFrame = 30;
+    const auto fail = [&](const std::string& message) {
+        const std::string error = "Menu smoke failed: " + message;
+        std::cerr << error << '\n';
+        m_diagnostics.reportError(error);
+        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+    };
+    const auto entityCount = [&context] {
+        return context.scene.registry().view<const SceneEntityIdComponent>().size();
+    };
+    if (m_smokeFrame == firstFrame) {
+        m_smokeEntityCount = entityCount();
+        invokeOperator(context, "wm.call_menu", nlohmann::json{{"menu", addMenuId}}.dump(), KeymapRegion::Viewport);
+    } else if (m_smokeFrame == firstFrame + 1) {
+        const std::optional<ResolvedMenu> menu =
+            m_menus.resolve(m_menus.request(), operatorContext(context, KeymapRegion::Global));
+        const std::vector<MenuSearchResult> results =
+            menu ? searchMenu(*menu, "empty") : std::vector<MenuSearchResult>{};
+        if (!m_menus.isOpen() || results.empty()) {
+            fail("wm.call_menu did not open an Add menu offering Empty");
+            return true;
+        }
+        invokeOperator(context, results.front().item->operatorId, results.front().item->properties,
+                       KeymapRegion::Global);
+        m_menus.close();
+        if (entityCount() != m_smokeEntityCount + 1 || m_selection.size() != 1) {
+            fail("choosing Empty did not add and select one entity");
+        }
+    } else if (m_smokeFrame == firstFrame + 2) {
+        if (m_menus.isOpen()) {
+            fail("the Add menu did not close");
+        }
+        undo(context);
+        if (entityCount() != m_smokeEntityCount) {
+            fail("undo did not remove the added entity");
+        }
+    }
+    return m_smokeFrame > firstFrame + 2;
 }

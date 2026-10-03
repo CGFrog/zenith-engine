@@ -15,6 +15,7 @@
 #include <string_view>
 
 class EditorDiagnostics;
+class EditorMenus;
 
 // Session-level workflows a panel can trigger but does not own: running
 // operators, the region keymaps, document replacement, and modal transforms.
@@ -62,6 +63,9 @@ struct EditorContext {
     EditorDiagnostics& diagnostics;
     EditorMode mode;
     EditorSessionActions& actions;
+    // The session's menus, to draw one inline; open a popup menu by running
+    // wm.call_menu.
+    EditorMenus& menus;
 
     bool editMode() const {
         return mode == EditorMode::Edit;

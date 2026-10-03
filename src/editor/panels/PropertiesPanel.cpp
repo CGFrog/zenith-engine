@@ -1,6 +1,7 @@
 #include "PropertiesPanel.hpp"
 
 #include "editor/document/EditorDocument.hpp"
+#include "editor/menus/AddComponentMenu.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/RenderSettingsControls.hpp"
 #include "editor/theme/EditorWidgets.hpp"
@@ -251,7 +252,7 @@ void PropertiesPanel::drawObjectTab(EditorContext& context) {
     m_view.drawAssetWarnings(context, *entityId);
     m_view.drawModelDropTarget(context, *entityId);
     ImGui::Separator();
-    m_view.drawAddComponentMenu(context, *entityId);
+    drawAddComponentButton(context, *entityId);
 }
 
 void PropertiesPanel::drawComponentsTab(EditorContext& context, const std::string& category) {
@@ -269,7 +270,7 @@ void PropertiesPanel::drawComponentsTab(EditorContext& context, const std::strin
         m_view.drawIrradianceBakeButton(context, *entityId);
     }
     ImGui::Separator();
-    m_view.drawAddComponentMenu(context, *entityId, category);
+    drawAddComponentButton(context, *entityId, category);
 }
 
 void PropertiesPanel::drawWorldTab(EditorContext& context) {

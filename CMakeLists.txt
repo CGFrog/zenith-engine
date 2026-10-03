@@ -553,6 +553,11 @@ add_library(zenith_editor_app STATIC
     src/editor/interaction/GraphicsSettingsEditor.cpp
     src/editor/interaction/ReflectedFieldEditor.cpp
     src/editor/interaction/Selection.cpp
+    src/editor/menus/AddComponentMenu.cpp
+    src/editor/menus/DefaultMenus.cpp
+    src/editor/menus/EditorMenus.cpp
+    src/editor/menus/MenuPopup.cpp
+    src/editor/menus/MenuRegistry.cpp
     src/editor/modules/GameModuleHost.cpp
     src/editor/operators/DefaultKeymap.cpp
     src/editor/operators/Keymap.cpp
@@ -1612,6 +1617,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_operator_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_operators COMMAND zenith_operator_tests)
+
+    add_executable(zenith_menu_tests tests/editor/MenuTests.cpp)
+    target_link_libraries(zenith_menu_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_menu_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_menu_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_menus COMMAND zenith_menu_tests)
 
     add_executable(zenith_workspace_tests tests/editor/WorkspaceTests.cpp)
     target_link_libraries(zenith_workspace_tests PRIVATE zenith_editor_app)

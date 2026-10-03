@@ -70,10 +70,6 @@ class EntityPropertiesView {
     void drawAssetWarnings(EditorContext& context, SceneEntityId entityId) const;
     // A drop target placing a dragged model asset as a child of the entity.
     void drawModelDropTarget(EditorContext& context, SceneEntityId entityId) const;
-    // An Add Component button and popup grouped by category, or listing only
-    // one category's types.
-    void drawAddComponentMenu(EditorContext& context, SceneEntityId entityId,
-                              std::optional<std::string_view> category = std::nullopt) const;
 
   private:
     std::unordered_map<std::string, CustomEditor> m_customEditors;

@@ -1,6 +1,7 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
+#include "editor/menus/EditorMenus.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/Keymap.hpp"
 #include "editor/operators/OperatorRunner.hpp"
@@ -103,6 +104,7 @@ struct ViewportFixture {
     EditorDiagnostics diagnostics;
     Selection selection;
     HeadlessSessionActions actions{editing(), history, selection};
+    EditorMenus menus;
     ViewportRegistry viewports;
     ViewportPanel viewport{viewports};
 
@@ -122,7 +124,8 @@ struct ViewportFixture {
                 .selection = selection,
                 .diagnostics = diagnostics,
                 .mode = EditorMode::Edit,
-                .actions = actions};
+                .actions = actions,
+                .menus = menus};
     }
 
     OperatorResult invoke(std::string_view operatorId, std::string_view properties = {}) {
