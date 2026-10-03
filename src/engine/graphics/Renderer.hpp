@@ -11,6 +11,7 @@
 #include "passes/MeshPass.hpp"
 #include "passes/UiPass.hpp"
 #include "resources/FrameResources.hpp"
+#include "resources/IdReadback.hpp"
 #include "resources/ImageReadback.hpp"
 #include "resources/UiImageStore.hpp"
 #include "resources/ViewportTarget.hpp"
@@ -54,6 +55,9 @@ struct RenderGraphViewShape {
     bool decals{false};
     // Debug lines (RenderRuntime::debugDraw) blend over the finished output.
     bool debugDraw{false};
+    // A pick request is served this frame (IdBufferPass); frames without one
+    // have no id-buffer pass.
+    bool idBuffer{false};
 
     bool operator==(const RenderGraphViewShape&) const = default;
 };
@@ -194,6 +198,28 @@ class Renderer {
     // Ends the debug primitives' one-frame lifetime.
     void clearDebugDraw();
 
+    // GPU picking (RenderRuntime::requestPick). A pick recorded into a frame,
+    // kept with its readback until that frame completes.
+    struct InFlightPick {
+        PickTicket ticket;
+        PickRect region;
+        VkExtent2D viewExtent{};
+        std::unique_ptr<IdReadback> readback;
+        std::vector<PickedObject> objects;
+        glm::mat4 viewProjection{1.0f};
+        uint64_t submittedFrame{0};
+    };
+
+    // Starts the queued picks of every view in m_viewRequests and points the
+    // requests at them.
+    void attachPicks();
+    // Hands this frame's picks to m_inFlightPicks once it was submitted.
+    void submitPicks(uint64_t submittedFrame);
+    // Resolves this frame's picks to Failed when the frame was not submitted.
+    void failFramePicks(const std::string& error);
+    // Publishes the picks whose frame completed; never waits for the device.
+    void collectPicks();
+
     VulkanContext m_context;
     Surface m_surface;
     Swapchain m_swapchain;
@@ -246,4 +272,11 @@ class Renderer {
     // Set between a successful prepareCapture and finishCapture; recordFrame
     // then records the copy.
     bool m_capturePrepared{false};
+    // This frame's picks: MeshPass reads and fills m_framePicks through the
+    // view requests; m_framePickStates holds each one's ticket and readback.
+    std::vector<MeshPassPick> m_framePicks;
+    std::vector<InFlightPick> m_framePickStates;
+    std::vector<InFlightPick> m_inFlightPicks;
+    // RenderStats::submittedFrame of each frame slot's latest submission.
+    std::array<uint64_t, framesInFlight> m_slotSubmittedFrames{};
 };

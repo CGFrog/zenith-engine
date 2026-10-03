@@ -65,6 +65,10 @@ bool FrameResources::waitUntilAvailable(VkDevice device) const {
     return checkVulkan(vkWaitForFences(device, 1, &m_fence, VK_TRUE, frameFenceTimeout), "Wait for frame");
 }
 
+bool FrameResources::completed(VkDevice device) const {
+    return vkGetFenceStatus(device, m_fence) == VK_SUCCESS;
+}
+
 bool FrameResources::beginRecording() const {
     if (!checkVulkan(vkResetCommandBuffer(m_commandBuffer, 0), "Reset command buffer")) {
         return false;

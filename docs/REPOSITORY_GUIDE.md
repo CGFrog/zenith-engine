@@ -709,6 +709,14 @@ document accepts, and the live per-pass GPU timing table built from
 panel with Save and Revert, and the Properties panel's Render tab hosts the
 settings controls over the same `RenderSettingsController`.
 
+### `src/editor/interaction/PickQueries.*`
+
+Pure selection queries over a GPU pick result's id grid: point picks with a
+pixel tolerance, box and lasso (even-odd, pixel centres) selection, depth at a
+pixel, and Alt+click cycling candidates merged with CPU ray hits. The header
+documents how a viewport turns clicks and drags into `requestPick` regions;
+`tests/editor/PickQueriesTests.cpp` covers each query on synthetic grids.
+
 ## Assets
 
 ### `src/engine/assets/Assets.*`
@@ -965,6 +973,9 @@ override. `tests/engine/RenderViewTests.cpp` covers the registry.
 It also owns the frame's debug-draw lists (all views and per view) and each
 view's projected debug labels.
 
+`RenderIds.hpp` holds `RenderViewId` and `RenderObjectId` so the picking types
+can name them.
+
 ### `src/engine/graphics/DebugDraw.*`
 
 Renderer-independent immediate-mode recording of debug lines, wire shapes
@@ -980,6 +991,19 @@ recorded view's post-processed output, depth testing in the fragment shader
 against the view's scene depth (which may be at render resolution). Owns a
 host-visible vertex buffer per frame in flight, grown on demand.
 `docs/ARCHITECTURE.md` (Debug drawing) explains the placement.
+
+### `src/engine/graphics/RenderPicking.*`, `passes/IdBufferPass.*`, and `resources/IdReadback.*`
+
+GPU picking (see Picking in [Architecture](ARCHITECTURE.md)). `RenderPicking`
+holds the CPU contract: `PickRect`, `PickTicket`, `PickResult` with its id and
+depth planes and object table, `PickRequestBook` (the ticket lifecycle
+`RenderRuntime::requestPick` and `pickResult` expose), and depth-to-world
+reconstruction. `IdBufferPass` owns the id-buffer pipeline
+(`shaders/id_buffer.*`) and targets and draws one pick region; `MeshPass`
+feeds it the view's visible items only when a request is pending.
+`IdReadback` copies a region into a host buffer the `Renderer` reads after the
+frame's fence signals. `tests/engine/RenderPickingTests.cpp` and the Vulkan
+`tests/engine/PickingSmokeTests.cpp` cover them.
 
 ### `src/engine/graphics/RenderViewPlanning.*`
 

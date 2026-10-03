@@ -77,6 +77,13 @@ class GraphicsPipeline {
                               VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout particleLayout,
                               VkShaderModule vertex, VkShaderModule fragment, VkPipelineCache pipelineCache,
                               uint32_t vertexPushConstantSize);
+    // Picking id buffer (IdBufferPass): position and skin streams, both faces,
+    // reversed-Z depth test and write, two unblended color targets (object id
+    // and device depth). Set 0 is the camera set; vertex and fragment stages
+    // share pushConstantSize bytes of push constants.
+    bool initIdBufferPipeline(VkDevice device, VkFormat idFormat, VkFormat depthColorFormat, VkFormat depthFormat,
+                              VkDescriptorSetLayout cameraLayout, VkShaderModule vertex, VkShaderModule fragment,
+                              VkPipelineCache pipelineCache, uint32_t pushConstantSize);
     void shutdown(VkDevice device);
 
     VkPipeline handle() const {

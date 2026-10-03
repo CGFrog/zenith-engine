@@ -3,6 +3,7 @@
 #include "../assets/Assets.hpp"
 #include "../physics/PhysicsComponents.hpp"
 #include "ParticleEmitter.hpp"
+#include "SceneEntityId.hpp"
 #include <compare>
 #include <cstdint>
 #include <entt/entt.hpp>
@@ -15,16 +16,6 @@
 #include <vector>
 
 using Entity = entt::entity;
-
-struct SceneEntityId {
-    uint64_t value{0};
-
-    explicit operator bool() const {
-        return value != 0;
-    }
-
-    auto operator<=>(const SceneEntityId&) const = default;
-};
 
 struct SceneEntityIdComponent {
     SceneEntityId id;

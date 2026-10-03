@@ -21,6 +21,7 @@
 #include "DepthPyramid.hpp"
 #include "EnvironmentPass.hpp"
 #include "GpuDrivenPass.hpp"
+#include "IdBufferPass.hpp"
 #include "IrradianceVolumePass.hpp"
 #include "LocalShadowPass.hpp"
 #include "ParticlePass.hpp"
@@ -39,6 +40,21 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+// One pick region a view serves this frame (RenderRuntime::requestPick). The
+// caller owns the readback, prepared for the region's size, until the frame
+// completes; MeshPass fills the outputs while recording.
+struct MeshPassPick {
+    // Output pixels of the view, already clamped to its extent.
+    PickRect region;
+    const IdReadback* readback{nullptr};
+    // Outputs: whether the region's copy was recorded (false when its targets
+    // could not be allocated; the frame still renders), the id table (id n is
+    // objects[n-1]), and the camera drawn with.
+    bool recorded{false};
+    std::vector<PickedObject> objects;
+    glm::mat4 viewProjection{1.0f};
+};
 
 // One render view a frame records (see RenderRuntime): where it draws and what
 // it shows. The targets must stay valid until the frame's submission retires.
@@ -65,6 +81,8 @@ struct MeshPassViewRequest {
     std::span<const RenderObjectId> outlinedObjects;
     // Receives the view's statistics when not null.
     RenderViewStats* stats{nullptr};
+    // Pick regions to draw into the id buffer; empty skips the pass.
+    std::span<MeshPassPick> picks;
 };
 
 // The camera a view's latest recording rendered with, for overlays drawn over
@@ -139,7 +157,7 @@ class MeshPass {
         // FSR 1, and the environment pipelines.
         const ViewState& view = *m_views.front();
         return 16u + view.ambientOcclusion.pipelineCount() + m_environmentPass.pipelineCount() +
-               DepthOfFieldPass::pipelineCount() + ParticlePass::pipelineCount() +
+               DepthOfFieldPass::pipelineCount() + ParticlePass::pipelineCount() + IdBufferPass::pipelineCount() +
                (view.volumetricFog.supported() ? VolumetricFogPass::pipelineCount() : 0u) +
                view.postProcess.spatialUpscalePipelineCount() +
                (m_gpuDrivenSupported ? m_gpuDrivenPass.pipelineCount() : 0u);
@@ -626,6 +644,10 @@ class MeshPass {
                     RenderRuntime& rendering, const MeshPassViewRequest& request, const ViewFrame& viewFrame,
                     bool leading, FrameTaskExecutor& frameTasks, VkQueryPool timestampQueries,
                     OptionalPassTimestamps& passTimestamps, FrameState& frame);
+    // Draws the view's frustum-visible objects into the id buffer once per
+    // pick region in request.picks and records each region's readback copy.
+    bool recordPicks(const DrawContext& draw, const Scene& scene, const MeshPassViewRequest& request,
+                     const ViewFrame& viewFrame);
     void recordSelectionMask(const DrawContext& draw);
     void recordShadedItems(const DrawContext& draw, ShadedItems selection);
     void recordOutlines(const DrawContext& draw);
@@ -729,6 +751,7 @@ class MeshPass {
     // view and bind its depth pyramid.
     GpuDrivenPass m_gpuDrivenPass;
     ParticlePass m_particles;
+    IdBufferPass m_idBuffer;
     std::array<VkImageView, particles::maximumSpriteTextures> m_particleSpriteViews{};
     bool m_gpuDrivenSupported{false};
     MeshPassDiagnosticOverrides m_diagnosticOverrides;

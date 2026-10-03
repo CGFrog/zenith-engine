@@ -804,13 +804,47 @@ destroyed images are released only after the frames that may sample them
 complete.
 
 Editor camera policy, selection, and gizmo state remain in `src/editor/`.
-`RenderView` is the narrow engine-facing camera override. Picking uses a
-bounded CPU ray test against transformed mesh bounding spheres; this avoids a
-GPU readback synchronization point. A deterministic test exercises the CPU
-path with 2,000 additional renderables and reports its elapsed time without a
-machine-dependent timing assertion. The renderer can replace it with an ID attachment later
-without changing scene identity or editor selection state if measurement shows
-that CPU picking no longer meets the interaction budget.
+`RenderView` is the narrow engine-facing camera override. The headless picking
+path is a bounded CPU ray test against transformed mesh bounding spheres and
+triangles (`pickThroughLens`); a deterministic test exercises it with 2,000
+additional renderables and reports its elapsed time without a
+machine-dependent timing assertion. GPU picking (below) is the windowed path.
+
+### Picking
+
+`RenderRuntime::requestPick(view, rect)` returns a `PickTicket` for the object
+ids and depth under a rectangle of a view's output pixels
+(`engine/graphics/RenderPicking.hpp`). The request waits in the runtime's
+`PickRequestBook` until the view next renders; that frame `MeshPass` records
+`IdBufferPass` once per request, right after the view's CPU visibility, and the
+pass is skipped entirely on frames without requests (`RenderStats::pickPasses`
+counts it). The id buffer draws the view's frustum-visible render items, the
+same list CPU and GPU-driven submission draw from (so it inherits their
+filtering), with the view's camera unjittered at its output aspect, skinned
+poses from the frame's palettes, and reversed-Z depth; alpha-masked cut-outs
+pick as solid and particles are not pickable. Each entity gets one id per
+request (`id n` names `PickResult::objects[n-1]`, holding its `SceneEntityId`
+and `RenderObjectId`; 0 is "none"). The region renders into the top-left of
+targets that grow to the largest request (the viewport is offset by the
+region's origin) and is copied with `IdReadback` into a host-visible buffer.
+
+The Renderer keeps each readback until the frame that recorded it completes,
+checking frame fences without waiting, then publishes the ids, the depth plane,
+the object table, and the camera (`viewProjection` and its inverse, for
+`pickWorldPosition` and other depth-to-world reconstruction). Results are
+typically Ready one to three frames after the request and are taken once with
+`pickResult`. A view destroyed or resized before its pick completes resolves it
+to `Cancelled`, as does `cancelPick`; a failed recording resolves to `Failed`.
+The book holds at most 64 tickets and evicts the oldest untaken finished result
+when full.
+
+Selection policy stays in the editor: `editor/interaction/PickQueries.*` holds
+the pure point (with tolerance), box, lasso, depth, and Alt+click cycling
+queries over a result's id grid, with the viewport integration contract in its
+header. `tests/engine/RenderPickingTests.cpp` and
+`tests/editor/PickQueriesTests.cpp` cover the CPU side;
+`tests/engine/PickingSmokeTests.cpp` picks known objects through both
+submission paths under strict validation.
 
 ### Scalable lighting and environment data
 

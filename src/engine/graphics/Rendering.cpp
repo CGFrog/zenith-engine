@@ -66,6 +66,7 @@ bool RenderRuntime::destroyView(RenderViewId view) {
     if (m_activeView == view) {
         m_activeView = defaultView();
     }
+    m_picks.cancelView(view);
     return true;
 }
 
@@ -188,6 +189,25 @@ std::span<const ProjectedDebugLabel> RenderRuntime::viewDebugLabels(RenderViewId
     const ViewSlot* slot = findView(view);
     return slot != nullptr ? std::span<const ProjectedDebugLabel>(slot->debugLabels)
                            : std::span<const ProjectedDebugLabel>{};
+}
+
+PickTicket RenderRuntime::requestPick(RenderViewId view, PickRect rect) {
+    if (findView(view) == nullptr) {
+        return {};
+    }
+    return m_picks.request(view, rect);
+}
+
+PickStatus RenderRuntime::pickStatus(PickTicket ticket) const {
+    return m_picks.status(ticket);
+}
+
+PickResult RenderRuntime::pickResult(PickTicket ticket) {
+    return m_picks.take(ticket);
+}
+
+bool RenderRuntime::cancelPick(PickTicket ticket) {
+    return m_picks.cancel(ticket);
 }
 
 RenderRuntime::ViewSlot* RenderRuntime::findView(RenderViewId view) {

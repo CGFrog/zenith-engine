@@ -256,6 +256,47 @@ bool GraphicsPipeline::initWireframeOverlayPipeline(VkDevice device, VkFormat co
                        "Create wireframe pipeline");
 }
 
+bool GraphicsPipeline::initIdBufferPipeline(VkDevice device, VkFormat idFormat, VkFormat depthColorFormat,
+                                            VkFormat depthFormat, VkDescriptorSetLayout cameraLayout,
+                                            VkShaderModule vertex, VkShaderModule fragment,
+                                            VkPipelineCache pipelineCache, uint32_t pushConstantSize) {
+    const VkPushConstantRange pushConstants{
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, .offset = 0, .size = pushConstantSize};
+    const VkPipelineLayoutCreateInfo layout{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+                                            .setLayoutCount = 1,
+                                            .pSetLayouts = &cameraLayout,
+                                            .pushConstantRangeCount = 1,
+                                            .pPushConstantRanges = &pushConstants};
+    if (!checkVulkan(vkCreatePipelineLayout(device, &layout, nullptr, &m_pipelineLayout),
+                     "Create id-buffer pipeline layout")) {
+        return false;
+    }
+    const VkPipelineShaderStageCreateInfo stages[]{shaderStage(VK_SHADER_STAGE_VERTEX_BIT, vertex),
+                                                   shaderStage(VK_SHADER_STAGE_FRAGMENT_BIT, fragment)};
+    const VkFormat colorFormats[]{idFormat, depthColorFormat};
+    VkPipelineRenderingCreateInfo rendering{.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+                                            .colorAttachmentCount = static_cast<uint32_t>(std::size(colorFormats)),
+                                            .pColorAttachmentFormats = colorFormats,
+                                            .depthAttachmentFormat = depthFormat};
+    FixedFunctionState state{MeshVertexInputs::PositionSkin};
+    // Both faces: an object seen from inside still picks, and nearer surfaces
+    // win the depth test anyway.
+    state.raster.cullMode = VK_CULL_MODE_NONE;
+    state.depth.depthCompareOp = scene_depth::compareOp;
+    // Integer targets cannot blend.
+    state.colorAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
+    const VkPipelineColorBlendAttachmentState colorAttachments[]{state.colorAttachment, state.colorAttachment};
+    state.blend.attachmentCount = static_cast<uint32_t>(std::size(colorAttachments));
+    state.blend.pAttachments = colorAttachments;
+    VkGraphicsPipelineCreateInfo info = state.pipelineInfo();
+    info.pNext = &rendering;
+    info.stageCount = static_cast<uint32_t>(std::size(stages));
+    info.pStages = stages;
+    info.layout = m_pipelineLayout;
+    return checkVulkan(vkCreateGraphicsPipelines(device, pipelineCache, 1, &info, nullptr, &m_pipeline),
+                       "Create id-buffer pipeline");
+}
+
 void GraphicsPipeline::shutdown(VkDevice device) {
     if (m_pipeline) {
         vkDestroyPipeline(device, m_pipeline, nullptr);

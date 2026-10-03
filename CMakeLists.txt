@@ -386,6 +386,7 @@ add_library(zenith_engine SHARED
     src/engine/graphics/ViewShading.cpp
     src/engine/graphics/Rendering.cpp
     src/engine/graphics/DebugDraw.cpp
+    src/engine/graphics/RenderPicking.cpp
     src/engine/graphics/RenderViewPlanning.cpp
     src/engine/graphics/GpuCullLayout.cpp
     src/engine/graphics/TemporalQuality.cpp
@@ -401,6 +402,7 @@ add_library(zenith_engine SHARED
     src/engine/graphics/graph/RenderGraph.cpp
     src/engine/graphics/passes/MeshPass.cpp
     src/engine/graphics/passes/GpuDrivenPass.cpp
+    src/engine/graphics/passes/IdBufferPass.cpp
     src/engine/graphics/passes/DepthPyramid.cpp
     src/engine/graphics/passes/AmbientOcclusionPass.cpp
     src/engine/graphics/passes/ClusteredLightingPass.cpp
@@ -428,6 +430,7 @@ add_library(zenith_engine SHARED
     src/engine/graphics/resources/UploadContext.cpp
     src/engine/graphics/resources/BindlessTextureTable.cpp
     src/engine/graphics/resources/GeometryArena.cpp
+    src/engine/graphics/resources/IdReadback.cpp
     src/engine/graphics/resources/ImageReadback.cpp
     src/engine/graphics/resources/UiImageStore.cpp
     src/engine/graphics/resources/ViewportTarget.cpp
@@ -557,6 +560,7 @@ add_library(zenith_editor_app STATIC
     src/editor/interaction/EditorCamera.cpp
     src/editor/interaction/EntityPropertiesView.cpp
     src/editor/interaction/ModalTransform.cpp
+    src/editor/interaction/PickQueries.cpp
     src/editor/interaction/GraphicsSettingsEditor.cpp
     src/editor/interaction/ReflectedFieldEditor.cpp
     src/editor/interaction/Selection.cpp
@@ -1226,6 +1230,33 @@ if(BUILD_TESTING)
         PROCESSORS 2
     )
 
+    add_executable(zenith_render_picking_tests tests/engine/RenderPickingTests.cpp)
+    target_link_libraries(zenith_render_picking_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_render_picking_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_render_picking_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_render_picking COMMAND zenith_render_picking_tests)
+
+    # GPU picking through the id buffer (docs/ARCHITECTURE.md, Picking).
+    add_executable(zenith_picking_smoke_tests tests/engine/PickingSmokeTests.cpp)
+    target_link_libraries(zenith_picking_smoke_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_picking_smoke_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_picking_smoke_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_dependencies(zenith_picking_smoke_tests zenith_assets)
+    add_test(NAME zenith_picking_vulkan_smoke COMMAND zenith_picking_smoke_tests)
+    set_tests_properties(zenith_picking_vulkan_smoke PROPERTIES
+        ENVIRONMENT "ZENITH_SMOKE_FRAMES=80"
+        LABELS "vulkan;smoke"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 120
+        PROCESSORS 2
+    )
+
     add_executable(zenith_deferred_upload_tracker_tests tests/engine/DeferredUploadTrackerTests.cpp)
     target_link_libraries(zenith_deferred_upload_tracker_tests PRIVATE zenith_engine)
     add_test(NAME zenith_deferred_upload_tracker COMMAND zenith_deferred_upload_tracker_tests)
@@ -1554,6 +1585,15 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_modal_transform COMMAND zenith_modal_transform_tests)
 
+    add_executable(zenith_pick_queries_tests tests/editor/PickQueriesTests.cpp)
+    target_link_libraries(zenith_pick_queries_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_pick_queries_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_pick_queries_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_pick_queries COMMAND zenith_pick_queries_tests)
+
     add_executable(zenith_selection_tests tests/editor/SelectionTests.cpp)
     target_link_libraries(zenith_selection_tests PRIVATE zenith_editor_app)
     if(MSVC)
@@ -1844,6 +1884,15 @@ if(BUILD_TESTING)
     zenith_add_validation_smoke(zenith_validation_multi_view
         COMMAND zenith_multi_view_smoke_tests
         ENVIRONMENT ZENITH_SMOKE_FRAMES=120
+    )
+    # The default view picks through both submission paths' visible lists.
+    zenith_add_validation_smoke(zenith_validation_picking
+        COMMAND zenith_picking_smoke_tests
+        ENVIRONMENT ZENITH_SMOKE_FRAMES=80
+    )
+    zenith_add_validation_smoke(zenith_validation_picking_gpu_driven
+        COMMAND zenith_picking_smoke_tests
+        ENVIRONMENT ZENITH_SMOKE_FRAMES=80 ZENITH_FORCE_GPU_DRIVEN=1
     )
     set_tests_properties(zenith_multi_view_vulkan_smoke zenith_editor_vulkan_smoke zenith_editor_module_smoke
         PROPERTIES PROCESSORS 2)

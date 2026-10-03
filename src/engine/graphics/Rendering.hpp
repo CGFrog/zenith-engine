@@ -1,6 +1,8 @@
 #pragma once
 
 #include "DebugDraw.hpp"
+#include "RenderIds.hpp"
+#include "RenderPicking.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -11,8 +13,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-using RenderObjectId = uint32_t;
 
 struct UiTextureHandle {
     uint64_t value{0};
@@ -622,6 +622,10 @@ struct RenderStats {
     // Scene local lights left out this submission because the scene had more
     // than the effective local-light limit (the nearest are kept).
     uint32_t droppedLocalLights{0};
+    // Id-buffer passes recorded this submission, one per pick request a
+    // rendered view served (RenderRuntime::requestPick); zero on frames
+    // without requests, which skip the pass entirely.
+    uint32_t pickPasses{0};
 };
 
 // A camera that replaces the scene's primary CameraComponent for one render
@@ -640,19 +644,6 @@ struct GridOverlay {
     float planeHeight{0.0f};
     float spacing{1.0f};
     float fadeDistance{40.0f};
-};
-
-// Generational handle of a render view (RenderRuntime::createView). A handle
-// whose view was destroyed never matches a later view in the same slot.
-struct RenderViewId {
-    uint32_t index{0};
-    uint32_t generation{0};
-
-    explicit operator bool() const {
-        return generation != 0;
-    }
-
-    bool operator==(const RenderViewId&) const = default;
 };
 
 // How the UI samples a UiImage when it is drawn larger or smaller than its
@@ -878,6 +869,19 @@ class RenderRuntime {
     uint32_t viewHeight(RenderViewId view) const;
     RenderViewStats viewStats(RenderViewId view) const;
 
+    // GPU picking (RenderPicking.hpp). requestPick asks for the object ids
+    // and depth under `rect` (output pixels of the view). The next frame that
+    // renders the view draws its id buffer; the result turns Ready once that
+    // frame's GPU work completed, typically one to three frames later. A pick
+    // whose view is destroyed or resized first resolves to Cancelled. Empty
+    // for a stale view or an empty rectangle.
+    PickTicket requestPick(RenderViewId view, PickRect rect);
+    PickStatus pickStatus(PickTicket ticket) const;
+    // A finished result is handed over once; afterwards the ticket is Unknown.
+    // While pending, only the status is set.
+    PickResult pickResult(PickTicket ticket);
+    bool cancelPick(PickTicket ticket);
+
     // UI images. The renderer uploads a created or updated image while it
     // records the next frame and then publishes its texture, so
     // uiImageTexture is empty until the frame after the request; after an
@@ -951,4 +955,5 @@ class RenderRuntime {
     RenderViewId m_activeView;
     std::vector<UiImageSlot> m_uiImages;
     DebugDraw m_debugDraw;
+    PickRequestBook m_picks;
 };
