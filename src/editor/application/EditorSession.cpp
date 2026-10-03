@@ -64,7 +64,8 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_gameModulePath(std::move(gameModule))
     , m_keymap(defaultEditorKeymap())
     , m_keymapPath(settingsDirectory / "keymap.json")
-    , m_assetBrowser(std::move(assetRoot), sceneRoot, settingsDirectory / "asset-browser.json")
+    , m_projectAssets(std::move(assetRoot), sceneRoot, settingsDirectory / "asset-browser.json")
+    , m_assetBrowser(m_projectAssets)
     , m_graphics(std::move(renderSettings))
     , m_panels{{{&m_viewport, &EditorPanelVisibility::viewport},
                 {&m_hierarchy, &EditorPanelVisibility::hierarchy},
@@ -88,8 +89,8 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     if (const OperatorRegistrationResult result = registerObjectOperators(m_operators); !result) {
         m_diagnostics.reportError(result.error);
     }
-    // Scene references resolve through the browser's asset database by GUID.
-    m_document.setAssetDatabase(m_assetBrowser.assetDatabase());
+    // Scene references resolve through the project's asset database by GUID.
+    m_document.setAssetDatabase(m_projectAssets.assetDatabase());
 }
 
 SceneEditing EditorSession::editing(ApplicationContext& context) {
@@ -327,7 +328,7 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     for (const std::string& warning : keymap.warnings) {
         m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Keymap", warning);
     }
-    m_assetBrowser.refresh(m_diagnostics);
+    m_projectAssets.refresh(m_diagnostics);
     m_openRecoveryDialog = m_recovery.available();
     m_smokeScenario = SDL_getenv("ZENITH_EDITOR_SMOKE") != nullptr;
 
@@ -394,11 +395,25 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
         updateSmokeScenario(context);
     }
     updateAutosave(context, deltaSeconds);
+    // Once per frame, however many asset browsers are open.
+    m_projectAssets.pollChanges(m_diagnostics, projectAssetActions(context), deltaSeconds);
     EditorContext editor = editorContext(context);
     for (const PanelSlot& slot : m_panels) {
         slot.panel->update(editor, input, deltaSeconds);
     }
     updateGameModule(context, input, deltaSeconds);
+}
+
+ProjectAssetActions EditorSession::projectAssetActions(ApplicationContext& context) {
+    return {
+        .reloadModel =
+            [this, &context](const std::filesystem::path& path) {
+                reloadProjectModel(context.assets, m_diagnostics, path);
+            },
+        .filesMoved = [this, &context](std::span<const ProjectFileMove> moves) { projectFilesMoved(context, moves); },
+        .filesRemoved =
+            [this, &context](std::span<const std::filesystem::path> removed) { projectFilesRemoved(context, removed); },
+    };
 }
 
 void EditorSession::updateSmokeScenario(ApplicationContext& context) {
@@ -555,6 +570,7 @@ void EditorSession::initializeDefaultLayout(uint32_t dockspaceId) {
     ImGui::DockBuilderDockWindow(m_diagnosticsPanel.title(), bottom);
     ImGui::DockBuilderDockWindow(m_buildPanel.title(), bottom);
     ImGui::DockBuilderDockWindow(m_renderStatistics.title(), bottom);
+    ImGui::DockBuilderDockWindow(m_assetBrowser.title(), bottom);
     ImGui::DockBuilderFinish(dockspaceId);
 
     m_settings.panels() = {};

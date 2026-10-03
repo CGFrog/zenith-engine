@@ -476,13 +476,22 @@ with favourites, breadcrumbs, a grid or list of the current folder, and search
 and type filters. Models drag out as `ZENITH_MODEL_ASSET` payloads and scenes
 open on double-click. `drawBrowser` draws everything from diagnostics and a
 small `AssetBrowserActions` set, so tests drive it in a headless ImGui frame.
+The panel holds only view state (current folder, selection, search, filters,
+view mode, dialogs) over a shared `project/ProjectAssets` service, so several
+browsers can show one project. `ProjectAssets` owns the catalog, the CPU
+`ThumbnailCache`, change polling and dispatch, the file operations, and the
+settings file. The session calls `pollChanges` once per frame, so each change
+on disk is scanned and dispatched once however many browsers are open; renames
+and moves made through the service are logged (`recentItemMoves`) so every
+browser carries its folder and selection along. Favourites are shared; only the
+`AssetBrowserRole::Primary` browser remembers its folder and view mode.
 All file-system knowledge stays behind `project/AssetCatalog` (asset records
 plus every folder, empty ones included). The catalog owns one `AssetDatabase`
 per root (a scene root inside the asset root shares the asset root's) and a
 `FileWatcher` per root: `poll()` rescans only the roots whose watcher saw a
 change, and reports added, modified, removed, and moved assets plus every
 moved or removed file. Roots that cannot be watched fall back to a rescan once
-a second. The browser acts on the changes: modified models are reloaded
+a second. `ProjectAssets` acts on the changes: modified models are reloaded
 through `AssetManager::reloadModel` with a diagnostic, modified textures get
 fresh thumbnails and an informational note (there is no texture reload API
 yet), and moves and removals go to `EditorSessionActions::projectFilesMoved`

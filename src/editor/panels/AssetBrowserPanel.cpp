@@ -3,7 +3,6 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/project/ProjectFileOperations.hpp"
-#include "engine/assets/Assets.hpp"
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
@@ -11,15 +10,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
-#include <iterator>
 #include <utility>
 
 namespace {
-constexpr float refreshIntervalSeconds = 1.0f;
 constexpr float folderPaneWidth = 200.0f;
 constexpr float gridTileWidth = 96.0f;
 constexpr float gridTileHeight = 72.0f;
-constexpr const char* diagnosticSource = "Asset Browser";
 constexpr const char* modelPayloadType = "ZENITH_MODEL_ASSET";
 // Any other file or folder dragged within the browser, to move it.
 constexpr const char* itemPayloadType = "ZENITH_PROJECT_ITEM";
@@ -103,118 +99,67 @@ std::string fitText(const std::string& text, float width) {
 }
 } // namespace
 
-AssetBrowserPanel::AssetBrowserPanel(std::filesystem::path assetRoot, std::filesystem::path sceneRoot,
-                                     std::filesystem::path settingsFile, AssetCatalogOptions catalogOptions)
-    : m_catalog(std::move(assetRoot), std::move(sceneRoot), std::move(catalogOptions))
-    , m_settingsPath(std::move(settingsFile)) {
-    if (const AssetBrowserSettingsResult loaded = loadAssetBrowserSettings(m_settingsPath, m_settings); !loaded) {
-        m_pendingSettingsError = loaded.error;
-    }
-    m_currentFolder =
-        m_settings.lastFolder.empty() ? m_catalog.roots().front() : resolveFolderKey(m_settings.lastFolder);
+AssetBrowserPanel::AssetBrowserPanel(ProjectAssets& project, AssetBrowserRole role)
+    : m_project(project)
+    , m_role(role)
+    , m_viewMode(project.settings().viewMode)
+    , m_followedItemMove(project.latestItemMoveSequence()) {
+    const std::string& lastFolder = project.settings().lastFolder;
+    m_currentFolder = lastFolder.empty() ? project.catalog().roots().front() : project.resolveFolderKey(lastFolder);
+    keepStateValid();
 }
 
 const char* AssetBrowserPanel::title() const {
     return "Asset Browser";
 }
 
-void AssetBrowserPanel::update(EditorContext& context, const InputState&, float deltaSeconds) {
-    reportPendingSettingsError(context.diagnostics);
-    pollChanges(context.diagnostics, sessionActions(context), deltaSeconds);
-}
-
-void AssetBrowserPanel::pollChanges(EditorDiagnostics& diagnostics, const AssetBrowserActions& actions,
-                                    float deltaSeconds) {
-    m_refreshElapsed += deltaSeconds;
-    if (!m_scanAttempted) {
-        // The first call scans at once and starts the watchers on the next.
-        m_scanAttempted = true;
-        m_refreshElapsed = 0.0f;
-        refresh(diagnostics);
-    } else if (m_catalog.watching() || m_refreshElapsed < refreshIntervalSeconds) {
-        // poll() also starts watchers for roots that have appeared.
-        if (AssetCatalogResult result = m_catalog.poll(); !result.changes.empty() || !result.movedFiles.empty() ||
-                                                          !result.removedFiles.empty() || !result.warnings.empty() ||
-                                                          !result) {
-            absorb(std::move(result), diagnostics);
-        }
-    } else {
-        // Without a watcher, rescans wait for the interval, including after
-        // a failed scan.
-        m_refreshElapsed = 0.0f;
-        refresh(diagnostics);
-    }
-    dispatchChanges(diagnostics, actions);
+void AssetBrowserPanel::update(EditorContext&, const InputState&, float) {
+    // The session polls and dispatches project changes; views only follow.
+    syncWithProject();
 }
 
 void AssetBrowserPanel::refresh(EditorDiagnostics& diagnostics) {
-    rescan(diagnostics);
+    m_project.refresh(diagnostics);
+    syncWithProject();
 }
 
-void AssetBrowserPanel::rescan(EditorDiagnostics& diagnostics) {
-    absorb(m_catalog.refresh(), diagnostics);
-}
-
-void AssetBrowserPanel::absorb(AssetCatalogResult result, EditorDiagnostics& diagnostics) {
-    for (std::string& warning : result.warnings) {
-        diagnostics.add(EditorDiagnosticSeverity::Warning, diagnosticSource, std::move(warning));
-    }
-    if (!result) {
-        diagnostics.reportError(result.error);
-        return;
-    }
-    for (const AssetCatalogChange& change : result.changes) {
-        // Thumbnails are keyed by path.
-        if (change.asset.kind == EditorAssetKind::Texture) {
-            m_thumbnails.invalidate(change.asset.absolutePath);
-            if (!change.previousPath.empty()) {
-                m_thumbnails.invalidate(change.previousPath);
-            }
-        }
-    }
-    // The first scan lists the project; only later changes are acted on.
-    if (m_initialized) {
-        std::ranges::move(result.changes, std::back_inserter(m_pending.changes));
-        std::ranges::move(result.movedFiles, std::back_inserter(m_pending.movedFiles));
-        std::ranges::move(result.removedFiles, std::back_inserter(m_pending.removedFiles));
-    }
-    m_initialized = true;
+void AssetBrowserPanel::syncWithProject() {
+    followItemMoves();
     keepStateValid();
 }
 
-void AssetBrowserPanel::dispatchChanges(EditorDiagnostics& diagnostics, const AssetBrowserActions& actions) {
-    AssetCatalogResult pending = std::exchange(m_pending, AssetCatalogResult{.success = true});
-    if (!pending.movedFiles.empty() && actions.filesMoved) {
-        actions.filesMoved(pending.movedFiles);
-    }
-    if (!pending.removedFiles.empty() && actions.filesRemoved) {
-        actions.filesRemoved(pending.removedFiles);
-    }
-    for (const AssetCatalogChange& change : pending.changes) {
-        if (change.kind != AssetCatalogChangeKind::Modified) {
+// Carries the current folder and selection along renames and moves made
+// through the service, by this browser or another.
+void AssetBrowserPanel::followItemMoves() {
+    for (const ProjectItemMove& move : m_project.recentItemMoves()) {
+        if (move.sequence <= m_followedItemMove) {
             continue;
         }
-        const std::string name = utf8PathText(change.asset.absolutePath.filename());
-        if (change.asset.kind == EditorAssetKind::Model && actions.reloadModel) {
-            actions.reloadModel(change.asset.absolutePath);
-        } else if (change.asset.kind == EditorAssetKind::Texture) {
-            // AssetManager has no texture reload; textures load fresh when a
-            // scene using them is opened again.
-            diagnostics.add(EditorDiagnosticSeverity::Info, diagnosticSource,
-                            "Texture '" + name + "' changed on disk. Reopen scenes that use it to see the change.");
+        if (isWithin(m_currentFolder, move.source)) {
+            m_currentFolder = rebase(m_currentFolder, move.source, move.destination);
+            m_revealCurrentInTree = true;
+        }
+        if (!m_selected.empty() && isWithin(m_selected, move.source)) {
+            m_selected = rebase(m_selected, move.source, move.destination);
         }
     }
+    m_followedItemMove = m_project.latestItemMoveSequence();
 }
 
-// After a rescan, the current folder falls back to its nearest surviving
-// ancestor and a vanished selection is cleared.
+// The current folder falls back to its nearest surviving ancestor and a
+// vanished selection is cleared. Before the first scan there is nothing to
+// check against, so the state is left alone.
 void AssetBrowserPanel::keepStateValid() {
+    const AssetCatalog& catalog = m_project.catalog();
+    if (!m_project.scanned()) {
+        return;
+    }
     std::filesystem::path folder = m_currentFolder;
-    while (!m_catalog.findFolder(folder)) {
+    while (!catalog.findFolder(folder)) {
         const bool insideRoot = std::ranges::any_of(
-            m_catalog.roots(), [&folder](const std::filesystem::path& root) { return isWithin(folder, root); });
+            catalog.roots(), [&folder](const std::filesystem::path& root) { return isWithin(folder, root); });
         if (!insideRoot || !folder.has_relative_path() || folder == folder.parent_path()) {
-            folder = m_catalog.folders().empty() ? m_catalog.roots().front() : m_catalog.folders().front().absolutePath;
+            folder = catalog.folders().empty() ? catalog.roots().front() : catalog.folders().front().absolutePath;
             break;
         }
         folder = folder.parent_path();
@@ -223,39 +168,22 @@ void AssetBrowserPanel::keepStateValid() {
         m_currentFolder = std::move(folder);
         m_revealCurrentInTree = true;
     }
-    if (!m_selected.empty() && !m_catalog.findAsset(m_selected) && !m_catalog.findFolder(m_selected)) {
+    if (!m_selected.empty() && !catalog.findAsset(m_selected) && !catalog.findFolder(m_selected)) {
         m_selected.clear();
     }
 }
 
-void AssetBrowserPanel::reportOutcome(EditorDiagnostics& diagnostics, bool success, const std::string& message) {
-    if (success) {
-        diagnostics.add(EditorDiagnosticSeverity::Info, diagnosticSource, message);
-    } else {
-        diagnostics.reportError(message);
+void AssetBrowserPanel::select(const std::optional<std::filesystem::path>& produced) {
+    syncWithProject();
+    if (produced) {
+        m_selected = *produced;
     }
 }
 
-void AssetBrowserPanel::saveSettings(EditorDiagnostics& diagnostics) {
-    if (const AssetBrowserSettingsResult saved = saveAssetBrowserSettings(m_settingsPath, m_settings); !saved) {
-        diagnostics.reportError(saved.error);
+void AssetBrowserPanel::rememberView(EditorDiagnostics& diagnostics) {
+    if (m_role == AssetBrowserRole::Primary) {
+        m_project.rememberView(m_currentFolder, m_viewMode, diagnostics);
     }
-}
-
-void AssetBrowserPanel::reportPendingSettingsError(EditorDiagnostics& diagnostics) {
-    if (!m_pendingSettingsError.empty()) {
-        diagnostics.add(EditorDiagnosticSeverity::Warning, diagnosticSource, std::move(m_pendingSettingsError));
-        m_pendingSettingsError.clear();
-    }
-}
-
-std::string AssetBrowserPanel::folderKey(const std::filesystem::path& folder) const {
-    const std::filesystem::path relative = folder.lexically_relative(m_catalog.roots().front());
-    return genericUtf8(relative.empty() ? folder : relative);
-}
-
-std::filesystem::path AssetBrowserPanel::resolveFolderKey(const std::string& key) const {
-    return normalizedCatalogPath(m_catalog.roots().front() / pathFromUtf8Text(key));
 }
 
 std::string AssetBrowserPanel::rootLabel(const std::filesystem::path& root) const {
@@ -264,15 +192,15 @@ std::string AssetBrowserPanel::rootLabel(const std::filesystem::path& root) cons
 }
 
 bool AssetBrowserPanel::isRoot(const std::filesystem::path& path) const {
-    return std::ranges::find(m_catalog.roots(), path) != m_catalog.roots().end();
+    return m_project.isRoot(path);
 }
 
 const AssetCatalog& AssetBrowserPanel::catalog() const {
-    return m_catalog;
+    return m_project.catalog();
 }
 
-std::shared_ptr<const AssetDatabase> AssetBrowserPanel::assetDatabase() const {
-    return m_catalog.assetDatabase();
+AssetBrowserRole AssetBrowserPanel::role() const {
+    return m_role;
 }
 
 const std::filesystem::path& AssetBrowserPanel::currentFolder() const {
@@ -281,42 +209,32 @@ const std::filesystem::path& AssetBrowserPanel::currentFolder() const {
 
 void AssetBrowserPanel::navigateTo(const std::filesystem::path& folder, EditorDiagnostics& diagnostics) {
     const std::filesystem::path normalized = normalizedCatalogPath(folder);
-    if (!m_catalog.findFolder(normalized)) {
+    if (!m_project.catalog().findFolder(normalized)) {
         diagnostics.reportError("Cannot open folder '" + utf8PathText(normalized) + "': it is not a project folder.");
         return;
     }
     m_currentFolder = normalized;
     m_revealCurrentInTree = true;
-    if (const std::string key = folderKey(normalized); key != m_settings.lastFolder) {
-        m_settings.lastFolder = key;
-        saveSettings(diagnostics);
-    }
+    rememberView(diagnostics);
 }
 
 AssetBrowserViewMode AssetBrowserPanel::viewMode() const {
-    return m_settings.viewMode;
+    return m_viewMode;
 }
 
 void AssetBrowserPanel::setViewMode(AssetBrowserViewMode mode, EditorDiagnostics& diagnostics) {
-    if (m_settings.viewMode != mode) {
-        m_settings.viewMode = mode;
-        saveSettings(diagnostics);
+    if (m_viewMode != mode) {
+        m_viewMode = mode;
+        rememberView(diagnostics);
     }
 }
 
 bool AssetBrowserPanel::isFavourite(const std::filesystem::path& folder) const {
-    return std::ranges::find(m_settings.favourites, folderKey(normalizedCatalogPath(folder))) !=
-           m_settings.favourites.end();
+    return m_project.isFavourite(folder);
 }
 
 void AssetBrowserPanel::toggleFavourite(const std::filesystem::path& folder, EditorDiagnostics& diagnostics) {
-    const std::string key = folderKey(normalizedCatalogPath(folder));
-    if (const auto found = std::ranges::find(m_settings.favourites, key); found != m_settings.favourites.end()) {
-        m_settings.favourites.erase(found);
-    } else {
-        m_settings.favourites.push_back(key);
-    }
-    saveSettings(diagnostics);
+    m_project.toggleFavourite(folder, diagnostics);
 }
 
 const std::filesystem::path& AssetBrowserPanel::selectedPath() const {
@@ -332,162 +250,34 @@ void AssetBrowserPanel::setKindShown(EditorAssetKind kind, bool shown) {
 }
 
 void AssetBrowserPanel::createFolder(EditorDiagnostics& diagnostics) {
-    const ProjectFileResult result = createProjectFolder(m_currentFolder);
-    reportOutcome(diagnostics, result.success,
-                  result ? "Created folder '" + utf8PathText(result.path) + "'." : result.error);
-    if (result) {
-        rescan(diagnostics);
-        m_selected = normalizedCatalogPath(result.path);
-    }
+    select(m_project.createFolder(m_currentFolder, diagnostics));
 }
 
 void AssetBrowserPanel::createScene(EditorDiagnostics& diagnostics) {
-    const ProjectFileResult result = createProjectScene(m_currentFolder, m_catalog.roots().front());
-    reportOutcome(diagnostics, result.success,
-                  result ? "Created scene '" + utf8PathText(result.path) + "'." : result.error);
-    if (result) {
-        rescan(diagnostics);
-        m_selected = normalizedCatalogPath(result.path);
-    }
+    select(m_project.createScene(m_currentFolder, diagnostics));
 }
 
 void AssetBrowserPanel::renameItem(const std::filesystem::path& item, const std::string& utf8NewName,
                                    EditorDiagnostics& diagnostics) {
-    const std::filesystem::path source = normalizedCatalogPath(item);
-    if (isRoot(source)) {
-        diagnostics.reportError("Project roots cannot be renamed from the asset browser.");
-        return;
-    }
-    AssetDatabase* database = m_catalog.databaseFor(source);
-    ProjectFileResult result = renameProjectItem(source, utf8NewName, database);
-    if (!result) {
-        diagnostics.reportError(result.error);
-        return;
-    }
-    const std::filesystem::path destination = normalizedCatalogPath(result.path);
-    if (destination == source) {
-        return;
-    }
-    reportOutcome(diagnostics, true,
-                  "Renamed '" + utf8PathText(source) + "' to '" + utf8PathText(destination.filename()) + "'.");
-    AssetCatalogResult applied =
-        database != nullptr ? m_catalog.applyDatabaseChanges(*database, result.assetChanges, std::move(result.warnings))
-                            : AssetCatalogResult{.success = true};
-    // The browser's state follows first, so it is not reset to a parent of
-    // the vanished source before it can move along.
-    followMovedItem(source, destination, diagnostics);
-    absorb(std::move(applied), diagnostics);
-    rescan(diagnostics);
+    select(m_project.renameItem(item, utf8NewName, diagnostics));
 }
 
 void AssetBrowserPanel::moveItem(const std::filesystem::path& item, const std::filesystem::path& folder,
                                  EditorDiagnostics& diagnostics) {
-    const std::filesystem::path source = normalizedCatalogPath(item);
-    const std::filesystem::path target = normalizedCatalogPath(folder);
-    if (isRoot(source)) {
-        diagnostics.reportError("Project roots cannot be moved from the asset browser.");
-        return;
-    }
-    AssetDatabase* database = m_catalog.databaseFor(source);
-    if (database != m_catalog.databaseFor(target)) {
-        diagnostics.reportError("Cannot move '" + utf8PathText(source) +
-                                "': items cannot move between the asset and scene roots.");
-        return;
-    }
-    ProjectFileResult result = moveProjectItem(source, target, database);
-    if (!result) {
-        diagnostics.reportError(result.error);
-        return;
-    }
-    const std::filesystem::path destination = normalizedCatalogPath(result.path);
-    if (destination == source) {
-        return;
-    }
-    reportOutcome(diagnostics, true, "Moved '" + utf8PathText(source) + "' to '" + utf8PathText(target) + "'.");
-    AssetCatalogResult applied =
-        database != nullptr ? m_catalog.applyDatabaseChanges(*database, result.assetChanges, std::move(result.warnings))
-                            : AssetCatalogResult{.success = true};
-    // The browser's state follows first, so it is not reset to a parent of
-    // the vanished source before it can move along.
-    followMovedItem(source, destination, diagnostics);
-    absorb(std::move(applied), diagnostics);
-    rescan(diagnostics);
-}
-
-// Carries the browser's own state (thumbnails, favourites, the current folder,
-// and the selection) from a renamed or moved item to its new path.
-void AssetBrowserPanel::followMovedItem(const std::filesystem::path& source, const std::filesystem::path& destination,
-                                        EditorDiagnostics& diagnostics) {
-    // Thumbnails are keyed by path; the old entry would otherwise linger.
-    m_thumbnails.invalidate(source);
-    bool settingsChanged = false;
-    for (std::string& favourite : m_settings.favourites) {
-        if (const std::filesystem::path folder = resolveFolderKey(favourite); isWithin(folder, source)) {
-            favourite = folderKey(rebase(folder, source, destination));
-            settingsChanged = true;
-        }
-    }
-    if (isWithin(m_currentFolder, source)) {
-        m_currentFolder = rebase(m_currentFolder, source, destination);
-        m_settings.lastFolder = folderKey(m_currentFolder);
-        settingsChanged = true;
-    }
-    if (settingsChanged) {
-        saveSettings(diagnostics);
-    }
-    m_selected = destination;
+    select(m_project.moveItem(item, folder, diagnostics));
 }
 
 void AssetBrowserPanel::duplicateItem(const std::filesystem::path& item, EditorDiagnostics& diagnostics) {
-    const std::filesystem::path source = normalizedCatalogPath(item);
-    if (isRoot(source)) {
-        diagnostics.reportError("Project roots cannot be duplicated from the asset browser.");
-        return;
-    }
-    const ProjectFileResult result = duplicateProjectItem(source);
-    reportOutcome(diagnostics, result.success,
-                  result
-                      ? "Duplicated '" + utf8PathText(source) + "' as '" + utf8PathText(result.path.filename()) + "'."
-                      : result.error);
-    for (const std::string& warning : result.warnings) {
-        diagnostics.add(EditorDiagnosticSeverity::Warning, diagnosticSource, warning);
-    }
-    if (result) {
-        rescan(diagnostics);
-        m_selected = normalizedCatalogPath(result.path);
-    }
+    select(m_project.duplicateItem(item, diagnostics));
 }
 
 void AssetBrowserPanel::moveItemToTrash(const std::filesystem::path& item, EditorDiagnostics& diagnostics) {
-    const std::filesystem::path target = normalizedCatalogPath(item);
-    if (isRoot(target)) {
-        diagnostics.reportError("Project roots cannot be deleted from the asset browser.");
-        return;
-    }
-    AssetDatabase* database = m_catalog.databaseFor(target);
-    ProjectFileResult result = moveProjectItemToTrash(target, database);
-    reportOutcome(diagnostics, result.success,
-                  result ? "Moved '" + utf8PathText(target) + "' to the trash." : result.error);
-    if (!result) {
-        return;
-    }
-    if (database != nullptr) {
-        absorb(m_catalog.applyDatabaseChanges(*database, result.assetChanges, std::move(result.warnings)), diagnostics);
-    }
-    m_thumbnails.invalidate(target);
-    const auto removed = std::erase_if(m_settings.favourites, [this, &target](const std::string& favourite) {
-        return isWithin(resolveFolderKey(favourite), target);
-    });
-    if (removed > 0) {
-        saveSettings(diagnostics);
-    }
-    rescan(diagnostics);
+    m_project.moveItemToTrash(item, diagnostics);
+    syncWithProject();
 }
 
 void AssetBrowserPanel::revealItem(const std::filesystem::path& item, EditorDiagnostics& diagnostics) {
-    if (const ProjectFileResult result = revealInFileBrowser(item); !result) {
-        diagnostics.reportError(result.error);
-    }
+    m_project.revealItem(item, diagnostics);
 }
 
 AssetBrowserActions AssetBrowserPanel::sessionActions(EditorContext& context) {
@@ -496,24 +286,7 @@ AssetBrowserActions AssetBrowserPanel::sessionActions(EditorContext& context) {
             [&context](const std::filesystem::path& path) { context.actions.requestOpenScene(context.app, path); },
         .reloadModel =
             [&context](const std::filesystem::path& path) {
-                const std::string name = utf8PathText(path.filename());
-                const AssetLoadResult<ModelHandle> result = context.app.assets.reloadModel(path);
-                if (!result) {
-                    context.diagnostics.reportError("Model reload of '" + name + "' failed: " + result.error);
-                    return;
-                }
-                context.diagnostics.add(EditorDiagnosticSeverity::Info, diagnosticSource,
-                                        "Reloaded model '" + name +
-                                            "'. Existing instances keep their previous resources; new placements "
-                                            "and reopened scenes use the refreshed model.");
-            },
-        .filesMoved =
-            [&context](std::span<const ProjectFileMove> moves) {
-                context.actions.projectFilesMoved(context.app, moves);
-            },
-        .filesRemoved =
-            [&context](std::span<const std::filesystem::path> removed) {
-                context.actions.projectFilesRemoved(context.app, removed);
+                reloadProjectModel(context.app.assets, context.diagnostics, path);
             },
     };
 }
@@ -523,7 +296,8 @@ void AssetBrowserPanel::draw(EditorContext& context) {
 }
 
 void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetBrowserActions& actions) {
-    reportPendingSettingsError(diagnostics);
+    m_project.reportPendingSettingsError(diagnostics);
+    syncWithProject();
     if (ImGui::Button("Refresh")) {
         refresh(diagnostics);
     }
@@ -553,7 +327,6 @@ void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetB
     drawSelectedAsset(actions);
     runDeferredCommand(diagnostics);
     drawModals(diagnostics);
-    dispatchChanges(diagnostics, actions);
 }
 
 void AssetBrowserPanel::drawToolbar(EditorDiagnostics& diagnostics) {
@@ -565,11 +338,11 @@ void AssetBrowserPanel::drawToolbar(EditorDiagnostics& diagnostics) {
         ImGui::EndPopup();
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton("Grid", m_settings.viewMode == AssetBrowserViewMode::Grid)) {
+    if (ImGui::RadioButton("Grid", m_viewMode == AssetBrowserViewMode::Grid)) {
         setViewMode(AssetBrowserViewMode::Grid, diagnostics);
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton("List", m_settings.viewMode == AssetBrowserViewMode::List)) {
+    if (ImGui::RadioButton("List", m_viewMode == AssetBrowserViewMode::List)) {
         setViewMode(AssetBrowserViewMode::List, diagnostics);
     }
     ImGui::SameLine();
@@ -588,10 +361,10 @@ void AssetBrowserPanel::drawToolbar(EditorDiagnostics& diagnostics) {
 }
 
 void AssetBrowserPanel::drawBreadcrumbs() {
-    const auto root = std::ranges::find_if(m_catalog.roots(), [this](const std::filesystem::path& candidate) {
+    const auto root = std::ranges::find_if(m_project.catalog().roots(), [this](const std::filesystem::path& candidate) {
         return isWithin(m_currentFolder, candidate);
     });
-    if (root == m_catalog.roots().end()) {
+    if (root == m_project.catalog().roots().end()) {
         ImGui::TextDisabled("%s", utf8PathText(m_currentFolder).c_str());
         return;
     }
@@ -624,13 +397,13 @@ void AssetBrowserPanel::drawBreadcrumbs() {
 
 void AssetBrowserPanel::drawFolderPane() {
     if (ImGui::CollapsingHeader("Favourites", ImGuiTreeNodeFlags_DefaultOpen)) {
-        if (m_settings.favourites.empty()) {
+        if (m_project.settings().favourites.empty()) {
             ImGui::TextDisabled("Right-click a folder to add it.");
         }
-        for (size_t index = 0; index < m_settings.favourites.size(); ++index) {
-            const std::string& key = m_settings.favourites[index];
-            const std::filesystem::path folder = resolveFolderKey(key);
-            const bool exists = m_catalog.findFolder(folder) != nullptr;
+        for (size_t index = 0; index < m_project.settings().favourites.size(); ++index) {
+            const std::string& key = m_project.settings().favourites[index];
+            const std::filesystem::path folder = m_project.resolveFolderKey(key);
+            const bool exists = m_project.catalog().findFolder(folder) != nullptr;
             std::string label = isRoot(folder) ? rootLabel(folder) : utf8PathText(folder.filename());
             if (!exists) {
                 label += " (missing)";
@@ -652,8 +425,8 @@ void AssetBrowserPanel::drawFolderPane() {
         }
     }
     if (ImGui::CollapsingHeader("Folders", ImGuiTreeNodeFlags_DefaultOpen)) {
-        for (const std::filesystem::path& root : m_catalog.roots()) {
-            if (const EditorAssetFolder* folder = m_catalog.findFolder(root)) {
+        for (const std::filesystem::path& root : m_project.catalog().roots()) {
+            if (const EditorAssetFolder* folder = m_project.catalog().findFolder(root)) {
                 drawFolderNode(*folder, rootLabel(root));
             } else {
                 ImGui::TextDisabled("%s (missing)", rootLabel(root).c_str());
@@ -664,7 +437,7 @@ void AssetBrowserPanel::drawFolderPane() {
 }
 
 void AssetBrowserPanel::drawFolderNode(const EditorAssetFolder& folder, const std::string& label) {
-    const std::vector<const EditorAssetFolder*> children = m_catalog.subfolders(folder.absolutePath);
+    const std::vector<const EditorAssetFolder*> children = m_project.catalog().subfolders(folder.absolutePath);
     ImGuiTreeNodeFlags flags =
         ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth;
     if (children.empty()) {
@@ -706,10 +479,10 @@ std::vector<AssetBrowserPanel::BrowserEntry> AssetBrowserPanel::visibleEntries()
     const auto shown = [this](const EditorAssetRecord& asset) { return m_shownKinds[static_cast<size_t>(asset.kind)]; };
     std::vector<BrowserEntry> entries;
     if (search.empty()) {
-        for (const EditorAssetFolder* folder : m_catalog.subfolders(m_currentFolder)) {
+        for (const EditorAssetFolder* folder : m_project.catalog().subfolders(m_currentFolder)) {
             entries.push_back({folder->absolutePath, utf8PathText(folder->absolutePath.filename()), nullptr});
         }
-        for (const EditorAssetRecord* asset : m_catalog.assetsInFolder(m_currentFolder)) {
+        for (const EditorAssetRecord* asset : m_project.catalog().assetsInFolder(m_currentFolder)) {
             if (shown(*asset)) {
                 entries.push_back({asset->absolutePath, utf8PathText(asset->absolutePath.filename()), asset});
             }
@@ -718,14 +491,14 @@ std::vector<AssetBrowserPanel::BrowserEntry> AssetBrowserPanel::visibleEntries()
     }
     // Searching covers the current folder and everything below it; labels show
     // where each match lives.
-    for (const EditorAssetFolder& folder : m_catalog.folders()) {
+    for (const EditorAssetFolder& folder : m_project.catalog().folders()) {
         if (folder.absolutePath != m_currentFolder && isWithin(folder.absolutePath, m_currentFolder) &&
             matches(folder.absolutePath)) {
             entries.push_back(
                 {folder.absolutePath, genericUtf8(folder.absolutePath.lexically_relative(m_currentFolder)), nullptr});
         }
     }
-    for (const EditorAssetRecord& asset : m_catalog.assets()) {
+    for (const EditorAssetRecord& asset : m_project.catalog().assets()) {
         if (isWithin(asset.absolutePath, m_currentFolder) && shown(asset) && matches(asset.absolutePath)) {
             entries.push_back(
                 {asset.absolutePath, genericUtf8(asset.absolutePath.lexically_relative(m_currentFolder)), &asset});
@@ -738,7 +511,7 @@ void AssetBrowserPanel::drawContents(const AssetBrowserActions& actions) {
     const std::vector<BrowserEntry> entries = visibleEntries();
     if (entries.empty()) {
         ImGui::TextDisabled("%s", m_search.empty() ? "This folder is empty." : "No matching assets.");
-    } else if (m_settings.viewMode == AssetBrowserViewMode::Grid) {
+    } else if (m_viewMode == AssetBrowserViewMode::Grid) {
         drawGrid(entries, actions);
     } else {
         drawList(entries, actions);
@@ -929,7 +702,7 @@ void AssetBrowserPanel::drawSelectedAsset(const AssetBrowserActions& actions) {
     }
     ImGui::Separator();
     ImGui::TextWrapped("%s", utf8PathText(m_selected).c_str());
-    const EditorAssetRecord* asset = m_catalog.findAsset(m_selected);
+    const EditorAssetRecord* asset = m_project.catalog().findAsset(m_selected);
     if (asset != nullptr && asset->kind == EditorAssetKind::Model && actions.reloadModel &&
         ImGui::Button("Reload Model")) {
         actions.reloadModel(asset->absolutePath);
@@ -950,7 +723,7 @@ void AssetBrowserPanel::runDeferredCommand(EditorDiagnostics& diagnostics) {
         const std::filesystem::path previousSelection = m_selected;
         createFolder(diagnostics);
         // A new folder starts in rename, as in most file browsers.
-        if (m_selected != previousSelection && m_catalog.findFolder(m_selected)) {
+        if (m_selected != previousSelection && m_project.catalog().findFolder(m_selected)) {
             beginRename(m_selected);
         }
         break;
@@ -982,7 +755,7 @@ void AssetBrowserPanel::runDeferredCommand(EditorDiagnostics& diagnostics) {
 }
 
 void AssetBrowserPanel::beginRename(const std::filesystem::path& item) {
-    const EditorAssetFolder* folder = m_catalog.findFolder(item);
+    const EditorAssetFolder* folder = m_project.catalog().findFolder(item);
     m_openModal = OpenModal::Rename;
     m_modalNeedsOpening = true;
     m_modalTarget = item;
@@ -1005,7 +778,7 @@ void AssetBrowserPanel::drawModals(EditorDiagnostics& diagnostics) {
         }
         ImGui::SetNextItemWidth(320.0f);
         const bool submitted = ImGui::InputText("##NewName", &m_renameText, ImGuiInputTextFlags_EnterReturnsTrue);
-        if (!m_catalog.findFolder(m_modalTarget) && !m_modalTarget.extension().empty()) {
+        if (!m_project.catalog().findFolder(m_modalTarget) && !m_modalTarget.extension().empty()) {
             ImGui::TextDisabled("The %s extension is kept.", utf8PathText(m_modalTarget.extension()).c_str());
         }
         if (submitted || ImGui::Button("Rename")) {
@@ -1043,8 +816,8 @@ std::string AssetBrowserPanel::textureDetail(const EditorAssetRecord& asset) {
     if (asset.kind != EditorAssetKind::Texture) {
         return {};
     }
-    m_thumbnails.request(asset.absolutePath);
-    const std::optional<CachedThumbnail> thumbnail = m_thumbnails.find(asset.absolutePath);
+    m_project.thumbnails().request(asset.absolutePath);
+    const std::optional<CachedThumbnail> thumbnail = m_project.thumbnails().find(asset.absolutePath);
     if (!thumbnail || thumbnail->state != ThumbnailState::Ready) {
         return {};
     }

@@ -26,6 +26,7 @@
 #include "editor/panels/InspectorPanel.hpp"
 #include "editor/panels/RenderStatisticsPanel.hpp"
 #include "editor/panels/ViewportPanel.hpp"
+#include "editor/project/ProjectAssets.hpp"
 #include "editor/settings/EditorRenderSettings.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "engine/application/Application.hpp"
@@ -127,6 +128,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void drawModulePanels(ApplicationContext& context);
 
     SceneResult prepareSmokeScenario(ApplicationContext& context);
+    // What the editor does when project files change; dispatched by m_projectAssets.
+    ProjectAssetActions projectAssetActions(ApplicationContext& context);
     void updateSmokeScenario(ApplicationContext& context);
     void updateSmokeModuleReload(ApplicationContext& context);
     void releaseSmokeLayers();
@@ -198,6 +201,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     KeymapEditor m_keymapEditor;
     LastOperatorPanel m_lastOperatorPanel;
     bool m_showKeymapEditor{false};
+    // The project's asset service, shared by every asset browser; declared
+    // before the panels that reference it.
+    ProjectAssets m_projectAssets;
 
     ViewportPanel m_viewport;
     HierarchyPanel m_hierarchy;

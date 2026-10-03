@@ -1,6 +1,7 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/panels/AssetBrowserPanel.hpp"
 #include "editor/project/AssetCatalog.hpp"
+#include "editor/project/ProjectAssets.hpp"
 #include "editor/project/ProjectFileOperations.hpp"
 #include "editor/settings/AssetBrowserSettings.hpp"
 #include "engine/scene/SceneDocument.hpp"
@@ -13,7 +14,9 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <span>
 #include <string>
+#include <vector>
 
 namespace {
 int failures = 0;
@@ -243,7 +246,8 @@ void testPanel(const std::filesystem::path& content, const std::filesystem::path
                                       .reloadModel = {}};
     {
         EditorDiagnostics diagnostics;
-        AssetBrowserPanel panel(content, scenes, settingsFile);
+        ProjectAssets project(content, scenes, settingsFile);
+        AssetBrowserPanel panel(project);
         panel.refresh(diagnostics);
         expect(panel.currentFolder() == normalizedCatalogPath(content), "the browser should start at the asset root");
         imgui.frame([&] { panel.drawBrowser(diagnostics, actions); });
@@ -285,7 +289,8 @@ void testPanel(const std::filesystem::path& content, const std::filesystem::path
     {
         // A fresh panel restores the view mode, favourites, and last folder.
         EditorDiagnostics diagnostics;
-        AssetBrowserPanel panel(content, scenes, settingsFile);
+        ProjectAssets project(content, scenes, settingsFile);
+        AssetBrowserPanel panel(project);
         panel.refresh(diagnostics);
         expect(panel.viewMode() == AssetBrowserViewMode::List, "the view mode should persist");
         expect(panel.isFavourite(surfaces) && panel.isFavourite(scenes), "favourites should persist");
@@ -297,7 +302,8 @@ void testPanel(const std::filesystem::path& content, const std::filesystem::path
         // Corrupt settings fall back to the defaults with a warning.
         writeFile(settingsFile, "{ corrupt");
         EditorDiagnostics diagnostics;
-        AssetBrowserPanel panel(content, scenes, settingsFile);
+        ProjectAssets project(content, scenes, settingsFile);
+        AssetBrowserPanel panel(project);
         panel.refresh(diagnostics);
         imgui.frame([&] { panel.drawBrowser(diagnostics, actions); });
         expect(panel.viewMode() == AssetBrowserViewMode::Grid && !panel.isFavourite(surfaces) &&
@@ -311,10 +317,131 @@ void testPanel(const std::filesystem::path& content, const std::filesystem::path
         AssetBrowserSettings settings{.lastFolder = "surfaces/gone/deeper"};
         saveAssetBrowserSettings(settingsFile, settings);
         EditorDiagnostics diagnostics;
-        AssetBrowserPanel panel(content, scenes, settingsFile);
+        ProjectAssets project(content, scenes, settingsFile);
+        AssetBrowserPanel panel(project);
         panel.refresh(diagnostics);
         expect(panel.currentFolder() == surfaces, "a missing last folder should fall back to its nearest ancestor");
     }
+}
+
+// Two browsers over one ProjectAssets: each keeps its own view, favourites are
+// shared, only the primary remembers its view, both follow each other's
+// renames, and a change on disk is dispatched exactly once.
+void testSharedProject(const std::filesystem::path& directory) {
+    const std::filesystem::path content = directory / "content";
+    const std::filesystem::path scenes = directory / "scenes";
+    const std::filesystem::path settingsFile = directory / "settings" / "asset-browser.json";
+    std::filesystem::create_directories(content / "models");
+    std::filesystem::create_directories(content / "materials");
+    std::filesystem::create_directories(content / "textures");
+    std::filesystem::create_directories(scenes);
+    writeFile(content / "models" / "cube.gltf", "{}");
+    writeFile(content / "materials" / "albedo.png", "png");
+    writeFile(content / "textures" / "noise.png", "png");
+    const std::filesystem::path models = normalizedCatalogPath(content / "models");
+    const std::filesystem::path materials = normalizedCatalogPath(content / "materials");
+    const std::filesystem::path surfaces = normalizedCatalogPath(content / "surfaces");
+    const std::filesystem::path textures = normalizedCatalogPath(content / "textures");
+
+    int reloads = 0;
+    int moveDispatches = 0;
+    int removalDispatches = 0;
+    std::vector<ProjectFileMove> moves;
+    const ProjectAssetActions projectActions{
+        .reloadModel = [&reloads](const std::filesystem::path&) { ++reloads; },
+        .filesMoved =
+            [&](std::span<const ProjectFileMove> moved) {
+                ++moveDispatches;
+                moves.insert(moves.end(), moved.begin(), moved.end());
+            },
+        .filesRemoved = [&removalDispatches](std::span<const std::filesystem::path>) { ++removalDispatches; },
+    };
+    int panelReloads = 0;
+    const AssetBrowserActions browserActions{
+        .openScene = {}, .reloadModel = [&panelReloads](const std::filesystem::path&) { ++panelReloads; }};
+
+    HeadlessImGui imgui;
+    EditorDiagnostics diagnostics;
+    // Without watchers, so rescans happen exactly when the test advances time.
+    ProjectAssets project(content, scenes, settingsFile, AssetCatalogOptions{.watchFiles = false});
+    AssetBrowserPanel primary(project);
+    AssetBrowserPanel secondary(project, AssetBrowserRole::Secondary);
+    const auto drawBoth = [&] {
+        imgui.frame([&] {
+            primary.drawBrowser(diagnostics, browserActions);
+            ImGui::End();
+            ImGui::Begin("Asset Browser (2)");
+            secondary.drawBrowser(diagnostics, browserActions);
+        });
+    };
+    project.pollChanges(diagnostics, projectActions);
+    expect(project.catalog().findAsset(normalizedCatalogPath(content / "models" / "cube.gltf")) != nullptr,
+           "the first poll should scan the project");
+    expect(primary.catalog().assets().size() == secondary.catalog().assets().size() &&
+               &primary.catalog() == &secondary.catalog(),
+           "both browsers should show the one shared catalog");
+
+    primary.navigateTo(models, diagnostics);
+    secondary.navigateTo(materials, diagnostics);
+    secondary.setViewMode(AssetBrowserViewMode::List, diagnostics);
+    expect(primary.currentFolder() == models && secondary.currentFolder() == materials,
+           "each browser should keep its own current folder");
+    expect(primary.viewMode() == AssetBrowserViewMode::Grid && secondary.viewMode() == AssetBrowserViewMode::List,
+           "each browser should keep its own view mode");
+    AssetBrowserSettings saved;
+    expect(loadAssetBrowserSettings(settingsFile, saved) && saved.lastFolder == "models" &&
+               saved.viewMode == AssetBrowserViewMode::Grid,
+           "only the primary browser's folder and view mode should be remembered");
+
+    secondary.toggleFavourite(materials, diagnostics);
+    expect(primary.isFavourite(materials) && secondary.isFavourite(materials),
+           "a favourite added in one browser should show in every browser");
+    drawBoth();
+    drawBoth();
+
+    // A rename in one browser moves the other browser's folder along.
+    primary.renameItem(materials, "surfaces", diagnostics);
+    drawBoth();
+    expect(secondary.currentFolder() == surfaces && primary.currentFolder() == models,
+           "a browser inside a renamed folder should follow it; others should stay put");
+    expect(primary.selectedPath() == surfaces, "the renaming browser should select the renamed folder");
+    expect(secondary.isFavourite(surfaces) && !secondary.isFavourite(materials),
+           "shared favourites should follow a rename");
+    project.pollChanges(diagnostics, projectActions);
+    project.pollChanges(diagnostics, projectActions);
+    drawBoth();
+    expect(
+        moveDispatches == 1 &&
+            std::ranges::any_of(moves, [&](const ProjectFileMove& move) { return move.to == surfaces / "albedo.png"; }),
+        "a rename should be dispatched once, with the moved file");
+
+    // A model changed on disk reloads once, however many browsers draw.
+    writeFile(content / "models" / "cube.gltf", R"({"asset":{"version":"2.0"}})");
+    project.pollChanges(diagnostics, projectActions, 1.5f);
+    drawBoth();
+    project.pollChanges(diagnostics, projectActions, 1.5f);
+    drawBoth();
+    expect(reloads == 1, "a model changed on disk should be reloaded exactly once");
+    expect(panelReloads == 0, "drawing without input should not reload models");
+
+    // A folder removed on disk is dispatched once and both views fall back.
+    secondary.navigateTo(textures, diagnostics);
+    primary.navigateTo(textures, diagnostics);
+    std::filesystem::remove_all(textures);
+    project.pollChanges(diagnostics, projectActions, 1.5f);
+    drawBoth();
+    project.pollChanges(diagnostics, projectActions, 1.5f);
+    drawBoth();
+    expect(removalDispatches == 1, "a removal should be dispatched exactly once");
+    expect(primary.currentFolder() == normalizedCatalogPath(content) &&
+               secondary.currentFolder() == normalizedCatalogPath(content),
+           "both browsers should fall back from a removed folder");
+
+    AssetBrowserSettings reloaded;
+    expect(loadAssetBrowserSettings(settingsFile, reloaded) &&
+               reloaded.favourites == std::vector<std::string>{"surfaces"},
+           "shared favourites should persist once, rebased by the rename");
+    expect(!hasErrorContaining(diagnostics, ""), "the shared project workflow should report no errors");
 }
 } // namespace
 
@@ -335,6 +462,7 @@ int main() {
     testFileOperations(directory);
     testSettings(directory);
     testPanel(content, scenes, directory / "settings");
+    testSharedProject(directory / "shared");
 
     std::filesystem::remove_all(directory, error);
     if (failures != 0) {

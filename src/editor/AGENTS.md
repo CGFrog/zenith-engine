@@ -14,7 +14,7 @@ depend on this subtree.
 | `interaction/` | Editor camera, picking, selection, gizmos, and component editing widgets. |
 | `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object operators, the per-region keymap with `keymap.json` overrides, F3 search, and the keymap editor. |
 | `panels/` | One class per dockable window, drawn from an `EditorContext`. |
-| `project/` | Project tooling: asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, and IDE launching. |
+| `project/` | Project tooling: the shared asset service (`ProjectAssets`: catalog, watchers, change dispatch, favourites), asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, and IDE launching. |
 | `settings/` | Persistent editor preferences and panel/layout state. |
 
 ## Local rules
