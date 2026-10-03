@@ -8,23 +8,27 @@
 namespace {
 using enum DefaultDockSlot;
 
+// Scene authoring: the outliner, the active entity, and project assets.
 constexpr std::array layoutAreas{
-    DefaultArea{"viewport", Center},  DefaultArea{"hierarchy", Left},           DefaultArea{"inspector", Right},
-    DefaultArea{"properties", Right}, DefaultArea{"graphics", RightBottom},     DefaultArea{"diagnostics", Bottom},
-    DefaultArea{"build", Bottom},     DefaultArea{"render_statistics", Bottom}, DefaultArea{"asset_browser", Bottom},
-    DefaultArea{"info", Bottom},
+    DefaultArea{"viewport", Center},  DefaultArea{"hierarchy", Left},       DefaultArea{"inspector", Right},
+    DefaultArea{"properties", Right}, DefaultArea{"asset_browser", Bottom}, DefaultArea{"info", Bottom},
 };
 
+// Lights and rendering: Properties on the World tab (sun, environment, fog,
+// irradiance volumes) above a second Properties on the Render tab, beside
+// the Graphics panel's storage and GPU timings. The states are
+// PropertiesPanel::areaState values.
 constexpr std::array lightingAreas{
-    DefaultArea{"viewport", Center},        DefaultArea{"hierarchy", Left},
-    DefaultArea{"graphics", Right},         DefaultArea{"inspector", RightBottom},
-    DefaultArea{"properties", RightBottom}, DefaultArea{"render_statistics", Bottom},
+    DefaultArea{"viewport", Center},           DefaultArea{"hierarchy", Left},
+    DefaultArea{"properties", Right, "world"}, DefaultArea{"properties", RightBottom, "render"},
+    DefaultArea{"graphics", RightBottom},
 };
 
+// Investigating problems: logs, diagnostics, frame statistics, and builds.
 constexpr std::array debugAreas{
-    DefaultArea{"viewport", Center},       DefaultArea{"hierarchy", Left},     DefaultArea{"render_statistics", Right},
-    DefaultArea{"inspector", RightBottom}, DefaultArea{"diagnostics", Bottom}, DefaultArea{"build", Bottom},
-    DefaultArea{"info", Bottom},
+    DefaultArea{"viewport", Center}, DefaultArea{"render_statistics", Right},
+    DefaultArea{"info", Bottom},     DefaultArea{"diagnostics", Bottom},
+    DefaultArea{"build", Bottom},
 };
 
 constexpr std::array workspaces{
@@ -99,10 +103,31 @@ const DefaultWorkspace& defaultWorkspaceFor(std::string_view name) {
     return found == workspaces.end() ? workspaces.front() : *found;
 }
 
+const DefaultArea* defaultAreaFor(const DefaultWorkspace& workspace, std::string_view typeId, uint32_t number) {
+    const DefaultArea* first = nullptr;
+    uint32_t listed = 0;
+    for (const DefaultArea& area : workspace.areas) {
+        if (area.type != typeId) {
+            continue;
+        }
+        ++listed;
+        if (listed == number) {
+            return &area;
+        }
+        if (first == nullptr) {
+            first = &area;
+        }
+    }
+    return first;
+}
+
 WorkspaceRecord defaultWorkspaceRecord(const DefaultWorkspace& workspace) {
     WorkspaceRecord record{.name = std::string(workspace.name)};
     for (const DefaultArea& area : workspace.areas) {
-        record.areas.push_back({.type = std::string(area.type), .instance = 1, .visible = true});
+        const auto sameType = [&area](const AreaRecord& existing) { return existing.type == area.type; };
+        const auto instance = static_cast<uint32_t>(std::ranges::count_if(record.areas, sameType)) + 1;
+        record.areas.push_back(
+            {.type = std::string(area.type), .instance = instance, .visible = true, .state = std::string(area.state)});
     }
     return record;
 }

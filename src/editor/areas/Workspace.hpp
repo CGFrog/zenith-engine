@@ -47,10 +47,12 @@ class Workspace {
     const AreaInstance* find(std::string_view areaId) const;
     bool anyVisible(std::string_view typeId) const;
 
-    // Adds an area as stored on disk; its panel is created by sync(). Fails
-    // on a duplicate id or a malformed type id.
-    AreaResult addStoredArea(std::string typeId, uint32_t number, bool visible);
-    // Creates panels for areas of registered types, adds a hidden area for
+    // Adds an area as stored on disk; its panel is created by sync() and
+    // given state (see AreaInstance::storedState). Fails on a duplicate id or
+    // a malformed type id.
+    AreaResult addStoredArea(std::string typeId, uint32_t number, bool visible, std::string state = {});
+    // Creates panels for areas of registered types (restoring their stored
+    // state), adds a hidden area for
     // each registered type that has none, drops extra areas of
     // single-instance types (keeping a visible one), and releases the panels
     // of areas whose type is no longer registered.

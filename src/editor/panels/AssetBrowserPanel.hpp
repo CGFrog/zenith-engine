@@ -22,8 +22,11 @@ struct AssetBrowserActions {
 };
 
 // Whether a browser's folder and view mode are remembered across sessions.
-// One browser (the first the editor opens) is Primary; any others keep their
-// view state in memory only, so several browsers never fight over the file.
+// At most one browser per project is Primary (see ProjectAssets::
+// claimPrimaryView); the others keep their view state in memory only, so
+// several browsers never fight over the file. The role moves: a hidden or
+// destroyed primary gives it up, one that is no longer drawn (another
+// workspace, a background tab) loses it, and the next browser drawn takes it.
 enum class AssetBrowserRole {
     Primary,
     Secondary,
@@ -40,21 +43,30 @@ enum class AssetBrowserRole {
 // catalog, watchers, thumbnails, change dispatch, favourites, and the file
 // operations. The panel holds only its view state (current folder,
 // selection, search, filters, view mode, open dialogs), so any number of
-// browsers can show the same project; each follows renames and moves made by
+// browsers can show the same project (each area of the multiple-instance
+// "asset_browser" type has its own); each follows renames and moves made by
 // any of them. It never polls or dispatches project changes itself.
 class AssetBrowserPanel final : public EditorPanel {
   public:
-    // project must outlive the panel. A Primary browser starts at the
-    // remembered folder and view mode and remembers its changes; a Secondary
-    // one starts the same way but keeps its changes to itself.
+    // project must outlive the panel. Every browser starts at the remembered
+    // folder and view mode. Requesting Primary takes the role when no other
+    // browser holds it; a Secondary browser keeps its changes to itself until
+    // it is promoted.
     explicit AssetBrowserPanel(ProjectAssets& project, AssetBrowserRole role = AssetBrowserRole::Primary);
+    // Gives up the primary role.
+    ~AssetBrowserPanel() override;
+    AssetBrowserPanel(const AssetBrowserPanel&) = delete;
+    AssetBrowserPanel& operator=(const AssetBrowserPanel&) = delete;
 
     const char* title() const override;
     void update(EditorContext& context, const InputState& input, float deltaSeconds) override;
     void draw(EditorContext& context) override;
+    // Gives up the primary role, so a browser that is shown can take it.
+    void hidden(EditorContext& context) override;
 
-    // Draws the panel contents into the current ImGui window. draw() calls it
-    // with actions bound to the editor session; it needs no session itself.
+    // Draws the panel contents into the current ImGui window, first taking
+    // the primary role when no browser holds it. draw() calls it with actions
+    // bound to the editor session; it needs no session itself.
     void drawBrowser(EditorDiagnostics& diagnostics, const AssetBrowserActions& actions);
 
     // Rescans the project through the service, then syncs this view.
@@ -154,7 +166,8 @@ class AssetBrowserPanel final : public EditorPanel {
     std::string textureDetail(const EditorAssetRecord& asset);
 
     ProjectAssets& m_project;
-    AssetBrowserRole m_role;
+    // This browser's id with the project, for the primary role.
+    uint64_t m_viewId;
     AssetBrowserViewMode m_viewMode;
     std::filesystem::path m_currentFolder;
     std::filesystem::path m_selected;

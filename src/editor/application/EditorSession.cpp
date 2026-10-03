@@ -58,7 +58,6 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_keymap(defaultEditorKeymap())
     , m_keymapPath(settingsDirectory / "keymap.json")
     , m_projectAssets(std::move(assetRoot), sceneRoot, settingsDirectory / "asset-browser.json")
-    , m_assetBrowser(m_projectAssets)
     , m_renderSettings(std::move(renderSettings))
     , m_workspacesPath(settingsDirectory / "workspaces.json")
     , m_legacyLayoutPath(settingsDirectory / "layout.ini")

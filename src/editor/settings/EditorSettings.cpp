@@ -20,6 +20,15 @@ bool parseBoolean(std::string_view value, bool& destination) {
 }
 } // namespace
 
+std::filesystem::path resolveEditorSettingsDirectory(std::string_view utf8Override,
+                                                     std::filesystem::path userDirectory) {
+    if (utf8Override.empty()) {
+        return userDirectory;
+    }
+    const std::u8string text(utf8Override.begin(), utf8Override.end());
+    return std::filesystem::path(text);
+}
+
 EditorSettings::EditorSettings(std::filesystem::path settingsPath)
     : m_path(std::move(settingsPath)) {}
 

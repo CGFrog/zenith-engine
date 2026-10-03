@@ -41,15 +41,22 @@ depend on this subtree.
 - A new window is an `EditorPanel` in `panels/`. Panels receive everything
   through `EditorContext`, record scene changes through `SceneEditing` so they
   are undoable, and never reach into other panels.
-- A panel becomes visible to users by registering an area type in
-  `EditorSession::registerAreaTypes` (`application/EditorAreas.cpp`) with one
-  `addAreaType` call: a panel with per-window state uses a factory and
-  `AreaInstancing::Multiple`; a panel the session must own (because other
-  workflows use it) is a member shown with `AreaType::shared("id", m_panel)`.
-  The type id is persisted in `workspaces.json` and window names, so never
-  rename it; add the type to a default workspace in
-  `areas/DefaultWorkspaces.cpp` if it should be open for new users. Areas,
-  workspaces, and layouts are user data, never scene data.
+- A panel becomes visible to users by adding an area type to
+  `builtInAreaTypes` (`application/EditorAreaTypes.cpp`), which
+  `EditorSession::registerAreaTypes` registers: a panel with per-window state
+  uses a factory and `AreaInstancing::Multiple`, taking shared services
+  through `EditorAreaServices`; a panel the session must own (because other
+  workflows use it) is a session member shown with
+  `AreaType::shared("id", panel)`. The type id is persisted in
+  `workspaces.json` and window names, so never rename it; add the type to a
+  default workspace in `areas/DefaultWorkspaces.cpp` if it should be open for
+  new users, and bump `currentWorkspaceFileVersion` (`areas/WorkspaceFile.hpp`)
+  whenever the defaults change so saved workspaces pick them up. A per-area
+  panel can keep view state with its area by overriding
+  `EditorPanel::areaState`/`restoreAreaState`. Areas, workspaces, and layouts
+  are user data, never scene data.
+- Automated editor runs must set `ZENITH_EDITOR_SETTINGS_DIR` so they never
+  read or replace the user's settings directory.
 - Never cache a game module's `ComponentType` pointers or registries across
   frames: read them from `EditorDocument::options()`. Before a module unloads,
   `GameModuleHost` releases its registries, systems, operators, and panels and

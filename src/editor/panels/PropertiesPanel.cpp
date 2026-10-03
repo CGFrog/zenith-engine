@@ -8,11 +8,15 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <string_view>
 #include <utility>
 
 namespace {
+// Area state of a Components tab: the prefix followed by the category label.
+constexpr std::string_view componentsStatePrefix = "components:";
+
 const ComponentTypeRegistry& componentTypes(const EditorContext& context) {
     return componentTypesFor(context.editing.document().options());
 }
@@ -112,6 +116,42 @@ PropertiesTab PropertiesPanel::activeTab(const EditorContext& context) const {
 
 void PropertiesPanel::selectTab(PropertiesTab tab) {
     m_selected = std::move(tab);
+}
+
+std::string PropertiesPanel::areaState() const {
+    switch (m_selected.kind) {
+    case PropertiesTabKind::Object:
+        return "object";
+    case PropertiesTabKind::Components:
+        return std::string(componentsStatePrefix) + m_selected.category;
+    case PropertiesTabKind::World:
+        return "world";
+    case PropertiesTabKind::Render:
+        return "render";
+    case PropertiesTabKind::Scene:
+        return "scene";
+    }
+    return {};
+}
+
+void PropertiesPanel::restoreAreaState(std::string_view state) {
+    if (state.starts_with(componentsStatePrefix) && state.size() > componentsStatePrefix.size()) {
+        selectTab({.kind = PropertiesTabKind::Components,
+                   .category = std::string(state.substr(componentsStatePrefix.size()))});
+        return;
+    }
+    constexpr std::array<std::pair<std::string_view, PropertiesTabKind>, 4> kinds{{
+        {"object", PropertiesTabKind::Object},
+        {"world", PropertiesTabKind::World},
+        {"render", PropertiesTabKind::Render},
+        {"scene", PropertiesTabKind::Scene},
+    }};
+    for (const auto& [name, kind] : kinds) {
+        if (state == name) {
+            selectTab({.kind = kind});
+            return;
+        }
+    }
 }
 
 void PropertiesPanel::draw(EditorContext& context) {

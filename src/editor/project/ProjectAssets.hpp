@@ -98,6 +98,22 @@ class ProjectAssets {
     // Reports, once, why the settings file could not be loaded.
     void reportPendingSettingsError(EditorDiagnostics& diagnostics);
 
+    // Asset browser views. At most one view is the primary: the one whose
+    // folder and view mode are remembered, and the one the editor addresses
+    // when it needs "the" asset browser. A view gets an id from registerView,
+    // claims the role each frame it is shown, and releases it when hidden or
+    // destroyed. A claim succeeds while nobody holds the role, or when the
+    // primary has not been shown this frame or the last (frames are counted
+    // by pollChanges), so a primary left in another workspace or a
+    // background tab is replaced by a browser the user can see.
+    uint64_t registerView();
+    // Returns whether view is the primary afterwards.
+    bool claimPrimaryView(uint64_t view);
+    // Does nothing unless view is the primary.
+    void releasePrimaryView(uint64_t view);
+    bool isPrimaryView(uint64_t view) const;
+    bool hasPrimaryView() const;
+
     // File operations. Each reports its outcome through diagnostics and
     // rescans the catalog. The returned path is what the operation produced,
     // or nullopt when it failed.
@@ -143,6 +159,12 @@ class ProjectAssets {
     std::vector<ProjectItemMove> m_itemMoves;
     uint64_t m_latestItemMove{0};
     float m_refreshElapsed{0.0f};
+    uint64_t m_lastViewId{0};
+    std::optional<uint64_t> m_primaryView;
+    // Frames are counted by pollChanges; the primary records the last frame
+    // it claimed (was shown) in.
+    uint64_t m_frame{0};
+    uint64_t m_primaryShownFrame{0};
     bool m_scanAttempted{false};
     bool m_initialized{false};
 };

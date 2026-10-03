@@ -21,6 +21,10 @@ struct AreaInstance {
     // Shared so a frame loop can keep a panel alive while an operator it
     // runs closes or retypes its own area.
     std::shared_ptr<EditorPanel> panel;
+    // The panel's per-area view state (EditorPanel::areaState) as stored in
+    // workspaces.json: handed to the panel when it is created, and kept as is
+    // while the area has no panel. A live panel's own state supersedes it.
+    std::string storedState;
     // ImGui dock node the window was in when last drawn (0 when floating or
     // never drawn). Runtime only; the layout itself is saved by ImGui.
     uint32_t dockId{0};
@@ -30,6 +34,8 @@ struct AreaInstance {
 
     std::string id() const;
     std::string windowName(std::string_view title) const;
+    // The panel's current per-area state, or storedState without a panel.
+    std::string state() const;
 };
 
 // Builds the id "<type>.<number>".

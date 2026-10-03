@@ -54,6 +54,7 @@ void ProjectAssets::refresh(EditorDiagnostics& diagnostics) {
 
 void ProjectAssets::pollChanges(EditorDiagnostics& diagnostics, const ProjectAssetActions& actions,
                                 float deltaSeconds) {
+    ++m_frame;
     reportPendingSettingsError(diagnostics);
     m_refreshElapsed += deltaSeconds;
     if (!m_scanAttempted) {
@@ -191,6 +192,39 @@ void ProjectAssets::reportPendingSettingsError(EditorDiagnostics& diagnostics) {
         diagnostics.add(EditorDiagnosticSeverity::Warning, diagnosticSource, std::move(m_pendingSettingsError));
         m_pendingSettingsError.clear();
     }
+}
+
+uint64_t ProjectAssets::registerView() {
+    return ++m_lastViewId;
+}
+
+bool ProjectAssets::claimPrimaryView(uint64_t view) {
+    // A primary not shown this frame or the last one (in another workspace
+    // or a background tab) is replaced; the grace frame keeps the role from
+    // moving to a view that merely draws before the primary.
+    const bool primaryAbsent = m_primaryShownFrame + 1 < m_frame;
+    if (!m_primaryView || (*m_primaryView != view && primaryAbsent)) {
+        m_primaryView = view;
+    }
+    if (*m_primaryView != view) {
+        return false;
+    }
+    m_primaryShownFrame = m_frame;
+    return true;
+}
+
+void ProjectAssets::releasePrimaryView(uint64_t view) {
+    if (m_primaryView == view) {
+        m_primaryView.reset();
+    }
+}
+
+bool ProjectAssets::isPrimaryView(uint64_t view) const {
+    return m_primaryView == view;
+}
+
+bool ProjectAssets::hasPrimaryView() const {
+    return m_primaryView.has_value();
 }
 
 void ProjectAssets::saveSettings(EditorDiagnostics& diagnostics) {
