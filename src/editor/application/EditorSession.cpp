@@ -10,6 +10,7 @@
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/EyedropperOperators.hpp"
 #include "editor/operators/ObjectOperators.hpp"
+#include "editor/operators/PrefabOperators.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
 #include "engine/scene/ComponentTypes.hpp"
@@ -96,6 +97,9 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
         m_diagnostics.reportError(result.error);
     }
     if (const MenuResult result = registerDefaultMenus(m_menus.registry()); !result) {
+        m_diagnostics.reportError(result.error);
+    }
+    if (const OperatorRegistrationResult result = registerPrefabOperators(m_operators); !result) {
         m_diagnostics.reportError(result.error);
     }
     // Scene references resolve through the project's asset database by GUID.

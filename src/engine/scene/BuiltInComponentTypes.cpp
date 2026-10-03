@@ -5,6 +5,7 @@
 #include "../assets/IrradianceVolumeAsset.hpp"
 #include "CollectionComponentTypes.hpp"
 #include "ComponentTypes.hpp"
+#include "Prefab.hpp"
 #include "SceneAssetReferences.hpp"
 
 #include <glm/gtc/constants.hpp>
@@ -786,6 +787,9 @@ SceneDocumentResult registerBuiltInComponentTypes(ComponentTypeRegistry& registr
             return result;
         }
     }
-    // Registered from their own translation unit to keep this one small.
-    return registerCollectionComponentTypes(registry);
+    // Registered from their own translation units to keep this one small.
+    if (SceneDocumentResult result = registerCollectionComponentTypes(registry); !result) {
+        return result;
+    }
+    return registerPrefabComponentTypes(registry);
 }

@@ -343,10 +343,10 @@ void testJobsAndAdditiveScenes(const std::filesystem::path& root) {
     PrefabDocument sharedPrefab;
     sharedPrefab.entities.push_back({{1}, "Shared prefab", std::nullopt, glm::mat4(1.0f)});
     expect(savePrefab(root / "shared.prefab", sharedPrefab).success, "shared layer prefab fixture saves");
-    PrefabSystem sharedPrefabs(root);
+    PrefabSystem sharedPrefabs(assets, SceneDocumentOptions{.assetRoot = root});
     Scene primaryScene;
-    const PrefabInstanceResult primaryPrefab = sharedPrefabs.instantiate("shared.prefab", {300}, primaryScene);
-    const PrefabInstanceResult layeredPrefab = sharedPrefabs.instantiate("shared.prefab", {301}, *layers.scene(first));
+    const PrefabInstanceResult primaryPrefab = sharedPrefabs.instantiate("shared.prefab", primaryScene);
+    const PrefabInstanceResult layeredPrefab = sharedPrefabs.instantiate("shared.prefab", *layers.scene(first));
     expect(primaryPrefab && layeredPrefab,
            "primary scenes and additive scene layers share runtime prefab definitions without editor state");
     const auto unrelatedCompletions = jobs.takeCompleted();
@@ -453,20 +453,24 @@ void testJobsAndAdditiveScenes(const std::filesystem::path& root) {
 }
 
 void testPrefabs(const std::filesystem::path& root) {
+    AssetManager assets;
+    const SceneDocumentOptions options{.assetRoot = root};
     PrefabDocument child;
     child.entities.push_back({{1}, "Child", std::nullopt, glm::mat4(1.0f)});
     expect(savePrefab(root / "child.prefab", child).success, "child prefab saves");
     PrefabDocument parent;
     parent.entities.push_back({{1}, "Root", std::nullopt, glm::mat4(1.0f)});
-    parent.nested.push_back({2, "child.prefab", PrefabEntityId{1}, {{{1}, "name", R"("Overridden")"}}});
+    parent.nested.push_back({2, "child.prefab", PrefabEntityId{1}, {{{1}, "", "/name", R"("Overridden")"}}});
     std::string encoded;
     expect(serializePrefab(parent, encoded).success, "prefab serializes");
     PrefabDocument decoded;
-    expect(deserializePrefab(encoded, decoded).success && decoded.nested.size() == 1, "prefab round trips");
+    expect(deserializePrefab(encoded, decoded).success && decoded.nested.size() == 1 &&
+               decoded.nested.front().overrides == parent.nested.front().overrides,
+           "prefab round trips");
     expect(savePrefab(root / "parent.prefab", parent).success, "parent prefab saves");
     Scene scene;
-    PrefabSystem prefabs(root);
-    const PrefabInstanceResult instance = prefabs.instantiate("parent.prefab", {42}, scene);
+    PrefabSystem prefabs(assets, options);
+    const PrefabInstanceResult instance = prefabs.instantiate("parent.prefab", scene);
     expect(instance.success && instance.entities.size() == 2, "nested prefab instantiates deterministically");
     bool foundOverride = false;
     for (Entity entity : instance.entities) {
@@ -475,7 +479,7 @@ void testPrefabs(const std::filesystem::path& root) {
     expect(foundOverride, "nested overrides remain separate and are applied");
 
     Scene secondScene;
-    const PrefabInstanceResult secondInstance = prefabs.instantiate("parent.prefab", {42}, secondScene);
+    const PrefabInstanceResult secondInstance = prefabs.instantiate("parent.prefab", secondScene);
     std::vector<uint64_t> firstIds;
     std::vector<uint64_t> secondIds;
     for (Entity entity : instance.entities) {
@@ -486,26 +490,26 @@ void testPrefabs(const std::filesystem::path& root) {
     }
     std::ranges::sort(firstIds);
     std::ranges::sort(secondIds);
-    expect(firstIds == secondIds, "prefab instance IDs remap deterministically across scenes");
+    expect(firstIds == secondIds, "prefab instance IDs are assigned deterministically across scenes");
 
     child.entities.front().name = "Updated child";
     expect(savePrefab(root / "child.prefab", child).success, "prefab source update saves");
-    const PrefabInstanceResult refreshed = prefabs.refresh("parent.prefab", {42}, scene, instance.root);
+    const PrefabInstanceResult refreshed = prefabs.refresh(scene, instance.root, PrefabRefreshMode::RemoveAddedObjects);
     foundOverride = false;
     for (Entity entity : refreshed.entities) {
         foundOverride |= scene.registry().get<NameComponent>(entity).name == "Overridden";
     }
     expect(refreshed && foundOverride, "source refresh preserves valid instance overrides");
-    const std::array orphanedOverrides = {PrefabOverride{{999}, "name", R"("Missing")"}};
+    const std::array orphanedOverrides = {PrefabOverride{{999}, "", "/name", R"("Missing")"}};
     Scene orphanScene;
     const PrefabInstanceResult orphaned =
-        prefabs.instantiate("child.prefab", {91}, orphanScene, entt::null, orphanedOverrides);
+        prefabs.instantiate("child.prefab", orphanScene, entt::null, orphanedOverrides);
     expect(orphaned && orphaned.diagnostics.size() == 1 &&
                orphaned.diagnostics.front().find("Orphaned override") != std::string::npos,
            "source refresh reports orphaned overrides as actionable diagnostics");
 
     const auto entityCountBeforeFailure = scene.registry().view<const SceneEntityIdComponent>().size();
-    const PrefabInstanceResult missing = prefabs.instantiate("missing.prefab", {77}, scene);
+    const PrefabInstanceResult missing = prefabs.instantiate("missing.prefab", scene);
     expect(!missing && scene.registry().view<const SceneEntityIdComponent>().size() == entityCountBeforeFailure,
            "missing prefab sources preserve previously valid runtime instances");
 
@@ -514,7 +518,7 @@ void testPrefabs(const std::filesystem::path& root) {
     cycle.nested.push_back({1, "cycle.prefab", std::nullopt, {}});
     savePrefab(root / "cycle.prefab", cycle);
     Scene cycleScene;
-    expect(!prefabs.instantiate("cycle.prefab", {7}, cycleScene), "nested prefab cycles are rejected");
+    expect(!prefabs.instantiate("cycle.prefab", cycleScene), "nested prefab cycles are rejected");
 
     PrefabDocument duplicateEntities;
     duplicateEntities.entities.push_back({{1}, "One", std::nullopt, glm::mat4(1.0f)});
@@ -546,14 +550,13 @@ void testPrefabs(const std::filesystem::path& root) {
                                std::filesystem::copy_options::overwrite_existing);
     PrefabDocument assetPrefab;
     PrefabEntity assetEntity{{1}, "Asset", std::nullopt, glm::mat4(1.0f)};
-    assetEntity.modelAsset = "sample.gltf";
+    assetEntity.components.emplace_back("model", R"({"path":"sample.gltf"})");
     assetPrefab.entities.push_back(std::move(assetEntity));
     expect(savePrefab(root / "asset.prefab", assetPrefab).success, "project-relative prefab asset saves");
-    AssetManager assets;
-    PrefabSystem assetPrefabs(root, &assets);
     Scene assetScene;
-    const PrefabInstanceResult assetInstance = assetPrefabs.instantiate("asset.prefab", {101}, assetScene);
-    expect(assetInstance && !assetScene.registry().view<const ModelComponent>().empty(),
+    const PrefabInstanceResult assetInstance = prefabs.instantiate("asset.prefab", assetScene);
+    expect(assetInstance && !assetScene.registry().view<const ModelComponent>().empty() &&
+               !assetScene.registry().view<const ModelNodeComponent>().empty(),
            "runtime prefab instantiation resolves project-relative asset references without editor state");
 }
 

@@ -114,8 +114,9 @@ std::string serialize(const Scene& scene, const AssetManager& assets, const Scen
 void testBuiltIns() {
     const std::shared_ptr<const ComponentTypeRegistry> builtIns = builtInComponentTypes();
     expect(builtIns == builtInComponentTypes(), "the built-in registry should be created once");
-    // 18 engine components plus collection membership, collection instance, and visibility.
-    expect(builtIns->types().size() == 21, "every serialized engine component should be registered");
+    // 18 engine components, collection membership, collection instance, and
+    // visibility, plus the two prefab link types.
+    expect(builtIns->types().size() == 23, "every serialized engine component should be registered");
     const ComponentType* light = builtIns->find("point_light");
     expect(light != nullptr && light->displayName() == "Point Light" && !light->internal(),
            "point lights should be a user-facing type");
