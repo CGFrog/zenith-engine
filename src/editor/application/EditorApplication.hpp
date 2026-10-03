@@ -2,11 +2,13 @@
 
 #include "editor/project/ProjectHub.hpp"
 #include "editor/project/RecentProjects.hpp"
+#include "editor/theme/EditorTheme.hpp"
 #include "engine/application/Application.hpp"
 #include "engine/project/ProjectConfig.hpp"
 
 #include <filesystem>
 #include <optional>
+#include <vector>
 
 // The Project Hub's configuration, for an editor that offers it.
 struct EditorProjectHubOptions {
@@ -57,6 +59,8 @@ class EditorApplication final : public Application {
 
     std::filesystem::path m_settingsDirectory;
     std::filesystem::path m_fontPath;
+    // The fonts onStart added to the atlas, handed to every session.
+    std::vector<EditorFonts> m_loadedFonts;
     ProjectConfig m_project;
     std::optional<EditorProjectHubOptions> m_projectHub;
     RecentProjects m_recentProjects;

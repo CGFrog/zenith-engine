@@ -22,8 +22,8 @@ constexpr const char* logCategory = "Editor";
 // the display's scale, the fonts, popup bevels, and no imgui.ini (each
 // workspace keeps its own layout in workspaces.json). Fonts must be added
 // before the first frame builds the atlas, so this runs once, before the hub
-// or the first session draws.
-void installEditorTheme(const std::filesystem::path& fontPath, Logger& logger) {
+// or the first session draws. Returns the fonts it added, which sessions reuse.
+std::vector<EditorFonts> installEditorTheme(const std::filesystem::path& fontPath, Logger& logger) {
     ImGuiIO& io = ImGui::GetIO();
     // Size the UI for the display's scale factor so text stays crisp on
     // high-DPI monitors instead of being stretched. The pixel theme rounds it
@@ -44,6 +44,10 @@ void installEditorTheme(const std::filesystem::path& fontPath, Logger& logger) {
     }
     ThemeChrome::installPopupBevels(*ImGui::GetCurrentContext());
     io.IniFilename = nullptr;
+    if (!fonts) {
+        return {};
+    }
+    return {fonts.fonts};
 }
 
 // Loads the project's startup scene with the editor's document options, which
@@ -139,7 +143,7 @@ EditorApplication::EditorApplication(std::filesystem::path settingsDirectory, st
     , m_recentProjects(m_settingsDirectory / "recent-projects.json") {}
 
 SceneResult EditorApplication::onStart(ApplicationContext& context) {
-    installEditorTheme(m_fontPath, context.logger);
+    m_loadedFonts = installEditorTheme(m_fontPath, context.logger);
     if (const RecentProjectsResult loaded = m_recentProjects.load(); !loaded) {
         context.logger.log(LogLevel::Warning, logCategory, loaded.error);
     }
@@ -209,7 +213,8 @@ std::unique_ptr<ApplicationScene> EditorApplication::createSession() {
     // Without a project file, render settings persist beside the editor's
     // own settings.
     EditorRenderSettings renderSettings(m_project, m_settingsDirectory / "render-settings.json");
-    EditorProjectServices services{.build = projectBuildRequest(m_project.projectFile)};
+    EditorProjectServices services{
+        .build = projectBuildRequest(m_project.projectFile), .fontPath = m_fontPath, .loadedFonts = m_loadedFonts};
     if (m_projectHub) {
         services.leaveForProjectHub = [this](ApplicationContext& context, ProjectHubEntry entry) {
             showProjectHub(context, entry);

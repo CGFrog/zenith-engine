@@ -100,6 +100,29 @@ a new key chord to rebind it (conflicts in the same region are refused), `+`
 adds a shortcut, and **Reset** restores the defaults. Your changes are saved to
 `keymap.json` in the editor settings folder.
 
+**Edit > Preferences...** tunes the editor and applies each change at once:
+
+- **Interface**: the wallpaper, how frosted and how opaque the glass is, panel
+  opacity, the accent colour, and the UI scale (Automatic follows your
+  display; 1x to 4x keep the pixel grid crisp).
+- **Keymap**: where `keymap.json` lives and a button to the keymap editor.
+- **External IDE**: the command that opens a compiler error, with `{file}`,
+  `{line}`, and `{column}` placeholders; **Test** launches it.
+- **Saving**: how often an unsaved scene's recovery copy is written, or off.
+- **Build**: the Build panel's command and directory, and the release folder
+  Build and Package uses.
+
+A value with a problem (an empty command, a folder that does not exist) is
+shown in red and not used until it is fixed. Each section has **Reset to
+Defaults**.
+
+**File > Build and Package > Windows** (on Windows; the other platforms are
+shown disabled) builds the open project in Release in `build-release`, cooks
+its textures, and packages it as `docs/RELEASING.md` describes. The Build
+panel streams the output; when the package is ready the editor opens its
+folder with the archive selected. The first package configures the release
+folder, which takes a while; later ones only rebuild what changed.
+
 The tabs at the right of the main menu bar are workspaces:
 
 - **Layout** for general editing: the Hierarchy on the left, the Inspector and

@@ -507,14 +507,18 @@ target_link_libraries(zenith_demo_gameplay PUBLIC zenith_engine)
 # project-relative path projects/demo.zenith-project names, so the editor can
 # open the checked-in project from any build directory. The copy is the most
 # recently built configuration; a module built for another configuration is
-# refused by its build hash.
+# refused by its build hash. Release trees made by Build and Package turn the
+# copy off, so they never replace the module the editor has loaded.
 add_library(zenith_game_demo MODULE src/game/module/DemoGameModule.cpp)
 target_link_libraries(zenith_game_demo PRIVATE zenith_demo_gameplay)
-set(ZENITH_DEMO_PROJECT_MODULE "${CMAKE_CURRENT_SOURCE_DIR}/projects/modules/zenith_game_demo.zmodule")
-add_custom_command(TARGET zenith_game_demo POST_BUILD
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_SOURCE_DIR}/projects/modules"
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:zenith_game_demo>" "${ZENITH_DEMO_PROJECT_MODULE}"
-    VERBATIM)
+option(ZENITH_COPY_PROJECT_MODULE "Copy the built demo module beside projects/demo.zenith-project" ON)
+if(ZENITH_COPY_PROJECT_MODULE)
+    set(ZENITH_DEMO_PROJECT_MODULE "${CMAKE_CURRENT_SOURCE_DIR}/projects/modules/zenith_game_demo.zmodule")
+    add_custom_command(TARGET zenith_game_demo POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_SOURCE_DIR}/projects/modules"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:zenith_game_demo>" "${ZENITH_DEMO_PROJECT_MODULE}"
+        VERBATIM)
+endif()
 
 # Application composition for the zenith executable: menus, settings, audio,
 # and scene switching around the linked gameplay.
@@ -551,6 +555,7 @@ add_library(zenith_editor_app STATIC
     src/editor/application/EditorPickingSmoke.cpp
     src/editor/application/EditorViewports.cpp
     src/editor/application/EditorPlayMode.cpp
+    src/editor/application/EditorPreferences.cpp
     src/editor/application/NativeFileDialog.cpp
     src/editor/application/EditorSession.cpp
     src/editor/application/EntityCommands.cpp
@@ -599,6 +604,8 @@ add_library(zenith_editor_app STATIC
     src/editor/operators/OperatorSearch.cpp
     src/editor/operators/PlayOperators.cpp
     src/editor/operators/OutlinerOperators.cpp
+    src/editor/operators/PackageOperators.cpp
+    src/editor/operators/PreferencesOperators.cpp
     src/editor/operators/VisibilityOperators.cpp
     src/editor/panels/AssetBrowserPanel.cpp
     src/editor/panels/BuildPanel.cpp
@@ -609,6 +616,7 @@ add_library(zenith_editor_app STATIC
     src/editor/panels/HierarchyPanel.cpp
     src/editor/panels/InfoPanel.cpp
     src/editor/panels/InspectorPanel.cpp
+    src/editor/panels/PreferencesWindow.cpp
     src/editor/panels/PropertiesPanel.cpp
     src/editor/panels/RenderSettingsControls.cpp
     src/editor/panels/RenderStatisticsPanel.cpp
@@ -627,6 +635,7 @@ add_library(zenith_editor_app STATIC
     src/editor/project/DerivedAssetInspector.cpp
     src/editor/project/ExternalEditor.cpp
     src/editor/project/IrradianceVolumeBaker.cpp
+    src/editor/project/PackageRunner.cpp
     src/editor/project/ProjectAssets.cpp
     src/editor/project/ProjectFileOperations.cpp
     src/editor/project/ProjectHub.cpp
@@ -658,6 +667,7 @@ add_library(zenith_editor_app STATIC
     src/editor/viewport/ViewportPickProvider.cpp
     src/editor/viewport/ViewportPicker.cpp
     src/editor/viewport/ViewportSelectOperators.cpp
+    src/editor/theme/ThemeParameters.cpp
 )
 target_link_libraries(zenith_editor_app PUBLIC zenith_engine)
 if(WIN32)
@@ -774,13 +784,32 @@ add_custom_target(zenith_assets ALL
 )
 add_dependencies(zenith_engine zenith_assets)
 
-# Cook every shipped model's external textures to block-compressed KTX2 in the
-# derived-data cache the executables read from <resource root>/derived. Entries
-# are keyed by source bytes, so unchanged textures are skipped on rebuild.
+# The project a release package ships (its project file, startup scene, game
+# module, and assets). Build and Package (file.build_package) configures its
+# release tree with the editor's open project.
+set(ZENITH_PACKAGE_PROJECT "${CMAKE_CURRENT_SOURCE_DIR}/projects/demo.zenith-project" CACHE FILEPATH
+    "The .zenith-project a release package ships")
+include(cmake/PackageProject.cmake)
+zenith_read_package_project("${ZENITH_PACKAGE_PROJECT}")
+
+# Cook every shipped model's external textures (the engine's assets and the
+# packaged project's) to block-compressed KTX2 in the derived-data cache the
+# executables read from <resource root>/derived. Entries are keyed by source
+# bytes, so unchanged textures are skipped on rebuild.
 set(ZENITH_DERIVED_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/derived")
-file(GLOB_RECURSE ZENITH_COOKED_MODELS CONFIGURE_DEPENDS "${ZENITH_ASSET_SOURCE_DIR}/*.gltf")
-file(GLOB_RECURSE ZENITH_COOKED_TEXTURE_SOURCES CONFIGURE_DEPENDS "${ZENITH_ASSET_SOURCE_DIR}/*.png"
-    "${ZENITH_ASSET_SOURCE_DIR}/*.jpg")
+set(ZENITH_COOKED_ASSET_DIRS "${ZENITH_ASSET_SOURCE_DIR}")
+cmake_path(COMPARE "${ZENITH_PACKAGE_ASSET_DIR}" NOT_EQUAL "${ZENITH_ASSET_SOURCE_DIR}" ZENITH_PACKAGE_HAS_OWN_ASSETS)
+if(ZENITH_PACKAGE_HAS_OWN_ASSETS)
+    list(APPEND ZENITH_COOKED_ASSET_DIRS "${ZENITH_PACKAGE_ASSET_DIR}")
+endif()
+set(ZENITH_COOKED_MODELS)
+set(ZENITH_COOKED_TEXTURE_SOURCES)
+foreach(cooked_asset_dir IN LISTS ZENITH_COOKED_ASSET_DIRS)
+    file(GLOB_RECURSE cooked_models CONFIGURE_DEPENDS "${cooked_asset_dir}/*.gltf")
+    file(GLOB_RECURSE cooked_textures CONFIGURE_DEPENDS "${cooked_asset_dir}/*.png" "${cooked_asset_dir}/*.jpg")
+    list(APPEND ZENITH_COOKED_MODELS ${cooked_models})
+    list(APPEND ZENITH_COOKED_TEXTURE_SOURCES ${cooked_textures})
+endforeach()
 set(ZENITH_TEXTURE_COOK_COMMANDS)
 foreach(cooked_model IN LISTS ZENITH_COOKED_MODELS)
     list(APPEND ZENITH_TEXTURE_COOK_COMMANDS
@@ -868,13 +897,25 @@ install(TARGETS zenith_engine SDL3-shared
     LIBRARY DESTINATION . NAMELINK_SKIP
     ARCHIVE DESTINATION lib COMPONENT development EXCLUDE_FROM_ALL
 )
-install(DIRECTORY "${ZENITH_ASSET_SOURCE_DIR}/" DESTINATION assets)
 install(DIRECTORY "${ZENITH_SHADER_BINARY_DIR}/" DESTINATION shaders FILES_MATCHING PATTERN "*.spv")
 install(DIRECTORY "${ZENITH_DERIVED_BINARY_DIR}/" DESTINATION derived FILES_MATCHING PATTERN "*.zderived")
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/projects/demo.zenith-project" DESTINATION .)
-# At the path the packaged project names, relative to the project file.
-install(FILES "$<TARGET_FILE:zenith_game_demo>" DESTINATION modules RENAME zenith_game_demo.zmodule)
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/projects/scenes/demo.zenith-scene" DESTINATION scenes)
+# The runtime's own assets, then the packaged project (ZENITH_PACKAGE_PROJECT):
+# its assets merged into the same folder (its packaged assetRoot), the project
+# file at the root, and its startup scene and game module at the paths the
+# project file names.
+install(DIRECTORY "${ZENITH_ASSET_SOURCE_DIR}/" DESTINATION assets)
+if(ZENITH_PACKAGE_HAS_OWN_ASSETS)
+    install(DIRECTORY "${ZENITH_PACKAGE_ASSET_DIR}/" DESTINATION assets)
+endif()
+install(FILES "${ZENITH_PACKAGE_PROJECT_INSTALL_FILE}" DESTINATION .)
+install(FILES "${ZENITH_PACKAGE_STARTUP_SCENE}" DESTINATION "${ZENITH_PACKAGE_SCENE_DESTINATION}")
+if(ZENITH_PACKAGE_MODULE_TARGET)
+    install(FILES "$<TARGET_FILE:${ZENITH_PACKAGE_MODULE_TARGET}>" DESTINATION "${ZENITH_PACKAGE_MODULE_DESTINATION}"
+        RENAME "${ZENITH_PACKAGE_MODULE_NAME}")
+elseif(ZENITH_PACKAGE_MODULE)
+    install(FILES "${ZENITH_PACKAGE_MODULE}" DESTINATION "${ZENITH_PACKAGE_MODULE_DESTINATION}"
+        RENAME "${ZENITH_PACKAGE_MODULE_NAME}")
+endif()
 if(UNIX AND NOT APPLE)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/zenith.desktop" DESTINATION share/applications)
 endif()
@@ -904,6 +945,7 @@ install(CODE "
     set(ZENITH_DEPENDENCY_REVISION \"${ZENITH_DEPENDENCY_REVISION}\")
     set(ZENITH_TOOLCHAIN \"${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}\")
     set(ZENITH_TARGET_PLATFORM \"${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}\")
+    set(ZENITH_PACKAGE_PROJECT_PATHS \"${ZENITH_PACKAGE_PROJECT_PATHS}\")
     include(\"${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidatePackage.cmake\")
 ")
 
@@ -1100,6 +1142,7 @@ if(BUILD_TESTING)
     add_executable(zenith_editor_settings_tests
         tests/editor/EditorSettingsTests.cpp
         src/editor/settings/EditorSettings.cpp
+        src/editor/theme/ThemeParameters.cpp
     )
     target_include_directories(zenith_editor_settings_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     if(MSVC)
@@ -1114,6 +1157,7 @@ if(BUILD_TESTING)
         src/editor/theme/EditorPalette.cpp
         src/editor/theme/PixelIconBitmaps.cpp
         src/editor/theme/PixelWallpaper.cpp
+        src/editor/theme/ThemeParameters.cpp
     )
     target_include_directories(zenith_editor_palette_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     if(MSVC)
@@ -1848,6 +1892,26 @@ if(BUILD_TESTING)
     add_test(NAME zenith_project_hub COMMAND zenith_project_hub_tests)
     add_test(NAME zenith_project_template_module_build COMMAND zenith_project_hub_tests --build-generated-module)
     set_tests_properties(zenith_project_template_module_build PROPERTIES LABELS "slow" TIMEOUT 600)
+
+
+    add_executable(zenith_package_workflow_tests tests/editor/PackageWorkflowTests.cpp)
+    target_link_libraries(zenith_package_workflow_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_package_workflow_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_package_workflow_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_package_workflow COMMAND zenith_package_workflow_tests)
+
+    add_executable(zenith_preferences_tests tests/editor/PreferencesTests.cpp)
+    target_link_libraries(zenith_preferences_tests PRIVATE zenith_editor_app)
+    target_compile_definitions(zenith_preferences_tests PRIVATE ZENITH_TEST_CMAKE="${CMAKE_COMMAND}")
+    if(MSVC)
+        target_compile_options(zenith_preferences_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_preferences_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_preferences COMMAND zenith_preferences_tests)
 
     add_executable(zenith_asset_browser_tests tests/editor/AssetBrowserTests.cpp)
     target_link_libraries(zenith_asset_browser_tests PRIVATE zenith_editor_app)

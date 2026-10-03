@@ -24,13 +24,18 @@ GlassBackdrop::~GlassBackdrop() {
     }
 }
 
-void GlassBackdrop::update(RenderRuntime& rendering, ImVec2 displayOrigin, ImVec2 displaySize, float artPixel) {
+void GlassBackdrop::update(RenderRuntime& rendering, ImVec2 displayOrigin, ImVec2 displaySize, float artPixel,
+                           const ThemeParameters& requested) {
+    const ThemeParameters parameters = clampedThemeParameters(requested);
     m_displayOrigin = displayOrigin;
     m_displaySize = displaySize;
+    m_wallpaper = parameters.wallpaper;
     const float cell = cellSize(artPixel);
     const GridSize wanted{.width = static_cast<uint32_t>(std::ceil(std::max(displaySize.x, 1.0f) / cell)),
                           .height = static_cast<uint32_t>(std::ceil(std::max(displaySize.y, 1.0f) / cell)),
-                          .cellSize = cell};
+                          .cellSize = cell,
+                          .frostRadius = parameters.frostRadius,
+                          .glassOpacity = parameters.glassOpacity};
     m_stableFrames = wanted == m_wantedGrid ? m_stableFrames + 1 : 0;
     m_wantedGrid = wanted;
 
@@ -39,7 +44,10 @@ void GlassBackdrop::update(RenderRuntime& rendering, ImVec2 displayOrigin, ImVec
     }
     const bool firstImage = !m_sharp && !m_generation.valid();
     const bool outdated = wanted != m_builtGrid && wanted != m_generatingGrid;
-    if (!m_generation.valid() && outdated && (firstImage || m_stableFrames >= stableFramesBeforeRegenerating)) {
+    // Without the wallpaper nothing new is generated; the last images are
+    // kept for when it is turned back on.
+    if (m_wallpaper && !m_generation.valid() && outdated &&
+        (firstImage || m_stableFrames >= stableFramesBeforeRegenerating)) {
         startGeneration(wanted);
     }
     const UiTextureHandle sharp = rendering.uiImageTexture(m_sharp);
@@ -68,7 +76,9 @@ void GlassBackdrop::release(RenderRuntime& rendering) {
 
 void GlassBackdrop::startGeneration(GridSize grid) {
     m_generatingGrid = grid;
-    m_generation = std::async(std::launch::async, [grid] { return generateNightWallpaper(grid.width, grid.height); });
+    m_generation = std::async(std::launch::async, [grid] {
+        return generateNightWallpaper(grid.width, grid.height, grid.frostRadius, grid.glassOpacity);
+    });
 }
 
 void GlassBackdrop::publishGenerated(RenderRuntime& rendering) {
@@ -89,7 +99,7 @@ void GlassBackdrop::publishGenerated(RenderRuntime& rendering) {
 }
 
 void GlassBackdrop::drawWallpaper(ImDrawList* drawList) const {
-    if (!m_sharpTexture) {
+    if (!m_sharpTexture || !m_wallpaper) {
         // The sky's top and horizon colours until the wallpaper is ready.
         const ImU32 top = toImU32(palette::wallpaper[0]);
         const ImU32 bottom = toImU32(palette::wallpaper[4]);
@@ -105,7 +115,7 @@ void GlassBackdrop::drawWallpaper(ImDrawList* drawList) const {
 void GlassBackdrop::drawFrosted(ImDrawList* drawList, ImVec2 min, ImVec2 max, float notch) const {
     min = pixel::snap(min);
     max = pixel::snap(max);
-    if (!m_frostedTexture) {
+    if (!m_frostedTexture || !m_wallpaper) {
         pixel::notchedRect(drawList, min, max, toImU32(palette::glassFallback), notch);
         return;
     }

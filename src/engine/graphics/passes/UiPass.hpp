@@ -41,4 +41,6 @@ class UiPass {
     // ImGui colors are sRGB-encoded; an sRGB target would encode them again.
     bool m_linearizeVertexColors{false};
     std::unordered_map<uint64_t, void*> m_fonts;
+    // Fonts in the ImGui atlas at the last upload; -1 before the first frame.
+    int m_uploadedFontCount{-1};
 };

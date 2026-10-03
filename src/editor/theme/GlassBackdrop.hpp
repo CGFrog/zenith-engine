@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/theme/PixelWallpaper.hpp"
+#include "editor/theme/ThemeParameters.hpp"
 
 #include "engine/graphics/Rendering.hpp"
 
@@ -12,8 +13,8 @@
 // The wallpaper behind the editor and the frosted glass drawn over it. The
 // glass samples a pre-blurred copy of the wallpaper at the same screen
 // position, so it reads as frosted glass without a blur pass. Until the
-// renderer publishes the textures (always, without a renderer) both draw
-// solid fallbacks.
+// renderer publishes the textures (always, without a renderer), and while the
+// theme's wallpaper is off, both draw solid fallbacks.
 class GlassBackdrop {
   public:
     GlassBackdrop() = default;
@@ -26,15 +27,23 @@ class GlassBackdrop {
         return 3.0f * artPixel;
     }
 
-    // Once per frame: keeps the wallpaper matching the display. A new size is
-    // generated on a worker thread after it has held for a few frames, so a
-    // window drag does not regenerate every frame.
-    void update(RenderRuntime& rendering, ImVec2 displayOrigin, ImVec2 displaySize, float artPixel);
+    // Once per frame: keeps the wallpaper matching the display and the
+    // theme's frost. A new size or frost is generated on a worker thread after
+    // it has held for a few frames, so a window drag or a slider being dragged
+    // does not regenerate every frame.
+    void update(RenderRuntime& rendering, ImVec2 displayOrigin, ImVec2 displaySize, float artPixel,
+                const ThemeParameters& parameters = {});
     // Destroys the wallpaper images.
     void release(RenderRuntime& rendering);
 
     bool texturesReady() const {
         return static_cast<bool>(m_sharpTexture) && static_cast<bool>(m_frostedTexture);
+    }
+
+    // Whether the wallpaper images are drawn: their textures exist and the
+    // theme shows the wallpaper.
+    bool wallpaperShown() const {
+        return m_wallpaper && texturesReady();
     }
 
     // The sharp wallpaper over the whole display.
@@ -43,10 +52,13 @@ class GlassBackdrop {
     void drawFrosted(ImDrawList* drawList, ImVec2 min, ImVec2 max, float notch) const;
 
   private:
+    // What one generation produces: the grid and the frosted copy's look.
     struct GridSize {
         uint32_t width{0};
         uint32_t height{0};
         float cellSize{0.0f};
+        uint32_t frostRadius{0};
+        float glassOpacity{0.0f};
 
         bool operator==(const GridSize&) const = default;
     };
@@ -72,4 +84,5 @@ class GlassBackdrop {
     uint32_t m_stableFrames{0};
     GridSize m_generatingGrid;
     std::future<WallpaperImages> m_generation;
+    bool m_wallpaper{true};
 };

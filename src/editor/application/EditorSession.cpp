@@ -33,7 +33,6 @@
 
 namespace {
 constexpr const char* sceneExtension = ".zenith-scene";
-constexpr float autosaveIntervalSeconds = 30.0f;
 
 // Native dialogs need an existing absolute folder to start in. A trailing
 // separator marks the location as a folder with no suggested file name.
@@ -84,6 +83,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     registerViewportOperators();
     registerModuleOperators();
     registerAreaOperators();
+    registerPreferenceOperators();
     registerAreaTypes();
     if (const OperatorRegistrationResult result = registerObjectOperators(m_operators); !result) {
         m_diagnostics.reportError(result.error);
@@ -128,6 +128,8 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     // Scene references resolve through the project's asset database by GUID.
     m_document.setAssetDatabase(m_projectAssets.assetDatabase());
     m_buildPanel.setProjectBuild(std::move(projectServices.build));
+    m_fontPath = std::move(projectServices.fontPath);
+    m_editorFonts = std::move(projectServices.loadedFonts);
 }
 
 SceneEditing EditorSession::editing(ApplicationContext& context) {
@@ -334,6 +336,9 @@ void EditorSession::drawOperatorWindows(ApplicationContext& context) {
     if (m_keymapEditor.draw(m_showKeymapEditor, m_keymap, m_operators)) {
         saveKeymap();
     }
+    if (m_preferences.draw(m_settings, preferencesContext(context))) {
+        saveSettings();
+    }
     if (m_playMode.mode() != EditorMode::Edit || m_activeTransform) {
         return;
     }
@@ -354,6 +359,12 @@ void EditorSession::saveSimulateSystems() {
 
 void EditorSession::saveKeymap() {
     if (const KeymapResult result = m_keymap.save(m_keymapPath); !result) {
+        m_diagnostics.reportError(result.error);
+    }
+}
+
+void EditorSession::saveSettings() {
+    if (const EditorSettingsResult result = m_settings.save(); !result) {
         m_diagnostics.reportError(result.error);
     }
 }
@@ -385,8 +396,16 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     m_openRecoveryDialog = m_recovery.available();
     m_smokeScenario = SDL_getenv("ZENITH_EDITOR_SMOKE") != nullptr;
 
-    // The theme and fonts are the application's (EditorApplication::onStart),
-    // so they outlive a switch between projects.
+    // The base theme, fonts, popup bevels, and the disabled imgui.ini are the
+    // application's (EditorApplication::onStart), so they outlive a switch
+    // between projects. The session applies the preferences on top: the UI
+    // scale (automatic follows the display's scale factor, rounded by the
+    // pixel theme to whole screen pixels per art pixel) and the theme tuning.
+    m_displayContentScale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
+    if (m_displayContentScale <= 0.0f) {
+        m_displayContentScale = 1.0f;
+    }
+    applyAppearance();
     // Asset paths in render settings (the colour-grading LUT) resolve against
     // the edited project's assets.
     context.rendering.setAssetRoot(m_document.options().assetRoot);
@@ -434,6 +453,8 @@ SceneResult EditorSession::prepareSmokeScenario(ApplicationContext& context) {
 }
 
 void EditorSession::update(ApplicationContext& context, const InputState& input, float deltaSeconds) {
+    // Between frames, where a new UI scale may add fonts to the atlas.
+    applyAppearance();
     // Before the smoke scenario, which checks the switch it requested.
     updateWorkspaces();
     beginViewportFrame(context);
@@ -441,6 +462,7 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
         updateSmokeScenario(context);
     }
     updateAutosave(context, deltaSeconds);
+    updatePackaging();
     // Once per frame, however many asset browsers are open.
     m_projectAssets.pollChanges(m_diagnostics, projectAssetActions(context), deltaSeconds);
     updateAreas(context, input, deltaSeconds);
@@ -785,12 +807,14 @@ void EditorSession::releaseSmokeLayers() {
 }
 
 void EditorSession::updateAutosave(ApplicationContext& context, float deltaSeconds) {
-    if (!m_document.dirty() || m_playMode.mode() != EditorMode::Edit) {
+    // An interval of 0 turns autosave off (Edit > Preferences > Saving).
+    const float intervalSeconds = m_settings.autosave().intervalSeconds;
+    if (intervalSeconds <= 0.0f || !m_document.dirty() || m_playMode.mode() != EditorMode::Edit) {
         m_autosaveElapsed = 0.0f;
         return;
     }
     m_autosaveElapsed += deltaSeconds;
-    if (m_autosaveElapsed >= autosaveIntervalSeconds) {
+    if (m_autosaveElapsed >= intervalSeconds) {
         m_autosaveElapsed = 0.0f;
         if (const SceneDocumentResult result = m_recovery.autosave(context.scene, context.assets, m_document.options());
             !result) {
@@ -911,9 +935,7 @@ void EditorSession::unload(ApplicationContext& context) {
         m_workspaces.active().setLayout(captureImGuiLayout());
         saveWorkspaces();
     }
-    if (const EditorSettingsResult result = m_settings.save(); !result) {
-        m_diagnostics.reportError(result.error);
-    }
+    saveSettings();
     saveComponentLayoutIfChanged();
 }
 
@@ -943,6 +965,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         ImGui::Separator();
         operatorMenuItem(context, "wm.open_project", "Open Project...");
         operatorMenuItem(context, "wm.project_hub", "Project Hub");
+        drawBuildPackageMenu(context);
         ImGui::Separator();
         operatorMenuItem(context, "file.quit", "Quit");
         ImGui::EndMenu();
@@ -980,6 +1003,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         ImGui::Separator();
         operatorMenuItem(context, "wm.search_menu", "Search Operators...");
         operatorMenuItem(context, "wm.keymap_editor", "Keymap...");
+        operatorMenuItem(context, "wm.preferences", "Preferences...");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Object")) {

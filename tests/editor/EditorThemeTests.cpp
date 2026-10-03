@@ -62,6 +62,57 @@ void testColorsComeFromThePalette() {
            "empty dock space and menu bars let the painted glass show");
 }
 
+void testThemeParametersApply() {
+    expect(artPixelForUiScale(0, 1.6f) == 2.0f && artPixelForUiScale(3, 1.0f) == 3.0f &&
+               artPixelForUiScale(9, 1.0f) == static_cast<float>(maximumUiScale),
+           "the UI scale follows the display unless overridden by a whole multiplier");
+    ImGuiStyle designed;
+    applyEditorColors(designed);
+    const ImVec4 glow = designed.Colors[ImGuiCol_NavCursor];
+    expect(glow.x == palette::pixelGlow.r && glow.y == palette::pixelGlow.g &&
+               designed.Colors[ImGuiCol_WindowBg].w == 1.0f,
+           "the default parameters keep the designed glow and opaque panes");
+
+    ImGuiStyle tuned;
+    const ThemeParameters violet{.paneOpacity = 0.95f, .accent = ThemeAccent::Violet};
+    applyEditorColors(tuned, violet);
+    const ThemeColor accent = themeAccentInfo(ThemeAccent::Violet).color;
+    expect(tuned.Colors[ImGuiCol_NavCursor].x == accent.r && tuned.Colors[ImGuiCol_TabSelectedOverline].z == accent.b &&
+               tuned.Colors[ImGuiCol_SliderGrabActive].y == accent.g,
+           "the accent replaces the glow everywhere it is drawn");
+    expect(std::abs(tuned.Colors[ImGuiCol_WindowBg].w - 0.95f) < 0.0001f, "pane opacity reaches the window background");
+    expect(tuned.Colors[ImGuiCol_Text].x == palette::ink.r, "the accent leaves text colours alone");
+
+    ImGui::GetStyle() = tuned;
+    expect(editorAccent() == accent.withAlpha(1.0f), "widgets read the accent from the current style");
+    applyEditorColors(ImGui::GetStyle());
+}
+
+void testBackdropWithoutWallpaper() {
+    RenderRuntime rendering;
+    GlassBackdrop backdrop;
+    for (int frame = 0; frame < 20; ++frame) {
+        backdrop.update(rendering, {0.0f, 0.0f}, {320.0f, 180.0f}, 1.0f, {.wallpaper = false});
+    }
+    expect(!rendering.uiImageAlive({.index = 0, .generation = 1}), "with the wallpaper off no wallpaper is generated");
+    expect(!backdrop.wallpaperShown(), "with the wallpaper off the backdrop shows no wallpaper");
+    {
+        HeadlessImGuiFrame frame("No wallpaper");
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        const int before = drawList->VtxBuffer.Size;
+        backdrop.drawWallpaper(drawList);
+        backdrop.drawFrosted(drawList, {10.0f, 10.0f}, {100.0f, 60.0f}, 1.0f);
+        expect(drawList->VtxBuffer.Size > before, "the flat sky and glass fill are drawn instead");
+    }
+    backdrop.release(rendering);
+
+    ThemeChrome chrome;
+    chrome.setParameters({.frostRadius = 99, .accent = ThemeAccent::Sky});
+    expect(chrome.parameters().frostRadius == ThemeParameters::maximumFrostRadius &&
+               chrome.parameters().accent == ThemeAccent::Sky,
+           "the chrome keeps its parameters clamped");
+}
+
 void testIconsAndPainterDraw() {
     HeadlessImGuiFrame frame("Icons");
     ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -195,6 +246,8 @@ int main() {
     applyEditorColors(ImGui::GetStyle());
     testMetricsSitOnThePixelGrid();
     testColorsComeFromThePalette();
+    testThemeParametersApply();
+    testBackdropWithoutWallpaper();
     testIconsAndPainterDraw();
     testWidgetsKeepImGuiIds();
     testEntityIcons();

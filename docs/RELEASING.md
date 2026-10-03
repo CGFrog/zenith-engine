@@ -1,9 +1,10 @@
 # Release packaging
 
 Zenith produces relocatable archives through CPack. A release contains the
-game executable, compiled SPIR-V shaders, the selected demo project, its assets
-and startup scene, required non-system runtime libraries, third-party license
-texts, and `content-manifest.json`. The manifest records the product and format
+game executable, compiled SPIR-V shaders, the selected project (the
+`ZENITH_PACKAGE_PROJECT` cache variable, `projects/demo.zenith-project` by
+default) with its assets, startup scene, and game module, required non-system
+runtime libraries, third-party license texts, and `content-manifest.json`. The manifest records the product and format
 versions plus a SHA-256 digest for every packaged file.
 
 ## Create an archive
@@ -17,6 +18,28 @@ cmake --build build --config Release --parallel 4
 ctest --test-dir build -C Release --output-on-failure -LE vulkan
 cmake --build build --config Release --target package
 ```
+
+To package another project, configure a release tree for it:
+
+```powershell
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF `
+  -DZENITH_PACKAGE_PROJECT="$PWD/projects/showcase.zenith-project" `
+  -DZENITH_COPY_PROJECT_MODULE=OFF
+cmake --build build-release --config Release --target package
+```
+
+`cmake/PackageProject.cmake` reads the project: its file goes to the archive
+root, its startup scene to its `sceneRoot`, its game module to the path it
+names (built from the matching `MODULE` target when this tree builds it), and
+its asset root to `assets/`, merged with the runtime's own assets (a project
+file with the same path as an engine asset replaces it). The project's `sceneRoot`, `startupScene`, and
+`gameModule` must stay inside its folder; the packaged copy of the project file
+names `assets` as its `assetRoot` (only that value is rewritten), so the
+packaged project resolves inside the archive. `ZENITH_COPY_PROJECT_MODULE=OFF`
+keeps a release tree from replacing the module beside the source project that
+the editor loads. The editor's **File > Build and Package** runs exactly these
+steps (configure when needed, build, `zenith_cooked_textures`, `package`) in
+`build-release` for the open project.
 
 Windows produces a relocatable `.zip` and, with
 `-DZENITH_WINDOWS_INSTALLER=ON`, a WiX `.msi`; Linux produces `.tar.gz` and
@@ -43,6 +66,9 @@ cmake -DZENITH_ARCHIVE="build/Zenith-0.1.0-Windows-AMD64.zip" `
   -DZENITH_VERIFY_ROOT="build/clean extraction with spaces" `
   -P cmake/VerifyExtractedPackage.cmake
 ```
+
+`VerifyExtractedPackage.cmake` verifies the single `.zenith-project` at the
+archive root; pass `-DZENITH_PACKAGE_PROJECT_NAME=<file>` to choose one.
 
 For a normal smoke run from an extracted archive:
 

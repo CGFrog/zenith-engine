@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/theme/GlassBackdrop.hpp"
+#include "editor/theme/ThemeParameters.hpp"
 
 #include <imgui.h>
 
@@ -11,6 +12,14 @@ struct ImGuiContext;
 // bevels on popups. The editor session owns one and calls it while drawing.
 class ThemeChrome {
   public:
+    // The theme tuning used from the next beginFrame on (the defaults until
+    // set).
+    void setParameters(const ThemeParameters& parameters);
+
+    const ThemeParameters& parameters() const {
+        return m_parameters;
+    }
+
     // Once per frame before the dockspace: keeps the wallpaper current and
     // paints it behind every window.
     void beginFrame(RenderRuntime& rendering);
@@ -39,4 +48,5 @@ class ThemeChrome {
     void paintGlassPanel(ImDrawList* drawList, ImVec2 min, ImVec2 max) const;
 
     GlassBackdrop m_backdrop;
+    ThemeParameters m_parameters;
 };

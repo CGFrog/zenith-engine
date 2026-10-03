@@ -11,8 +11,12 @@
 #include <vector>
 
 struct BuildRequest {
-    // Run by the platform shell, so it may chain commands.
+    // Run by the platform shell, so it may chain commands. With arguments it
+    // is only the text shown for the build.
     std::string command;
+    // When not empty: the program and its arguments, run directly with no
+    // shell, so paths with spaces or shell characters stay single arguments.
+    std::vector<std::string> arguments;
     // Empty runs in the editor's working directory. Relative diagnostic paths
     // are resolved against this directory.
     std::filesystem::path workingDirectory;

@@ -7,15 +7,17 @@ ChildProcessResult BuildRunner::start(const BuildRequest& request) {
     if (running()) {
         return {.error = "A build is already running"};
     }
-    if (request.command.find_first_not_of(" \t") == std::string::npos) {
+    if (request.arguments.empty() && request.command.find_first_not_of(" \t") == std::string::npos) {
         return {.error = "No build command is configured"};
     }
     std::error_code error;
     if (!request.workingDirectory.empty() && !std::filesystem::is_directory(request.workingDirectory, error)) {
         return {.error = "Build directory does not exist: " + request.workingDirectory.string()};
     }
-    const ChildProcessResult started = m_process.start(
-        {.command = ChildProcessCommand::shell(request.command), .workingDirectory = request.workingDirectory});
+    const ChildProcessResult started =
+        m_process.start({.command = request.arguments.empty() ? ChildProcessCommand::shell(request.command)
+                                                              : ChildProcessCommand::program(request.arguments),
+                         .workingDirectory = request.workingDirectory});
     if (!started) {
         return started;
     }

@@ -24,13 +24,16 @@
 #include "editor/panels/BuildPanel.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/InfoPanel.hpp"
+#include "editor/panels/PreferencesWindow.hpp"
 #include "editor/panels/ViewportPanel.hpp"
+#include "editor/project/PackageRunner.hpp"
 #include "editor/project/ProjectAssets.hpp"
 #include "editor/project/ProjectHub.hpp"
 #include "editor/settings/ComponentInspectorLayout.hpp"
 #include "editor/settings/EditorRenderSettings.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "editor/settings/RenderSettingsController.hpp"
+#include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/ThemeChrome.hpp"
 #include "engine/application/Application.hpp"
 #include "engine/jobs/JobSystem.hpp"
@@ -61,6 +64,11 @@ struct EditorProjectServices {
     // Ends the session and shows the Project Hub; the session asks about
     // unsaved changes first. Empty when the editor runs without a hub.
     std::function<void(ApplicationContext&, ProjectHubEntry)> leaveForProjectHub;
+    // The editor font file, and the fonts the application already added to
+    // the atlas, so a UI scale preference reuses them and only loads sizes
+    // that are missing.
+    std::filesystem::path fontPath;
+    std::vector<EditorFonts> loadedFonts;
 };
 
 // Composes the editor: owns the document, history, selection, camera, the
@@ -129,6 +137,20 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
                           std::string_view properties = {}, bool selected = false);
     void drawOperatorWindows(ApplicationContext& context);
     void saveKeymap();
+    void saveSettings();
+
+    // Preferences and packaging (EditorPreferences.cpp).
+    void registerPreferenceOperators();
+    // Applies the appearance settings when they changed since the last call:
+    // art-pixel metrics, fonts for that size, colours, and the glass. Runs
+    // between frames, where fonts may be added to the atlas.
+    void applyAppearance();
+    void useFontsFor(float artPixel);
+    PreferencesContext preferencesContext(ApplicationContext& context);
+    // Polls Build and Package; publishes its outcome and opens the output
+    // folder when it succeeds.
+    void updatePackaging();
+    void drawBuildPackageMenu(ApplicationContext& context);
     void saveComponentLayoutIfChanged();
     void saveSimulateSystems();
 
@@ -273,6 +295,14 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     KeymapEditor m_keymapEditor;
     LastOperatorPanel m_lastOperatorPanel;
     bool m_showKeymapEditor{false};
+    PreferencesWindow m_preferences;
+    // The appearance applied to ImGui and the chrome, the art pixel it used,
+    // and the fonts loaded per art pixel (an atlas only grows).
+    std::optional<EditorAppearanceSettings> m_appliedAppearance;
+    float m_appliedArtPixel{0.0f};
+    std::filesystem::path m_fontPath;
+    std::vector<EditorFonts> m_editorFonts;
+    float m_displayContentScale{1.0f};
     // The project's asset service, shared by every Asset Browser area;
     // declared before the areas that reference it.
     ProjectAssets m_projectAssets;
@@ -292,7 +322,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // Panels holding editor-wide state, shown by single-instance area types.
     // Per-area panels (Viewport, Hierarchy, Asset Browser, Graphics, ...) are
     // created by their types (EditorAreaTypes.hpp, EditorAreas.cpp).
-    BuildPanel m_buildPanel{m_settings.tools()};
+    // Build and Package; declared before the Build panel, which shows it.
+    PackageRunner m_packageRunner{makeProcessPackageStepRunner()};
+    BuildPanel m_buildPanel{m_settings.tools(), &m_packageRunner};
     // Shows the engine log, diagnostics, and operator history.
     InfoPanel m_infoPanel{m_operatorRunner.history()};
 

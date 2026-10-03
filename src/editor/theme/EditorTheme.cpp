@@ -59,6 +59,13 @@ float artPixelForScale(float contentScale) {
     return std::max(1.0f, std::round(contentScale));
 }
 
+float artPixelForUiScale(uint32_t uiScaleOverride, float contentScale) {
+    if (uiScaleOverride == 0) {
+        return artPixelForScale(contentScale);
+    }
+    return static_cast<float>(std::min(uiScaleOverride, maximumUiScale));
+}
+
 float editorArtPixel() {
     return g_artPixel;
 }
@@ -108,13 +115,15 @@ void applyEditorMetrics(ImGuiStyle& style, float artPixel) {
     g_artPixel = artPixel;
 }
 
-void applyEditorColors(ImGuiStyle& style) {
+void applyEditorColors(ImGuiStyle& style, const ThemeParameters& requested) {
     using namespace palette;
+    const ThemeParameters parameters = clampedThemeParameters(requested);
+    const ThemeColor accent = themeAccentInfo(parameters.accent).color;
     ImVec4* colors = style.Colors;
     const ImVec4 clear = toImVec4(transparent);
     colors[ImGuiCol_Text] = toImVec4(ink);
     colors[ImGuiCol_TextDisabled] = toImVec4(inkDisabled);
-    colors[ImGuiCol_WindowBg] = toImVec4(pane);
+    colors[ImGuiCol_WindowBg] = toImVec4(paneColor(parameters));
     colors[ImGuiCol_ChildBg] = clear;
     colors[ImGuiCol_PopupBg] = toImVec4(popup);
     colors[ImGuiCol_Border] = toImVec4(glassBorder);
@@ -130,10 +139,10 @@ void applyEditorColors(ImGuiStyle& style) {
     colors[ImGuiCol_ScrollbarBg] = toImVec4(field);
     colors[ImGuiCol_ScrollbarGrab] = toImVec4(scrollbarThumb);
     colors[ImGuiCol_ScrollbarGrabHovered] = toImVec4(scrollbarThumbHovered);
-    colors[ImGuiCol_ScrollbarGrabActive] = toImVec4(scrollbarThumbActive);
+    colors[ImGuiCol_ScrollbarGrabActive] = toImVec4(accent);
     colors[ImGuiCol_CheckMark] = toImVec4(sliderHandle);
     colors[ImGuiCol_SliderGrab] = toImVec4(sliderHandle);
-    colors[ImGuiCol_SliderGrabActive] = toImVec4(pixelGlow);
+    colors[ImGuiCol_SliderGrabActive] = toImVec4(accent);
     colors[ImGuiCol_Button] = toImVec4(buttonTop);
     colors[ImGuiCol_ButtonHovered] = toImVec4(buttonHoverTop);
     colors[ImGuiCol_ButtonActive] = toImVec4(buttonActiveBottom);
@@ -141,25 +150,25 @@ void applyEditorColors(ImGuiStyle& style) {
     colors[ImGuiCol_HeaderHovered] = toImVec4(rowHovered);
     colors[ImGuiCol_HeaderActive] = toImVec4(rowSelectedHighlight);
     colors[ImGuiCol_Separator] = toImVec4(separator);
-    colors[ImGuiCol_SeparatorHovered] = toImVec4(pixelGlow.withAlpha(0.6f));
-    colors[ImGuiCol_SeparatorActive] = toImVec4(pixelGlow);
+    colors[ImGuiCol_SeparatorHovered] = toImVec4(accent.withAlpha(0.6f));
+    colors[ImGuiCol_SeparatorActive] = toImVec4(accent);
     colors[ImGuiCol_ResizeGrip] = toImVec4(buttonTop.withAlpha(0.3f));
-    colors[ImGuiCol_ResizeGripHovered] = toImVec4(pixelGlow.withAlpha(0.6f));
-    colors[ImGuiCol_ResizeGripActive] = toImVec4(pixelGlow);
+    colors[ImGuiCol_ResizeGripHovered] = toImVec4(accent.withAlpha(0.6f));
+    colors[ImGuiCol_ResizeGripActive] = toImVec4(accent);
     colors[ImGuiCol_Tab] = toImVec4(buttonBottom.withAlpha(0.85f));
     colors[ImGuiCol_TabHovered] = toImVec4(buttonHoverTop);
     colors[ImGuiCol_TabSelected] = toImVec4(rowSelected);
-    colors[ImGuiCol_TabSelectedOverline] = toImVec4(pixelGlow);
+    colors[ImGuiCol_TabSelectedOverline] = toImVec4(accent);
     colors[ImGuiCol_TabDimmed] = toImVec4(glassFallback.withAlpha(0.85f));
     colors[ImGuiCol_TabDimmedSelected] = toImVec4(sectionTop);
     colors[ImGuiCol_TabDimmedSelectedOverline] = clear;
-    colors[ImGuiCol_DockingPreview] = toImVec4(pixelGlow.withAlpha(0.5f));
+    colors[ImGuiCol_DockingPreview] = toImVec4(accent.withAlpha(0.5f));
     // Empty dock space shows the wallpaper.
     colors[ImGuiCol_DockingEmptyBg] = clear;
     colors[ImGuiCol_PlotLines] = toImVec4(inkMuted);
-    colors[ImGuiCol_PlotLinesHovered] = toImVec4(pixelGlow);
+    colors[ImGuiCol_PlotLinesHovered] = toImVec4(accent);
     colors[ImGuiCol_PlotHistogram] = toImVec4(sliderFill);
-    colors[ImGuiCol_PlotHistogramHovered] = toImVec4(pixelGlow);
+    colors[ImGuiCol_PlotHistogramHovered] = toImVec4(accent);
     colors[ImGuiCol_TableHeaderBg] = toImVec4(sectionTop);
     colors[ImGuiCol_TableBorderStrong] = toImVec4(glassBorder);
     colors[ImGuiCol_TableBorderLight] = toImVec4(separator);
@@ -167,8 +176,8 @@ void applyEditorColors(ImGuiStyle& style) {
     colors[ImGuiCol_TableRowBgAlt] = toImVec4(paneAlternate);
     colors[ImGuiCol_TextLink] = toImVec4(info);
     colors[ImGuiCol_TextSelectedBg] = toImVec4(textSelection);
-    colors[ImGuiCol_DragDropTarget] = toImVec4(pixelGlow);
-    colors[ImGuiCol_NavCursor] = toImVec4(pixelGlow);
+    colors[ImGuiCol_DragDropTarget] = toImVec4(accent);
+    colors[ImGuiCol_NavCursor] = toImVec4(accent);
     colors[ImGuiCol_NavWindowingHighlight] = toImVec4(captionInk.withAlpha(0.7f));
     colors[ImGuiCol_NavWindowingDimBg] = toImVec4(modalDim.withAlpha(0.3f));
     colors[ImGuiCol_ModalWindowDimBg] = toImVec4(modalDim);
@@ -181,7 +190,12 @@ void applyEditorColors(ImGuiStyle& style) {
     gizmo.Colors[ImGuizmo::PLANE_X] = toImVec4(axisX.withAlpha(0.38f));
     gizmo.Colors[ImGuizmo::PLANE_Y] = toImVec4(axisY.withAlpha(0.38f));
     gizmo.Colors[ImGuizmo::PLANE_Z] = toImVec4(axisZ.withAlpha(0.38f));
-    gizmo.Colors[ImGuizmo::SELECTION] = toImVec4(pixelGlow);
+    gizmo.Colors[ImGuizmo::SELECTION] = toImVec4(accent);
+}
+
+ThemeColor editorAccent() {
+    const ImVec4 accent = ImGui::GetStyle().Colors[ImGuiCol_NavCursor];
+    return {accent.x, accent.y, accent.z, accent.w};
 }
 
 ImVec4 toImVec4(ThemeColor color) {
@@ -203,8 +217,8 @@ EditorFontResult loadEditorFonts(ImGuiIO& io, const std::filesystem::path& fontD
         ImFont* body = addPixelFont(io, bodyPath, bodyFontSize * artPixel, fallbackFont);
         ImFont* title = addPixelFont(io, titlePath, titleFontSize * artPixel, fallbackFont);
         if (body != nullptr && title != nullptr) {
-            io.FontDefault = body;
-            g_titleFont = title;
+            result.fonts = {.artPixel = artPixel, .body = body, .title = title};
+            useEditorFonts(io, result.fonts);
             result.success = true;
             return result;
         }
@@ -226,9 +240,15 @@ EditorFontResult loadEditorFonts(ImGuiIO& io, const std::filesystem::path& fontD
         result.error = "Could not load editor font: " + fallbackFont.string();
         return result;
     }
-    io.FontDefault = font;
+    result.fonts = {.artPixel = artPixel, .body = font, .title = nullptr};
+    useEditorFonts(io, result.fonts);
     result.success = true;
     return result;
+}
+
+void useEditorFonts(ImGuiIO& io, const EditorFonts& fonts) {
+    io.FontDefault = fonts.body;
+    g_titleFont = fonts.title;
 }
 
 ImFont* editorTitleFont() {

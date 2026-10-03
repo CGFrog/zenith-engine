@@ -6,6 +6,11 @@ endif()
 if(NOT DEFINED ZENITH_PACKAGE_VERSION)
     set(ZENITH_PACKAGE_VERSION "unknown")
 endif()
+# The packaged project's files (project file, startup scene, game module), as
+# cmake/PackageProject.cmake lists them.
+if(NOT DEFINED ZENITH_PACKAGE_PROJECT_PATHS OR ZENITH_PACKAGE_PROJECT_PATHS STREQUAL "")
+    message(FATAL_ERROR "ZENITH_PACKAGE_PROJECT_PATHS is required")
+endif()
 
 cmake_path(ABSOLUTE_PATH ZENITH_PACKAGE_ROOT NORMALIZE OUTPUT_VARIABLE package_root)
 set(required_paths
@@ -15,9 +20,7 @@ set(required_paths
     "assets/audio/interaction.wav"
     "shaders"
     "licenses"
-    "demo.zenith-project"
-    "modules/zenith_game_demo.zmodule"
-    "scenes/demo.zenith-scene"
+    ${ZENITH_PACKAGE_PROJECT_PATHS}
     "shaders/mesh.vert.spv"
     "shaders/mesh.frag.spv"
     "shaders/post.frag.spv"
