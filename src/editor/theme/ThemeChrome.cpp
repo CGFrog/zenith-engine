@@ -14,11 +14,13 @@ ImU32 u32(ThemeColor color) {
 
 // A solid content pane: notched, outlined, with a shadow along its top and
 // left edges so it reads as set into the glass.
-void paintPane(ImDrawList* drawList, ImVec2 min, ImVec2 max, float artPixel) {
+// Below full opacity the frosted glass behind shows through the pane.
+void paintPane(ImDrawList* drawList, ImVec2 min, ImVec2 max, float artPixel, const ThemeParameters& parameters) {
     using namespace palette;
-    pixel::notchedRect(drawList, min, max, u32(pane), artPixel);
-    pixel::bevel(drawList, {min.x + artPixel, min.y + artPixel}, {max.x - artPixel, max.y - artPixel}, u32(paneShadow),
-                 u32(pane), artPixel);
+    const ThemeColor fill = paneColor(parameters);
+    pixel::notchedRect(drawList, min, max, u32(fill), artPixel);
+    pixel::bevel(drawList, {min.x + artPixel, min.y + artPixel}, {max.x - artPixel, max.y - artPixel},
+                 u32(paneShadow.withAlpha(fill.a)), u32(fill), artPixel);
     pixel::notchedOutline(drawList, min, max, u32(glassBorder), artPixel);
 }
 
@@ -41,9 +43,13 @@ void paintPopupBevels(ImGuiContext* context, ImGuiContextHook*) {
 }
 } // namespace
 
+void ThemeChrome::setParameters(const ThemeParameters& parameters) {
+    m_parameters = clampedThemeParameters(parameters);
+}
+
 void ThemeChrome::beginFrame(RenderRuntime& rendering) {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    m_backdrop.update(rendering, viewport->Pos, viewport->Size, editorArtPixel());
+    m_backdrop.update(rendering, viewport->Pos, viewport->Size, editorArtPixel(), m_parameters);
     m_backdrop.drawWallpaper(ImGui::GetBackgroundDrawList(ImGui::GetMainViewport()));
 }
 
@@ -65,7 +71,7 @@ void ThemeChrome::paintAreaWindow() const {
         ImDrawList* background = ImGui::GetBackgroundDrawList(window->Viewport);
         const ImRect node = window->DockNode->Rect();
         paintGlassPanel(background, node.Min, node.Max);
-        paintPane(background, paneMin, paneMax, artPixel);
+        paintPane(background, paneMin, paneMax, artPixel, m_parameters);
         return;
     }
     // A floating area keeps ImGui's title bar; its body becomes the pane and
@@ -75,7 +81,7 @@ void ThemeChrome::paintAreaWindow() const {
     if (window->InnerRect.Min.y > bodyTop) {
         paintGlassPanel(drawList, {windowMin.x, bodyTop}, {windowMax.x, window->InnerRect.Min.y});
     }
-    paintPane(drawList, {windowMin.x, window->InnerRect.Min.y}, windowMax, artPixel);
+    paintPane(drawList, {windowMin.x, window->InnerRect.Min.y}, windowMax, artPixel, m_parameters);
 }
 
 void ThemeChrome::paintBarWindow() const {

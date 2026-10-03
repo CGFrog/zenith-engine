@@ -173,9 +173,14 @@ void UiPass::syncFonts(const AssetManager& assets) {
             added = true;
         }
     }
-    if (added) {
+    // The backend uploads the atlas at its first NewFrame. Fonts added later,
+    // here or by the application between frames (an editor changing its UI
+    // scale), need the atlas built and uploaded again.
+    const int atlasFonts = io.Fonts->Fonts.Size;
+    if (added || (m_uploadedFontCount >= 0 && atlasFonts != m_uploadedFontCount)) {
         ImGui_ImplVulkan_CreateFontsTexture();
     }
+    m_uploadedFontCount = atlasFonts;
 }
 
 void UiPass::drawGameUi(const GameUiContext& gameUi, const std::function<uint64_t(TextureHandle)>& textureResolver) {

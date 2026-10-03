@@ -610,7 +610,36 @@ Build or Diagnostics panel runs `ide.command` through `project/ExternalEditor`,
 which tokenizes the template and substitutes `{file}`, `{line}`, and `{column}`
 into arguments (never a shell); the default is
 `code -g "{file}:{line}:{column}"`. These settings live in the editor's
-`settings.ini` and are editable in the Build panel.
+`settings.ini` and are editable in the Build panel and **Edit > Preferences**.
+
+**File > Build and Package** runs `file.build_package {platform,
+configuration}` (`operators/PackageOperators`): it plans the release
+packaging of `docs/RELEASING.md` for the open project with
+`project/PackageRunner` (`planPackage` is a pure function returning the
+commands) — configure (only when `packageCacheNeedsConfigure` says the tree
+was made for another project or configuration), build, the
+`zenith_cooked_textures` target, and the `package` target — in its own release
+tree (`package.directory`, default `build-release` inside `build.directory`),
+never the editor's Debug tree. The configure step passes
+`ZENITH_PACKAGE_PROJECT=<project>` and `ZENITH_COPY_PROJECT_MODULE=OFF`, so the
+release module never replaces the module the editor has loaded and packaging
+never triggers a hot reload. `PackageRunner` runs the steps one at a time on a
+`PackageStepRunner` (a `BuildRunner` in the editor, a scripted fake in tests),
+stops at the first failure, and can be cancelled. The session owns the runner
+and polls it every frame; the Build panel shows its output (Build Output /
+Package Output), the outcome is published as `Package` diagnostics, and a
+successful package opens the folder with the archive selected. Only the host
+platform can be packaged; the others are listed disabled with the reason.
+
+**Edit > Preferences** (`wm.preferences`, `panels/PreferencesWindow`) edits
+the theme tuning, UI scale, keymap link, IDE command (with a Test button),
+autosave interval, and build settings. Edits are validated as they are made
+(`validatePreferences`); every section without a problem is stored at once and
+`settings.ini` is saved, while a section with a problem keeps its last valid
+values. Each section has Reset to Defaults. The session applies the look
+between frames (`EditorSession::applyAppearance`): art-pixel metrics, the
+pixel fonts for a new art pixel (added to the atlas, which the UI pass uploads
+again when it grows), the palette with the chosen accent, and the glass.
 
 ### `src/editor/operators/`
 
@@ -717,7 +746,13 @@ is needed. `ThemeChrome` paints the wallpaper, the glass frames behind docked
 areas and the editor bars, and popup bevels. `EditorWidgets` wraps ImGui
 buttons and headers with the same ids, painting the pixel look over them;
 `PixelIcons` draws the pixel-art icon set and `EntityIcon` picks an entity's
-icon from its components.
+icon from its components. `ThemeParameters` is the theme's only tuning (there
+is one look): wallpaper on or off, frost radius, glass opacity, pane opacity
+(never below the 4.5:1 text contrast over the brightest wallpaper colour), and
+an accent from a curated set of palette hues. It is passed explicitly to
+`applyEditorColors`, `ThemeChrome`, and `GlassBackdrop` (which regenerates the
+frosted wallpaper when the frost changes); the defaults are the designed look.
+The accent lives in the ImGui style, where widgets read it (`editorAccent`).
 
 ### `src/editor/settings/EditorRenderSettings.*`
 

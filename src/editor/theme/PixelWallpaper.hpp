@@ -47,5 +47,8 @@ SceneImage frost(const SceneImage& image, uint32_t radius, ThemeColor tint, floa
 // Maps every pixel to its nearest palette colour after a 4x4 ordered (Bayer)
 // dither offset, so gradients become retro bands.
 PixelImage quantize(const SceneImage& image, std::span<const ThemeColor> palette);
-// Both wallpaper images for a grid of width x height cells.
-WallpaperImages generateNightWallpaper(uint32_t width, uint32_t height);
+// Both wallpaper images for a grid of width x height cells; the frosted copy
+// is blurred by frostRadius cells and mixed toward the glass tint by
+// tintAmount (the defaults are the theme's own glass).
+WallpaperImages generateNightWallpaper(uint32_t width, uint32_t height, uint32_t frostRadius = 3,
+                                       float tintAmount = palette::glassTintAmount);

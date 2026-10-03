@@ -1,6 +1,7 @@
 #include "editor/theme/EditorPalette.hpp"
 #include "editor/theme/PixelIconBitmaps.hpp"
 #include "editor/theme/PixelWallpaper.hpp"
+#include "editor/theme/ThemeParameters.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -80,6 +81,66 @@ void testCaptionContrastOverFrostedGlass() {
     expect(worst >= textContrast, "outlined captions read over every frosted wallpaper cell");
 }
 
+// Every accent works as the glow ring, overline, and drag target on what it
+// is drawn over; the default is the designed glow.
+void testAccentContrast() {
+    using namespace palette;
+    expect(themeAccents().front().accent == ThemeAccent::Mint && themeAccentInfo(ThemeAccent::Mint).color == pixelGlow,
+           "the default accent is the theme's own glow");
+    for (const ThemeAccentInfo& accent : themeAccents()) {
+        for (const ThemeColor surface : {pane, paneAlternate, field, fieldHovered, glassFallback, buttonTop,
+                                         buttonBottom, sectionTop, rowSelected}) {
+            expect(contrastRatio(accent.color, surface) >= graphicContrast,
+                   "accent " + std::string(accent.key) + " stands out from panes, fields, glass, and buttons");
+        }
+        expect(parseThemeAccent(accent.key) == accent.accent, "accent " + std::string(accent.key) + " parses back");
+    }
+    expect(!parseThemeAccent("pink").has_value(), "unknown accents are rejected");
+}
+
+// Panes at their lowest opacity over the brightest wallpaper colour keep
+// every text colour readable.
+void testPaneOpacityKeepsTextReadable() {
+    using namespace palette;
+    ThemeParameters thinnest;
+    thinnest.paneOpacity = ThemeParameters::minimumPaneOpacity;
+    for (const ThemeColor behind : wallpaper) {
+        const ThemeColor surface = composite(paneColor(thinnest), behind);
+        for (const ThemeColor text : {ink, inkMuted, success, info, warning, error}) {
+            expect(contrastRatio(text, surface) >= textContrast,
+                   "text reaches 4.5:1 on the most transparent pane over any wallpaper colour");
+        }
+    }
+    ThemeParameters wild{.frostRadius = 40, .glassOpacity = 3.0f, .paneOpacity = 0.0f};
+    const ThemeParameters clamped = clampedThemeParameters(wild);
+    expect(clamped.frostRadius == ThemeParameters::maximumFrostRadius &&
+               clamped.glassOpacity == ThemeParameters::maximumGlassOpacity &&
+               clamped.paneOpacity == ThemeParameters::minimumPaneOpacity,
+           "parameters are clamped into their supported ranges");
+    expect(clampedThemeParameters(ThemeParameters{}) == ThemeParameters{}, "the defaults are in range");
+}
+
+// Captions stay readable over the frosted wallpaper at every frost setting.
+void testCaptionContrastAtEveryFrost() {
+    for (const uint32_t radius : {0u, ThemeParameters::maximumFrostRadius}) {
+        for (const float opacity : {ThemeParameters::minimumGlassOpacity, ThemeParameters::maximumGlassOpacity}) {
+            const WallpaperImages images = generateNightWallpaper(96, 54, radius, opacity);
+            float worst = 21.0f;
+            for (size_t index = 0; index < static_cast<size_t>(images.frosted.width) * images.frosted.height; ++index) {
+                const ThemeColor cell = pixelAt(images.frosted, index);
+                worst = std::min(worst, std::max(contrastRatio(palette::captionInk, cell),
+                                                 contrastRatio(palette::captionOutline, cell)));
+            }
+            expect(worst >= textContrast, "outlined captions read over frosted glass at every frost and opacity");
+        }
+    }
+    const WallpaperImages sharp = generateNightWallpaper(64, 36, 0, ThemeParameters::minimumGlassOpacity);
+    const WallpaperImages soft =
+        generateNightWallpaper(64, 36, ThemeParameters::maximumFrostRadius, ThemeParameters::minimumGlassOpacity);
+    expect(sharp.sharp.rgba == soft.sharp.rgba && sharp.frosted.rgba != soft.frosted.rgba,
+           "frost changes only the frosted copy");
+}
+
 void testWallpaperIsDeterministicAndPaletted() {
     const WallpaperImages first = generateNightWallpaper(96, 54);
     const WallpaperImages second = generateNightWallpaper(96, 54);
@@ -153,6 +214,9 @@ int main() {
     testContrastHelpers();
     testTextContrast();
     testCaptionContrastOverFrostedGlass();
+    testAccentContrast();
+    testPaneOpacityKeepsTextReadable();
+    testCaptionContrastAtEveryFrost();
     testWallpaperIsDeterministicAndPaletted();
     testFrostSoftensTheScene();
     testDegenerateWallpaperSizes();

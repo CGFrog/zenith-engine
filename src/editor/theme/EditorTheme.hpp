@@ -1,9 +1,11 @@
 #pragma once
 
 #include "editor/theme/EditorPalette.hpp"
+#include "editor/theme/ThemeParameters.hpp"
 
 #include <imgui.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -15,23 +17,39 @@
 // The theme's pixel grid: one art pixel in screen pixels, a whole number so
 // pixel art and hard edges stay crisp. Display scales round to the nearest.
 float artPixelForScale(float contentScale);
+// Screen pixels per art pixel for a UI scale setting: an override (whole
+// multipliers from 1 to maximumUiScale) or, when 0, the display's scale.
+float artPixelForUiScale(uint32_t uiScaleOverride, float contentScale);
 // The art pixel the current metrics were built for (1 before any are applied).
 float editorArtPixel();
 
 // Sizes, spacing and borders on the art-pixel grid, with every rounding and
 // anti-aliasing switched off.
 void applyEditorMetrics(ImGuiStyle& style, float artPixel);
-// Every ImGui and ImGuizmo colour from the palette.
-void applyEditorColors(ImGuiStyle& style);
+// Every ImGui and ImGuizmo colour from the palette, with the parameters'
+// accent and pane opacity. The accent is also kept in the style (as its
+// NavCursor colour), where editorAccent reads it.
+void applyEditorColors(ImGuiStyle& style, const ThemeParameters& parameters = {});
+// The accent of the current ImGui style.
+ThemeColor editorAccent();
 
 ImVec4 toImVec4(ThemeColor color);
 ImU32 toImU32(ThemeColor color);
+
+// The fonts loaded for one art pixel size. title is null without the pixel
+// fonts.
+struct EditorFonts {
+    float artPixel{0.0f};
+    ImFont* body{nullptr};
+    ImFont* title{nullptr};
+};
 
 struct EditorFontResult {
     bool success{false};
     std::string error;
     // Optional fonts that were missing; the editor still runs without them.
     std::vector<std::string> warnings;
+    EditorFonts fonts;
 
     explicit operator bool() const {
         return success;
@@ -42,9 +60,13 @@ struct EditorFontResult {
 // default) and Press Start 2P for titles, each with the fallback font merged
 // in for glyphs the pixel fonts lack. Without the pixel fonts the fallback
 // alone is the default. Must run before the first UI frame so the backend
-// uploads the atlas with these fonts.
+// uploads the atlas with these fonts; fonts added later (another UI scale)
+// must be added between frames, and the renderer uploads the grown atlas at
+// the next frame.
 EditorFontResult loadEditorFonts(ImGuiIO& io, const std::filesystem::path& fontDirectory,
                                  const std::filesystem::path& fallbackFont, float artPixel);
+// Makes fonts loaded earlier the default and title fonts again.
+void useEditorFonts(ImGuiIO& io, const EditorFonts& fonts);
 // The title font, or null to use the current font (before fonts load or
 // without the pixel fonts).
 ImFont* editorTitleFont();

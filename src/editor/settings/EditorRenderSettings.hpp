@@ -46,6 +46,11 @@ class EditorRenderSettings {
         return m_unsaved;
     }
 
+    // The project file the editor opened; empty without one.
+    const std::filesystem::path& projectFile() const {
+        return m_project.projectFile;
+    }
+
     bool savesToProject() const {
         return !m_project.projectFile.empty();
     }

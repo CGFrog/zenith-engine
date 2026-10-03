@@ -21,8 +21,21 @@ if(WIN32)
 else()
     set(game "${package_root}/zenith")
 endif()
+# The packaged project: ZENITH_PACKAGE_PROJECT_NAME, or the one
+# .zenith-project at the archive root.
+if(DEFINED ZENITH_PACKAGE_PROJECT_NAME AND NOT ZENITH_PACKAGE_PROJECT_NAME STREQUAL "")
+    set(project_file "${package_root}/${ZENITH_PACKAGE_PROJECT_NAME}")
+else()
+    file(GLOB project_files "${package_root}/*.zenith-project")
+    list(LENGTH project_files project_count)
+    if(NOT project_count EQUAL 1)
+        message(FATAL_ERROR "Expected one .zenith-project at the package root, found ${project_count}; "
+            "pass ZENITH_PACKAGE_PROJECT_NAME")
+    endif()
+    set(project_file "${project_files}")
+endif()
 execute_process(
-    COMMAND "${game}" --verify-package --project "${package_root}/demo.zenith-project"
+    COMMAND "${game}" --verify-package --project "${project_file}"
     WORKING_DIRECTORY "${ZENITH_VERIFY_ROOT}"
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output

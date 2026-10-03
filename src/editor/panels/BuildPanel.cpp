@@ -3,6 +3,8 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/project/ExternalEditor.hpp"
+#include "editor/project/PackageRunner.hpp"
+#include "editor/project/ProjectFileOperations.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
@@ -46,8 +48,9 @@ std::string describe(const CompilerDiagnostic& diagnostic) {
 }
 } // namespace
 
-BuildPanel::BuildPanel(EditorToolSettings& tools)
-    : m_tools(tools) {}
+BuildPanel::BuildPanel(EditorToolSettings& tools, PackageRunner* package)
+    : m_tools(tools)
+    , m_package(package) {}
 
 const char* BuildPanel::title() const {
     return "Build";
@@ -75,6 +78,7 @@ void BuildPanel::startBuild(EditorDiagnostics& diagnostics) {
                                 .action = "Check build.command and build.directory in the Build panel."});
     }
     diagnostics.replaceSource(buildSource, std::move(replacements));
+    m_view = View::Build;
     m_scrollToEnd = true;
 }
 
@@ -108,11 +112,26 @@ void BuildPanel::publishDiagnostics(EditorDiagnostics& diagnostics) const {
     diagnostics.replaceSource(buildSource, std::move(replacements));
 }
 
+void BuildPanel::followPackage() {
+    const bool packageRunning = m_package != nullptr && m_package->running();
+    if (packageRunning && !m_packageWasRunning) {
+        m_view = View::Package;
+        m_scrollToEnd = true;
+    }
+    m_packageWasRunning = packageRunning;
+}
+
 void BuildPanel::drawContents(EditorDiagnostics& diagnostics) {
+    followPackage();
     drawToolbar(diagnostics);
-    drawStatus();
+    const bool showPackage = m_view == View::Package && m_package != nullptr;
+    if (showPackage) {
+        drawPackageStatus();
+    } else {
+        drawStatus();
+    }
     ImGui::Separator();
-    drawOutput(diagnostics);
+    drawOutput(showPackage ? m_package->output() : m_runner.output(), diagnostics);
 }
 
 void BuildPanel::drawToolbar(EditorDiagnostics& diagnostics) {
@@ -123,6 +142,22 @@ void BuildPanel::drawToolbar(EditorDiagnostics& diagnostics) {
         }
     } else if (widgets::Button("Build")) {
         startBuild(diagnostics);
+    }
+    if (m_package != nullptr && m_package->state() != PackageState::Idle) {
+        ImGui::SameLine();
+        if (widgets::Button("Build Output", {}, m_view == View::Build)) {
+            m_view = View::Build;
+        }
+        ImGui::SameLine();
+        if (widgets::Button("Package Output", {}, m_view == View::Package)) {
+            m_view = View::Package;
+        }
+        if (m_package->running()) {
+            ImGui::SameLine();
+            if (widgets::Button("Cancel Package")) {
+                m_package->cancel();
+            }
+        }
     }
     ImGui::SameLine();
     ImGui::Checkbox("Follow", &m_followOutput);
@@ -171,13 +206,38 @@ void BuildPanel::drawStatus() const {
     ImGui::TextDisabled("%zu error lines, %zu warning lines", errors, warnings);
 }
 
-void BuildPanel::drawOutput(EditorDiagnostics& diagnostics) {
+void BuildPanel::drawPackageStatus() const {
+    const PackagePlan& plan = m_package->plan();
+    switch (m_package->state()) {
+    case PackageState::Idle:
+        ImGui::TextDisabled("No package has been built.");
+        return;
+    case PackageState::Running:
+        ImGui::Text("Packaging: step %zu of %zu, %s...", m_package->currentStep() + 1, plan.steps.size(),
+                    plan.steps[m_package->currentStep()].label.c_str());
+        return;
+    case PackageState::Succeeded:
+        ImGui::TextColored(toImVec4(palette::success), "%sPackage built in %s", widgets::IconLabelPadding(),
+                           utf8PathText(plan.buildDirectory).c_str());
+        widgets::ItemIcon(EditorIcon::Success, 0.0f);
+        return;
+    case PackageState::Failed:
+        ImGui::TextColored(toImVec4(palette::error), "%sPackaging failed: %s", widgets::IconLabelPadding(),
+                           m_package->failure().c_str());
+        widgets::ItemIcon(EditorIcon::Error, 0.0f);
+        return;
+    case PackageState::Cancelled:
+        ImGui::TextDisabled("Packaging cancelled");
+        return;
+    }
+}
+
+void BuildPanel::drawOutput(const std::deque<BuildOutputLine>& output, EditorDiagnostics& diagnostics) {
     if (!ImGui::BeginChild("Build output", {0.0f, 0.0f}, ImGuiChildFlags_Borders,
                            ImGuiWindowFlags_HorizontalScrollbar)) {
         ImGui::EndChild();
         return;
     }
-    const std::deque<BuildOutputLine>& output = m_runner.output();
     std::optional<EditorSourceLocation> clicked;
     ImGuiListClipper clipper;
     clipper.Begin(static_cast<int>(output.size()));

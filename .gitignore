@@ -1,4 +1,6 @@
 /build/
+# Release trees made by File > Build and Package (package.directory)
+/build-release*/
 /out/
 /.cache/
 /.vs/

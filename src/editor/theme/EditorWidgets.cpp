@@ -57,7 +57,7 @@ void paintButton(ImDrawList* drawList, ImVec2 min, ImVec2 max, ButtonState state
     }
     pixel::notchedOutline(drawList, min, max, color(glassBorder), artPixel);
     if (state == ButtonState::Hovered || state == ButtonState::Active) {
-        pixel::glowRing(drawList, min, max, color(pixelGlow), artPixel);
+        pixel::glowRing(drawList, min, max, color(editorAccent()), artPixel);
     }
 }
 

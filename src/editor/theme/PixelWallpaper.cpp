@@ -321,8 +321,8 @@ PixelImage quantize(const SceneImage& image, std::span<const ThemeColor> palette
     return result;
 }
 
-WallpaperImages generateNightWallpaper(uint32_t width, uint32_t height) {
+WallpaperImages generateNightWallpaper(uint32_t width, uint32_t height, uint32_t frostRadius, float tintAmount) {
     const SceneImage scene = paintNightScene(width, height);
     return {.sharp = quantize(scene, palette::wallpaper),
-            .frosted = quantize(frost(scene, 3, palette::glassTint, palette::glassTintAmount), palette::wallpaper)};
+            .frosted = quantize(frost(scene, frostRadius, palette::glassTint, tintAmount), palette::wallpaper)};
 }
