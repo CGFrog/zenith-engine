@@ -740,7 +740,11 @@ opaque `UiTextureHandle`. Viewport resize recreates those targets and the
 size-dependent mesh/post-process targets without recreating the swapchain.
 Descriptor replacement happens before the next ImGui frame so queued UI draw
 data cannot retain a destroyed texture. Further editor viewports are created
-render views (see Render views) with the same contract.
+render views (see Render views) with the same contract: every viewport area
+owns one view for its lifetime (the first takes the default view), renders
+only on frames it is drawn, and sets its shading through a per-view settings
+override, never the frame settings. The editor makes the active viewport's view
+the renderer's active view, so shadow cascades follow the view being worked in.
 
 Editor camera policy, selection, and gizmo state remain in `src/editor/`.
 `RenderView` is the narrow engine-facing camera override. Picking uses a

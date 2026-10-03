@@ -4,7 +4,6 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
-#include "editor/interaction/EditorCamera.hpp"
 #include "editor/interaction/EntityPropertiesView.hpp"
 #include "editor/operators/ObjectOperators.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
@@ -101,7 +100,7 @@ class OperatorActions final : public EditorSessionActions {
         return false;
     }
 
-    void updateModalTransform(ApplicationContext&) override {}
+    void updateModalTransform(ApplicationContext&, ViewportId) override {}
 
   private:
     OperatorRunner& m_runner;
@@ -123,7 +122,6 @@ struct PanelFixture {
     CommandHistory history;
     EditorDiagnostics diagnostics;
     Selection selection;
-    EditorCamera camera;
     OperatorRegistry operators;
     OperatorRunner runner{operators, history};
     OperatorActions actions{runner, [this] { return operatorContext(); }};
@@ -148,7 +146,6 @@ struct PanelFixture {
                 .editing = editing(),
                 .selection = selection,
                 .diagnostics = diagnostics,
-                .camera = camera,
                 .mode = EditorMode::Edit,
                 .actions = actions};
     }

@@ -71,6 +71,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     }
     registerSessionOperators();
     registerObjectModeOperators();
+    registerViewportOperators();
     registerModuleOperators();
     registerAreaOperators();
     registerAreaTypes();
@@ -90,7 +91,6 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .editing = editing(context),
             .selection = m_selection,
             .diagnostics = m_diagnostics,
-            .camera = m_camera,
             .mode = m_playMode.mode(),
             .actions = *this};
 }
@@ -270,9 +270,8 @@ void EditorSession::drawOperatorWindows(ApplicationContext& context) {
     if (m_playMode.mode() != EditorMode::Edit || m_activeTransform) {
         return;
     }
-    const glm::vec2 viewportCorner = m_viewport.position() + glm::vec2(0.0f, m_viewport.size().y);
     if (const std::optional<OperatorProperties> edited =
-            m_lastOperatorPanel.draw(m_operatorRunner.lastOperator(), viewportCorner)) {
+            m_lastOperatorPanel.draw(m_operatorRunner.lastOperator(), lastOperatorAnchor())) {
         OperatorContext operatorContext = this->operatorContext(context, KeymapRegion::Global);
         m_operatorRunner.adjustLast(operatorContext, *edited);
     }
@@ -365,6 +364,7 @@ SceneResult EditorSession::prepareSmokeScenario(ApplicationContext& context) {
 void EditorSession::update(ApplicationContext& context, const InputState& input, float deltaSeconds) {
     // Before the smoke scenario, which checks the switch it requested.
     updateWorkspaces();
+    beginViewportFrame(context);
     if (m_smokeScenario) {
         updateSmokeScenario(context);
     }
@@ -413,14 +413,20 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     } else if (m_smokeFrame == 6) {
         // The viewport chrome: open the sidebar, hide and restore the tool
         // shelf, and render through a narrower lens with tighter clipping.
+        ViewportPanel* viewport = m_viewports.active();
         for (const char* operatorId : {"view3d.toggle_sidebar", "view3d.toggle_toolbar", "view3d.toggle_toolbar"}) {
             invokeOperator(context, operatorId, {}, KeymapRegion::Viewport);
         }
-        m_camera.setVerticalFovRadians(glm::radians(45.0f));
-        m_camera.setClipPlanes(0.05f, 500.0f);
-        if (!m_viewport.chrome().sidebarVisible || !m_viewport.chrome().toolbarVisible) {
-            m_diagnostics.reportError("Viewport chrome smoke: the sidebar and toolbar should be visible");
+        if (viewport == nullptr) {
+            m_diagnostics.reportError("Viewport chrome smoke: no viewport is open");
             context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+        } else {
+            viewport->camera().setVerticalFovRadians(glm::radians(45.0f));
+            viewport->camera().setClipPlanes(0.05f, 500.0f);
+            if (!viewport->chrome().sidebarVisible || !viewport->chrome().toolbarVisible) {
+                m_diagnostics.reportError("Viewport chrome smoke: the sidebar and toolbar should be visible");
+                context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+            }
         }
         // The renderer logs at least its validation-layer state at startup.
         if (m_infoPanel.log().count(InfoSource::Engine) == 0) {
@@ -444,10 +450,11 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
         }
     }
     const bool areasDone = updateSmokeAreas(context);
+    const bool viewportsDone = updateSmokeViewports(context);
     if (m_smokeFrame == 500 && !m_smokeStreamCompleted) {
         m_diagnostics.reportError("Streaming smoke did not commit while frames were being presented");
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    } else if (areasDone && m_smokeStreamCompleted) {
+    } else if (areasDone && viewportsDone && m_smokeStreamCompleted) {
         updateSmokeModuleReload(context);
     }
 }
@@ -537,6 +544,7 @@ void EditorSession::drawUi(ApplicationContext& context) {
     drawUnsavedChangesDialog(context);
     drawRecoveryDialog(context);
     drawAreas(context);
+    syncActiveRenderView(context);
     drawObjectPopups(context);
     drawOperatorWindows(context);
     drawStatusBar(context.rendering.stats());
@@ -662,12 +670,18 @@ void EditorSession::drawStatusBar(const RenderStats& stats) {
         constexpr const char* modeNames[] = {"Select", "Move", "Rotate", "Scale"};
         constexpr const char* spaceNames[] = {"Global", "Local"};
         constexpr const char* playModeNames[] = {"Edit", "Play", "Paused"};
-        const TransformToolSettings& tools = m_viewport.tools();
         ImGui::Text("%s | %s", m_document.displayName().c_str(),
                     m_diagnostics.hasUnacknowledgedError() ? "Diagnostics available" : "Ready");
-        ImGui::SameLine();
-        ImGui::Text("| Mode: %s | Space: %s | Snap: %s", modeNames[static_cast<int>(tools.gizmo)],
-                    spaceNames[static_cast<int>(tools.space)], tools.snapping ? "On" : "Off");
+        // The transform tools are the active viewport's.
+        if (const ViewportPanel* activeViewport = m_viewports.active()) {
+            const TransformToolSettings& tools = activeViewport->tools();
+            ImGui::SameLine();
+            ImGui::Text("| Mode: %s | Space: %s | Snap: %s", modeNames[static_cast<int>(tools.gizmo)],
+                        spaceNames[static_cast<int>(tools.space)], tools.snapping ? "On" : "Off");
+        } else {
+            ImGui::SameLine();
+            ImGui::TextDisabled("| No viewport");
+        }
         ImGui::SameLine();
         ImGui::Text("| Selection: %zu | Draws %u | Visible %u | GPU %.2f ms", m_selection.size(), stats.drawCalls,
                     stats.visibleCount, stats.gpuFrameMilliseconds);

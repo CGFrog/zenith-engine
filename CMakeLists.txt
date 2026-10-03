@@ -493,6 +493,7 @@ add_library(zenith_editor_app STATIC
     src/editor/application/EditorDiagnostics.cpp
     src/editor/application/EditorModuleCommands.cpp
     src/editor/application/EditorObjectCommands.cpp
+    src/editor/application/EditorViewports.cpp
     src/editor/application/EditorPlayMode.cpp
     src/editor/application/EditorTheme.cpp
     src/editor/application/NativeFileDialog.cpp
@@ -541,7 +542,9 @@ add_library(zenith_editor_app STATIC
     src/editor/panels/RenderSettingsControls.cpp
     src/editor/panels/RenderStatisticsPanel.cpp
     src/editor/panels/ViewportChrome.cpp
+    src/editor/panels/ViewportOperators.cpp
     src/editor/panels/ViewportPanel.cpp
+    src/editor/panels/ViewportRegistry.cpp
     src/editor/project/AssetCatalog.cpp
     src/editor/project/AssetRelocation.cpp
     src/editor/project/BuildRunner.cpp
@@ -1288,6 +1291,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_viewport_chrome_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_viewport_chrome COMMAND zenith_viewport_chrome_tests)
+
+    add_executable(zenith_multi_viewport_tests tests/editor/MultiViewportTests.cpp)
+    target_link_libraries(zenith_multi_viewport_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_multi_viewport_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_multi_viewport_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_multi_viewport COMMAND zenith_multi_viewport_tests)
 
     add_executable(zenith_project_asset_tests
         tests/editor/ProjectAssetTests.cpp

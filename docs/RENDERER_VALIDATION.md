@@ -215,7 +215,10 @@ should regenerate its own set rather than loosen the tolerances.
 
 The `zenith_editor_vulkan_smoke` CTest runs a bounded editor scenario that
 resizes the offscreen viewport twice and exercises Play, Pause, Single Step,
-and Stop. It is labeled `vulkan;smoke` so headless CI can exclude it while a
+and Stop, then opens a second Viewport beside the first with another camera and
+Wireframe shading, checks that both render views rendered with their own
+shading while the project settings stay Rendered, and closes it again,
+checking its view was destroyed. It is labeled `vulkan;smoke` so headless CI can exclude it while a
 Vulkan-capable workstation runs it explicitly.
 
 ## Strict Vulkan validation
@@ -1030,9 +1033,12 @@ unchanged. TAA frames do not run FXAA.
 ## View shading modes
 
 `RenderSettings::viewShading` selects Rendered, Material Preview, Solid or
-Wireframe, after Blender's viewport shading. It is global for now (the editor's
-Graphics Settings panel has a "Viewport shading" combo) and serialized by
-value; documents written before it load as Rendered. Every mode is one
+Wireframe, after Blender's viewport shading. The frame settings carry a
+project-wide value (the editor's Graphics Settings panel has a "Viewport
+shading" combo, serialized by value), and each editor viewport sets its own
+through a per-view settings override (`RenderRuntime::setViewSettings`)
+holding the already reduced `viewShadingFrameSettings`. Documents written before
+the field existed load as Rendered. Every mode is one
 recording path with a reduced feature set:
 
 - `viewShadingFrameSettings` (`ViewShading.hpp`) turns the requested settings

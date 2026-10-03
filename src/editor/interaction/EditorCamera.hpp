@@ -7,6 +7,26 @@
 
 #include <glm/glm.hpp>
 
+#include <optional>
+
+// Camera math for any lens described as a RenderView (the editor camera's, or
+// a scene camera a viewport looks through). The view space is right-handed
+// and looks along -Z; aspectRatio is width over height.
+glm::mat4 lensViewMatrix(const RenderView& lens);
+// Zero-to-one depth with Y flipped for Vulkan, as picking and modal
+// transforms project points.
+glm::mat4 lensProjectionMatrix(const RenderView& lens, float aspectRatio);
+// The OpenGL-style projection ImGuizmo expects.
+glm::mat4 lensGizmoProjectionMatrix(const RenderView& lens, float aspectRatio);
+// The closest mesh hit by the ray through normalizedViewportPosition (0..1,
+// top-left origin), or entt::null.
+Entity pickThroughLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
+                       glm::vec2 normalizedViewportPosition, float aspectRatio);
+// The lens of entity's CameraComponent at its world transform (scale is
+// ignored), or nullopt when the entity has no camera. World transforms must
+// be current.
+std::optional<RenderView> sceneCameraLens(const Scene& scene, Entity entity);
+
 struct EditorCameraConfiguration {
     float lookRadiansPerPixel{0.003f};
     float panDistancePerPixel{0.0015f};

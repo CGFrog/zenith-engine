@@ -3,6 +3,7 @@
 #include "editor/operators/Operator.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 class EditorCamera;
@@ -63,10 +64,14 @@ struct ViewportChromeState {
 
 const char* viewportShadingLabel(ViewportShading shading);
 
-// view3d.toggle_sidebar, view3d.toggle_toolbar, and view3d.shading_set. They
-// edit state, which must outlive the registered operators; they need no
-// window, so they also run headless.
-std::vector<Operator> viewportChromeOperators(ViewportChromeState& state);
+// The chrome an operator acts on when it runs (the active viewport's), or null
+// when there is none.
+using ViewportChromeTarget = std::function<ViewportChromeState*()>;
+
+// view3d.toggle_sidebar, view3d.toggle_toolbar, and view3d.shading_set acting
+// on target's chrome. They poll false, and fail if run anyway, while target
+// returns null. They need no window, so they also run headless.
+std::vector<Operator> viewportChromeOperators(ViewportChromeTarget target);
 
 // Widgets for the viewport's header, tool shelf, and sidebar. Each draws into
 // the current ImGui window and edits the referenced settings directly.

@@ -45,6 +45,104 @@ bool intersectTriangle(glm::vec3 origin, glm::vec3 direction, glm::vec3 a, glm::
 }
 } // namespace
 
+glm::mat4 lensViewMatrix(const RenderView& lens) {
+    return glm::lookAtRH(lens.position, lens.position + lens.forward, lens.up);
+}
+
+glm::mat4 lensProjectionMatrix(const RenderView& lens, float aspectRatio) {
+    glm::mat4 projection = glm::perspectiveRH_ZO(lens.verticalFovRadians, aspectRatio, lens.nearPlane, lens.farPlane);
+    projection[1][1] *= -1.0f;
+    return projection;
+}
+
+glm::mat4 lensGizmoProjectionMatrix(const RenderView& lens, float aspectRatio) {
+    return glm::perspectiveRH_NO(lens.verticalFovRadians, aspectRatio, lens.nearPlane, lens.farPlane);
+}
+
+Entity pickThroughLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
+                       glm::vec2 normalizedViewportPosition, float aspectRatio) {
+    const glm::mat4 inverseViewProjection =
+        glm::inverse(lensProjectionMatrix(lens, aspectRatio) * lensViewMatrix(lens));
+    const glm::vec2 ndc = normalizedViewportPosition * 2.0f - 1.0f;
+    glm::vec4 nearPoint = inverseViewProjection * glm::vec4(ndc, 0.0f, 1.0f);
+    glm::vec4 farPoint = inverseViewProjection * glm::vec4(ndc, 1.0f, 1.0f);
+    nearPoint /= nearPoint.w;
+    farPoint /= farPoint.w;
+    const glm::vec3 direction = glm::normalize(glm::vec3(farPoint - nearPoint));
+    const glm::vec3 origin = lens.position;
+
+    Entity closest = entt::null;
+    float closestDistance = std::numeric_limits<float>::max();
+    auto renderables = scene.registry().view<const MeshRendererComponent, const TransformComponent>();
+    for (Entity entity : renderables) {
+        const MeshAsset* mesh = assets.mesh(renderables.get<const MeshRendererComponent>(entity).mesh);
+        if (mesh == nullptr) {
+            continue;
+        }
+        const glm::mat4& world = renderables.get<const TransformComponent>(entity).world;
+        const glm::vec3 center = glm::vec3(world * glm::vec4(mesh->bounds.center, 1.0f));
+        const float scale = std::max(
+            {glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])), glm::length(glm::vec3(world[2]))});
+        float boundsDistance = 0.0f;
+        if (!intersectSphere(origin, direction, center, mesh->bounds.radius * scale, boundsDistance)) {
+            continue;
+        }
+        const glm::mat3 linearWorld(world);
+        if (std::abs(glm::determinant(linearWorld)) < 0.000001f) {
+            continue;
+        }
+        const glm::mat4 inverseWorld = glm::inverse(world);
+        const glm::vec3 localOrigin = glm::vec3(inverseWorld * glm::vec4(origin, 1.0f));
+        const glm::vec3 localDirection = glm::vec3(inverseWorld * glm::vec4(direction, 0.0f));
+        // Pick against full-detail ranges only; simplified LOD ranges follow
+        // them in the same index buffer.
+        for (const MeshPrimitive& primitive : mesh->primitives) {
+            const size_t end = std::min<size_t>(static_cast<size_t>(primitive.firstIndex) + primitive.indexCount,
+                                                mesh->indices.size());
+            for (size_t index = primitive.firstIndex; index + 2 < end; index += 3) {
+                const uint32_t a = mesh->indices[index];
+                const uint32_t b = mesh->indices[index + 1];
+                const uint32_t c = mesh->indices[index + 2];
+                if (a >= mesh->vertices.size() || b >= mesh->vertices.size() || c >= mesh->vertices.size()) {
+                    continue;
+                }
+                float triangleDistance = 0.0f;
+                if (intersectTriangle(localOrigin, localDirection, mesh->vertices[a].position,
+                                      mesh->vertices[b].position, mesh->vertices[c].position, triangleDistance) &&
+                    triangleDistance < closestDistance) {
+                    closest = entity;
+                    closestDistance = triangleDistance;
+                }
+            }
+        }
+    }
+    return closest;
+}
+
+std::optional<RenderView> sceneCameraLens(const Scene& scene, Entity entity) {
+    if (entity == entt::null || !scene.registry().valid(entity)) {
+        return std::nullopt;
+    }
+    const auto* camera = scene.registry().try_get<CameraComponent>(entity);
+    const auto* transform = scene.registry().try_get<TransformComponent>(entity);
+    if (camera == nullptr || transform == nullptr) {
+        return std::nullopt;
+    }
+    // The renderer views the scene through the inverse of the camera's world
+    // matrix, so the lens follows its translation and rotation axes.
+    const glm::mat4& world = transform->world;
+    const auto axis = [](const glm::vec4& column, glm::vec3 fallback) {
+        const glm::vec3 direction(column);
+        return glm::length(direction) > 1e-8f ? glm::normalize(direction) : fallback;
+    };
+    return RenderView{.position = glm::vec3(world[3]),
+                      .forward = -axis(world[2], {0.0f, 0.0f, 1.0f}),
+                      .up = axis(world[1], {0.0f, 1.0f, 0.0f}),
+                      .verticalFovRadians = camera->verticalFovRadians,
+                      .nearPlane = camera->nearPlane,
+                      .farPlane = camera->farPlane};
+}
+
 EditorCamera::EditorCamera(EditorCameraConfiguration configuration)
     : m_configuration(configuration) {}
 
@@ -121,83 +219,27 @@ void EditorCamera::focusOnBounds(const glm::vec3& center, float radius) {
 RenderView EditorCamera::renderView() const {
     return {.position = m_position,
             .forward = forward(),
+            .up = {0.0f, 1.0f, 0.0f},
             .verticalFovRadians = m_verticalFovRadians,
             .nearPlane = m_nearPlane,
             .farPlane = m_farPlane};
 }
 
 glm::mat4 EditorCamera::viewMatrix() const {
-    return glm::lookAtRH(m_position, m_position + forward(), {0.0f, 1.0f, 0.0f});
+    return lensViewMatrix(renderView());
 }
 
 glm::mat4 EditorCamera::projectionMatrix(float aspectRatio) const {
-    glm::mat4 projection = glm::perspectiveRH_ZO(m_verticalFovRadians, aspectRatio, m_nearPlane, m_farPlane);
-    projection[1][1] *= -1.0f;
-    return projection;
+    return lensProjectionMatrix(renderView(), aspectRatio);
 }
 
 glm::mat4 EditorCamera::gizmoProjectionMatrix(float aspectRatio) const {
-    return glm::perspectiveRH_NO(m_verticalFovRadians, aspectRatio, m_nearPlane, m_farPlane);
+    return lensGizmoProjectionMatrix(renderView(), aspectRatio);
 }
 
 Entity EditorCamera::pick(const Scene& scene, const AssetManager& assets, glm::vec2 normalizedViewportPosition,
                           float aspectRatio) const {
-    const glm::mat4 projection = projectionMatrix(aspectRatio);
-    const glm::mat4 view = viewMatrix();
-    const glm::mat4 inverseViewProjection = glm::inverse(projection * view);
-    const glm::vec2 ndc = normalizedViewportPosition * 2.0f - 1.0f;
-    glm::vec4 nearPoint = inverseViewProjection * glm::vec4(ndc, 0.0f, 1.0f);
-    glm::vec4 farPoint = inverseViewProjection * glm::vec4(ndc, 1.0f, 1.0f);
-    nearPoint /= nearPoint.w;
-    farPoint /= farPoint.w;
-    const glm::vec3 direction = glm::normalize(glm::vec3(farPoint - nearPoint));
-
-    Entity closest = entt::null;
-    float closestDistance = std::numeric_limits<float>::max();
-    auto renderables = scene.registry().view<const MeshRendererComponent, const TransformComponent>();
-    for (Entity entity : renderables) {
-        const MeshAsset* mesh = assets.mesh(renderables.get<const MeshRendererComponent>(entity).mesh);
-        if (mesh == nullptr) {
-            continue;
-        }
-        const glm::mat4& world = renderables.get<const TransformComponent>(entity).world;
-        const glm::vec3 center = glm::vec3(world * glm::vec4(mesh->bounds.center, 1.0f));
-        const float scale = std::max(
-            {glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])), glm::length(glm::vec3(world[2]))});
-        float boundsDistance = 0.0f;
-        if (!intersectSphere(m_position, direction, center, mesh->bounds.radius * scale, boundsDistance)) {
-            continue;
-        }
-        const glm::mat3 linearWorld(world);
-        if (std::abs(glm::determinant(linearWorld)) < 0.000001f) {
-            continue;
-        }
-        const glm::mat4 inverseWorld = glm::inverse(world);
-        const glm::vec3 localOrigin = glm::vec3(inverseWorld * glm::vec4(m_position, 1.0f));
-        const glm::vec3 localDirection = glm::vec3(inverseWorld * glm::vec4(direction, 0.0f));
-        // Pick against full-detail ranges only; simplified LOD ranges follow
-        // them in the same index buffer.
-        for (const MeshPrimitive& primitive : mesh->primitives) {
-            const size_t end = std::min<size_t>(static_cast<size_t>(primitive.firstIndex) + primitive.indexCount,
-                                                mesh->indices.size());
-            for (size_t index = primitive.firstIndex; index + 2 < end; index += 3) {
-                const uint32_t a = mesh->indices[index];
-                const uint32_t b = mesh->indices[index + 1];
-                const uint32_t c = mesh->indices[index + 2];
-                if (a >= mesh->vertices.size() || b >= mesh->vertices.size() || c >= mesh->vertices.size()) {
-                    continue;
-                }
-                float triangleDistance = 0.0f;
-                if (intersectTriangle(localOrigin, localDirection, mesh->vertices[a].position,
-                                      mesh->vertices[b].position, mesh->vertices[c].position, triangleDistance) &&
-                    triangleDistance < closestDistance) {
-                    closest = entity;
-                    closestDistance = triangleDistance;
-                }
-            }
-        }
-    }
-    return closest;
+    return pickThroughLens(scene, assets, renderView(), normalizedViewportPosition, aspectRatio);
 }
 
 float EditorCamera::speed() const {
