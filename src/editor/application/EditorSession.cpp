@@ -7,6 +7,7 @@
 #include "editor/document/SceneFragment.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/ObjectOperators.hpp"
+#include "editor/operators/PrefabOperators.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
 
@@ -77,6 +78,9 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     registerAreaOperators();
     registerAreaTypes();
     if (const OperatorRegistrationResult result = registerObjectOperators(m_operators); !result) {
+        m_diagnostics.reportError(result.error);
+    }
+    if (const OperatorRegistrationResult result = registerPrefabOperators(m_operators); !result) {
         m_diagnostics.reportError(result.error);
     }
     // Scene references resolve through the project's asset database by GUID.

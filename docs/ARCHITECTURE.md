@@ -220,14 +220,22 @@ cannot publish content after its owning scene has left the streaming set.
 
 `PrefabSystem` is independent of editor state and can instantiate the same
 versioned definition into a primary scene or any committed additive instance.
-A nested instance with an explicit parent inherits that local hierarchy; a
-nested instance without one is attached to the parent supplied for its owning
-instance. Instance-derived stable IDs make repeated expansion deterministic.
-The editor's `PrefabAuthoring` service records create, instantiate, override,
-unpack, apply, and revert operations in `CommandHistory`. Applying a source
-change refreshes all linked instances while reapplying their independent valid
-overrides; orphaned overrides remain visible through inspection diagnostics.
-Source and scene snapshots make failed operations transactional.
+Prefab content is the scene document entity form read and written by the
+component registry, so prefabs carry any registered component, and instances
+are rebuilt with `SceneDocument::applyChanges`. An instance persists its link in
+the scene (`prefab_instance` on its root, `prefab_entity` on each entity made
+from the prefab), so apply and revert keep working after a reload. Nested
+prefabs instantiate as separate instances parented inside the containing one;
+a nested record without a parent attaches to the containing instance's root.
+Overrides are field-level JSON pointers computed by diffing an instance's
+serialized entities with its prefab's; the root's local transform is the
+instance's placement and never an override. The editor's `PrefabAuthoring`
+service and `prefab.*` operators create, instantiate, apply, revert, revert one
+field, and unpack. Apply writes the prefab file, then refreshes every other
+instance in the scene against the new content while keeping the overrides it
+had against the old content (deleting or reparenting a prefab entity in an instance is not an override, so a refresh restores it); orphaned overrides are reported as diagnostics.
+Operators are undoable for their scene changes only: prefab files are asset
+content and stay as written when a step is undone.
 
 ## Runtime game-UI flow
 

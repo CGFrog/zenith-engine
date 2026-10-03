@@ -46,6 +46,14 @@ SceneResult Scene::createEntityWithId(SceneEntityId id, std::string name, Entity
     return {.success = true};
 }
 
+SceneEntityId Scene::reserveEntityId() {
+    const SceneEntityId reserved{m_nextEntityId};
+    if (m_nextEntityId != std::numeric_limits<uint64_t>::max()) {
+        ++m_nextEntityId;
+    }
+    return reserved;
+}
+
 SceneEntityId Scene::id(Entity entity) const {
     const SceneEntityIdComponent* component = m_registry.try_get<SceneEntityIdComponent>(entity);
     return component == nullptr ? SceneEntityId{} : component->id;

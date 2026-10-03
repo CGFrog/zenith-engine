@@ -300,6 +300,9 @@ class Scene {
     Scene();
     Entity createEntity(std::string name = {});
     SceneResult createEntityWithId(SceneEntityId id, std::string name, Entity& entity);
+    // An id no entity has had since the scene was last cleared, for callers
+    // that create entities with explicit ids (createEntityWithId).
+    SceneEntityId reserveEntityId();
     SceneEntityId id(Entity entity) const;
     Entity findEntity(SceneEntityId id) const;
     void setParent(Entity child, Entity parent);

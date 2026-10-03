@@ -460,6 +460,8 @@ add_library(zenith_engine SHARED
     src/engine/scene/SceneDocument.cpp
     src/engine/scene/AdditiveSceneManager.cpp
     src/engine/scene/Prefab.cpp
+    src/engine/scene/PrefabComponentTypes.cpp
+    src/engine/scene/PrefabSystem.cpp
     src/engine/ui/GameUi.cpp
     src/engine/ui/Accessibility.cpp
     src/engine/ui/Localization.cpp
@@ -559,6 +561,7 @@ add_library(zenith_editor_app STATIC
     src/editor/operators/KeymapEditor.cpp
     src/editor/operators/LastOperatorPanel.cpp
     src/editor/operators/ObjectOperators.cpp
+    src/editor/operators/PrefabOperators.cpp
     src/editor/operators/Operator.cpp
     src/editor/operators/OperatorHistory.cpp
     src/editor/operators/OperatorRegistry.cpp
@@ -1378,7 +1381,6 @@ if(BUILD_TESTING)
     add_executable(zenith_command_history_tests
         tests/editor/CommandHistoryTests.cpp
         src/editor/document/CommandHistory.cpp
-        src/editor/document/PrefabAuthoring.cpp
     )
     target_include_directories(zenith_command_history_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(zenith_command_history_tests PRIVATE zenith_engine)
@@ -1612,6 +1614,17 @@ if(BUILD_TESTING)
         target_compile_options(zenith_operator_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_operators COMMAND zenith_operator_tests)
+
+    add_executable(zenith_prefab_tests tests/editor/PrefabTests.cpp)
+    target_compile_definitions(zenith_prefab_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_prefab_tests zenith_assets)
+    target_link_libraries(zenith_prefab_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_prefab_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_prefab_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_prefabs COMMAND zenith_prefab_tests)
 
     add_executable(zenith_workspace_tests tests/editor/WorkspaceTests.cpp)
     target_link_libraries(zenith_workspace_tests PRIVATE zenith_editor_app)

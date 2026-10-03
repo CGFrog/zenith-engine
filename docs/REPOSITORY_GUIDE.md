@@ -269,17 +269,41 @@ document boundary. Texture paths (`ComponentTypeBuilder::texture`) and other
 `assetReference` fields are converted after component migrations run. Inside
 component JSON the key `path` is reserved for asset references, which lets
 `relocateSceneAssetReferences` rewrite references to moved files generically.
-Prefab documents (`Prefab.*`) still reference models by path.
+Prefab entities use the same entity form and component codecs, so their asset
+references carry GUIDs too; nested-prefab sources are still paths relative to
+the containing prefab.
 
-### `src/engine/scene/Prefab.*`
+### `src/engine/scene/Prefab.*`, `PrefabSystem.cpp`, `PrefabComponentTypes.cpp`
 
-Defines versioned reusable entity documents with stable local IDs,
-project-relative model and nested-prefab references, explicit component
-payloads, and separate instance overrides. Nested expansion uses deterministic
-instance-derived IDs, rejects source and hierarchy cycles, and validates the
-complete graph before mutating a destination scene. `PrefabSystem` is runtime
-code, so primary and additive scenes can share definitions without editor
-state.
+Prefab documents (version 2, `.prefab` files under the asset root) list one
+root entity and its descendants in the scene document entity form (`id`,
+`name`, `parent`, `local_transform`, and `components` keyed by registered
+component type) with prefab-local ids, plus nested prefab records
+(`{id, source, parent, overrides}`). Components are read and written by the
+`ComponentTypeRegistry`, so module components work and unknown keys survive a
+load as preserved components. Version 1 documents (`localTransform`,
+`modelAsset`, `pointLight`/`camera`, whole-component overrides) migrate on
+load; a model component whose node entities a prefab does not list gets its
+node hierarchy instantiated.
+
+Overrides are `{entity, component, field, value}` with `field` an RFC 6901
+pointer into the component's document object (empty for a whole component;
+value null removes it), or `/name` and `/local_transform` with an empty
+component. Instances persist their link: the root holds `prefab_instance`
+(the prefab as a `{guid, path}` asset reference, the overrides as of the last
+prefab operation, and the nested record it came from) and every entity created
+from the prefab holds `prefab_entity` (its prefab-local id); both are internal
+types registered from `PrefabComponentTypes.cpp`. An instance is its root and
+descendants up to the next instance root, so nested prefabs instantiate as
+separate instances. `PrefabSystem` instantiates (validating the whole nested
+graph in a staging scene first and rejecting cycles), refreshes an instance
+from its prefab through `SceneDocument::applyChanges` (stable ids kept, added
+objects kept or removed), reports live overrides by diffing the instance's
+serialized entities against the prefab's normalized entities, and captures a
+scene subtree as a document. It is runtime code, so primary and additive
+scenes share definitions without editor state. Entity references inside
+component JSON are remapped through a small table (`model_node` and `skin`
+`instance_root`).
 
 ### `src/engine/application/Application.*`
 
@@ -565,6 +589,12 @@ user's differences from `DefaultKeymap` are saved to `keymap.json` in the
 editor settings directory. `OperatorSearch` is the F3 popup and `KeymapEditor`
 the rebinding window. `ObjectOperators` holds the document-only object
 operators, which run headless in `tests/editor/OperatorTests.cpp`.
+`PrefabOperators` holds `prefab.create_from_selection`, `prefab.instantiate`,
+`prefab.apply`, `prefab.revert`, `prefab.unpack`, and `prefab.revert_field`,
+built on `document/PrefabAuthoring` (which also answers
+`PrefabAuthoring::overrides(entity)` for override highlighting); they run
+headless in `tests/editor/PrefabTests.cpp`. Each is one undo step for its
+scene changes, while the prefab files they write stay as written on undo.
 
 ### Game module hosting (`src/editor/modules/`)
 
@@ -1487,7 +1517,7 @@ The source directory is copied as a whole to `build/assets/` for runtime use.
 | Path | Coverage |
 | --- | --- |
 | `tests/engine/` | Audio, asset importing, scene documents/hierarchy, and physics contracts. |
-| `tests/editor/` | Settings, build output parsing, build runner and IDE launching, render-settings persistence and graphics-panel helpers, document state, command history, undoable scene editing and entity commands, operators and keymaps, areas and workspaces (registry, type switching, layout switching, per-area state, `workspaces.json` and its version, and legacy layout migration), the built-in area types (each drawn headless, multi-instance Asset Browser areas and primary promotion, and the default workspaces' layouts and round trip), asset browser, selection, camera behavior, and component editing helpers. |
+| `tests/editor/` | Settings, build output parsing, build runner and IDE launching, render-settings persistence and graphics-panel helpers, document state, command history, undoable scene editing and entity commands, operators and keymaps, prefab authoring and operators, areas and workspaces (registry, type switching, layout switching, per-area state, `workspaces.json` and its version, and legacy layout migration), the built-in area types (each drawn headless, multi-instance Asset Browser areas and primary promotion, and the default workspaces' layouts and round trip), asset browser, selection, camera behavior, and component editing helpers. |
 | `tests/game/` | Application callback order, scene changes, cleanup, demo composition, controls, and reload behavior; the `zenith_game_demo` module loaded with `GameModule::load`, parity with the linked gameplay, and authored character controllers playing in the game. |
 | `tests/capture/`, `tests/references/` | Reference capture driver, showcase capture manifest, and reference PNGs (`docs/RENDERER_VALIDATION.md`). |
 

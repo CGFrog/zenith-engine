@@ -573,9 +573,12 @@ The suite runs in parallel, captures one reference view per CTest, and has
 direct tests for reflection, `InputManager`, and the headless `EditorSession`.
 Remaining coverage gaps, highest value first:
 
-- [ ] Prefab and additive-scene tests: instantiation, overrides, nested
-      prefabs, broken references, and additive load/unload ownership (today
-      only sections of `ProductionMilestonesTests.cpp`).
+- [ ] Additive-scene tests: broken references and additive load/unload
+      ownership (today only sections of `ProductionMilestonesTests.cpp`).
+      Prefabs have `tests/editor/PrefabTests.cpp`: registry round trip with
+      module and unknown components, version 1 migration, link persistence by
+      GUID, field-level overrides, nested prefabs and cycles, and every
+      `prefab.*` operator with undo and redo.
 - [ ] `JobSystem` tests: ordering, dependencies, exceptions, and shutdown while
       busy.
 - [ ] `ThumbnailCache` and `HierarchyPanel` tests: downsampling,

@@ -4,6 +4,7 @@
 
 #include "../assets/IrradianceVolumeAsset.hpp"
 #include "ComponentTypes.hpp"
+#include "Prefab.hpp"
 #include "SceneAssetReferences.hpp"
 
 #include <glm/gtc/constants.hpp>
@@ -785,5 +786,5 @@ SceneDocumentResult registerBuiltInComponentTypes(ComponentTypeRegistry& registr
             return result;
         }
     }
-    return {.success = true};
+    return registerPrefabComponentTypes(registry);
 }
