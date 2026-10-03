@@ -423,8 +423,9 @@ Statistics, Asset Browser, and Graphics are multiple-instance, each area with
 its own panel over shared services (`ProjectAssets`, the
 `RenderSettingsController`); Build and Info stay single-instance views
 (`AreaType::shared`) of panels the session owns, because one `BuildRunner`
-owns the build and the session reads Info's merged log. The Viewport is
-registered by the session itself. Each game module panel becomes a
+owns the build and the session reads Info's merged log. The multiple-instance
+Viewport is registered by the session itself (each area owns a render view;
+see `ViewportRegistry` below). Each game module panel becomes a
 single-instance type `module:<title>` while the module provides it.
 `EditorSession::registerAreaTypes` (`application/EditorAreas.cpp`) registers
 the Viewport and then every built-in type.
@@ -471,24 +472,47 @@ older `settings.ini` and its `layout.ini` are migrated into the Layout
 workspace (window sections renamed to the area windows).
 
 The settings directory is `%LOCALAPPDATA%\Zenith\Editor` (or the platform's
-user data directory) unless `ZENITH_EDITOR_SETTINGS_DIR` names another one;
-`src/editor/main.cpp` resolves it. The editor smoke tests set it to a
-directory under the build tree, emptied by the `zenith_editor_test_settings_reset`
-fixture each ctest run, so they start from the default workspaces and never
-touch the user's settings.
-
-`panels/ViewportPanel` draws Blender-style chrome over the rendered image as
-ImGui child windows, so clicks on it never reach picking, the gizmo, or the
-camera: a header with View, Shading, Overlays, and Gizmos menus, the `T` tool
-shelf on the left, and the `N` sidebar on the right with Item (active
-transform), Tool (transform tool and snapping), and View (camera field of
-view, clip planes, fly speed) tabs plus tabs added with `addSidebarTab`.
-`panels/ViewportChrome` holds that per-panel state (`ViewportChromeState`:
-region visibility, `ViewportShading`, overlays), its widgets, and the
-`view3d.toggle_sidebar`, `view3d.toggle_toolbar`, and `view3d.shading_set`
-operators, which run headless in `tests/editor/ViewportChromeTests.cpp`.
-`EditorCamera` owns the lens (field of view and clip planes) that its render
 view, projections, and picking share.
+`panels/ViewportPanel` is one 3D viewport area; a workspace may show any
+number. Each owns its `EditorCamera`, transform tools, chrome state, and a
+render view, and draws Blender-style chrome over its image as ImGui child
+windows, so clicks on it never reach picking, the gizmo, or the camera: a
+header with View (regions, camera view), Shading, Overlays, and Gizmos menus,
+the `T` tool shelf on the left, and the `N` sidebar on the right with Item
+(active transform), Tool (transform tool and snapping), and View (camera field
+of view, clip planes, fly speed) tabs plus the tabs added to every viewport
+with `ViewportRegistry::addSidebarTab`.
+
+`panels/ViewportRegistry` is the session-owned record of the viewports. A
+viewport registers in its constructor and unregisters in its destructor; it
+takes a render view the first time it is drawn (the renderer's default view
+when free, otherwise `createView`) and returns it when destroyed, so closing
+an area destroys its view. A viewport is open while it was drawn in the
+previous frame; the active viewport is the one last hovered or clicked while
+open, otherwise the first open one, otherwise none. The session makes the
+active viewport's view the renderer's active view (shadow cascades and
+streaming follow it), and modal transforms, the Adjust Last Operation anchor,
+snapping, and the status bar use it. A modal transform keeps the viewport it
+started in and is cancelled if that viewport closes. `panels/ViewportOperators`
+registers every `view3d.*` operator (chrome toggles, `shading_set`,
+`toggle_snapping`, viewpoints, orbit, framing, `view_camera`) against the
+active viewport; with none open they poll false and fail descriptively.
+
+Viewport shading never touches the project's render settings: each draw hands
+the viewport's view `viewportViewSettings` (a copy of the project settings
+with the viewport's `ViewShading`, reduced by `viewShadingFrameSettings`
+for the device) through `RenderRuntime::setViewSettings`, rebuilt every frame
+so project changes flow through, and nothing in Play mode. A viewport can look
+through a scene `CameraComponent` (Numpad 0, or View > Look Through): the
+view is overridden with that camera's lens, navigation is disabled, and any
+navigation operator or View > Exit Camera View returns to the editor camera.
+`panels/ViewportChrome` holds the per-viewport chrome state
+(`ViewportChromeState`: region visibility, `ViewportShading`, overlays) and
+its widgets. `EditorCamera` owns the lens (field of view and clip planes) that
+its render view, projections, and picking share; `lensViewMatrix`,
+`lensProjectionMatrix`, `pickThroughLens`, and `sceneCameraLens` do the same
+math for any `RenderView`. `tests/editor/ViewportChromeTests.cpp` and
+`tests/editor/MultiViewportTests.cpp` cover this headless.
 
 `panels/InfoPanel` is the unified log view. Its CPU-only `InfoLog` model
 merges, by time, the engine log (`ApplicationContext::logger`), editor

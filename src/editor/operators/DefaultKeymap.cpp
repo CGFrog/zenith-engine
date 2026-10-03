@@ -60,6 +60,7 @@ std::vector<KeymapBinding> defaultEditorKeymap() {
         binding("view3d.view_axis", viewport, ImGuiKey_Keypad7, R"({"type":"top"})"),
         binding("view3d.view_axis", viewport, ImGuiMod_Ctrl | ImGuiKey_Keypad7, R"({"type":"bottom"})"),
         binding("view3d.view_opposite", viewport, ImGuiKey_Keypad9),
+        binding("view3d.view_camera", viewport, ImGuiKey_Keypad0),
         binding("view3d.view_orbit", viewport, ImGuiKey_Keypad4, R"({"direction":"left"})"),
         binding("view3d.view_orbit", viewport, ImGuiKey_Keypad6, R"({"direction":"right"})"),
         binding("view3d.view_orbit", viewport, ImGuiKey_Keypad8, R"({"direction":"up"})"),

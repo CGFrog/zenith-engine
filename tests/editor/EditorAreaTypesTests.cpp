@@ -9,7 +9,6 @@
 #include "editor/areas/WorkspaceFile.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
-#include "editor/interaction/EditorCamera.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/operators/OperatorRunner.hpp"
 #include "editor/panels/AssetBrowserPanel.hpp"
@@ -83,7 +82,7 @@ class NoSessionActions final : public EditorSessionActions {
         return false;
     }
 
-    void updateModalTransform(ApplicationContext&) override {}
+    void updateModalTransform(ApplicationContext&, ViewportId) override {}
 };
 
 // The Viewport needs a GPU, so the tests stand in a plain panel for it.
@@ -113,7 +112,6 @@ struct SessionFixture {
     CommandHistory history;
     EditorDiagnostics diagnostics;
     Selection selection;
-    EditorCamera camera;
     NoSessionActions actions;
     OperatorRegistry operators;
     OperatorRunner runner{operators, history};
@@ -161,7 +159,6 @@ struct SessionFixture {
                 .editing = {scene, assets, document, history, diagnostics},
                 .selection = selection,
                 .diagnostics = diagnostics,
-                .camera = camera,
                 .mode = EditorMode::Edit,
                 .actions = actions};
     }

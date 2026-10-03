@@ -5,6 +5,7 @@
 #include "editor/interaction/Selection.hpp"
 #include "editor/operators/KeymapRegion.hpp"
 #include "editor/operators/Operator.hpp"
+#include "editor/panels/ViewportRegistry.hpp"
 #include "editor/project/AssetRelocation.hpp"
 #include "engine/application/Application.hpp"
 
@@ -13,7 +14,6 @@
 #include <string>
 #include <string_view>
 
-class EditorCamera;
 class EditorDiagnostics;
 
 // Session-level workflows a panel can trigger but does not own: running
@@ -40,10 +40,13 @@ class EditorSessionActions {
     virtual void projectFilesRemoved(ApplicationContext& context, std::span<const std::filesystem::path> removed) = 0;
     // Runs the keymap of the region under the mouse.
     virtual void handleObjectKeys(ApplicationContext& context, KeymapRegion region) = 0;
+    // True while a modal transform runs and for the rest of the frame that
+    // ended it, so the ending click reaches no other viewport.
     virtual bool modalTransformActive() const = 0;
-    // Advances the active modal transform and draws its overlay in the
-    // current window.
-    virtual void updateModalTransform(ApplicationContext& context) = 0;
+    // Every viewport calls this while a modal transform is active; only the
+    // viewport the transform started in advances it and draws its overlay in
+    // the current window.
+    virtual void updateModalTransform(ApplicationContext& context, ViewportId viewport) = 0;
 
   protected:
     ~EditorSessionActions() = default;
@@ -57,7 +60,6 @@ struct EditorContext {
     SceneEditing editing;
     Selection& selection;
     EditorDiagnostics& diagnostics;
-    EditorCamera& camera;
     EditorMode mode;
     EditorSessionActions& actions;
 

@@ -72,9 +72,10 @@ by the new defaults (an Info message says so, and the old file is kept as
 `workspaces.json.old`).
 
 The viewport is laid out like Blender's 3D view. Its header holds the
-**View** menu (sidebar and toolbar toggles), **Shading** (Rendered, Material
-Preview, Solid, Wireframe; the choice is stored per viewport and the renderer
-currently draws every mode fully shaded), **Overlays** (grid, selection
+**View** menu (sidebar and toolbar toggles, camera view), **Shading**
+(Rendered, Material Preview, Solid, Wireframe; each viewport shades on its own
+and never changes the project's render settings; Play mode always shows the
+project's look), **Overlays** (grid, selection
 outline, active object name, transform gizmo), and **Gizmos** (Global or Local
 orientation, snapping and its increments). With the mouse over the viewport,
 `T` shows or hides the tool shelf on the left (Tweak, Move, Rotate, Scale) and
@@ -82,6 +83,13 @@ orientation, snapping and its increments). With the mouse over the viewport,
 object's transform, **Tool** the transform tool and snapping, and **View** the
 camera's field of view, clip start and end, and fly speed. Clicks on the
 header, shelf, or sidebar never select through to the scene.
+
+Open more viewports with an area's **New Area** menu or **View > New Area >
+Viewport**; each has its own camera, shading, overlays, and tools. Keys, the
+main View menu, the status bar, and `G`/`R`/`S` act on the viewport the mouse
+last hovered. `Numpad 0` (or **View > Look Through**) looks through a scene
+camera; navigation is locked while you do, and any view key or **View > Exit
+Camera View** returns to the editor camera.
 
 New, Open, Exit, and the native window close button ask what to do when the
 scene has unsaved changes. **Cancel** always leaves the active document intact.

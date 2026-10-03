@@ -9,7 +9,6 @@
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/EditorRecovery.hpp"
-#include "editor/interaction/EditorCamera.hpp"
 #include "editor/interaction/ModalTransform.hpp"
 #include "editor/interaction/Selection.hpp"
 #include "editor/modules/GameModuleHost.hpp"
@@ -84,7 +83,7 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void projectFilesRemoved(ApplicationContext& context, std::span<const std::filesystem::path> removed) override;
     void handleObjectKeys(ApplicationContext& context, KeymapRegion region) override;
     bool modalTransformActive() const override;
-    void updateModalTransform(ApplicationContext& context) override;
+    void updateModalTransform(ApplicationContext& context, ViewportId viewport) override;
 
     SceneEditing editing(ApplicationContext& context);
     EditorContext editorContext(ApplicationContext& context);
@@ -173,12 +172,25 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
 
     // Blender object-mode workflows (EditorObjectCommands.cpp).
     void drawObjectPopups(ApplicationContext& context);
-    void frameEntities(ApplicationContext& context, const std::vector<SceneEntityId>& entities);
-    void frameAll(ApplicationContext& context);
+    // Starts a modal transform in the active viewport; false when there is
+    // none, nothing to transform, or the scene cannot be captured.
     bool beginModalTransform(ApplicationContext& context, TransformOperation operation, std::string commandName,
                              std::string before, bool commitOnCancel);
     void finishModalTransform(ApplicationContext& context, bool confirm);
-    void drawModalTransformOverlay(const ModalTransformResult& result) const;
+    void drawModalTransformOverlay(const ViewportPanel& viewport, const ModalTransformResult& result) const;
+
+    // Viewports (EditorViewports.cpp).
+    void registerViewportOperators();
+    // Start of a frame: settles which viewports are open and cancels a modal
+    // transform whose viewport closed.
+    void beginViewportFrame(ApplicationContext& context);
+    // After the areas are drawn: shadows and streaming follow the active
+    // viewport's render view.
+    void syncActiveRenderView(ApplicationContext& context);
+    // The bottom-left corner of the active viewport's image, or of the work
+    // area when no viewport is open.
+    glm::vec2 lastOperatorAnchor() const;
+    bool updateSmokeViewports(ApplicationContext& context);
 
     enum class PendingAction {
         None,
@@ -192,7 +204,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     EditorRecovery m_recovery;
     EditorDiagnostics m_diagnostics;
     CommandHistory m_history;
-    EditorCamera m_camera;
     EditorPlayMode m_playMode;
     NativeFileDialog m_fileDialog;
     Selection m_selection;
@@ -217,10 +228,12 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
 
     // Shared by the Graphics and Properties areas, so declared before them.
     RenderSettingsController m_renderSettings;
+    // Every viewport area registers here; declared before the areas, which
+    // own the viewport panels, so it outlives them.
+    ViewportRegistry m_viewports;
     // Panels holding editor-wide state, shown by single-instance area types.
-    // Per-area panels (Hierarchy, Asset Browser, Graphics, ...) are created by
-    // their types (EditorAreaTypes.hpp).
-    ViewportPanel m_viewport;
+    // Per-area panels (Viewport, Hierarchy, Asset Browser, Graphics, ...) are
+    // created by their types (EditorAreaTypes.hpp, EditorAreas.cpp).
     BuildPanel m_buildPanel{m_settings.tools()};
     // Shows the engine log, diagnostics, and operator history.
     InfoPanel m_infoPanel{m_operatorRunner.history()};
@@ -265,9 +278,24 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     std::string m_smokeWorkspace;
     std::string m_smokeArea;
     bool m_smokeShowedHierarchy{false};
+    // The multi-viewport smoke: the second Viewport area it opened, the two
+    // viewports it compares, and their render views.
+    std::string m_smokeViewportArea;
+    bool m_smokeShowedViewport{false};
+    ViewportId m_smokeFirstViewport;
+    ViewportId m_smokeSecondViewport;
+    RenderViewId m_smokeSecondView;
+    uint32_t m_smokeViewCount{0};
+    ViewShading m_smokeProjectShading{ViewShading::Rendered};
+    // The ImGui layout from before the second viewport was docked beside
+    // the first, restored when the viewport smoke ends.
+    std::string m_smokeLayout;
 
     struct ActiveTransform {
         ModalTransform transform;
+        // The viewport the transform started in; it alone advances and draws
+        // the transform, which is cancelled if the viewport closes.
+        ViewportId viewport;
         std::vector<SceneEntityId> entities;
         std::vector<glm::mat4> startLocal;
         // Scene snapshot from before the command, for undo.
@@ -278,6 +306,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     };
 
     std::optional<ActiveTransform> m_activeTransform;
+    // Set when a modal transform ends, until the next frame starts.
+    bool m_modalTransformFinishedThisFrame{false};
     bool m_openAddMenu{false};
     bool m_openDeleteMenu{false};
     bool m_openRenamePopup{false};

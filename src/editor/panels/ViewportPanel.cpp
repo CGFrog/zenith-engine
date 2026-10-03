@@ -1,8 +1,8 @@
 #include "ViewportPanel.hpp"
 
 #include "editor/interaction/ComponentEditors.hpp"
-#include "editor/interaction/EditorCamera.hpp"
 #include "editor/panels/EditorContext.hpp"
+#include "engine/graphics/ViewShading.hpp"
 
 #include <imgui.h>
 
@@ -13,23 +13,58 @@
 #include <utility>
 
 namespace {
-// Built-in sidebar tabs; added tabs follow them.
-constexpr const char* itemTabTitle = "Item";
-constexpr const char* toolTabTitle = "Tool";
-constexpr const char* viewTabTitle = "View";
 constexpr float chromeMargin = 4.0f;
 constexpr ImU32 chromeBackground = IM_COL32(28, 28, 32, 225);
 
-// Wave 2 (engine view shading): map the viewport's shading choice to the
-// renderer here, as RenderSettings::viewShading, once the engine has shading
-// modes. This is the only place the choice reaches the engine; until then
-// every choice renders fully shaded.
-void applyViewportShading(RenderRuntime&, ViewportShading) {}
-
-bool isBuiltInSidebarTab(std::string_view title) {
-    return title == itemTabTitle || title == toolTabTitle || title == viewTabTitle;
+const char* entityName(const Scene& scene, Entity entity) {
+    const auto* name = scene.registry().try_get<NameComponent>(entity);
+    return name != nullptr ? name->name.c_str() : "Camera";
 }
 } // namespace
+
+ViewShading toViewShading(ViewportShading shading) {
+    switch (shading) {
+    case ViewportShading::Rendered:
+        return ViewShading::Rendered;
+    case ViewportShading::MaterialPreview:
+        return ViewShading::MaterialPreview;
+    case ViewportShading::Solid:
+        return ViewShading::Solid;
+    case ViewportShading::Wireframe:
+        return ViewShading::Wireframe;
+    }
+    return ViewShading::Rendered;
+}
+
+std::optional<RenderSettings> viewportViewSettings(const RenderSettings& projectSettings,
+                                                   const RenderCapabilities& capabilities, ViewportShading shading,
+                                                   EditorMode mode) {
+    const ViewShading viewShading = toViewShading(shading);
+    if (mode != EditorMode::Edit || viewShading == projectSettings.viewShading) {
+        return std::nullopt;
+    }
+    RenderSettings settings = projectSettings;
+    settings.viewShading = viewShading;
+    return viewShadingFrameSettings(settings, capabilities);
+}
+
+ViewportPanel::ViewportPanel(ViewportRegistry& registry)
+    : m_registry(registry)
+    , m_id(registry.add(*this)) {}
+
+ViewportPanel::~ViewportPanel() {
+    releaseRenderView();
+    m_registry.remove(m_id);
+}
+
+void ViewportPanel::releaseRenderView() {
+    if (m_rendering != nullptr) {
+        m_registry.releaseView(*m_rendering, m_view);
+    }
+    m_rendering = nullptr;
+    m_view = {};
+    m_inputActive = false;
+}
 
 const char* ViewportPanel::title() const {
     return "Viewport";
@@ -37,6 +72,22 @@ const char* ViewportPanel::title() const {
 
 int ViewportPanel::windowFlags() const {
     return ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+}
+
+ViewportId ViewportPanel::id() const {
+    return m_id;
+}
+
+RenderViewId ViewportPanel::renderView() const {
+    return m_view;
+}
+
+EditorCamera& ViewportPanel::camera() {
+    return m_camera;
+}
+
+const EditorCamera& ViewportPanel::camera() const {
+    return m_camera;
 }
 
 TransformToolSettings& ViewportPanel::tools() {
@@ -55,28 +106,33 @@ const ViewportChromeState& ViewportPanel::chrome() const {
     return m_chrome;
 }
 
-std::vector<Operator> ViewportPanel::chromeOperators() {
-    return viewportChromeOperators(m_chrome);
+bool ViewportPanel::lookThroughCamera(const Scene& scene, SceneEntityId entity) {
+    if (!sceneCameraLens(scene, scene.findEntity(entity))) {
+        return false;
+    }
+    m_cameraView = entity;
+    return true;
 }
 
-ViewportSidebarTabResult ViewportPanel::addSidebarTab(ViewportSidebarTab tab) {
-    if (tab.title.empty()) {
-        return {.error = "A viewport sidebar tab needs a title"};
-    }
-    if (!tab.draw) {
-        return {.error = "Viewport sidebar tab '" + tab.title + "' needs a draw function"};
-    }
-    const bool duplicate = std::ranges::any_of(
-        m_sidebarTabs, [&](const ViewportSidebarTab& existing) { return existing.title == tab.title; });
-    if (duplicate || isBuiltInSidebarTab(tab.title)) {
-        return {.error = "The viewport sidebar already has a tab named '" + tab.title + "'"};
-    }
-    m_sidebarTabs.push_back(std::move(tab));
-    return {.success = true};
+void ViewportPanel::exitCameraView() {
+    m_cameraView.reset();
 }
 
-bool ViewportPanel::removeSidebarTab(std::string_view title) {
-    return std::erase_if(m_sidebarTabs, [&](const ViewportSidebarTab& tab) { return tab.title == title; }) != 0;
+std::optional<SceneEntityId> ViewportPanel::cameraView() const {
+    return m_cameraView;
+}
+
+RenderView ViewportPanel::lens(const Scene& scene) const {
+    if (m_cameraView) {
+        if (const std::optional<RenderView> sceneLens = sceneCameraLens(scene, scene.findEntity(*m_cameraView))) {
+            return *sceneLens;
+        }
+    }
+    return m_camera.renderView();
+}
+
+const std::optional<RenderSettings>& ViewportPanel::appliedViewSettings() const {
+    return m_appliedViewSettings;
 }
 
 glm::vec2 ViewportPanel::position() const {
@@ -95,21 +151,34 @@ void ViewportPanel::update(EditorContext& context, const InputState& input, floa
     if (m_suppressCameraUntilRelease && !input.mouseButtonDown(MouseButton::Right)) {
         m_suppressCameraUntilRelease = false;
     }
+    // Looking through a scene camera is read-only: the editor camera waits.
     const bool cameraInputActive =
-        m_inputActive && !context.actions.modalTransformActive() && !m_suppressCameraUntilRelease;
+        m_inputActive && !context.actions.modalTransformActive() && !m_suppressCameraUntilRelease && !m_cameraView;
     m_navigating =
         cameraInputActive && (input.mouseButtonDown(MouseButton::Middle) || input.mouseButtonDown(MouseButton::Right));
-    context.camera.update(input, deltaSeconds, cameraInputActive);
+    m_camera.update(input, deltaSeconds, cameraInputActive);
+}
 
+void ViewportPanel::syncRenderView(EditorContext& context) {
     RenderRuntime& rendering = context.app.rendering;
-    rendering.setViewOverride(context.camera.renderView());
-    applyViewportShading(rendering, m_chrome.shading);
+    const Scene& scene = context.app.scene;
+    // A deleted camera (or one that lost its CameraComponent) ends the
+    // camera view.
+    if (m_cameraView && !sceneCameraLens(scene, scene.findEntity(*m_cameraView))) {
+        m_cameraView.reset();
+    }
+    const RenderView currentLens = lens(scene);
+    rendering.setViewOverride(m_view, currentLens);
+    m_appliedViewSettings =
+        viewportViewSettings(rendering.settings(), rendering.capabilities(), m_chrome.shading, context.mode);
+    rendering.setViewSettings(m_view, m_appliedViewSettings);
     if (m_chrome.overlays.grid) {
-        const float distance = std::max(context.camera.distance(), 0.1f);
+        const float distance = std::max(m_cameraView ? std::abs(currentLens.position.y) : m_camera.distance(), 0.1f);
         const float spacing = std::pow(10.0f, std::floor(std::log10(distance / 5.0f)));
-        rendering.setGridOverlay(GridOverlay{.planeHeight = 0.0f, .spacing = spacing, .fadeDistance = spacing * 40.0f});
+        rendering.setViewGridOverlay(
+            m_view, GridOverlay{.planeHeight = 0.0f, .spacing = spacing, .fadeDistance = spacing * 40.0f});
     } else {
-        rendering.setGridOverlay(std::nullopt);
+        rendering.setViewGridOverlay(m_view, std::nullopt);
     }
     updateSelectionOutline(context);
 }
@@ -135,7 +204,7 @@ void ViewportPanel::updateSelectionOutline(EditorContext& context) {
             }
         }
     }
-    context.app.rendering.setOutlinedObjects(m_outlinedObjects);
+    context.app.rendering.setViewOutlinedObjects(m_view, m_outlinedObjects);
 }
 
 void ViewportPanel::hidden(EditorContext& context) {
@@ -144,16 +213,38 @@ void ViewportPanel::hidden(EditorContext& context) {
 
 void ViewportPanel::setInputActive(EditorContext& context, bool active) {
     m_inputActive = active;
-    context.app.rendering.setViewportInputActive(active);
+    context.app.rendering.setViewInputActive(m_view, active);
 }
 
 void ViewportPanel::draw(EditorContext& context) {
     RenderRuntime& rendering = context.app.rendering;
+    m_registry.markDrawn(m_id);
+    // Trade a view of its own for the free default view, which renders every
+    // frame anyway and keeps GPU-driven submission.
+    if (m_view && m_view != rendering.defaultView() && m_registry.defaultViewFree()) {
+        releaseRenderView();
+    }
+    if (!m_view) {
+        m_view = m_registry.acquireView(rendering, m_id);
+        if (m_view) {
+            m_rendering = &rendering;
+        }
+    }
+    // Blender's rule: view operators act on the viewport under the mouse. A
+    // modal transform keeps the viewport it started in.
+    const bool modal = context.actions.modalTransformActive();
+    if (!modal && (m_navigating || ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows))) {
+        m_registry.activate(m_id);
+    }
+
     const ImVec2 available = ImGui::GetContentRegionAvail();
     const uint32_t width = static_cast<uint32_t>(std::max(available.x, 16.0f));
     const uint32_t height = static_cast<uint32_t>(std::max(available.y, 16.0f));
-    rendering.requestViewportSize(width, height);
-    const UiTextureHandle texture = rendering.viewportTexture();
+    UiTextureHandle texture;
+    if (m_view) {
+        rendering.requestViewSize(m_view, width, height);
+        texture = rendering.viewTexture(m_view);
+    }
 
     // The image area is laid out without a texture too, so the chrome (and
     // headless tests of it) does not depend on a rendered frame.
@@ -161,7 +252,8 @@ void ViewportPanel::draw(EditorContext& context) {
     m_position = {imagePosition.x, imagePosition.y};
     m_size = {static_cast<float>(width), static_cast<float>(height)};
     ImGui::Dummy({m_size.x, m_size.y});
-    drawViewImage(texture);
+    drawViewImage(texture, m_view ? "Viewport will be available on the next rendered frame."
+                                  : "No render view is free; close another viewport.");
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ZENITH_MODEL_ASSET")) {
             context.placeModel(static_cast<const char*>(payload->Data), entt::null);
@@ -173,12 +265,16 @@ void ViewportPanel::draw(EditorContext& context) {
     const bool imageHovered = ImGui::IsItemHovered();
     const bool imageClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
     m_inputActive = texture && (imageHovered || m_navigating);
-    rendering.setViewportInputActive(m_inputActive && !context.actions.modalTransformActive() &&
-                                     !m_suppressCameraUntilRelease);
+    rendering.setViewInputActive(m_view, m_inputActive && !modal && !m_suppressCameraUntilRelease && !m_cameraView);
 
     const bool chromeHovered = drawChrome(context);
-    if (context.actions.modalTransformActive()) {
-        context.actions.updateModalTransform(context.app);
+    if (m_view) {
+        // After the chrome, whose menus may change the shading or overlays.
+        syncRenderView(context);
+    }
+    if (modal) {
+        // Only the viewport the transform started in advances it.
+        context.actions.updateModalTransform(context.app, m_id);
         return;
     }
 
@@ -194,7 +290,7 @@ void ViewportPanel::draw(EditorContext& context) {
     }
 }
 
-void ViewportPanel::drawViewImage(UiTextureHandle texture) const {
+void ViewportPanel::drawViewImage(UiTextureHandle texture, const char* placeholder) const {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     const ImVec2 minimum{m_position.x, m_position.y};
     const ImVec2 maximum{m_position.x + m_size.x, m_position.y + m_size.y};
@@ -202,10 +298,9 @@ void ViewportPanel::drawViewImage(UiTextureHandle texture) const {
         drawList->AddImage(static_cast<ImTextureID>(texture.value), minimum, maximum);
         return;
     }
-    constexpr const char* waiting = "Viewport will be available on the next rendered frame.";
-    const ImVec2 textSize = ImGui::CalcTextSize(waiting);
+    const ImVec2 textSize = ImGui::CalcTextSize(placeholder);
     drawList->AddText({minimum.x + (m_size.x - textSize.x) * 0.5f, minimum.y + (m_size.y - textSize.y) * 0.5f},
-                      ImGui::GetColorU32(ImGuiCol_TextDisabled), waiting);
+                      ImGui::GetColorU32(ImGuiCol_TextDisabled), placeholder);
 }
 
 bool ViewportPanel::drawChrome(EditorContext& context) {
@@ -234,14 +329,7 @@ bool ViewportPanel::drawHeader(EditorContext& context) {
     if (ImGui::BeginChild("##ViewportHeader", {m_size.x, ImGui::GetFrameHeight()}, ImGuiChildFlags_None, flags)) {
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("View")) {
-                const std::string sidebarShortcut = context.shortcut("view3d.toggle_sidebar");
-                const std::string toolbarShortcut = context.shortcut("view3d.toggle_toolbar");
-                if (ImGui::MenuItem("Sidebar", sidebarShortcut.c_str(), m_chrome.sidebarVisible)) {
-                    context.invoke("view3d.toggle_sidebar");
-                }
-                if (ImGui::MenuItem("Toolbar", toolbarShortcut.c_str(), m_chrome.toolbarVisible)) {
-                    context.invoke("view3d.toggle_toolbar");
-                }
+                drawViewMenu(context);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Shading")) {
@@ -257,12 +345,53 @@ bool ViewportPanel::drawHeader(EditorContext& context) {
                 ImGui::EndMenu();
             }
             ImGui::TextDisabled("%s", viewportShadingLabel(m_chrome.shading));
+            if (m_cameraView) {
+                const Entity camera = context.app.scene.findEntity(*m_cameraView);
+                if (camera != entt::null) {
+                    ImGui::TextDisabled("| Camera: %s", entityName(context.app.scene, camera));
+                }
+            }
             ImGui::EndMenuBar();
         }
         hovered = ImGui::IsWindowHovered();
     }
     ImGui::EndChild();
     return hovered;
+}
+
+void ViewportPanel::drawViewMenu(EditorContext& context) {
+    // The menu's operators act on the active viewport, which is this one
+    // while its menu is in use.
+    m_registry.activate(m_id);
+    const std::string sidebarShortcut = context.shortcut("view3d.toggle_sidebar");
+    const std::string toolbarShortcut = context.shortcut("view3d.toggle_toolbar");
+    const std::string cameraShortcut = context.shortcut("view3d.view_camera");
+    if (ImGui::MenuItem("Sidebar", sidebarShortcut.c_str(), m_chrome.sidebarVisible)) {
+        context.invoke("view3d.toggle_sidebar");
+    }
+    if (ImGui::MenuItem("Toolbar", toolbarShortcut.c_str(), m_chrome.toolbarVisible)) {
+        context.invoke("view3d.toggle_toolbar");
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Camera View", cameraShortcut.c_str(), m_cameraView.has_value())) {
+        context.invoke("view3d.view_camera");
+    }
+    const Scene& scene = context.app.scene;
+    auto cameras = scene.registry().view<const CameraComponent>();
+    if (ImGui::BeginMenu("Look Through", !cameras.empty())) {
+        for (const Entity entity : cameras) {
+            const SceneEntityId id = scene.id(entity);
+            ImGui::PushID(static_cast<int>(entt::to_integral(entity)));
+            if (ImGui::MenuItem(entityName(scene, entity), nullptr, m_cameraView == id)) {
+                lookThroughCamera(scene, id);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndMenu();
+    }
+    if (ImGui::MenuItem("Exit Camera View", nullptr, false, m_cameraView.has_value())) {
+        exitCameraView();
+    }
 }
 
 bool ViewportPanel::drawToolShelf(float headerHeight) {
@@ -289,19 +418,28 @@ bool ViewportPanel::drawSidebar(EditorContext& context, float headerHeight) {
     bool hovered = false;
     if (ImGui::BeginChild("##ViewportSidebar", sidebarSize, ImGuiChildFlags_None)) {
         if (ImGui::BeginTabBar("##ViewportSidebarTabs")) {
-            if (ImGui::BeginTabItem(itemTabTitle)) {
+            if (ImGui::BeginTabItem(BuiltInViewportSidebarTab::item)) {
                 drawItemTab(context);
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem(toolTabTitle)) {
+            if (ImGui::BeginTabItem(BuiltInViewportSidebarTab::tool)) {
                 ViewportChromeWidgets::drawToolTab(m_tools);
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem(viewTabTitle)) {
-                ViewportChromeWidgets::drawViewTab(context.camera);
+            if (ImGui::BeginTabItem(BuiltInViewportSidebarTab::view)) {
+                if (m_cameraView) {
+                    ImGui::TextDisabled("Looking through a scene camera.");
+                    if (ImGui::Button("Exit Camera View")) {
+                        exitCameraView();
+                    }
+                    ImGui::Separator();
+                }
+                ViewportChromeWidgets::drawViewTab(m_camera);
                 ImGui::EndTabItem();
             }
-            for (const ViewportSidebarTab& tab : m_sidebarTabs) {
+            // By index, drawing a copy: a tab's draw may add or remove tabs.
+            for (size_t index = 0; index < m_registry.sidebarTabs().size(); ++index) {
+                const ViewportSidebarTab tab = m_registry.sidebarTabs()[index];
                 if (ImGui::BeginTabItem(tab.title.c_str())) {
                     tab.draw(context);
                     ImGui::EndTabItem();
@@ -349,7 +487,7 @@ void ViewportPanel::pickAtMouse(EditorContext& context) {
     const glm::vec2 normalized = (glm::vec2(mouse.x, mouse.y) - m_position) / m_size;
     Scene& scene = context.app.scene;
     scene.updateWorldTransforms();
-    const Entity picked = context.camera.pick(scene, context.app.assets, normalized, m_size.x / m_size.y);
+    const Entity picked = pickThroughLens(scene, context.app.assets, lens(scene), normalized, m_size.x / m_size.y);
     if (picked == entt::null) {
         context.selection.clear();
     } else {
@@ -391,8 +529,12 @@ bool ViewportPanel::drawGizmo(EditorContext& context) {
     entt::registry& registry = scene.registry();
     scene.updateWorldTransforms();
     glm::mat4 world = registry.get<TransformComponent>(entity).world;
-    const glm::mat4 view = context.camera.viewMatrix();
-    const glm::mat4 projection = context.camera.gizmoProjectionMatrix(m_size.x / m_size.y);
+    const RenderView currentLens = lens(scene);
+    const glm::mat4 view = lensViewMatrix(currentLens);
+    const glm::mat4 projection = lensGizmoProjectionMatrix(currentLens, m_size.x / m_size.y);
+    // ImGuizmo's drag state is global; the id keeps each viewport's gizmo
+    // from answering another's drag.
+    ImGuizmo::PushID(static_cast<int>(m_id.value));
     ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
     ImGuizmo::SetRect(m_position.x, m_position.y, m_size.x, m_size.y);
     ImGuizmo::SetOrthographic(false);
@@ -406,6 +548,9 @@ bool ViewportPanel::drawGizmo(EditorContext& context) {
     const glm::mat4 localBeforeManipulation = registry.get<TransformComponent>(entity).local;
     const bool changed = ImGuizmo::Manipulate(&view[0][0], &projection[0][0], operation, mode, &world[0][0], nullptr,
                                               m_tools.snapping ? snap : nullptr);
+    const bool usingGizmo = ImGuizmo::IsUsing();
+    const bool overGizmo = ImGuizmo::IsOver();
+    ImGuizmo::PopID();
     if (changed) {
         const Entity parent = registry.get<RelationshipComponent>(entity).parent;
         registry.get<TransformComponent>(entity).local =
@@ -413,7 +558,6 @@ bool ViewportPanel::drawGizmo(EditorContext& context) {
         scene.markTransformDirty(entity);
         scene.updateWorldTransforms();
     }
-    const bool usingGizmo = ImGuizmo::IsUsing();
     if (usingGizmo && !m_gizmoWasUsing) {
         // The first manipulated frame has already moved the entity, so the
         // undo snapshot is taken with the pre-drag transform restored.
@@ -432,5 +576,5 @@ bool ViewportPanel::drawGizmo(EditorContext& context) {
         m_gizmoBefore.clear();
     }
     m_gizmoWasUsing = usingGizmo;
-    return usingGizmo || ImGuizmo::IsOver();
+    return usingGizmo || overGizmo;
 }

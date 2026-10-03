@@ -1,11 +1,11 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
-#include "editor/interaction/EditorCamera.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/Keymap.hpp"
 #include "editor/operators/OperatorRunner.hpp"
 #include "editor/panels/EditorContext.hpp"
+#include "editor/panels/ViewportOperators.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "engine/application/Application.hpp"
 #include "engine/diagnostics/Logger.hpp"
@@ -80,7 +80,7 @@ class HeadlessSessionActions final : public EditorSessionActions {
         return false;
     }
 
-    void updateModalTransform(ApplicationContext&) override {}
+    void updateModalTransform(ApplicationContext&, ViewportId) override {}
 
   private:
     SceneEditing m_editing;
@@ -102,13 +102,13 @@ struct ViewportFixture {
     CommandHistory history;
     EditorDiagnostics diagnostics;
     Selection selection;
-    EditorCamera camera;
     HeadlessSessionActions actions{editing(), history, selection};
-    ViewportPanel viewport;
+    ViewportRegistry viewports;
+    ViewportPanel viewport{viewports};
 
     ViewportFixture() {
-        for (Operator& op : viewport.chromeOperators()) {
-            expect(static_cast<bool>(actions.registry.add(std::move(op))), "the chrome operators should register");
+        for (Operator& op : viewportOperators(viewports)) {
+            expect(static_cast<bool>(actions.registry.add(std::move(op))), "the viewport operators should register");
         }
     }
 
@@ -121,7 +121,6 @@ struct ViewportFixture {
                 .editing = editing(),
                 .selection = selection,
                 .diagnostics = diagnostics,
-                .camera = camera,
                 .mode = EditorMode::Edit,
                 .actions = actions};
     }
@@ -298,12 +297,13 @@ void testSidebarTabsAndChromeDrawing() {
     HeadlessImGui imgui;
     ViewportPanel& viewport = fixture.viewport;
     const auto drawTab = [](EditorContext&) { ImGui::TextUnformatted("Module tab"); };
-    expect(static_cast<bool>(viewport.addSidebarTab({.title = "Spinners", .draw = drawTab})),
+    ViewportRegistry& viewports = fixture.viewports;
+    expect(static_cast<bool>(viewports.addSidebarTab({.title = "Spinners", .draw = drawTab})),
            "a module tab should be added");
-    expect(!viewport.addSidebarTab({.title = "Spinners", .draw = drawTab}), "duplicate tab titles should be refused");
-    expect(!viewport.addSidebarTab({.title = "View", .draw = drawTab}), "built-in tab titles should be refused");
-    expect(!viewport.addSidebarTab({.title = "", .draw = drawTab}), "tabs need a title");
-    expect(!viewport.addSidebarTab({.title = "Empty"}), "tabs need a draw function");
+    expect(!viewports.addSidebarTab({.title = "Spinners", .draw = drawTab}), "duplicate tab titles should be refused");
+    expect(!viewports.addSidebarTab({.title = "View", .draw = drawTab}), "built-in tab titles should be refused");
+    expect(!viewports.addSidebarTab({.title = "", .draw = drawTab}), "tabs need a title");
+    expect(!viewports.addSidebarTab({.title = "Empty"}), "tabs need a draw function");
 
     // Every region and overlay combination draws headless.
     fixture.invoke("view3d.toggle_sidebar");
@@ -318,7 +318,7 @@ void testSidebarTabsAndChromeDrawing() {
                                       .gizmo = false};
         imgui.settle(fixture, {10.0f, 10.0f});
     }
-    expect(viewport.removeSidebarTab("Spinners") && !viewport.removeSidebarTab("Spinners"),
+    expect(viewports.removeSidebarTab("Spinners") && !viewports.removeSidebarTab("Spinners"),
            "a tab should be removed once");
 
     // The menu and tab bodies edit the settings they are given.
@@ -333,7 +333,7 @@ void testSidebarTabsAndChromeDrawing() {
     ViewportChromeWidgets::drawToolShelf(tools, 60.0f);
     ImGui::PopID();
     ViewportChromeWidgets::drawToolTab(tools);
-    ViewportChromeWidgets::drawViewTab(fixture.camera);
+    ViewportChromeWidgets::drawViewTab(fixture.viewport.camera());
     ImGui::End();
     ImGui::Render();
     expect(state.shading == ViewportShading::Rendered && tools.gizmo == GizmoMode::Select,

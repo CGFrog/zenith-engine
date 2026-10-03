@@ -99,7 +99,9 @@ void EditorSession::addAreaType(AreaType type) {
 }
 
 void EditorSession::registerAreaTypes() {
-    addAreaType(AreaType::shared("viewport", m_viewport));
+    addAreaType({.id = "viewport", .title = "Viewport", .instancing = AreaInstancing::Multiple, .create = [this] {
+                     return std::make_unique<ViewportPanel>(m_viewports);
+                 }});
     for (AreaType& type : builtInAreaTypes({.projectAssets = m_projectAssets,
                                             .renderSettings = m_renderSettings,
                                             .tools = m_settings.tools(),

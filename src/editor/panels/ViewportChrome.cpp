@@ -30,12 +30,24 @@ constexpr std::array<ToolChoice, 4> toolChoices{{
     {"Scale", "Scale the selection with a gizmo", GizmoMode::Scale},
 }};
 
-Operator toggleOperator(std::string id, std::string label, std::string description, bool& flag) {
+constexpr const char* noViewportError = "No viewport is open";
+
+std::function<bool(const OperatorContext&)> hasTarget(const ViewportChromeTarget& target) {
+    return [target](const OperatorContext&) { return target() != nullptr; };
+}
+
+Operator toggleOperator(std::string id, std::string label, std::string description, ViewportChromeTarget target,
+                        bool ViewportChromeState::* flag) {
     return {.id = std::move(id),
             .label = std::move(label),
             .description = std::move(description),
-            .execute = [&flag](OperatorContext&, OperatorProperties&) {
-                flag = !flag;
+            .poll = hasTarget(target),
+            .execute = [target, flag](OperatorContext&, OperatorProperties&) {
+                ViewportChromeState* state = target();
+                if (state == nullptr) {
+                    return OperatorResult::failed(noViewportError);
+                }
+                state->*flag = !(state->*flag);
                 return OperatorResult::finished();
             }};
 }
@@ -80,13 +92,14 @@ const char* viewportShadingLabel(ViewportShading shading) {
     return "Rendered";
 }
 
-std::vector<Operator> viewportChromeOperators(ViewportChromeState& state) {
+std::vector<Operator> viewportChromeOperators(ViewportChromeTarget target) {
     std::vector<Operator> operators;
     operators.push_back(toggleOperator("view3d.toggle_sidebar", "Toggle Sidebar",
-                                       "Show or hide the viewport's Item, Tool, and View sidebar",
-                                       state.sidebarVisible));
+                                       "Show or hide the viewport's Item, Tool, and View sidebar", target,
+                                       &ViewportChromeState::sidebarVisible));
     operators.push_back(toggleOperator("view3d.toggle_toolbar", "Toggle Toolbar",
-                                       "Show or hide the viewport's tool shelf", state.toolbarVisible));
+                                       "Show or hide the viewport's tool shelf", target,
+                                       &ViewportChromeState::toolbarVisible));
     operators.push_back(
         {.id = "view3d.shading_set",
          .label = "Set Shading",
@@ -100,9 +113,14 @@ std::vector<Operator> viewportChromeOperators(ViewportChromeState& state) {
                                       static_cast<int64_t>(ViewportShading::MaterialPreview)},
                                      {"solid", "Solid", static_cast<int64_t>(ViewportShading::Solid)},
                                      {"wireframe", "Wireframe", static_cast<int64_t>(ViewportShading::Wireframe)}}))),
-         .execute = [&state](OperatorContext&, OperatorProperties& properties) {
+         .poll = hasTarget(target),
+         .execute = [target](OperatorContext&, OperatorProperties& properties) {
+             ViewportChromeState* state = target();
+             if (state == nullptr) {
+                 return OperatorResult::failed(noViewportError);
+             }
              const ShadingProperties* values = properties.get<ShadingProperties>();
-             state.shading = values != nullptr ? values->type : ViewportShading::Rendered;
+             state->shading = values != nullptr ? values->type : ViewportShading::Rendered;
              return OperatorResult::finished();
          }});
     return operators;

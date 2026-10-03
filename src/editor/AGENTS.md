@@ -57,6 +57,12 @@ depend on this subtree.
   are user data, never scene data.
 - Automated editor runs must set `ZENITH_EDITOR_SETTINGS_DIR` so they never
   read or replace the user's settings directory.
+- Viewports are multiple-instance areas registered with the session's
+  `ViewportRegistry`. Code acting on "the viewport" (view3d operators, modal
+  transforms, the status bar) uses `ViewportRegistry::active()` and must
+  handle it being null; never reach a viewport through a session member.
+  Viewport shading goes to the viewport's render view through
+  `setViewSettings`, never into the project's render settings.
 - Never cache a game module's `ComponentType` pointers or registries across
   frames: read them from `EditorDocument::options()`. Before a module unloads,
   `GameModuleHost` releases its registries, systems, operators, and panels and

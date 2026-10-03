@@ -1,6 +1,7 @@
 // Blender object-mode operators that need the running editor: modal G/R/S
-// transforms, the Add/Delete/Rename popups, and the viewpoint keys. Operators
-// that only edit the document live in editor/operators/ObjectOperators.
+// transforms and the Add/Delete/Rename popups. Operators that only edit the
+// document live in editor/operators/ObjectOperators, and the view3d ones in
+// editor/panels/ViewportOperators.
 
 #include "EditorSession.hpp"
 
@@ -10,80 +11,15 @@
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
 
-#include <glm/gtc/constants.hpp>
-
 #include <algorithm>
 #include <array>
-#include <limits>
 #include <optional>
 #include <utility>
 
 namespace {
-// Blender orbits 15 degrees per numpad press.
-constexpr float orbitStepRadians = 0.261799388f;
-constexpr float quarterTurn = glm::half_pi<float>();
-constexpr float halfTurn = glm::pi<float>();
 constexpr const char* addMenuPopup = "ObjectAddMenu";
 constexpr const char* deleteMenuPopup = "ObjectDeleteMenu";
 constexpr const char* renamePopup = "ObjectRename";
-
-enum class ViewAxis : uint8_t {
-    Front,
-    Back,
-    Right,
-    Left,
-    Top,
-    Bottom,
-};
-
-struct ViewAxisProperties {
-    ViewAxis type{ViewAxis::Front};
-};
-
-enum class OrbitDirection : uint8_t {
-    Left,
-    Right,
-    Up,
-    Down,
-};
-
-struct OrbitProperties {
-    OrbitDirection direction{OrbitDirection::Left};
-};
-
-// Yaw and pitch, in radians, of Blender's numpad viewpoints.
-std::pair<float, float> viewAxisAngles(ViewAxis axis) {
-    switch (axis) {
-    case ViewAxis::Front:
-        return {0.0f, 0.0f};
-    case ViewAxis::Back:
-        return {halfTurn, 0.0f};
-    case ViewAxis::Right:
-        return {-quarterTurn, 0.0f};
-    case ViewAxis::Left:
-        return {quarterTurn, 0.0f};
-    case ViewAxis::Top:
-        return {0.0f, -quarterTurn};
-    case ViewAxis::Bottom:
-        return {0.0f, quarterTurn};
-    }
-    return {0.0f, 0.0f};
-}
-
-// Yaw and pitch change of one numpad orbit step.
-glm::vec2 orbitStep(OrbitDirection direction) {
-    switch (direction) {
-    case OrbitDirection::Left:
-        return {orbitStepRadians, 0.0f};
-    case OrbitDirection::Right:
-        return {-orbitStepRadians, 0.0f};
-    case OrbitDirection::Up:
-        return {0.0f, -orbitStepRadians};
-    case OrbitDirection::Down:
-        return {0.0f, orbitStepRadians};
-    }
-    return glm::vec2(0.0f);
-}
 
 ImU32 axisColor(TransformAxis axis) {
     switch (axis) {
@@ -138,7 +74,9 @@ void EditorSession::handleObjectKeys(ApplicationContext& context, KeymapRegion r
 
 void EditorSession::registerObjectModeOperators() {
     const auto canTransform = [this](const OperatorContext& context) {
-        return context.app != nullptr && context.editMode() && !context.selection.empty() && !m_activeTransform;
+        // A modal transform follows the mouse over the active viewport.
+        return context.app != nullptr && context.editMode() && !context.selection.empty() && !m_activeTransform &&
+               m_viewports.active() != nullptr;
     };
     const auto modalTransform = [this, canTransform](std::string id, std::string label, std::string description,
                                                      TransformOperation operation, std::string commandName) {
@@ -149,7 +87,7 @@ void EditorSession::registerObjectModeOperators() {
                         .execute = [this, operation, commandName](OperatorContext& context, OperatorProperties&) {
                             return beginModalTransform(*context.app, operation, commandName, {}, false)
                                        ? OperatorResult::finished()
-                                       : OperatorResult::cancelled();
+                                       : OperatorResult::cancelled("Nothing to transform in an open viewport");
                         }};
     };
     registerOperator(modalTransform("transform.translate", "Move", "Move the selection with the mouse",
@@ -195,64 +133,6 @@ void EditorSession::registerObjectModeOperators() {
             m_openRenamePopup = true;
             m_focusRenameField = true;
         }));
-
-    registerOperator(applicationOperator(
-        "view3d.toggle_snapping", "Toggle Snapping", "Turn transform snapping on or off", {},
-        [this](ApplicationContext&) { m_viewport.tools().snapping = !m_viewport.tools().snapping; }));
-    for (Operator& op : m_viewport.chromeOperators()) {
-        registerOperator(std::move(op));
-    }
-    registerOperator(applicationOperator(
-        "view3d.frame_selected", "Frame Selected", "Move the view to show the selected objects",
-        [](const OperatorContext& context) { return !context.selection.empty(); },
-        [this](ApplicationContext& app) { frameEntities(app, m_selection.ids()); }));
-    registerOperator(applicationOperator("view3d.frame_all", "Frame All", "Move the view to show every object", {},
-                                         [this](ApplicationContext& app) { frameAll(app); }));
-    registerOperator({.id = "view3d.view_axis",
-                      .label = "View Axis",
-                      .description = "Look along a world axis",
-                      .properties = OperatorProperties::make(
-                          ViewAxisProperties{},
-                          std::move(Fields<ViewAxisProperties>()
-                                        .add("type", &ViewAxisProperties::type)
-                                        .options({{"front", "Front", static_cast<int64_t>(ViewAxis::Front)},
-                                                  {"back", "Back", static_cast<int64_t>(ViewAxis::Back)},
-                                                  {"right", "Right", static_cast<int64_t>(ViewAxis::Right)},
-                                                  {"left", "Left", static_cast<int64_t>(ViewAxis::Left)},
-                                                  {"top", "Top", static_cast<int64_t>(ViewAxis::Top)},
-                                                  {"bottom", "Bottom", static_cast<int64_t>(ViewAxis::Bottom)}}))),
-                      .poll = [](const OperatorContext& context) { return context.app != nullptr; },
-                      .execute =
-                          [this](OperatorContext&, OperatorProperties& properties) {
-                              const ViewAxisProperties* values = properties.get<ViewAxisProperties>();
-                              const auto [yaw, pitch] =
-                                  viewAxisAngles(values != nullptr ? values->type : ViewAxis::Front);
-                              m_camera.setViewAngles(yaw, pitch);
-                              return OperatorResult::finished();
-                          }});
-    registerOperator(applicationOperator(
-        "view3d.view_opposite", "View Opposite", "Look from the opposite side", {},
-        [this](ApplicationContext&) { m_camera.setViewAngles(m_camera.yaw() + halfTurn, -m_camera.pitch()); }));
-    registerOperator({.id = "view3d.view_orbit",
-                      .label = "Orbit View",
-                      .description = "Orbit the view 15 degrees around its pivot",
-                      .properties = OperatorProperties::make(
-                          OrbitProperties{},
-                          std::move(Fields<OrbitProperties>()
-                                        .add("direction", &OrbitProperties::direction)
-                                        .options({{"left", "Left", static_cast<int64_t>(OrbitDirection::Left)},
-                                                  {"right", "Right", static_cast<int64_t>(OrbitDirection::Right)},
-                                                  {"up", "Up", static_cast<int64_t>(OrbitDirection::Up)},
-                                                  {"down", "Down", static_cast<int64_t>(OrbitDirection::Down)}}))),
-                      .poll = [](const OperatorContext& context) { return context.app != nullptr; },
-                      .execute =
-                          [this](OperatorContext&, OperatorProperties& properties) {
-                              const OrbitProperties* values = properties.get<OrbitProperties>();
-                              const glm::vec2 step =
-                                  orbitStep(values != nullptr ? values->direction : OrbitDirection::Left);
-                              m_camera.orbitAroundPivot(step.x, step.y);
-                              return OperatorResult::finished();
-                          }});
 }
 
 void EditorSession::drawObjectPopups(ApplicationContext& context) {
@@ -312,48 +192,10 @@ void EditorSession::drawObjectPopups(ApplicationContext& context) {
     }
 }
 
-void EditorSession::frameEntities(ApplicationContext& context, const std::vector<SceneEntityId>& entities) {
-    context.scene.updateWorldTransforms();
-    constexpr float objectRadius = 0.5f;
-    glm::vec3 lower(std::numeric_limits<float>::max());
-    glm::vec3 upper(std::numeric_limits<float>::lowest());
-    bool any = false;
-    for (SceneEntityId id : entities) {
-        const Entity entity = context.scene.findEntity(id);
-        if (entity == entt::null) {
-            continue;
-        }
-        const glm::mat4& world = context.scene.registry().get<TransformComponent>(entity).world;
-        glm::vec3 center(world[3]);
-        float radius = objectRadius;
-        if (const auto* renderer = context.scene.registry().try_get<MeshRendererComponent>(entity)) {
-            if (const MeshAsset* mesh = context.assets.mesh(renderer->mesh)) {
-                const float scale = std::max({glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])),
-                                              glm::length(glm::vec3(world[2]))});
-                center = glm::vec3(world * glm::vec4(mesh->bounds.center, 1.0f));
-                radius = mesh->bounds.radius * scale;
-            }
-        }
-        lower = glm::min(lower, center - radius);
-        upper = glm::max(upper, center + radius);
-        any = true;
-    }
-    if (any) {
-        m_camera.focusOnBounds((lower + upper) * 0.5f, std::max(glm::length(upper - lower) * 0.5f, objectRadius));
-    }
-}
-
-void EditorSession::frameAll(ApplicationContext& context) {
-    std::vector<SceneEntityId> all;
-    for (Entity entity : context.scene.registry().view<const TransformComponent>()) {
-        all.push_back(context.scene.id(entity));
-    }
-    frameEntities(context, all);
-}
-
 bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOperation operation,
                                         std::string commandName, std::string before, bool commitOnCancel) {
-    if (m_playMode.mode() != EditorMode::Edit || m_selection.empty()) {
+    const ViewportPanel* viewport = m_viewports.active();
+    if (m_playMode.mode() != EditorMode::Edit || m_selection.empty() || viewport == nullptr) {
         return false;
     }
     context.scene.updateWorldTransforms();
@@ -375,15 +217,19 @@ bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOp
     if (const Entity active = context.scene.findEntity(*m_selection.active()); active != entt::null) {
         localAxes = normalizedAxes(context.scene.registry().get<TransformComponent>(active).world);
     }
-    const glm::vec2 viewportSize = m_viewport.size();
+    // Projected through whatever the viewport shows, its editor camera or a
+    // scene camera it looks through.
+    const glm::vec2 viewportSize = viewport->size();
     const float aspectRatio = viewportSize.x / std::max(viewportSize.y, 1.0f);
-    const ModalTransformView view{.view = m_camera.viewMatrix(),
-                                  .projection = m_camera.projectionMatrix(aspectRatio),
-                                  .viewportPosition = m_viewport.position(),
+    const RenderView lens = viewport->lens(context.scene);
+    const ModalTransformView view{.view = lensViewMatrix(lens),
+                                  .projection = lensProjectionMatrix(lens, aspectRatio),
+                                  .viewportPosition = viewport->position(),
                                   .viewportSize = viewportSize};
     const ImVec2 mouse = ImGui::GetMousePos();
     m_activeTransform.emplace(ActiveTransform{
         .transform = ModalTransform(operation, std::move(startWorld), localAxes, {mouse.x, mouse.y}, view),
+        .viewport = viewport->id(),
         .entities = std::move(roots),
         .startLocal = std::move(startLocal),
         .before = std::move(before),
@@ -393,15 +239,28 @@ bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOp
 }
 
 bool EditorSession::modalTransformActive() const {
-    return m_activeTransform.has_value();
+    // Through the end of the frame that finished it, so the confirming click
+    // does not also pick or grab a gizmo in a viewport drawn later.
+    return m_activeTransform.has_value() || m_modalTransformFinishedThisFrame;
 }
 
-void EditorSession::updateModalTransform(ApplicationContext& context) {
+void EditorSession::updateModalTransform(ApplicationContext& context, ViewportId viewportId) {
+    if (!m_activeTransform || m_activeTransform->viewport != viewportId) {
+        return;
+    }
+    ViewportPanel* viewport = m_viewports.find(viewportId);
+    if (viewport == nullptr) {
+        finishModalTransform(context, false);
+        return;
+    }
     ModalTransform& transform = m_activeTransform->transform;
     const ImGuiIO& io = ImGui::GetIO();
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
         if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-            m_viewport.suppressCameraUntilRightRelease();
+            // The cancelling click may be over any viewport.
+            for (ViewportPanel* open : m_viewports.openViewports()) {
+                open->suppressCameraUntilRightRelease();
+            }
         }
         finishModalTransform(context, false);
         return;
@@ -439,7 +298,7 @@ void EditorSession::updateModalTransform(ApplicationContext& context) {
 
     transform.moveMouse({io.MousePos.x, io.MousePos.y}, io.KeyShift);
     // Ctrl inverts the snapping toggle while it is held, as in Blender.
-    const TransformToolSettings& tools = m_viewport.tools();
+    const TransformToolSettings& tools = viewport->tools();
     const TransformSnapping snapping{.enabled = tools.snapping != io.KeyCtrl,
                                      .translation = tools.translationSnap,
                                      .rotationDegrees = tools.rotationSnapDegrees,
@@ -459,12 +318,13 @@ void EditorSession::updateModalTransform(ApplicationContext& context) {
         context.scene.markTransformDirty(entity);
     }
     context.scene.updateWorldTransforms();
-    drawModalTransformOverlay(result);
+    drawModalTransformOverlay(*viewport, result);
 }
 
 void EditorSession::finishModalTransform(ApplicationContext& context, bool confirm) {
     ActiveTransform active = std::move(*m_activeTransform);
     m_activeTransform.reset();
+    m_modalTransformFinishedThisFrame = true;
     if (!confirm) {
         for (size_t index = 0; index < active.entities.size(); ++index) {
             if (const Entity entity = context.scene.findEntity(active.entities[index]); entity != entt::null) {
@@ -479,10 +339,10 @@ void EditorSession::finishModalTransform(ApplicationContext& context, bool confi
     }
 }
 
-void EditorSession::drawModalTransformOverlay(const ModalTransformResult& result) const {
+void EditorSession::drawModalTransformOverlay(const ViewportPanel& viewport, const ModalTransformResult& result) const {
     const ModalTransform& transform = m_activeTransform->transform;
-    const glm::vec2 viewportPosition = m_viewport.position();
-    const glm::vec2 viewportSize = m_viewport.size();
+    const glm::vec2 viewportPosition = viewport.position();
+    const glm::vec2 viewportSize = viewport.size();
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     const ImVec2 clipMin{viewportPosition.x, viewportPosition.y};
     const ImVec2 clipMax{viewportPosition.x + viewportSize.x, viewportPosition.y + viewportSize.y};
