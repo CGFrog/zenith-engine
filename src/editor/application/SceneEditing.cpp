@@ -31,6 +31,10 @@ EditorDiagnostics& SceneEditing::diagnostics() const {
     return m_diagnostics;
 }
 
+uint64_t SceneEditing::historyRevision() const {
+    return m_history.revision();
+}
+
 bool SceneEditing::capture(std::string& snapshot) const {
     const SceneDocumentResult result = SceneDocument::serialize(m_scene, m_assets, m_document.options(), snapshot);
     if (!result) {

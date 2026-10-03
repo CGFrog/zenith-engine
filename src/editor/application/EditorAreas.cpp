@@ -8,6 +8,7 @@
 #include "editor/areas/AreaWindows.hpp"
 #include "editor/areas/DefaultWorkspaces.hpp"
 #include "editor/areas/WorkspaceFile.hpp"
+#include "editor/operators/CollectionOperators.hpp"
 #include "editor/panels/GameModulePanel.hpp"
 
 #include <imgui.h>
@@ -446,4 +447,75 @@ bool EditorSession::updateSmokeAreas(ApplicationContext& context) {
         }
     }
     return m_smokeFrame > firstFrame + 3;
+}
+
+bool EditorSession::updateSmokeOutliner(ApplicationContext& context) {
+    // Frames 170-171, after the Simulate smoke has returned to Edit mode: show
+    // a Hierarchy in Collections mode, add an empty, create a collection and
+    // link the empty to it (the Hierarchy draws the result in between), then
+    // undo every step and restore the mode.
+    constexpr uint32_t firstFrame = 170;
+    const auto fail = [&](const std::string& message) {
+        const std::string error = "Outliner smoke failed: " + message;
+        std::cerr << error << '\n';
+        m_diagnostics.reportError(error);
+        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+    };
+    if (m_smokeFrame == firstFrame) {
+        m_smokeOutlinerArea.clear();
+        for (const AreaInstance& area : m_workspaces.active().areas()) {
+            if (area.typeId == "hierarchy" && area.visible && area.panel) {
+                m_smokeOutlinerArea = area.id();
+                m_smokeOutlinerState = area.panel->areaState();
+                area.panel->restoreAreaState("collections");
+                if (area.panel->areaState() != "collections") {
+                    fail("the Hierarchy did not switch to the Collections display mode");
+                }
+                break;
+            }
+        }
+        if (const OperatorResult result = invokeOperator(context, "object.add_empty", {}, KeymapRegion::Global);
+            !result) {
+            fail("object.add_empty did not run: " + result.message);
+            return true;
+        }
+        const std::optional<SceneEntityId> added = m_selection.active();
+        invokeOperator(context, "collection.new", R"({"name":"Smoke Collection","link_selection":false})",
+                       KeymapRegion::Global);
+        const LastOperator* created = m_operatorRunner.lastOperator();
+        const NewCollectionProperties* properties =
+            created == nullptr ? nullptr : created->properties.get<NewCollectionProperties>();
+        if (!added || properties == nullptr || properties->created == 0) {
+            fail("collection.new did not create a collection");
+            return true;
+        }
+        const SceneCollectionId collection{properties->created};
+        const OperatorResult linked =
+            invokeOperator(context, "collection.link", nlohmann::json{{"collection", collection.value}}.dump(),
+                           KeymapRegion::Outliner);
+        const Entity entity = context.scene.findEntity(*added);
+        const auto* membership =
+            entity == entt::null ? nullptr : context.scene.registry().try_get<CollectionMembershipComponent>(entity);
+        if (membership == nullptr || !membership->contains(collection)) {
+            fail("collection.link did not link the new empty: " + linked.message);
+        }
+        // One undo step per operator. (The history's size is no count: a new
+        // step drops any steps an earlier smoke undid.)
+        m_smokeOutlinerUndoSteps = 3;
+        m_smokeOutlinerEntity = *added;
+    } else if (m_smokeFrame == firstFrame + 1) {
+        const size_t collectionsBefore = context.scene.collections().all().size();
+        for (size_t step = 0; step < m_smokeOutlinerUndoSteps && m_history.canUndo(); ++step) {
+            undo(context);
+        }
+        if (context.scene.collections().all().size() + 1 != collectionsBefore ||
+            context.scene.findEntity(m_smokeOutlinerEntity) != entt::null) {
+            fail("undo did not remove the smoke collection and empty");
+        }
+        if (const AreaInstance* area = m_workspaces.active().find(m_smokeOutlinerArea);
+            area != nullptr && area->panel) {
+            area->panel->restoreAreaState(m_smokeOutlinerState);
+        }
+    }
+    return m_smokeFrame > firstFrame + 1;
 }

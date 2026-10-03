@@ -31,6 +31,10 @@ class SceneEditing {
     AssetManager& assets() const;
     const EditorDocument& document() const;
     EditorDiagnostics& diagnostics() const;
+    // The history's revision (CommandHistory::revision): it changes with
+    // every recorded edit, undo, redo, and document replacement, so views can
+    // cache what they derive from the document.
+    uint64_t historyRevision() const;
 
     // Serializes the scene into snapshot; returns false after reporting.
     bool capture(std::string& snapshot) const;

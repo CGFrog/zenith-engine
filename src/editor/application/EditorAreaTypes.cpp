@@ -30,7 +30,8 @@ std::vector<AreaType> builtInAreaTypes(const EditorAreaServices& services) {
     ComponentInspectorLayout& componentLayout = services.componentLayout;
     const EditorToolSettings& tools = services.tools;
     std::vector<AreaType> types;
-    types.push_back(perArea("hierarchy", "Hierarchy", [] { return std::make_unique<HierarchyPanel>(); }));
+    types.push_back(perArea("hierarchy", "Hierarchy",
+                            [&projectAssets] { return std::make_unique<HierarchyPanel>(&projectAssets); }));
     types.push_back(perArea("inspector", "Inspector",
                             [&componentLayout] { return std::make_unique<InspectorPanel>(componentLayout); }));
     types.push_back(perArea("properties", "Properties", [&renderSettings, &componentLayout] {

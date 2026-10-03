@@ -596,6 +596,7 @@ add_library(zenith_editor_app STATIC
     src/editor/operators/OperatorRunner.cpp
     src/editor/operators/OperatorSearch.cpp
     src/editor/operators/PlayOperators.cpp
+    src/editor/operators/OutlinerOperators.cpp
     src/editor/operators/VisibilityOperators.cpp
     src/editor/panels/AssetBrowserPanel.cpp
     src/editor/panels/BuildPanel.cpp
@@ -614,6 +615,9 @@ add_library(zenith_editor_app STATIC
     src/editor/panels/ViewportOperators.cpp
     src/editor/panels/ViewportPanel.cpp
     src/editor/panels/ViewportRegistry.cpp
+    src/editor/panels/outliner/OrphanData.cpp
+    src/editor/panels/outliner/OutlinerRowWidgets.cpp
+    src/editor/panels/outliner/OutlinerTree.cpp
     src/editor/project/AssetCatalog.cpp
     src/editor/project/AssetRelocation.cpp
     src/editor/project/BuildRunner.cpp
@@ -1684,6 +1688,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_selection_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_selection COMMAND zenith_selection_tests)
+
+    add_executable(zenith_outliner_tests tests/editor/OutlinerTests.cpp)
+    target_link_libraries(zenith_outliner_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_outliner_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_outliner_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_outliner COMMAND zenith_outliner_tests)
 
     add_executable(zenith_scene_editing_tests tests/editor/SceneEditingTests.cpp)
     target_link_libraries(zenith_scene_editing_tests PRIVATE zenith_editor_app)

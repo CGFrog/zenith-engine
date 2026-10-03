@@ -16,7 +16,8 @@ struct EditorToolSettings;
 // What the editor's built-in area types show. Every object must outlive the
 // panels the types create.
 struct EditorAreaServices {
-    // Shared by every Asset Browser area.
+    // Shared by every Asset Browser area, and read by every Hierarchy for
+    // its Orphan Data view.
     ProjectAssets& projectAssets;
     // Shared by every Properties and Graphics area.
     RenderSettingsController& renderSettings;
@@ -38,7 +39,7 @@ struct EditorAreaServices {
 //
 // | id                  | instancing | panel                                    |
 // | ------------------- | ---------- | ---------------------------------------- |
-// | `hierarchy`         | Multiple   | HierarchyPanel                           |
+// | `hierarchy`         | Multiple   | HierarchyPanel (display mode per area)   |
 // | `inspector`         | Multiple   | InspectorPanel                           |
 // | `properties`        | Multiple   | PropertiesPanel (tab kept per area)      |
 // | `diagnostics`       | Multiple   | DiagnosticsPanel                         |
