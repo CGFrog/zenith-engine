@@ -78,6 +78,9 @@ std::vector<KeymapBinding> defaultEditorKeymap() {
     addObjectKey(bindings, "edit.copy", ImGuiMod_Ctrl | ImGuiKey_C);
     addObjectKey(bindings, "edit.paste", ImGuiMod_Ctrl | ImGuiKey_V);
     addObjectKey(bindings, "view3d.frame_selected", ImGuiKey_KeypadDecimal);
+    addObjectKey(bindings, "object.hide", ImGuiKey_H);
+    addObjectKey(bindings, "object.unhide", ImGuiMod_Alt | ImGuiKey_H);
+    addObjectKey(bindings, "object.isolate", ImGuiMod_Shift | ImGuiKey_H);
     // Tapping A twice quickly deselects everything.
     for (const KeymapRegion region : {viewport, outliner}) {
         KeymapBinding deselect = binding("object.select_all", region, ImGuiKey_A, R"({"action":"deselect"})");

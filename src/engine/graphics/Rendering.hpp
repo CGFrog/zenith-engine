@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/scene/SceneVisibilityMode.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
@@ -844,6 +846,26 @@ class RenderRuntime {
     // follows the frame settings. Cheap views can disable temporal
     // anti-aliasing, ambient occlusion, reflections, fog, bloom, and the rest.
     bool setViewSettings(RenderViewId view, std::optional<RenderSettings> settings);
+    // Isolates a view (the editor's local view): with a set, the view draws
+    // only meshes of the listed objects (collection instances count as their
+    // instancing entity); nullopt draws everything. Sorted and deduplicated on
+    // assignment. Shared work (shadow maps, lights, particles) still covers
+    // the whole scene. An isolated default view uses CPU submission instead
+    // of GPU-driven submission while the set is present.
+    bool setViewVisibleEntities(RenderViewId view, std::optional<std::vector<RenderObjectId>> objects);
+    // The view's isolation set; nullopt when it is not isolated or the handle is stale.
+    std::optional<std::vector<RenderObjectId>> viewVisibleEntities(RenderViewId view) const;
+
+    // Which visibility flags every view honours (see SceneVisibility.hpp).
+    // Runtime, the default, ignores the editor's viewport hide; the editor
+    // selects Editor while editing and Runtime in Play mode.
+    void setSceneVisibilityMode(SceneVisibilityMode mode) {
+        m_sceneVisibilityMode = mode;
+    }
+
+    SceneVisibilityMode sceneVisibilityMode() const {
+        return m_sceneVisibilityMode;
+    }
 
     UiTextureHandle viewTexture(RenderViewId view) const;
     uint32_t viewWidth(RenderViewId view) const;
@@ -900,6 +922,8 @@ class RenderRuntime {
         std::optional<GridOverlay> grid;
         std::vector<RenderObjectId> outlinedObjects;
         std::optional<RenderSettings> settings;
+        // Sorted; nullopt draws every object (see setViewVisibleEntities).
+        std::optional<std::vector<RenderObjectId>> visibleObjects;
         // Published by the Renderer.
         UiTextureHandle texture;
         uint32_t width{0};
@@ -912,6 +936,7 @@ class RenderRuntime {
     bool anyViewInputActive() const;
 
     RenderSettings m_settings;
+    SceneVisibilityMode m_sceneVisibilityMode{SceneVisibilityMode::Runtime};
     std::filesystem::path m_assetRoot;
     RenderCapabilities m_capabilities;
     RenderStats m_stats;

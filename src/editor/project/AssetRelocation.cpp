@@ -66,7 +66,7 @@ SceneDocumentResult relocateSceneAssets(Scene& scene, AssetManager& assets, cons
         !result || relocated == 0) {
         return result;
     }
-    std::vector<SceneEntityChange> changes;
+    SceneChanges changes;
     if (SceneDocumentResult result = SceneDocument::diff(before, after, changes); !result) {
         return result;
     }

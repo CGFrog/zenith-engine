@@ -25,6 +25,10 @@ void EditorSession::registerViewportOperators() {
 void EditorSession::beginViewportFrame(ApplicationContext& context) {
     m_viewports.beginFrame();
     m_modalTransformFinishedThisFrame = false;
+    // The viewport hide is an authoring aid: Play mode shows the scene as the
+    // game would.
+    context.rendering.setSceneVisibilityMode(m_playMode.mode() == EditorMode::Edit ? SceneVisibilityMode::Editor
+                                                                                   : SceneVisibilityMode::Runtime);
     // The default view renders every frame, so a viewport nobody sees (its
     // area hidden, tabbed away, or in another workspace) gives it up for the
     // next drawn viewport.

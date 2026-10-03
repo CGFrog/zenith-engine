@@ -1,5 +1,7 @@
 #include "ReflectionProbes.hpp"
 
+#include "engine/scene/SceneVisibility.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -10,10 +12,14 @@ namespace {
 constexpr float minimumDirectionComponent = 1.0e-6f;
 } // namespace
 
-std::vector<ReflectionProbeVolume> gatherReflectionProbes(const Scene& scene) {
+std::vector<ReflectionProbeVolume> gatherReflectionProbes(const Scene& scene, SceneVisibilityMode visibilityMode) {
     std::vector<ReflectionProbeVolume> result;
+    const SceneVisibility visibility(scene, visibilityMode);
     const auto probes = scene.registry().view<const ReflectionProbeComponent, const TransformComponent>();
     for (Entity entity : probes) {
+        if (!visibility.drawn(entity)) {
+            continue;
+        }
         const auto& probe = probes.get<const ReflectionProbeComponent>(entity);
         result.push_back({.entity = entity,
                           .center = glm::vec3(probes.get<const TransformComponent>(entity).world[3]),

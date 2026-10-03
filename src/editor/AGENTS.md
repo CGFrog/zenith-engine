@@ -13,7 +13,7 @@ depend on this subtree.
 | `document/` | Scene document state, persistence workflow, and undo/redo history. |
 | `modules/` | Game module hosting: loading the project's module, running its systems, hot reload, and the header-only editor extension API modules implement. |
 | `interaction/` | Editor camera, picking, selection, gizmos, and component editing widgets. |
-| `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object operators, the per-region keymap with `keymap.json` overrides, F3 search, and the keymap editor. |
+| `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object, collection, and visibility (hide) operators, the per-region keymap with `keymap.json` overrides, F3 search, and the keymap editor. |
 | `panels/` | One class per dockable window, drawn from an `EditorContext`. |
 | `project/` | Project tooling: the shared asset service (`ProjectAssets`: catalog, watchers, change dispatch, favourites), asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, and IDE launching. |
 | `settings/` | Persistent editor preferences (legacy panel flags are only read, for migration). |
@@ -62,6 +62,9 @@ depend on this subtree.
   `theme/EditorWidgets` wrappers for themed controls; they keep ImGui's ids,
   so tests can address them by label. Area windows get their glass frame from
   `ThemeChrome` in `drawAreaWindow`; panels draw only their contents.
+- The viewport hide (`VisibilityComponent::hidden`, collection `visible`) is
+  editor-only: anything that picks or selects in the viewport uses
+  `SceneVisibility` in `Editor` mode, and Play mode renders in `Runtime` mode.
 - Automated editor runs must set `ZENITH_EDITOR_SETTINGS_DIR` so they never
   read or replace the user's settings directory.
 - Viewports are multiple-instance areas registered with the session's

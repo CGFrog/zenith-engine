@@ -2,6 +2,7 @@
 
 #include "../assets/Assets.hpp"
 #include "../physics/PhysicsComponents.hpp"
+#include "Collections.hpp"
 #include "ParticleEmitter.hpp"
 #include <compare>
 #include <cstdint>
@@ -330,6 +331,12 @@ class Scene {
     // from edits to the same one.
     uint64_t contentGeneration() const;
 
+    // Collection definitions (see Collections.hpp). Replacing them marks the
+    // render and light state dirty, since collection flags and instance
+    // offsets change what renders.
+    const SceneCollections& collections() const;
+    void setCollections(SceneCollections collections);
+
     entt::registry& registry();
     const entt::registry& registry() const;
 
@@ -357,4 +364,5 @@ class Scene {
     std::vector<PhysicsLifecycleEvent> m_physicsLifecycleEvents;
     uint64_t m_renderPacketRevision{1};
     uint64_t m_contentGeneration{1};
+    SceneCollections m_collections;
 };

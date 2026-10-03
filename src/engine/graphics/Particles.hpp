@@ -2,6 +2,7 @@
 
 #include "Rendering.hpp"
 #include "engine/scene/ParticleEmitter.hpp"
+#include "engine/scene/SceneVisibilityMode.hpp"
 
 #include <glm/glm.hpp>
 
@@ -250,9 +251,11 @@ class ParticleScheduler {
     uint64_t m_sceneGeneration{0};
 };
 
-// The scene's valid emitters (see validateParticleEmitter) with their world
-// transforms, sorted by stable scene id; entities without one are skipped.
-std::vector<EmitterSnapshot> gatherEmitters(const Scene& scene);
+// The scene's valid emitters (see validateParticleEmitter) that the visibility
+// mode draws, with their world transforms, sorted by stable scene id; entities
+// without one are skipped.
+std::vector<EmitterSnapshot> gatherEmitters(const Scene& scene,
+                                            SceneVisibilityMode visibility = SceneVisibilityMode::Runtime);
 
 // Packs one scheduled emitter for the GPU. textureSlot selects the sprite.
 GpuParticleEmitter packEmitter(const EmitterSnapshot& snapshot, const ScheduledEmitter& scheduled,

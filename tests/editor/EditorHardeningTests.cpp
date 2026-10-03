@@ -41,6 +41,52 @@ int main() {
     expect(scene.registry().get<RelationshipComponent>(pastedRoot).children.size() == 1,
            "pasting should retain fragment hierarchy");
 
+    // Collections travel by name: same scene keeps them, another scene maps
+    // them to its collection of that name, and drops unknown ones.
+    {
+        Scene source;
+        SceneCollections sourceCollections;
+        SceneCollectionId props;
+        SceneCollectionId lights;
+        sourceCollections.create("Props", {}, props);
+        sourceCollections.create("Lights", {}, lights);
+        source.setCollections(sourceCollections);
+        const Entity crate = source.createEntity("Crate");
+        linkToCollection(source, crate, props);
+        linkToCollection(source, crate, lights);
+        const Entity instance = source.createEntity("Instance");
+        source.registry().emplace<CollectionInstanceComponent>(instance, props);
+        const std::vector<SceneEntityId> copied{source.id(crate), source.id(instance)};
+        std::string collectionFragment;
+        expect(SceneFragment::copy(source, assets, options, copied, collectionFragment).success,
+               "entities in collections should copy");
+
+        Scene destination;
+        SceneCollections destinationCollections;
+        SceneCollectionId disabled;
+        SceneCollectionId destinationProps;
+        destinationCollections.create("Disabled", {}, disabled);
+        destinationCollections.create("Props", {}, destinationProps);
+        destination.setCollections(destinationCollections);
+        std::vector<SceneEntityId> pastedIds;
+        expect(SceneFragment::paste(collectionFragment, destination, assets, options, entt::null, pastedIds).success &&
+                   pastedIds.size() == 2,
+               "a fragment from another scene should paste");
+        const Entity pastedCrate = destination.findEntity(pastedIds.front());
+        const Entity pastedInstance = destination.findEntity(pastedIds.back());
+        expect(destination.registry().get<CollectionMembershipComponent>(pastedCrate).collections ==
+                       std::vector<SceneCollectionId>{destinationProps} &&
+                   destination.registry().get<CollectionInstanceComponent>(pastedInstance).collection ==
+                       destinationProps,
+               "pasted collection references should follow collection names, not ids");
+
+        std::vector<SceneEntityId> again;
+        expect(SceneFragment::paste(collectionFragment, source, assets, options, entt::null, again).success &&
+                   source.registry().get<CollectionMembershipComponent>(source.findEntity(again.front())).collections ==
+                       std::vector<SceneCollectionId>{props, lights},
+               "pasting into the source scene should keep its collections");
+    }
+
     EditorRecovery recovery(directory / "recovery.zenith-scene");
     expect(recovery.autosave(scene, assets, options).success && recovery.available(),
            "autosave should create a separate recovery document");

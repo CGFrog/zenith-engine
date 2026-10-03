@@ -455,9 +455,12 @@ add_library(zenith_engine SHARED
     src/engine/scene/Scene.cpp
     src/engine/scene/ParticleEmitter.cpp
     src/engine/scene/BuiltInComponentTypes.cpp
+    src/engine/scene/CollectionComponentTypes.cpp
+    src/engine/scene/Collections.cpp
     src/engine/scene/ComponentTypes.cpp
     src/engine/scene/SceneAssetReferences.cpp
     src/engine/scene/SceneDocument.cpp
+    src/engine/scene/SceneVisibility.cpp
     src/engine/scene/AdditiveSceneManager.cpp
     src/engine/scene/Prefab.cpp
     src/engine/ui/GameUi.cpp
@@ -554,6 +557,7 @@ add_library(zenith_editor_app STATIC
     src/editor/interaction/ReflectedFieldEditor.cpp
     src/editor/interaction/Selection.cpp
     src/editor/modules/GameModuleHost.cpp
+    src/editor/operators/CollectionOperators.cpp
     src/editor/operators/DefaultKeymap.cpp
     src/editor/operators/Keymap.cpp
     src/editor/operators/KeymapEditor.cpp
@@ -564,6 +568,7 @@ add_library(zenith_editor_app STATIC
     src/editor/operators/OperatorRegistry.cpp
     src/editor/operators/OperatorRunner.cpp
     src/editor/operators/OperatorSearch.cpp
+    src/editor/operators/VisibilityOperators.cpp
     src/editor/panels/AssetBrowserPanel.cpp
     src/editor/panels/BuildPanel.cpp
     src/editor/panels/DiagnosticsPanel.cpp
@@ -1039,6 +1044,18 @@ if(BUILD_TESTING)
         target_compile_options(zenith_scene_document_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_scene_document COMMAND zenith_scene_document_tests)
+
+    add_executable(zenith_collection_tests tests/engine/CollectionTests.cpp)
+    target_compile_definitions(zenith_collection_tests PRIVATE
+        ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}"
+    )
+    target_link_libraries(zenith_collection_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_collection_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_collection_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_collections COMMAND zenith_collection_tests)
 
     add_executable(zenith_component_types_tests tests/engine/ComponentTypesTests.cpp)
     target_link_libraries(zenith_component_types_tests PRIVATE zenith_engine)

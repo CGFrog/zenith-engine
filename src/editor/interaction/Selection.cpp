@@ -1,5 +1,7 @@
 #include "Selection.hpp"
 
+#include "engine/scene/SceneVisibility.hpp"
+
 #include <algorithm>
 #include <utility>
 
@@ -56,9 +58,10 @@ void Selection::selectAll(const Scene& scene) {
     if (!m_ids.empty() && scene.findEntity(m_ids.front()) != entt::null) {
         all.push_back(m_ids.front());
     }
+    const SceneVisibility visibility(scene, SceneVisibilityMode::Editor);
     for (Entity entity : scene.registry().view<const TransformComponent>()) {
         const SceneEntityId id = scene.id(entity);
-        if (all.empty() || id != all.front()) {
+        if (visibility.selectable(entity) && (all.empty() || id != all.front())) {
             all.push_back(id);
         }
     }
@@ -67,9 +70,10 @@ void Selection::selectAll(const Scene& scene) {
 
 void Selection::invert(const Scene& scene) {
     std::vector<SceneEntityId> inverted;
+    const SceneVisibility visibility(scene, SceneVisibilityMode::Editor);
     for (Entity entity : scene.registry().view<const TransformComponent>()) {
         const SceneEntityId id = scene.id(entity);
-        if (!contains(id)) {
+        if (!contains(id) && visibility.selectable(entity)) {
             inverted.push_back(id);
         }
     }

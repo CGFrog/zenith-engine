@@ -54,11 +54,11 @@ size_t SceneStateCommand::storedBytes() const {
     return sizeof(*this) + m_name.capacity() + m_before.capacity() + m_after.capacity() + m_coalesceKey.capacity();
 }
 
-EntityDiffCommand::EntityDiffCommand(std::string name, std::vector<SceneEntityChange> changes, std::string coalesceKey)
+EntityDiffCommand::EntityDiffCommand(std::string name, SceneChanges changes, std::string coalesceKey)
     : m_name(std::move(name))
     , m_changes(std::move(changes))
     , m_coalesceKey(std::move(coalesceKey)) {
-    std::ranges::sort(m_changes, {}, [](const SceneEntityChange& change) { return change.id.value; });
+    std::ranges::sort(m_changes.entities, {}, [](const SceneEntityChange& change) { return change.id.value; });
 }
 
 std::string_view EntityDiffCommand::name() const {
@@ -85,16 +85,18 @@ bool EntityDiffCommand::mergeWith(const EditorCommand& newer) {
     // Both lists are sorted by id. An entity keeps this command's before
     // state when it already changed here, and takes the newer after state
     // when the newer edit touched it.
+    std::vector<SceneEntityChange>& entities = m_changes.entities;
+    const std::vector<SceneEntityChange>& newerEntities = diff->m_changes.entities;
     std::vector<SceneEntityChange> merged;
-    merged.reserve(m_changes.size() + diff->m_changes.size());
-    auto older = m_changes.begin();
-    auto latest = diff->m_changes.begin();
-    while (older != m_changes.end() || latest != diff->m_changes.end()) {
-        if (latest == diff->m_changes.end() || (older != m_changes.end() && older->id < latest->id)) {
+    merged.reserve(entities.size() + newerEntities.size());
+    auto older = entities.begin();
+    auto latest = newerEntities.begin();
+    while (older != entities.end() || latest != newerEntities.end()) {
+        if (latest == newerEntities.end() || (older != entities.end() && older->id < latest->id)) {
             merged.push_back(std::move(*older++));
             continue;
         }
-        if (older == m_changes.end() || latest->id < older->id) {
+        if (older == entities.end() || latest->id < older->id) {
             merged.push_back(*latest++);
             continue;
         }
@@ -105,20 +107,33 @@ bool EntityDiffCommand::mergeWith(const EditorCommand& newer) {
             merged.push_back(std::move(change));
         }
     }
-    m_changes = std::move(merged);
+    entities = std::move(merged);
+    if (const std::optional<SceneCollectionsChange>& newerCollections = diff->m_changes.collections) {
+        if (m_changes.collections) {
+            m_changes.collections->after = newerCollections->after;
+        } else {
+            m_changes.collections = newerCollections;
+        }
+        if (m_changes.collections->before == m_changes.collections->after) {
+            m_changes.collections.reset();
+        }
+    }
     return true;
 }
 
 size_t EntityDiffCommand::storedBytes() const {
-    size_t bytes =
-        sizeof(*this) + m_name.capacity() + m_coalesceKey.capacity() + m_changes.capacity() * sizeof(SceneEntityChange);
-    for (const SceneEntityChange& change : m_changes) {
+    size_t bytes = sizeof(*this) + m_name.capacity() + m_coalesceKey.capacity() +
+                   m_changes.entities.capacity() * sizeof(SceneEntityChange);
+    for (const SceneEntityChange& change : m_changes.entities) {
         bytes += optionalBytes(change.before) + optionalBytes(change.after);
+    }
+    if (m_changes.collections) {
+        bytes += m_changes.collections->before.capacity() + m_changes.collections->after.capacity();
     }
     return bytes;
 }
 
-const std::vector<SceneEntityChange>& EntityDiffCommand::changes() const {
+const SceneChanges& EntityDiffCommand::changes() const {
     return m_changes;
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/scene/Scene.hpp"
+#include "engine/scene/SceneVisibilityMode.hpp"
 
 #include <cstdint>
 #include <span>
@@ -30,7 +31,10 @@ struct LocalLight {
     int32_t shadowPriority{0};
 };
 
-std::vector<LocalLight> gatherLocalLights(const Scene& scene);
+// Point and spot lights the visibility mode draws (see SceneVisibility.hpp),
+// in stable-id order.
+std::vector<LocalLight> gatherLocalLights(const Scene& scene,
+                                          SceneVisibilityMode visibility = SceneVisibilityMode::Runtime);
 // Keeps at most maximumLights lights, preferring those whose range reaches
 // closest to the camera; the result stays in stable-id order.
 std::vector<LocalLight> selectLocalLights(std::span<const LocalLight> lights, const glm::vec3& cameraPosition,

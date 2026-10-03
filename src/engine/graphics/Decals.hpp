@@ -58,7 +58,9 @@ std::optional<DecalProjector> makeDecalProjector(const DecalComponent& decal, co
 
 // Every decal in the scene with a valid box, in application order: ascending
 // sort order, then ascending stable scene id (SceneEntityId).
-std::vector<DecalProjector> gatherDecals(const Scene& scene);
+// Only decals the visibility mode draws (see SceneVisibility.hpp).
+std::vector<DecalProjector> gatherDecals(const Scene& scene,
+                                         SceneVisibilityMode visibility = SceneVisibilityMode::Runtime);
 
 // Keeps at most maximumCount decals, preferring those whose bounding sphere
 // is nearest the camera; the result stays in application order.

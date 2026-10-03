@@ -1,5 +1,6 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/EditorDocument.hpp"
+#include "editor/operators/CollectionOperators.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/Keymap.hpp"
 #include "editor/operators/KeymapEditor.hpp"
@@ -168,6 +169,147 @@ void testPollAndUndo() {
     expect(entityCount(fixture.scene) == 1, "one undo should restore a deleted object");
 }
 
+std::string documentOf(EditingFixture& fixture) {
+    std::string document;
+    expect(SceneDocument::serialize(fixture.scene, fixture.assets, fixture.document.options(), document).success,
+           "the scene should serialize");
+    return document;
+}
+
+// Undoes and redoes the last step, checking both land on the recorded states.
+void expectUndoRedo(EditingFixture& fixture, const std::string& before, const std::string& after, const char* message) {
+    const SceneEditing editing(fixture.scene, fixture.assets, fixture.document, fixture.history, fixture.diagnostics);
+    editing.undo();
+    const bool undone = documentOf(fixture) == before;
+    editing.redo();
+    expect(undone && documentOf(fixture) == after, message);
+}
+
+const CollectionMembershipComponent* membershipOf(EditingFixture& fixture, SceneEntityId id) {
+    return fixture.scene.registry().try_get<CollectionMembershipComponent>(fixture.scene.findEntity(id));
+}
+
+void testCollectionOperators() {
+    EditingFixture fixture;
+    expect(fixture.invoke("collection.link", R"({"collection":1})").status == OperatorStatus::Cancelled,
+           "linking should not run without collections");
+    fixture.invoke("object.add_empty");
+    const SceneEntityId first = *fixture.selection.active();
+    fixture.invoke("object.add_empty", R"({"location":[2,0,0]})");
+    const SceneEntityId second = *fixture.selection.active();
+
+    std::string before = documentOf(fixture);
+    expect(static_cast<bool>(fixture.invoke("collection.new", R"({"name":"Props"})")),
+           "a new collection should be created");
+    const SceneCollection* props = fixture.scene.collections().find({1});
+    expect(props != nullptr && props->name == "Props" && membershipOf(fixture, second) != nullptr &&
+               membershipOf(fixture, second)->contains({1}) && membershipOf(fixture, first) == nullptr,
+           "a new collection should link the selection");
+    expect(fixture.runner.lastOperator() != nullptr &&
+               fixture.runner.lastOperator()->properties.get<NewCollectionProperties>()->created == 1,
+           "collection.new should report the id it created");
+    expectUndoRedo(fixture, before, documentOf(fixture), "creating a collection should undo and redo");
+
+    fixture.invoke("collection.new", R"({"name":"Crates","parent":1,"link_selection":false})");
+    expect(fixture.scene.collections().find({2}) != nullptr && fixture.scene.collections().find({2})->parent.value == 1,
+           "a collection should nest inside its parent");
+
+    fixture.selection.assign({first, second});
+    before = documentOf(fixture);
+    expect(static_cast<bool>(fixture.invoke("collection.link", R"({"collection":2})")) &&
+               membershipOf(fixture, first)->contains({2}) &&
+               membershipOf(fixture, second)->collections == std::vector<SceneCollectionId>{{1}, {2}},
+           "linking should add every selected object, keeping its other collections");
+    expectUndoRedo(fixture, before, documentOf(fixture), "linking should undo and redo");
+    expect(fixture.invoke("collection.link", R"({"collection":2})").status == OperatorStatus::Cancelled,
+           "linking objects already in the collection should change nothing");
+    expect(fixture.invoke("collection.link", R"({"collection":9})").status == OperatorStatus::Failed,
+           "linking to an unknown collection should fail");
+    fixture.diagnostics.acknowledgeErrors();
+
+    before = documentOf(fixture);
+    expect(static_cast<bool>(fixture.invoke("collection.unlink", R"({"collection":2})")) &&
+               membershipOf(fixture, first) == nullptr && membershipOf(fixture, second)->contains({1}),
+           "unlinking should remove the selected objects from only that collection");
+    expectUndoRedo(fixture, before, documentOf(fixture), "unlinking should undo and redo");
+
+    before = documentOf(fixture);
+    expect(static_cast<bool>(
+               fixture.invoke("collection.set_flag", R"({"collection":1,"flag":"renderable","value":false})")) &&
+               !fixture.scene.collections().find({1})->renderable,
+           "set_flag should change a collection flag");
+    expectUndoRedo(fixture, before, documentOf(fixture), "changing a collection flag should undo and redo");
+    expect(fixture.invoke("collection.set_flag", R"({"collection":1,"flag":"renderable","value":false})").status ==
+               OperatorStatus::Cancelled,
+           "setting a flag to its current value should change nothing");
+
+    before = documentOf(fixture);
+    expect(
+        static_cast<bool>(fixture.invoke("object.collection_instance_add", R"({"collection":1,"location":[0,0,5]})")),
+        "a collection instance should be added");
+    const Entity instance = fixture.scene.findEntity(*fixture.selection.active());
+    expect(fixture.scene.registry().get<CollectionInstanceComponent>(instance).collection.value == 1 &&
+               fixture.scene.registry().get<NameComponent>(instance).name == "Props",
+           "the instance should reference the collection and take its name");
+    expectUndoRedo(fixture, before, documentOf(fixture), "adding an instance should undo and redo");
+
+    fixture.selection.assign({second});
+    fixture.invoke("collection.link", R"({"collection":2})");
+    before = documentOf(fixture);
+    expect(static_cast<bool>(fixture.invoke("collection.delete", R"({"collection":1})")), "delete should finish");
+    expect(fixture.scene.collections().find({1}) == nullptr &&
+               fixture.scene.collections().find({2})->parent == SceneCollectionId{} &&
+               membershipOf(fixture, second)->collections == std::vector<SceneCollectionId>{{2}} &&
+               !fixture.scene.registry().all_of<CollectionInstanceComponent>(instance),
+           "deleting a collection should lift its contents and drop its instances");
+    expectUndoRedo(fixture, before, documentOf(fixture), "deleting a collection should undo and redo");
+    expect(!fixture.diagnostics.hasUnacknowledgedError(), "collection operators should not report errors");
+}
+
+void testVisibilityOperators() {
+    EditingFixture fixture;
+    fixture.invoke("object.add_empty");
+    const SceneEntityId first = *fixture.selection.active();
+    fixture.invoke("object.add_empty");
+    const SceneEntityId second = *fixture.selection.active();
+    fixture.invoke("object.add_empty");
+    const SceneEntityId third = *fixture.selection.active();
+    const auto isHidden = [&fixture](SceneEntityId id) {
+        const auto* visibility = fixture.scene.registry().try_get<VisibilityComponent>(fixture.scene.findEntity(id));
+        return visibility != nullptr && visibility->hidden;
+    };
+    expect(fixture.invoke("object.unhide").status == OperatorStatus::Cancelled,
+           "reveal should not run while nothing is hidden");
+
+    fixture.selection.assign({first});
+    std::string before = documentOf(fixture);
+    const uint64_t renderable = fixture.scene.revisions().renderable;
+    expect(static_cast<bool>(fixture.invoke("object.hide")) && isHidden(first) && fixture.selection.empty(),
+           "hide should hide and deselect the selection");
+    expect(fixture.scene.revisions().renderable != renderable, "hiding should invalidate render caches");
+    expectUndoRedo(fixture, before, documentOf(fixture), "hide should undo and redo");
+    fixture.invoke("object.select_all");
+    expect(fixture.selection.size() == 2 && !fixture.selection.contains(first),
+           "select all should skip hidden objects");
+
+    fixture.selection.assign({second});
+    before = documentOf(fixture);
+    expect(static_cast<bool>(fixture.invoke("object.isolate")) && isHidden(third) && !isHidden(second) &&
+               fixture.selection.contains(second),
+           "hide unselected should hide everything else");
+    expectUndoRedo(fixture, before, documentOf(fixture), "hide unselected should undo and redo");
+
+    before = documentOf(fixture);
+    expect(static_cast<bool>(fixture.invoke("object.unhide")) && !isHidden(first) && !isHidden(third) &&
+               fixture.selection.size() == 2 && fixture.selection.contains(first) && fixture.selection.contains(third),
+           "reveal should show and select every hidden object");
+    expect(!fixture.scene.registry().any_of<VisibilityComponent>(fixture.scene.findEntity(first)),
+           "revealed objects should not keep a default visibility component");
+    expectUndoRedo(fixture, before, documentOf(fixture), "reveal should undo and redo");
+    // Three added empties, then hide, hide unselected, and reveal.
+    expect(fixture.history.size() == 6, "each visibility operator should record one undo step");
+}
+
 void testAdjustLastOperation() {
     EditingFixture fixture;
     {
@@ -282,6 +424,9 @@ void testDefaultKeymap() {
     expect(keymap.shortcutLabel("object.select_all", R"({"action": "deselect"})") == "Alt+A",
            "shortcut labels should match binding properties");
     expect(keymap.shortcutLabel("object.duplicate") == "Shift+D", "region shortcuts should label menu items");
+    expect(keymap.shortcutLabel("object.hide") == "H" && keymap.shortcutLabel("object.unhide") == "Alt+H" &&
+               keymap.shortcutLabel("object.isolate") == "Shift+H",
+           "hide, reveal, and hide unselected should use Blender's keys");
 
     // A second A within the double-click time deselects.
     const KeymapBinding* first = keymap.resolve(KeymapRegion::Viewport, ImGuiKey_A, 10.0, 0.3);
@@ -552,6 +697,8 @@ void testLastOperatorPanel() {
 int main() {
     testRegistry();
     testPollAndUndo();
+    testCollectionOperators();
+    testVisibilityOperators();
     testAdjustLastOperation();
     testKeyChords();
     testDefaultKeymap();

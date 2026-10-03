@@ -87,6 +87,30 @@ void testViewRequests() {
     expect(!rendering.viewStats(view).rendered, "nothing renders without a renderer");
 }
 
+void testViewIsolation() {
+    RenderRuntime rendering;
+    const RenderViewId view = rendering.createView();
+    expect(!rendering.viewVisibleEntities(view), "views start without isolation");
+    expect(rendering.setViewVisibleEntities(view, std::vector<RenderObjectId>{9, 2, 9, 4}),
+           "a created view accepts an isolation set");
+    expect(rendering.viewVisibleEntities(view) == std::vector<RenderObjectId>{2, 4, 9},
+           "isolation sets should be sorted and deduplicated");
+    expect(rendering.setViewVisibleEntities(rendering.defaultView(), std::vector<RenderObjectId>{}) &&
+               rendering.viewVisibleEntities(rendering.defaultView())->empty(),
+           "the default view accepts an empty isolation set, which draws nothing");
+    expect(rendering.setViewVisibleEntities(view, std::nullopt) && !rendering.viewVisibleEntities(view),
+           "nullopt should leave isolation");
+    rendering.setViewVisibleEntities(view, std::vector<RenderObjectId>{1});
+    expect(rendering.destroyView(view), "the view is destroyed");
+    expect(!rendering.setViewVisibleEntities(view, std::vector<RenderObjectId>{1}) &&
+               !rendering.viewVisibleEntities(view),
+           "stale handles should be rejected");
+    const RenderViewId reused = rendering.createView();
+    expect(!rendering.viewVisibleEntities(reused), "a reused slot should not inherit isolation");
+    expect(rendering.sceneVisibilityMode() == SceneVisibilityMode::Runtime,
+           "the renderer should default to the runtime visibility mode");
+}
+
 void testComposeViewSettings() {
     RenderSettings frame;
     frame.shadows = ShadowQuality::CascadedHigh;
@@ -173,6 +197,7 @@ int main() {
     testViewCapacity();
     testActiveView();
     testViewRequests();
+    testViewIsolation();
     testComposeViewSettings();
     testOrderRenderedViews();
     testRemapLocalShadowTiles();

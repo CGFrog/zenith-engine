@@ -1,5 +1,7 @@
 #include "Decals.hpp"
 
+#include "engine/scene/SceneVisibility.hpp"
+
 #include <glm/gtc/constants.hpp>
 
 #include <algorithm>
@@ -59,11 +61,15 @@ std::optional<DecalProjector> makeDecalProjector(const DecalComponent& decal, co
                           .angleFadeBias = -endCosine * scale};
 }
 
-std::vector<DecalProjector> gatherDecals(const Scene& scene) {
+std::vector<DecalProjector> gatherDecals(const Scene& scene, SceneVisibilityMode visibilityMode) {
     // Ties break on the stable scene id, so layering survives save and reload.
     std::vector<std::pair<SceneEntityId, DecalProjector>> ordered;
+    const SceneVisibility visibility(scene, visibilityMode);
     const auto decals = scene.registry().view<const DecalComponent, const TransformComponent>();
     for (Entity entity : decals) {
+        if (!visibility.drawn(entity)) {
+            continue;
+        }
         std::optional<DecalProjector> projector = makeDecalProjector(
             decals.get<const DecalComponent>(entity), decals.get<const TransformComponent>(entity).world);
         if (projector) {

@@ -152,6 +152,25 @@ bool RenderRuntime::setViewSettings(RenderViewId view, std::optional<RenderSetti
     return true;
 }
 
+bool RenderRuntime::setViewVisibleEntities(RenderViewId view, std::optional<std::vector<RenderObjectId>> objects) {
+    ViewSlot* slot = findView(view);
+    if (slot == nullptr) {
+        return false;
+    }
+    if (objects) {
+        std::ranges::sort(*objects);
+        const auto duplicates = std::ranges::unique(*objects);
+        objects->erase(duplicates.begin(), duplicates.end());
+    }
+    slot->visibleObjects = std::move(objects);
+    return true;
+}
+
+std::optional<std::vector<RenderObjectId>> RenderRuntime::viewVisibleEntities(RenderViewId view) const {
+    const ViewSlot* slot = findView(view);
+    return slot != nullptr ? slot->visibleObjects : std::nullopt;
+}
+
 UiTextureHandle RenderRuntime::viewTexture(RenderViewId view) const {
     const ViewSlot* slot = findView(view);
     return slot != nullptr ? slot->texture : UiTextureHandle{};

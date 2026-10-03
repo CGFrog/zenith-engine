@@ -4,10 +4,64 @@
 
 #include <algorithm>
 #include <nlohmann/json.hpp>
+#include <optional>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 using Json = nlohmann::json;
+
+namespace {
+// Collection ids are per scene, so a fragment carries the names of the
+// collections its entities reference. Pasting keeps a reference when the
+// destination has the same collection (same id and name), otherwise moves it
+// to a destination collection of the same name, and otherwise drops it:
+// pasted entities leave collections the destination lacks (and stop
+// instancing them) instead of joining an unrelated one or failing to load.
+std::optional<uint64_t> pastedCollection(const SceneCollections& destination,
+                                         const std::unordered_map<uint64_t, std::string>& sourceNames, uint64_t id) {
+    const auto source = sourceNames.find(id);
+    if (source == sourceNames.end()) {
+        return std::nullopt;
+    }
+    if (const SceneCollection* same = destination.find(SceneCollectionId{id});
+        same != nullptr && same->name == source->second) {
+        return id;
+    }
+    const auto named = std::ranges::find(destination.all(), source->second, &SceneCollection::name);
+    return named == destination.all().end() ? std::nullopt : std::optional<uint64_t>(named->id.value);
+}
+
+void remapCollections(const SceneCollections& destination, const std::unordered_map<uint64_t, std::string>& sourceNames,
+                      Json& entity) {
+    Json& components = entity.at("components");
+    if (const auto membership = components.find("collection_membership"); membership != components.end()) {
+        std::vector<uint64_t> kept;
+        for (const Json& id : membership->at("collections")) {
+            if (const std::optional<uint64_t> pasted = pastedCollection(destination, sourceNames, id.get<uint64_t>());
+                pasted && std::ranges::find(kept, *pasted) == kept.end()) {
+                kept.push_back(*pasted);
+            }
+        }
+        std::ranges::sort(kept);
+        if (kept.empty()) {
+            components.erase(membership);
+        } else {
+            (*membership)["collections"] = kept;
+        }
+    }
+    if (const auto instance = components.find("collection_instance"); instance != components.end()) {
+        const std::optional<uint64_t> pasted =
+            pastedCollection(destination, sourceNames, instance->at("collection").get<uint64_t>());
+        if (pasted) {
+            (*instance)["collection"] = *pasted;
+        } else {
+            components.erase(instance);
+        }
+    }
+}
+} // namespace
 
 SceneDocumentResult SceneFragment::copy(const Scene& scene, const AssetManager& assets,
                                         const SceneDocumentOptions& options, std::span<const SceneEntityId> roots,
@@ -66,7 +120,10 @@ SceneDocumentResult SceneFragment::copy(const Scene& scene, const AssetManager& 
         if (included.empty()) {
             return {.error = "Copy requires at least one valid entity"};
         }
-        Json output{{"version", SceneDocument::currentVersion}, {"entities", Json::array()}, {"roots", Json::array()}};
+        Json output{{"version", SceneDocument::currentVersion},
+                    {"collections", document.at("collections")},
+                    {"entities", Json::array()},
+                    {"roots", Json::array()}};
         for (uint64_t root : effectiveRoots) {
             if (included.contains(root)) {
                 output["roots"].push_back(root);
@@ -111,7 +168,12 @@ SceneDocumentResult SceneFragment::paste(std::string_view fragment, Scene& scene
             remap.emplace(entity.at("id").get<uint64_t>(), nextId++);
         }
         const SceneEntityId parentId = parent == entt::null ? SceneEntityId{} : scene.id(parent);
+        std::unordered_map<uint64_t, std::string> sourceCollections;
+        for (const Json& collection : source.value("collections", Json::array())) {
+            sourceCollections.emplace(collection.at("id").get<uint64_t>(), collection.at("name").get<std::string>());
+        }
         for (Json entity : source.at("entities")) {
+            remapCollections(scene.collections(), sourceCollections, entity);
             const uint64_t oldId = entity.at("id").get<uint64_t>();
             entity["id"] = remap.at(oldId);
             if (entity.at("parent").is_null()) {

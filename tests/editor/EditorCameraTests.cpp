@@ -20,6 +20,50 @@ void expect(bool condition, const char* message) {
 bool near(glm::vec3 left, glm::vec3 right, float tolerance = 0.0001f) {
     return glm::length(left - right) <= tolerance;
 }
+
+// Picking skips hidden and unselectable entities and collections, and a click
+// on a collection instance picks its instancer. Leaves the scene as it found it.
+void testPickingVisibility(const EditorCamera& camera, Scene& scene, const AssetManager& assets) {
+    const glm::vec2 center{0.5f, 0.5f};
+    const Entity picked = camera.pick(scene, assets, center, 1.0f);
+    entt::registry& registry = scene.registry();
+    registry.emplace<VisibilityComponent>(picked, VisibilityComponent{.hidden = true});
+    expect(camera.pick(scene, assets, center, 1.0f) != picked, "a hidden entity should not be picked");
+    registry.replace<VisibilityComponent>(picked, VisibilityComponent{.selectable = false});
+    expect(camera.pick(scene, assets, center, 1.0f) != picked, "an unselectable entity should not be picked");
+    registry.remove<VisibilityComponent>(picked);
+
+    SceneCollections collections;
+    SceneCollectionId source;
+    collections.create("Source", {}, source);
+    collections.setFlag(source, CollectionFlag::Selectable, false);
+    scene.setCollections(collections);
+    std::vector<Entity> meshes;
+    for (const Entity entity : registry.view<const MeshRendererComponent>()) {
+        meshes.push_back(entity);
+    }
+    for (const Entity entity : meshes) {
+        linkToCollection(scene, entity, source);
+    }
+    expect(camera.pick(scene, assets, center, 1.0f) == entt::null,
+           "members of an unselectable collection should not be picked");
+
+    collections.setFlag(source, CollectionFlag::Selectable, true);
+    collections.setFlag(source, CollectionFlag::Visible, false);
+    scene.setCollections(collections);
+    const Entity instancer = scene.createEntity("Instancer");
+    registry.emplace<CollectionInstanceComponent>(instancer, source);
+    scene.updateWorldTransforms();
+    expect(camera.pick(scene, assets, center, 1.0f) == instancer,
+           "a click on a collection instance should pick its instancer");
+
+    scene.destroyEntity(instancer);
+    for (const Entity entity : meshes) {
+        unlinkFromCollection(scene, entity, source);
+    }
+    scene.setCollections({});
+    expect(camera.pick(scene, assets, center, 1.0f) == picked, "picking should recover once everything is shown");
+}
 } // namespace
 
 int main() {
@@ -151,6 +195,8 @@ int main() {
         expect(narrowLens.pick(scene, assets, edge, 1.0f) != entt::null &&
                    wideLens.pick(scene, assets, edge, 1.0f) == entt::null,
                "picking should cast through the camera's field of view");
+
+        testPickingVisibility(camera, scene, assets);
 
         const ModelAsset* modelAsset = assets.model(model.handle);
         MeshHandle sharedMesh{};

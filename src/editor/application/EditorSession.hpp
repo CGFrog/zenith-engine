@@ -142,6 +142,7 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // What the editor does when project files change; dispatched by m_projectAssets.
     ProjectAssetActions projectAssetActions(ApplicationContext& context);
     void updateSmokeScenario(ApplicationContext& context);
+    void updateSmokeHide(ApplicationContext& context);
     void updateSmokeModuleReload(ApplicationContext& context);
     void releaseSmokeLayers();
     void updateAutosave(ApplicationContext& context, float deltaSeconds);
@@ -276,6 +277,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     std::unique_ptr<AdditiveSceneManager> m_smokeLayers;
     std::optional<SceneInstanceId> m_smokeStreamInstance;
     bool m_smokeStreamCompleted{false};
+    // Items the renderer drew before the hide smoke hid everything.
+    uint32_t m_smokeRenderablesBeforeHide{0};
+    bool m_smokeHideSkipped{false};
     bool m_smokeModuleReloadRequested{false};
     // The workspace the area smoke started in, restored when it ends, and
     // the extra Hierarchy area it opened.

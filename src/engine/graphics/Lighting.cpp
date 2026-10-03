@@ -1,5 +1,6 @@
 #include "Lighting.hpp"
 #include "ReflectionProbes.hpp"
+#include "engine/scene/SceneVisibility.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -53,10 +54,14 @@ LocalShadowAtlas allocateLocalShadowAtlas(std::span<const LocalShadowRequest> re
     return atlas;
 }
 
-std::vector<LocalLight> gatherLocalLights(const Scene& scene) {
+std::vector<LocalLight> gatherLocalLights(const Scene& scene, SceneVisibilityMode visibilityMode) {
     std::vector<LocalLight> result;
+    const SceneVisibility visibility(scene, visibilityMode);
     const auto points = scene.registry().view<const PointLightComponent, const TransformComponent>();
     for (Entity entity : points) {
+        if (!visibility.drawn(entity)) {
+            continue;
+        }
         const PointLightComponent& source = points.get<const PointLightComponent>(entity);
         const TransformComponent& transform = points.get<const TransformComponent>(entity);
         result.push_back({LocalLightType::Point,
@@ -74,6 +79,9 @@ std::vector<LocalLight> gatherLocalLights(const Scene& scene) {
     }
     const auto spots = scene.registry().view<const SpotLightComponent, const TransformComponent>();
     for (Entity entity : spots) {
+        if (!visibility.drawn(entity)) {
+            continue;
+        }
         const SpotLightComponent& source = spots.get<const SpotLightComponent>(entity);
         const TransformComponent& transform = spots.get<const TransformComponent>(entity);
         glm::vec3 direction = glm::mat3(transform.world) * source.direction;

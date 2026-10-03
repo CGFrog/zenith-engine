@@ -61,4 +61,6 @@ struct ComponentProperties {
     std::string component;
 };
 
+// Also registers the collection and visibility operators
+// (CollectionOperators.hpp, VisibilityOperators.hpp).
 OperatorRegistrationResult registerObjectOperators(OperatorRegistry& registry);
