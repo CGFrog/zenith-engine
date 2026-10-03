@@ -30,7 +30,8 @@ depend on this subtree.
   behavior into its focused folder rather than growing the coordinator.
 - Component inspectors come from the engine's component registry. Prefer
   better field presentation hints over a custom editor; register a custom
-  editor in `InspectorPanel` only when reflected fields cannot express the UI.
+  editor in `interaction/EntityPropertiesView` (shared by the Inspector and
+  Properties panels) only when reflected fields cannot express the UI.
 - Every user action is a registered `Operator` with a stable id
   (`object.duplicate`, `file.save`). Menus, buttons, and keys invoke it by id
   (`EditorContext::invoke`); add default keys in `operators/DefaultKeymap.cpp`.

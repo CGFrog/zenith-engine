@@ -14,6 +14,12 @@ Entity addEnvironment(Scene& scene) {
     return environment;
 }
 
+Entity addFog(Scene& scene) {
+    const Entity fog = scene.createEntity("Volumetric Fog");
+    scene.registry().emplace<VolumetricFogComponent>(fog);
+    return fog;
+}
+
 Entity addEmpty(Scene& scene) {
     return scene.createEntity("Empty");
 }

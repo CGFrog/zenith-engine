@@ -26,6 +26,7 @@ int main() {
     settings.panels().hierarchy = false;
     settings.panels().diagnostics = false;
     settings.panels().build = false;
+    settings.panels().properties = false;
     settings.setLayoutVersion(2);
     expect(settings.tools().ideCommand == R"(code -g "{file}:{line}:{column}")",
            "the IDE command should default to VS Code at the location");

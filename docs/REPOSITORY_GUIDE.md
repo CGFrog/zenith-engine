@@ -496,7 +496,35 @@ Owns the render settings the editor requests and their persistent home: the
 loaded project file, or `render-settings.json` in the editor's settings
 directory when no project file was given. `apply` hands the renderer the
 capability-validated settings and returns the fallbacks; the request itself
-keeps what the user chose.
+keeps what the user chose. `settings/RenderSettingsController` is the
+session's single owner of that request and the fallbacks of its latest apply;
+the Graphics panel and the Properties panel's Render tab both edit it through
+`panels/RenderSettingsControls` (Save, Revert, storage location, fallbacks, and
+the settings widgets), so they always show and change the same settings.
+
+### Inspector and Properties panels
+
+`interaction/EntityPropertiesView` draws one entity's sections: name, label
+filter, transform, every registered component (reflected fields, or a custom
+editor registered there for `collider`, `morph_weights`, `irradiance_volume`,
+and `animation`), preserved unknown components, asset warnings, the model drop
+target, the irradiance bake button, and the Add Component menu grouped by
+`ComponentType::category()` (empty categories show as "Other"). Every edit is
+recorded through `SceneEditing` with a per-entity coalesce key, and component
+add/remove run `object.component_add`/`object.component_remove`.
+
+`panels/InspectorPanel` lists those sections in one scrolling column.
+`panels/PropertiesPanel` is the Blender-style alternative: a vertical tab strip
+with Object (name, transform, Add Component), one tab per component category
+the single selected entity has (module categories included), World (the
+scene's primary sun, environment light, and fog, chosen as the renderer chooses
+them, plus every irradiance volume, with Add Sun/Environment/Fog when
+missing), Render (the shared render settings), and Scene (document file,
+unsaved state, entity count, asset root, and component registry). It
+remembers the selected tab and falls back to Object while that tab is
+unavailable. Its visibility is `panel.properties` in `settings.ini`.
+`tests/editor/PropertiesPanelTests.cpp` drives both panels headlessly through
+`tests/editor/HeadlessImGui.hpp`.
 
 ### `src/editor/panels/AssetBrowserPanel.*` and `src/editor/project/`
 
@@ -547,7 +575,8 @@ ImGui controls for every `RenderSettings` field (options a device cannot run
 stay visible but disabled), clamping into the ranges the render-settings
 document accepts, and the live per-pass GPU timing table built from
 `RenderStats`. `panels/GraphicsPanel` hosts them in the dockable Graphics
-panel with Save and Revert.
+panel with Save and Revert, and the Properties panel's Render tab hosts the
+settings controls over the same `RenderSettingsController`.
 
 ## Assets
 

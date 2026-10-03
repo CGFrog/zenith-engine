@@ -27,6 +27,7 @@
 #include "editor/project/ProjectAssets.hpp"
 #include "editor/settings/EditorRenderSettings.hpp"
 #include "editor/settings/EditorSettings.hpp"
+#include "editor/settings/RenderSettingsController.hpp"
 #include "engine/application/Application.hpp"
 #include "engine/jobs/JobSystem.hpp"
 #include "engine/scene/AdditiveSceneManager.hpp"
@@ -215,11 +216,13 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // before the panels that reference it.
     ProjectAssets m_projectAssets;
 
+    // Shared by the Graphics and Properties panels, so declared before them.
+    RenderSettingsController m_renderSettings;
     // Panels holding editor-wide state, shown by single-instance area types.
     // Per-area panels (Hierarchy, Inspector, ...) are created by their types.
     ViewportPanel m_viewport;
     AssetBrowserPanel m_assetBrowser;
-    GraphicsPanel m_graphics;
+    GraphicsPanel m_graphics{m_renderSettings};
     BuildPanel m_buildPanel{m_settings.tools()};
 
     // Declared after everything area panels refer to (the panels above, the

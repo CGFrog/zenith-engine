@@ -90,6 +90,8 @@ EditorSettingsResult EditorSettings::load() {
             destination = &loaded.graphics;
         } else if (key == "panel.build") {
             destination = &loaded.build;
+        } else if (key == "panel.properties") {
+            destination = &loaded.properties;
         } else {
             continue;
         }

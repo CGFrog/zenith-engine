@@ -18,15 +18,24 @@ asset and scene roots are relative to that file.
 3. Open the Asset Browser, find a model, and drag it into the viewport or onto
    an entity in the Inspector. Import failures appear in Diagnostics with a
    suggested next action.
-4. Use `Shift+D` to duplicate a selection, or `Ctrl+C` and `Ctrl+V` to copy and
+4. The **Properties** panel (docked as a tab beside the Inspector; toggle it in
+   **View**) shows the same data Blender-style: pick a tab on its left edge.
+   **Object** holds the name and transform, each component category the
+   selected entity has (Lights, Physics, a game module's Gameplay, ...) gets
+   its own tab with an **Add Component** button for that category, **World**
+   edits the scene's sun, environment, fog, and irradiance volumes without
+   selecting them (and adds a missing sun, environment, or fog), **Render**
+   edits the same render settings as the Graphics panel, and **Scene**
+   summarizes the open document. Edits there undo like Inspector edits.
+5. Use `Shift+D` to duplicate a selection, or `Ctrl+C` and `Ctrl+V` to copy and
    paste serialized entity hierarchies. `Ctrl+Z` undoes; `Ctrl+Shift+Z` or
    `Ctrl+Y` redoes. After adding or duplicating an object, the **Adjust Last
    Operation** panel at the bottom-left of the viewport lets you change its
    location, size, or offset; the operation is redone with the new values.
-5. Choose **File > Save As** and save beneath the project's scene root. Saves
+6. Choose **File > Save As** and save beneath the project's scene root. Saves
    are atomic. A separate recovery file is written periodically while the
    document is dirty and is offered after an interrupted session.
-6. Press `F5` to enter Play, `F6` to pause, `F7` to step, and `Shift+F5` to
+7. Press `F5` to enter Play, `F6` to pause, `F7` to step, and `Shift+F5` to
    stop. Play uses a runtime clone; stopping restores the authored scene.
 
 Every menu item and key runs a named operator. Press `F3` to search all

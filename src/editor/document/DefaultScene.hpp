@@ -12,6 +12,7 @@ inline const std::filesystem::path defaultCubeModel = std::filesystem::path("pri
 // Objects the Add menu (Shift A) creates at the world origin.
 Entity addSun(Scene& scene);
 Entity addEnvironment(Scene& scene);
+Entity addFog(Scene& scene);
 Entity addEmpty(Scene& scene);
 // Loads assetRoot/defaultCubeModel; cube is set only on success.
 SceneResult addCube(Scene& scene, AssetManager& assets, const std::filesystem::path& assetRoot, Entity& cube);

@@ -60,7 +60,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_keymapPath(settingsDirectory / "keymap.json")
     , m_projectAssets(std::move(assetRoot), sceneRoot, settingsDirectory / "asset-browser.json")
     , m_assetBrowser(m_projectAssets)
-    , m_graphics(std::move(renderSettings))
+    , m_renderSettings(std::move(renderSettings))
     , m_workspacesPath(settingsDirectory / "workspaces.json")
     , m_legacyLayoutPath(settingsDirectory / "layout.ini")
     , m_sceneRoot(std::move(sceneRoot))
@@ -289,7 +289,9 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     if (const EditorSettingsResult result = m_settings.load(); !result) {
         m_diagnostics.reportError(result.error);
     }
-    m_graphics.loadSettings(context.rendering, m_diagnostics);
+    if (const EditorRenderSettingsResult result = m_renderSettings.load(context.rendering); !result) {
+        m_diagnostics.reportError(result.error);
+    }
     const KeymapResult keymap = m_keymap.load(m_keymapPath);
     if (!keymap) {
         m_diagnostics.reportError(keymap.error);
@@ -594,6 +596,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             operatorMenuItem(context, "object.add_cube", "Cube");
             operatorMenuItem(context, "object.add_sun", "Sun");
             operatorMenuItem(context, "object.add_environment", "Environment");
+            operatorMenuItem(context, "object.add_fog", "Fog");
             operatorMenuItem(context, "object.add_empty", "Empty");
             ImGui::EndMenu();
         }

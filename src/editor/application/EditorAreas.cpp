@@ -11,6 +11,7 @@
 #include "editor/panels/GameModulePanel.hpp"
 #include "editor/panels/HierarchyPanel.hpp"
 #include "editor/panels/InspectorPanel.hpp"
+#include "editor/panels/PropertiesPanel.hpp"
 #include "editor/panels/RenderStatisticsPanel.hpp"
 
 #include <imgui.h>
@@ -97,6 +98,9 @@ void EditorSession::registerAreaTypes() {
                  }});
     addAreaType({.id = "inspector", .title = "Inspector", .instancing = AreaInstancing::Multiple, .create = [] {
                      return std::make_unique<InspectorPanel>();
+                 }});
+    addAreaType({.id = "properties", .title = "Properties", .instancing = AreaInstancing::Multiple, .create = [this] {
+                     return std::make_unique<PropertiesPanel>(m_renderSettings);
                  }});
     addAreaType({.id = "diagnostics", .title = "Diagnostics", .instancing = AreaInstancing::Multiple, .create = [this] {
                      return std::make_unique<DiagnosticsPanel>(m_settings.tools());

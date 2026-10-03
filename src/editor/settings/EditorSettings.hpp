@@ -16,6 +16,7 @@ struct EditorPanelVisibility {
     bool assetBrowser{true};
     bool graphics{true};
     bool build{true};
+    bool properties{true};
 
     auto operator<=>(const EditorPanelVisibility&) const = default;
 };
