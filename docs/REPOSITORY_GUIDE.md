@@ -362,7 +362,10 @@ copy to name it) to a unique shadow file, loads that with
 built-in (or host-supplied) `ComponentTypeRegistry` plus its own
 `SystemRegistry`, recording which component keys the module added.
 `SystemScheduler` runs a registry's systems per `SystemPhase` (update, fixed
-update) by ascending order, filtered by `RunIn` edit/play flags. Everything a
+update) by ascending order, filtered by `RunIn` edit/play flags; in
+`SimulationMode::Simulate` it runs the Play systems its `SimulateSystemMask`
+enables (default: FixedUpdate on, Update off). An optional `SystemProfile`
+passed to `run` records per-system CPU time (frame, rolling average, maximum). Everything a
 module registered must be released, and every scene its components touched
 destroyed, before the `GameModule` is destroyed; otherwise the library is
 deliberately left loaded. `EngineExport.hpp` defines `ZENITH_ENGINE_API` for
@@ -515,8 +518,8 @@ Properties area on World and another on Render.
 The default workspaces (`areas/DefaultWorkspaces.cpp`) are **Layout** (Viewport,
 Hierarchy, Inspector and Properties, Asset Browser and Info below), **Lighting**
 (Viewport, Hierarchy, Properties on World above Properties on Render and
-Graphics), and **Debug** (Viewport, Render Statistics, and Info, Diagnostics,
-and Build below). Each default area names a dock slot (left, right, lower
+Graphics), and **Debug** (Viewport, Render Statistics above the System
+Profiler, and Info, Diagnostics, and Build below). Each default area names a dock slot (left, right, lower
 right, bottom, or the central node) that `buildDefaultDockLayout` splits off
 the dockspace when the workspace has no saved layout.
 The header menu of each area switches its editor type in place (the new type
@@ -681,6 +684,23 @@ Component menu all see module components. Module systems run through a
 `fixedUpdate` in Play mode (pause and single step apply), and `RunIn::Edit`
 systems every Edit-mode frame, with fixed updates on an editor-side fixed
 clock. Edit-mode systems change the scene directly, outside undo.
+
+Simulate (`play.simulate`, `Alt+F5`) is `EditorMode::Simulate`: like Play it
+runs on a snapshot that Stop restores (and `Paused` covers both;
+`EditorPlayMode::simulating()` tells which), but systems run in
+`SimulationMode::Simulate` with no input (`GameModuleHost::runSystems` drops it)
+and only the systems the Simulate mask enables, while the editor keeps its
+camera. The mask is edited with `play.set_simulate_system {system, enabled}`
+(the System Profiler's checkboxes), kept across module reloads, and saved to
+`simulate-systems.json` (`settings/SimulateSystemSettings`).
+`play.set_time_scale {scale}` sets `EditorPlayMode`'s time scale, which the
+session's `simulationClock()` reports in Play and Simulate (real time in Edit)
+and which also scales Update systems. The **System Profiler** area
+(`panels/SystemProfilerPanel`, type `system_profiler`) shows each module
+system's phase, modes, and frame/average/max CPU time (`GameModuleHost::
+systemProfile()`, published by `finishSystemFrame` at the start of `drawUi`),
+the engine's CPU phases, and the GPU pass table; `profiler.reset_max` restarts
+the maxima. The headless play operators live in `operators/PlayOperators`.
 
 Hot reload (`module.reload` in the Module menu, a settled change to the
 library file, or a successful Build that changed it) waits for Edit mode, a
@@ -1053,6 +1073,12 @@ in terms of ECS entities. `refreshBody` rebuilds a body after collider or body
 settings change. Native Jolt accessors are deliberate advanced escape hatches.
 `drawDebug` records collider wireframes and other body diagnostics into a
 `DebugDraw`.
+
+### `src/engine/physics/JoltRuntime.*`
+
+Private reference-counted owner of Jolt's process-wide state (factory,
+registered types, the one debug renderer). Each initialized `PhysicsWorld`
+holds a move-only `JoltRuntimeLease`; worlds coexist and shut down in any order.
 
 ### `src/engine/physics/JoltDebugDraw.*`
 

@@ -223,6 +223,8 @@ struct AudioSystem::Impl {
     std::unordered_map<uint32_t, EmitterRuntime> emitters;
     uint64_t emitterSync{0};
     std::array<BusState, 3> buses;
+    // Multiplies every voice's step; 0 pauses all playback. Guarded by mutex.
+    float playbackRate{1.0f};
     ListenerState listener;
     mutable std::mutex mutex;
     std::thread decoderThread;
@@ -755,6 +757,19 @@ void AudioSystem::syncScene(const Scene& scene) {
     }
 }
 
+void AudioSystem::setPlaybackRate(float rate) {
+    if (std::isnan(rate)) {
+        return;
+    }
+    std::scoped_lock lock(m_impl->mutex);
+    m_impl->playbackRate = std::clamp(rate, 0.0f, 10.0f);
+}
+
+float AudioSystem::playbackRate() const {
+    std::scoped_lock lock(m_impl->mutex);
+    return m_impl->playbackRate;
+}
+
 void AudioSystem::update(float deltaSeconds) {
     if (m_impl->output || !m_impl->initialized || !std::isfinite(deltaSeconds) || deltaSeconds <= 0.0f) {
         return;
@@ -899,7 +914,7 @@ void mixImpl(AudioSystem::Impl& impl, float* output, size_t frameCount) {
         return;
     }
     const auto master = impl.buses[busIndex(AudioBus::Master)];
-    if (master.muted) {
+    if (master.muted || impl.playbackRate <= 0.0f) {
         return;
     }
     for (auto& voice : impl.voices) {
@@ -941,7 +956,8 @@ void mixImpl(AudioSystem::Impl& impl, float* output, size_t frameCount) {
         if (voice.streaming) {
             const auto& stream = impl.streams[voice.assetIndex];
             const uint32_t channels = stream.channels;
-            const double step = static_cast<double>(stream.sampleRate) / impl.config.sampleRate * voice.pitch;
+            const double step =
+                static_cast<double>(stream.sampleRate) / impl.config.sampleRate * voice.pitch * impl.playbackRate;
             uint64_t read = impl.streamRead.load(std::memory_order_relaxed);
             const uint64_t write = impl.streamWrite.load(std::memory_order_acquire);
             size_t available = static_cast<size_t>(write - read);
@@ -982,7 +998,8 @@ void mixImpl(AudioSystem::Impl& impl, float* output, size_t frameCount) {
         }
         const auto& clip = impl.clips[voice.assetIndex];
         const size_t sourceFrames = clip.samples.size() / clip.channels;
-        const double step = static_cast<double>(clip.sampleRate) / impl.config.sampleRate * voice.pitch;
+        const double step =
+            static_cast<double>(clip.sampleRate) / impl.config.sampleRate * voice.pitch * impl.playbackRate;
         for (size_t frame = 0; frame < frameCount; ++frame) {
             size_t sourceFrame = static_cast<size_t>(voice.cursor);
             if (sourceFrame >= sourceFrames) {

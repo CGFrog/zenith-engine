@@ -1,11 +1,11 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include "PhysicsWorld.hpp"
 #include "JoltDebugDraw.hpp"
+#include "JoltRuntime.hpp"
 
 #include <Jolt/Jolt.h>
 
 // Jolt/Jolt.h defines configuration macros required by all other Jolt headers.
-#include <Jolt/Core/Factory.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
@@ -20,7 +20,6 @@
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSystem.h>
-#include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
 #include <chrono>
@@ -197,6 +196,9 @@ class PhysicsWorld::Impl {
 
     PhysicsWorldConfig config;
     bool initialized{false};
+    // Keeps Jolt's process-wide factory, types, and debug renderer alive
+    // while this world is initialized; shared with every other world.
+    JoltRuntimeLease runtime;
     std::unique_ptr<JPH::TempAllocatorImpl> tempAllocator;
     std::unique_ptr<JPH::JobSystemThreadPool> jobs;
     std::unique_ptr<JPH::PhysicsSystem> system;
@@ -211,8 +213,6 @@ class PhysicsWorld::Impl {
     std::mutex contactMutex;
     const Scene* observedScene{nullptr};
     uint32_t stepsUntilAudit{0};
-    // Created by the first drawDebug while Jolt has no debug renderer.
-    std::unique_ptr<JoltDebugDraw> debugRenderer;
 };
 
 PhysicsWorld::PhysicsWorld()
@@ -231,9 +231,7 @@ PhysicsResult PhysicsWorld::init(const PhysicsWorldConfig& config) {
     }
 
     m_impl->config = config;
-    JPH::RegisterDefaultAllocator();
-    JPH::Factory::sInstance = new JPH::Factory();
-    JPH::RegisterTypes();
+    m_impl->runtime = JoltRuntimeLease::acquire();
 
     m_impl->tempAllocator = std::make_unique<JPH::TempAllocatorImpl>(config.temporaryAllocatorBytes);
     const uint32_t hardwareThreads = std::max(1u, std::thread::hardware_concurrency());
@@ -259,13 +257,11 @@ void PhysicsWorld::shutdown() {
     }
 
     clear();
-    m_impl->debugRenderer.reset();
     m_impl->system.reset();
     m_impl->jobs.reset();
     m_impl->tempAllocator.reset();
-    JPH::UnregisterTypes();
-    delete JPH::Factory::sInstance;
-    JPH::Factory::sInstance = nullptr;
+    // The last world to shut down destroys Jolt's shared runtime.
+    m_impl->runtime.release();
     m_impl->initialized = false;
 }
 
@@ -700,18 +696,11 @@ PhysicsResult PhysicsWorld::drawDebug(DebugDraw& output, const PhysicsDebugDrawO
     if (!m_impl->initialized) {
         return {.error = "Physics debug drawing needs an initialized physics world"};
     }
-    // Jolt keeps one debug renderer per process; a world borrows another
-    // world's for the duration of this call instead of creating a second.
-    JoltDebugDraw* renderer = m_impl->debugRenderer.get();
-    if (renderer == nullptr && JPH::DebugRenderer::sInstance != nullptr) {
-        renderer = dynamic_cast<JoltDebugDraw*>(JPH::DebugRenderer::sInstance);
-        if (renderer == nullptr) {
-            return {.error = "Physics debug drawing found another Jolt debug renderer in this process"};
-        }
-    }
+    // Jolt keeps one debug renderer per process; every world draws through
+    // the shared runtime's, which outlives them all.
+    JoltDebugDraw* renderer = m_impl->runtime.debugRenderer();
     if (renderer == nullptr) {
-        m_impl->debugRenderer = std::make_unique<JoltDebugDraw>();
-        renderer = m_impl->debugRenderer.get();
+        return {.error = "Physics debug drawing found another Jolt debug renderer in this process"};
     }
     JPH::BodyManager::DrawSettings settings;
     settings.mDrawShape = options.shapes;

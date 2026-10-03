@@ -21,7 +21,8 @@
 // Jolt allows one DebugRenderer per process (JPH::DebugRenderer::sInstance),
 // so a JoltDebugDraw must not be created while another debug renderer exists.
 // Constructing it builds Jolt's shared debug geometry, so keep it alive
-// rather than creating one per frame. Use from one thread at a time.
+// rather than creating one per frame: JoltRuntimeLease owns the one every
+// PhysicsWorld draws through. Use from one thread at a time.
 class JoltDebugDraw final : public JPH::DebugRendererSimple {
   public:
     // Primitives go to `target` (null drops them) with the given depth mode.

@@ -97,9 +97,11 @@ class GameModuleHost {
     // one, and unloads the module. The source path is forgotten.
     void unload(Scene& scene, EditorDocument& document);
 
-    // Runs the module's systems of phase that run in mode. application is
-    // null in Edit mode; input is the frame's device state in Play mode and
-    // null when systems must not react to input.
+    // Runs the module's systems of phase that run in mode, recording their
+    // CPU time in systemProfile(). application is null in Edit mode; input
+    // is the frame's device state in Play mode and null when systems must
+    // not react to input. Simulate never passes input to systems, whatever
+    // the caller gives, and runs only the systems simulateMask() enables.
     void runSystems(SystemPhase phase, Scene& scene, ApplicationContext* application, SimulationMode mode,
                     float deltaSeconds, const InputState* input = nullptr);
     // Edit mode, once per frame: runs Update systems for deltaSeconds, then
@@ -110,6 +112,21 @@ class GameModuleHost {
     // Adjust Last Operation from matching the operator's result. Edit systems
     // should therefore change only derived or transient state.
     void runEditFrame(Scene& scene, float deltaSeconds, float fixedStepSeconds);
+
+    // Every module system of phase in run order, whatever its RunIn flags;
+    // empty without a loaded module. Valid until the module is released.
+    std::span<const SystemDescriptor* const> systems(SystemPhase phase) const;
+    // Per-system CPU timings of the systems that ran. Call finishSystemFrame
+    // once per editor frame, after the frame's systems ran; the profile
+    // starts over whenever the module loads or reloads.
+    const SystemProfile& systemProfile() const;
+    void finishSystemFrame();
+    void resetSystemTimingMaxima();
+    // Which Play systems Simulate runs. Kept across module reloads (by
+    // system name) and while no module is loaded.
+    const SimulateSystemMask& simulateMask() const;
+    void setSimulateMask(SimulateSystemMask mask);
+    void setSimulateSystemEnabled(std::string name, bool enabled);
 
     // Checks the module file at most every checkInterval and returns true
     // once, when it changed since the last load and then stayed unchanged
@@ -167,6 +184,10 @@ class GameModuleHost {
     std::chrono::steady_clock::time_point m_lastCheck{};
 
     float m_editFixedAccumulator{0.0f};
+    // Names and timings only; holds no module code.
+    SystemProfile m_profile;
+    // Copied into every scheduler the host builds.
+    SimulateSystemMask m_simulateMask;
 
     // Declared before everything holding module code, so it is destroyed
     // after them.

@@ -14,10 +14,10 @@ depend on this subtree.
 | `modules/` | Game module hosting: loading the project's module, running its systems, hot reload, and the header-only editor extension API modules implement. |
 | `menus/` | Menus as data: the `MenuRegistry` of named menus, entries, and dynamic sections (owner tokens for module cleanup), the searchable popup and menu-item drawing, `wm.call_menu`, and the default Add and Add Component menus. |
 | `interaction/` | Editor camera, picking, selection, gizmos, component editing widgets (including entity reference fields), and the entity eyedropper. |
-| `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object, component, collection, visibility (hide), and prefab operators, the per-region keymap with `keymap.json` overrides, F3 search, and the keymap editor. |
+| `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object, component, collection, visibility (hide), and prefab operators, the headless play operators (time scale, Simulate systems, profiler reset), the per-region keymap with `keymap.json` overrides, F3 search, and the keymap editor. |
 | `panels/` | One class per dockable window, drawn from an `EditorContext`. |
 | `project/` | Project tooling: the shared asset service (`ProjectAssets`: catalog, watchers, change dispatch, favourites), asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, and IDE launching. |
-| `settings/` | Persistent editor preferences, including the component inspector's section order and collapse state (legacy panel flags are only read, for migration). |
+| `settings/` | Persistent editor preferences, including the component inspector's section order and collapse state (legacy panel flags are only read, for migration) and the systems chosen for Simulate. |
 | `theme/` | The "Pixel Aero Night" look: palette, art-pixel metrics, pixel fonts, the procedural wallpaper and frosted glass, window chrome, themed widget wrappers, and pixel-art icons. |
 
 ## Local rules

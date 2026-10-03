@@ -42,6 +42,10 @@ bool ApplicationScene::beginFixedUpdate() {
     return true;
 }
 
+SimulationClock ApplicationScene::simulationClock() const {
+    return {};
+}
+
 void ApplicationScene::requestQuit(ApplicationContext& context) {
     context.control.requestQuit();
 }
@@ -107,6 +111,14 @@ bool ApplicationSession::fixedUpdatesEnabled() const {
 
 bool ApplicationSession::beginFixedUpdate() {
     return m_activeScene && m_activeScene->beginFixedUpdate();
+}
+
+SimulationClock ApplicationSession::simulationClock() const {
+    return m_activeScene ? m_activeScene->simulationClock() : SimulationClock{};
+}
+
+void ApplicationSession::setFrameTimings(const EngineFrameTimings* timings) {
+    m_context.frameTimings = timings;
 }
 
 void ApplicationSession::drawUi() {
@@ -186,8 +198,9 @@ SceneResult ApplicationSession::transition(SceneKey scene) {
 
     Scene stagedScene;
     ApplicationControl stagedControl;
-    ApplicationContext stagedContext{stagedScene,   m_context.assets,    m_context.physics, m_context.audio,
-                                     stagedControl, m_context.rendering, m_context.gameUi,  m_context.logger};
+    ApplicationContext stagedContext{stagedScene,      m_context.assets, m_context.physics,
+                                     m_context.audio,  stagedControl,    m_context.rendering,
+                                     m_context.gameUi, m_context.logger, m_context.frameTimings};
     if (SceneResult result = candidate->load(stagedContext); !result) {
         candidate->unload(stagedContext);
         return result;

@@ -107,7 +107,9 @@ void EditorSession::registerAreaTypes() {
                                             .componentLayout = m_componentLayout,
                                             .tools = m_settings.tools(),
                                             .build = m_buildPanel,
-                                            .info = m_infoPanel})) {
+                                            .info = m_infoPanel,
+                                            .modules = m_moduleHost,
+                                            .playMode = m_playMode})) {
         addAreaType(std::move(type));
     }
 }

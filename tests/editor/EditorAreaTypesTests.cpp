@@ -2,6 +2,7 @@
 
 #include "editor/application/EditorAreaTypes.hpp"
 #include "editor/application/EditorDiagnostics.hpp"
+#include "editor/application/EditorPlayMode.hpp"
 #include "editor/areas/AreaRegistry.hpp"
 #include "editor/areas/AreaWindows.hpp"
 #include "editor/areas/DefaultWorkspaces.hpp"
@@ -10,6 +11,7 @@
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/menus/EditorMenus.hpp"
+#include "editor/modules/GameModuleHost.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/operators/OperatorRunner.hpp"
 #include "editor/panels/AssetBrowserPanel.hpp"
@@ -119,6 +121,9 @@ struct SessionFixture {
     EditorMenus menus;
     OperatorRegistry operators;
     OperatorRunner runner{operators, history};
+    // Without a module: the System Profiler shows no systems.
+    GameModuleHost modules{operators, runner};
+    EditorPlayMode playMode;
     EditorToolSettings tools;
     RenderSettingsController renderSettings;
     ComponentInspectorLayout componentLayout;
@@ -140,7 +145,9 @@ struct SessionFixture {
                                                 .componentLayout = componentLayout,
                                                 .tools = tools,
                                                 .build = build,
-                                                .info = info})) {
+                                                .info = info,
+                                                .modules = modules,
+                                                .playMode = playMode})) {
             const std::string id = type.id;
             if (!registry.add(std::move(type)).success) {
                 std::cerr << "FAILED: built-in area type '" << id << "' should register\n";
@@ -196,14 +203,20 @@ void testEveryTypeDraws(const std::filesystem::path& directory) {
     SessionFixture fixture(directory);
     fixture.projectAssets.refresh(fixture.diagnostics);
     const std::vector<std::pair<std::string_view, AreaInstancing>> expected{
-        {"viewport", AreaInstancing::Single},        {"hierarchy", AreaInstancing::Multiple},
-        {"inspector", AreaInstancing::Multiple},     {"properties", AreaInstancing::Multiple},
-        {"diagnostics", AreaInstancing::Multiple},   {"render_statistics", AreaInstancing::Multiple},
-        {"asset_browser", AreaInstancing::Multiple}, {"graphics", AreaInstancing::Multiple},
-        {"build", AreaInstancing::Single},           {"info", AreaInstancing::Single},
+        {"viewport", AreaInstancing::Single},
+        {"hierarchy", AreaInstancing::Multiple},
+        {"inspector", AreaInstancing::Multiple},
+        {"properties", AreaInstancing::Multiple},
+        {"diagnostics", AreaInstancing::Multiple},
+        {"render_statistics", AreaInstancing::Multiple},
+        {"system_profiler", AreaInstancing::Multiple},
+        {"asset_browser", AreaInstancing::Multiple},
+        {"graphics", AreaInstancing::Multiple},
+        {"build", AreaInstancing::Single},
+        {"info", AreaInstancing::Single},
     };
     const std::span<const AreaType> types = fixture.registry.types();
-    expect(types.size() == expected.size(), "the editor should register ten built-in area types");
+    expect(types.size() == expected.size(), "the editor should register eleven built-in area types");
     for (size_t index = 0; index < std::min(types.size(), expected.size()); ++index) {
         if (types[index].id != expected[index].first || types[index].instancing != expected[index].second) {
             std::cerr << "FAILED: area type " << index << " should be '" << expected[index].first
@@ -362,7 +375,8 @@ void testDefaultWorkspaces(const std::filesystem::path& directory) {
     }
     const Workspace* debug = workspaces.find("Debug");
     expect(debug != nullptr && debug->anyVisible("info") && debug->anyVisible("diagnostics") &&
-               debug->anyVisible("render_statistics") && debug->anyVisible("build") && debug->anyVisible("viewport"),
+               debug->anyVisible("render_statistics") && debug->anyVisible("system_profiler") &&
+               debug->anyVisible("build") && debug->anyVisible("viewport"),
            "Debug should show the Viewport, Info, Diagnostics, Render Statistics, and Build");
     const Workspace* layout = workspaces.find("Layout");
     expect(layout != nullptr && layout->anyVisible("viewport") && layout->anyVisible("hierarchy") &&

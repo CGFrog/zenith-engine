@@ -144,6 +144,12 @@ class AudioSystem {
     float busGain(AudioBus bus) const;
     void setBusMuted(AudioBus bus, bool muted);
     bool busMuted(AudioBus bus) const;
+    // Plays every voice at rate times its pitch, like a tape running faster
+    // or slower (pitch changes with speed); 0 holds every voice where it is
+    // until the rate rises again. Clamped to [0, 10]; NaN is ignored. The
+    // engine sets it from the application's SimulationClock each frame.
+    void setPlaybackRate(float rate);
+    float playbackRate() const;
     // Copies declarative audio state after another frame subsystem has updated
     // Scene world transforms. This function never recomputes the hierarchy.
     void syncScene(const Scene& scene);

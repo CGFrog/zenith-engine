@@ -8,13 +8,13 @@ This subtree is the reusable `zenith_engine` library. It must not include from
 | Path | Responsibility |
 | --- | --- |
 | `Engine.*` | Top-level ownership and runtime loop orchestration. |
-| `application/` | Application/scene lifecycle contracts and deferred control requests. |
+| `application/` | Application/scene lifecycle contracts, deferred control requests, and the simulation clock (time scale and pause). |
 | `assets/` | Renderer-independent import, decoding, caching, and typed asset handles. |
 | `audio/` | SDL audio device, decoding, mixing, streaming, and audio handles. |
 | `graphics/` | Renderer and Vulkan implementation; nested folders separate passes, resources, pipelines, surfaces, swapchains, shaders, and Vulkan setup. |
 | `input/` | Device-state translation; gameplay meaning belongs in `src/game/`. |
-| `module/` | Game module ABI, shadow-copied loading and unloading, module registration, and the system registry and scheduler. |
-| `physics/` | Jolt-backed simulation exposed through Zenith domain types. |
+| `module/` | Game module ABI, shadow-copied loading and unloading, module registration, and the system registry and scheduler (Simulate mask, per-system CPU profile). |
+| `physics/` | Jolt-backed simulation exposed through Zenith domain types; `JoltRuntime` shares Jolt's process-wide state between worlds. |
 | `platform/` | OS services: user-data locations, atomic writes, diagnostics bundles, and child processes. |
 | `reflection/` | Plain-data field descriptors and their JSON codec; no scene or asset knowledge (types such as `SceneEntityId` opt into a kind through `ReflectedFieldKind`). |
 | `scene/` | ECS components, hierarchy, transforms, collections and visibility (`Collections`, `SceneVisibility`), the component type registry, and scene serialization. |

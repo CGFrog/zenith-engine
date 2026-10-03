@@ -11,7 +11,7 @@ class WorkspaceSet;
 // ImGui docking layout. It is editor user data and never part of a scene.
 //
 // {
-//   "version": 2,
+//   "version": 3,
 //   "activeWorkspace": "Layout",
 //   "workspaces": [
 //     {"name": "Layout",
@@ -24,10 +24,11 @@ class WorkspaceSet;
 // The version changes whenever the default workspaces change, so files from
 // older editors (which hold the old defaults, usually untouched) are replaced
 // by the new defaults rather than migrated. Version 1 (phase 5 development)
-// had the same format without "state".
+// had the same format without "state"; version 3 added the System Profiler
+// to the Debug workspace.
 
 // The version saveWorkspaceFile writes.
-inline constexpr int currentWorkspaceFileVersion = 2;
+inline constexpr int currentWorkspaceFileVersion = 3;
 
 struct AreaRecord {
     std::string type;

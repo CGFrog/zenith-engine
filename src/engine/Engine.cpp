@@ -140,6 +140,8 @@ bool Engine::run(Application& application) {
         return false;
     }
 
+    applicationSession.setFrameTimings(&m_frameTimings);
+    m_frameTimings = {};
     m_input.initialize(m_window, false);
     m_physicsAccumulator = 0.0f;
 
@@ -166,9 +168,15 @@ bool Engine::run(Application& application) {
             applicationSession.requestQuit();
         }
 
+        // Read after the application's update, which is where operators
+        // start, pause, or rescale the simulation, so fixed steps, animation,
+        // and audio follow the same state as fixedUpdatesEnabled() this frame.
+        SimulationClock clock = applicationSession.simulationClock();
         double updateMilliseconds = 0.0;
         double animationMilliseconds = 0.0;
+        double fixedUpdateMilliseconds = 0.0;
         double physicsMilliseconds = 0.0;
+        uint32_t subSteps = 0;
         FrameTaskGraphStats animationTaskStats;
         if (benchmark.mode != BenchmarkMode::RenderOnly) {
             if (benchmark.mode == BenchmarkMode::FullRuntime || m_captureConfig.fixedFrameTime) {
@@ -181,10 +189,11 @@ bool Engine::run(Application& application) {
             previousTicks = now;
             const auto updateBegin = std::chrono::steady_clock::now();
             applicationSession.update(m_input.state(), deltaSeconds);
+            clock = applicationSession.simulationClock();
             updateMilliseconds = elapsedMilliseconds(updateBegin);
             const auto animationBegin = std::chrono::steady_clock::now();
-            const AnimationTaskResult animationResult =
-                updateAnimations(m_scene, m_assets, deltaSeconds, m_frameTasks, ++taskGeneration);
+            const AnimationTaskResult animationResult = updateAnimations(
+                m_scene, m_assets, simulatedSeconds(clock, deltaSeconds), m_frameTasks, ++taskGeneration);
             if (!animationResult) {
                 m_log.error("Animation task graph failed: " + animationResult.error);
                 runSucceeded = false;
@@ -194,14 +203,14 @@ bool Engine::run(Application& application) {
             animationTaskStats = animationResult.stats;
             animationMilliseconds = elapsedMilliseconds(animationBegin);
             if (applicationSession.fixedUpdatesEnabled()) {
-                m_physicsAccumulator += deltaSeconds;
+                m_physicsAccumulator += fixedStepAccumulation(clock, deltaSeconds);
             } else {
                 m_physicsAccumulator = 0.0f;
             }
             const float fixedStep = m_physics.config().fixedTimeStep;
-            uint32_t subSteps = 0;
             while (m_physicsAccumulator >= fixedStep && subSteps < m_physics.config().maxSubSteps &&
                    applicationSession.beginFixedUpdate() && !applicationSession.actionPending()) {
+                const auto fixedBegin = std::chrono::steady_clock::now();
                 const InputState fixedInput = m_input.fixedState();
                 applicationSession.fixedUpdate(fixedInput, fixedStep);
                 if (applicationSession.actionPending()) {
@@ -215,6 +224,7 @@ bool Engine::run(Application& application) {
                     break;
                 }
                 physicsMilliseconds += elapsedMilliseconds(physicsBegin);
+                fixedUpdateMilliseconds += elapsedMilliseconds(fixedBegin);
                 if (measuring) {
                     benchmarkReport.physics(m_physics.stats());
                 }
@@ -264,14 +274,29 @@ bool Engine::run(Application& application) {
         const auto audioBegin = std::chrono::steady_clock::now();
         if (benchmark.mode != BenchmarkMode::RenderOnly) {
             m_audio.syncScene(m_scene);
+            // The rate scales playback itself, so null-output mixing still
+            // advances by wall-clock time.
+            m_audio.setPlaybackRate(audioPlaybackRate(clock));
             m_audio.update(deltaSeconds);
         }
         const double audioMilliseconds = elapsedMilliseconds(audioBegin);
+        m_frameTimings = {.frame = m_frameTimings.frame + 1,
+                          .totalMilliseconds = elapsedMilliseconds(frameBegin),
+                          .inputMilliseconds = inputMilliseconds,
+                          .updateMilliseconds = updateMilliseconds,
+                          .animationMilliseconds = animationMilliseconds,
+                          .fixedUpdateMilliseconds = fixedUpdateMilliseconds,
+                          .physicsMilliseconds = physicsMilliseconds,
+                          .transformsMilliseconds = transformsMilliseconds,
+                          .uiBuildMilliseconds = uiBuildMilliseconds,
+                          .rendererMilliseconds = renderMilliseconds,
+                          .audioMilliseconds = audioMilliseconds,
+                          .fixedSteps = subSteps};
 
         ++fpsFrames;
         const uint64_t frameEndTicks = SDL_GetTicksNS();
         if (measuring) {
-            benchmarkReport.sample("cpu.frame", elapsedMilliseconds(frameBegin), "ms",
+            benchmarkReport.sample("cpu.frame", m_frameTimings.totalMilliseconds, "ms",
                                    benchmark.frameBudgetMilliseconds);
             benchmarkReport.sample("cpu.input", inputMilliseconds);
             benchmarkReport.sample("cpu.application_update", updateMilliseconds);

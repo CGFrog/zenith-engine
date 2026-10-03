@@ -73,6 +73,7 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) override;
     bool fixedUpdatesEnabled() const override;
     bool beginFixedUpdate() override;
+    SimulationClock simulationClock() const override;
     void requestQuit(ApplicationContext& context) override;
     void drawUi(ApplicationContext& context) override;
     void unload(ApplicationContext& context) override;
@@ -116,6 +117,7 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void drawOperatorWindows(ApplicationContext& context);
     void saveKeymap();
     void saveComponentLayoutIfChanged();
+    void saveSimulateSystems();
 
     // Game module hosting.
     void loadGameModule();
@@ -149,6 +151,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void updateSmokeScenario(ApplicationContext& context);
     void updateSmokeHide(ApplicationContext& context);
     void updateSmokeModuleReload(ApplicationContext& context);
+    // Enters Simulate, checks that physics-step systems run and disabled
+    // Update systems do not, and that Stop restores the scene; true when done.
+    bool updateSmokeSimulate(ApplicationContext& context);
     void releaseSmokeLayers();
     void updateAutosave(ApplicationContext& context, float deltaSeconds);
     void drawMainMenu(ApplicationContext& context);
@@ -170,7 +175,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void onDocumentPathCommitted();
     void undo(ApplicationContext& context);
     void redo(ApplicationContext& context);
-    void enterPlayMode(ApplicationContext& context);
+    // Runs the document on a throwaway copy as Play or Simulate.
+    void enterPlayMode(ApplicationContext& context, EditorRuntime runtime = EditorRuntime::Play);
     void stopPlayMode(ApplicationContext& context);
     void requestNew(ApplicationContext& context);
     void requestOpen(ApplicationContext& context);
@@ -235,6 +241,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     std::filesystem::path m_gameModulePath;
     // A reload waits for Edit mode, a finished build, and no modal tool.
     bool m_moduleReloadPending{false};
+    // The user's Simulate system choices (SimulateSystemSettings).
+    std::filesystem::path m_simulateSystemsPath;
     BuildState m_lastBuildState{BuildState::Idle};
     Keymap m_keymap;
     std::filesystem::path m_keymapPath;
@@ -327,6 +335,10 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     std::string m_smokeLayout;
     // Entities in the scene before the menu smoke added one.
     size_t m_smokeEntityCount{0};
+    // The Simulate smoke: the scene before it entered Simulate, and how many
+    // fixed-update system runs it has seen.
+    std::string m_smokeSimulateSnapshot;
+    uint32_t m_smokeSimulateFixedRuns{0};
 
     struct ActiveTransform {
         ModalTransform transform;

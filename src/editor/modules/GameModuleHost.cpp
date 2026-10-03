@@ -154,6 +154,8 @@ GameModuleHostResult GameModuleHost::loadSource(EditorDocument& document) {
     m_error.clear();
     ++m_loadCount;
     m_scheduler = SystemScheduler(m_module->systems());
+    m_scheduler.setSimulateMask(m_simulateMask);
+    m_profile.clear();
     document.setComponentTypes(m_module->componentTypes());
 
     GameModuleHostResult result{.success = true};
@@ -222,6 +224,7 @@ void GameModuleHost::releaseModule(Scene& scene, EditorDocument& document, std::
     releaseEditorExtensions();
     m_runner.forgetLast();
     m_scheduler = SystemScheduler{};
+    m_profile.clear();
     document.setComponentTypes(nullptr);
     // Replacing the registry destroys the storage module code created while
     // that code is still loaded.
@@ -255,9 +258,42 @@ void GameModuleHost::runSystems(SystemPhase phase, Scene& scene, ApplicationCont
     if (!m_module) {
         return;
     }
+    if (mode == SimulationMode::Simulate) {
+        input = nullptr;
+    }
     m_scheduler.run(
-        phase,
-        {.scene = scene, .application = application, .mode = mode, .deltaSeconds = deltaSeconds, .input = input});
+        phase, {.scene = scene, .application = application, .mode = mode, .deltaSeconds = deltaSeconds, .input = input},
+        &m_profile);
+}
+
+std::span<const SystemDescriptor* const> GameModuleHost::systems(SystemPhase phase) const {
+    return m_scheduler.systems(phase);
+}
+
+const SystemProfile& GameModuleHost::systemProfile() const {
+    return m_profile;
+}
+
+void GameModuleHost::finishSystemFrame() {
+    m_profile.finishFrame();
+}
+
+void GameModuleHost::resetSystemTimingMaxima() {
+    m_profile.resetMaxima();
+}
+
+const SimulateSystemMask& GameModuleHost::simulateMask() const {
+    return m_simulateMask;
+}
+
+void GameModuleHost::setSimulateMask(SimulateSystemMask mask) {
+    m_simulateMask = std::move(mask);
+    m_scheduler.setSimulateMask(m_simulateMask);
+}
+
+void GameModuleHost::setSimulateSystemEnabled(std::string name, bool enabled) {
+    m_simulateMask.set(std::move(name), enabled);
+    m_scheduler.setSimulateMask(m_simulateMask);
 }
 
 void GameModuleHost::runEditFrame(Scene& scene, float deltaSeconds, float fixedStepSeconds) {

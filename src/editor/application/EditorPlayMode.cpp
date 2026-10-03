@@ -3,9 +3,9 @@
 #include "engine/assets/Assets.hpp"
 
 SceneDocumentResult EditorPlayMode::enter(Scene& activeScene, AssetManager& assets, const SceneDocumentOptions& options,
-                                          std::span<const SceneEntityId> selection) {
+                                          std::span<const SceneEntityId> selection, EditorRuntime runtime) {
     if (m_mode != EditorMode::Edit) {
-        return {.error = "Play mode is already active"};
+        return {.error = m_simulating ? "Simulate mode is already active" : "Play mode is already active"};
     }
     std::string snapshot;
     if (SceneDocumentResult result = SceneDocument::serialize(activeScene, assets, options, snapshot); !result) {
@@ -18,19 +18,20 @@ SceneDocumentResult EditorPlayMode::enter(Scene& activeScene, AssetManager& asse
         return result;
     }
     m_editSelection.assign(selection.begin(), selection.end());
-    m_mode = EditorMode::Play;
+    m_simulating = runtime == EditorRuntime::Simulate;
+    m_mode = m_simulating ? EditorMode::Simulate : EditorMode::Play;
     return {.success = true};
 }
 
 void EditorPlayMode::pause() {
-    if (m_mode == EditorMode::Play) {
+    if (running()) {
         m_mode = EditorMode::Paused;
     }
 }
 
 void EditorPlayMode::resume() {
     if (m_mode == EditorMode::Paused) {
-        m_mode = EditorMode::Play;
+        m_mode = m_simulating ? EditorMode::Simulate : EditorMode::Play;
         m_singleStepRequested = false;
     }
 }
@@ -53,6 +54,7 @@ void EditorPlayMode::stop(Scene& activeScene, std::vector<SceneEntityId>& select
     selection = std::move(m_editSelection);
     m_editSelection.clear();
     m_mode = EditorMode::Edit;
+    m_simulating = false;
     m_singleStepRequested = false;
 }
 
@@ -60,12 +62,27 @@ EditorMode EditorPlayMode::mode() const {
     return m_mode;
 }
 
+bool EditorPlayMode::simulating() const {
+    return m_simulating;
+}
+
+bool EditorPlayMode::running() const {
+    return m_mode == EditorMode::Play || m_mode == EditorMode::Simulate;
+}
+
+SimulationMode EditorPlayMode::simulationMode() const {
+    if (m_mode == EditorMode::Edit) {
+        return SimulationMode::Edit;
+    }
+    return m_simulating ? SimulationMode::Simulate : SimulationMode::Play;
+}
+
 bool EditorPlayMode::fixedUpdatesEnabled() const {
-    return m_mode == EditorMode::Play || m_singleStepRequested;
+    return running() || m_singleStepRequested;
 }
 
 bool EditorPlayMode::beginFixedUpdate() {
-    if (m_mode == EditorMode::Play) {
+    if (running()) {
         return true;
     }
     if (m_mode == EditorMode::Paused && m_singleStepRequested) {
@@ -73,4 +90,20 @@ bool EditorPlayMode::beginFixedUpdate() {
         return true;
     }
     return false;
+}
+
+float EditorPlayMode::setTimeScale(float scale) {
+    m_timeScale = clampTimeScale(scale);
+    return m_timeScale;
+}
+
+float EditorPlayMode::timeScale() const {
+    return m_timeScale;
+}
+
+SimulationClock EditorPlayMode::simulationClock() const {
+    if (m_mode == EditorMode::Edit) {
+        return {};
+    }
+    return {.timeScale = m_timeScale, .paused = m_mode == EditorMode::Paused};
 }

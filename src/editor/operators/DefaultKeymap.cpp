@@ -38,6 +38,7 @@ std::vector<KeymapBinding> defaultEditorKeymap() {
         binding("edit.redo", global, ImGuiMod_Ctrl | ImGuiKey_Y),
         binding("wm.search_menu", global, ImGuiKey_F3),
         binding("play.start", global, ImGuiKey_F5),
+        binding("play.simulate", global, ImGuiMod_Alt | ImGuiKey_F5),
         binding("play.toggle_pause", global, ImGuiKey_F6),
         binding("play.step", global, ImGuiKey_F7),
         binding("play.stop", global, ImGuiMod_Shift | ImGuiKey_F5),

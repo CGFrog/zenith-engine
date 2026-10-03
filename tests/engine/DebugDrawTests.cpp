@@ -278,16 +278,16 @@ void testPhysicsAdapter() {
     expect(lines(boundsOnly, DebugDepth::AlwaysOnTop) == 36 && lines(boundsOnly, DebugDepth::Tested) == 0,
            "three bodies give three on-top boxes");
 
-    // Jolt allows one debug renderer per process; a second world borrows it.
+    // Jolt allows one debug renderer per process; every world shares it.
     PhysicsWorld second;
     expect(static_cast<bool>(second.init()), "a second world initializes");
     DebugDraw secondDraw;
     expect(static_cast<bool>(second.drawDebug(secondDraw)) && secondDraw.empty(),
            "a second world draws (nothing) through the shared renderer");
-    // The owner shuts down first (it also releases Jolt's shared factory, so
-    // the remaining world is only drawn, never stepped, afterwards).
+    // The world that created the renderer shuts down first; the shared Jolt
+    // runtime keeps it (and the factory) alive for the remaining world.
     physics.shutdown();
-    expect(static_cast<bool>(second.drawDebug(secondDraw)), "a world draws after the renderer's owner shut down");
+    expect(static_cast<bool>(second.drawDebug(secondDraw)), "a world draws after the first world shut down");
     second.shutdown();
 }
 } // namespace

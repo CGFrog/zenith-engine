@@ -5,6 +5,7 @@
 #include "assets/Assets.hpp"
 #include "audio/AudioSystem.hpp"
 #include "diagnostics/FrameCaptureConfig.hpp"
+#include "diagnostics/FrameTimings.hpp"
 #include "diagnostics/Logger.hpp"
 #include "graphics/Renderer.hpp"
 #include "input/InputManager.hpp"
@@ -51,5 +52,8 @@ class Engine {
     AudioSystem m_audio;
     GameUiContext m_gameUi;
     float m_physicsAccumulator{0.0f};
+    // The last completed frame's CPU phase timings, shared with the
+    // application through ApplicationContext::frameTimings.
+    EngineFrameTimings m_frameTimings;
     GraphicsValidationOptions m_graphicsValidation;
 };
