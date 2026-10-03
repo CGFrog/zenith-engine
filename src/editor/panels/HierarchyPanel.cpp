@@ -1,5 +1,6 @@
 #include "HierarchyPanel.hpp"
 
+#include "editor/interaction/EntityReferenceField.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
@@ -16,7 +17,7 @@
 #include <vector>
 
 namespace {
-constexpr const char* entityPayload = "ZENITH_SCENE_ENTITY";
+constexpr const char* entityPayload = sceneEntityDragPayload;
 
 // Pixel decoration of the tree row just drawn: the entity's icon in the
 // label's reserved space, and for a selected row lit edges and, where no
@@ -152,8 +153,13 @@ void HierarchyPanel::drawEntity(EditorContext& context, Entity entity) {
     const float guideX = ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing() / 2.0f;
     const float guideTop = ImGui::GetItemRectMax().y;
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
-        context.selection.click(entityId,
-                                ImGui::GetIO().KeyCtrl ? SelectionClickMode::Extend : SelectionClickMode::Replace);
+        // An armed eyedropper takes the click; the selection stays as it is.
+        if (context.eyedropperArmed()) {
+            context.pickEyedropperEntity(entityId);
+        } else {
+            context.selection.click(entityId,
+                                    ImGui::GetIO().KeyCtrl ? SelectionClickMode::Extend : SelectionClickMode::Replace);
+        }
     }
     if (ImGui::BeginDragDropSource()) {
         ImGui::SetDragDropPayload(entityPayload, &entityId.value, sizeof(entityId.value));
@@ -181,7 +187,7 @@ void HierarchyPanel::drawEntity(EditorContext& context, Entity entity) {
 }
 
 void HierarchyPanel::drawContextMenu(EditorContext& context, Entity entity) {
-    if (!ImGui::BeginPopupContextItem("HierarchyContextMenu")) {
+    if (context.eyedropperBlocksContextMenus() || !ImGui::BeginPopupContextItem("HierarchyContextMenu")) {
         return;
     }
     // As in Blender's outliner, the menu acts on the clicked entity: it keeps

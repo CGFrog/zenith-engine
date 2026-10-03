@@ -1,5 +1,6 @@
 #include "ReflectedFieldEditor.hpp"
 
+#include "editor/interaction/EntityReferenceField.hpp"
 #include "editor/theme/EditorTheme.hpp"
 
 #include <imgui.h>
@@ -202,6 +203,9 @@ bool drawField(void* object, const FieldDescriptor& field, const ReflectedFieldE
     case FieldKind::FloatRange:
         changed = drawRange(label, *static_cast<float*>(field.address(object)),
                             *static_cast<float*>(field.secondAddress(object)), presentation);
+        break;
+    case FieldKind::EntityReference:
+        changed = drawEntityReferenceField(label, field.value<SceneEntityId>(object), field, options.entityReferences);
         break;
     case FieldKind::Struct:
         if (ImGui::TreeNode(label)) {

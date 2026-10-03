@@ -1,5 +1,6 @@
 #include "engine/reflection/FieldJson.hpp"
 #include "engine/reflection/Reflection.hpp"
+#include "engine/scene/SceneEntityId.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -254,6 +255,49 @@ void testRejectsMismatchedValues() {
            "mismatch: 32-bit limits and integer floats are accepted");
 }
 
+struct Follower {
+    SceneEntityId target;
+    SceneEntityId fallback;
+};
+
+std::vector<FieldDescriptor> followerFields() {
+    return built(Fields<Follower>().add("target", &Follower::target).add("fallback", &Follower::fallback));
+}
+
+// Entity references are written as scene documents write entity ids, and an
+// id is kept whether or not any entity has it.
+void testEntityReferences() {
+    const std::vector<FieldDescriptor> fields = followerFields();
+    expect(fields[0].kind == FieldKind::EntityReference, "entity reference: SceneEntityId members deduce the kind");
+    expect(validateFieldDescriptors(fields).empty(), "entity reference: the descriptors are valid");
+
+    // An id no scene has (for example of a deleted entity) is a plain value here.
+    const Follower source{.target = SceneEntityId{0xFFFF'FFFF'FFFF'FFF0ull}, .fallback = {}};
+    nlohmann::json document;
+    writeReflectedFields(&source, fields, document);
+    expect(document["target"] == uint64_t{0xFFFF'FFFF'FFFF'FFF0ull}, "entity reference: an id is written as a number");
+    expect(document["fallback"].is_null(), "entity reference: no reference is written as null");
+
+    Follower restored{.target = SceneEntityId{1}, .fallback = SceneEntityId{2}};
+    expect(readReflectedFields(document, &restored, fields).empty(), "entity reference: a written document reads back");
+    expect(restored.target == source.target && !restored.fallback,
+           "entity reference: missing-entity ids and null round-trip unchanged");
+
+    for (const nlohmann::json& invalid :
+         {nlohmann::json(-1), nlohmann::json(1.5), nlohmann::json("7"), nlohmann::json::array({1})}) {
+        nlohmann::json rejected = document;
+        rejected["target"] = invalid;
+        Follower follower;
+        const std::string error = readReflectedFields(rejected, &follower, fields);
+        expect(contains(error, "'target'") && contains(error, "entity id"),
+               "entity reference: " + invalid.dump() + " is rejected: " + error);
+    }
+
+    std::vector<FieldDescriptor> colored = built(Fields<Follower>().add("target", &Follower::target).color());
+    expect(contains(validateFieldDescriptors(colored), "Entity reference field 'target'"),
+           "entity reference: color presentation is rejected");
+}
+
 void testValidateFieldDescriptors() {
     std::vector<FieldDescriptor> emptyKey = built(Fields<Sample>().add("", &Sample::weight));
     expect(contains(validateFieldDescriptors(emptyKey), "empty key"), "validate: an empty key is rejected");
@@ -289,6 +333,7 @@ int main() {
     testOptionalAndUnknownKeys();
     testRejectsMismatchedValues();
     testValidateFieldDescriptors();
+    testEntityReferences();
     if (failures != 0) {
         std::cerr << failures << " reflection test(s) failed\n";
         return 1;

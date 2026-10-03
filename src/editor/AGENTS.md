@@ -12,7 +12,7 @@ depend on this subtree.
 | `areas/` | Blender-style areas and workspaces: the area type registry, per-workspace areas and their ImGui dock layouts, the default workspaces, legacy layout migration, and `workspaces.json`. |
 | `document/` | Scene document state, persistence workflow, and undo/redo history. |
 | `modules/` | Game module hosting: loading the project's module, running its systems, hot reload, and the header-only editor extension API modules implement. |
-| `interaction/` | Editor camera, picking, selection, gizmos, and component editing widgets. |
+| `interaction/` | Editor camera, picking, selection, gizmos, component editing widgets (including entity reference fields), and the entity eyedropper. |
 | `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object operators, the per-region keymap with `keymap.json` overrides, F3 search, and the keymap editor. |
 | `panels/` | One class per dockable window, drawn from an `EditorContext`. |
 | `project/` | Project tooling: the shared asset service (`ProjectAssets`: catalog, watchers, change dispatch, favourites), asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, and IDE launching. |
@@ -70,6 +70,9 @@ depend on this subtree.
   handle it being null; never reach a viewport through a session member.
   Viewport shading goes to the viewport's render view through
   `setViewSettings`, never into the project's render settings.
+- A click that picks an entity in a viewport or the outliner must first
+  check `EditorContext::eyedropperArmed()` and hand the entity to
+  `pickEyedropperEntity` instead of changing the selection.
 - Never cache a game module's `ComponentType` pointers or registries across
   frames: read them from `EditorDocument::options()`. Before a module unloads,
   `GameModuleHost` releases its registries, systems, operators, and panels and

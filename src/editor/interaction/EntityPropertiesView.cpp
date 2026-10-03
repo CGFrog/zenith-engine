@@ -2,6 +2,7 @@
 
 #include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/ComponentEditors.hpp"
+#include "editor/interaction/EntityReferenceField.hpp"
 #include "editor/interaction/ReflectedFieldEditor.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/theme/EditorTheme.hpp"
@@ -151,6 +152,8 @@ void EntityPropertiesView::drawComponent(EditorContext& context, const Component
                                              .assetLoaded = [&type, &scene, entity](std::string_view fieldKey) {
                                                  return type.textureLoaded(type.find(scene, entity), fieldKey);
                                              }};
+    const EntityReferenceFieldContext entityReferences = entityReferenceFieldContext(context, entityId, type);
+    fieldOptions.entityReferences = &entityReferences;
     const auto custom = m_customEditors.find(type.key());
     if (!nameMatches && custom == m_customEditors.end() &&
         std::ranges::none_of(type.fields(), [filter](const FieldDescriptor& field) {

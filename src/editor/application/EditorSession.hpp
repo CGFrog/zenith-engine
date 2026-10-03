@@ -9,6 +9,7 @@
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/EditorRecovery.hpp"
+#include "editor/interaction/EntityEyedropper.hpp"
 #include "editor/interaction/ModalTransform.hpp"
 #include "editor/interaction/Selection.hpp"
 #include "editor/modules/GameModuleHost.hpp"
@@ -150,6 +151,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void drawPanels(ApplicationContext& context);
     void drawStatusBar(const RenderStats& stats);
     void drawPlayModePill() const;
+    // Cancels the entity eyedropper on Esc, a right-click, Play mode, or a
+    // target that no longer exists, and shows its hint at the mouse.
+    void updateEyedropper(ApplicationContext& context);
     void drawPathDialog(ApplicationContext& context);
     void drawUnsavedChangesDialog(ApplicationContext& context);
     void drawRecoveryDialog(ApplicationContext& context);
@@ -209,6 +213,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     EditorPlayMode m_playMode;
     NativeFileDialog m_fileDialog;
     Selection m_selection;
+    // Declared before the operator registry, whose eyedropper operators
+    // refer to it.
+    EntityEyedropper m_eyedropper;
     OperatorRegistry m_operators;
     OperatorRunner m_operatorRunner;
     // Declared after the operator registry and runner, which it removes the

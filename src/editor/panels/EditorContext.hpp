@@ -15,6 +15,7 @@
 #include <string_view>
 
 class EditorDiagnostics;
+class EntityEyedropper;
 
 // Session-level workflows a panel can trigger but does not own: running
 // operators, the region keymaps, document replacement, and modal transforms.
@@ -62,6 +63,8 @@ struct EditorContext {
     EditorDiagnostics& diagnostics;
     EditorMode mode;
     EditorSessionActions& actions;
+    // The session's entity eyedropper; null where there is none (some tests).
+    EntityEyedropper* eyedropper{nullptr};
 
     bool editMode() const {
         return mode == EditorMode::Edit;
@@ -83,4 +86,14 @@ struct EditorContext {
     // Places a model asset as an undoable edit; models can only be placed in
     // Edit mode.
     void placeModel(const std::filesystem::path& path, Entity parent);
+
+    // Whether the entity eyedropper is picking for a reference field. While
+    // it is, an entity click in a viewport or the outliner goes to
+    // pickEyedropperEntity instead of changing the selection.
+    bool eyedropperArmed() const;
+    // Stores entity in the armed field as one undo step (ui.eyedropper_pick).
+    void pickEyedropperEntity(SceneEntityId entity);
+    // Whether the eyedropper is armed or the right-click that cancelled it is
+    // still held; context menus stay closed meanwhile.
+    bool eyedropperBlocksContextMenus() const;
 };
