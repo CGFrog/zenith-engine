@@ -16,6 +16,7 @@
 
 class EditorDiagnostics;
 class EntityEyedropper;
+class EditorMenus;
 
 // Session-level workflows a panel can trigger but does not own: running
 // operators, the region keymaps, document replacement, and modal transforms.
@@ -65,6 +66,9 @@ struct EditorContext {
     EditorSessionActions& actions;
     // The session's entity eyedropper; null where there is none (some tests).
     EntityEyedropper* eyedropper{nullptr};
+    // The session's menus, to draw one inline; open a popup menu by running
+    // wm.call_menu.
+    EditorMenus& menus;
 
     bool editMode() const {
         return mode == EditorMode::Edit;

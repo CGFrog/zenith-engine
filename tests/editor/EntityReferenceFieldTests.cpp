@@ -7,11 +7,13 @@
 #include "editor/interaction/EntityEyedropper.hpp"
 #include "editor/interaction/EntityPropertiesView.hpp"
 #include "editor/interaction/EntityReferenceField.hpp"
+#include "editor/menus/EditorMenus.hpp"
 #include "editor/operators/EyedropperOperators.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/operators/OperatorRunner.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/HierarchyPanel.hpp"
+#include "editor/settings/ComponentInspectorLayout.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/audio/AudioSystem.hpp"
 #include "engine/physics/PhysicsWorld.hpp"
@@ -129,10 +131,12 @@ struct Fixture {
     EditorDiagnostics diagnostics;
     Selection selection;
     EntityEyedropper eyedropper;
+    EditorMenus menus;
+    ComponentInspectorLayout componentLayout;
     OperatorRegistry operators;
     OperatorRunner runner{operators, history};
     OperatorActions actions{runner, [this] { return operatorContext(); }};
-    EntityPropertiesView view;
+    EntityPropertiesView view{componentLayout};
     HierarchyPanel hierarchy;
     SceneEntityId owner;
     SceneEntityId chased;
@@ -162,7 +166,8 @@ struct Fixture {
                 .diagnostics = diagnostics,
                 .mode = EditorMode::Edit,
                 .actions = actions,
-                .eyedropper = &eyedropper};
+                .eyedropper = &eyedropper,
+                .menus = menus};
     }
 
     FollowComponent& follow() {
@@ -176,7 +181,7 @@ struct Fixture {
             before();
         }
         EditorContext editor = context();
-        view.drawComponent(editor, *componentTypesFor(document.options()).find("follow"), owner, {});
+        view.drawComponent(editor, *componentTypesFor(document.options()).find("follow"), std::span(&owner, 1), {});
     }
 
     void drawHierarchy() {

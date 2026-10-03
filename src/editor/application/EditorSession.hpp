@@ -13,6 +13,7 @@
 #include "editor/interaction/EntityEyedropper.hpp"
 #include "editor/interaction/ModalTransform.hpp"
 #include "editor/interaction/Selection.hpp"
+#include "editor/menus/EditorMenus.hpp"
 #include "editor/modules/GameModuleHost.hpp"
 #include "editor/operators/Keymap.hpp"
 #include "editor/operators/KeymapEditor.hpp"
@@ -187,6 +188,7 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
                              std::string before, bool commitOnCancel);
     void finishModalTransform(ApplicationContext& context, bool confirm);
     void drawModalTransformOverlay(const ViewportPanel& viewport, const ModalTransformResult& result) const;
+    bool updateSmokeMenus(ApplicationContext& context);
 
     // Viewports (EditorViewports.cpp).
     void registerViewportOperators();
@@ -221,6 +223,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // Declared before the operator registry, whose eyedropper operators
     // refer to it.
     EntityEyedropper m_eyedropper;
+    // Menus and the open popup menu; declared before the operators that
+    // open them.
+    EditorMenus m_menus;
     OperatorRegistry m_operators;
     OperatorRunner m_operatorRunner;
     // Declared after the operator registry and runner, which it removes the
@@ -316,6 +321,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // The ImGui layout from before the second viewport was docked beside
     // the first, restored when the viewport smoke ends.
     std::string m_smokeLayout;
+    // Entities in the scene before the menu smoke added one.
+    size_t m_smokeEntityCount{0};
 
     struct ActiveTransform {
         ModalTransform transform;
@@ -334,7 +341,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     std::optional<ActiveTransform> m_activeTransform;
     // Set when a modal transform ends, until the next frame starts.
     bool m_modalTransformFinishedThisFrame{false};
-    bool m_openAddMenu{false};
     bool m_openDeleteMenu{false};
     bool m_openRenamePopup{false};
     bool m_focusRenameField{false};

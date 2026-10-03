@@ -5,6 +5,7 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
+#include "editor/menus/EditorMenus.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/operators/OperatorRunner.hpp"
 #include "editor/panels/EditorContext.hpp"
@@ -96,6 +97,7 @@ struct Fixture {
     EditorDiagnostics diagnostics;
     Selection selection;
     OperatorActions actions{editing(), history, selection};
+    EditorMenus menus;
     EditorMode mode{EditorMode::Edit};
     ViewportRegistry viewports;
     std::vector<std::unique_ptr<ViewportPanel>> panels;
@@ -123,7 +125,8 @@ struct Fixture {
                 .selection = selection,
                 .diagnostics = diagnostics,
                 .mode = mode,
-                .actions = actions};
+                .actions = actions,
+                .menus = menus};
     }
 
     ViewportPanel& addViewport() {

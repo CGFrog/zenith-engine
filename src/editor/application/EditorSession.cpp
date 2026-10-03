@@ -5,6 +5,7 @@
 #include "editor/areas/DefaultWorkspaces.hpp"
 #include "editor/document/DefaultScene.hpp"
 #include "editor/document/SceneFragment.hpp"
+#include "editor/menus/DefaultMenus.hpp"
 #include "editor/operators/ComponentOperators.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/EyedropperOperators.hpp"
@@ -91,6 +92,12 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
         !result) {
         m_diagnostics.reportError(result.error);
     }
+    if (const OperatorRegistrationResult result = registerMenuOperators(m_operators, m_menus); !result) {
+        m_diagnostics.reportError(result.error);
+    }
+    if (const MenuResult result = registerDefaultMenus(m_menus.registry()); !result) {
+        m_diagnostics.reportError(result.error);
+    }
     // Scene references resolve through the project's asset database by GUID.
     m_document.setAssetDatabase(m_projectAssets.assetDatabase());
 }
@@ -106,7 +113,8 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .diagnostics = m_diagnostics,
             .mode = m_playMode.mode(),
             .actions = *this,
-            .eyedropper = &m_eyedropper};
+            .eyedropper = &m_eyedropper,
+            .menus = m_menus};
 }
 
 OperatorContext EditorSession::operatorContext(ApplicationContext& context, KeymapRegion region) {
@@ -486,10 +494,11 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     const bool areasDone = updateSmokeAreas(context);
     const bool viewportsDone = updateSmokeViewports(context);
     const bool componentsDone = updateSmokeComponents(context);
+    const bool menusDone = updateSmokeMenus(context);
     if (m_smokeFrame == 500 && !m_smokeStreamCompleted) {
         m_diagnostics.reportError("Streaming smoke did not commit while frames were being presented");
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    } else if (areasDone && viewportsDone && componentsDone && m_smokeStreamCompleted) {
+    } else if (areasDone && viewportsDone && componentsDone && menusDone && m_smokeStreamCompleted) {
         updateSmokeModuleReload(context);
     }
 }
@@ -749,11 +758,13 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Add", editing)) {
-            operatorMenuItem(context, "object.add_cube", "Cube");
-            operatorMenuItem(context, "object.add_sun", "Sun");
-            operatorMenuItem(context, "object.add_environment", "Environment");
-            operatorMenuItem(context, "object.add_fog", "Fog");
-            operatorMenuItem(context, "object.add_empty", "Empty");
+            if (const std::optional<ResolvedMenu> add = m_menus.resolve(
+                    {.menu = addMenuId, .category = {}}, operatorContext(context, KeymapRegion::Global))) {
+                EditorContext editor = editorContext(context);
+                if (const std::optional<MenuChoice> chosen = drawMenuItems(editor, *add)) {
+                    editor.invoke(chosen->operatorId, chosen->properties);
+                }
+            }
             ImGui::EndMenu();
         }
         ImGui::Separator();

@@ -472,39 +472,3 @@ void EntityPropertiesView::drawModelDropTarget(EditorContext& context, SceneEnti
         ImGui::EndDragDropTarget();
     }
 }
-
-void EntityPropertiesView::drawAddComponentMenu(EditorContext& context, SceneEntityId entityId,
-                                                std::optional<std::string_view> category) const {
-    if (widgets::Button("Add Component")) {
-        ImGui::OpenPopup("AddComponentPopup");
-    }
-    if (!ImGui::BeginPopup("AddComponentPopup")) {
-        return;
-    }
-    Scene& scene = context.app.scene;
-    const ComponentTypeRegistry& types = componentTypes(context);
-    // Grouped by category in the order categories first appear.
-    std::vector<std::string> categories;
-    for (const ComponentType& type : types.types()) {
-        std::string label = componentCategoryLabel(type);
-        if (!type.internal() && (!category || label == *category) &&
-            std::ranges::find(categories, label) == categories.end()) {
-            categories.push_back(std::move(label));
-        }
-    }
-    for (const std::string& label : categories) {
-        if (!category) {
-            ImGui::SeparatorText(label.c_str());
-        }
-        for (const ComponentType& type : types.types()) {
-            if (type.internal() || componentCategoryLabel(type) != label ||
-                type.has(scene, scene.findEntity(entityId))) {
-                continue;
-            }
-            if (ImGui::MenuItem(type.displayName().c_str())) {
-                context.invoke("object.component_add", componentProperties(type.key()));
-            }
-        }
-    }
-    ImGui::EndPopup();
-}

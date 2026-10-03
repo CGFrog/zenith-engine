@@ -1,5 +1,6 @@
 #include "InspectorPanel.hpp"
 
+#include "editor/menus/AddComponentMenu.hpp"
 #include "editor/panels/EditorContext.hpp"
 
 #include <imgui.h>
@@ -42,5 +43,5 @@ void InspectorPanel::draw(EditorContext& context) {
     m_view.drawAssetWarnings(context, entityId);
     m_view.drawModelDropTarget(context, entityId);
     ImGui::Separator();
-    m_view.drawAddComponentMenu(context, entityId);
+    drawAddComponentButton(context, entityId);
 }

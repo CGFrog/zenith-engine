@@ -40,15 +40,21 @@ asset and scene roots are relative to that file.
    fields alone. Components only the active entity has follow under **Active
    Entity Only**; hold `Alt` while editing one of them to apply the change to
    every selected entity that has the component.
-6. Use `Shift+D` to duplicate a selection, or `Ctrl+C` and `Ctrl+V` to copy and
+6. Press `Shift+A` over the viewport (or open **Edit > Add**) for the Add
+   menu: a cube, sun, environment, fog, or empty, or under **Component** an
+   empty entity with one component of any type (a game module's too), named
+   after it. Start typing to search the menu (`sun` finds **Light > Sun**),
+   then use the arrow keys and `Enter`. **Add Component** buttons open the
+   same kind of searchable menu, grouped by category.
+7. Use `Shift+D` to duplicate a selection, or `Ctrl+C` and `Ctrl+V` to copy and
    paste serialized entity hierarchies. `Ctrl+Z` undoes; `Ctrl+Shift+Z` or
    `Ctrl+Y` redoes. After adding or duplicating an object, the **Adjust Last
    Operation** panel at the bottom-left of the viewport lets you change its
    location, size, or offset; the operation is redone with the new values.
-7. Choose **File > Save As** and save beneath the project's scene root. Saves
+8. Choose **File > Save As** and save beneath the project's scene root. Saves
    are atomic. A separate recovery file is written periodically while the
    document is dirty and is offered after an interrupted session.
-8. Press `F5` to enter Play, `F6` to pause, `F7` to step, and `Shift+F5` to
+9. Press `F5` to enter Play, `F6` to pause, `F7` to step, and `Shift+F5` to
    stop. Play uses a runtime clone; stopping restores the authored scene.
 
 Every menu item and key runs a named operator. Press `F3` to search all

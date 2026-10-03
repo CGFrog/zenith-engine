@@ -576,6 +576,29 @@ to selected, move), tested in `tests/editor/ComponentOperatorTests.cpp`.
 (`ui.eyedropper_pick`, one undo step), and cancels (`ui.eyedropper_cancel`) the
 session's `interaction/EntityEyedropper`.
 
+### `src/editor/menus/`
+
+Menus are data. `MenuRegistry` holds named menus (`MenuDefinition`: id such as
+`VIEW3D_MT_add`, title, and a submenu or headed-section layout) and their
+entries (`MenuEntry`: label, operator id with JSON properties, optional icon,
+optional category path, or another menu as a submenu), plus dynamic sections
+whose `MenuSectionFill` callback adds entries each time the menu is shown.
+Every menu, entry, and section carries a `MenuOwner` token; the editor uses
+`editorMenuOwner` and other clients take one from `createOwner` and call
+`removeOwner` before their code unloads. `resolve` builds a `ResolvedMenu`
+snapshot (copies only, so nothing outlives a module), and `searchMenu` scores
+its leaves with `fuzzyMatchScore`. `MenuPopup` draws a snapshot Blender style
+(search field focused on open, typed queries list matching runnable leaves as
+"Light > Sun"), and `drawMenuItems` draws one inside any ImGui menu (the main
+menu's **Edit > Add**). `EditorMenus` is the session-owned registry plus the
+open popup, reached through `EditorContext::menus`; `wm.call_menu {menu,
+category}` opens a menu at the mouse and `object.add_menu` (Shift A) opens
+the Add menu. `DefaultMenus` registers the Add menu (add-object entries plus
+Component > category > type running `object.add_empty_with`) and the Add
+Component menu, whose sections come from the document's component registry
+in `AddComponentMenu`, so game module types appear. Tests live in
+`tests/editor/MenuTests.cpp`.
+
 ### Game module hosting (`src/editor/modules/`)
 
 When the project names a `gameModule`, `EditorSession` loads it at startup
@@ -644,10 +667,12 @@ the settings widgets), so they always show and change the same settings.
 filter, transform, every registered component (reflected fields, or a custom
 editor registered there for `collider`, `morph_weights`, `irradiance_volume`,
 and `animation`), preserved unknown components, asset warnings, the model drop
-target, the irradiance bake button, and the Add Component menu grouped by
-`ComponentType::category()` (empty categories show as "Other"). Every edit is
-recorded through `SceneEditing` with a coalesce key naming the edited entities,
-and component add runs `object.component_add` (active entity).
+target, and the irradiance bake button. Panels add the Add Component button
+from `menus/AddComponentMenu`, which opens the searchable Add Component menu
+grouped by `ComponentType::category()` (empty categories show as "Other").
+Every edit is recorded through `SceneEditing` with a coalesce key naming the
+edited entities, and component add runs `object.component_add` (active
+entity).
 
 Components are listed in the display order of
 `settings/ComponentInspectorLayout`, which also remembers collapsed sections

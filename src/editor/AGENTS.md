@@ -12,6 +12,7 @@ depend on this subtree.
 | `areas/` | Blender-style areas and workspaces: the area type registry, per-workspace areas and their ImGui dock layouts, the default workspaces, legacy layout migration, and `workspaces.json`. |
 | `document/` | Scene document state, persistence workflow, and undo/redo history. |
 | `modules/` | Game module hosting: loading the project's module, running its systems, hot reload, and the header-only editor extension API modules implement. |
+| `menus/` | Menus as data: the `MenuRegistry` of named menus, entries, and dynamic sections (owner tokens for module cleanup), the searchable popup and menu-item drawing, `wm.call_menu`, and the default Add and Add Component menus. |
 | `interaction/` | Editor camera, picking, selection, gizmos, component editing widgets (including entity reference fields), and the entity eyedropper. |
 | `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object operators, the per-region keymap with `keymap.json` overrides, F3 search, and the keymap editor. |
 | `panels/` | One class per dockable window, drawn from an `EditorContext`. |
@@ -42,6 +43,13 @@ depend on this subtree.
   Operators that only edit the document belong in `operators/` and must run
   headless; ones needing the window are registered by `EditorSession`. An
   `Undo` operator must not commit history itself; the runner records it.
+- A menu is registered data in the session's `MenuRegistry`
+  (`menus/DefaultMenus.cpp` for the editor's own), never hard-coded ImGui
+  items: entries name operators, and content that changes (component types)
+  comes from a dynamic section filled when the menu is shown. Open a popup
+  menu with `wm.call_menu {"menu": id}`. Anything that registers menu content
+  from module code uses its own `MenuOwner` and removes it before the module
+  unloads.
 - A new window is an `EditorPanel` in `panels/`. Panels receive everything
   through `EditorContext`, record scene changes through `SceneEditing` so they
   are undoable, and never reach into other panels.

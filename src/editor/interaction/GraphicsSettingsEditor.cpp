@@ -31,14 +31,14 @@ constexpr float maximumFilmGrainIntensity = 0.5f;
 constexpr float minimumFilmGrainSize = 1.0f;
 constexpr float maximumFilmGrainSize = 8.0f;
 
-struct EnumOption {
+struct ComboOption {
     const char* label;
     bool available{true};
 };
 
 // Selects one of the options by index; unavailable options are shown disabled.
 template <typename Enum, size_t Count>
-bool enumCombo(const char* label, Enum& value, const std::array<EnumOption, Count>& options) {
+bool enumCombo(const char* label, Enum& value, const std::array<ComboOption, Count>& options) {
     const size_t current = std::min(static_cast<size_t>(value), Count - 1);
     bool changed = false;
     if (ImGui::BeginCombo(label, options[current].label)) {
@@ -69,12 +69,12 @@ bool drawBudget(const char* label, RenderPassBudget& budget) {
 bool drawAntialiasingAndResolution(RenderSettings& settings, const RenderCapabilities& capabilities) {
     bool changed =
         enumCombo("Anti-aliasing", settings.antialiasing,
-                  std::array<EnumOption, 3>{{{"Off"}, {"FXAA"}, {"TAA", capabilities.temporalAntialiasing}}});
+                  std::array<ComboOption, 3>{{{"Off"}, {"FXAA"}, {"TAA", capabilities.temporalAntialiasing}}});
     UpscalerSettings& upscaler = settings.upscaler;
     if (enumCombo("Upscaler", upscaler.mode,
-                  std::array<EnumOption, 3>{{{"Off"},
-                                             {"TAA upsampling", capabilities.temporalAntialiasing},
-                                             {"FSR 1", capabilities.spatialUpscaling}}})) {
+                  std::array<ComboOption, 3>{{{"Off"},
+                                              {"TAA upsampling", capabilities.temporalAntialiasing},
+                                              {"FSR 1", capabilities.spatialUpscaling}}})) {
         // TAA upsampling reconstructs with TAA; validation would enable it too.
         if (upscaler.mode == UpscalerMode::Taau) {
             settings.antialiasing = AntialiasingMode::Taa;
@@ -83,7 +83,7 @@ bool drawAntialiasingAndResolution(RenderSettings& settings, const RenderCapabil
     }
     ImGui::BeginDisabled(upscaler.mode == UpscalerMode::Off);
     changed |= enumCombo("Upscaler quality", upscaler.quality,
-                         std::array<EnumOption, 3>{{{"Quality (1.5x)"}, {"Balanced (1.7x)"}, {"Performance (2x)"}}});
+                         std::array<ComboOption, 3>{{{"Quality (1.5x)"}, {"Balanced (1.7x)"}, {"Performance (2x)"}}});
     ImGui::EndDisabled();
     ImGui::BeginDisabled(upscaler.mode != UpscalerMode::Fsr1);
     changed |= ImGui::SliderFloat("FSR sharpness", &upscaler.sharpness, 0.0f, 1.0f, "%.2f");
@@ -107,7 +107,7 @@ bool drawAntialiasingAndResolution(RenderSettings& settings, const RenderCapabil
 bool drawShadows(RenderSettings& settings) {
     bool changed =
         enumCombo("Shadows", settings.shadows,
-                  std::array<EnumOption, 4>{{{"Off"}, {"Single map"}, {"Cascaded (balanced)"}, {"Cascaded (high)"}}});
+                  std::array<ComboOption, 4>{{{"Off"}, {"Single map"}, {"Cascaded (balanced)"}, {"Cascaded (high)"}}});
     const bool cascaded =
         settings.shadows == ShadowQuality::CascadedBalanced || settings.shadows == ShadowQuality::CascadedHigh;
     ImGui::BeginDisabled(!cascaded);
@@ -120,11 +120,11 @@ bool drawShadows(RenderSettings& settings) {
 
 bool drawLighting(RenderSettings& settings, const RenderCapabilities& capabilities) {
     bool changed =
-        enumCombo("Lighting model", settings.lighting, std::array<EnumOption, 2>{{{"Fast"}, {"Physically based"}}});
+        enumCombo("Lighting model", settings.lighting, std::array<ComboOption, 2>{{{"Fast"}, {"Physically based"}}});
     changed |= enumCombo("Environment", settings.environment,
-                         std::array<EnumOption, 3>{{{"Hemisphere"},
-                                                    {"Image-based (low)", capabilities.imageBasedLighting},
-                                                    {"Image-based (high)", capabilities.imageBasedLighting}}});
+                         std::array<ComboOption, 3>{{{"Hemisphere"},
+                                                     {"Image-based (low)", capabilities.imageBasedLighting},
+                                                     {"Image-based (high)", capabilities.imageBasedLighting}}});
     ImGui::BeginDisabled(settings.environment == EnvironmentQuality::Hemisphere);
     changed |= ImGui::Checkbox("Environment background", &settings.environmentBackground);
     ImGui::EndDisabled();
@@ -134,14 +134,14 @@ bool drawLighting(RenderSettings& settings, const RenderCapabilities& capabiliti
     ImGui::BeginDisabled(!capabilities.reflectionProbes || !settings.reflectionProbes);
     changed |=
         enumCombo("Probe blending", settings.reflectionProbeBlending,
-                  std::array<EnumOption, 2>{{{"At camera"}, {"Per pixel", capabilities.perPixelReflectionProbes}}});
+                  std::array<ComboOption, 2>{{{"At camera"}, {"Per pixel", capabilities.perPixelReflectionProbes}}});
     ImGui::EndDisabled();
     changed |=
         enumCombo("Indirect diffuse", settings.indirectDiffuse,
-                  std::array<EnumOption, 2>{{{"Environment"}, {"Probe volume", capabilities.irradianceVolumes}}});
+                  std::array<ComboOption, 2>{{{"Environment"}, {"Probe volume", capabilities.irradianceVolumes}}});
     const bool localLightsAvailable = capabilities.maximumLocalLights > 0;
     changed |= enumCombo("Local lights", settings.localLights,
-                         std::array<EnumOption, 2>{{{"Disabled"}, {"Clustered", localLightsAvailable}}});
+                         std::array<ComboOption, 2>{{{"Disabled"}, {"Clustered", localLightsAvailable}}});
     ImGui::BeginDisabled(settings.localLights == LocalLightingQuality::Disabled || !localLightsAvailable);
     int maximumLights = static_cast<int>(settings.maximumLocalLights);
     const int lightCapacity = static_cast<int>(std::max(capabilities.maximumLocalLights, 1u));
@@ -150,39 +150,39 @@ bool drawLighting(RenderSettings& settings, const RenderCapabilities& capabiliti
         changed = true;
     }
     changed |= enumCombo("Local light shadows", settings.localShadows,
-                         std::array<EnumOption, 4>{{{"Off"}, {"Low"}, {"Medium"}, {"High"}}});
+                         std::array<ComboOption, 4>{{{"Off"}, {"Low"}, {"Medium"}, {"High"}}});
     ImGui::EndDisabled();
     changed |= enumCombo("Volumetric fog", settings.volumetricFog,
-                         std::array<EnumOption, 4>{{{"Off"},
-                                                    {"Low", capabilities.volumetricFog},
-                                                    {"Medium", capabilities.volumetricFog},
-                                                    {"High", capabilities.volumetricFog}}});
+                         std::array<ComboOption, 4>{{{"Off"},
+                                                     {"Low", capabilities.volumetricFog},
+                                                     {"Medium", capabilities.volumetricFog},
+                                                     {"High", capabilities.volumetricFog}}});
     if (settings.volumetricFog != VolumetricFogQuality::Off) {
         ImGui::TextDisabled("Add a Volumetric Fog component to the scene to author the medium.");
     }
-    changed |= enumCombo("Decals", settings.decals, std::array<EnumOption, 2>{{{"Off"}, {"On", capabilities.decals}}});
+    changed |= enumCombo("Decals", settings.decals, std::array<ComboOption, 2>{{{"Off"}, {"On", capabilities.decals}}});
     changed |= enumCombo("Particles", settings.particles,
-                         std::array<EnumOption, 3>{{{"Off"},
-                                                    {"Low (16k particles)", capabilities.particles},
-                                                    {"High (131k particles)", capabilities.particles}}});
+                         std::array<ComboOption, 3>{{{"Off"},
+                                                     {"Low (16k particles)", capabilities.particles},
+                                                     {"High (131k particles)", capabilities.particles}}});
     return changed;
 }
 
 bool drawScreenSpaceEffects(RenderSettings& settings, const RenderCapabilities& capabilities) {
     bool changed =
         enumCombo("Ambient occlusion", settings.ambientOcclusion,
-                  std::array<EnumOption, 3>{{{"Off"},
-                                             {"Half resolution", capabilities.screenSpaceAmbientOcclusion},
-                                             {"Full resolution", capabilities.screenSpaceAmbientOcclusion}}});
+                  std::array<ComboOption, 3>{{{"Off"},
+                                              {"Half resolution", capabilities.screenSpaceAmbientOcclusion},
+                                              {"Full resolution", capabilities.screenSpaceAmbientOcclusion}}});
     changed |= enumCombo("Reflections", settings.reflections,
-                         std::array<EnumOption, 3>{{{"Probes only"},
-                                                    {"Screen-space (half)", capabilities.screenSpaceReflections},
-                                                    {"Screen-space (full)", capabilities.screenSpaceReflections}}});
+                         std::array<ComboOption, 3>{{{"Probes only"},
+                                                     {"Screen-space (half)", capabilities.screenSpaceReflections},
+                                                     {"Screen-space (full)", capabilities.screenSpaceReflections}}});
     DepthOfFieldSettings& depthOfField = settings.depthOfField;
     changed |= enumCombo("Depth of field", depthOfField.quality,
-                         std::array<EnumOption, 3>{{{"Off"},
-                                                    {"Low (half resolution)", capabilities.depthOfField},
-                                                    {"High (half resolution)", capabilities.depthOfField}}});
+                         std::array<ComboOption, 3>{{{"Off"},
+                                                     {"Low (half resolution)", capabilities.depthOfField},
+                                                     {"High (half resolution)", capabilities.depthOfField}}});
     ImGui::BeginDisabled(depthOfField.quality == DepthOfFieldQuality::Off);
     changed |=
         ImGui::DragFloat("Focus distance", &depthOfField.focusDistance, 0.05f, depth_of_field::minimumFocusDistance,
@@ -202,7 +202,7 @@ bool drawScreenSpaceEffects(RenderSettings& settings, const RenderCapabilities& 
 bool drawMotionBlur(RenderSettings& settings, const RenderCapabilities& capabilities) {
     bool changed = enumCombo(
         "Motion blur", settings.motionBlur,
-        std::array<EnumOption, 3>{{{"Off"}, {"Low", capabilities.motionBlur}, {"High", capabilities.motionBlur}}});
+        std::array<ComboOption, 3>{{{"Off"}, {"Low", capabilities.motionBlur}, {"High", capabilities.motionBlur}}});
     ImGui::BeginDisabled(settings.motionBlur == MotionBlurQuality::Off);
     changed |= ImGui::SliderFloat("Shutter (60 Hz frames)", &settings.motionBlurShutterFraction,
                                   motion_blur::minimumShutterFraction, motion_blur::maximumShutterFraction, "%.2f");
@@ -213,14 +213,14 @@ bool drawMotionBlur(RenderSettings& settings, const RenderCapabilities& capabili
 }
 
 bool drawBloomAndToneMapping(RenderSettings& settings) {
-    bool changed = enumCombo("Bloom", settings.bloom, std::array<EnumOption, 2>{{{"Off"}, {"Downsampled chain"}}});
+    bool changed = enumCombo("Bloom", settings.bloom, std::array<ComboOption, 2>{{{"Off"}, {"Downsampled chain"}}});
     ImGui::BeginDisabled(settings.bloom == BloomQuality::Off);
     changed |= ImGui::SliderFloat("Bloom intensity", &settings.bloomIntensity, 0.0f, 1.0f, "%.3f");
     changed |=
         ImGui::SliderFloat("Bloom radius", &settings.bloomFilterRadius, minimumBloomRadius, maximumBloomRadius, "%.2f");
     ImGui::EndDisabled();
     changed |=
-        enumCombo("Tone mapping", settings.tonemap, std::array<EnumOption, 3>{{{"ACES"}, {"AgX"}, {"AgX (punchy)"}}});
+        enumCombo("Tone mapping", settings.tonemap, std::array<ComboOption, 3>{{{"ACES"}, {"AgX"}, {"AgX (punchy)"}}});
     return changed;
 }
 
@@ -254,7 +254,7 @@ bool drawColorGrading(RenderSettings& settings) {
 }
 
 bool drawExposure(ExposureSettings& exposure) {
-    bool changed = enumCombo("Exposure mode", exposure.mode, std::array<EnumOption, 2>{{{"Automatic"}, {"Manual"}}});
+    bool changed = enumCombo("Exposure mode", exposure.mode, std::array<ComboOption, 2>{{{"Automatic"}, {"Manual"}}});
     changed |= ImGui::SliderFloat("Compensation", &exposure.compensationEv, -maximumCompensationEv,
                                   maximumCompensationEv, "%.2f EV");
     ImGui::BeginDisabled(exposure.mode != ExposureMode::Manual);
@@ -464,7 +464,7 @@ bool drawSettings(RenderSettings& settings, const RenderCapabilities& capabiliti
     // Global until viewports get their own shading menu; the settings below
     // describe the Rendered mode.
     changed |= enumCombo("Viewport shading", settings.viewShading,
-                         std::array<EnumOption, 4>{
+                         std::array<ComboOption, 4>{
                              {{"Rendered"}, {"Material preview"}, {"Solid"}, {"Wireframe", capabilities.wireframe}}});
     if (widgets::SectionHeader("Anti-aliasing and resolution", ImGuiTreeNodeFlags_DefaultOpen)) {
         changed |= drawAntialiasingAndResolution(settings, capabilities);

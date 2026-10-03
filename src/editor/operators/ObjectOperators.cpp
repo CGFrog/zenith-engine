@@ -274,6 +274,32 @@ Operator addComponentOperator() {
             })};
 }
 
+// "Create Empty with Component X": an entity named after the component.
+Operator addEmptyWithOperator() {
+    return {.id = "object.add_empty_with",
+            .label = "Add Empty with Component",
+            .description = "Add an entity with one component, named after it, and select it",
+            .flags = OperatorFlags::Undo | OperatorFlags::Register | OperatorFlags::Internal,
+            .properties = OperatorProperties::make(AddEmptyWithProperties{},
+                                                   std::move(Fields<AddEmptyWithProperties>()
+                                                                 .add("component", &AddEmptyWithProperties::component)
+                                                                 .add("location", &AddEmptyWithProperties::location)
+                                                                 .drag(0.05f))),
+            .poll = inEditMode,
+            .execute = typed<AddEmptyWithProperties>([](OperatorContext& context, AddEmptyWithProperties& values) {
+                const ComponentType* type =
+                    componentTypesFor(context.editing.document().options()).find(values.component);
+                if (type == nullptr || type->internal()) {
+                    return OperatorResult::failed("Unknown component type '" + values.component + "'");
+                }
+                Scene& scene = context.editing.scene();
+                const Entity entity = scene.createEntity(type->displayName());
+                type->addDefault(scene, entity);
+                placeEntity(scene, entity, values.location, 1.0f);
+                return selectCreated(context, entity);
+            })};
+}
+
 // Removes a registered component, or the preserved data of a component type
 // that is not registered (for example from an unloaded game module), from one
 // entity. Returns whether the entity had it.
@@ -362,6 +388,7 @@ OperatorRegistrationResult registerObjectOperators(OperatorRegistry& registry) {
         addObjectOperator("object.add_fog", "Add Fog", "Add a volumetric fog medium filling the view", addFog));
     operators.push_back(
         addObjectOperator("object.add_empty", "Add Empty", "Add an entity with only a transform", addEmpty));
+    operators.push_back(addEmptyWithOperator());
     operators.push_back(createEntityOperator());
     operators.push_back(duplicateOperator());
     operators.push_back(deleteOperator());
