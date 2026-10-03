@@ -189,6 +189,12 @@ void fillRenderGraphShape(std::span<const MeshPassViewRequest> views, bool defau
     }
 }
 
+// The debug lines a view draws: every view's and its own. The graph shape
+// and recordDebugDraw must agree on this.
+bool viewDrawsDebugLines(const DebugDraw& shared, const DebugDraw& own) {
+    return shared.lineCount() != 0 || own.lineCount() != 0;
+}
+
 VkExtent2D clampedViewExtent(uint32_t width, uint32_t height) {
     return {std::clamp(width, 16u, 8192u), std::clamp(height, 16u, 8192u)};
 }
@@ -238,6 +244,9 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
     }
     m_pipelineCreationMilliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pipelineCreationBegin).count();
+    if (!m_debugDrawPass.init(m_context, m_swapchain.format(), framesInFlight)) {
+        return false;
+    }
     m_prewarmedPipelineCount = m_meshPass.prewarmedPipelineCount();
     m_meshPass.setFixedFrameSeconds(options.fixedFrameSeconds);
     m_meshPass.setDiagnosticOverrides(MeshPassDiagnosticOverrides::fromEnvironment());
@@ -292,6 +301,15 @@ void Renderer::destroySwapchainResources() {
 }
 
 bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager& assets) {
+    // Debug primitives last one frame, drawn or not.
+    struct DebugDrawLifetime {
+        Renderer& renderer;
+
+        ~DebugDrawLifetime() {
+            renderer.clearDebugDraw();
+        }
+    } debugDrawLifetime{*this};
+
     applyDiagnosticOverrides(*m_rendering);
     const FrameStatus surfaceStatus = prepareSurface(window);
     if (surfaceStatus != FrameStatus::Ready) {
@@ -616,6 +634,9 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
                            *m_frameTasks, frame.timestampQueries())) {
         return false;
     }
+    if (!recordDebugDraw(frame.commandBuffer())) {
+        return false;
+    }
     RenderStats& graphStats = m_rendering->m_stats;
     graphStats.renderGraphBarrierCount = m_renderGraphStatistics.barrierCount;
     graphStats.renderGraphQueueTransfers = m_renderGraphStatistics.queueTransferCount;
@@ -721,12 +742,59 @@ void Renderer::collectViewRequests(VkImage swapchainImage, VkImageView swapchain
     }
 }
 
+bool Renderer::recordDebugDraw(VkCommandBuffer commandBuffer) {
+    std::vector<RenderRuntime::ViewSlot>& slots = m_rendering->m_views;
+    for (RenderRuntime::ViewSlot& slot : slots) {
+        slot.debugLabels.clear();
+    }
+    const DebugDraw& shared = m_rendering->m_debugDraw;
+    m_debugDrawViews.clear();
+    for (const MeshPassViewRequest& request : m_viewRequests) {
+        RenderRuntime::ViewSlot& slot = slots[request.view];
+        const std::optional<MeshPassViewCamera> camera = m_meshPass.recordedCamera(request.view);
+        if (!camera) {
+            m_context.log().error("Render view " + std::to_string(request.view) + " recorded without a camera");
+            return false;
+        }
+        const glm::vec2 viewportSize{static_cast<float>(request.extent.width),
+                                     static_cast<float>(request.extent.height)};
+        projectDebugLabels(shared.labels(), camera->viewProjection, viewportSize, slot.debugLabels);
+        projectDebugLabels(slot.debugDraw.labels(), camera->viewProjection, viewportSize, slot.debugLabels);
+        if (!viewDrawsDebugLines(shared, slot.debugDraw)) {
+            continue;
+        }
+        m_debugDrawViews.push_back({.colorView = request.colorView,
+                                    .extent = request.extent,
+                                    .depthView = request.depthView,
+                                    .renderExtent = camera->renderExtent,
+                                    .viewProjection = camera->viewProjection,
+                                    .nearPlane = camera->nearPlane,
+                                    .farPlane = camera->farPlane,
+                                    .lines = &slot.debugDraw});
+    }
+    return m_debugDrawPass.record(commandBuffer, m_currentFrame, shared, m_debugDrawViews);
+}
+
+void Renderer::clearDebugDraw() {
+    if (m_rendering == nullptr) {
+        return;
+    }
+    m_rendering->m_debugDraw.clear();
+    for (RenderRuntime::ViewSlot& slot : m_rendering->m_views) {
+        slot.debugDraw.clear();
+    }
+}
+
 bool Renderer::updateRenderGraphPlan() {
     const bool defaultViewOffscreen = m_rendering->m_views.front().sizeRequested;
     // Filled in place so a steady frame reuses the shape's storage.
     RenderGraphShape& shape = m_frameGraphShape;
     fillRenderGraphShape(m_viewRequests, defaultViewOffscreen, m_rendering->settings(), m_rendering->capabilities(),
                          shape);
+    for (size_t index = 0; index < m_viewRequests.size(); ++index) {
+        shape.views[index].debugDraw =
+            viewDrawsDebugLines(m_rendering->m_debugDraw, m_rendering->m_views[m_viewRequests[index].view].debugDraw);
+    }
     if (shape != m_renderGraphShape) {
         RenderGraph graph;
         const auto image = [](uint32_t format, VkExtent2D extent, uint64_t usage, uint64_t bytes) {
@@ -1257,6 +1325,17 @@ bool Renderer::updateRenderGraphPlan() {
                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
                 graph.addPass(name("colour grade"), RenderGraphQueue::Graphics, gradeAccesses);
             }
+            if (view.debugDraw) {
+                // DebugDrawPass: lines blend over the finished output and
+                // test against the scene depth the post pass left read-only.
+                const RenderGraphAccess debugDrawAccesses[]{
+                    {depth, RenderGraphAccessMode::Read, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+                    {output, RenderGraphAccessMode::ReadWrite, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL}};
+                graph.addPass(name("debug draw"), RenderGraphQueue::Graphics, debugDrawAccesses);
+            }
         }
         // The UI samples every offscreen view and draws into the swapchain,
         // over the default view when that renders into the swapchain.
@@ -1464,6 +1543,7 @@ void Renderer::shutdown() {
         }
         m_viewTargets.clear();
         m_meshPass.shutdown(m_context);
+        m_debugDrawPass.shutdown();
         m_viewportTarget.shutdown(m_context, m_uiPass);
         m_uiPass.shutdown();
         destroySwapchainResources();

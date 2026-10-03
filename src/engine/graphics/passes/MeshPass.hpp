@@ -67,6 +67,17 @@ struct MeshPassViewRequest {
     RenderViewStats* stats{nullptr};
 };
 
+// The camera a view's latest recording rendered with, for overlays drawn over
+// its output after MeshPass::record (debug lines, label projection).
+struct MeshPassViewCamera {
+    // Unjittered reversed-Z view-projection; NDC spans the output extent.
+    glm::mat4 viewProjection{1.0f};
+    float nearPlane{0.1f};
+    float farPlane{1000.0f};
+    // The scene depth's valid region, from its top-left corner.
+    VkExtent2D renderExtent{};
+};
+
 // Records the scene for one or more render views per frame. A frame first runs
 // the work every view shares once (render packets, uploads, environment,
 // irradiance volume, local and directional shadows, texture streaming), placed
@@ -94,6 +105,12 @@ class MeshPass {
 
     bool hasView(uint32_t view) const {
         return view < m_views.size() && m_views[view] != nullptr;
+    }
+
+    // The camera of the view's latest recording; empty until the view first
+    // records.
+    std::optional<MeshPassViewCamera> recordedCamera(uint32_t view) const {
+        return hasView(view) ? m_views[view]->recordedCamera : std::nullopt;
     }
 
     // Decides a view's graph-shaping choices; pass the result in its request.
@@ -320,6 +337,7 @@ class MeshPass {
         glm::vec2 previousJitterNdc{0.0f};
         bool cameraHistoryValid{false};
         TemporalQualityController temporalQuality;
+        std::optional<MeshPassViewCamera> recordedCamera;
     };
 
     // The camera and sampling of one view for the frame being recorded.

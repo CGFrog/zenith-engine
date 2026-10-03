@@ -164,13 +164,21 @@ naming the project it renders, plus the reference PNGs.
 - `irradiance_room/` covers volumetric fog light shafts through the room's
   window (dense uniform fog, ambient-lit by the baked irradiance volume) and
   the volume's bounce lighting and color bleed.
+- `debug_draw/` renders `zenith_debug_draw_smoke_tests` instead of the game
+  (no project, fixed camera): every `DebugDraw` primitive over three cubes,
+  depth-tested lines partly hidden by and intersecting them, always-on-top
+  lines across them, and an alpha-blended circle, natively and with FSR 1 at
+  its Performance preset (lines against lower-resolution scene depth).
 
 Each view
-names a capture frame, a camera pose and optional motion, optional extra
-environment variables, and optional per-view tolerances. The checked-in PNGs
+names a capture frame, a camera pose and optional motion (both optional for a
+capture executable with its own fixed camera), optional extra environment
+variables, and optional per-view tolerances. A manifest without `project`
+launches its executable without `--project`. The checked-in PNGs
 beside it are the references.
 
-`zenith_reference_capture` renders every view with `zenith`, a clean
+`zenith_reference_capture` renders every view with `zenith` (or the set's
+own executable, chosen in `CMakeLists.txt`), a clean
 environment (benchmark, smoke, and every `ZENITH_FORCE_*`, `ZENITH_DISABLE_*`
 `ZENITH_DEPTH_PYRAMID_PER_LEVEL` and device-fallback switch removed before the view's own
 `environment` entries are applied), the
@@ -222,6 +230,12 @@ Wireframe shading, checks that both render views rendered with their own
 shading while the project settings stay Rendered, and closes it again,
 checking its view was destroyed. It is labeled `vulkan;smoke` so headless CI can exclude it while a
 Vulkan-capable workstation runs it explicitly.
+
+The `zenith_debug_draw_vulkan_smoke` CTest (`vulkan;smoke`, strict
+validation) records the debug-draw primitive set into the default view and two
+created views every frame, one of them upscaled with FSR 1, and checks that the
+renderer clears the lists after each frame and that each view publishes its
+projected labels (shared and own, none behind the camera).
 
 ## Strict Vulkan validation
 

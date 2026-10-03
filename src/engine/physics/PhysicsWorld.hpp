@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../graphics/DebugDraw.hpp"
 #include "../scene/Scene.hpp"
 #include "PhysicsComponents.hpp"
 
@@ -84,6 +85,17 @@ struct PhysicsStats {
     uint32_t transformsReadBack{0};
 };
 
+// What PhysicsWorld::drawDebug records. Shapes are collider wireframes in
+// Jolt's motion-type colours (static grey, keyframed green, dynamic a colour
+// per body).
+struct PhysicsDebugDrawOptions {
+    bool shapes{true};
+    bool boundingBoxes{false};
+    bool centersOfMass{false};
+    bool velocities{false};
+    DebugDepth depth{DebugDepth::Tested};
+};
+
 class PhysicsWorld {
   public:
     PhysicsWorld();
@@ -105,6 +117,11 @@ class PhysicsWorld {
     bool raycast(const glm::vec3& origin, const glm::vec3& direction, float distance, PhysicsRayHit& hit) const;
 
     std::span<const ContactEvent> contactEvents() const;
+    // Records the bodies' debug geometry into `output` (for example
+    // RenderRuntime::debugDraw()). Physics depends only on the recording
+    // type, never on the renderer. Fails before init or when a debug renderer
+    // that is not a PhysicsWorld's owns Jolt's one per-process slot.
+    PhysicsResult drawDebug(DebugDraw& output, const PhysicsDebugDrawOptions& options = {}) const;
     const PhysicsWorldConfig& config() const;
 
     const PhysicsStats& stats() const {

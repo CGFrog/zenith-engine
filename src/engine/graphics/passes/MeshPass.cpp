@@ -3648,6 +3648,10 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
     view.previousViewProjection = cameraData.viewProjection;
     view.previousUnjitteredViewProjection = viewFrame.unjitteredViewProjection;
     view.previousJitterNdc = temporal.jitterNdc;
+    view.recordedCamera = MeshPassViewCamera{.viewProjection = viewFrame.unjitteredViewProjection,
+                                             .nearPlane = viewFrame.nearPlane,
+                                             .farPlane = viewFrame.farPlane,
+                                             .renderExtent = renderExtent};
     const auto viewCpuEnd = std::chrono::steady_clock::now();
     addViewCounters(frameStats, stats);
     if (leading) {

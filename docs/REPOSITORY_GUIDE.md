@@ -904,6 +904,15 @@ blends previous and current dynamic poses for smooth rendering.
 It exposes forces, impulses, velocity, raycasts, and begin/persist/end contacts
 in terms of ECS entities. `refreshBody` rebuilds a body after collider or body
 settings change. Native Jolt accessors are deliberate advanced escape hatches.
+`drawDebug` records collider wireframes and other body diagnostics into a
+`DebugDraw`.
+
+### `src/engine/physics/JoltDebugDraw.*`
+
+Private adapter from Jolt's `DebugRendererSimple` to `DebugDraw`: lines and
+triangle edges become debug lines, 3D text becomes labels. It needs Jolt's
+`JPH_DEBUG_RENDERER`, which the root `CMakeLists.txt` enables in every
+configuration.
 
 ## Graphics
 
@@ -916,6 +925,7 @@ Renderer
 |- Swapchain (presentation images, depth image, presentation semaphores)
 |- FrameResources[3] (command pool/buffer, acquire semaphore, fence)
 |- RenderGraph (pass hazards, synchronization plan, transient lifetimes)
+|- DebugDrawPass (debug lines over each view's output, before the UI)
 `- MeshPass
    |- GPU mesh/texture/material caches
    |- shadow pass, depth/normal prepass, and main mesh pipeline
@@ -952,6 +962,24 @@ render-view registry (generational `RenderViewId`s, per-view size, camera
 override, grid, outlines, settings override, published texture and
 `RenderViewStats`). `composeViewSettings` defines which settings a view may
 override. `tests/engine/RenderViewTests.cpp` covers the registry.
+It also owns the frame's debug-draw lists (all views and per view) and each
+view's projected debug labels.
+
+### `src/engine/graphics/DebugDraw.*`
+
+Renderer-independent immediate-mode recording of debug lines, wire shapes
+(arrow, AABB and oriented box, sphere, circle, frustum, cone, capsule) and
+text labels, plus `frustumCorners` and the label projection
+(`projectDebugPoint`, `projectDebugLabels`). No graphics types, so physics and
+gameplay can record into it. `tests/engine/DebugDrawTests.cpp` covers it.
+
+### `src/engine/graphics/passes/DebugDrawPass.*`
+
+Draws `DebugDraw` lines (`shaders/debug_line.*`) as a LINE_LIST into every
+recorded view's post-processed output, depth testing in the fragment shader
+against the view's scene depth (which may be at render resolution). Owns a
+host-visible vertex buffer per frame in flight, grown on demand.
+`docs/ARCHITECTURE.md` (Debug drawing) explains the placement.
 
 ### `src/engine/graphics/RenderViewPlanning.*`
 
@@ -1489,7 +1517,7 @@ The source directory is copied as a whole to `build/assets/` for runtime use.
 | `tests/engine/` | Audio, asset importing, scene documents/hierarchy, and physics contracts. |
 | `tests/editor/` | Settings, build output parsing, build runner and IDE launching, render-settings persistence and graphics-panel helpers, document state, command history, undoable scene editing and entity commands, operators and keymaps, areas and workspaces (registry, type switching, layout switching, per-area state, `workspaces.json` and its version, and legacy layout migration), the built-in area types (each drawn headless, multi-instance Asset Browser areas and primary promotion, and the default workspaces' layouts and round trip), asset browser, selection, camera behavior, and component editing helpers. |
 | `tests/game/` | Application callback order, scene changes, cleanup, demo composition, controls, and reload behavior; the `zenith_game_demo` module loaded with `GameModule::load`, parity with the linked gameplay, and authored character controllers playing in the game. |
-| `tests/capture/`, `tests/references/` | Reference capture driver, showcase capture manifest, and reference PNGs (`docs/RENDERER_VALIDATION.md`). |
+| `tests/capture/`, `tests/references/` | Reference capture driver, the showcase, irradiance-room and debug-draw capture manifests, and reference PNGs (`docs/RENDERER_VALIDATION.md`). |
 
 The executables return a nonzero status on failed expectations so CTest can
 report failures without another test framework. Test sources and registrations

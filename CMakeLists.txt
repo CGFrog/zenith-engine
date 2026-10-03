@@ -213,6 +213,10 @@ set(JPH_USE_VK OFF CACHE BOOL "" FORCE)
 set(JPH_USE_MTL OFF CACHE BOOL "" FORCE)
 set(JPH_USE_CPU_COMPUTE OFF CACHE BOOL "" FORCE)
 set(ENABLE_OBJECT_STREAM OFF CACHE BOOL "" FORCE)
+# PhysicsWorld::drawDebug (JoltDebugDraw) needs Jolt's debug renderer in every
+# configuration. Jolt publishes the matching JPH_DEBUG_RENDERER definition to
+# its users, so the library and the engine always agree on it.
+set(DEBUG_RENDERER_IN_DISTRIBUTION ON CACHE BOOL "" FORCE)
 set(ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     JoltPhysics
@@ -381,6 +385,7 @@ add_library(zenith_engine SHARED
     src/engine/graphics/MeshPassFramePlan.cpp
     src/engine/graphics/ViewShading.cpp
     src/engine/graphics/Rendering.cpp
+    src/engine/graphics/DebugDraw.cpp
     src/engine/graphics/RenderViewPlanning.cpp
     src/engine/graphics/GpuCullLayout.cpp
     src/engine/graphics/TemporalQuality.cpp
@@ -416,6 +421,7 @@ add_library(zenith_engine SHARED
     src/engine/graphics/passes/BloomExposurePass.cpp
     src/engine/graphics/passes/ColorGradePass.cpp
     src/engine/graphics/passes/UiPass.cpp
+    src/engine/graphics/passes/DebugDrawPass.cpp
     src/engine/graphics/pipeline/GraphicsPipeline.cpp
     src/engine/graphics/pipeline/ComputePipeline.cpp
     src/engine/graphics/resources/FrameResources.cpp
@@ -443,6 +449,7 @@ add_library(zenith_engine SHARED
     src/engine/module/SharedLibrary.cpp
     src/engine/module/SystemScheduler.cpp
     src/engine/physics/PhysicsWorld.cpp
+    src/engine/physics/JoltDebugDraw.cpp
     src/engine/platform/FileWatcher.cpp
     src/engine/platform/ChildProcess.cpp
     src/engine/platform/FileContents.cpp
@@ -1194,6 +1201,31 @@ if(BUILD_TESTING)
         TIMEOUT 120
     )
 
+    # Debug-draw recording, tessellation and label projection (CPU only).
+    add_executable(zenith_debug_draw_tests tests/engine/DebugDrawTests.cpp)
+    target_link_libraries(zenith_debug_draw_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_debug_draw_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_debug_draw_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_debug_draw COMMAND zenith_debug_draw_tests)
+
+    # Debug lines in the default view and two created views under strict
+    # validation, plus the fixed primitive set the debug_draw reference set
+    # captures (tests/references/debug_draw).
+    add_executable(zenith_debug_draw_smoke_tests tests/engine/DebugDrawSmokeTests.cpp)
+    target_link_libraries(zenith_debug_draw_smoke_tests PRIVATE zenith_engine)
+    add_dependencies(zenith_debug_draw_smoke_tests zenith_assets)
+    add_test(NAME zenith_debug_draw_vulkan_smoke COMMAND zenith_debug_draw_smoke_tests)
+    set_tests_properties(zenith_debug_draw_vulkan_smoke PROPERTIES
+        ENVIRONMENT "ZENITH_SMOKE_FRAMES=60;ZENITH_VALIDATION_STRICT=1"
+        LABELS "vulkan;smoke"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 120
+        PROCESSORS 2
+    )
+
     add_executable(zenith_deferred_upload_tracker_tests tests/engine/DeferredUploadTrackerTests.cpp)
     target_link_libraries(zenith_deferred_upload_tracker_tests PRIVATE zenith_engine)
     add_test(NAME zenith_deferred_upload_tracker COMMAND zenith_deferred_upload_tracker_tests)
@@ -1314,12 +1346,18 @@ if(BUILD_TESTING)
     # The driver loads Vulkan through its own volk instance; the engine's is private.
     target_link_libraries(zenith_reference_capture PRIVATE zenith_engine volk)
     # Captures sample the cooked BC7/BC5 textures, so they must be current.
-    add_dependencies(zenith_reference_capture zenith zenith_cooked_textures)
+    add_dependencies(zenith_reference_capture zenith zenith_cooked_textures zenith_debug_draw_smoke_tests)
     add_custom_target(zenith_update_references)
-    foreach(reference_set IN ITEMS showcase irradiance_room)
+    # Each set renders with the game, except debug_draw, whose fixed primitive
+    # set is drawn by the Engine-hosted debug-draw smoke test executable.
+    foreach(reference_set IN ITEMS showcase irradiance_room debug_draw)
+        set(capture_executable zenith)
+        if(reference_set STREQUAL "debug_draw")
+            set(capture_executable zenith_debug_draw_smoke_tests)
+        endif()
         set(capture_manifest "${CMAKE_CURRENT_SOURCE_DIR}/tests/references/${reference_set}/captures.json")
         set(capture_arguments
-            --executable "$<TARGET_FILE:zenith>"
+            --executable "$<TARGET_FILE:${capture_executable}>"
             --manifest "${capture_manifest}"
             --output "${CMAKE_CURRENT_BINARY_DIR}/captures/${reference_set}")
         # One CTest per manifest view, so views capture in parallel and a
@@ -1341,7 +1379,7 @@ if(BUILD_TESTING)
         endforeach()
         add_custom_target(zenith_update_${reference_set}_references
             COMMAND zenith_reference_capture ${capture_arguments} --update
-            DEPENDS zenith_reference_capture zenith zenith_cooked_textures
+            DEPENDS zenith_reference_capture ${capture_executable} zenith_cooked_textures
             COMMENT "Regenerating ${reference_set} reference captures"
             VERBATIM
         )

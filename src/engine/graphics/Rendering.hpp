@@ -1,5 +1,7 @@
 #pragma once
 
+#include "DebugDraw.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
@@ -845,6 +847,32 @@ class RenderRuntime {
     // anti-aliasing, ambient occlusion, reflections, fog, bloom, and the rest.
     bool setViewSettings(RenderViewId view, std::optional<RenderSettings> settings);
 
+    // Debug drawing (DebugDraw.hpp). Primitives recorded into debugDraw()
+    // appear in every view, those in viewDebugDraw(view) only in that view.
+    // Both last one frame: the renderer draws them in the next
+    // Renderer::drawFrame (lines after post-processing, before the UI) and
+    // then clears them, also when the frame is skipped. Record every frame
+    // that should show them, before drawFrame.
+    DebugDraw& debugDraw() {
+        return m_debugDraw;
+    }
+
+    const DebugDraw& debugDraw() const {
+        return m_debugDraw;
+    }
+
+    // Null for a stale handle. Valid until the view is destroyed (creating
+    // other views does not move it).
+    DebugDraw* viewDebugDraw(RenderViewId view);
+    const DebugDraw* viewDebugDraw(RenderViewId view) const;
+    // The labels of debugDraw() and the view's own list from the latest
+    // drawFrame, projected with the camera that frame rendered the view with
+    // (positions in the view's output pixels, top-left origin). Empty when
+    // the view did not render; the UI draws them, a frame after recording.
+    // Valid until the next drawFrame. Callers needing this frame's labels
+    // can project them with projectDebugLabels and their own camera.
+    std::span<const ProjectedDebugLabel> viewDebugLabels(RenderViewId view) const;
+
     UiTextureHandle viewTexture(RenderViewId view) const;
     uint32_t viewWidth(RenderViewId view) const;
     uint32_t viewHeight(RenderViewId view) const;
@@ -905,6 +933,9 @@ class RenderRuntime {
         uint32_t width{0};
         uint32_t height{0};
         RenderViewStats stats;
+        DebugDraw debugDraw;
+        // Published by the Renderer (viewDebugLabels).
+        std::vector<ProjectedDebugLabel> debugLabels;
     };
 
     ViewSlot* findView(RenderViewId view);
@@ -919,4 +950,5 @@ class RenderRuntime {
     std::vector<ViewSlot> m_views;
     RenderViewId m_activeView;
     std::vector<UiImageSlot> m_uiImages;
+    DebugDraw m_debugDraw;
 };

@@ -29,6 +29,8 @@ RenderSettings composeViewSettings(const RenderSettings& frameSettings,
 RenderRuntime::RenderRuntime()
     : m_views(1)
     , m_activeView{.index = 0, .generation = 1} {
+    // Never reallocates, so viewDebugDraw pointers survive createView.
+    m_views.reserve(maximumViews);
     m_views.front().generation = 1;
     m_views.front().alive = true;
 }
@@ -170,6 +172,22 @@ uint32_t RenderRuntime::viewHeight(RenderViewId view) const {
 RenderViewStats RenderRuntime::viewStats(RenderViewId view) const {
     const ViewSlot* slot = findView(view);
     return slot != nullptr ? slot->stats : RenderViewStats{};
+}
+
+DebugDraw* RenderRuntime::viewDebugDraw(RenderViewId view) {
+    ViewSlot* slot = findView(view);
+    return slot != nullptr ? &slot->debugDraw : nullptr;
+}
+
+const DebugDraw* RenderRuntime::viewDebugDraw(RenderViewId view) const {
+    const ViewSlot* slot = findView(view);
+    return slot != nullptr ? &slot->debugDraw : nullptr;
+}
+
+std::span<const ProjectedDebugLabel> RenderRuntime::viewDebugLabels(RenderViewId view) const {
+    const ViewSlot* slot = findView(view);
+    return slot != nullptr ? std::span<const ProjectedDebugLabel>(slot->debugLabels)
+                           : std::span<const ProjectedDebugLabel>{};
 }
 
 RenderRuntime::ViewSlot* RenderRuntime::findView(RenderViewId view) {
