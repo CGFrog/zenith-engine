@@ -3,6 +3,7 @@
 #include "ModuleShadowCopy.hpp"
 #include "SharedLibrary.hpp"
 #include "SystemScheduler.hpp"
+#include "engine/diagnostics/Logger.hpp"
 
 #include <filesystem>
 #include <memory>
@@ -28,6 +29,9 @@ struct GameModuleOptions {
     // Where the shadow copy is written. Empty means
     // <temporary directory>/zenith_game_modules.
     std::filesystem::path shadowDirectory;
+    // Receives the module's lifecycle warnings and must outlive it; null
+    // writes them to stderr.
+    Logger* logger{nullptr};
 };
 
 // A game module loaded from a shadow copy, and what it registered: a component
@@ -93,4 +97,5 @@ class GameModule {
     std::vector<std::string> m_moduleComponentKeys;
     std::shared_ptr<const ComponentTypeRegistry> m_componentTypes;
     std::shared_ptr<const SystemRegistry> m_systems;
+    LogChannel m_log;
 };

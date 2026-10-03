@@ -309,6 +309,7 @@ add_library(zenith_engine SHARED
     src/engine/diagnostics/Benchmark.cpp
     src/engine/diagnostics/FrameCaptureConfig.cpp
     src/engine/diagnostics/ImageComparison.cpp
+    src/engine/diagnostics/Logger.cpp
     src/engine/diagnostics/RgbaImage.cpp
     src/engine/diagnostics/StbImageWrite.cpp
     src/engine/animation/AnimationSystem.cpp
@@ -513,6 +514,7 @@ add_library(zenith_editor_app STATIC
     src/editor/operators/LastOperatorPanel.cpp
     src/editor/operators/ObjectOperators.cpp
     src/editor/operators/Operator.cpp
+    src/editor/operators/OperatorHistory.cpp
     src/editor/operators/OperatorRegistry.cpp
     src/editor/operators/OperatorRunner.cpp
     src/editor/operators/OperatorSearch.cpp
@@ -522,6 +524,7 @@ add_library(zenith_editor_app STATIC
     src/editor/panels/EditorContext.cpp
     src/editor/panels/GraphicsPanel.cpp
     src/editor/panels/HierarchyPanel.cpp
+    src/editor/panels/InfoPanel.cpp
     src/editor/panels/InspectorPanel.cpp
     src/editor/panels/RenderStatisticsPanel.cpp
     src/editor/panels/ViewportPanel.cpp
@@ -1357,6 +1360,15 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_reflected_field_editor COMMAND zenith_reflected_field_editor_tests)
 
+    add_executable(zenith_logger_tests tests/engine/LoggerTests.cpp)
+    target_link_libraries(zenith_logger_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_logger_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_logger_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_logger COMMAND zenith_logger_tests)
+
     add_executable(zenith_child_process_tests tests/engine/ChildProcessTests.cpp)
     target_link_libraries(zenith_child_process_tests PRIVATE zenith_engine)
     target_compile_definitions(zenith_child_process_tests PRIVATE ZENITH_TEST_CMAKE="${CMAKE_COMMAND}")
@@ -1408,6 +1420,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_operator_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_operators COMMAND zenith_operator_tests)
+
+    add_executable(zenith_info_panel_tests tests/editor/InfoPanelTests.cpp)
+    target_link_libraries(zenith_info_panel_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_info_panel_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_info_panel_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_info_panel COMMAND zenith_info_panel_tests)
 
     # Game modules with editor extensions for zenith_game_module_host_tests and
     # the editor module smoke: one source built as two versions, so a test can

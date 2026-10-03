@@ -26,7 +26,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
-#include <iostream>
 #include <limits>
 #include <string>
 #include <tuple>
@@ -271,6 +270,7 @@ EnvironmentFrameRequest environmentRequest(const Scene& scene, const AssetManage
 
 bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat depthFormat, uint32_t frameCount,
                     VkExtent2D extent, VkImageView depthView) {
+    m_log = context.log();
     m_device = context.device();
     m_pipelineCache = context.pipelineCache();
     m_allocator = context.vmaAllocator();
@@ -846,13 +846,13 @@ bool MeshPass::createBindlessDescriptors(const VulkanContext& context, uint32_t 
         (forceUpdateAfterBind ||
          (ordinaryLimit < maximumBindlessTextures + reservedSampledImages && updateAfterBindLimit > ordinaryLimit));
     if (forceUpdateAfterBind) {
-        std::cerr << (updateAfterBind ? "Bindless materials use update-after-bind (ZENITH_FORCE_UPDATE_AFTER_BIND)\n"
-                                      : "ZENITH_FORCE_UPDATE_AFTER_BIND ignored: the device lacks sampled-image "
-                                        "update-after-bind\n");
+        context.log().info(updateAfterBind ? "Bindless materials use update-after-bind (ZENITH_FORCE_UPDATE_AFTER_BIND)"
+                                           : "ZENITH_FORCE_UPDATE_AFTER_BIND ignored: the device lacks sampled-image "
+                                             "update-after-bind");
     }
     const uint32_t deviceLimit = updateAfterBind ? updateAfterBindLimit : ordinaryLimit;
     if (deviceLimit <= reservedSampledImages + 3) {
-        std::cerr << "The device exposes too few sampled-image descriptors for bindless materials\n";
+        context.log().error("The device exposes too few sampled-image descriptors for bindless materials");
         return false;
     }
     const uint32_t capacity = std::min(maximumBindlessTextures, deviceLimit - reservedSampledImages);
@@ -1641,7 +1641,7 @@ const MeshPass::GpuMesh* MeshPass::ensureMesh(MeshHandle handle, const AssetMana
     std::string packError;
     const std::optional<PackedVertexStreams> streams = vertex_packing::packVertexStreams(mesh->vertices, packError);
     if (!streams) {
-        std::cerr << "Mesh vertices cannot be packed for upload: " << packError << '\n';
+        m_log.error("Mesh vertices cannot be packed for upload: " + packError);
         m_unpackableMeshes.insert(key);
         return nullptr;
     }
@@ -1653,8 +1653,8 @@ const MeshPass::GpuMesh* MeshPass::ensureMesh(MeshHandle handle, const AssetMana
                                       alignedBytes(mesh->indices.size() * sizeof(uint32_t)) +
                                       alignedBytes(streams->skin.size() * sizeof(PackedSkinInfluence));
     if (stagingBytes > UploadContext::maximumSlotBytes) {
-        std::cerr << "Mesh rejected: " << stagingBytes << " bytes exceed the " << UploadContext::maximumSlotBytes
-                  << "-byte upload limit\n";
+        m_log.error("Mesh rejected: " + std::to_string(stagingBytes) + " bytes exceed the " +
+                    std::to_string(UploadContext::maximumSlotBytes) + "-byte upload limit");
         m_unpackableMeshes.insert(key);
         return nullptr;
     }
@@ -1664,7 +1664,7 @@ const MeshPass::GpuMesh* MeshPass::ensureMesh(MeshHandle handle, const AssetMana
     if (!geometry) {
         // Retried every frame while the arena is full; logged once per episode.
         if (!m_geometryArenaFullReported) {
-            std::cerr << "Geometry arena could not place a mesh; its draws are deferred until space frees\n";
+            m_log.warning("Geometry arena could not place a mesh; its draws are deferred until space frees");
             m_geometryArenaFullReported = true;
         }
         m_deferredUploads.markDeferred(DeferredUploadKind::Mesh, key);
@@ -1741,7 +1741,7 @@ const MeshPass::GpuTexture* MeshPass::ensureTexture(TextureHandle handle, const 
     // Permanent failures are remembered so they are neither retried nor
     // logged every frame; only retryable failures count as deferred.
     if (const std::string reason = textureRejectionReason(*texture); !reason.empty()) {
-        std::cerr << "Texture rejected: " << reason << "; materials sample a fallback texture\n";
+        m_log.warning("Texture rejected: " + reason + "; materials sample a fallback texture");
         m_rejectedTextures.insert(key);
         return nullptr;
     }
@@ -1776,8 +1776,8 @@ bool MeshPass::assignTextureSlots(GpuTexture& texture) {
         }
         // Retried every frame while the table is full; logged once per episode.
         if (!m_textureTableFullReported) {
-            std::cerr << "Bindless texture table is full (" << m_textureTable->capacity()
-                      << " slots); textures are deferred until slots free\n";
+            m_log.warning("Bindless texture table is full (" + std::to_string(m_textureTable->capacity()) +
+                          " slots); textures are deferred until slots free");
             m_textureTableFullReported = true;
         }
         return false;
@@ -1826,7 +1826,7 @@ const MeshPass::GpuMaterial* MeshPass::ensureMaterial(MaterialHandle handle, con
     } else if (m_nextMaterialIndex < maximumMaterials) {
         index = m_nextMaterialIndex++;
     } else {
-        std::cerr << "Material count exceeds the renderer capacity (" << maximumMaterials << ")\n";
+        m_log.error("Material count exceeds the renderer capacity (" + std::to_string(maximumMaterials) + ")");
         return nullptr;
     }
     // Upload referenced textures now so frame recording only resolves slots.
@@ -2736,7 +2736,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     const double packetBuildMilliseconds =
         std::chrono::duration<double, std::milli>(packetBuildEnd - packetBuildStart).count();
     if (m_renderItems.size() > maximumObjectsPerFrame) {
-        std::cerr << "Renderable count exceeds the per-frame render capacity\n";
+        m_log.error("Renderable count exceeds the per-frame render capacity");
         return false;
     }
     // Opaque and masked surfaces go through GPU culling; blended surfaces and
@@ -2760,7 +2760,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
     });
     const FrameTaskResult taskResult = frameTasks.execute(taskGraph);
     if (!taskResult) {
-        std::cerr << "Frame task graph failed: " << taskResult.error << '\n';
+        m_log.error("Frame task graph failed: " + taskResult.error);
         return false;
     }
     m_gpuScene.retireDeltas();
@@ -2862,7 +2862,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, VkImage colorImage, VkImage
             continue;
         }
         if (skinMatrixCount + item.jointPalette.size() > maximumSkinMatricesPerFrame) {
-            std::cerr << "Skin palettes exceed the per-frame render capacity\n";
+            m_log.error("Skin palettes exceed the per-frame render capacity");
             return false;
         }
         item.skinPaletteOffset = skinMatrixCount;
@@ -3211,12 +3211,12 @@ bool MeshPass::prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lod
         }
     }
     if (m_gpuDrivenKeys.size() > maximumGpuDrivenInstances) {
-        std::cerr << "GPU-driven LOD instances exceed the renderer capacity\n";
+        m_log.error("GPU-driven LOD instances exceed the renderer capacity");
         return false;
     }
     buildIndirectDrawPlan(m_gpuDrivenKeys, m_drawPlan);
     if (m_drawPlan.groups.size() > maximumGpuDrawGroups) {
-        std::cerr << "GPU-driven draw groups exceed the renderer capacity\n";
+        m_log.error("GPU-driven draw groups exceed the renderer capacity");
         return false;
     }
     m_gpuDrivenBatches.clear();
@@ -3637,7 +3637,7 @@ bool MeshPass::collectCpuSubmittedItems(bool gpuDrivenActive, const glm::vec3& c
                          return glm::dot(firstOffset, firstOffset) > glm::dot(secondOffset, secondOffset);
                      });
     if (m_visibleItems.size() > maximumObjectsPerFrame) {
-        std::cerr << "Visible object count exceeds the per-frame render capacity\n";
+        m_log.error("Visible object count exceeds the per-frame render capacity");
         return false;
     }
     return true;
@@ -3780,7 +3780,7 @@ void MeshPass::recordDeferredUploads(const RenderSettings& settings, RenderStats
     stats.deferredMeshUploads = deferred.deferredMeshes;
     stats.deferredTextureUploads = deferred.deferredTextures;
     for (const DeferredUploadWarning& warning : deferred.overdue) {
-        std::cerr << describeDeferredUpload(warning) << '\n';
+        m_log.warning(describeDeferredUpload(warning));
     }
 }
 

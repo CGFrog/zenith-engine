@@ -90,6 +90,8 @@ EditorSettingsResult EditorSettings::load() {
             destination = &loaded.graphics;
         } else if (key == "panel.build") {
             destination = &loaded.build;
+        } else if (key == "panel.info") {
+            destination = &loaded.info;
         } else {
             continue;
         }
@@ -136,6 +138,7 @@ EditorSettingsResult EditorSettings::save() const {
            << "panel.asset_browser=" << (m_panels.assetBrowser ? "true" : "false") << '\n'
            << "panel.graphics=" << (m_panels.graphics ? "true" : "false") << '\n'
            << "panel.build=" << (m_panels.build ? "true" : "false") << '\n'
+           << "panel.info=" << (m_panels.info ? "true" : "false") << '\n'
            << "build.command=" << m_tools.buildCommand << '\n'
            << "build.directory=" << m_tools.buildDirectory << '\n'
            << "ide.command=" << m_tools.ideCommand << '\n';

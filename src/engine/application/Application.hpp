@@ -2,6 +2,7 @@
 
 #include "../assets/Assets.hpp"
 #include "../audio/AudioSystem.hpp"
+#include "../diagnostics/Logger.hpp"
 #include "../graphics/Rendering.hpp"
 #include "../input/InputManager.hpp"
 #include "../physics/PhysicsWorld.hpp"
@@ -44,6 +45,8 @@ struct ApplicationContext {
     ApplicationControl& control;
     RenderRuntime& rendering;
     GameUiContext& gameUi;
+    // The engine's log; scenes and tools may log through it and read it.
+    Logger& logger;
 };
 
 class ApplicationScene {
@@ -90,7 +93,7 @@ class ApplicationSession {
     ApplicationSession(Application& application, Scene& scene, AssetManager& assets, PhysicsWorld& physics,
                        AudioSystem& audio, RenderRuntime& rendering);
     ApplicationSession(Application& application, Scene& scene, AssetManager& assets, PhysicsWorld& physics,
-                       AudioSystem& audio, RenderRuntime& rendering, GameUiContext& gameUi);
+                       AudioSystem& audio, RenderRuntime& rendering, GameUiContext& gameUi, Logger& logger);
     ~ApplicationSession();
 
     ApplicationSession(const ApplicationSession&) = delete;
@@ -116,6 +119,7 @@ class ApplicationSession {
     ApplicationControl m_control;
     RenderRuntime m_fallbackRendering;
     GameUiContext m_fallbackGameUi;
+    Logger m_fallbackLogger;
     ApplicationContext m_context;
     std::unique_ptr<ApplicationScene> m_activeScene;
     AssetLeaseSet m_sceneAssets;

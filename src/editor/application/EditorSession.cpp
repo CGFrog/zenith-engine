@@ -16,7 +16,6 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <iostream>
 #include <limits>
 #include <utility>
 
@@ -73,7 +72,8 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
                 {&m_renderStatistics, &EditorPanelVisibility::renderStatistics},
                 {&m_assetBrowser, &EditorPanelVisibility::assetBrowser},
                 {&m_graphics, &EditorPanelVisibility::graphics},
-                {&m_buildPanel, &EditorPanelVisibility::build}}}
+                {&m_buildPanel, &EditorPanelVisibility::build},
+                {&m_infoPanel, &EditorPanelVisibility::info}}}
     , m_sceneRoot(std::move(sceneRoot))
     , m_fontPath(std::move(fontPath))
     , m_initialSceneLoader(std::move(initialSceneLoader))
@@ -423,6 +423,10 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     } else if (m_smokeFrame == 5) {
         context.rendering.requestViewportSize(800, 450);
         m_smokeStreamInstance = m_smokeLayers->requestLoad(m_smokeScenePath, 100);
+    } else if (m_smokeFrame == 6 && m_infoPanel.log().count(InfoSource::Engine) == 0) {
+        // The renderer logs at least its validation-layer state at startup.
+        m_diagnostics.reportError("The Info panel received no engine log entries");
+        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
     }
     if (m_smokeStreamInstance && !m_smokeStreamCompleted) {
         const auto state = m_smokeLayers->state(*m_smokeStreamInstance);
@@ -466,7 +470,7 @@ void EditorSession::updateSmokeModuleReload(ApplicationContext& context) {
         return;
     }
     const std::string error = "Game module smoke reload failed: " + m_moduleHost.error();
-    std::cerr << error << '\n';
+    context.logger.log(LogLevel::Error, "editor", error);
     m_diagnostics.reportError(error);
     context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
 }
@@ -554,6 +558,7 @@ void EditorSession::initializeDefaultLayout(uint32_t dockspaceId) {
     ImGui::DockBuilderDockWindow(m_graphics.title(), graphics);
     ImGui::DockBuilderDockWindow(m_diagnosticsPanel.title(), bottom);
     ImGui::DockBuilderDockWindow(m_buildPanel.title(), bottom);
+    ImGui::DockBuilderDockWindow(m_infoPanel.title(), bottom);
     ImGui::DockBuilderDockWindow(m_renderStatistics.title(), bottom);
     ImGui::DockBuilderFinish(dockspaceId);
 

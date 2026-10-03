@@ -9,7 +9,6 @@
 
 #include <array>
 #include <cstring>
-#include <iostream>
 
 namespace {
 // Mirrors ColorGradeSettings in shaders/color_grade.frag.
@@ -61,6 +60,7 @@ std::filesystem::path resolveLutPath(const std::string& path, const std::filesys
 } // namespace
 
 bool ColorGradePass::init(const VulkanContext& context, VkFormat outputFormat, uint32_t frameCount, VkExtent2D extent) {
+    m_log = context.log();
     m_device = context.device();
     m_allocator = context.vmaAllocator();
     m_pipelineCache = context.pipelineCache();
@@ -336,7 +336,7 @@ bool ColorGradePass::updateLut(VkCommandBuffer commandBuffer, uint64_t frameSeri
     ColorLut lut;
     if (const ColorLutResult loaded = loadColorLut(resolveLutPath(m_requestedPath, assetRoot), lut); !loaded) {
         // Reported once per requested path; the grade runs without the LUT.
-        std::cerr << "Colour grading LUT unavailable, skipping it: " << loaded.error << '\n';
+        m_log.warning("Colour grading LUT unavailable, skipping it: " + loaded.error);
         return true;
     }
     if (!uploadLut(commandBuffer, frameSerial, lut)) {

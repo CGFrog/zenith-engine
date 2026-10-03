@@ -4,7 +4,6 @@
 #include "ModuleRegistrar.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
-#include <iostream>
 #include <system_error>
 #include <utility>
 
@@ -29,8 +28,8 @@ std::filesystem::path defaultShadowDirectory() {
 GameModule::~GameModule() {
     if (registriesShared()) {
         // Unloading now would leave the other owners holding unmapped code.
-        std::cerr << "Game module '" << m_name
-                  << "' is still referenced at unload; its library stays loaded until the process exits\n";
+        m_log.warning("Game module '" + m_name +
+                      "' is still referenced at unload; its library stays loaded until the process exits");
         m_library.leak();
         m_shadowCopy.keep();
     }
@@ -49,6 +48,7 @@ GameModuleResult GameModule::load(const std::filesystem::path& path, const GameM
 
     std::unique_ptr<GameModule> module(new GameModule());
     module->m_sourcePath = sourcePath;
+    module->m_log = LogChannel(options.logger, "module");
     const std::filesystem::path shadowDirectory =
         options.shadowDirectory.empty() ? defaultShadowDirectory() : options.shadowDirectory;
     if (ModuleShadowCopyResult result = ModuleShadowCopy::create(

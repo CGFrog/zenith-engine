@@ -224,7 +224,7 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
 }
 
 bool Renderer::initContext(const Window& window, const GraphicsValidationOptions& validation) {
-    if (!m_context.initInstance(validation)) {
+    if (!m_context.initInstance(validation, LogChannel(m_options.logger, "graphics"))) {
         return false;
     }
     if (!m_surface.init(m_context.instance(), window.handle())) {
@@ -395,7 +395,7 @@ Renderer::FrameStatus Renderer::prepareSurface(const Window& window) {
     int width = 0;
     int height = 0;
     if (!SDL_GetWindowSizeInPixels(window.handle(), &width, &height)) {
-        std::cerr << "Cannot query drawable size: " << SDL_GetError() << '\n';
+        m_context.log().error(std::string("Cannot query drawable size: ") + SDL_GetError());
         return FrameStatus::Failed;
     }
     const bool minimized = (SDL_GetWindowFlags(window.handle()) & SDL_WINDOW_MINIMIZED) != 0;
@@ -525,8 +525,8 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
 }
 
 bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport, const MeshPassFramePlan& meshPassPlan) {
-    const RenderGraphShape shape = renderGraphShape(extent, useViewport, m_rendering->settings(),
-                                                    m_rendering->capabilities(), meshPassPlan);
+    const RenderGraphShape shape =
+        renderGraphShape(extent, useViewport, m_rendering->settings(), m_rendering->capabilities(), meshPassPlan);
     if (shape != m_renderGraphShape) {
         RenderGraph graph;
         const uint64_t pixels = static_cast<uint64_t>(extent.width) * extent.height;
@@ -1049,14 +1049,14 @@ bool Renderer::updateRenderGraphPlan(VkExtent2D extent, bool useViewport, const 
         }
         const RenderGraphCompileResult compiled = graph.compile();
         if (!compiled) {
-            std::cerr << "Could not compile render graph: " << compiled.error << '\n';
+            m_context.log().error("Could not compile render graph: " + compiled.error);
             return false;
         }
 #ifndef NDEBUG
         const RenderGraphCompileResult conservative = graph.compile(true);
         if (!conservative || conservative.graph.executionOrder != compiled.graph.executionOrder ||
             conservative.graph.statistics.barrierCount < compiled.graph.statistics.barrierCount) {
-            std::cerr << "Render graph conservative synchronization validation failed\n";
+            m_context.log().error("Render graph conservative synchronization validation failed");
             return false;
         }
 #endif

@@ -9,13 +9,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <iostream>
 #include <vector>
 
 namespace {
 void reportVulkanError(VkResult result) {
     if (result != VK_SUCCESS) {
-        std::cerr << "Dear ImGui Vulkan error: " << result << '\n';
+        writeLogToStderr("Dear ImGui Vulkan error: " + std::to_string(static_cast<int>(result)));
     }
 }
 
@@ -97,7 +96,7 @@ bool UiPass::init(const VulkanContext& context, const Window& window, VkFormat c
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_DockingEnable;
     ImGui::StyleColorsDark();
     if (!ImGui_ImplSDL3_InitForVulkan(window.handle())) {
-        std::cerr << "Could not initialize Dear ImGui's SDL backend\n";
+        context.log().error("Could not initialize Dear ImGui's SDL backend");
         ImGui::DestroyContext();
         vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
         m_descriptorPool = VK_NULL_HANDLE;
@@ -122,7 +121,7 @@ bool UiPass::init(const VulkanContext& context, const Window& window, VkFormat c
     init.PipelineRenderingCreateInfo = rendering;
     init.CheckVkResultFn = reportVulkanError;
     if (!ImGui_ImplVulkan_Init(&init)) {
-        std::cerr << "Could not initialize Dear ImGui's Vulkan backend\n";
+        context.log().error("Could not initialize Dear ImGui's Vulkan backend");
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
         vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);

@@ -23,6 +23,7 @@
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/GraphicsPanel.hpp"
 #include "editor/panels/HierarchyPanel.hpp"
+#include "editor/panels/InfoPanel.hpp"
 #include "editor/panels/InspectorPanel.hpp"
 #include "editor/panels/RenderStatisticsPanel.hpp"
 #include "editor/panels/ViewportPanel.hpp"
@@ -207,8 +208,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     AssetBrowserPanel m_assetBrowser;
     GraphicsPanel m_graphics;
     BuildPanel m_buildPanel{m_settings.tools()};
+    InfoPanel m_infoPanel{m_operatorRunner.history()};
     // Drawing order, which is also the View menu order.
-    std::array<PanelSlot, 8> m_panels;
+    std::array<PanelSlot, 9> m_panels;
 
     std::filesystem::path m_sceneRoot;
     std::filesystem::path m_fontPath;

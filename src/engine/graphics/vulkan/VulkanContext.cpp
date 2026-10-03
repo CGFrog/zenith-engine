@@ -164,11 +164,14 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VulkanContext::debugCallback(VkDebugUtilsMessageS
         validation.warnings.fetch_add(1, std::memory_order_relaxed);
     }
     const char* messageId = message->pMessageIdName != nullptr ? message->pMessageIdName : "unnamed";
-    std::cerr << "[Vulkan "
-              << (loader        ? "loader "
-                  : performance ? "performance "
-                                : "")
-              << severityName(severity) << "] " << messageId << ": " << message->pMessage << '\n';
+    const std::string text = std::string("[Vulkan ") +
+                             (loader        ? "loader "
+                              : performance ? "performance "
+                                            : "") +
+                             severityName(severity) + "] " + messageId + ": " + message->pMessage;
+    const LogLevel level =
+        !loader && severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT ? LogLevel::Error : LogLevel::Warning;
+    validation.log.log(level, text);
     return VK_FALSE;
 }
 
@@ -182,10 +185,12 @@ GraphicsValidationReport VulkanContext::validationReport() const {
             .loaderMessageCount = m_validationCounters.loaderMessages.load(std::memory_order_relaxed)};
 }
 
-bool VulkanContext::initInstance(const GraphicsValidationOptions& validation) {
+bool VulkanContext::initInstance(const GraphicsValidationOptions& validation, LogChannel log) {
     // Record strict mode before anything can fail so a missing loader or layer
     // still reports as a skipped strict run.
     m_validationStrict = validation.strict;
+    m_validationCounters.log = std::move(log);
+    const LogChannel& logChannel = m_validationCounters.log;
     if (!checkVulkan(volkInitialize(), "volkInitialize")) {
         return false;
     }
@@ -197,12 +202,12 @@ bool VulkanContext::initInstance(const GraphicsValidationOptions& validation) {
     m_validationLayerActive = validationLayerAvailable();
     if (m_validationLayerActive) {
         layers.push_back(validationLayer);
-        std::cerr << "Vulkan validation enabled.\n";
+        logChannel.info("Vulkan validation enabled.");
     } else if (validation.strict) {
-        std::cerr << "Strict validation requires " << validationLayer << ", which is not installed.\n";
+        logChannel.error(std::string("Strict validation requires ") + validationLayer + ", which is not installed.");
         return false;
     } else {
-        std::cerr << "Validation layer unavailable; continuing without validation.\n";
+        logChannel.info("Validation layer unavailable; continuing without validation.");
     }
     VkDebugUtilsMessengerCreateInfoEXT debugInfo{.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
                                                  .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
@@ -223,7 +228,7 @@ bool VulkanContext::initInstance(const GraphicsValidationOptions& validation) {
     m_synchronizationValidation = false;
     if (validation.strict) {
         if (!layerProvidesExtension(validationLayer, VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME)) {
-            std::cerr << "Strict validation requires " << VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME << ".\n";
+            logChannel.error("Strict validation requires " VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME ".");
             return false;
         }
         extensions.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
@@ -290,9 +295,9 @@ bool VulkanContext::initPhysicalDevice(const Surface& surface) {
         }
     }
     if (!m_pDevice) {
-        std::cerr << "No suitable Vulkan 1.4 graphics/presentation device with dynamic rendering, "
-                     "synchronization2, push descriptor, independent blend, demote-to-helper, and bindless "
-                     "texture support.\n";
+        log().error("No suitable Vulkan 1.4 graphics/presentation device with dynamic rendering, "
+                    "synchronization2, push descriptor, independent blend, demote-to-helper, and bindless "
+                    "texture support.");
         return false;
     }
     return true;
@@ -349,7 +354,7 @@ bool VulkanContext::initDevice() {
     const bool blockCompressionDisabled = SDL_getenv("ZENITH_DISABLE_BLOCK_COMPRESSION") != nullptr;
     m_blockCompressionSupported = supported.features.textureCompressionBC == VK_TRUE && !blockCompressionDisabled;
     if (blockCompressionDisabled) {
-        std::cerr << "BC texture sampling disabled by ZENITH_DISABLE_BLOCK_COMPRESSION; textures use RGBA8\n";
+        log().info("BC texture sampling disabled by ZENITH_DISABLE_BLOCK_COMPRESSION; textures use RGBA8");
     }
     // Optional: the single-pass depth-pyramid build indexes its level array.
     m_storageImageArrayDynamicIndexingSupported = supported.features.shaderStorageImageArrayDynamicIndexing == VK_TRUE;
@@ -419,7 +424,7 @@ void VulkanContext::closeDevice() {
                 cacheBytes.resize(cacheSize);
                 const PlatformResult saved = atomicWriteUserData(m_pipelineCachePath, cacheBytes);
                 if (!saved) {
-                    std::cerr << "Cannot persist pipeline cache: " << saved.error << '\n';
+                    log().warning("Cannot persist pipeline cache: " + saved.error);
                 }
             }
         }

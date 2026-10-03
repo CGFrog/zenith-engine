@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <array>
-#include <iostream>
 
 namespace {
 constexpr uint32_t workgroupSize = 8;
@@ -107,7 +106,7 @@ bool AmbientOcclusionPass::init(const VulkanContext& context, uint32_t frameCoun
     // keep a valid binding; occlusion is then always unoccluded.
     m_computeSupported = supportsStorage(context, occlusionFormat) && supportsStorage(context, rawFormat);
     if (!m_computeSupported) {
-        std::cerr << "Ambient occlusion disabled: R8_UNORM or R16G16_SFLOAT storage images are unsupported\n";
+        context.log().info("Ambient occlusion disabled: R8_UNORM or R16G16_SFLOAT storage images are unsupported");
     }
     m_frames.resize(frameCount);
     if (!createLayouts() || (m_computeSupported && !createPipelines(context.pipelineCache())) ||

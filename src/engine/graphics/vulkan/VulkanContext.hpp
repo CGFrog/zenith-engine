@@ -1,4 +1,5 @@
 #pragma once
+#include "../../diagnostics/Logger.hpp"
 #include "../GraphicsValidation.hpp"
 #include "../surface/Surface.hpp"
 #include <atomic>
@@ -14,7 +15,9 @@ class VulkanContext {
 
     // Strict validation requires the validation layer and enables
     // synchronization validation; initInstance fails when either is missing.
-    bool initInstance(const GraphicsValidationOptions& validation = {});
+    // log receives context and validation-layer messages (from any thread)
+    // and is what passes initialized with this context log through.
+    bool initInstance(const GraphicsValidationOptions& validation = {}, LogChannel log = {});
     bool initPhysicalDevice(const Surface& surface);
     bool initGfxQueue(const Surface& surface);
     bool initDevice();
@@ -91,6 +94,10 @@ class VulkanContext {
     // valid after closeInstance so callers can inspect teardown messages.
     GraphicsValidationReport validationReport() const;
 
+    const LogChannel& log() const {
+        return m_validationCounters.log;
+    }
+
   private:
     // Written by the debug messenger callback through pUserData; callbacks may
     // arrive on any thread that calls into Vulkan.
@@ -99,6 +106,8 @@ class VulkanContext {
         std::atomic<uint32_t> warnings{0};
         std::atomic<uint32_t> performanceWarnings{0};
         std::atomic<uint32_t> loaderMessages{0};
+        // Set by initInstance before the messenger exists; read-only after.
+        LogChannel log;
     };
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,

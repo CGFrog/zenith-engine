@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <compare>
 #include <cstdint>
 #include <filesystem>
@@ -31,6 +32,10 @@ struct EditorDiagnostic {
     std::string action;
     // Set when the diagnostic points into a file the user can open.
     std::optional<EditorSourceLocation> location;
+    // When the entry was added: wall-clock time for display, steady time for
+    // ordering against other logs. Set by EditorDiagnostics.
+    std::chrono::system_clock::time_point wallTime;
+    std::chrono::steady_clock::time_point steadyTime;
 };
 
 class EditorDiagnostics {
@@ -48,8 +53,14 @@ class EditorDiagnostics {
     void clear();
     const std::vector<EditorDiagnostic>& entries() const;
 
+    // Changes whenever entries() changes, so a reader can skip re-reading.
+    uint64_t revision() const {
+        return m_revision;
+    }
+
   private:
     uint64_t m_nextId{1};
+    uint64_t m_revision{0};
     std::vector<EditorDiagnostic> m_entries;
     bool m_unacknowledgedError{false};
 };

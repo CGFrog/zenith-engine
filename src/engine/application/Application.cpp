@@ -49,18 +49,18 @@ void ApplicationScene::requestQuit(ApplicationContext& context) {
 ApplicationSession::ApplicationSession(Application& application, Scene& scene, AssetManager& assets,
                                        PhysicsWorld& physics, AudioSystem& audio)
     : m_application(application)
-    , m_context{scene, assets, physics, audio, m_control, m_fallbackRendering, m_fallbackGameUi} {}
+    , m_context{scene, assets, physics, audio, m_control, m_fallbackRendering, m_fallbackGameUi, m_fallbackLogger} {}
 
 ApplicationSession::ApplicationSession(Application& application, Scene& scene, AssetManager& assets,
                                        PhysicsWorld& physics, AudioSystem& audio, RenderRuntime& rendering)
     : m_application(application)
-    , m_context{scene, assets, physics, audio, m_control, rendering, m_fallbackGameUi} {}
+    , m_context{scene, assets, physics, audio, m_control, rendering, m_fallbackGameUi, m_fallbackLogger} {}
 
 ApplicationSession::ApplicationSession(Application& application, Scene& scene, AssetManager& assets,
                                        PhysicsWorld& physics, AudioSystem& audio, RenderRuntime& rendering,
-                                       GameUiContext& gameUi)
+                                       GameUiContext& gameUi, Logger& logger)
     : m_application(application)
-    , m_context{scene, assets, physics, audio, m_control, rendering, gameUi} {}
+    , m_context{scene, assets, physics, audio, m_control, rendering, gameUi, logger} {}
 
 ApplicationSession::~ApplicationSession() {
     shutdown();
@@ -187,7 +187,7 @@ SceneResult ApplicationSession::transition(SceneKey scene) {
     Scene stagedScene;
     ApplicationControl stagedControl;
     ApplicationContext stagedContext{stagedScene,   m_context.assets,    m_context.physics, m_context.audio,
-                                     stagedControl, m_context.rendering, m_context.gameUi};
+                                     stagedControl, m_context.rendering, m_context.gameUi,  m_context.logger};
     if (SceneResult result = candidate->load(stagedContext); !result) {
         candidate->unload(stagedContext);
         return result;

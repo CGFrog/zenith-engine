@@ -29,7 +29,7 @@ bool Swapchain::initSwapchain(const Window& window, const Surface& surface, cons
     VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     if (options.transferSource) {
         if ((caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) == 0) {
-            std::cerr << "The presentation surface does not support copying swapchain images (frame capture)\n";
+            context.log().error("The presentation surface does not support copying swapchain images (frame capture)");
             return false;
         }
         usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;

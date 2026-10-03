@@ -11,7 +11,6 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
-#include <iostream>
 #include <limits>
 
 namespace {
@@ -144,6 +143,7 @@ VkDescriptorSetLayoutBinding layoutBinding(uint32_t binding, VkDescriptorType ty
 
 bool EnvironmentPass::init(const VulkanContext& context, VkDescriptorSetLayout cameraLayout, VkFormat colorFormat,
                            VkFormat motionFormat, VkFormat depthFormat, uint32_t frameCount) {
+    m_log = context.log();
     m_device = context.device();
     m_allocator = context.vmaAllocator();
     m_frameCount = frameCount;
@@ -308,7 +308,7 @@ std::optional<EnvironmentFrameState> EnvironmentPass::prepare(VkCommandBuffer co
             return std::nullopt;
         }
         m_probeCacheUnavailable = true;
-        std::cerr << "The reflection probe cache could not be allocated; per-pixel probes are disabled\n";
+        m_log.warning("The reflection probe cache could not be allocated; per-pixel probes are disabled");
         if (!ensureProbeCache(commandBuffer, request.quality, 1u)) {
             return std::nullopt;
         }
@@ -386,8 +386,8 @@ const EnvironmentPass::Environment* EnvironmentPass::ensureEnvironment(VkCommand
         m_releaseQueue.defer(m_frameSerial, [this, environment] { destroyEnvironment(environment); });
         // Remember the failure so a source that cannot fit is not rebuilt every frame.
         m_failedEnvironments.insert(key);
-        std::cerr << "Image-based lighting could not prepare an environment "
-                  << (usesMap ? "map; using the analytic sky\n" : "sky\n");
+        m_log.warning(std::string("Image-based lighting could not prepare an environment ") +
+                      (usesMap ? "map; using the analytic sky" : "sky"));
         return nullptr;
     }
     return &m_environments.emplace(key, environment).first->second;

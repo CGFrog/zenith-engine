@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
-#include <iostream>
 
 namespace {
 // Bound while local shadows are off or unused, so the descriptor stays valid
@@ -44,6 +43,7 @@ void transitionAtlas(VkCommandBuffer commandBuffer, VkImage image, VkImageLayout
 
 bool LocalShadowPass::init(const VulkanContext& context, uint32_t frameCount, VkFormat depthFormat,
                            VkDescriptorSetLayout cameraLayout, VkDescriptorSetLayout materialLayout) {
+    m_log = context.log();
     m_device = context.device();
     m_allocator = context.vmaAllocator();
     m_depthFormat = depthFormat;
@@ -192,7 +192,7 @@ std::vector<int32_t> LocalShadowPass::record(VkCommandBuffer commandBuffer, uint
             releases.defer(completionSerial, [this, retired] { destroyAtlas(retired); });
         } else {
             // createAtlas left the previous atlas bound; the next frame retries.
-            std::cerr << "Local shadows keep the previous atlas size\n";
+            m_log.warning("Local shadows keep the previous atlas size");
         }
     }
     if (m_frames[frameIndex].boundAtlas != m_atlas.view) {
