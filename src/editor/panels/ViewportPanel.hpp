@@ -12,6 +12,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // The renderer's shading mode for a viewport shading choice.
@@ -26,6 +27,12 @@ ViewShading toViewShading(ViewportShading shading);
 std::optional<RenderSettings> viewportViewSettings(const RenderSettings& projectSettings,
                                                    const RenderCapabilities& capabilities, ViewportShading shading,
                                                    EditorMode mode);
+
+// Whether a viewport records its scene gizmos (ViewportOverlays::scene): always
+// in Edit mode; in Play mode only when the user enabled sceneInPlay, and never
+// while the viewport looks through a scene camera, so the game's own image
+// stays untouched.
+bool viewportDrawsSceneGizmos(EditorMode mode, bool lookingThroughSceneCamera, const ViewportOverlays& overlays);
 
 // One 3D viewport area: shows its own render view, drives its own editor
 // camera, and hosts Blender-style chrome over the image (a header with View,
@@ -53,6 +60,9 @@ class ViewportPanel final : public EditorPanel {
     void update(EditorContext& context, const InputState& input, float deltaSeconds) override;
     void draw(EditorContext& context) override;
     void hidden(EditorContext& context) override;
+    // The overlays (viewportAreaState).
+    std::string areaState() const override;
+    void restoreAreaState(std::string_view state) override;
 
     ViewportId id() const;
     // Empty until the viewport is first drawn, or while the renderer has no
@@ -86,9 +96,13 @@ class ViewportPanel final : public EditorPanel {
     void suppressCameraUntilRightRelease();
 
   private:
-    // Pushes the camera, shading, grid, and outline to the render view.
+    // Pushes the camera, shading, grid, outline, and scene gizmos to the
+    // render view.
     void syncRenderView(EditorContext& context);
     void updateSelectionOutline(EditorContext& context);
+    void recordSceneGizmos(EditorContext& context);
+    // The name labels the render view projected in its latest frame.
+    void drawSceneLabels(EditorContext& context) const;
     void drawViewImage(UiTextureHandle texture, const char* placeholder) const;
     // Each returns whether its region is under the mouse.
     bool drawChrome(EditorContext& context);

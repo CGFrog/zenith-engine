@@ -18,6 +18,7 @@ depend on this subtree.
 | `panels/` | One class per dockable window, drawn from an `EditorContext`. |
 | `project/` | Project tooling: the shared asset service (`ProjectAssets`: catalog, watchers, change dispatch, favourites), asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, and IDE launching. |
 | `settings/` | Persistent editor preferences, including the component inspector's section order and collapse state (legacy panel flags are only read, for migration). |
+| `viewport/` | Scene overlays for 3D viewports (`SceneGizmoDraw`: light, camera, collider, volume, and selection gizmos and name labels recorded into a view's debug list), free of ImGui so they also run in engine-hosted tests. |
 | `theme/` | The "Pixel Aero Night" look: palette, art-pixel metrics, pixel fonts, the procedural wallpaper and frosted glass, window chrome, themed widget wrappers, and pixel-art icons. |
 
 ## Local rules

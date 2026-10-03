@@ -6,8 +6,10 @@
 #include <imgui.h>
 
 #include <glm/trigonometric.hpp>
+#include <nlohmann/json.hpp>
 
 #include <array>
+#include <string>
 #include <utility>
 
 namespace {
@@ -36,6 +38,159 @@ constexpr const char* noViewportError = "No viewport is open";
 
 std::function<bool(const OperatorContext&)> hasTarget(const ViewportChromeTarget& target) {
     return [target](const OperatorContext&) { return target() != nullptr; };
+}
+
+struct OverlayName {
+    ViewportOverlay overlay;
+    // The operator option and area-state key.
+    const char* key;
+    const char* label;
+};
+
+constexpr std::array<OverlayName, 13> overlayNames{{
+    {ViewportOverlay::Grid, "grid", "Grid"},
+    {ViewportOverlay::SelectionOutline, "selection_outline", "Selection Outline"},
+    {ViewportOverlay::ActiveName, "active_name", "Active Object Name"},
+    {ViewportOverlay::TransformGizmo, "transform_gizmo", "Transform Gizmo"},
+    {ViewportOverlay::Lights, "lights", "Lights"},
+    {ViewportOverlay::Cameras, "cameras", "Cameras"},
+    {ViewportOverlay::Colliders, "colliders", "Colliders"},
+    {ViewportOverlay::ReflectionProbes, "reflection_probes", "Reflection Probes"},
+    {ViewportOverlay::Decals, "decals", "Decals"},
+    {ViewportOverlay::IrradianceVolumes, "irradiance_volumes", "Irradiance Volumes"},
+    {ViewportOverlay::Names, "names", "Names"},
+    {ViewportOverlay::SelectionBounds, "selection_bounds", "Selection Bounds"},
+    {ViewportOverlay::SceneInPlay, "scene_in_play", "Scene Overlays in Play"},
+}};
+
+struct ScopeName {
+    OverlayScope scope;
+    const char* key;
+    const char* label;
+};
+
+constexpr std::array<ScopeName, 3> scopeNames{{
+    {OverlayScope::Off, "off", "Off"},
+    {OverlayScope::Selected, "selected", "Selected Only"},
+    {OverlayScope::All, "all", "All"},
+}};
+
+struct OverlayToggleProperties {
+    ViewportOverlay overlay{ViewportOverlay::Grid};
+};
+
+struct OverlayScopeProperties {
+    ViewportOverlay overlay{ViewportOverlay::Lights};
+    OverlayScope scope{OverlayScope::All};
+};
+
+std::vector<EnumOption> overlayOptions() {
+    std::vector<EnumOption> options;
+    for (const OverlayName& name : overlayNames) {
+        options.push_back({name.key, name.label, static_cast<int64_t>(name.overlay)});
+    }
+    return options;
+}
+
+std::vector<EnumOption> scopeOptions() {
+    std::vector<EnumOption> options;
+    for (const ScopeName& name : scopeNames) {
+        options.push_back({name.key, name.label, static_cast<int64_t>(name.scope)});
+    }
+    return options;
+}
+
+const char* overlayLabel(ViewportOverlay overlay) {
+    for (const OverlayName& name : overlayNames) {
+        if (name.overlay == overlay) {
+            return name.label;
+        }
+    }
+    return "Overlay";
+}
+
+// Flips an on/off overlay, or switches a scoped one between Off and the scope
+// it has by default.
+void toggleOverlay(ViewportOverlays& overlays, ViewportOverlay overlay) {
+    if (bool* flag = viewportOverlayFlag(overlays, overlay)) {
+        *flag = !*flag;
+        return;
+    }
+    OverlayScope* scope = viewportOverlayScope(overlays, overlay);
+    if (scope == nullptr) {
+        return;
+    }
+    if (*scope != OverlayScope::Off) {
+        *scope = OverlayScope::Off;
+        return;
+    }
+    ViewportOverlays defaults;
+    const OverlayScope* defaultScope = viewportOverlayScope(defaults, overlay);
+    *scope = defaultScope != nullptr && *defaultScope != OverlayScope::Off ? *defaultScope : OverlayScope::All;
+}
+
+Operator overlayToggleOperator(ViewportChromeTarget target) {
+    return {.id = "view3d.overlay_toggle",
+            .label = "Toggle Overlay",
+            .description = "Show or hide one of the viewport's overlays",
+            .properties = OperatorProperties::make(OverlayToggleProperties{},
+                                                   std::move(Fields<OverlayToggleProperties>()
+                                                                 .add("overlay", &OverlayToggleProperties::overlay)
+                                                                 .options(overlayOptions()))),
+            .poll = hasTarget(target),
+            .execute = [target](OperatorContext&, OperatorProperties& properties) {
+                ViewportChromeState* state = target();
+                if (state == nullptr) {
+                    return OperatorResult::failed(noViewportError);
+                }
+                const OverlayToggleProperties* values = properties.get<OverlayToggleProperties>();
+                if (values == nullptr) {
+                    return OperatorResult::failed("view3d.overlay_toggle needs an overlay");
+                }
+                toggleOverlay(state->overlays, values->overlay);
+                return OperatorResult::finished();
+            }};
+}
+
+Operator overlayScopeOperator(ViewportChromeTarget target) {
+    return {.id = "view3d.overlay_scope_set",
+            .label = "Set Overlay Scope",
+            .description = "Choose whether a scene overlay draws for no objects, the selection, or every object",
+            .properties = OperatorProperties::make(OverlayScopeProperties{},
+                                                   std::move(Fields<OverlayScopeProperties>()
+                                                                 .add("overlay", &OverlayScopeProperties::overlay)
+                                                                 .options(overlayOptions())
+                                                                 .add("scope", &OverlayScopeProperties::scope)
+                                                                 .options(scopeOptions()))),
+            .poll = hasTarget(target),
+            .execute = [target](OperatorContext&, OperatorProperties& properties) {
+                ViewportChromeState* state = target();
+                if (state == nullptr) {
+                    return OperatorResult::failed(noViewportError);
+                }
+                const OverlayScopeProperties* values = properties.get<OverlayScopeProperties>();
+                if (values == nullptr) {
+                    return OperatorResult::failed("view3d.overlay_scope_set needs an overlay and a scope");
+                }
+                OverlayScope* scope = viewportOverlayScope(state->overlays, values->overlay);
+                if (scope == nullptr) {
+                    return OperatorResult::failed(std::string(overlayLabel(values->overlay)) +
+                                                  " is shown or hidden, not scoped; use view3d.overlay_toggle");
+                }
+                *scope = values->scope;
+                return OperatorResult::finished();
+            }};
+}
+
+void drawScopeMenu(const char* label, OverlayScope& scope) {
+    if (ImGui::BeginMenu(label)) {
+        for (const ScopeName& name : scopeNames) {
+            if (ImGui::MenuItem(name.label, nullptr, scope == name.scope)) {
+                scope = name.scope;
+            }
+        }
+        ImGui::EndMenu();
+    }
 }
 
 Operator toggleOperator(std::string id, std::string label, std::string description, ViewportChromeTarget target,
@@ -78,6 +233,92 @@ float& TransformToolSettings::activeSnap() {
         return translationSnap;
     }
     return gizmo == GizmoMode::Rotate ? rotationSnapDegrees : scaleSnap;
+}
+
+bool* viewportOverlayFlag(ViewportOverlays& overlays, ViewportOverlay overlay) {
+    switch (overlay) {
+    case ViewportOverlay::Grid:
+        return &overlays.grid;
+    case ViewportOverlay::SelectionOutline:
+        return &overlays.selectionOutline;
+    case ViewportOverlay::ActiveName:
+        return &overlays.activeName;
+    case ViewportOverlay::TransformGizmo:
+        return &overlays.gizmo;
+    case ViewportOverlay::SelectionBounds:
+        return &overlays.scene.selectionBounds;
+    case ViewportOverlay::SceneInPlay:
+        return &overlays.sceneInPlay;
+    default:
+        return nullptr;
+    }
+}
+
+OverlayScope* viewportOverlayScope(ViewportOverlays& overlays, ViewportOverlay overlay) {
+    switch (overlay) {
+    case ViewportOverlay::Lights:
+        return &overlays.scene.lights;
+    case ViewportOverlay::Cameras:
+        return &overlays.scene.cameras;
+    case ViewportOverlay::Colliders:
+        return &overlays.scene.colliders;
+    case ViewportOverlay::ReflectionProbes:
+        return &overlays.scene.reflectionProbes;
+    case ViewportOverlay::Decals:
+        return &overlays.scene.decals;
+    case ViewportOverlay::IrradianceVolumes:
+        return &overlays.scene.irradianceVolumes;
+    case ViewportOverlay::Names:
+        return &overlays.scene.names;
+    default:
+        return nullptr;
+    }
+}
+
+std::string viewportAreaState(const ViewportChromeState& chrome) {
+    // The lookups hand out mutable pointers; read them from a copy.
+    ViewportOverlays overlays = chrome.overlays;
+    nlohmann::json saved = nlohmann::json::object();
+    for (const OverlayName& name : overlayNames) {
+        if (const bool* flag = viewportOverlayFlag(overlays, name.overlay)) {
+            saved[name.key] = *flag;
+        } else if (const OverlayScope* scope = viewportOverlayScope(overlays, name.overlay)) {
+            for (const ScopeName& scopeName : scopeNames) {
+                if (scopeName.scope == *scope) {
+                    saved[name.key] = scopeName.key;
+                }
+            }
+        }
+    }
+    return nlohmann::json{{"overlays", std::move(saved)}}.dump();
+}
+
+void restoreViewportAreaState(std::string_view state, ViewportChromeState& chrome) {
+    const nlohmann::json parsed = nlohmann::json::parse(state, nullptr, false);
+    if (!parsed.is_object()) {
+        return;
+    }
+    const auto saved = parsed.find("overlays");
+    if (saved == parsed.end() || !saved->is_object()) {
+        return;
+    }
+    for (const OverlayName& name : overlayNames) {
+        const auto value = saved->find(name.key);
+        if (value == saved->end()) {
+            continue;
+        }
+        if (bool* flag = viewportOverlayFlag(chrome.overlays, name.overlay)) {
+            if (value->is_boolean()) {
+                *flag = value->get<bool>();
+            }
+        } else if (OverlayScope* scope = viewportOverlayScope(chrome.overlays, name.overlay)) {
+            for (const ScopeName& scopeName : scopeNames) {
+                if (value->is_string() && value->get<std::string>() == scopeName.key) {
+                    *scope = scopeName.scope;
+                }
+            }
+        }
+    }
 }
 
 const char* viewportShadingLabel(ViewportShading shading) {
@@ -125,6 +366,8 @@ std::vector<Operator> viewportChromeOperators(ViewportChromeTarget target) {
              state->shading = values != nullptr ? values->type : ViewportShading::Rendered;
              return OperatorResult::finished();
          }});
+    operators.push_back(overlayToggleOperator(target));
+    operators.push_back(overlayScopeOperator(target));
     return operators;
 }
 
@@ -142,6 +385,15 @@ void drawOverlaysMenu(ViewportOverlays& overlays) {
     ImGui::MenuItem("Selection Outline", nullptr, &overlays.selectionOutline);
     ImGui::MenuItem("Active Object Name", nullptr, &overlays.activeName);
     ImGui::MenuItem("Transform Gizmo", nullptr, &overlays.gizmo);
+    ImGui::SeparatorText("Scene");
+    for (const OverlayName& name : overlayNames) {
+        if (OverlayScope* scope = viewportOverlayScope(overlays, name.overlay)) {
+            drawScopeMenu(name.label, *scope);
+        }
+    }
+    ImGui::MenuItem("Selection Bounds", nullptr, &overlays.scene.selectionBounds);
+    ImGui::MenuItem("Show in Play Mode", nullptr, &overlays.sceneInPlay);
+    ImGui::SetItemTooltip("Draw the scene overlays while playing, except through a scene camera");
 }
 
 void drawGizmosMenu(TransformToolSettings& tools) {

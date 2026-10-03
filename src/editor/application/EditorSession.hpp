@@ -325,6 +325,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // The ImGui layout from before the second viewport was docked beside
     // the first, restored when the viewport smoke ends.
     std::string m_smokeLayout;
+    // The first viewport's area state before the smoke set every scene
+    // overlay to All, restored afterwards.
+    std::string m_smokeOverlayState;
     // Entities in the scene before the menu smoke added one.
     size_t m_smokeEntityCount{0};
 

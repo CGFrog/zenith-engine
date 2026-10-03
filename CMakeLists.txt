@@ -635,6 +635,7 @@ add_library(zenith_editor_app STATIC
     src/editor/theme/PixelPainter.cpp
     src/editor/theme/PixelWallpaper.cpp
     src/editor/theme/ThemeChrome.cpp
+    src/editor/viewport/SceneGizmoDraw.cpp
 )
 target_link_libraries(zenith_editor_app PUBLIC zenith_engine)
 if(WIN32)
@@ -1408,14 +1409,17 @@ if(BUILD_TESTING)
     # The driver loads Vulkan through its own volk instance; the engine's is private.
     target_link_libraries(zenith_reference_capture PRIVATE zenith_engine volk)
     # Captures sample the cooked BC7/BC5 textures, so they must be current.
-    add_dependencies(zenith_reference_capture zenith zenith_cooked_textures zenith_debug_draw_smoke_tests)
+    add_dependencies(zenith_reference_capture zenith zenith_cooked_textures zenith_debug_draw_smoke_tests
+        zenith_scene_gizmo_smoke_tests)
     add_custom_target(zenith_update_references)
-    # Each set renders with the game, except debug_draw, whose fixed primitive
-    # set is drawn by the Engine-hosted debug-draw smoke test executable.
-    foreach(reference_set IN ITEMS showcase irradiance_room debug_draw)
+    # Each set renders with the game, except debug_draw and scene_gizmos,
+    # whose fixed scenes are drawn by Engine-hosted smoke test executables.
+    foreach(reference_set IN ITEMS showcase irradiance_room debug_draw scene_gizmos)
         set(capture_executable zenith)
         if(reference_set STREQUAL "debug_draw")
             set(capture_executable zenith_debug_draw_smoke_tests)
+        elseif(reference_set STREQUAL "scene_gizmos")
+            set(capture_executable zenith_scene_gizmo_smoke_tests)
         endif()
         set(capture_manifest "${CMAKE_CURRENT_SOURCE_DIR}/tests/references/${reference_set}/captures.json")
         set(capture_arguments
@@ -1507,6 +1511,37 @@ if(BUILD_TESTING)
         target_compile_options(zenith_viewport_chrome_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_viewport_chrome COMMAND zenith_viewport_chrome_tests)
+
+    # Viewport scene gizmos recorded on the CPU (editor/viewport/SceneGizmoDraw).
+    add_executable(zenith_scene_gizmo_tests tests/editor/SceneGizmoDrawTests.cpp)
+    target_link_libraries(zenith_scene_gizmo_tests PRIVATE zenith_editor_app)
+    add_dependencies(zenith_scene_gizmo_tests zenith_assets)
+    if(MSVC)
+        target_compile_options(zenith_scene_gizmo_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_scene_gizmo_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_scene_gizmo COMMAND zenith_scene_gizmo_tests)
+
+    # Scene gizmos in a rendered view under strict validation, plus the fixed
+    # scene the scene_gizmos reference set captures
+    # (tests/references/scene_gizmos).
+    add_executable(zenith_scene_gizmo_smoke_tests tests/editor/SceneGizmoCaptureTests.cpp)
+    target_link_libraries(zenith_scene_gizmo_smoke_tests PRIVATE zenith_editor_app)
+    add_dependencies(zenith_scene_gizmo_smoke_tests zenith_assets)
+    if(MSVC)
+        target_compile_options(zenith_scene_gizmo_smoke_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_scene_gizmo_smoke_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_scene_gizmo_vulkan_smoke COMMAND zenith_scene_gizmo_smoke_tests)
+    set_tests_properties(zenith_scene_gizmo_vulkan_smoke PROPERTIES
+        ENVIRONMENT "ZENITH_SMOKE_FRAMES=60;ZENITH_VALIDATION_STRICT=1"
+        LABELS "vulkan;smoke"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 120
+        PROCESSORS 2
+    )
 
     add_executable(zenith_editor_theme_tests tests/editor/EditorThemeTests.cpp)
     target_link_libraries(zenith_editor_theme_tests PRIVATE zenith_editor_app)

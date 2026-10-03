@@ -110,6 +110,14 @@ last hovered. `Numpad 0` (or **View > Look Through**) looks through a scene
 camera; navigation is locked while you do, and any view key or **View > Exit
 Camera View** returns to the editor camera.
 
+The **Overlays** menu also draws the scene's invisible helpers: light ranges
+and cones, camera frustums (the active camera highlighted), colliders,
+reflection probe, decal, and irradiance volume bounds, selection bounds, and
+object names. Each category is Off, Selected Only, or All (colliders and names
+start with the selection); hidden objects show none. Overlays stay off while
+playing unless **Show in Play Mode** is ticked, and never cover a scene
+camera's view. Each viewport remembers its overlays with its area.
+
 Group objects into **collections** the way Blender does: they are separate
 from parenting, and an object can be in several. Search (`F3`) for **New
 Collection** to create one holding the selection; **Link to Collection** and

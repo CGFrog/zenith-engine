@@ -121,6 +121,22 @@ inline constexpr ThemeColor axisZ = ThemeColor::hex(0x4F9BFF);
 inline constexpr ThemeColor guideLine = ThemeColor::hex(0xE6FFF7, 0.85f);
 inline constexpr ThemeColor activeObjectLabel = ThemeColor::hex(0xFFCF8A);
 
+// Viewport scene overlays (editor/viewport/SceneGizmoDraw): 1px debug lines
+// and name labels the renderer draws over the tone-mapped image, so these are
+// display-referred like every other token. Selected and active objects take
+// the selection hues whatever their kind.
+inline constexpr ThemeColor overlayLight = ThemeColor::hex(0xFFE27A);
+inline constexpr ThemeColor overlayEnvironment = ThemeColor::hex(0xB6FFE6);
+inline constexpr ThemeColor overlayCamera = ThemeColor::hex(0xC8D6E0);
+inline constexpr ThemeColor overlayActiveCamera = ThemeColor::hex(0x5EF0E0);
+inline constexpr ThemeColor overlayCollider = ThemeColor::hex(0x6CFF8A);
+inline constexpr ThemeColor overlayReflectionProbe = ThemeColor::hex(0x7AD8FF);
+inline constexpr ThemeColor overlayDecal = ThemeColor::hex(0xC58AFF);
+inline constexpr ThemeColor overlayIrradianceVolume = ThemeColor::hex(0x4F9BFF);
+inline constexpr ThemeColor overlaySelected = ThemeColor::hex(0xFF9A3C);
+inline constexpr ThemeColor overlayActive = ThemeColor::hex(0xFFE0A8);
+inline constexpr ThemeColor overlayLabel = ThemeColor::hex(0xE6FFF7);
+
 // Pixel icon hues, chosen by meaning.
 inline constexpr ThemeColor iconOutline = ThemeColor::hex(0x00060C);
 inline constexpr ThemeColor iconGloss = ThemeColor::hex(0xFFFFFF, 0.55f);

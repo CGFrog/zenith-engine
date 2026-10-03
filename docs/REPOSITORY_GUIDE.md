@@ -578,6 +578,31 @@ render view to a set of objects for local view (a default view falls back to
 CPU submission while isolated). `tests/editor/ViewportChromeTests.cpp` and
 `tests/editor/MultiViewportTests.cpp` cover this headless.
 
+`viewport/SceneGizmoDraw` records a viewport's scene overlays into its own
+render view's debug list (`RenderRuntime::viewDebugDraw`), never the all-views
+list, so nothing reaches another view: light shapes (point range spheres, spot
+inner and outer cones along the transformed direction, directional arrows
+along the light's travel, environment markers), camera frustums at the view's
+aspect (the active primary camera highlighted, a selected one out to its far
+plane, the camera being looked through skipped), collider shapes from
+`ColliderComponent` (physics only steps in Play, so the editor does not use
+`PhysicsWorld::drawDebug`; shapes follow the body construction with world
+scale baked in), reflection probe, decal (oriented, scaled, with a -Y
+projection arrow) and irradiance volume (axis-aligned) bounds, world-space
+selection bounds, and name labels. It has no ImGui, takes `SceneGizmoOverlays`
+(each category `Off`, `Selected`, or `All`; colliders and names default to the
+selection), skips entities `SceneVisibility` hides in the editor, and colours
+with the palette's `overlay*` tokens. `ViewportPanel::syncRenderView` records
+it every frame (always in Edit; in Play only with **Show in Play Mode** and
+never through a scene camera, `viewportDrawsSceneGizmos`) and draws the labels
+the view projected last frame (`viewDebugLabels`) with ImGui over the image.
+The Overlays menu, `view3d.overlay_toggle {overlay}`, and
+`view3d.overlay_scope_set {overlay, scope}` change them; the viewport saves
+its overlays as its area state (`viewportAreaState`).
+`tests/editor/SceneGizmoDrawTests.cpp` covers the geometry and policy on the
+CPU; `tests/editor/SceneGizmoCaptureTests.cpp` is the strict-validation smoke
+test and the `scene_gizmos` reference capture.
+
 `panels/InfoPanel` is the unified log view. Its CPU-only `InfoLog` model
 merges, by time, the engine log (`ApplicationContext::logger`), editor
 diagnostics (sources `Build` and `Game Module` get their own source filter),

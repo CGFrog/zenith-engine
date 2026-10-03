@@ -295,6 +295,60 @@ void testOperators() {
     expect(!fixture.history.canUndo(), "chrome operators should not record undo steps");
 }
 
+void testOverlayOperatorsAndAreaState() {
+    ViewportFixture fixture;
+    ViewportOverlays& overlays = fixture.viewport.chrome().overlays;
+    expect(overlays.scene == SceneGizmoOverlays{} && !overlays.sceneInPlay,
+           "a new viewport starts with the default scene overlays, off in Play");
+    expect(static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"grid"})")) && !overlays.grid,
+           "view3d.overlay_toggle should flip an on/off overlay");
+    expect(static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"lights"})")) &&
+               overlays.scene.lights == OverlayScope::Off,
+           "toggling a shown scoped overlay should turn it off");
+    expect(static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"colliders"})")) &&
+               overlays.scene.colliders == OverlayScope::Off &&
+               static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"colliders"})")) &&
+               overlays.scene.colliders == OverlayScope::Selected,
+           "toggling a scoped overlay back on should restore its default scope");
+    expect(static_cast<bool>(fixture.invoke("view3d.overlay_scope_set", R"({"overlay":"colliders","scope":"all"})")) &&
+               overlays.scene.colliders == OverlayScope::All,
+           "view3d.overlay_scope_set should set a scoped overlay");
+    expect(fixture.invoke("view3d.overlay_scope_set", R"({"overlay":"grid","scope":"all"})").status ==
+               OperatorStatus::Failed,
+           "an on/off overlay should refuse a scope");
+    expect(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"x-ray"})").status == OperatorStatus::Failed,
+           "an unknown overlay should fail");
+    expect(static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"scene_in_play"})")) &&
+               overlays.sceneInPlay,
+           "Play-mode scene overlays are toggled like any overlay");
+    expect(!fixture.history.canUndo(), "overlay operators should not record undo steps");
+
+    // The overlays travel with the area.
+    overlays.scene.names = OverlayScope::All;
+    overlays.scene.selectionBounds = false;
+    const std::string saved = fixture.viewport.areaState();
+    ViewportRegistry otherRegistry;
+    ViewportPanel restored(otherRegistry);
+    restored.restoreAreaState(saved);
+    const ViewportOverlays& copy = restored.chrome().overlays;
+    expect(copy.scene == overlays.scene && copy.grid == overlays.grid && copy.sceneInPlay == overlays.sceneInPlay &&
+               copy.gizmo == overlays.gizmo,
+           "a viewport's area state should round-trip its overlays");
+    ViewportPanel defaults(otherRegistry);
+    defaults.restoreAreaState("not json");
+    defaults.restoreAreaState(R"({"overlays":{"lights":"sideways","grid":3,"unknown":true}})");
+    expect(defaults.chrome().overlays.scene == SceneGizmoOverlays{} && defaults.chrome().overlays.grid,
+           "unreadable area state should keep the defaults");
+
+    // Headless frames record nothing visible but must run with every overlay.
+    HeadlessImGui imgui;
+    for (const char* overlay : {"lights", "cameras", "reflection_probes", "decals", "irradiance_volumes", "names"}) {
+        fixture.invoke("view3d.overlay_scope_set", std::string(R"({"overlay":")") + overlay + R"(","scope":"all"})");
+    }
+    selectNewEntity(fixture);
+    imgui.settle(fixture, {10.0f, 10.0f});
+}
+
 void testSidebarTabsAndChromeDrawing() {
     ViewportFixture fixture;
     HeadlessImGui imgui;
@@ -346,6 +400,7 @@ void testSidebarTabsAndChromeDrawing() {
 
 int main() {
     testOperators();
+    testOverlayOperatorsAndAreaState();
     testDefaultsAndPickingIgnoresChrome();
     testKeysToggleRegions();
     testSidebarTabsAndChromeDrawing();

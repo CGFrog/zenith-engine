@@ -4,7 +4,9 @@
 #include "editor/panels/EditorContext.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
+#include "editor/theme/PixelPainter.hpp"
 #include "editor/theme/ThemeChrome.hpp"
+#include "editor/viewport/SceneGizmoDraw.hpp"
 #include "engine/graphics/ViewShading.hpp"
 
 #include <imgui.h>
@@ -58,6 +60,13 @@ std::optional<RenderSettings> viewportViewSettings(const RenderSettings& project
     return viewShadingFrameSettings(settings, capabilities);
 }
 
+bool viewportDrawsSceneGizmos(EditorMode mode, bool lookingThroughSceneCamera, const ViewportOverlays& overlays) {
+    if (mode == EditorMode::Edit) {
+        return true;
+    }
+    return overlays.sceneInPlay && !lookingThroughSceneCamera;
+}
+
 ViewportPanel::ViewportPanel(ViewportRegistry& registry)
     : m_registry(registry)
     , m_id(registry.add(*this)) {}
@@ -74,6 +83,14 @@ void ViewportPanel::releaseRenderView() {
     m_rendering = nullptr;
     m_view = {};
     m_inputActive = false;
+}
+
+std::string ViewportPanel::areaState() const {
+    return viewportAreaState(m_chrome);
+}
+
+void ViewportPanel::restoreAreaState(std::string_view state) {
+    restoreViewportAreaState(state, m_chrome);
 }
 
 const char* ViewportPanel::title() const {
@@ -191,6 +208,58 @@ void ViewportPanel::syncRenderView(EditorContext& context) {
         rendering.setViewGridOverlay(m_view, std::nullopt);
     }
     updateSelectionOutline(context);
+    recordSceneGizmos(context);
+}
+
+void ViewportPanel::recordSceneGizmos(EditorContext& context) {
+    if (!viewportDrawsSceneGizmos(context.mode, m_cameraView.has_value(), m_chrome.overlays)) {
+        return;
+    }
+    // Only this view's list: the all-views list would reach every view.
+    DebugDraw* output = context.app.rendering.viewDebugDraw(m_view);
+    if (output == nullptr) {
+        return;
+    }
+    Scene& scene = context.app.scene;
+    scene.updateWorldTransforms();
+    // A camera view skips the frustum of the camera it looks through.
+    const std::optional<SceneEntityId> viewCamera =
+        m_cameraView && sceneCameraLens(scene, scene.findEntity(*m_cameraView)) ? m_cameraView : std::nullopt;
+    drawSceneGizmos({.scene = scene,
+                     .assets = context.app.assets,
+                     .selection = context.selection.ids(),
+                     .aspectRatio = m_size.x / std::max(m_size.y, 1.0f),
+                     .viewCamera = viewCamera},
+                    m_chrome.overlays.scene, *output);
+}
+
+void ViewportPanel::drawSceneLabels(EditorContext& context) const {
+    if (!m_view || !viewportDrawsSceneGizmos(context.mode, m_cameraView.has_value(), m_chrome.overlays)) {
+        return;
+    }
+    const RenderRuntime& rendering = context.app.rendering;
+    const std::span<const ProjectedDebugLabel> labels = rendering.viewDebugLabels(m_view);
+    const float viewWidth = static_cast<float>(rendering.viewWidth(m_view));
+    const float viewHeight = static_cast<float>(rendering.viewHeight(m_view));
+    if (labels.empty() || viewWidth <= 0.0f || viewHeight <= 0.0f) {
+        return;
+    }
+    // Labels are in the view's output pixels from its latest frame, which
+    // can lag a resize by a frame; scale them onto the image as drawn.
+    const glm::vec2 scale = m_size / glm::vec2(viewWidth, viewHeight);
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const float artPixel = editorArtPixel();
+    const ImU32 outline = toImU32(palette::captionOutline);
+    drawList->PushClipRect({m_position.x, m_position.y}, {m_position.x + m_size.x, m_position.y + m_size.y}, true);
+    for (const ProjectedDebugLabel& label : labels) {
+        const glm::vec2 anchor = m_position + label.position * scale;
+        const ImU32 ink = toImU32({label.color.r, label.color.g, label.color.b, label.color.a});
+        pixel::outlinedText(
+            drawList, ImGui::GetFont(), ImGui::GetFontSize(),
+            {std::floor(anchor.x + 3.0f * artPixel), std::floor(anchor.y - ImGui::GetFontSize() * 0.5f)}, ink, outline,
+            label.text.c_str(), artPixel);
+    }
+    drawList->PopClipRect();
 }
 
 void ViewportPanel::updateSelectionOutline(EditorContext& context) {
@@ -264,6 +333,9 @@ void ViewportPanel::draw(EditorContext& context) {
     ImGui::Dummy({m_size.x, m_size.y});
     drawViewImage(texture, m_view ? "Viewport will be available on the next rendered frame."
                                   : "No render view is free; close another viewport.");
+    if (texture) {
+        drawSceneLabels(context);
+    }
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ZENITH_MODEL_ASSET")) {
             context.placeModel(static_cast<const char*>(payload->Data), entt::null);
