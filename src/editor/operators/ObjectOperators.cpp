@@ -62,7 +62,7 @@ Fields<AddObjectProperties> addObjectFields() {
     return std::move(Fields<AddObjectProperties>().add("location", &AddObjectProperties::location).drag(0.05f));
 }
 
-// Sun, environment, and empty differ only in the function that creates them.
+// Sun, environment, fog, and empty differ only in the function that creates them.
 Operator addObjectOperator(std::string id, std::string label, std::string description, Entity (*create)(Scene&)) {
     return {.id = std::move(id),
             .label = std::move(label),
@@ -346,6 +346,8 @@ OperatorRegistrationResult registerObjectOperators(OperatorRegistry& registry) {
     operators.push_back(addObjectOperator("object.add_sun", "Add Sun", "Add a directional sun light", addSun));
     operators.push_back(addObjectOperator("object.add_environment", "Add Environment",
                                           "Add an environment light with a procedural sky", addEnvironment));
+    operators.push_back(
+        addObjectOperator("object.add_fog", "Add Fog", "Add a volumetric fog medium filling the view", addFog));
     operators.push_back(
         addObjectOperator("object.add_empty", "Add Empty", "Add an entity with only a transform", addEmpty));
     operators.push_back(createEntityOperator());

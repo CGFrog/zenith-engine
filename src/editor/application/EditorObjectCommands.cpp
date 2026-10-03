@@ -269,6 +269,7 @@ void EditorSession::drawObjectPopups(ApplicationContext& context) {
             ImGui::EndMenu();
         }
         operatorMenuItem(context, "object.add_environment", "Environment");
+        operatorMenuItem(context, "object.add_fog", "Fog");
         operatorMenuItem(context, "object.add_empty", "Empty");
         ImGui::EndPopup();
     }

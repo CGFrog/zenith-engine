@@ -502,6 +502,7 @@ add_library(zenith_editor_app STATIC
     src/editor/document/SceneFragment.cpp
     src/editor/interaction/ComponentEditors.cpp
     src/editor/interaction/EditorCamera.cpp
+    src/editor/interaction/EntityPropertiesView.cpp
     src/editor/interaction/ModalTransform.cpp
     src/editor/interaction/GraphicsSettingsEditor.cpp
     src/editor/interaction/ReflectedFieldEditor.cpp
@@ -523,6 +524,8 @@ add_library(zenith_editor_app STATIC
     src/editor/panels/GraphicsPanel.cpp
     src/editor/panels/HierarchyPanel.cpp
     src/editor/panels/InspectorPanel.cpp
+    src/editor/panels/PropertiesPanel.cpp
+    src/editor/panels/RenderSettingsControls.cpp
     src/editor/panels/RenderStatisticsPanel.cpp
     src/editor/panels/ViewportPanel.cpp
     src/editor/project/AssetCatalog.cpp
@@ -538,6 +541,7 @@ add_library(zenith_editor_app STATIC
     src/editor/settings/AssetBrowserSettings.cpp
     src/editor/settings/EditorRenderSettings.cpp
     src/editor/settings/EditorSettings.cpp
+    src/editor/settings/RenderSettingsController.cpp
 )
 target_link_libraries(zenith_editor_app PUBLIC zenith_engine)
 if(WIN32)
@@ -1356,6 +1360,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_reflected_field_editor_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_reflected_field_editor COMMAND zenith_reflected_field_editor_tests)
+
+    add_executable(zenith_properties_panel_tests tests/editor/PropertiesPanelTests.cpp)
+    target_link_libraries(zenith_properties_panel_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_properties_panel_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_properties_panel_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_properties_panel COMMAND zenith_properties_panel_tests)
 
     add_executable(zenith_child_process_tests tests/engine/ChildProcessTests.cpp)
     target_link_libraries(zenith_child_process_tests PRIVATE zenith_engine)

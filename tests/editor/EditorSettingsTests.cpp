@@ -26,6 +26,7 @@ int main() {
     settings.panels().hierarchy = false;
     settings.panels().diagnostics = false;
     settings.panels().build = false;
+    settings.panels().properties = false;
     settings.setLayoutVersion(2);
     expect(settings.tools().ideCommand == R"(code -g "{file}:{line}:{column}")",
            "the IDE command should default to VS Code at the location");
@@ -40,6 +41,7 @@ int main() {
     expect(restored.layoutVersion() == 2, "layout version should round trip");
     expect(restored.tools() == settings.tools(), "build and IDE commands containing '=' should round trip");
     expect(!restored.panels().build, "build panel visibility should round trip");
+    expect(!restored.panels().properties, "properties panel visibility should round trip");
 
     EditorSettings multiline(directory / "multiline.ini");
     multiline.tools().buildCommand = "first\nsecond";

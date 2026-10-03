@@ -24,10 +24,12 @@
 #include "editor/panels/GraphicsPanel.hpp"
 #include "editor/panels/HierarchyPanel.hpp"
 #include "editor/panels/InspectorPanel.hpp"
+#include "editor/panels/PropertiesPanel.hpp"
 #include "editor/panels/RenderStatisticsPanel.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/settings/EditorRenderSettings.hpp"
 #include "editor/settings/EditorSettings.hpp"
+#include "editor/settings/RenderSettingsController.hpp"
 #include "engine/application/Application.hpp"
 #include "engine/jobs/JobSystem.hpp"
 #include "engine/scene/AdditiveSceneManager.hpp"
@@ -199,16 +201,19 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     LastOperatorPanel m_lastOperatorPanel;
     bool m_showKeymapEditor{false};
 
+    // Shared by the Graphics and Properties panels, so declared before them.
+    RenderSettingsController m_renderSettings;
     ViewportPanel m_viewport;
     HierarchyPanel m_hierarchy;
     InspectorPanel m_inspector;
     DiagnosticsPanel m_diagnosticsPanel{m_settings.tools()};
     RenderStatisticsPanel m_renderStatistics;
     AssetBrowserPanel m_assetBrowser;
-    GraphicsPanel m_graphics;
+    GraphicsPanel m_graphics{m_renderSettings};
     BuildPanel m_buildPanel{m_settings.tools()};
+    PropertiesPanel m_properties{m_renderSettings};
     // Drawing order, which is also the View menu order.
-    std::array<PanelSlot, 8> m_panels;
+    std::array<PanelSlot, 9> m_panels;
 
     std::filesystem::path m_sceneRoot;
     std::filesystem::path m_fontPath;

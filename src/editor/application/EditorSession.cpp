@@ -22,8 +22,9 @@
 
 namespace {
 // Layouts older than version 3 lack the Graphics panel below the Inspector;
-// version 4 docks the Build panel beside Diagnostics.
-constexpr uint32_t currentLayoutVersion = 4;
+// version 4 docks the Build panel beside Diagnostics; version 5 docks the
+// Properties panel beside the Inspector.
+constexpr uint32_t currentLayoutVersion = 5;
 constexpr const char* sceneExtension = ".zenith-scene";
 constexpr float editorFontPixelSize = 15.0f;
 constexpr float autosaveIntervalSeconds = 30.0f;
@@ -64,8 +65,8 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_gameModulePath(std::move(gameModule))
     , m_keymap(defaultEditorKeymap())
     , m_keymapPath(settingsDirectory / "keymap.json")
+    , m_renderSettings(std::move(renderSettings))
     , m_assetBrowser(std::move(assetRoot), sceneRoot, settingsDirectory / "asset-browser.json")
-    , m_graphics(std::move(renderSettings))
     , m_panels{{{&m_viewport, &EditorPanelVisibility::viewport},
                 {&m_hierarchy, &EditorPanelVisibility::hierarchy},
                 {&m_inspector, &EditorPanelVisibility::inspector},
@@ -73,7 +74,8 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
                 {&m_renderStatistics, &EditorPanelVisibility::renderStatistics},
                 {&m_assetBrowser, &EditorPanelVisibility::assetBrowser},
                 {&m_graphics, &EditorPanelVisibility::graphics},
-                {&m_buildPanel, &EditorPanelVisibility::build}}}
+                {&m_buildPanel, &EditorPanelVisibility::build},
+                {&m_properties, &EditorPanelVisibility::properties}}}
     , m_sceneRoot(std::move(sceneRoot))
     , m_fontPath(std::move(fontPath))
     , m_initialSceneLoader(std::move(initialSceneLoader))
@@ -319,7 +321,9 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     if (const EditorSettingsResult result = m_settings.load(); !result) {
         m_diagnostics.reportError(result.error);
     }
-    m_graphics.loadSettings(context.rendering, m_diagnostics);
+    if (const EditorRenderSettingsResult result = m_renderSettings.load(context.rendering); !result) {
+        m_diagnostics.reportError(result.error);
+    }
     const KeymapResult keymap = m_keymap.load(m_keymapPath);
     if (!keymap) {
         m_diagnostics.reportError(keymap.error);
@@ -551,6 +555,7 @@ void EditorSession::initializeDefaultLayout(uint32_t dockspaceId) {
     ImGui::DockBuilderDockWindow(m_viewport.title(), center);
     ImGui::DockBuilderDockWindow(m_hierarchy.title(), left);
     ImGui::DockBuilderDockWindow(m_inspector.title(), inspector);
+    ImGui::DockBuilderDockWindow(m_properties.title(), inspector);
     ImGui::DockBuilderDockWindow(m_graphics.title(), graphics);
     ImGui::DockBuilderDockWindow(m_diagnosticsPanel.title(), bottom);
     ImGui::DockBuilderDockWindow(m_buildPanel.title(), bottom);
@@ -630,6 +635,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             operatorMenuItem(context, "object.add_cube", "Cube");
             operatorMenuItem(context, "object.add_sun", "Sun");
             operatorMenuItem(context, "object.add_environment", "Environment");
+            operatorMenuItem(context, "object.add_fog", "Fog");
             operatorMenuItem(context, "object.add_empty", "Empty");
             ImGui::EndMenu();
         }
