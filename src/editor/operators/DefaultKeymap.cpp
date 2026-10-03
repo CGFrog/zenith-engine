@@ -50,6 +50,8 @@ std::vector<KeymapBinding> defaultEditorKeymap() {
         binding("object.duplicate", outliner, ImGuiMod_Shift | ImGuiKey_D),
         binding("object.add_menu", viewport, ImGuiMod_Shift | ImGuiKey_A),
         binding("view3d.toggle_snapping", viewport, ImGuiMod_Shift | ImGuiKey_Tab),
+        binding("view3d.toggle_sidebar", viewport, ImGuiKey_N),
+        binding("view3d.toggle_toolbar", viewport, ImGuiKey_T),
         binding("view3d.frame_all", viewport, ImGuiKey_Home),
         binding("view3d.view_axis", viewport, ImGuiKey_Keypad1, R"({"type":"front"})"),
         binding("view3d.view_axis", viewport, ImGuiMod_Ctrl | ImGuiKey_Keypad1, R"({"type":"back"})"),

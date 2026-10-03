@@ -18,6 +18,11 @@ struct EditorCameraConfiguration {
     float minimumDistance{0.05f};
     float maximumDistance{10000.0f};
     float maximumPitchRadians{1.55334306f};
+    // Lens limits, in radians and world units.
+    float minimumVerticalFovRadians{0.0174532925f};
+    float maximumVerticalFovRadians{2.96705973f};
+    float minimumNearPlane{0.0001f};
+    float maximumFarPlane{1000000.0f};
 };
 
 class EditorCamera {
@@ -36,6 +41,16 @@ class EditorCamera {
 
     float speed() const;
     void setSpeed(float speed);
+    // The lens shared by renderView, both projections, and picking.
+    float verticalFovRadians() const;
+    // Clamps to the configured field-of-view range.
+    void setVerticalFovRadians(float verticalFovRadians);
+    float nearPlane() const;
+    float farPlane() const;
+    // Clamps nearPlane to at least minimumNearPlane and farPlane to at most
+    // maximumFarPlane, then keeps farPlane beyond nearPlane, so the depth
+    // range is never empty or inverted.
+    void setClipPlanes(float nearPlane, float farPlane);
     float distance() const;
     void setDistance(float distance);
     const glm::vec3& pivot() const;
@@ -62,5 +77,8 @@ class EditorCamera {
     float m_pitchRadians{-0.32175055f};
     float m_distance{6.32455532f};
     float m_speed{5.0f};
+    float m_verticalFovRadians{1.04719755f};
+    float m_nearPlane{0.1f};
+    float m_farPlane{1000.0f};
     EditorCameraConfiguration m_configuration;
 };

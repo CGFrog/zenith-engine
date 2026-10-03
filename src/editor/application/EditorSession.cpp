@@ -411,6 +411,18 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     } else if (m_smokeFrame == 5) {
         context.rendering.requestViewportSize(800, 450);
         m_smokeStreamInstance = m_smokeLayers->requestLoad(m_smokeScenePath, 100);
+    } else if (m_smokeFrame == 6) {
+        // The viewport chrome: open the sidebar, hide and restore the tool
+        // shelf, and render through a narrower lens with tighter clipping.
+        for (const char* operatorId : {"view3d.toggle_sidebar", "view3d.toggle_toolbar", "view3d.toggle_toolbar"}) {
+            invokeOperator(context, operatorId, {}, KeymapRegion::Viewport);
+        }
+        m_camera.setVerticalFovRadians(glm::radians(45.0f));
+        m_camera.setClipPlanes(0.05f, 500.0f);
+        if (!m_viewport.chrome().sidebarVisible || !m_viewport.chrome().toolbarVisible) {
+            m_diagnostics.reportError("Viewport chrome smoke: the sidebar and toolbar should be visible");
+            context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+        }
     }
     if (m_smokeStreamInstance && !m_smokeStreamCompleted) {
         const auto state = m_smokeLayers->state(*m_smokeStreamInstance);

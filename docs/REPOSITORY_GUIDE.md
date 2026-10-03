@@ -419,6 +419,19 @@ layouts; when it is missing, the `panel.*` flags and `layout.version` from an
 older `settings.ini` and its `layout.ini` are migrated into the Layout
 workspace (window sections renamed to the area windows).
 
+`panels/ViewportPanel` draws Blender-style chrome over the rendered image as
+ImGui child windows, so clicks on it never reach picking, the gizmo, or the
+camera: a header with View, Shading, Overlays, and Gizmos menus, the `T` tool
+shelf on the left, and the `N` sidebar on the right with Item (active
+transform), Tool (transform tool and snapping), and View (camera field of
+view, clip planes, fly speed) tabs plus tabs added with `addSidebarTab`.
+`panels/ViewportChrome` holds that per-panel state (`ViewportChromeState`:
+region visibility, `ViewportShading`, overlays), its widgets, and the
+`view3d.toggle_sidebar`, `view3d.toggle_toolbar`, and `view3d.shading_set`
+operators, which run headless in `tests/editor/ViewportChromeTests.cpp`.
+`EditorCamera` owns the lens (field of view and clip planes) that its render
+view, projections, and picking share.
+
 `SceneEditing` captures transient whole-scene snapshots around an edit but
 records only the entities it added, removed, or changed as an
 `EntityDiffCommand`, so history memory and undo/redo time scale with the edit
