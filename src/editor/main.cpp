@@ -1,5 +1,6 @@
 #include "editor/application/EditorApplication.hpp"
 #include "editor/project/IrradianceVolumeBaker.hpp"
+#include "editor/project/ProjectTemplate.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "engine/Engine.hpp"
 #include "engine/platform/PlatformServices.hpp"
@@ -7,27 +8,44 @@
 #include "engine/resources/ResourceLocator.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
+#include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_stdinc.h>
 
+#include <array>
 #include <cstdlib>
 #include <filesystem>
-#include <functional>
 #include <iostream>
+#include <optional>
 #include <string_view>
 
 namespace {
-// Loads the project's startup scene with the editor's document options, which
-// carry the game module's component types when the project has a module.
-SceneResult loadStartupScene(const ProjectConfig& project, const SceneDocumentOptions& options, AssetManager& assets,
-                             Scene& scene) {
-    std::filesystem::path scenePath;
-    if (const ProjectConfigResult resolved =
-            resolveProjectScene(project, project.startupScene.lexically_relative(project.sceneRoot), scenePath);
-        !resolved) {
-        return {.error = resolved.error};
+std::filesystem::path fromUtf8(std::string_view text) {
+    return std::filesystem::path(std::u8string(text.begin(), text.end()));
+}
+
+// The Project Hub's template, engine build, and default folder. Templates
+// are looked up beside the executable's resources first (<resource
+// root>/templates, where the build copies them), then in the source tree's
+// templates/. Generated projects build against the resource root when it is
+// a Zenith build tree (it holds ZenithEngineConfig.cmake), else against the
+// build this editor was compiled in.
+EditorProjectHubOptions projectHubOptions(bool startInHub) {
+    const std::array templateRoots{resourceRoot() / "templates", fromUtf8(ZENITH_SOURCE_TEMPLATE_DIR)};
+    const std::array engineRoots{resourceRoot(), fromUtf8(ZENITH_ENGINE_BUILD_DIR)};
+    std::filesystem::path engineRoot = findEngineBuildRoot(engineRoots);
+    if (engineRoot.empty()) {
+        engineRoot = fromUtf8(ZENITH_ENGINE_BUILD_DIR);
     }
-    const SceneDocumentResult loaded = SceneDocument::load(scenePath, assets, options, scene);
-    return {.success = loaded.success, .error = loaded.error};
+    // SDL owns the returned string.
+    const char* documents = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
+    std::filesystem::path projectsFolder =
+        (documents != nullptr ? fromUtf8(documents) : std::filesystem::current_path()) / "Zenith Projects";
+    return {.hub = {.templateDirectory = findProjectTemplate(templateRoots, cppGameTemplateName),
+                    .engineRoot = std::move(engineRoot),
+                    .engineAssetRoot = assetRoot(),
+                    .buildConfiguration = ZENITH_EDITOR_CONFIGURATION,
+                    .defaultProjectLocation = std::move(projectsFolder)},
+            .startInHub = startInHub};
 }
 
 // `zenith_editor <project> --bake-irradiance-volumes` bakes every irradiance
@@ -82,21 +100,20 @@ int main(int argc, char** argv) {
                           .assetRoot = assetRoot(),
                           .sceneRoot = std::filesystem::current_path() / "scenes",
                           .renderSettings = RenderSettings{.environment = EnvironmentQuality::ImageBasedLow}};
-    bool projectLoaded = false;
+    // Without a startup scene the editor opens its default scene.
     if (argc > 1) {
         if (const ProjectConfigResult result = loadProjectConfig(argv[1], project); !result) {
             std::cerr << result.error << '\n';
             engine.shutdown();
             return EXIT_FAILURE;
         }
-        projectLoaded = true;
     }
-    // Without a startup scene the editor opens its default scene.
-    EditorApplication::SceneLoader initialSceneLoader;
-    if (projectLoaded && !project.startupScene.empty()) {
-        initialSceneLoader = [project](ApplicationContext& context, const SceneDocumentOptions& options) {
-            return loadStartupScene(project, options, context.assets, context.scene);
-        };
+    // Interactive runs offer the Project Hub and start in it without a
+    // project argument. Smoke runs never show it: without a project they
+    // open the default project, as before the hub existed.
+    std::optional<EditorProjectHubOptions> projectHub;
+    if (SDL_getenv("ZENITH_EDITOR_SMOKE") == nullptr) {
+        projectHub = projectHubOptions(argc <= 1);
     }
     // Automated runs pass their own settings directory so they never read or
     // replace the user's workspaces and preferences.
@@ -104,7 +121,7 @@ int main(int argc, char** argv) {
     EditorApplication application(resolveEditorSettingsDirectory(settingsOverride != nullptr ? settingsOverride : "",
                                                                  userDataDirectory("Zenith", "Editor")),
                                   resourceRoot() / "editor" / "fonts" / "Inter-Regular.ttf", std::move(project),
-                                  std::move(initialSceneLoader));
+                                  std::move(projectHub));
     const bool success = engine.run(application);
     engine.shutdown();
     return validationExitCode(engine.graphicsValidation(), success ? EXIT_SUCCESS : EXIT_FAILURE);

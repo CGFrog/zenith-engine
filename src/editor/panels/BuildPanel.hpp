@@ -3,6 +3,7 @@
 #include "editor/panels/EditorPanel.hpp"
 #include "editor/project/BuildRunner.hpp"
 
+#include <optional>
 #include <string>
 
 class EditorDiagnostics;
@@ -27,6 +28,14 @@ class BuildPanel final : public EditorPanel {
     void drawContents(EditorDiagnostics& diagnostics);
     const BuildRunner& runner() const;
 
+    // The open project's own build (see projectBuildRequest), run instead of
+    // the settings while build.command and build.directory are unchanged
+    // from their defaults; editing either builds with the settings again.
+    void setProjectBuild(std::optional<BuildRequest> projectBuild);
+    // The request the Build button runs now.
+    BuildRequest buildRequest() const;
+    bool usesProjectBuild() const;
+
   private:
     void publishDiagnostics(EditorDiagnostics& diagnostics) const;
     void drawToolbar(EditorDiagnostics& diagnostics);
@@ -34,6 +43,7 @@ class BuildPanel final : public EditorPanel {
     void drawOutput(EditorDiagnostics& diagnostics);
 
     EditorToolSettings& m_tools;
+    std::optional<BuildRequest> m_projectBuild;
     BuildRunner m_runner;
     bool m_followOutput{true};
     bool m_scrollToEnd{false};

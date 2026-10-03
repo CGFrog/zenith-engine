@@ -22,7 +22,6 @@
 
 #include <ImGuizmo.h>
 #include <SDL3/SDL_stdinc.h>
-#include <SDL3/SDL_video.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -55,9 +54,9 @@ std::filesystem::path dialogStartLocation(const std::optional<std::filesystem::p
 } // namespace
 
 EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::filesystem::path assetRoot,
-                             std::filesystem::path sceneRoot, std::filesystem::path fontPath,
-                             EditorRenderSettings renderSettings, EditorSceneLoader initialSceneLoader,
-                             std::filesystem::path gameModule)
+                             std::filesystem::path sceneRoot, EditorRenderSettings renderSettings,
+                             EditorSceneLoader initialSceneLoader, std::filesystem::path gameModule,
+                             EditorProjectServices projectServices)
     : m_settings(settingsDirectory / "settings.ini")
     , m_document(assetRoot)
     , m_recovery(settingsDirectory / (std::string("recovery") + sceneExtension))
@@ -73,8 +72,8 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_workspacesPath(settingsDirectory / "workspaces.json")
     , m_legacyLayoutPath(settingsDirectory / "layout.ini")
     , m_sceneRoot(std::move(sceneRoot))
-    , m_fontPath(std::move(fontPath))
     , m_initialSceneLoader(std::move(initialSceneLoader))
+    , m_leaveForProjectHub(std::move(projectServices.leaveForProjectHub))
     , m_smokeScenePath(settingsDirectory / (std::string("streaming-smoke") + sceneExtension)) {
     for (const std::string& problem : m_keymap.defaultProblems()) {
         m_diagnostics.reportError(problem);
@@ -114,6 +113,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     }
     // Scene references resolve through the project's asset database by GUID.
     m_document.setAssetDatabase(m_projectAssets.assetDatabase());
+    m_buildPanel.setProjectBuild(std::move(projectServices.build));
 }
 
 SceneEditing EditorSession::editing(ApplicationContext& context) {
@@ -174,6 +174,17 @@ void EditorSession::registerSessionOperators() {
                                          [this](ApplicationContext& app) { saveDocument(app); }));
     registerOperator(applicationOperator("file.save_as", "Save As", "Save the scene to a new file", documentCommands,
                                          [this](ApplicationContext&) { requestFileDialog(FileDialogKind::Save); }));
+    const auto projectHubAvailable = [this](const OperatorContext&) {
+        return m_leaveForProjectHub && !m_activeTransform && !m_fileDialog.pending();
+    };
+    registerOperator(applicationOperator(
+        "wm.open_project", "Open Project", "Close this project and choose another .zenith-project file to open",
+        projectHubAvailable,
+        [this](ApplicationContext& app) { requestProjectHub(app, ProjectHubEntry::OpenProjectDialog); }));
+    registerOperator(applicationOperator(
+        "wm.project_hub", "Project Hub",
+        "Close this project and return to the Project Hub's recent projects and templates", projectHubAvailable,
+        [this](ApplicationContext& app) { requestProjectHub(app, ProjectHubEntry::Hub); }));
     registerOperator(applicationOperator(
         "file.quit", "Quit", "Close the editor, asking about unsaved changes first",
         [this](const OperatorContext&) { return !m_activeTransform; },
@@ -360,27 +371,8 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     m_openRecoveryDialog = m_recovery.available();
     m_smokeScenario = SDL_getenv("ZENITH_EDITOR_SMOKE") != nullptr;
 
-    ImGuiIO& io = ImGui::GetIO();
-    // Size the UI for the display's scale factor so text stays crisp on
-    // high-DPI monitors instead of being stretched. The pixel theme rounds it
-    // to a whole number of screen pixels per art pixel.
-    float contentScale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
-    if (contentScale <= 0.0f) {
-        contentScale = 1.0f;
-    }
-    const float artPixel = artPixelForScale(contentScale);
-    applyEditorMetrics(ImGui::GetStyle(), artPixel);
-    applyEditorColors(ImGui::GetStyle());
-    const EditorFontResult fonts = loadEditorFonts(io, m_fontPath.parent_path(), m_fontPath, artPixel);
-    if (!fonts) {
-        m_diagnostics.reportError(fonts.error);
-    }
-    for (const std::string& warning : fonts.warnings) {
-        m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Theme", warning);
-    }
-    ThemeChrome::installPopupBevels(*ImGui::GetCurrentContext());
-    // Each workspace keeps its own ImGui layout in workspaces.json.
-    io.IniFilename = nullptr;
+    // The theme and fonts are the application's (EditorApplication::onStart),
+    // so they outlive a switch between projects.
     // Asset paths in render settings (the colour-grading LUT) resolve against
     // the edited project's assets.
     context.rendering.setAssetRoot(m_document.options().assetRoot);
@@ -887,6 +879,9 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         operatorMenuItem(context, "file.save", "Save");
         operatorMenuItem(context, "file.save_as", "Save As...");
         ImGui::Separator();
+        operatorMenuItem(context, "wm.open_project", "Open Project...");
+        operatorMenuItem(context, "wm.project_hub", "Project Hub");
+        ImGui::Separator();
         operatorMenuItem(context, "file.quit", "Quit");
         ImGui::EndMenu();
     }
@@ -1272,6 +1267,20 @@ void EditorSession::requestClose(ApplicationContext& context) {
     }
 }
 
+void EditorSession::requestProjectHub(ApplicationContext& context, ProjectHubEntry entry) {
+    m_pendingOpenPath.reset();
+    if (m_playMode.mode() != EditorMode::Edit) {
+        stopPlayMode(context);
+    }
+    m_pendingAction = PendingAction::LeaveForProjectHub;
+    m_pendingHubEntry = entry;
+    if (m_document.dirty()) {
+        m_openUnsavedDialog = true;
+    } else {
+        finishPendingAction(context);
+    }
+}
+
 void EditorSession::finishPendingAction(ApplicationContext& context) {
     const PendingAction action = m_pendingAction;
     m_pendingAction = PendingAction::None;
@@ -1297,6 +1306,8 @@ void EditorSession::finishPendingAction(ApplicationContext& context) {
         }
     } else if (action == PendingAction::CloseEditor) {
         context.control.requestQuit();
+    } else if (action == PendingAction::LeaveForProjectHub && m_leaveForProjectHub) {
+        m_leaveForProjectHub(context, m_pendingHubEntry);
     }
 }
 

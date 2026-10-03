@@ -1,0 +1,12 @@
+# Generated when Zenith is configured: the $<CONFIG> libraries behind
+# Zenith::Engine (see ZenithEngineConfig.cmake).
+set_property(TARGET Zenith::Engine APPEND PROPERTY IMPORTED_CONFIGURATIONS "$<UPPER_CASE:$<CONFIG>>")
+set_target_properties(Zenith::Engine PROPERTIES
+    IMPORTED_LOCATION_$<UPPER_CASE:$<CONFIG>> "$<TARGET_FILE:zenith_engine>"
+    IMPORTED_IMPLIB_$<UPPER_CASE:$<CONFIG>> "$<TARGET_LINKER_FILE:zenith_engine>"
+)
+set_property(TARGET Zenith::SDL3 APPEND PROPERTY IMPORTED_CONFIGURATIONS "$<UPPER_CASE:$<CONFIG>>")
+set_target_properties(Zenith::SDL3 PROPERTIES
+    IMPORTED_LOCATION_$<UPPER_CASE:$<CONFIG>> "$<TARGET_FILE:SDL3-shared>"
+    IMPORTED_IMPLIB_$<UPPER_CASE:$<CONFIG>> "$<TARGET_LINKER_FILE:SDL3-shared>"
+)

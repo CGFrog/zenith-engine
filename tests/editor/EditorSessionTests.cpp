@@ -8,12 +8,16 @@
 #include "HeadlessImGui.hpp"
 
 #include "editor/application/EditorApplication.hpp"
+#include "editor/project/ProjectTemplate.hpp"
+#include "editor/project/RecentProjects.hpp"
 #include "engine/application/Application.hpp"
 #include "engine/scene/Scene.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -56,8 +60,8 @@ ProjectConfig testProject(const fs::path& root) {
 // editor's unload, which still uses ImGui) ends before the ImGui context.
 class EditorHarness {
   public:
-    explicit EditorHarness(const fs::path& root)
-        : m_application(root / "settings", ZENITH_EDITOR_FONT, testProject(root))
+    explicit EditorHarness(const fs::path& root, std::optional<EditorProjectHubOptions> projectHub = std::nullopt)
+        : m_application(root / "settings", ZENITH_EDITOR_FONT, testProject(root), std::move(projectHub))
         , m_session(m_application, scene, assets, m_physics, m_audio) {}
 
     SceneResult start() {
@@ -83,6 +87,10 @@ class EditorHarness {
 
     ApplicationSession& session() {
         return m_session;
+    }
+
+    const EditorApplication& application() const {
+        return m_application;
     }
 
     void shutdown() {
@@ -198,6 +206,74 @@ void testHostQuitRequest(const fs::path& root) {
     const ApplicationFrameResult result = editor.frame();
     expect(result.success && !result.keepRunning, "quit: a host quit request on a clean document quits");
 }
+
+// The id of an item in the Project Hub's window, reached through path's ids.
+ImGuiID projectHubItem(std::initializer_list<const char*> path) {
+    const ImGuiWindow* window = HeadlessImGuiContext::findWindow("Project Hub");
+    if (window == nullptr) {
+        return 0;
+    }
+    ImGuiID id = window->ID;
+    for (const char* part : path) {
+        id = ImHashStr(part, 0, id);
+    }
+    return id;
+}
+
+// Starts in the hub, opens a template project from the recent list, and goes
+// back to the hub through File > Project Hub (run from operator search).
+void testProjectHubSwitchesProjects(const fs::path& root) {
+    AssetManager generatorAssets;
+    const ProjectTemplateResult generated =
+        generateProjectFromTemplate({.displayName = "Hub Game",
+                                     .parentDirectory = root / "projects",
+                                     .templateDirectory = fs::path(ZENITH_TEMPLATE_DIR) / cppGameTemplateName,
+                                     .engineRoot = root / "engine",
+                                     .engineAssetRoot = ZENITH_ASSET_DIR},
+                                    generatorAssets);
+    if (!generated) {
+        expect(false, "hub: the template project generates: " + generated.error);
+        return;
+    }
+    {
+        RecentProjects recent(root / "settings" / "recent-projects.json");
+        recent.recordOpened(generated.projectFile, "Hub Game", std::chrono::system_clock::time_point{});
+        expect(static_cast<bool>(recent.save()), "hub: the recent list is prepared");
+    }
+
+    EditorHarness editor(
+        root, EditorProjectHubOptions{.hub = {.defaultProjectLocation = root / "projects"}, .startInHub = true});
+    if (!editor.start()) {
+        expect(false, "hub: the editor starts in the Project Hub");
+        return;
+    }
+    const ApplicationFrameResult hubFrame = editor.frame();
+    expect(hubFrame.keepRunning && entityCount(editor.scene) == 0, "hub: the hub shows no scene");
+
+    const std::string projectKey = fs::absolute(generated.projectFile).lexically_normal().string();
+    HeadlessImGuiContext::activateNextFrame(
+        projectHubItem({"##hub_columns", "##recent_projects", projectKey.c_str(), "Open"}));
+    const ApplicationFrameResult opened = editor.frame();
+    expect(opened.success && opened.keepRunning, "hub: opening a recent project keeps the editor running");
+    expect(hasEntityNamed(editor.scene, "Ground") && hasEntityNamed(editor.scene, "Camera"),
+           "hub: the chosen project's session opens its startup scene");
+    expect(editor.application().project().displayName == "Hub Game", "hub: the chosen project is current");
+    const std::span<const RecentProject> recent = editor.application().recentProjects().entries();
+    expect(!recent.empty() && recent.front().lastOpened > std::chrono::system_clock::time_point{},
+           "hub: opening a project records when it was opened");
+    editor.frame();
+
+    // F3, then the operator's name and Enter.
+    editor.press(ImGuiKey_F3);
+    HeadlessImGuiContext::typeNextFrame("Project Hub");
+    editor.frame();
+    const ApplicationFrameResult left = editor.press(ImGuiKey_Enter);
+    expect(left.success && left.keepRunning && entityCount(editor.scene) == 0,
+           "hub: File > Project Hub closes the clean project and shows the hub");
+    expect(fs::is_regular_file(root / "settings" / "workspaces.json"),
+           "hub: leaving the project unloads its session, which saves the workspaces");
+    expect(editor.frame().keepRunning, "hub: the hub keeps running after a project closed");
+}
 } // namespace
 
 int main() {
@@ -210,6 +286,7 @@ int main() {
     testPlayModeRestoresTheScene(root / "play");
     testNewDocumentAndQuit(root / "file");
     testHostQuitRequest(root / "quit");
+    testProjectHubSwitchesProjects(root / "hub");
 
     fs::remove_all(root, error);
     if (failures != 0) {

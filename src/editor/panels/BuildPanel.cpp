@@ -63,11 +63,7 @@ void BuildPanel::draw(EditorContext& context) {
 }
 
 void BuildPanel::startBuild(EditorDiagnostics& diagnostics) {
-    const ChildProcessResult started =
-        m_runner.start({.command = m_tools.buildCommand,
-                        // Settings text is UTF-8; a narrow path would use the ANSI code page.
-                        .workingDirectory = std::filesystem::path(
-                            std::u8string(m_tools.buildDirectory.begin(), m_tools.buildDirectory.end()))});
+    const ChildProcessResult started = m_runner.start(buildRequest());
     std::vector<EditorDiagnostic> replacements;
     if (!started) {
         replacements.push_back({.severity = EditorDiagnosticSeverity::Error,
@@ -86,6 +82,26 @@ void BuildPanel::poll(EditorDiagnostics& diagnostics) {
 
 const BuildRunner& BuildPanel::runner() const {
     return m_runner;
+}
+
+void BuildPanel::setProjectBuild(std::optional<BuildRequest> projectBuild) {
+    m_projectBuild = std::move(projectBuild);
+}
+
+bool BuildPanel::usesProjectBuild() const {
+    const EditorToolSettings defaults;
+    return m_projectBuild && m_tools.buildCommand == defaults.buildCommand &&
+           m_tools.buildDirectory == defaults.buildDirectory;
+}
+
+BuildRequest BuildPanel::buildRequest() const {
+    if (usesProjectBuild()) {
+        return *m_projectBuild;
+    }
+    // Settings text is UTF-8; a narrow path would use the ANSI code page.
+    return {.command = m_tools.buildCommand,
+            .workingDirectory =
+                std::filesystem::path(std::u8string(m_tools.buildDirectory.begin(), m_tools.buildDirectory.end()))};
 }
 
 void BuildPanel::publishDiagnostics(EditorDiagnostics& diagnostics) const {
@@ -131,6 +147,11 @@ void BuildPanel::drawToolbar(EditorDiagnostics& diagnostics) {
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputTextWithHint("##command", "Build command, run by the shell", &m_tools.buildCommand);
     ImGui::EndDisabled();
+    if (usesProjectBuild()) {
+        const std::u8string directory = m_projectBuild->workingDirectory.u8string();
+        ImGui::TextDisabled("Builds the project: %s (in %s). Change the command or directory to run them instead.",
+                            m_projectBuild->command.c_str(), std::string(directory.begin(), directory.end()).c_str());
+    }
     if (widgets::SectionHeader("Settings")) {
         ImGui::BeginDisabled(running);
         ImGui::InputTextWithHint("Directory", "Editor working directory", &m_tools.buildDirectory);
