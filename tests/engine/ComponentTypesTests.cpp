@@ -40,6 +40,10 @@ struct TestBehaviourComponent {
     float minimumDelay{0.5f};
     float maximumDelay{1.5f};
     TestSettings settings;
+    // One reference to an entity in the scene and one to an entity that no
+    // longer exists, which must be kept as it is.
+    SceneEntityId target;
+    SceneEntityId lostTarget;
 };
 
 Fields<TestBehaviourComponent> behaviourFields() {
@@ -58,9 +62,12 @@ Fields<TestBehaviourComponent> behaviourFields() {
             .add("mood", &C::mood)
             .options({{"calm", "Calm", 0}, {"angry", "Angry", 1}})
             .range("delay", &C::minimumDelay, &C::maximumDelay)
-            .structure(
-                "settings", &C::settings,
-                Fields<TestSettings>().add("weight", &TestSettings::weight).add("active", &TestSettings::active)));
+            .structure("settings", &C::settings,
+                       Fields<TestSettings>().add("weight", &TestSettings::weight).add("active", &TestSettings::active))
+            .add("target", &C::target)
+            .optional()
+            .add("lost_target", &C::lostTarget)
+            .optional());
 }
 
 // Schema version 2 renamed "old_speed" to "speed".
@@ -152,13 +159,16 @@ void testGameComponentRoundTrip() {
     behaviour.minimumDelay = 0.25f;
     behaviour.maximumDelay = 0.75f;
     behaviour.settings = {.weight = 3.0f, .active = false};
+    behaviour.target = scene.id(entity);
+    behaviour.lostTarget = SceneEntityId{987654321};
     scene.registry().emplace<TestBehaviourComponent>(entity, behaviour);
 
     const std::string document = serialize(scene, assets, options);
     const nlohmann::json parsed = nlohmann::json::parse(document);
     const nlohmann::json& saved = parsed.at("entities").at(0).at("components").at("test_behaviour");
     expect(saved.at("$version") == 2 && saved.at("mood") == "angry" && saved.at("delay").size() == 2 &&
-               saved.at("settings").at("active") == false,
+               saved.at("settings").at("active") == false && saved.at("target") == scene.id(entity).value &&
+               saved.at("lost_target") == 987654321,
            "a reflected component should save its schema version, enum names, ranges, and nested structs");
 
     Scene restored;
@@ -169,7 +179,9 @@ void testGameComponentRoundTrip() {
     expect(restoredBehaviour != nullptr && restoredBehaviour->speed == 4.5f && restoredBehaviour->score == 900 &&
                restoredBehaviour->cells == glm::uvec3(4u, 5u, 6u) && restoredBehaviour->label == "villain" &&
                restoredBehaviour->mood == Mood::Angry && restoredBehaviour->maximumDelay == 0.75f &&
-               restoredBehaviour->settings.weight == 3.0f && !restoredBehaviour->settings.active,
+               restoredBehaviour->settings.weight == 3.0f && !restoredBehaviour->settings.active &&
+               restoredBehaviour->target == scene.id(entity) &&
+               restoredBehaviour->lostTarget == SceneEntityId{987654321},
            "a reflected component should round trip every field");
     expect(serialize(restored, assets, options) == document, "a reloaded game component should save identically");
 }

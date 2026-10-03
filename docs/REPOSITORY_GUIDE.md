@@ -237,7 +237,12 @@ their hierarchy. `destroyEntity` recursively destroys descendants.
 
 `Fields<T>` describes a struct's members (`FieldDescriptor`: key, kind,
 optional flag, and inspector hints such as ranges, angles, and colors);
-`FieldJson` reads and writes described fields generically. A `ComponentType`
+`FieldJson` reads and writes described fields generically. A `SceneEntityId`
+member is an entity reference field (`FieldKind::EntityReference`), written
+as the entity's id or `null` like a scene document's `parent`; an id whose
+entity no longer exists is kept unchanged. Reflection does not know the id
+type: `scene/SceneEntityId.hpp` opts it in through the `ReflectedFieldKind`
+trait, so `reflection/` stays free of scene code. A `ComponentType`
 pairs a component's stable document key with its fields or a custom codec,
 validation, sanitizing, texture bindings, and schema migrations, and a
 `ComponentTypeRegistry` holds the types a document understands.
@@ -565,6 +570,9 @@ user's differences from `DefaultKeymap` are saved to `keymap.json` in the
 editor settings directory. `OperatorSearch` is the F3 popup and `KeymapEditor`
 the rebinding window. `ObjectOperators` holds the document-only object
 operators, which run headless in `tests/editor/OperatorTests.cpp`.
+`EyedropperOperators` arms (`ui.eyedropper_entity`), completes
+(`ui.eyedropper_pick`, one undo step), and cancels (`ui.eyedropper_cancel`) the
+session's `interaction/EntityEyedropper`.
 
 ### Game module hosting (`src/editor/modules/`)
 
@@ -638,6 +646,19 @@ target, the irradiance bake button, and the Add Component menu grouped by
 `ComponentType::category()` (empty categories show as "Other"). Every edit is
 recorded through `SceneEditing` with a per-entity coalesce key, and component
 add/remove run `object.component_add`/`object.component_remove`.
+
+Entity reference fields draw through `interaction/EntityReferenceField`: a box
+naming the referenced entity ("None", its name, or "Missing" in the error
+colour), which accepts an entity dragged from the outliner
+(`ZENITH_SCENE_ENTITY`), a Clear button, and a Pick button arming the entity
+eyedropper. The armed `EntityEyedropper` names its field by entity id,
+component key, and field path only (never a `ComponentType` pointer), and
+looks it up again on every use. While it is armed, the next entity clicked in
+a viewport or the outliner fills the field through `ui.eyedropper_pick`
+instead of changing the selection; Esc, a right-click, Play mode, or the
+field's disappearance cancels it, and `EditorSession::updateEyedropper` shows
+the hint at the mouse. `tests/editor/EntityReferenceFieldTests.cpp` covers
+the widget, an outliner-click pick, and undo.
 
 `panels/InspectorPanel` lists those sections in one scrolling column.
 `panels/PropertiesPanel` is the Blender-style alternative: a vertical tab strip

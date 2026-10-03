@@ -6,9 +6,11 @@
 #include "editor/document/DefaultScene.hpp"
 #include "editor/document/SceneFragment.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
+#include "editor/operators/EyedropperOperators.hpp"
 #include "editor/operators/ObjectOperators.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
+#include "engine/scene/ComponentTypes.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -79,6 +81,9 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     if (const OperatorRegistrationResult result = registerObjectOperators(m_operators); !result) {
         m_diagnostics.reportError(result.error);
     }
+    if (const OperatorRegistrationResult result = registerEyedropperOperators(m_operators, m_eyedropper); !result) {
+        m_diagnostics.reportError(result.error);
+    }
     // Scene references resolve through the project's asset database by GUID.
     m_document.setAssetDatabase(m_projectAssets.assetDatabase());
 }
@@ -93,7 +98,8 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .selection = m_selection,
             .diagnostics = m_diagnostics,
             .mode = m_playMode.mode(),
-            .actions = *this};
+            .actions = *this,
+            .eyedropper = &m_eyedropper};
 }
 
 OperatorContext EditorSession::operatorContext(ApplicationContext& context, KeymapRegion region) {
@@ -555,11 +561,50 @@ void EditorSession::drawUi(ApplicationContext& context) {
     drawPathDialog(context);
     drawUnsavedChangesDialog(context);
     drawRecoveryDialog(context);
+    updateEyedropper(context);
     drawAreas(context);
     syncActiveRenderView(context);
     drawObjectPopups(context);
     drawOperatorWindows(context);
     drawStatusBar(context.rendering.stats());
+}
+
+void EditorSession::updateEyedropper(ApplicationContext& context) {
+    if (m_eyedropper.cancellingClickHeld() && !ImGui::IsMouseDown(ImGuiMouseButton_Right) &&
+        !ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        m_eyedropper.setCancellingClickHeld(false);
+    }
+    const EntityReferenceTarget* target = m_eyedropper.target();
+    if (target == nullptr) {
+        return;
+    }
+    const bool cancelKey = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+    const ResolvedEntityReference resolved =
+        resolveEntityReference(context.scene, componentTypesFor(m_document.options()), *target);
+    if (cancelKey || m_playMode.mode() != EditorMode::Edit || !resolved) {
+        invokeOperator(context, "ui.eyedropper_cancel", {}, KeymapRegion::Global);
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+            // The cancelling click must not also start a viewport camera drag
+            // or open a context menu when it is released.
+            m_eyedropper.setCancellingClickHeld(true);
+            for (ViewportPanel* viewport : m_viewports.openViewports()) {
+                viewport->suppressCameraUntilRightRelease();
+            }
+        }
+        return;
+    }
+    // The hint follows the mouse on smoked glass, like the viewport labels.
+    const std::string hint = "Pick " + resolved.field->presentation.label + ": click an entity (Esc cancels)";
+    const float artPixel = editorArtPixel();
+    const ImVec2 mouse = ImGui::GetMousePos();
+    const ImVec2 textPosition{mouse.x + 8.0f * artPixel, mouse.y + 8.0f * artPixel};
+    const ImVec2 textSize = ImGui::CalcTextSize(hint.c_str());
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    ThemeChrome::paintSmokedGlass(
+        drawList, {textPosition.x - 3.0f * artPixel, textPosition.y - 2.0f * artPixel},
+        {textPosition.x + textSize.x + 3.0f * artPixel, textPosition.y + textSize.y + 2.0f * artPixel});
+    drawList->AddText(textPosition, toImU32(palette::activeObjectLabel), hint.c_str());
+    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
 }
 
 void EditorSession::unload(ApplicationContext& context) {

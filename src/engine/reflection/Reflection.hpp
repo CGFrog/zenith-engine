@@ -31,7 +31,18 @@ enum class FieldKind : uint8_t {
     FloatRange,
     // A nested struct described by FieldDescriptor::children.
     Struct,
+    // A reference to another entity by its stable 64-bit id, stored as a
+    // standard-layout type whose only member is a uint64_t; zero means none.
+    // Reflection does not know the id type: it opts in through
+    // ReflectedFieldKind (see engine/scene/SceneEntityId.hpp). The referenced
+    // entity may not exist; such an id is kept as it is.
+    EntityReference,
 };
+
+// Lets a type defined outside reflection be described by Fields::add with a
+// kind whose storage reflection knows. Specialize it next to the type with
+// `static constexpr FieldKind kind`.
+template <typename Value> struct ReflectedFieldKind {};
 
 // How an enum is written to documents.
 enum class EnumEncoding : uint8_t {
@@ -128,6 +139,8 @@ template <typename Value> constexpr FieldKind kindOf() {
         return FieldKind::String;
     } else if constexpr (std::is_enum_v<Value>) {
         return FieldKind::Enum;
+    } else if constexpr (requires { ReflectedFieldKind<Value>::kind; }) {
+        return ReflectedFieldKind<Value>::kind;
     } else {
         static_assert(sizeof(Value) == 0, "Unsupported reflected field type; describe it with structure() or a "
                                           "custom component codec");

@@ -63,6 +63,11 @@ Json writeField(const void* object, const FieldDescriptor& field) {
         return Json::array({*static_cast<float*>(field.address(mutableObject)),
                             *static_cast<float*>(field.secondAddress(mutableObject))});
     }
+    case FieldKind::EntityReference: {
+        // As scene documents write entity ids: a number, or null for none.
+        const uint64_t id = field.value<uint64_t>(object);
+        return id == 0 ? Json(nullptr) : Json(id);
+    }
     case FieldKind::Struct: {
         Json nested;
         writeReflectedFields(&field.value<char>(object), field.children, nested);
@@ -151,6 +156,18 @@ std::string readField(const Json& input, void* object, const FieldDescriptor& fi
         *static_cast<float*>(field.secondAddress(object)) = values[1];
         return {};
     }
+    case FieldKind::EntityReference:
+        // The id is kept even when no entity has it, so a reference to a
+        // missing entity survives a save and load unchanged.
+        if (input.is_null()) {
+            field.value<uint64_t>(object) = 0;
+            return {};
+        }
+        if (!input.is_number_unsigned()) {
+            return mismatch("an entity id or null");
+        }
+        field.value<uint64_t>(object) = input.get<uint64_t>();
+        return {};
     case FieldKind::Struct:
         if (std::string error = readReflectedFields(input, &field.value<char>(object), field.children);
             !error.empty()) {

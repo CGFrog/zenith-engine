@@ -7,12 +7,17 @@
 #include <span>
 #include <string_view>
 
+struct EntityReferenceFieldContext;
+
 struct ReflectedFieldEditorOptions {
     // Case-insensitive label filter; empty shows every field.
     std::string_view filter;
     // For read-only path fields: whether the asset they name loaded, so a
     // missing file can be flagged. nullopt means the field is not an asset.
     std::function<std::optional<bool>(std::string_view fieldKey)> assetLoaded;
+    // Names referenced entities and offers the eyedropper; without it entity
+    // reference fields show their id only.
+    const EntityReferenceFieldContext* entityReferences{nullptr};
 };
 
 // Draws one ImGui widget per visible field of object, using each field's

@@ -44,6 +44,9 @@ std::string validateFieldDescriptors(const std::vector<FieldDescriptor>& fields)
         if (field.kind == FieldKind::Enum && field.options.empty()) {
             return "Enum field '" + field.key + "' lists no options";
         }
+        if (field.kind == FieldKind::EntityReference && (field.presentation.angle || field.presentation.color)) {
+            return "Entity reference field '" + field.key + "' cannot be shown as an angle or a color";
+        }
         if (field.kind == FieldKind::Struct) {
             if (std::string error = validateFieldDescriptors(field.children); !error.empty()) {
                 return field.key + "." + error;

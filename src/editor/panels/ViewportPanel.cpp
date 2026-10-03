@@ -503,6 +503,14 @@ void ViewportPanel::pickAtMouse(EditorContext& context) {
     Scene& scene = context.app.scene;
     scene.updateWorldTransforms();
     const Entity picked = pickThroughLens(scene, context.app.assets, lens(scene), normalized, m_size.x / m_size.y);
+    if (context.eyedropperArmed()) {
+        // An armed eyedropper takes the click and leaves the selection alone;
+        // a click on empty space keeps it waiting.
+        if (picked != entt::null) {
+            context.pickEyedropperEntity(scene.id(picked));
+        }
+        return;
+    }
     if (picked == entt::null) {
         context.selection.clear();
     } else {

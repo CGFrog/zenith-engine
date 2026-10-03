@@ -558,7 +558,9 @@ add_library(zenith_editor_app STATIC
     src/editor/document/SceneFragment.cpp
     src/editor/interaction/ComponentEditors.cpp
     src/editor/interaction/EditorCamera.cpp
+    src/editor/interaction/EntityEyedropper.cpp
     src/editor/interaction/EntityPropertiesView.cpp
+    src/editor/interaction/EntityReferenceField.cpp
     src/editor/interaction/ModalTransform.cpp
     src/editor/interaction/PickQueries.cpp
     src/editor/interaction/GraphicsSettingsEditor.cpp
@@ -569,6 +571,7 @@ add_library(zenith_editor_app STATIC
     src/editor/operators/Keymap.cpp
     src/editor/operators/KeymapEditor.cpp
     src/editor/operators/LastOperatorPanel.cpp
+    src/editor/operators/EyedropperOperators.cpp
     src/editor/operators/ObjectOperators.cpp
     src/editor/operators/Operator.cpp
     src/editor/operators/OperatorHistory.cpp
@@ -1629,6 +1632,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_properties_panel_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_properties_panel COMMAND zenith_properties_panel_tests)
+
+    add_executable(zenith_entity_reference_field_tests tests/editor/EntityReferenceFieldTests.cpp)
+    target_link_libraries(zenith_entity_reference_field_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_entity_reference_field_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_entity_reference_field_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_entity_reference_field COMMAND zenith_entity_reference_field_tests)
 
     add_executable(zenith_logger_tests tests/engine/LoggerTests.cpp)
     target_link_libraries(zenith_logger_tests PRIVATE zenith_engine)
