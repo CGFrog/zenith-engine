@@ -10,7 +10,9 @@
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/EyedropperOperators.hpp"
 #include "editor/operators/ObjectOperators.hpp"
+#include "editor/operators/PlayOperators.hpp"
 #include "editor/operators/PrefabOperators.hpp"
+#include "editor/settings/SimulateSystemSettings.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
 #include "engine/scene/ComponentTypes.hpp"
@@ -62,6 +64,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_fileDialog("Zenith scene", sceneExtension)
     , m_operatorRunner(m_operators, m_history)
     , m_gameModulePath(std::move(gameModule))
+    , m_simulateSystemsPath(settingsDirectory / "simulate-systems.json")
     , m_keymap(defaultEditorKeymap())
     , m_keymapPath(settingsDirectory / "keymap.json")
     , m_projectAssets(std::move(assetRoot), sceneRoot, settingsDirectory / "asset-browser.json")
@@ -100,6 +103,13 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
         m_diagnostics.reportError(result.error);
     }
     if (const OperatorRegistrationResult result = registerPrefabOperators(m_operators); !result) {
+        m_diagnostics.reportError(result.error);
+    }
+    if (const OperatorRegistrationResult result =
+            registerPlayOperators(m_operators, {.playMode = m_playMode,
+                                                .modules = m_moduleHost,
+                                                .simulateMaskChanged = [this] { saveSimulateSystems(); }});
+        !result) {
         m_diagnostics.reportError(result.error);
     }
     // Scene references resolve through the project's asset database by GUID.
@@ -199,21 +209,27 @@ void EditorSession::registerSessionOperators() {
         [](const OperatorContext& context) { return context.mode == EditorMode::Edit; },
         [this](ApplicationContext& app) { enterPlayMode(app); }));
     registerOperator(applicationOperator(
-        "play.toggle_pause", "Pause / Resume", "Pause or resume Play mode",
+        "play.simulate", "Simulate",
+        "Run physics and the systems chosen in the System Profiler on a copy of the document, keeping the editor "
+        "camera and tools",
+        [](const OperatorContext& context) { return context.mode == EditorMode::Edit; },
+        [this](ApplicationContext& app) { enterPlayMode(app, EditorRuntime::Simulate); }));
+    registerOperator(applicationOperator(
+        "play.toggle_pause", "Pause / Resume", "Pause or resume Play or Simulate",
         [](const OperatorContext& context) { return context.mode != EditorMode::Edit; },
         [this](ApplicationContext&) {
-            if (m_playMode.mode() == EditorMode::Play) {
+            if (m_playMode.running()) {
                 m_playMode.pause();
             } else {
                 m_playMode.resume();
             }
         }));
     registerOperator(applicationOperator(
-        "play.step", "Single Step", "Advance paused Play mode by one fixed update",
+        "play.step", "Single Step", "Advance paused Play or Simulate by one fixed update",
         [](const OperatorContext& context) { return context.mode == EditorMode::Paused; },
         [this](ApplicationContext&) { m_playMode.requestSingleStep(); }));
     registerOperator(applicationOperator(
-        "play.stop", "Stop", "Leave Play mode and restore the authored scene",
+        "play.stop", "Stop", "Leave Play or Simulate and restore the authored scene",
         [](const OperatorContext& context) { return context.mode != EditorMode::Edit; },
         [this](ApplicationContext& app) { stopPlayMode(app); }));
 
@@ -303,6 +319,14 @@ void EditorSession::drawOperatorWindows(ApplicationContext& context) {
     }
 }
 
+void EditorSession::saveSimulateSystems() {
+    if (const SimulateSystemSettingsResult result =
+            saveSimulateSystemSettings(m_simulateSystemsPath, m_moduleHost.simulateMask());
+        !result) {
+        m_diagnostics.reportError(result.error);
+    }
+}
+
 void EditorSession::saveKeymap() {
     if (const KeymapResult result = m_keymap.save(m_keymapPath); !result) {
         m_diagnostics.reportError(result.error);
@@ -326,6 +350,12 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     for (const std::string& warning : keymap.warnings) {
         m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Keymap", warning);
     }
+    SimulateSystemMask simulateMask;
+    if (const SimulateSystemSettingsResult result = loadSimulateSystemSettings(m_simulateSystemsPath, simulateMask);
+        !result) {
+        m_diagnostics.reportError(result.error);
+    }
+    m_moduleHost.setSimulateMask(std::move(simulateMask));
     m_projectAssets.refresh(m_diagnostics);
     m_openRecoveryDialog = m_recovery.available();
     m_smokeScenario = SDL_getenv("ZENITH_EDITOR_SMOKE") != nullptr;
@@ -501,10 +531,11 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     const bool viewportsDone = updateSmokeViewports(context);
     const bool componentsDone = updateSmokeComponents(context);
     const bool menusDone = updateSmokeMenus(context);
+    const bool simulateDone = updateSmokeSimulate(context);
     if (m_smokeFrame == 500 && !m_smokeStreamCompleted) {
         m_diagnostics.reportError("Streaming smoke did not commit while frames were being presented");
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    } else if (areasDone && viewportsDone && componentsDone && menusDone && m_smokeStreamCompleted) {
+    } else if (areasDone && viewportsDone && componentsDone && menusDone && simulateDone && m_smokeStreamCompleted) {
         updateSmokeModuleReload(context);
     }
 }
@@ -555,6 +586,75 @@ bool EditorSession::updateSmokeComponents(ApplicationContext& context) {
         m_selection.clear();
     }
     return m_smokeFrame > firstFrame + 1;
+}
+
+bool EditorSession::updateSmokeSimulate(ApplicationContext& context) {
+    // From frame 40: Simulate at half speed until a physics-step system has
+    // run a few times (or for at most 120 frames when the module has none),
+    // then Stop.
+    constexpr uint32_t firstFrame = 40;
+    constexpr uint32_t lastFrame = firstFrame + 120;
+    const auto fail = [&](const std::string& message) {
+        context.logger.log(LogLevel::Error, "editor", "Simulate smoke: " + message);
+        m_diagnostics.reportError("Simulate smoke: " + message);
+        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+    };
+    const auto snapshot = [&] {
+        std::string text;
+        if (const SceneDocumentResult result =
+                SceneDocument::serialize(context.scene, context.assets, m_document.options(), text);
+            !result) {
+            fail("the scene could not be serialized: " + result.error);
+        }
+        return text;
+    };
+    if (m_smokeFrame < firstFrame) {
+        return false;
+    }
+    if (m_smokeFrame == firstFrame) {
+        m_smokeSimulateSnapshot = snapshot();
+        m_smokeSimulateFixedRuns = 0;
+        invokeOperator(context, "play.set_time_scale", R"({"scale":0.5})", KeymapRegion::Global);
+        if (!invokeOperator(context, "play.simulate", {}, KeymapRegion::Global) ||
+            m_playMode.mode() != EditorMode::Simulate || m_playMode.timeScale() != 0.5f) {
+            fail("play.simulate did not enter Simulate at half speed");
+            return true;
+        }
+        return false;
+    }
+    if (m_playMode.mode() == EditorMode::Edit) {
+        return true;
+    }
+    // The profile publishes the previous frame, which ran in Simulate.
+    const SystemProfile& profile = m_moduleHost.systemProfile();
+    const SimulateSystemMask& mask = m_moduleHost.simulateMask();
+    bool fixedSystemsEnabled = false;
+    for (const SystemPhase phase : {SystemPhase::Update, SystemPhase::FixedUpdate}) {
+        for (const SystemDescriptor* system : m_moduleHost.systems(phase)) {
+            const SystemTiming* timing = profile.find(system->name);
+            const bool runs = runsIn(system->runIn, SimulationMode::Simulate) && mask.enabled(system->name, phase);
+            if (!runs && timing != nullptr && timing->frameRuns > 0) {
+                fail("system '" + system->name + "' ran although Simulate does not run it");
+            }
+            if (runs && phase == SystemPhase::FixedUpdate) {
+                fixedSystemsEnabled = true;
+                m_smokeSimulateFixedRuns += timing != nullptr ? timing->frameRuns : 0;
+            }
+        }
+    }
+    const bool fixedDone = !fixedSystemsEnabled || m_smokeSimulateFixedRuns >= 3;
+    if (m_smokeFrame < firstFrame + 3 || (!fixedDone && m_smokeFrame < lastFrame)) {
+        return false;
+    }
+    if (!fixedDone) {
+        fail("no fixed-update system ran in Simulate");
+    }
+    invokeOperator(context, "play.stop", {}, KeymapRegion::Global);
+    invokeOperator(context, "play.set_time_scale", R"({"scale":1.0})", KeymapRegion::Global);
+    if (m_playMode.mode() != EditorMode::Edit || snapshot() != m_smokeSimulateSnapshot) {
+        fail("Stop did not restore the scene from before Simulate");
+    }
+    return true;
 }
 
 // H hides everything in the editor views (the frame rendered in between draws
@@ -648,9 +748,11 @@ void EditorSession::updateAutosave(ApplicationContext& context, float deltaSecon
 void EditorSession::fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) {
     // Fixed updates run only while simulating (including a paused single
     // step); Edit mode keeps its own fixed clock in updateGameModule.
+    // Simulate passes no input; the host enforces that too.
     if (m_playMode.mode() != EditorMode::Edit) {
-        m_moduleHost.runSystems(SystemPhase::FixedUpdate, context.scene, &context, SimulationMode::Play, deltaSeconds,
-                                &input);
+        const SimulationMode mode = m_playMode.simulationMode();
+        m_moduleHost.runSystems(SystemPhase::FixedUpdate, context.scene, &context, mode, deltaSeconds,
+                                mode == SimulationMode::Simulate ? nullptr : &input);
     }
 }
 
@@ -662,11 +764,18 @@ bool EditorSession::beginFixedUpdate() {
     return m_playMode.beginFixedUpdate();
 }
 
+SimulationClock EditorSession::simulationClock() const {
+    return m_playMode.simulationClock();
+}
+
 void EditorSession::requestQuit(ApplicationContext& context) {
     requestClose(context);
 }
 
 void EditorSession::drawUi(ApplicationContext& context) {
+    // Every system of this frame ran in update and fixedUpdate; publish
+    // their timings for the System Profiler areas drawn below.
+    m_moduleHost.finishSystemFrame();
     ImGuizmo::BeginFrame();
     m_themeChrome.beginFrame(context.rendering);
     // The dockspace host is transparent so the wallpaper shows between areas.
@@ -833,8 +942,9 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
     if (ImGui::BeginMenu("Play")) {
         if (m_playMode.mode() == EditorMode::Edit) {
             operatorMenuItem(context, "play.start", "Play");
+            operatorMenuItem(context, "play.simulate", "Simulate");
         } else {
-            operatorMenuItem(context, "play.toggle_pause", m_playMode.mode() == EditorMode::Play ? "Pause" : "Resume");
+            operatorMenuItem(context, "play.toggle_pause", m_playMode.running() ? "Pause" : "Resume");
             operatorMenuItem(context, "play.step", "Single Step");
             operatorMenuItem(context, "play.stop", "Stop");
         }
@@ -904,8 +1014,12 @@ void EditorSession::drawPlayModePill() const {
     case EditorMode::Play:
         widgets::StatusPill(EditorIcon::Play, "Play", buttonActiveTop, buttonActiveBottom, activeInk);
         break;
+    case EditorMode::Simulate:
+        widgets::StatusPill(EditorIcon::Play, "Simulate", buttonActiveTop, buttonActiveBottom, activeInk);
+        break;
     case EditorMode::Paused:
-        widgets::StatusPill(EditorIcon::Pause, "Paused", buttonHoverTop, buttonHoverBottom, ink);
+        widgets::StatusPill(EditorIcon::Pause, m_playMode.simulating() ? "Simulate Paused" : "Paused", buttonHoverTop,
+                            buttonHoverBottom, ink);
         break;
     }
 }
@@ -1241,13 +1355,15 @@ OperatorResult EditorSession::pasteClipboard(ApplicationContext& context) {
     return OperatorResult::finished();
 }
 
-void EditorSession::enterPlayMode(ApplicationContext& context) {
+void EditorSession::enterPlayMode(ApplicationContext& context, EditorRuntime runtime) {
     context.physics.clear();
     context.audio.stopSceneVoices();
     if (const SceneDocumentResult result =
-            m_playMode.enter(context.scene, context.assets, m_document.options(), m_selection.ids());
+            m_playMode.enter(context.scene, context.assets, m_document.options(), m_selection.ids(), runtime);
         !result) {
-        m_diagnostics.reportError("Could not enter Play mode: " + result.error);
+        m_diagnostics.reportError(std::string(runtime == EditorRuntime::Simulate ? "Could not enter Simulate: "
+                                                                                 : "Could not enter Play mode: ") +
+                                  result.error);
         return;
     }
     m_history.crossBoundary(CommandHistoryBoundary::EnterPlayMode);

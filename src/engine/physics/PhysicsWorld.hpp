@@ -96,6 +96,11 @@ struct PhysicsDebugDrawOptions {
     DebugDepth depth{DebugDepth::Tested};
 };
 
+// A Jolt physics system over one Scene. Any number of worlds may be
+// initialized at once (for example an editor's edit scene and its Play or
+// Simulate copy, or tests) and shut down in any order: they share Jolt's
+// process-wide runtime through JoltRuntimeLease, which the last world to shut
+// down destroys.
 class PhysicsWorld {
   public:
     PhysicsWorld();

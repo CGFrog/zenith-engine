@@ -80,7 +80,12 @@ rebuilt while loaded, refuses a module whose API version or toolchain/runtime
 build hash differs, and lets it register component types into a copy of the
 host's registry and systems into its own `SystemRegistry`. A
 `SystemScheduler` runs systems per update or fixed-update phase by order,
-filtered by edit/play `RunIn` flags. A system receives the frame's raw
+filtered by edit/play `RunIn` flags. `SimulationMode::Simulate` (the editor's
+Simulate) runs the Play systems a `SimulateSystemMask` enables (by default
+every FixedUpdate system and no Update system) and never passes input. Given a
+`SystemProfile`, `run` records each system's CPU time (this frame, a rolling
+average, and a resettable maximum); the scheduler itself stays immutable and
+shareable. A system receives the frame's raw
 `InputState` through `SystemContext::input` when the host routes player input
 to the scene (null otherwise) and interprets it with its own bindings. Module code is reachable through
 registered functions, EnTT storage created by module code, and component
@@ -408,9 +413,31 @@ Debug drawing). Physics depends only on the renderer-independent
 `graphics/DebugDraw.hpp` recording type; `physics/JoltDebugDraw` adapts Jolt's
 `DebugRendererSimple` to it. Jolt is built with `JPH_DEBUG_RENDERER` in every
 configuration (`DEBUG_RENDERER_IN_DISTRIBUTION`), and Jolt publishes that
-definition to its users, so the library and the engine agree on it. Jolt
-allows one debug renderer per process: the first world that draws creates it
-and later worlds borrow it until its owner shuts down.
+definition to its users, so the library and the engine agree on it.
+
+Jolt keeps process-wide globals (its factory and registered types, the default
+material, and one debug renderer). Every initialized `PhysicsWorld` holds a
+`JoltRuntimeLease` (`physics/JoltRuntime`): the first lease creates the
+runtime, the last one released destroys it, and the runtime owns the single
+`JoltDebugDraw`, so any number of worlds (an edit scene and its Play or
+Simulate copy, tests) can coexist and shut down in any order. The lease count
+and the debug renderer, behind one mutex, are the only process-wide state
+Zenith adds to Jolt's own.
+
+## Simulation clock and frame timings
+
+`ApplicationScene::simulationClock()` (`application/SimulationClock.hpp`) gives
+a time scale (clamped to [0, 10]) and a paused flag, read each frame after
+`update` (where editor operators change it).
+`Engine::run` applies it to fixed-step accumulation (so physics and
+FixedUpdate systems), skeletal animation, and audio (`AudioSystem`'s playback
+rate, which holds every voice at 0). `ApplicationScene::update` still receives
+wall-clock time for tools and cameras; a scene scales its own simulation work
+(the editor scales its Update systems). A paused clock accumulates only for a
+requested single step, at wall-clock rate. The engine measures its CPU phases
+(input, update, animation, fixed updates and physics, transforms, UI, renderer,
+audio) every frame into `EngineFrameTimings` and shares the last frame through
+`ApplicationContext::frameTimings`; benchmark mode samples the same values.
 
 ## Render flow
 

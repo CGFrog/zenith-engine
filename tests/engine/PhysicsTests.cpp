@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
+#include <memory>
 
 namespace {
 int failures = 0;
@@ -13,6 +14,78 @@ void expect(bool condition, const char* message) {
         std::cerr << "FAILED: " << message << '\n';
         ++failures;
     }
+}
+
+// A static floor and a dynamic box three metres above it; returns the box.
+Entity addFallingBox(Scene& scene) {
+    const Entity floor = scene.createEntity("Floor");
+    scene.registry().get<TransformComponent>(floor).local =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -0.5f, 0.0f)) *
+        glm::scale(glm::mat4(1.0f), glm::vec3(5.0f, 0.5f, 5.0f));
+    scene.registry().emplace<ColliderComponent>(floor, BoxCollider{glm::vec3(1.0f)});
+    scene.registry().emplace<RigidBodyComponent>(floor);
+    const Entity box = scene.createEntity("Box");
+    scene.registry().get<TransformComponent>(box).local = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 3.0f, 0.0f));
+    scene.registry().emplace<ColliderComponent>(box, BoxCollider{glm::vec3(0.5f)});
+    scene.registry().emplace<RigidBodyComponent>(
+        box, RigidBodyComponent{.motionType = PhysicsMotionType::Dynamic, .layer = PhysicsLayer::Dynamic});
+    return box;
+}
+
+// One world of several: its own scene, stepped and drawn independently.
+struct WorldUnderTest {
+    Scene scene;
+    Entity box{entt::null};
+    std::unique_ptr<PhysicsWorld> physics = std::make_unique<PhysicsWorld>();
+
+    WorldUnderTest() {
+        box = addFallingBox(scene);
+        expect(static_cast<bool>(physics->init()), "each of several physics worlds initializes");
+    }
+
+    bool stepAndDraw(const AssetManager& assets, int steps) {
+        for (int step = 0; step < steps; ++step) {
+            if (!physics->step(scene, assets, physics->config().fixedTimeStep)) {
+                return false;
+            }
+        }
+        DebugDraw debug;
+        return physics->drawDebug(debug) && debug.lineCount() > 0;
+    }
+
+    float boxHeight() const {
+        return scene.registry().get<TransformComponent>(box).local[3].y;
+    }
+};
+
+// Worlds share Jolt's process-wide runtime (factory, registered types, debug
+// renderer): any number may run at once, and shutting one down in any order
+// leaves the others stepping and drawing.
+void testWorldsShareJoltRuntime() {
+    AssetManager assets;
+    for (const bool firstShutsDownFirst : {true, false}) {
+        WorldUnderTest first;
+        WorldUnderTest second;
+        expect(first.stepAndDraw(assets, 10) && second.stepAndDraw(assets, 10),
+               "two worlds step and draw debug geometry at the same time");
+        WorldUnderTest& closed = firstShutsDownFirst ? first : second;
+        WorldUnderTest& survivor = firstShutsDownFirst ? second : first;
+        const float before = survivor.boxHeight();
+        closed.physics->shutdown();
+        closed.physics.reset();
+        expect(survivor.stepAndDraw(assets, 30) && survivor.boxHeight() < before,
+               "a world keeps simulating and drawing after another world shuts down");
+        WorldUnderTest third;
+        expect(third.stepAndDraw(assets, 5) && survivor.stepAndDraw(assets, 5),
+               "a world created after another shut down shares the live runtime");
+    }
+    // Every world above is gone, so the runtime was destroyed; a new world
+    // creates it again.
+    WorldUnderTest fresh;
+    expect(fresh.stepAndDraw(assets, 5), "a world initializes again after every world shut down");
+    fresh.physics->shutdown();
+    expect(static_cast<bool>(fresh.physics->init()) && fresh.stepAndDraw(assets, 5),
+           "a world shut down and initialized again steps and draws");
 }
 } // namespace
 
@@ -95,5 +168,7 @@ int main() {
     expect(!physics.raycast({0.0f, 5.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, 10.0f, clearedHit),
            "clearing physics removes all managed bodies");
     physics.shutdown();
+
+    testWorldsShareJoltRuntime();
     return failures == 0 ? 0 : 1;
 }

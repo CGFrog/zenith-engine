@@ -7,6 +7,7 @@
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/operators/OperatorRunner.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/input/InputManager.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneDocument.hpp"
@@ -168,6 +169,55 @@ void testLoadEditAndPlay(HostFixture& fixture, const TestPaths& paths, SceneEnti
     expect(fixture.counterValue(counterId, "fixed_ticks") == 5, "play fixed updates run fixed-update systems");
 }
 
+// Simulate runs FixedUpdate systems and the Update systems the user enabled,
+// never passes input, and every run is timed in the host's profile.
+void testSimulate(HostFixture& fixture, SceneEntityId counterId) {
+    const InputState input;
+    const int32_t value = fixture.counterValue(counterId, "value");
+    const int32_t fixedTicks = fixture.counterValue(counterId, "fixed_ticks");
+    const int32_t inputTicks = fixture.counterValue(counterId, "input_ticks");
+    expect(fixture.host.systems(SystemPhase::Update).size() == 2 &&
+               fixture.host.systems(SystemPhase::FixedUpdate).size() == 1,
+           "the host lists the module's systems by phase");
+
+    fixture.host.finishSystemFrame();
+    fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Simulate, 0.016f, &input);
+    fixture.host.runSystems(SystemPhase::FixedUpdate, fixture.scene, nullptr, SimulationMode::Simulate, 0.25f, &input);
+    fixture.host.runSystems(SystemPhase::FixedUpdate, fixture.scene, nullptr, SimulationMode::Simulate, 0.25f, &input);
+    fixture.host.finishSystemFrame();
+    expect(fixture.counterValue(counterId, "value") == value &&
+               fixture.counterValue(counterId, "fixed_ticks") == fixedTicks + 2,
+           "Simulate runs FixedUpdate systems but no Update system by default");
+    expect(fixture.counterValue(counterId, "input_ticks") == inputTicks,
+           "Simulate never passes player input to systems, even when the caller has some");
+    const SystemTiming* fixed = fixture.host.systemProfile().find("count_fixed");
+    const SystemTiming* play = fixture.host.systemProfile().find("count_play");
+    expect(fixed != nullptr && fixed->frameRuns == 2 && fixed->phase == SystemPhase::FixedUpdate,
+           "the profile counts every fixed run of the frame");
+    expect(play == nullptr || play->frameRuns == 0, "a system Simulate skipped has no runs that frame");
+
+    fixture.host.runSystems(SystemPhase::FixedUpdate, fixture.scene, nullptr, SimulationMode::Play, 0.25f, &input);
+    expect(fixture.counterValue(counterId, "input_ticks") == inputTicks + 1, "Play passes input to systems");
+
+    fixture.host.setSimulateSystemEnabled("count_play", true);
+    fixture.host.setSimulateSystemEnabled("count_fixed", false);
+    fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Simulate, 0.016f, &input);
+    fixture.host.runSystems(SystemPhase::FixedUpdate, fixture.scene, nullptr, SimulationMode::Simulate, 0.25f, &input);
+    expect(fixture.counterValue(counterId, "value") == value + 1 &&
+               fixture.counterValue(counterId, "fixed_ticks") == fixedTicks + 3 &&
+               fixture.counterValue(counterId, "input_ticks") == inputTicks + 1,
+           "the Simulate mask chooses which systems Simulate runs, still without input");
+    fixture.host.setSimulateSystemEnabled("count_fixed", true);
+    fixture.host.finishSystemFrame();
+    fixture.host.resetSystemTimingMaxima();
+    expect(fixture.host.systemProfile().find("count_fixed")->maximumMilliseconds == 0.0,
+           "resetting the maxima clears them");
+
+    // Later tests expect the counter as testLoadEditAndPlay left it.
+    *fixture.counterField<int32_t>(counterId, "value") = value;
+    *fixture.counterField<int32_t>(counterId, "fixed_ticks") = fixedTicks;
+}
+
 void testHotReload(HostFixture& fixture, const TestPaths& paths, SceneEntityId counterId) {
     const auto start = std::chrono::steady_clock::now();
     expect(!fixture.host.pollSourceChange(start) && !fixture.host.sourceChanged(),
@@ -198,6 +248,12 @@ void testHotReload(HostFixture& fixture, const TestPaths& paths, SceneEntityId c
     expect(fixture.operators.find(addCounterOperator) != nullptr && fixture.host.panels().size() == 1,
            "the reloaded module's editor extensions are registered again");
     expect(!fixture.host.panels().empty() && fixture.host.panels()[0].visible, "an open module panel stays open");
+    expect(fixture.host.systemProfile().timings().size() == 1,
+           "a reload starts the profile over with the new module's systems");
+    fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Simulate, 0.016f);
+    expect(fixture.host.simulateMask().enabled("count_play", SystemPhase::Update) &&
+               fixture.counterValue(counterId, "value") == 206,
+           "the Simulate mask survives a module reload");
 
     fixture.editing().undo();
     expect(fixture.counterField<int32_t>(counterId, "value") == nullptr, "undo history recorded before reload undoes");
@@ -279,6 +335,7 @@ int main() {
         SceneEntityId counterId;
         testLoadEditAndPlay(fixture, paths, counterId);
         if (fixture.host.module() != nullptr) {
+            testSimulate(fixture, counterId);
             testHotReload(fixture, paths, counterId);
             testFailedReloadPreservesData(fixture, paths, counterId);
         }

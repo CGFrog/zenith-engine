@@ -9,6 +9,7 @@
 #include "editor/panels/InspectorPanel.hpp"
 #include "editor/panels/PropertiesPanel.hpp"
 #include "editor/panels/RenderStatisticsPanel.hpp"
+#include "editor/panels/SystemProfilerPanel.hpp"
 
 #include <memory>
 #include <string>
@@ -39,6 +40,10 @@ std::vector<AreaType> builtInAreaTypes(const EditorAreaServices& services) {
         perArea("diagnostics", "Diagnostics", [&tools] { return std::make_unique<DiagnosticsPanel>(tools); }));
     types.push_back(
         perArea("render_statistics", "Render Statistics", [] { return std::make_unique<RenderStatisticsPanel>(); }));
+    types.push_back(
+        perArea("system_profiler", "System Profiler", [&modules = services.modules, &playMode = services.playMode] {
+            return std::make_unique<SystemProfilerPanel>(modules, playMode);
+        }));
     // Browsers start secondary (hidden areas and other workspaces create
     // them too); the first one drawn while nobody is primary takes the role.
     types.push_back(perArea("asset_browser", "Asset Browser", [&projectAssets] {

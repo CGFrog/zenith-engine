@@ -2,12 +2,14 @@
 
 #include "../assets/Assets.hpp"
 #include "../audio/AudioSystem.hpp"
+#include "../diagnostics/FrameTimings.hpp"
 #include "../diagnostics/Logger.hpp"
 #include "../graphics/Rendering.hpp"
 #include "../input/InputManager.hpp"
 #include "../physics/PhysicsWorld.hpp"
 #include "../scene/Scene.hpp"
 #include "../ui/GameUi.hpp"
+#include "SimulationClock.hpp"
 
 #include <compare>
 #include <cstdint>
@@ -47,6 +49,9 @@ struct ApplicationContext {
     GameUiContext& gameUi;
     // The engine's log; scenes and tools may log through it and read it.
     Logger& logger;
+    // The engine loop's CPU phase timings for the last completed frame; null
+    // when the host does not measure them (for example in tests).
+    const EngineFrameTimings* frameTimings{nullptr};
 };
 
 class ApplicationScene {
@@ -58,6 +63,10 @@ class ApplicationScene {
     virtual void fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) = 0;
     virtual bool fixedUpdatesEnabled() const;
     virtual bool beginFixedUpdate();
+    // Read each frame after update (so a change made there applies to that
+    // frame's fixed steps, animation, and audio); the default runs at
+    // wall-clock rate.
+    virtual SimulationClock simulationClock() const;
     virtual void requestQuit(ApplicationContext& context);
     virtual void drawUi(ApplicationContext& context);
     virtual void unload(ApplicationContext& context) = 0;
@@ -104,6 +113,11 @@ class ApplicationSession {
     void fixedUpdate(const InputState& input, float deltaSeconds);
     bool fixedUpdatesEnabled() const;
     bool beginFixedUpdate();
+    // The active scene's clock, or the default one without a scene.
+    SimulationClock simulationClock() const;
+    // Shares the host's frame timings with the scenes (see
+    // ApplicationContext::frameTimings); timings must outlive the session.
+    void setFrameTimings(const EngineFrameTimings* timings);
     void drawUi();
     ApplicationFrameResult finishFrame();
     bool actionPending() const;

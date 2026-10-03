@@ -56,6 +56,11 @@ asset and scene roots are relative to that file.
    document is dirty and is offered after an interrupted session.
 9. Press `F5` to enter Play, `F6` to pause, `F7` to step, and `Shift+F5` to
    stop. Play uses a runtime clone; stopping restores the authored scene.
+   `Alt+F5` (**Play > Simulate**) runs physics and the fixed-update systems on
+   a clone instead, keeping the editor camera and ignoring your input; choose
+   which systems Simulate runs with the checkboxes in the **System Profiler**
+   (Debug workspace), where the time-scale field also slows down or speeds up
+   Play and Simulate.
 
 Every menu item and key runs a named operator. Press `F3` to search all
 operators that can run right now, with their shortcuts; use the arrow keys and
@@ -72,8 +77,9 @@ The tabs at the right of the main menu bar are workspaces:
 - **Lighting** for lights and rendering: one Properties area on the **World**
   tab (sun, environment, fog, irradiance volumes) above a second on the
   **Render** tab, beside the Graphics panel's GPU timings.
-- **Debug** for investigating problems: Render Statistics beside the viewport,
-  and Info, Diagnostics, and Build below it.
+- **Debug** for investigating problems: Render Statistics and the System
+  Profiler (per-system, engine, and GPU timings) beside the viewport, and Info,
+  Diagnostics, and Build below it.
 
 Each workspace remembers its own windows and docking. Every window is an area
 with a header menu named after its editor type: pick another type to show it

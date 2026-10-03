@@ -354,6 +354,7 @@ add_library(zenith_engine SHARED
     src/engine/audio/StbVorbis.cpp
     src/engine/Engine.cpp
     src/engine/application/Application.cpp
+    src/engine/application/SimulationClock.cpp
     src/engine/assets/Assets.cpp
     src/engine/assets/ModelImporter.cpp
     src/engine/assets/MeshOptimization.cpp
@@ -453,6 +454,7 @@ add_library(zenith_engine SHARED
     src/engine/module/SystemScheduler.cpp
     src/engine/physics/PhysicsWorld.cpp
     src/engine/physics/JoltDebugDraw.cpp
+    src/engine/physics/JoltRuntime.cpp
     src/engine/platform/FileWatcher.cpp
     src/engine/platform/ChildProcess.cpp
     src/engine/platform/FileContents.cpp
@@ -593,6 +595,7 @@ add_library(zenith_editor_app STATIC
     src/editor/operators/OperatorRegistry.cpp
     src/editor/operators/OperatorRunner.cpp
     src/editor/operators/OperatorSearch.cpp
+    src/editor/operators/PlayOperators.cpp
     src/editor/operators/VisibilityOperators.cpp
     src/editor/panels/AssetBrowserPanel.cpp
     src/editor/panels/BuildPanel.cpp
@@ -606,6 +609,7 @@ add_library(zenith_editor_app STATIC
     src/editor/panels/PropertiesPanel.cpp
     src/editor/panels/RenderSettingsControls.cpp
     src/editor/panels/RenderStatisticsPanel.cpp
+    src/editor/panels/SystemProfilerPanel.cpp
     src/editor/panels/ViewportChrome.cpp
     src/editor/panels/ViewportOperators.cpp
     src/editor/panels/ViewportPanel.cpp
@@ -626,6 +630,7 @@ add_library(zenith_editor_app STATIC
     src/editor/settings/EditorRenderSettings.cpp
     src/editor/settings/EditorSettings.cpp
     src/editor/settings/RenderSettingsController.cpp
+    src/editor/settings/SimulateSystemSettings.cpp
     src/editor/theme/EditorPalette.cpp
     src/editor/theme/EditorTheme.cpp
     src/editor/theme/EditorWidgets.cpp
@@ -999,6 +1004,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_physics_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_physics COMMAND zenith_physics_tests)
+
+    add_executable(zenith_system_scheduler_tests tests/engine/SystemSchedulerTests.cpp)
+    target_link_libraries(zenith_system_scheduler_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_system_scheduler_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_system_scheduler_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_system_scheduler COMMAND zenith_system_scheduler_tests)
 
     add_executable(zenith_application_tests tests/game/ApplicationLifecycleTests.cpp)
     target_compile_definitions(zenith_application_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
@@ -1803,6 +1817,18 @@ if(BUILD_TESTING)
         target_compile_options(zenith_info_panel_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_info_panel COMMAND zenith_info_panel_tests)
+
+    add_executable(zenith_system_profiler_tests tests/editor/SystemProfilerTests.cpp)
+    target_link_libraries(zenith_system_profiler_tests PRIVATE zenith_editor_app)
+    target_compile_definitions(zenith_system_profiler_tests PRIVATE
+        ZENITH_EDITOR_TEST_MODULE_V1="$<TARGET_FILE:zenith_editor_test_module>")
+    add_dependencies(zenith_system_profiler_tests zenith_editor_test_module)
+    if(MSVC)
+        target_compile_options(zenith_system_profiler_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_system_profiler_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_system_profiler COMMAND zenith_system_profiler_tests)
 
     # Game modules with editor extensions for zenith_game_module_host_tests and
     # the editor module smoke: one source built as two versions, so a test can

@@ -318,7 +318,7 @@ void testWorkspaceFileRoundTrip(const std::filesystem::path& directory) {
     expect(loadWorkspaceFile(directory / "missing.json", untouched).success &&
                !loadWorkspaceFile(directory / "missing.json", untouched).found && untouched == saved,
            "a missing file should load as not found");
-    writeText(path, R"({"version":3,"workspaces":[{"name":"A"}]})");
+    writeText(path, R"({"version":4,"workspaces":[{"name":"A"}]})");
     expect(!loadWorkspaceFile(path, untouched).success && untouched == saved, "a newer version should be refused");
     writeText(path, R"({"version":0,"workspaces":[{"name":"A"}]})");
     expect(!loadWorkspaceFile(path, untouched).success && untouched == saved, "version 0 should be refused");
@@ -327,13 +327,13 @@ void testWorkspaceFileRoundTrip(const std::filesystem::path& directory) {
     const WorkspaceFileResult outdated = loadWorkspaceFile(path, untouched);
     expect(outdated.success && outdated.found && outdated.outdated && untouched == saved,
            "an older version should load as outdated without changing the contents");
-    writeText(path, R"({"version":2,"workspaces":[{"name":"A"},{"name":"A"}]})");
+    writeText(path, R"({"version":3,"workspaces":[{"name":"A"},{"name":"A"}]})");
     expect(!loadWorkspaceFile(path, untouched).success, "duplicate workspace names should be refused");
-    writeText(path, R"({"version":2,"workspaces":[{"name":"A","areas":[{"type":"alpha","instance":0}]}]})");
+    writeText(path, R"({"version":3,"workspaces":[{"name":"A","areas":[{"type":"alpha","instance":0}]}]})");
     expect(!loadWorkspaceFile(path, untouched).success, "an area instance of 0 should be refused");
-    writeText(path, R"({"version":2,"workspaces":[{"name":"A","areas":[{"type":"alpha","state":3}]}]})");
+    writeText(path, R"({"version":3,"workspaces":[{"name":"A","areas":[{"type":"alpha","state":3}]}]})");
     expect(!loadWorkspaceFile(path, untouched).success, "a non-string area state should be refused");
-    writeText(path, R"({"version":2,"activeWorkspace":"B","workspaces":[{"name":"A","areas":[{"type":"x.y"}]}]})");
+    writeText(path, R"({"version":3,"activeWorkspace":"B","workspaces":[{"name":"A","areas":[{"type":"x.y"}]}]})");
     expect(loadWorkspaceFile(path, untouched).success, "a structurally valid file should load");
     WorkspaceSet lenient;
     std::vector<std::string> lenientWarnings;

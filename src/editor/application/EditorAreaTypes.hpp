@@ -6,6 +6,8 @@
 
 class BuildPanel;
 class ComponentInspectorLayout;
+class EditorPlayMode;
+class GameModuleHost;
 class InfoPanel;
 class ProjectAssets;
 class RenderSettingsController;
@@ -25,6 +27,10 @@ struct EditorAreaServices {
     // reloads wait for the build, and the smoke checks the engine log.
     BuildPanel& build;
     InfoPanel& info;
+    // Read by every System Profiler area: the module's systems and their
+    // timings, and the Play / Simulate state and time scale.
+    const GameModuleHost& modules;
+    const EditorPlayMode& playMode;
 };
 
 // The built-in editor types except the Viewport, which the session registers
@@ -37,6 +43,7 @@ struct EditorAreaServices {
 // | `properties`        | Multiple   | PropertiesPanel (tab kept per area)      |
 // | `diagnostics`       | Multiple   | DiagnosticsPanel                         |
 // | `render_statistics` | Multiple   | RenderStatisticsPanel                    |
+// | `system_profiler`   | Multiple   | SystemProfilerPanel over modules         |
 // | `asset_browser`     | Multiple   | AssetBrowserPanel over projectAssets     |
 // | `graphics`          | Multiple   | GraphicsPanel over renderSettings        |
 // | `build`             | Single     | the session's BuildPanel (one runner)    |

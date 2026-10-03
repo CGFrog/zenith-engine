@@ -25,10 +25,12 @@ constexpr int32_t playIncrement = 1;
 
 struct EditorTestCounter {
     // Play Update adds playIncrement; Edit Update counts editTicks; every
-    // FixedUpdate counts fixedTicks.
+    // FixedUpdate counts fixedTicks; every Play Update or FixedUpdate that
+    // received player input counts inputTicks.
     int32_t value{0};
     int32_t editTicks{0};
     int32_t fixedTicks{0};
+    int32_t inputTicks{0};
     std::string label{"counter"};
 };
 
@@ -46,14 +48,17 @@ void zenith_module_register(ModuleRegistrar& registrar) {
                                                .add("value", &EditorTestCounter::value)
                                                .add("edit_ticks", &EditorTestCounter::editTicks)
                                                .add("fixed_ticks", &EditorTestCounter::fixedTicks)
+                                               .add("input_ticks", &EditorTestCounter::inputTicks)
                                                .add("label", &EditorTestCounter::label))
                                    .build());
     registrar.addSystem({.name = "count_play",
                          .phase = SystemPhase::Update,
                          .runIn = RunIn::Play,
                          .run = [](const SystemContext& context) {
-                             forEachCounter(context.scene,
-                                            [](EditorTestCounter& counter) { counter.value += playIncrement; });
+                             forEachCounter(context.scene, [&context](EditorTestCounter& counter) {
+                                 counter.value += playIncrement;
+                                 counter.inputTicks += context.input != nullptr ? 1 : 0;
+                             });
                          }});
     registrar.addSystem({.name = "count_edit",
                          .phase = SystemPhase::Update,
@@ -65,7 +70,10 @@ void zenith_module_register(ModuleRegistrar& registrar) {
                          .phase = SystemPhase::FixedUpdate,
                          .runIn = RunIn::EditAndPlay,
                          .run = [](const SystemContext& context) {
-                             forEachCounter(context.scene, [](EditorTestCounter& counter) { ++counter.fixedTicks; });
+                             forEachCounter(context.scene, [&context](EditorTestCounter& counter) {
+                                 ++counter.fixedTicks;
+                                 counter.inputTicks += context.input != nullptr ? 1 : 0;
+                             });
                          }});
 }
 

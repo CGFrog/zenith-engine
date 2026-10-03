@@ -9,6 +9,7 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -209,6 +210,28 @@ int main() {
     expect(newClip.handle.index == oldClip.handle.index && newClip.handle.generation != oldClip.handle.generation,
            "audio slots are recycled with a new generation");
     lifetime.shutdown();
+
+    // The playback rate (the simulation's time scale) holds voices at 0 and
+    // plays them faster above 1.
+    AudioSystem rated;
+    expect(static_cast<bool>(rated.init(AudioConfig{.maxVoices = 2, .outputEnabled = false})),
+           "audio playback rate test initializes");
+    const std::vector<float> tenthSecond(static_cast<size_t>(rated.config().sampleRate / 10), 0.1f);
+    const auto ratedClip = rated.createClip(tenthSecond, 1, rated.config().sampleRate);
+    const auto heldVoice = rated.play(ratedClip.handle, {.scope = AudioScope::Persistent});
+    rated.setPlaybackRate(0.0f);
+    rated.update(1.0f);
+    expect(rated.isPlaying(heldVoice.handle), "a zero playback rate holds every voice, persistent ones included");
+    rated.setPlaybackRate(2.0f);
+    rated.update(0.03f);
+    expect(rated.isPlaying(heldVoice.handle), "a held voice resumes where it stopped");
+    rated.update(0.03f);
+    expect(!rated.isPlaying(heldVoice.handle), "a doubled rate plays a tenth of a second in 0.06 seconds");
+    rated.setPlaybackRate(std::numeric_limits<float>::quiet_NaN());
+    expect(rated.playbackRate() == 2.0f, "a NaN playback rate is ignored");
+    rated.setPlaybackRate(40.0f);
+    expect(rated.playbackRate() == 10.0f, "the playback rate is clamped to ten");
+    rated.shutdown();
 
     AudioSystem invalid;
     expect(!invalid.init(AudioConfig{.outputChannels = 1}), "non-stereo output configuration is rejected");

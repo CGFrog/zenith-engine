@@ -24,10 +24,14 @@ constexpr std::array lightingAreas{
     DefaultArea{"graphics", RightBottom},
 };
 
-// Investigating problems: logs, diagnostics, frame statistics, and builds.
+// Investigating problems: logs, diagnostics, frame statistics, system and
+// engine timings, and builds.
 constexpr std::array debugAreas{
-    DefaultArea{"viewport", Center}, DefaultArea{"render_statistics", Right},
-    DefaultArea{"info", Bottom},     DefaultArea{"diagnostics", Bottom},
+    DefaultArea{"viewport", Center},
+    DefaultArea{"render_statistics", Right},
+    DefaultArea{"system_profiler", RightBottom},
+    DefaultArea{"info", Bottom},
+    DefaultArea{"diagnostics", Bottom},
     DefaultArea{"build", Bottom},
 };
 
