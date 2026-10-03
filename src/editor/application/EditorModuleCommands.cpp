@@ -4,7 +4,10 @@
 
 #include "EditorSession.hpp"
 
+#include "editor/panels/GameModulePanel.hpp"
+
 #include <imgui.h>
+#include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <utility>
@@ -124,39 +127,16 @@ void EditorSession::drawModuleMenu(ApplicationContext& context) {
         ImGui::SetItemTooltip("%s", m_moduleHost.error().c_str());
     }
     operatorMenuItem(context, "module.reload", "Reload Game Module");
+    // Module panels are area types (see syncAreaTypes), toggled like any
+    // other in the active workspace.
     std::span<GameModuleHost::Panel> panels = m_moduleHost.panels();
     if (!panels.empty()) {
         ImGui::Separator();
-        for (GameModuleHost::Panel& panel : panels) {
-            ImGui::MenuItem(panel.panel.title.c_str(), nullptr, &panel.visible);
+        for (const GameModuleHost::Panel& panel : panels) {
+            const std::string typeId = gameModuleAreaTypeId(panel.panel.title);
+            operatorMenuItem(context, "wm.toggle_panel", panel.panel.title.c_str(),
+                             nlohmann::json{{"panel", typeId}}.dump(), m_workspaces.active().anyVisible(typeId));
         }
     }
     ImGui::EndMenu();
-}
-
-void EditorSession::drawModulePanels(ApplicationContext& context) {
-    // Module panels draw module code; a reload requested while they draw is
-    // deferred to the next update, so the span stays valid here.
-    for (GameModuleHost::Panel& panel : m_moduleHost.panels()) {
-        if (!panel.visible) {
-            continue;
-        }
-        // The suffix keeps module windows distinct from editor panels of the
-        // same title.
-        const std::string window = panel.panel.title + "##game_module";
-        if (ImGui::Begin(window.c_str(), &panel.visible)) {
-            // Copied: an operator the panel invokes may change the selection.
-            const std::vector<SceneEntityId> selection = m_selection.ids();
-            EditorModulePanelContext panelContext{
-                .scene = context.scene,
-                .assets = context.assets,
-                .selection = selection,
-                .editMode = m_playMode.mode() == EditorMode::Edit,
-                .invokeOperator = [this, &context](std::string_view operatorId) {
-                    return static_cast<bool>(invokeOperator(context, operatorId, {}, KeymapRegion::Global));
-                }};
-            panel.panel.draw(panelContext);
-        }
-        ImGui::End();
-    }
 }

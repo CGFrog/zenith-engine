@@ -2,6 +2,8 @@
 
 #include "editor/application/EditorTheme.hpp"
 #include "editor/application/EntityCommands.hpp"
+#include "editor/areas/AreaWindows.hpp"
+#include "editor/areas/DefaultWorkspaces.hpp"
 #include "editor/document/DefaultScene.hpp"
 #include "editor/document/SceneFragment.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
@@ -21,17 +23,9 @@
 #include <utility>
 
 namespace {
-// Layouts older than version 3 lack the Graphics panel below the Inspector;
-// version 4 docks the Build panel beside Diagnostics.
-constexpr uint32_t currentLayoutVersion = 4;
 constexpr const char* sceneExtension = ".zenith-scene";
 constexpr float editorFontPixelSize = 15.0f;
 constexpr float autosaveIntervalSeconds = 30.0f;
-
-struct PanelProperties {
-    // The panel's window title, for example "Inspector".
-    std::string panel;
-};
 
 // Native dialogs need an existing absolute folder to start in. A trailing
 // separator marks the location as a folder with no suggested file name.
@@ -66,18 +60,11 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_keymapPath(settingsDirectory / "keymap.json")
     , m_assetBrowser(std::move(assetRoot), sceneRoot, settingsDirectory / "asset-browser.json")
     , m_graphics(std::move(renderSettings))
-    , m_panels{{{&m_viewport, &EditorPanelVisibility::viewport},
-                {&m_hierarchy, &EditorPanelVisibility::hierarchy},
-                {&m_inspector, &EditorPanelVisibility::inspector},
-                {&m_diagnosticsPanel, &EditorPanelVisibility::diagnostics},
-                {&m_renderStatistics, &EditorPanelVisibility::renderStatistics},
-                {&m_assetBrowser, &EditorPanelVisibility::assetBrowser},
-                {&m_graphics, &EditorPanelVisibility::graphics},
-                {&m_buildPanel, &EditorPanelVisibility::build}}}
+    , m_workspacesPath(settingsDirectory / "workspaces.json")
+    , m_legacyLayoutPath(settingsDirectory / "layout.ini")
     , m_sceneRoot(std::move(sceneRoot))
     , m_fontPath(std::move(fontPath))
     , m_initialSceneLoader(std::move(initialSceneLoader))
-    , m_layoutPath((settingsDirectory / "layout.ini").string())
     , m_smokeScenePath(settingsDirectory / (std::string("streaming-smoke") + sceneExtension)) {
     for (const std::string& problem : m_keymap.defaultProblems()) {
         m_diagnostics.reportError(problem);
@@ -85,6 +72,8 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     registerSessionOperators();
     registerObjectModeOperators();
     registerModuleOperators();
+    registerAreaOperators();
+    registerAreaTypes();
     if (const OperatorRegistrationResult result = registerObjectOperators(m_operators); !result) {
         m_diagnostics.reportError(result.error);
     }
@@ -208,26 +197,6 @@ void EditorSession::registerSessionOperators() {
     registerOperator(applicationOperator("wm.keymap_editor", "Keymap Editor",
                                          "Change, add, or reset keyboard shortcuts", {},
                                          [this](ApplicationContext&) { m_showKeymapEditor = true; }));
-    registerOperator(
-        {.id = "wm.toggle_panel",
-         .label = "Toggle Panel",
-         .description = "Show or hide an editor panel",
-         .flags = OperatorFlags::Internal,
-         .properties = OperatorProperties::make(
-             PanelProperties{}, std::move(Fields<PanelProperties>().add("panel", &PanelProperties::panel))),
-         .poll = [](const OperatorContext& context) { return context.app != nullptr; },
-         .execute =
-             [this](OperatorContext&, OperatorProperties& properties) {
-                 const PanelProperties* values = properties.get<PanelProperties>();
-                 for (const PanelSlot& slot : m_panels) {
-                     if (values != nullptr && values->panel == slot.panel->title()) {
-                         bool& visible = m_settings.panels().*slot.visible;
-                         visible = !visible;
-                         return OperatorResult::finished();
-                     }
-                 }
-                 return OperatorResult::failed("There is no panel named \"" + (values ? values->panel : "") + "\"");
-             }});
 }
 
 OperatorResult EditorSession::invokeOperator(ApplicationContext& context, std::string_view operatorId,
@@ -343,14 +312,16 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     if (const EditorFontResult result = loadEditorFont(io, m_fontPath, editorFontPixelSize * contentScale); !result) {
         m_diagnostics.reportError(result.error);
     }
-    io.IniFilename = m_layoutPath.c_str();
-    ImGui::LoadIniSettingsFromDisk(io.IniFilename);
-    m_initializeLayout = m_settings.layoutVersion() < currentLayoutVersion;
+    // Each workspace keeps its own ImGui layout in workspaces.json.
+    io.IniFilename = nullptr;
     // Asset paths in render settings (the colour-grading LUT) resolve against
     // the edited project's assets.
     context.rendering.setAssetRoot(m_document.options().assetRoot);
     // Before any scene loads, so documents read the module's component types.
     loadGameModule();
+    // After the module, so its panels' areas are restored with their types.
+    syncAreaTypes();
+    loadWorkspaces();
     if (m_initialSceneLoader) {
         if (SceneResult result = m_initialSceneLoader(context, m_document.options()); !result) {
             return result;
@@ -390,15 +361,15 @@ SceneResult EditorSession::prepareSmokeScenario(ApplicationContext& context) {
 }
 
 void EditorSession::update(ApplicationContext& context, const InputState& input, float deltaSeconds) {
+    // Before the smoke scenario, which checks the switch it requested.
+    updateWorkspaces();
     if (m_smokeScenario) {
         updateSmokeScenario(context);
     }
     updateAutosave(context, deltaSeconds);
-    EditorContext editor = editorContext(context);
-    for (const PanelSlot& slot : m_panels) {
-        slot.panel->update(editor, input, deltaSeconds);
-    }
+    updateAreas(context, input, deltaSeconds);
     updateGameModule(context, input, deltaSeconds);
+    syncAreaTypes();
 }
 
 void EditorSession::updateSmokeScenario(ApplicationContext& context) {
@@ -439,10 +410,11 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
             context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
         }
     }
+    const bool areasDone = updateSmokeAreas(context);
     if (m_smokeFrame == 500 && !m_smokeStreamCompleted) {
         m_diagnostics.reportError("Streaming smoke did not commit while frames were being presented");
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    } else if (m_smokeFrame >= 8 && m_smokeStreamCompleted) {
+    } else if (areasDone && m_smokeStreamCompleted) {
         updateSmokeModuleReload(context);
     }
 }
@@ -521,45 +493,20 @@ void EditorSession::requestQuit(ApplicationContext& context) {
 void EditorSession::drawUi(ApplicationContext& context) {
     ImGuizmo::BeginFrame();
     const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-    if (m_initializeLayout) {
-        initializeDefaultLayout(dockspaceId);
+    if (m_buildDefaultLayout) {
+        buildDefaultDockLayout(dockspaceId, defaultWorkspaceFor(m_workspaces.active().name()), m_workspaces.active(),
+                               m_areaTypes);
+        m_buildDefaultLayout = false;
     }
     drawMainMenu(context);
     pollFileDialog(context);
     drawPathDialog(context);
     drawUnsavedChangesDialog(context);
     drawRecoveryDialog(context);
-    drawPanels(context);
-    drawModulePanels(context);
+    drawAreas(context);
     drawObjectPopups(context);
     drawOperatorWindows(context);
     drawStatusBar(context.rendering.stats());
-}
-
-void EditorSession::initializeDefaultLayout(uint32_t dockspaceId) {
-    ImGui::DockBuilderRemoveNode(dockspaceId);
-    ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->WorkSize);
-
-    ImGuiID center = dockspaceId;
-    const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.20f, nullptr, &center);
-    const ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.25f, nullptr, &center);
-    const ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.25f, nullptr, &center);
-    ImGuiID inspector = right;
-    const ImGuiID graphics = ImGui::DockBuilderSplitNode(inspector, ImGuiDir_Down, 0.70f, nullptr, &inspector);
-
-    ImGui::DockBuilderDockWindow(m_viewport.title(), center);
-    ImGui::DockBuilderDockWindow(m_hierarchy.title(), left);
-    ImGui::DockBuilderDockWindow(m_inspector.title(), inspector);
-    ImGui::DockBuilderDockWindow(m_graphics.title(), graphics);
-    ImGui::DockBuilderDockWindow(m_diagnosticsPanel.title(), bottom);
-    ImGui::DockBuilderDockWindow(m_buildPanel.title(), bottom);
-    ImGui::DockBuilderDockWindow(m_renderStatistics.title(), bottom);
-    ImGui::DockBuilderFinish(dockspaceId);
-
-    m_settings.panels() = {};
-    m_settings.setLayoutVersion(currentLayoutVersion);
-    m_initializeLayout = false;
 }
 
 void EditorSession::unload(ApplicationContext& context) {
@@ -576,11 +523,13 @@ void EditorSession::unload(ApplicationContext& context) {
     context.rendering.setGridOverlay(std::nullopt);
     context.rendering.clearOutlinedObjects();
     context.rendering.clearViewOverride();
-    ImGui::SaveIniSettingsToDisk(m_layoutPath.c_str());
+    if (!m_workspaces.empty()) {
+        m_workspaces.active().setLayout(captureImGuiLayout());
+        saveWorkspaces();
+    }
     if (const EditorSettingsResult result = m_settings.save(); !result) {
         m_diagnostics.reportError(result.error);
     }
-    ImGui::GetIO().IniFilename = nullptr;
 }
 
 void EditorSession::handleGlobalShortcuts(ApplicationContext& context) {
@@ -639,11 +588,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
-        const EditorPanelVisibility& visibility = m_settings.panels();
-        for (const PanelSlot& slot : m_panels) {
-            operatorMenuItem(context, "wm.toggle_panel", slot.panel->title(),
-                             nlohmann::json{{"panel", slot.panel->title()}}.dump(), visibility.*slot.visible);
-        }
+        drawAreaMenuItems(context);
         ImGui::Separator();
         operatorMenuItem(context, "view3d.frame_selected", "Frame Selected");
         operatorMenuItem(context, "view3d.frame_all", "Frame All");
@@ -667,26 +612,8 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         ImGui::EndMenu();
     }
     drawModuleMenu(context);
+    drawWorkspaceTabs(context);
     ImGui::EndMainMenuBar();
-}
-
-void EditorSession::drawPanels(ApplicationContext& context) {
-    EditorContext editor = editorContext(context);
-    EditorPanelVisibility& visibility = m_settings.panels();
-    for (const PanelSlot& slot : m_panels) {
-        bool& visible = visibility.*slot.visible;
-        if (!visible) {
-            slot.panel->hidden(editor);
-            continue;
-        }
-        if (ImGui::Begin(slot.panel->title(), &visible, slot.panel->windowFlags())) {
-            const bool readOnly = slot.panel->editModeOnly() && !editor.editMode();
-            ImGui::BeginDisabled(readOnly);
-            slot.panel->draw(editor);
-            ImGui::EndDisabled();
-        }
-        ImGui::End();
-    }
 }
 
 void EditorSession::drawStatusBar(const RenderStats& stats) {

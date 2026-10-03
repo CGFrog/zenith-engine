@@ -4,6 +4,8 @@
 #include "editor/application/EditorPlayMode.hpp"
 #include "editor/application/NativeFileDialog.hpp"
 #include "editor/application/SceneEditing.hpp"
+#include "editor/areas/AreaRegistry.hpp"
+#include "editor/areas/Workspace.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/EditorRecovery.hpp"
@@ -19,12 +21,8 @@
 #include "editor/operators/OperatorSearch.hpp"
 #include "editor/panels/AssetBrowserPanel.hpp"
 #include "editor/panels/BuildPanel.hpp"
-#include "editor/panels/DiagnosticsPanel.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/GraphicsPanel.hpp"
-#include "editor/panels/HierarchyPanel.hpp"
-#include "editor/panels/InspectorPanel.hpp"
-#include "editor/panels/RenderStatisticsPanel.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/settings/EditorRenderSettings.hpp"
 #include "editor/settings/EditorSettings.hpp"
@@ -48,19 +46,20 @@
 // types when the project has a module).
 using EditorSceneLoader = std::function<SceneResult(ApplicationContext&, const SceneDocumentOptions&)>;
 
-// Composes the editor: owns the document, history, selection, camera, panels,
-// the operator registry and keymap, and the project's game module, runs the
-// frame loop, and coordinates workflows that span panels (file commands, Play
-// mode, module reloads, and modal transforms). Every menu item, button, and
-// key runs a registered operator. The runtime Scene stays owned by Engine and
-// is changed only through SceneEditing.
+// Composes the editor: owns the document, history, selection, camera, the
+// panels that hold editor-wide state, the area types and workspaces that show
+// panels, the operator registry and keymap, and the project's game module,
+// runs the frame loop, and coordinates workflows that span panels (file
+// commands, Play mode, module reloads, and modal transforms). Every menu item,
+// button, and key runs a registered operator. The runtime Scene stays owned by
+// Engine and is changed only through SceneEditing.
 class EditorSession final : public ApplicationScene, private EditorSessionActions {
   public:
     // gameModule is the project's module library, or empty for none.
     EditorSession(std::filesystem::path settingsDirectory, std::filesystem::path assetRoot,
                   std::filesystem::path sceneRoot, std::filesystem::path fontPath, EditorRenderSettings renderSettings,
                   EditorSceneLoader initialSceneLoader = {}, std::filesystem::path gameModule = {});
-    // Panels are referenced by address from the panel table.
+    // Area types and operators refer to the session's members by address.
     EditorSession(const EditorSession&) = delete;
     EditorSession& operator=(const EditorSession&) = delete;
 
@@ -74,11 +73,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void unload(ApplicationContext& context) override;
 
   private:
-    struct PanelSlot {
-        EditorPanel* panel;
-        bool EditorPanelVisibility::* visible;
-    };
-
     // EditorSessionActions
     OperatorResult invokeOperator(ApplicationContext& context, std::string_view operatorId, std::string_view properties,
                                   KeymapRegion region) override;
@@ -124,7 +118,24 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void reportGameModule(const GameModuleHostResult& result);
     std::string gameModuleStatusText() const;
     void drawModuleMenu(ApplicationContext& context);
-    void drawModulePanels(ApplicationContext& context);
+
+    // Areas and workspaces (EditorAreas.cpp).
+    void addAreaType(AreaType type);
+    void registerAreaTypes();
+    void registerAreaOperators();
+    // Registers an area type per game module panel and drops the types of
+    // panels the module no longer has, then syncs the workspaces.
+    void syncAreaTypes();
+    void loadWorkspaces();
+    void saveWorkspaces();
+    // Between frames: applies a requested workspace switch and saves
+    // workspaces.json when the layout or areas changed.
+    void updateWorkspaces();
+    void updateAreas(ApplicationContext& context, const InputState& input, float deltaSeconds);
+    void drawAreas(ApplicationContext& context);
+    void drawAreaMenuItems(ApplicationContext& context);
+    void drawWorkspaceTabs(ApplicationContext& context);
+    bool updateSmokeAreas(ApplicationContext& context);
 
     SceneResult prepareSmokeScenario(ApplicationContext& context);
     void updateSmokeScenario(ApplicationContext& context);
@@ -138,7 +149,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void drawPathDialog(ApplicationContext& context);
     void drawUnsavedChangesDialog(ApplicationContext& context);
     void drawRecoveryDialog(ApplicationContext& context);
-    void initializeDefaultLayout(uint32_t dockspaceId);
     void requestFileDialog(FileDialogKind kind);
     void openPathDialog(FileDialogKind kind);
     void pollFileDialog(ApplicationContext& context);
@@ -199,21 +209,29 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     LastOperatorPanel m_lastOperatorPanel;
     bool m_showKeymapEditor{false};
 
+    // Panels holding editor-wide state, shown by single-instance area types.
+    // Per-area panels (Hierarchy, Inspector, ...) are created by their types.
     ViewportPanel m_viewport;
-    HierarchyPanel m_hierarchy;
-    InspectorPanel m_inspector;
-    DiagnosticsPanel m_diagnosticsPanel{m_settings.tools()};
-    RenderStatisticsPanel m_renderStatistics;
     AssetBrowserPanel m_assetBrowser;
     GraphicsPanel m_graphics;
     BuildPanel m_buildPanel{m_settings.tools()};
-    // Drawing order, which is also the View menu order.
-    std::array<PanelSlot, 8> m_panels;
+
+    // Declared after everything area panels refer to (the panels above, the
+    // settings, and the module host), so the areas are destroyed first.
+    // Registration order is the View menu order.
+    AreaRegistry m_areaTypes;
+    WorkspaceSet m_workspaces;
+    std::filesystem::path m_workspacesPath;
+    // layout.ini from editors before workspaces.json, read once to migrate.
+    std::filesystem::path m_legacyLayoutPath;
+    // The active workspace has no saved layout; build its default one when
+    // the next frame's dockspace exists.
+    bool m_buildDefaultLayout{false};
+    bool m_workspacesDirty{false};
 
     std::filesystem::path m_sceneRoot;
     std::filesystem::path m_fontPath;
     EditorSceneLoader m_initialSceneLoader;
-    std::string m_layoutPath;
     std::string m_clipboardFragment;
     std::array<char, 1024> m_pathBuffer{};
     bool m_openPathDialog{false};
@@ -223,7 +241,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     PendingAction m_pendingAction{PendingAction::None};
     std::optional<std::filesystem::path> m_pendingOpenPath;
     bool m_pathDialogSaves{false};
-    bool m_initializeLayout{false};
     float m_autosaveElapsed{0.0f};
 
     bool m_smokeScenario{false};
@@ -234,6 +251,11 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     std::optional<SceneInstanceId> m_smokeStreamInstance;
     bool m_smokeStreamCompleted{false};
     bool m_smokeModuleReloadRequested{false};
+    // The workspace the area smoke started in, restored when it ends, and
+    // the extra Hierarchy area it opened.
+    std::string m_smokeWorkspace;
+    std::string m_smokeArea;
+    bool m_smokeShowedHierarchy{false};
 
     struct ActiveTransform {
         ModalTransform transform;

@@ -36,10 +36,20 @@ int main() {
 
     EditorSettings restored(settingsPath);
     expect(restored.load().success, "saved settings should load");
-    expect(restored.panels() == settings.panels(), "panel visibility should round trip");
-    expect(restored.layoutVersion() == 2, "layout version should round trip");
+    // Panel visibility and the layout version moved to workspaces.json; they
+    // are read from old files for migration but no longer saved.
+    expect(restored.panels() == EditorPanelVisibility{} && restored.layoutVersion() == 0,
+           "panel visibility and layout version should not be saved");
     expect(restored.tools() == settings.tools(), "build and IDE commands containing '=' should round trip");
-    expect(!restored.panels().build, "build panel visibility should round trip");
+
+    {
+        std::ofstream legacy(directory / "legacy.ini", std::ios::trunc);
+        legacy << "layout.version=4\npanel.build=false\npanel.hierarchy=false\n";
+    }
+    EditorSettings legacySettings(directory / "legacy.ini");
+    expect(legacySettings.load().success && legacySettings.layoutVersion() == 4 && !legacySettings.panels().build &&
+               !legacySettings.panels().hierarchy && legacySettings.panels().viewport,
+           "legacy panel flags and layout version should still be read for migration");
 
     EditorSettings multiline(directory / "multiline.ini");
     multiline.tools().buildCommand = "first\nsecond";
