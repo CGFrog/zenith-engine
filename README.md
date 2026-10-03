@@ -66,8 +66,11 @@ screen also exposes high-contrast and reduced-motion modes; the underlying
 accessibility profile includes scalable UI/text, captions, locale, and
 color-independent indicator choices.
 
-The application loads `assets/basic_map.gltf`, adds static collision to the
-room, creates stacks of dynamic props, and spawns a physics-controlled player.
+The demo project opens an editor-authored collection level built from
+`assets/basic_map.gltf`, with static collision, a physics-controlled player,
+and five blue pickups. Walking into a pickup collects it and updates the HUD;
+the same behavior runs from the editor's Play mode through the demo game
+module.
 Move with WASD or the left stick, look with the mouse or right stick, jump with
 Space or the south gamepad button, and hold Shift or press the left stick to
 sprint. Press E or the west gamepad button to play the demo's original

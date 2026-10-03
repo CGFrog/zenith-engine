@@ -3,12 +3,14 @@
 #include "DemoScene.hpp"
 
 #include "game/application/DemoApplication.hpp"
+#include "game/gameplay/ItemCollection.hpp"
 #include "game/player/FirstPersonController.hpp"
 
 #include <SDL3/SDL_stdinc.h>
 #include <charconv>
 #include <glm/gtc/matrix_transform.hpp>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -231,7 +233,7 @@ void GameplayScene::drawUi(ApplicationContext& context) {
         drawTitle(context);
         break;
     case Screen::Playing:
-        drawHud(context.gameUi);
+        drawHud(context.gameUi, context.scene);
         break;
     case Screen::Paused:
         drawPause(context);
@@ -242,9 +244,12 @@ void GameplayScene::drawUi(ApplicationContext& context) {
     }
 }
 
-void GameplayScene::drawHud(GameUiContext& ui) const {
+void GameplayScene::drawHud(GameUiContext& ui, const Scene& scene) const {
+    const ItemCollectionProgress progress = itemCollectionProgress(scene);
     ui.panel({{-2.0f, -18.0f}, {4.0f, 36.0f}}, {.color = {1.0f, 1.0f, 1.0f, 0.85f}}, UiAnchor::Center);
     ui.panel({{-18.0f, -2.0f}, {36.0f, 4.0f}}, {.color = {1.0f, 1.0f, 1.0f, 0.85f}}, UiAnchor::Center);
+    ui.text({-220.0f, 24.0f}, "Items: " + std::to_string(progress.collected) + " / " + std::to_string(progress.total),
+            26.0f, {1.0f, 1.0f, 1.0f, 0.95f}, UiAnchor::TopRight);
     ui.text({24.0f, -48.0f}, "WASD / left stick to move | Escape / Start to pause", 20.0f, {1.0f, 1.0f, 1.0f, 0.8f},
             UiAnchor::BottomLeft);
 }

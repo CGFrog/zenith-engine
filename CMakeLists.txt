@@ -492,6 +492,7 @@ endif()
 # registration.
 add_library(zenith_demo_gameplay STATIC
     src/game/gameplay/DemoGameplay.cpp
+    src/game/gameplay/ItemCollection.cpp
     src/game/input/DemoInput.cpp
     src/game/player/FirstPersonController.cpp
 )
@@ -1022,7 +1023,8 @@ if(BUILD_TESTING)
     add_executable(zenith_demo_game_module_tests tests/game/DemoGameModuleTests.cpp)
     target_link_libraries(zenith_demo_game_module_tests PRIVATE zenith_demo)
     target_compile_definitions(zenith_demo_game_module_tests PRIVATE
-        ZENITH_DEMO_GAME_MODULE="$<TARGET_FILE:zenith_game_demo>")
+        ZENITH_DEMO_GAME_MODULE="$<TARGET_FILE:zenith_game_demo>"
+        ZENITH_PROJECT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/projects")
     add_dependencies(zenith_demo_game_module_tests zenith_game_demo)
     if(MSVC)
         target_compile_options(zenith_demo_game_module_tests PRIVATE /W4 /permissive-)

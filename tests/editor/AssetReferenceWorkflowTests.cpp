@@ -249,8 +249,8 @@ void testWorkflow(const std::filesystem::path& sourceAssets, const std::filesyst
     expect(copyGuid && copyGuid != modelGuid, "a duplicate should get a fresh GUID");
 }
 
-// Every checked-in scene is a version 1 document; it loads through the
-// migration and its version 2 form round-trips.
+// Every checked-in scene, whether current or migrated, loads and round-trips
+// in the current document form.
 void testCheckedInScenes(const std::filesystem::path& assets, const std::filesystem::path& sceneDirectory) {
     size_t loadedScenes = 0;
     for (const auto& entry : std::filesystem::directory_iterator(sceneDirectory)) {
@@ -271,7 +271,7 @@ void testCheckedInScenes(const std::filesystem::path& assets, const std::filesys
         std::string roundTrip;
         expect(SceneDocument::deserialize(upgraded, assetManager, options, again).success &&
                    SceneDocument::serialize(again, assetManager, options, roundTrip).success && roundTrip == upgraded,
-               name + " should round-trip in version 2");
+               name + " should round-trip in the current version");
         ++loadedScenes;
     }
     expect(loadedScenes >= 3, "the checked-in scenes should be found");

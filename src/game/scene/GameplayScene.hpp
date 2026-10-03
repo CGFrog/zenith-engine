@@ -32,7 +32,7 @@ class GameplayScene final : public ApplicationScene {
         Settings,
     };
 
-    void drawHud(GameUiContext& ui) const;
+    void drawHud(GameUiContext& ui, const Scene& scene) const;
     void drawTitle(ApplicationContext& context);
     void drawPause(ApplicationContext& context);
     void drawSettings(ApplicationContext& context);
