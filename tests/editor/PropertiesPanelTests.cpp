@@ -5,6 +5,8 @@
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/EntityPropertiesView.hpp"
+#include "editor/interaction/ReflectedFieldEditor.hpp"
+#include "editor/operators/ComponentOperators.hpp"
 #include "editor/operators/ObjectOperators.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/operators/OperatorRunner.hpp"
@@ -12,6 +14,7 @@
 #include "editor/panels/GraphicsPanel.hpp"
 #include "editor/panels/InspectorPanel.hpp"
 #include "editor/panels/PropertiesPanel.hpp"
+#include "editor/settings/ComponentInspectorLayout.hpp"
 #include "editor/settings/RenderSettingsController.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/audio/AudioSystem.hpp"
@@ -24,8 +27,10 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -122,6 +127,8 @@ struct PanelFixture {
     CommandHistory history;
     EditorDiagnostics diagnostics;
     Selection selection;
+    MemoryClipboard clipboard;
+    ComponentInspectorLayout componentLayout;
     OperatorRegistry operators;
     OperatorRunner runner{operators, history};
     OperatorActions actions{runner, [this] { return operatorContext(); }};
@@ -130,6 +137,8 @@ struct PanelFixture {
 
     PanelFixture() {
         expect(registerObjectOperators(operators).success, "the object operators should register");
+        expect(registerComponentOperators(operators, {.clipboard = clipboard, .layout = componentLayout}).success,
+               "the component operators should register");
         document.setComponentTypes(moduleComponentTypes());
     }
 
@@ -169,6 +178,18 @@ struct PanelFixture {
         EditorContext editor = context();
         panel.draw(editor);
     }
+
+    // Draws panel for one frame and returns the text it rendered (labels,
+    // values, and checkbox marks such as "[~]"), through ImGui's text log.
+    template <typename Panel> std::string drawLogged(Panel& panel) {
+        HeadlessImGuiFrame frame(panel.title());
+        ImGui::LogToBuffer();
+        EditorContext editor = context();
+        panel.draw(editor);
+        std::string text = ImGui::GetCurrentContext()->LogBuffer.c_str();
+        ImGui::LogFinish();
+        return text;
+    }
 };
 
 std::vector<std::string> labels(const std::vector<PropertiesTab>& tabs) {
@@ -194,7 +215,7 @@ void testCategories() {
 
 void testTabs() {
     PanelFixture fixture;
-    PropertiesPanel panel(fixture.renderSettings);
+    PropertiesPanel panel(fixture.renderSettings, fixture.componentLayout);
     {
         const std::vector<std::string> empty = labels(panel.tabs(fixture.context()));
         expect(empty == std::vector<std::string>({"Object", "World", "Render", "Scene"}),
@@ -261,7 +282,7 @@ template <typename Panel> void typeInto(PanelFixture& fixture, Panel& panel, ImG
 void testEditsRecordUndo() {
     PanelFixture fixture;
     const SceneEntityId subject = fixture.addSubject();
-    PropertiesPanel panel(fixture.renderSettings);
+    PropertiesPanel panel(fixture.renderSettings, fixture.componentLayout);
     HeadlessImGuiContext imgui;
 
     // Object tab: renaming records one undo step.
@@ -296,7 +317,7 @@ void testEditsRecordUndo() {
     expect(name() == "Subject", "undo should revert the rename");
 
     // The Inspector shares the view: the same edit records the same way.
-    InspectorPanel inspector;
+    InspectorPanel inspector(fixture.componentLayout);
     fixture.draw(inspector);
     const ImGuiWindow* inspectorWindow = HeadlessImGuiContext::findWindow(inspector.title());
     expect(inspectorWindow != nullptr, "the Inspector should draw into its window");
@@ -308,7 +329,7 @@ void testEditsRecordUndo() {
 
 void testWorldTab() {
     PanelFixture fixture;
-    PropertiesPanel panel(fixture.renderSettings);
+    PropertiesPanel panel(fixture.renderSettings, fixture.componentLayout);
     HeadlessImGuiContext imgui;
     panel.selectTab({.kind = PropertiesTabKind::World});
     fixture.draw(panel);
@@ -352,7 +373,7 @@ void testWorldTab() {
 
 void testRenderTab() {
     PanelFixture fixture;
-    PropertiesPanel panel(fixture.renderSettings);
+    PropertiesPanel panel(fixture.renderSettings, fixture.componentLayout);
     GraphicsPanel graphics(fixture.renderSettings);
     HeadlessImGuiContext imgui;
     panel.selectTab({.kind = PropertiesTabKind::Render});
@@ -394,6 +415,214 @@ void testController() {
            "reverting should restore and apply the saved settings");
     std::filesystem::remove(path);
 }
+
+// The line of logged panel text that contains needle, or empty.
+std::string lineContaining(const std::string& text, std::string_view needle) {
+    const size_t found = text.find(needle);
+    if (found == std::string::npos) {
+        return {};
+    }
+    const size_t begin = text.rfind('\n', found);
+    const size_t end = text.find('\n', found);
+    return text.substr(begin == std::string::npos ? 0 : begin + 1,
+                       end == std::string::npos ? std::string::npos
+                                                : end - (begin == std::string::npos ? 0 : begin + 1));
+}
+
+// An entity with the module's Health component, and optionally a Marker.
+SceneEntityId addHealthy(PanelFixture& fixture, const char* name, float amount, std::optional<bool> flagged) {
+    const Entity entity = fixture.scene.createEntity(name);
+    fixture.scene.registry().emplace<HealthComponent>(entity).amount = amount;
+    if (flagged) {
+        fixture.scene.registry().emplace<MarkerComponent>(entity).flagged = *flagged;
+    }
+    return fixture.scene.id(entity);
+}
+
+float healthOf(PanelFixture& fixture, SceneEntityId id) {
+    return fixture.scene.registry().get<HealthComponent>(fixture.scene.findEntity(id)).amount;
+}
+
+ImGuiID healthAmountId(const char* windowName) {
+    const ImGuiWindow* window = HeadlessImGuiContext::findWindow(windowName);
+    expect(window != nullptr, "the panel window should exist");
+    return window != nullptr ? HeadlessImGuiContext::itemId(*window, "health", "amount", "Amount") : 0;
+}
+
+void testMultiSelectionDisplay() {
+    PanelFixture fixture;
+    const SceneEntityId first = addHealthy(fixture, "First", 11.0f, true);
+    const SceneEntityId second = addHealthy(fixture, "Second", 22.0f, false);
+    componentTypesFor(fixture.document.options())
+        .find("point_light")
+        ->addDefault(fixture.scene, fixture.scene.findEntity(first));
+    fixture.selection.assign({first, second});
+    InspectorPanel inspector(fixture.componentLayout);
+    HeadlessImGuiContext imgui;
+    fixture.draw(inspector);
+    const std::string text = fixture.drawLogged(inspector);
+    expect(text.find("2 entities selected") != std::string::npos, "the Inspector should summarize the selection");
+    expect(lineContaining(text, "Amount").find(mixedValueText) != std::string::npos &&
+               text.find("11.000") == std::string::npos,
+           "a shared field whose values differ should show the mixed mark instead of a value");
+    expect(lineContaining(text, "Flagged").find("[~]") != std::string::npos,
+           "a checkbox whose values differ should show ImGui's mixed state");
+    const size_t heading = text.find("Active Entity Only");
+    expect(heading != std::string::npos && text.find("Health") < heading && text.find("Point Light") > heading,
+           "shared components should come first, then those only the active entity has");
+    expect(fixture.history.size() == 0, "drawing a multi-selection should not record edits");
+    // Remove acts on every selected entity with the component, so a section
+    // only the active entity has does not offer it.
+    expect(lineContaining(text, "Point Light").find("Remove") == std::string::npos &&
+               lineContaining(text, "Health").find("Remove") != std::string::npos,
+           "only sections the selection shares should offer Remove");
+
+    // Equal values show the value itself.
+    fixture.scene.registry().get<HealthComponent>(fixture.scene.findEntity(second)).amount = 11.0f;
+    expect(lineContaining(fixture.drawLogged(inspector), "Amount").find("11.000") != std::string::npos,
+           "a shared field with equal values should show the value");
+}
+
+void testMultiSelectionEdit() {
+    PanelFixture fixture;
+    const SceneEntityId first = addHealthy(fixture, "First", 10.0f, std::nullopt);
+    const SceneEntityId second = addHealthy(fixture, "Second", 20.0f, std::nullopt);
+    fixture.selection.assign({first, second});
+    InspectorPanel inspector(fixture.componentLayout);
+    HeadlessImGuiContext imgui;
+    fixture.draw(inspector);
+    typeInto(fixture, inspector, healthAmountId(inspector.title()), "42");
+    expect(healthOf(fixture, first) == 42.0f && healthOf(fixture, second) == 42.0f,
+           "an edit in a multi-selection should change every selected entity");
+    expect(fixture.history.size() == 1, "the multi-entity edit should be one undo step");
+    fixture.editing().undo();
+    expect(healthOf(fixture, first) == 10.0f && healthOf(fixture, second) == 20.0f,
+           "undo should restore every entity's own value");
+
+    // The Properties panel's category tab edits the selection the same way.
+    PropertiesPanel panel(fixture.renderSettings, fixture.componentLayout);
+    panel.selectTab({.kind = PropertiesTabKind::Components, .category = "Gameplay"});
+    expect(panel.activeTab(fixture.context()).category == "Gameplay",
+           "a multi-selection should offer the active entity's category tabs");
+    fixture.draw(panel);
+    typeInto(fixture, panel, healthAmountId("##PropertiesContent"), "7");
+    expect(healthOf(fixture, first) == 7.0f && healthOf(fixture, second) == 7.0f,
+           "a Properties tab edit should change every selected entity");
+}
+
+void testAltAppliesToSelected() {
+    PanelFixture fixture;
+    const SceneEntityId first = addHealthy(fixture, "First", 10.0f, std::nullopt);
+    const SceneEntityId second = addHealthy(fixture, "Second", 20.0f, std::nullopt);
+    const SceneEntityId bare = fixture.scene.id(fixture.scene.createEntity("Bare"));
+    // Health is not shared by the whole selection, so it is shown for the
+    // active entity only.
+    fixture.selection.assign({first, second, bare});
+    InspectorPanel inspector(fixture.componentLayout);
+    {
+        HeadlessImGuiContext imgui;
+        fixture.draw(inspector);
+        typeInto(fixture, inspector, healthAmountId(inspector.title()), "42");
+        expect(healthOf(fixture, first) == 42.0f && healthOf(fixture, second) == 20.0f,
+               "without Alt an active-only edit should change only the active entity");
+        fixture.editing().undo();
+    }
+
+    // A fresh context, so the field from the first edit is no longer active.
+    HeadlessImGuiContext imgui;
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddKeyEvent(ImGuiMod_Alt, true);
+    fixture.draw(inspector);
+    typeInto(fixture, inspector, healthAmountId(inspector.title()), "55");
+    io.AddKeyEvent(ImGuiMod_Alt, false);
+    fixture.draw(inspector);
+    expect(healthOf(fixture, first) == 55.0f && healthOf(fixture, second) == 55.0f,
+           "Alt should apply the edit to every selected entity with the component");
+    expect(!fixture.scene.registry().all_of<HealthComponent>(fixture.scene.findEntity(bare)),
+           "Alt should not add the component to entities without it");
+    fixture.editing().undo();
+    expect(healthOf(fixture, first) == 10.0f && healthOf(fixture, second) == 20.0f,
+           "undo should restore every entity the Alt edit changed");
+}
+
+// Opens the component menu of the module's Health section, then activates
+// the menu item labelled item.
+void runHealthMenuItem(PanelFixture& fixture, InspectorPanel& inspector, const char* item) {
+    const ImGuiWindow* window = HeadlessImGuiContext::findWindow(inspector.title());
+    expect(window != nullptr, "the Inspector window should exist");
+    if (window == nullptr) {
+        return;
+    }
+    HeadlessImGuiContext::activateNextFrame(HeadlessImGuiContext::itemId(*window, "health", "..."));
+    fixture.draw(inspector);
+    fixture.draw(inspector);
+    const ImGuiWindow* popup = HeadlessImGuiContext::findWindow("##Popup_");
+    expect(popup != nullptr && popup->Active, "the component menu should open");
+    if (popup == nullptr) {
+        return;
+    }
+    HeadlessImGuiContext::activateNextFrame(HeadlessImGuiContext::itemId(*popup, item));
+    fixture.draw(inspector);
+}
+
+void testComponentMenu() {
+    PanelFixture fixture;
+    const SceneEntityId first = addHealthy(fixture, "First", 10.0f, false);
+    const SceneEntityId second = addHealthy(fixture, "Second", 20.0f, false);
+    fixture.selection.assign({first, second});
+    InspectorPanel inspector(fixture.componentLayout);
+    HeadlessImGuiContext imgui;
+    fixture.draw(inspector);
+
+    runHealthMenuItem(fixture, inspector, "Reset to Default");
+    expect(healthOf(fixture, first) == 100.0f && healthOf(fixture, second) == 100.0f,
+           "Reset to Default should reset every selected entity's component");
+    expect(fixture.history.size() == 1, "the menu's reset should be one undo step");
+
+    fixture.scene.registry().get<HealthComponent>(fixture.scene.findEntity(first)).amount = 64.0f;
+    runHealthMenuItem(fixture, inspector, "Copy Values");
+    expect(fixture.clipboard.text().find("\"health\"") != std::string::npos,
+           "Copy Values should put the active entity's values on the clipboard");
+    runHealthMenuItem(fixture, inspector, "Paste Values");
+    expect(healthOf(fixture, second) == 64.0f, "Paste Values should apply the copied values to the selection");
+
+    // Health is listed before Marker; moving Marker to the top reorders the
+    // sections for every entity and is remembered by the layout.
+    const ComponentTypeRegistry& types = componentTypesFor(fixture.document.options());
+    expect(displayedComponentKeys(types, fixture.componentLayout, fixture.scene, first).front() == "health",
+           "sections should start in registry order");
+    runHealthMenuItem(fixture, inspector, "Move Down");
+    expect(displayedComponentKeys(types, fixture.componentLayout, fixture.scene, first).front() == "marker",
+           "Move Down should reorder the sections");
+    expect(fixture.componentLayout.takeChanged(), "the move should be a layout change to save");
+}
+
+void testCollapseState() {
+    PanelFixture fixture;
+    const SceneEntityId subject = addHealthy(fixture, "Subject", 10.0f, std::nullopt);
+    fixture.selection.selectOnly(subject);
+    InspectorPanel inspector(fixture.componentLayout);
+    HeadlessImGuiContext imgui;
+    fixture.draw(inspector);
+    const ImGuiWindow* window = HeadlessImGuiContext::findWindow(inspector.title());
+    expect(window != nullptr, "the Inspector window should exist");
+    if (window == nullptr) {
+        return;
+    }
+    expect(!fixture.componentLayout.collapsed("health"), "sections start expanded");
+    HeadlessImGuiContext::activateNextFrame(HeadlessImGuiContext::itemId(*window, "health", "Health"));
+    fixture.draw(inspector);
+    fixture.draw(inspector);
+    expect(fixture.componentLayout.collapsed("health") && fixture.componentLayout.takeChanged(),
+           "collapsing a section should be remembered per component type");
+    expect(fixture.drawLogged(inspector).find("Amount") == std::string::npos, "a collapsed section should stay closed");
+
+    // Another Inspector (or a restarted editor with the saved layout) opens
+    // the type collapsed.
+    InspectorPanel another(fixture.componentLayout);
+    expect(fixture.drawLogged(another).find("Amount") == std::string::npos,
+           "the collapse state should be shared by every inspector");
+}
 } // namespace
 
 int main() {
@@ -403,6 +632,11 @@ int main() {
     testWorldTab();
     testRenderTab();
     testController();
+    testMultiSelectionDisplay();
+    testMultiSelectionEdit();
+    testAltAppliesToSelected();
+    testComponentMenu();
+    testCollapseState();
     if (failures != 0) {
         std::cerr << failures << " properties panel test(s) failed\n";
         return 1;

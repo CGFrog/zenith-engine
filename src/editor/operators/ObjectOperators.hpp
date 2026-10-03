@@ -9,8 +9,9 @@
 
 // Object-mode operators that need only the document and selection, so they
 // run headless: adding, creating, duplicating, deleting, renaming, selecting,
-// clearing transforms, adding/removing components, and baking irradiance
-// volumes. Session operators that need a window (modal transforms, popups,
+// clearing transforms, adding components (to the active object) and removing
+// them (from every selected object), and baking irradiance volumes. The
+// component value operators are in ComponentOperators. Session operators that need a window (modal transforms, popups,
 // files, Play mode, the camera) are registered by the editor session.
 
 struct AddObjectProperties {

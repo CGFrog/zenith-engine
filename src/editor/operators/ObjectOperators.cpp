@@ -275,31 +275,43 @@ Operator addComponentOperator() {
 }
 
 // Removes a registered component, or the preserved data of a component type
-// that is not registered (for example from an unloaded game module).
+// that is not registered (for example from an unloaded game module), from one
+// entity. Returns whether the entity had it.
+bool removeComponent(Scene& scene, const ComponentType* type, Entity entity, const std::string& key) {
+    if (type != nullptr && type->has(scene, entity)) {
+        type->remove(scene, entity);
+        return true;
+    }
+    auto* preserved = scene.registry().try_get<PreservedComponentsComponent>(entity);
+    if (preserved == nullptr ||
+        std::erase_if(preserved->components, [&key](const auto& entry) { return entry.first == key; }) == 0) {
+        return false;
+    }
+    if (preserved->components.empty()) {
+        scene.registry().remove<PreservedComponentsComponent>(entity);
+    }
+    return true;
+}
+
 Operator removeComponentOperator() {
     return {.id = "object.component_remove",
             .label = "Remove Component",
-            .description = "Remove a component from the active object",
+            .description = "Remove a component from every selected object that has it",
             .flags = OperatorFlags::Undo | OperatorFlags::Internal,
             .properties = OperatorProperties::make(ComponentProperties{}, componentFields()),
             .poll = hasActive,
             .execute = typed<ComponentProperties>([](OperatorContext& context, ComponentProperties& values) {
                 Scene& scene = context.editing.scene();
-                const Entity entity = activeEntity(context);
                 const ComponentType* type =
                     componentTypesFor(context.editing.document().options()).find(values.component);
-                if (type != nullptr && type->has(scene, entity)) {
-                    type->remove(scene, entity);
-                    return OperatorResult::finished();
+                size_t removed = 0;
+                for (const SceneEntityId id : context.selection.ids()) {
+                    if (const Entity entity = scene.findEntity(id); entity != entt::null) {
+                        removed += removeComponent(scene, type, entity, values.component) ? 1 : 0;
+                    }
                 }
-                auto* preserved = scene.registry().try_get<PreservedComponentsComponent>(entity);
-                if (preserved == nullptr || std::erase_if(preserved->components, [&values](const auto& entry) {
-                                                return entry.first == values.component;
-                                            }) == 0) {
-                    return OperatorResult::cancelled("The active object has no '" + values.component + "' component");
-                }
-                if (preserved->components.empty()) {
-                    scene.registry().remove<PreservedComponentsComponent>(entity);
+                if (removed == 0) {
+                    return OperatorResult::cancelled("No selected object has a '" + values.component + "' component");
                 }
                 return OperatorResult::finished();
             })};

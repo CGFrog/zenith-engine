@@ -11,7 +11,7 @@ class RenderSettingsController;
 enum class PropertiesTabKind {
     // The active entity's name and transform, or the selection summary.
     Object,
-    // The active entity's components of one category.
+    // The selection's components of one category of the active entity.
     Components,
     // The scene's primary sun, environment, and fog, and its irradiance volumes.
     World,
@@ -33,23 +33,23 @@ struct PropertiesTab {
 };
 
 // A Blender-style Properties editor: a vertical tab strip beside the selected
-// tab's contents. Entity tabs present the active entity through the same
-// EntityPropertiesView as the Inspector, so edits share its filtering and are
-// undoable through SceneEditing. The Render tab edits the session's
-// RenderSettingsController, shared with the Graphics panel.
+// tab's contents. Entity tabs present the selection through the same
+// EntityPropertiesView as the Inspector, so edits share its filtering,
+// multi-entity editing, and undo through SceneEditing. The Render tab edits
+// the session's RenderSettingsController, shared with the Graphics panel.
 //
 // Authoring tabs are read-only outside Edit mode; the Render and Scene tabs
 // stay usable in Play mode.
 class PropertiesPanel final : public EditorPanel {
   public:
-    // The controller must outlive the panel.
-    explicit PropertiesPanel(RenderSettingsController& renderSettings);
+    // The controller and layout must outlive the panel.
+    PropertiesPanel(RenderSettingsController& renderSettings, ComponentInspectorLayout& layout);
 
     const char* title() const override;
     void draw(EditorContext& context) override;
 
     // The tabs available now, in strip order: Object, one Components tab per
-    // category the single active entity has, then World, Render, and Scene.
+    // category the active entity has, then World, Render, and Scene.
     std::vector<PropertiesTab> tabs(const EditorContext& context) const;
     // The remembered tab when it is available now, otherwise Object.
     PropertiesTab activeTab(const EditorContext& context) const;

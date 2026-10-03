@@ -17,6 +17,7 @@
 #include "editor/panels/InfoPanel.hpp"
 #include "editor/panels/PropertiesPanel.hpp"
 #include "editor/project/ProjectAssets.hpp"
+#include "editor/settings/ComponentInspectorLayout.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "editor/settings/RenderSettingsController.hpp"
 #include "editor/theme/ThemeChrome.hpp"
@@ -118,6 +119,7 @@ struct SessionFixture {
     OperatorRunner runner{operators, history};
     EditorToolSettings tools;
     RenderSettingsController renderSettings;
+    ComponentInspectorLayout componentLayout;
     // Without watchers, so rescans happen exactly when a test advances time.
     ProjectAssets projectAssets;
     BuildPanel build{tools};
@@ -133,6 +135,7 @@ struct SessionFixture {
         expect(registry.add(AreaType::shared("viewport", viewport)).success, "the viewport stand-in should register");
         for (AreaType& type : builtInAreaTypes({.projectAssets = projectAssets,
                                                 .renderSettings = renderSettings,
+                                                .componentLayout = componentLayout,
                                                 .tools = tools,
                                                 .build = build,
                                                 .info = info})) {

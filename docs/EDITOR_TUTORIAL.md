@@ -27,15 +27,28 @@ asset and scene roots are relative to that file.
    selecting them (and adds a missing sun, environment, or fog), **Render**
    edits the same render settings as the Graphics panel, and **Scene**
    summarizes the open document. Edits there undo like Inspector edits.
-5. Use `Shift+D` to duplicate a selection, or `Ctrl+C` and `Ctrl+V` to copy and
+5. Right-click a component's header (or press its **...** button) for
+   **Remove**, **Reset to Default**, **Copy Values** / **Paste Values**
+   (the values go to the clipboard as JSON), **Copy to Selected** (gives the
+   other selected entities the active entity's component and values), and
+   **Move Up/Down/to Top/to Bottom**, which reorders that component's section
+   for every entity. Collapsed sections and the order are remembered in
+   `component-inspector.json` in the editor settings folder. With several
+   entities selected, the Inspector and the Properties category tabs list the
+   components they all share: a value that differs shows `—`, and an edit sets
+   that field on every selected entity as one undo step, leaving their other
+   fields alone. Components only the active entity has follow under **Active
+   Entity Only**; hold `Alt` while editing one of them to apply the change to
+   every selected entity that has the component.
+6. Use `Shift+D` to duplicate a selection, or `Ctrl+C` and `Ctrl+V` to copy and
    paste serialized entity hierarchies. `Ctrl+Z` undoes; `Ctrl+Shift+Z` or
    `Ctrl+Y` redoes. After adding or duplicating an object, the **Adjust Last
    Operation** panel at the bottom-left of the viewport lets you change its
    location, size, or offset; the operation is redone with the new values.
-6. Choose **File > Save As** and save beneath the project's scene root. Saves
+7. Choose **File > Save As** and save beneath the project's scene root. Saves
    are atomic. A separate recovery file is written periodically while the
    document is dirty and is offered after an interrupted session.
-7. Press `F5` to enter Play, `F6` to pause, `F7` to step, and `Shift+F5` to
+8. Press `F5` to enter Play, `F6` to pause, `F7` to step, and `Shift+F5` to
    stop. Play uses a runtime clone; stopping restores the authored scene.
 
 Every menu item and key runs a named operator. Press `F3` to search all

@@ -564,7 +564,9 @@ Viewport, Outliner) with conflict detection and double-tap triggers; only the
 user's differences from `DefaultKeymap` are saved to `keymap.json` in the
 editor settings directory. `OperatorSearch` is the F3 popup and `KeymapEditor`
 the rebinding window. `ObjectOperators` holds the document-only object
-operators, which run headless in `tests/editor/OperatorTests.cpp`.
+operators, which run headless in `tests/editor/OperatorTests.cpp`;
+`ComponentOperators` the component value operators (reset, copy, paste, copy
+to selected, move), tested in `tests/editor/ComponentOperatorTests.cpp`.
 
 ### Game module hosting (`src/editor/modules/`)
 
@@ -630,19 +632,40 @@ the settings widgets), so they always show and change the same settings.
 
 ### Inspector and Properties panels
 
-`interaction/EntityPropertiesView` draws one entity's sections: name, label
+`interaction/EntityPropertiesView` draws the selection's sections: name, label
 filter, transform, every registered component (reflected fields, or a custom
 editor registered there for `collider`, `morph_weights`, `irradiance_volume`,
 and `animation`), preserved unknown components, asset warnings, the model drop
 target, the irradiance bake button, and the Add Component menu grouped by
 `ComponentType::category()` (empty categories show as "Other"). Every edit is
-recorded through `SceneEditing` with a per-entity coalesce key, and component
-add/remove run `object.component_add`/`object.component_remove`.
+recorded through `SceneEditing` with a coalesce key naming the edited entities,
+and component add runs `object.component_add` (active entity).
+
+Components are listed in the display order of
+`settings/ComponentInspectorLayout`, which also remembers collapsed sections
+per component type and is saved by the session to `component-inspector.json`.
+A component header has Remove and a context menu (right click or "...")
+running the headless operators in `operators/ComponentOperators`:
+`object.component_remove` (in `ObjectOperators`), `object.component_reset`,
+`object.component_copy`/`object.component_paste` (the component's document
+JSON on a `TextClipboard`; the session uses `application/SystemClipboard`),
+`object.component_copy_to_selected`, and `object.component_move`. All act on
+every selected entity that has the component except copy (the active entity)
+and move (the layout). With several entities selected the view shows the
+components they share; `interaction/ReflectedFieldEditor` compares and copies
+each field through its JSON form (`FieldJson`), so a differing field shows
+`mixedValueText` (ImGui's mixed state for checkboxes) and an edit changes only
+that field, or only the edited vector elements, on every entity in one undo
+step. Custom editors copy only the top-level document keys they changed.
+Components only the active entity has follow under "Active Entity Only";
+holding Alt while editing applies the change to every selected entity with the
+component.
 
 `panels/InspectorPanel` lists those sections in one scrolling column.
 `panels/PropertiesPanel` is the Blender-style alternative: a vertical tab strip
 with Object (name, transform, Add Component), one tab per component category
-the single selected entity has (module categories included), World (the
+the active entity has (module categories included; with several selected it
+edits their shared components), World (the
 scene's primary sun, environment light, and fog, chosen as the renderer chooses
 them, plus every irradiance volume, with Add Sun/Environment/Fog when
 missing), Render (the shared render settings), and Scene (document file,

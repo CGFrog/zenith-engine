@@ -1,22 +1,43 @@
 #include "ReflectedFieldEditor.hpp"
 
 #include "editor/theme/EditorTheme.hpp"
+#include "engine/reflection/FieldJson.hpp"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cfloat>
 #include <climits>
 #include <string>
+#include <vector>
 
 namespace {
+using Json = nlohmann::json;
+
 const ImVec4 problemColor = toImVec4(palette::error);
+
+// Alt applies an edit to every selected object (see EntityPropertiesView), so
+// it must not also slow drags down as ImGui's speed tweak does.
+ImGuiSliderFlags modifierFlags() {
+    return ImGui::GetIO().KeyAlt ? ImGuiSliderFlags_NoSpeedTweaks : ImGuiSliderFlags_None;
+}
+
+// Which of a field's values differ between the edited objects. Vectors and
+// ranges also record which elements differ, so each can show its own mark.
+struct MixedValue {
+    bool any{false};
+    std::array<bool, 4> elements{};
+};
 
 // ImGui treats equal drag bounds as unbounded; one-sided ranges are filled
 // with the type's extreme so the given side still clamps.
 struct FloatBounds {
+    bool bounded{false};
     float minimum{0.0f};
     float maximum{0.0f};
     ImGuiSliderFlags flags{ImGuiSliderFlags_None};
@@ -24,11 +45,12 @@ struct FloatBounds {
 
 FloatBounds floatBounds(const FieldPresentation& presentation) {
     if (!presentation.minimum && !presentation.maximum) {
-        return {};
+        return {.flags = modifierFlags()};
     }
-    return {.minimum = static_cast<float>(presentation.minimum.value_or(-FLT_MAX)),
+    return {.bounded = true,
+            .minimum = static_cast<float>(presentation.minimum.value_or(-FLT_MAX)),
             .maximum = static_cast<float>(presentation.maximum.value_or(FLT_MAX)),
-            .flags = ImGuiSliderFlags_AlwaysClamp};
+            .flags = ImGuiSliderFlags_AlwaysClamp | modifierFlags()};
 }
 
 struct IntBounds {
@@ -40,27 +62,33 @@ struct IntBounds {
 IntBounds intBounds(const FieldPresentation& presentation, int lowest) {
     if (!presentation.minimum && !presentation.maximum) {
         if (lowest == INT_MIN) {
-            return {};
+            return {.flags = modifierFlags()};
         }
-        return {.minimum = lowest, .maximum = INT_MAX, .flags = ImGuiSliderFlags_AlwaysClamp};
+        return {.minimum = lowest, .maximum = INT_MAX, .flags = ImGuiSliderFlags_AlwaysClamp | modifierFlags()};
     }
     const auto clampToInt = [](double value) {
         return static_cast<int>(std::clamp(value, static_cast<double>(INT_MIN), static_cast<double>(INT_MAX)));
     };
     return {.minimum = std::max(lowest, clampToInt(presentation.minimum.value_or(INT_MIN))),
             .maximum = clampToInt(presentation.maximum.value_or(INT_MAX)),
-            .flags = ImGuiSliderFlags_AlwaysClamp};
+            .flags = ImGuiSliderFlags_AlwaysClamp | modifierFlags()};
 }
 
-const char* formatOr(const FieldPresentation& presentation, const char* fallback) {
+// The number format, or the mixed mark when the values differ. A format
+// without a conversion makes ImGui show it verbatim; typing a value still
+// parses with the type's default format.
+const char* numberFormat(const FieldPresentation& presentation, const char* fallback, bool mixed) {
+    if (mixed) {
+        return mixedValueText;
+    }
     return presentation.format.empty() ? fallback : presentation.format.c_str();
 }
 
-bool drawFloat(const char* label, float& value, const FieldPresentation& presentation) {
+bool drawFloat(const char* label, float& value, const FieldPresentation& presentation, bool mixed) {
     const FloatBounds bounds = floatBounds(presentation);
     if (presentation.angle) {
         float degrees = glm::degrees(value);
-        const char* format = formatOr(presentation, "%.1f deg");
+        const char* format = numberFormat(presentation, "%.1f deg", mixed);
         const bool changed =
             presentation.widget == NumberWidget::Slider
                 ? ImGui::SliderFloat(label, &degrees, bounds.minimum, bounds.maximum, format, bounds.flags)
@@ -71,46 +99,105 @@ bool drawFloat(const char* label, float& value, const FieldPresentation& present
         }
         return changed;
     }
-    const char* format = formatOr(presentation, "%.3f");
+    const char* format = numberFormat(presentation, "%.3f", mixed);
     if (presentation.widget == NumberWidget::Slider) {
         return ImGui::SliderFloat(label, &value, bounds.minimum, bounds.maximum, format, bounds.flags);
     }
     return ImGui::DragFloat(label, &value, presentation.speed, bounds.minimum, bounds.maximum, format, bounds.flags);
 }
 
-bool drawFloats(const char* label, float* values, int count, const FieldPresentation& presentation) {
-    if (presentation.color) {
-        constexpr ImGuiColorEditFlags flags = ImGuiColorEditFlags_Float;
-        return count == 3 ? ImGui::ColorEdit3(label, values, flags) : ImGui::ColorEdit4(label, values, flags);
+// A drag or slider per element laid out as ImGui's DragScalarN and
+// SliderScalarN lay them out (with the same ids), so each element can show
+// its own mixed mark.
+struct ElementWidget {
+    ImGuiDataType type{ImGuiDataType_Float};
+    bool slider{false};
+    float speed{0.01f};
+    const void* minimum{nullptr};
+    const void* maximum{nullptr};
+    const char* format{"%.3f"};
+    ImGuiSliderFlags flags{ImGuiSliderFlags_None};
+};
+
+bool drawElements(const char* label, void* values, int count, const ElementWidget& widget, const MixedValue& mixed) {
+    if (ImGui::GetCurrentWindow()->SkipItems) {
+        return false;
     }
-    const FloatBounds bounds = floatBounds(presentation);
-    const char* format = formatOr(presentation, "%.3f");
-    if (presentation.widget == NumberWidget::Slider) {
-        return ImGui::SliderScalarN(label, ImGuiDataType_Float, values, count, &bounds.minimum, &bounds.maximum, format,
-                                    bounds.flags);
+    const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+    const size_t elementSize = ImGui::DataTypeGetInfo(widget.type)->Size;
+    bool changed = false;
+    ImGui::BeginGroup();
+    ImGui::PushID(label);
+    ImGui::PushMultiItemsWidths(count, ImGui::CalcItemWidth());
+    for (int index = 0; index < count; ++index) {
+        ImGui::PushID(index);
+        if (index > 0) {
+            ImGui::SameLine(0.0f, spacing);
+        }
+        void* element = static_cast<char*>(values) + elementSize * static_cast<size_t>(index);
+        const char* format = mixed.elements[static_cast<size_t>(index)] ? mixedValueText : widget.format;
+        changed |= widget.slider ? ImGui::SliderScalar("", widget.type, element, widget.minimum, widget.maximum, format,
+                                                       widget.flags)
+                                 : ImGui::DragScalar("", widget.type, element, widget.speed, widget.minimum,
+                                                     widget.maximum, format, widget.flags);
+        ImGui::PopID();
+        ImGui::PopItemWidth();
     }
-    return ImGui::DragScalarN(label, ImGuiDataType_Float, values, count, presentation.speed,
-                              bounds.flags != 0 ? &bounds.minimum : nullptr,
-                              bounds.flags != 0 ? &bounds.maximum : nullptr, format, bounds.flags);
+    ImGui::PopID();
+    if (const char* labelEnd = ImGui::FindRenderedTextEnd(label); labelEnd != label) {
+        ImGui::SameLine(0.0f, spacing);
+        ImGui::TextEx(label, labelEnd);
+    }
+    ImGui::EndGroup();
+    return changed;
 }
 
-bool drawInt(const char* label, int& value, const FieldPresentation& presentation, int lowest) {
+bool drawFloats(const char* label, float* values, int count, const FieldPresentation& presentation,
+                const MixedValue& mixed) {
+    if (presentation.color) {
+        constexpr ImGuiColorEditFlags flags = ImGuiColorEditFlags_Float;
+        const bool changed =
+            count == 3 ? ImGui::ColorEdit3(label, values, flags) : ImGui::ColorEdit4(label, values, flags);
+        if (mixed.any) {
+            // Colour pickers have no mixed state; mark the row instead.
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", mixedValueText);
+        }
+        return changed;
+    }
+    const FloatBounds bounds = floatBounds(presentation);
+    const bool slider = presentation.widget == NumberWidget::Slider;
+    return drawElements(label, values, count,
+                        {.type = ImGuiDataType_Float,
+                         .slider = slider,
+                         .speed = presentation.speed,
+                         .minimum = slider || bounds.bounded ? &bounds.minimum : nullptr,
+                         .maximum = slider || bounds.bounded ? &bounds.maximum : nullptr,
+                         .format = numberFormat(presentation, "%.3f", false),
+                         .flags = bounds.flags},
+                        mixed);
+}
+
+bool drawInt(const char* label, int& value, const FieldPresentation& presentation, int lowest, bool mixed) {
     const IntBounds bounds = intBounds(presentation, lowest);
-    const char* format = formatOr(presentation, "%d");
+    const char* format = numberFormat(presentation, "%d", mixed);
     if (presentation.widget == NumberWidget::Slider) {
         return ImGui::SliderInt(label, &value, bounds.minimum, bounds.maximum, format, bounds.flags);
     }
     return ImGui::DragInt(label, &value, presentation.speed, bounds.minimum, bounds.maximum, format, bounds.flags);
 }
 
-bool drawEnum(const char* label, void* object, const FieldDescriptor& field) {
+bool drawEnum(const char* label, void* object, const FieldDescriptor& field, bool mixed) {
     const int64_t current = field.enumValue(object);
     const EnumOption* selected = field.findOption(current);
-    const std::string preview = selected != nullptr ? selected->label : std::to_string(current);
+    const std::string preview = mixed                 ? std::string(mixedValueText)
+                                : selected != nullptr ? selected->label
+                                                      : std::to_string(current);
     bool changed = false;
     if (ImGui::BeginCombo(label, preview.c_str())) {
         for (const EnumOption& option : field.options) {
-            const bool isSelected = option.value == current;
+            const bool isSelected = !mixed && option.value == current;
+            // Choosing the shown value of a mixed field still applies it to all.
             if (ImGui::Selectable(option.label.c_str(), isSelected) && !isSelected) {
                 field.setEnumValue(object, option.value);
                 changed = true;
@@ -125,11 +212,18 @@ bool drawEnum(const char* label, void* object, const FieldDescriptor& field) {
 }
 
 // Edits a [minimum, maximum] pair, keeping the maximum at least the minimum.
-bool drawRange(const char* label, float& minimum, float& maximum, const FieldPresentation& presentation) {
+bool drawRange(const char* label, float& minimum, float& maximum, const FieldPresentation& presentation,
+               const MixedValue& mixed) {
     float range[2]{minimum, maximum};
     const FloatBounds bounds = floatBounds(presentation);
-    if (!ImGui::DragFloat2(label, range, presentation.speed, bounds.minimum, bounds.maximum,
-                           formatOr(presentation, "%.3f"), bounds.flags)) {
+    if (!drawElements(label, range, 2,
+                      {.type = ImGuiDataType_Float,
+                       .speed = presentation.speed,
+                       .minimum = &bounds.minimum,
+                       .maximum = &bounds.maximum,
+                       .format = numberFormat(presentation, "%.3f", false),
+                       .flags = bounds.flags},
+                      mixed)) {
         return false;
     }
     minimum = range[0];
@@ -137,8 +231,23 @@ bool drawRange(const char* label, float& minimum, float& maximum, const FieldPre
     return true;
 }
 
-void drawReadOnlyText(const char* label, const std::string& value, std::optional<bool> assetLoaded) {
-    if (value.empty()) {
+bool drawString(const char* label, std::string& value, bool mixed) {
+    if (!mixed) {
+        return ImGui::InputText(label, &value);
+    }
+    // Typing replaces every object's differing text.
+    std::string typed;
+    if (!ImGui::InputTextWithHint(label, mixedValueText, &typed)) {
+        return false;
+    }
+    value = std::move(typed);
+    return true;
+}
+
+void drawReadOnlyText(const char* label, const std::string& value, std::optional<bool> assetLoaded, bool mixed) {
+    if (mixed) {
+        ImGui::TextDisabled("%s: %s", label, mixedValueText);
+    } else if (value.empty()) {
         ImGui::TextDisabled("%s: (none)", label);
     } else if (assetLoaded == false) {
         ImGui::TextColored(problemColor, "%s missing: %s", label, value.c_str());
@@ -147,61 +256,134 @@ void drawReadOnlyText(const char* label, const std::string& value, std::optional
     }
 }
 
-bool drawField(void* object, const FieldDescriptor& field, const ReflectedFieldEditorOptions& options) {
+// The field's value in its document form, which every field kind has, so
+// values can be compared and copied without knowing the kind.
+Json fieldValue(const void* object, const FieldDescriptor& field) {
+    Json output = Json::object();
+    writeReflectedFields(object, std::span(&field, 1), output);
+    return output[field.key];
+}
+
+MixedValue mixedValue(std::span<void* const> objects, const FieldDescriptor& field) {
+    MixedValue mixed;
+    if (objects.size() < 2 || field.kind == FieldKind::Struct) {
+        return mixed;
+    }
+    const Json shown = fieldValue(objects.front(), field);
+    for (const void* object : objects.subspan(1)) {
+        const Json other = fieldValue(object, field);
+        if (other == shown) {
+            continue;
+        }
+        mixed.any = true;
+        const bool elementwise = shown.is_array() && other.is_array() && shown.size() == other.size();
+        for (size_t index = 0; index < mixed.elements.size(); ++index) {
+            mixed.elements[index] |= !elementwise || (index < shown.size() && shown[index] != other[index]);
+        }
+    }
+    return mixed;
+}
+
+// Copies the edit the first object received (from before to after) to the
+// others: the whole value, or only the changed elements of an array.
+void applyToOthers(std::span<void* const> objects, const FieldDescriptor& field, const Json& before,
+                   const Json& after) {
+    const bool elementwise = before.is_array() && after.is_array() && before.size() == after.size();
+    for (void* object : objects.subspan(1)) {
+        Json value = fieldValue(object, field);
+        if (elementwise && value.is_array() && value.size() == after.size()) {
+            for (size_t index = 0; index < after.size(); ++index) {
+                if (before[index] != after[index]) {
+                    value[index] = after[index];
+                }
+            }
+        } else {
+            value = after;
+        }
+        // The value came from an object described by the same field, so it
+        // reads back; a failure would leave this object unchanged.
+        const std::string error =
+            readReflectedFields(Json{{field.key, std::move(value)}}, object, std::span(&field, 1));
+        if (error.empty() && field.kind == FieldKind::FloatRange) {
+            float& maximum = *static_cast<float*>(field.secondAddress(object));
+            maximum = std::max(maximum, *static_cast<const float*>(field.address(object)));
+        }
+    }
+}
+
+bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
+               const ReflectedFieldEditorOptions& options) {
+    void* object = objects.front();
     const FieldPresentation& presentation = field.presentation;
     const char* label = presentation.label.c_str();
+    const MixedValue mixed = options.showMixedValues ? mixedValue(objects, field) : MixedValue{};
     if (field.kind == FieldKind::String && presentation.readOnly) {
         const std::optional<bool> loaded = options.assetLoaded ? options.assetLoaded(field.key) : std::nullopt;
-        drawReadOnlyText(label, field.value<std::string>(object), loaded);
+        drawReadOnlyText(label, field.value<std::string>(object), loaded, mixed.any);
         return false;
     }
+    const Json before = objects.size() > 1 ? fieldValue(object, field) : Json{};
     bool changed = false;
     ImGui::BeginDisabled(presentation.readOnly);
     switch (field.kind) {
-    case FieldKind::Bool:
-        changed = ImGui::Checkbox(label, &field.value<bool>(object));
+    case FieldKind::Bool: {
+        bool& value = field.value<bool>(object);
+        ImGui::PushItemFlag(ImGuiItemFlags_MixedValue, mixed.any);
+        changed = ImGui::Checkbox(label, &value);
+        ImGui::PopItemFlag();
+        if (changed && mixed.any) {
+            // Clicking a mixed checkbox checks every object.
+            value = true;
+        }
         break;
+    }
     case FieldKind::Int32:
-        changed = drawInt(label, field.value<int32_t>(object), presentation, INT_MIN);
+        changed = drawInt(label, field.value<int32_t>(object), presentation, INT_MIN, mixed.any);
         break;
     case FieldKind::UInt32: {
         uint32_t& stored = field.value<uint32_t>(object);
         int value = static_cast<int>(std::min<uint32_t>(stored, INT_MAX));
-        if (drawInt(label, value, presentation, 0)) {
+        if (drawInt(label, value, presentation, 0, mixed.any)) {
             stored = static_cast<uint32_t>(std::max(value, 0));
             changed = true;
         }
         break;
     }
     case FieldKind::Float:
-        changed = drawFloat(label, field.value<float>(object), presentation);
+        changed = drawFloat(label, field.value<float>(object), presentation, mixed.any);
         break;
     case FieldKind::Vec3:
-        changed = drawFloats(label, &field.value<glm::vec3>(object).x, 3, presentation);
+        changed = drawFloats(label, &field.value<glm::vec3>(object).x, 3, presentation, mixed);
         break;
     case FieldKind::Vec4:
-        changed = drawFloats(label, &field.value<glm::vec4>(object).x, 4, presentation);
+        changed = drawFloats(label, &field.value<glm::vec4>(object).x, 4, presentation, mixed);
         break;
     case FieldKind::UVec3: {
         glm::uvec3& stored = field.value<glm::uvec3>(object);
         glm::ivec3 value(glm::min(stored, glm::uvec3(INT_MAX)));
         const IntBounds bounds = intBounds(presentation, 0);
-        if (ImGui::DragInt3(label, &value.x, presentation.speed, bounds.minimum, bounds.maximum,
-                            formatOr(presentation, "%d"), bounds.flags)) {
+        if (drawElements(label, &value.x, 3,
+                         {.type = ImGuiDataType_S32,
+                          .speed = presentation.speed,
+                          .minimum = &bounds.minimum,
+                          .maximum = &bounds.maximum,
+                          .format = numberFormat(presentation, "%d", false),
+                          .flags = bounds.flags},
+                         mixed)) {
             stored = glm::uvec3(glm::max(value, glm::ivec3(0)));
             changed = true;
         }
         break;
     }
     case FieldKind::String:
-        changed = ImGui::InputText(label, &field.value<std::string>(object));
+        changed = drawString(label, field.value<std::string>(object), mixed.any);
         break;
     case FieldKind::Enum:
-        changed = drawEnum(label, object, field);
+        changed = drawEnum(label, object, field, mixed.any);
         break;
     case FieldKind::FloatRange:
         changed = drawRange(label, *static_cast<float*>(field.address(object)),
-                            *static_cast<float*>(field.secondAddress(object)), presentation);
+                            *static_cast<float*>(field.secondAddress(object)), presentation, mixed);
         break;
     case FieldKind::Struct:
         if (ImGui::TreeNode(label)) {
@@ -210,7 +392,13 @@ bool drawField(void* object, const FieldDescriptor& field, const ReflectedFieldE
             if (matchesInspectorFilter(presentation.label, options.filter)) {
                 childOptions.filter = {};
             }
-            changed = drawReflectedFields(field.address(object), field.children, childOptions);
+            // The children copy their own edits to every object.
+            std::vector<void*> members;
+            members.reserve(objects.size());
+            for (void* owner : objects) {
+                members.push_back(field.address(owner));
+            }
+            changed = drawReflectedFields(members, field.children, childOptions);
             ImGui::TreePop();
         }
         break;
@@ -218,6 +406,9 @@ bool drawField(void* object, const FieldDescriptor& field, const ReflectedFieldE
     ImGui::EndDisabled();
     if (!presentation.tooltip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip("%s", presentation.tooltip.c_str());
+    }
+    if (changed && objects.size() > 1 && field.kind != FieldKind::Struct) {
+        applyToOthers(objects, field, before, fieldValue(object, field));
     }
     return changed;
 }
@@ -244,6 +435,14 @@ bool matchesInspectorFilter(std::string_view label, std::string_view filter) {
 
 bool drawReflectedFields(void* object, std::span<const FieldDescriptor> fields,
                          const ReflectedFieldEditorOptions& options) {
+    return drawReflectedFields(std::span<void* const>(&object, 1), fields, options);
+}
+
+bool drawReflectedFields(std::span<void* const> objects, std::span<const FieldDescriptor> fields,
+                         const ReflectedFieldEditorOptions& options) {
+    if (objects.empty()) {
+        return false;
+    }
     bool changed = false;
     for (const FieldDescriptor& field : fields) {
         if (field.presentation.hidden) {
@@ -256,7 +455,7 @@ bool drawReflectedFields(void* object, std::span<const FieldDescriptor> fields,
             continue;
         }
         ImGui::PushID(field.key.c_str());
-        changed |= drawField(object, field, options);
+        changed |= drawField(objects, field, options);
         ImGui::PopID();
     }
     return changed;

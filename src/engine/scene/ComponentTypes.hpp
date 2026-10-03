@@ -75,6 +75,12 @@ class ComponentType {
     // in-place edit without knowing the type.
     std::any copy(const void* component) const;
     void assign(void* component, const std::any& value) const;
+    // A default-constructed component value, assignable with assign().
+    std::any makeDefault() const;
+    // Assigns the default value to the entity's component in place, keeping
+    // the component (and its EnTT storage slot). Returns false, changing
+    // nothing, when the entity has no such component.
+    bool resetToDefault(Scene& scene, Entity entity) const;
     // Restores invariants an edit may have broken, such as a spot light's
     // outer cone narrower than its inner cone.
     void sanitize(void* component) const;
