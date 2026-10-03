@@ -1,4 +1,5 @@
 #include "HeadlessImGui.hpp"
+#include "engine/diagnostics/Logger.hpp"
 
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/CommandHistory.hpp"
@@ -116,7 +117,8 @@ struct PanelFixture {
     ApplicationControl control;
     RenderRuntime rendering;
     GameUiContext gameUi;
-    ApplicationContext app{scene, assets, physics, audio, control, rendering, gameUi};
+    Logger logger;
+    ApplicationContext app{scene, assets, physics, audio, control, rendering, gameUi, logger};
     EditorDocument document{std::filesystem::temp_directory_path()};
     CommandHistory history;
     EditorDiagnostics diagnostics;

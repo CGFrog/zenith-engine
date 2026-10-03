@@ -8,6 +8,7 @@
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "engine/application/Application.hpp"
+#include "engine/diagnostics/Logger.hpp"
 
 #include <imgui.h>
 
@@ -95,7 +96,8 @@ struct ViewportFixture {
     ApplicationControl control;
     RenderRuntime rendering;
     GameUiContext gameUi;
-    ApplicationContext app{scene, assets, physics, audio, control, rendering, gameUi};
+    Logger logger;
+    ApplicationContext app{scene, assets, physics, audio, control, rendering, gameUi, logger};
     EditorDocument document{std::filesystem::temp_directory_path()};
     CommandHistory history;
     EditorDiagnostics diagnostics;

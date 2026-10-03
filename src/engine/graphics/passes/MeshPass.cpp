@@ -4307,11 +4307,11 @@ void MeshPass::recordWireframeOverlay(const DrawContext& draw, bool gpuDrivenAct
     // edges came from the indirect groups). Unlike recordShadedItems this adds
     // no visibility or timing statistics; the edges belong to surfaces already
     // counted.
-    const VkDescriptorSet sets[]{m_cameras[draw.frameIndex].descriptor, m_cameras[draw.frameIndex].bindlessDescriptor};
+    const VkDescriptorSet sets[]{draw.cameraSet, m_cameras[draw.frameIndex].bindlessDescriptor};
     const GraphicsPipeline* boundPipeline = nullptr;
     std::optional<uint32_t> boundPage;
-    for (size_t itemIndex = 0; itemIndex < m_visibleItems.size(); ++itemIndex) {
-        const RenderItem& item = *m_visibleItems[itemIndex];
+    for (size_t itemIndex = 0; itemIndex < draw.viewState->visibleItems.size(); ++itemIndex) {
+        const RenderItem& item = *draw.viewState->visibleItems[itemIndex];
         if (gpuDrivenActive && !item.material->translucent()) {
             continue;
         }
@@ -4325,7 +4325,7 @@ void MeshPass::recordWireframeOverlay(const DrawContext& draw, bool gpuDrivenAct
         bindGeometry(draw.commandBuffer, *item.gpuMesh, boundPage);
         vkCmdDrawIndexed(draw.commandBuffer, item.lod.indexCount, 1,
                          item.gpuMesh->geometry.firstIndex + item.lod.firstIndex, item.gpuMesh->geometry.vertexOffset,
-                         mainObjectBase + static_cast<uint32_t>(itemIndex));
+                         draw.objectBase + static_cast<uint32_t>(itemIndex));
         ++draw.stats->drawCalls;
     }
 }
