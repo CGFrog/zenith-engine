@@ -11,6 +11,7 @@
 #include "passes/UiPass.hpp"
 #include "resources/FrameResources.hpp"
 #include "resources/ImageReadback.hpp"
+#include "resources/UiImageStore.hpp"
 #include "resources/ViewportTarget.hpp"
 #include "surface/Surface.hpp"
 #include "swapchain/Swapchain.hpp"
@@ -190,6 +191,7 @@ class Renderer {
     Swapchain m_swapchain;
     MeshPass m_meshPass;
     UiPass m_uiPass;
+    UiImageStore m_uiImages;
     ViewportTarget m_viewportTarget;
     // Indexed by view slot; slot 0 is unused (the default view's targets are
     // m_viewportTarget and the swapchain).

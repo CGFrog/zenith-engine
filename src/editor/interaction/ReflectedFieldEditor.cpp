@@ -1,5 +1,7 @@
 #include "ReflectedFieldEditor.hpp"
 
+#include "editor/theme/EditorTheme.hpp"
+
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
 
@@ -10,7 +12,7 @@
 #include <string>
 
 namespace {
-constexpr ImVec4 problemColor{1.0f, 0.35f, 0.35f, 1.0f};
+const ImVec4 problemColor = toImVec4(palette::error);
 
 // ImGui treats equal drag bounds as unbounded; one-sided ranges are filled
 // with the type's extreme so the given side still clamps.

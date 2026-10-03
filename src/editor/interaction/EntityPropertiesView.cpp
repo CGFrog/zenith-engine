@@ -4,6 +4,8 @@
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/ReflectedFieldEditor.hpp"
 #include "editor/panels/EditorContext.hpp"
+#include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/EditorWidgets.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
 #include <imgui.h>
@@ -15,7 +17,7 @@
 #include <utility>
 
 namespace {
-constexpr ImVec4 problemColor{1.0f, 0.35f, 0.35f, 1.0f};
+const ImVec4 problemColor = toImVec4(palette::error);
 
 // Properties for object.component_add and object.component_remove.
 std::string componentProperties(std::string_view key) {
@@ -68,7 +70,7 @@ EntityPropertiesView::EntityPropertiesView() {
 
 void EntityPropertiesView::drawMultipleSelection(EditorContext& context) const {
     ImGui::Text("%zu entities selected", context.selection.size());
-    if (ImGui::Button("Delete All")) {
+    if (widgets::Button("Delete All")) {
         context.invoke("object.delete");
     }
 }
@@ -99,7 +101,7 @@ void EntityPropertiesView::drawFilter(const char* id, std::string& filter) const
 
 void EntityPropertiesView::drawTransform(EditorContext& context, SceneEntityId entityId,
                                          std::string_view filter) const {
-    if (!ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen) ||
+    if (!widgets::SectionHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen) ||
         !matchesInspectorFilter("Transform", filter)) {
         return;
     }
@@ -158,7 +160,7 @@ void EntityPropertiesView::drawComponent(EditorContext& context, const Component
     }
 
     ImGui::PushID(type.key().c_str());
-    const bool open = ImGui::CollapsingHeader(type.displayName().c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+    const bool open = widgets::SectionHeader(type.displayName().c_str(), ImGuiTreeNodeFlags_DefaultOpen);
     bool remove = false;
     if (options.removable) {
         ImGui::SameLine();
@@ -204,7 +206,7 @@ void EntityPropertiesView::drawPreservedComponents(EditorContext& context, Scene
     for (const auto& [key, payload] : entries) {
         ImGui::PushID(key.c_str());
         const std::string header = key + " (unknown type)";
-        const bool open = ImGui::CollapsingHeader(header.c_str());
+        const bool open = widgets::SectionHeader(header.c_str());
         ImGui::SameLine();
         const bool remove = ImGui::SmallButton("Remove");
         if (open && !remove) {
@@ -225,7 +227,7 @@ void EntityPropertiesView::drawPreservedComponents(EditorContext& context, Scene
 void EntityPropertiesView::drawIrradianceBakeButton(EditorContext& context, SceneEntityId entityId) const {
     Scene& scene = context.app.scene;
     if (scene.registry().all_of<IrradianceVolumeComponent>(scene.findEntity(entityId)) &&
-        ImGui::Button("Bake Irradiance Volume", {-1.0f, 0.0f})) {
+        widgets::Button("Bake Irradiance Volume", {-1.0f, 0.0f})) {
         context.invoke("object.irradiance_volume_bake");
     }
 }
@@ -244,7 +246,7 @@ void EntityPropertiesView::drawAssetWarnings(EditorContext& context, SceneEntity
 }
 
 void EntityPropertiesView::drawModelDropTarget(EditorContext& context, SceneEntityId entityId) const {
-    ImGui::Button("Drop Model Asset to Add Child", {-1.0f, 0.0f});
+    widgets::Button("Drop Model Asset to Add Child", {-1.0f, 0.0f});
     if (ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ZENITH_MODEL_ASSET")) {
             context.placeModel(static_cast<const char*>(payload->Data), context.app.scene.findEntity(entityId));
@@ -255,7 +257,7 @@ void EntityPropertiesView::drawModelDropTarget(EditorContext& context, SceneEnti
 
 void EntityPropertiesView::drawAddComponentMenu(EditorContext& context, SceneEntityId entityId,
                                                 std::optional<std::string_view> category) const {
-    if (ImGui::Button("Add Component")) {
+    if (widgets::Button("Add Component")) {
         ImGui::OpenPopup("AddComponentPopup");
     }
     if (!ImGui::BeginPopup("AddComponentPopup")) {

@@ -4,6 +4,7 @@
 #include "editor/interaction/GraphicsSettingsEditor.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/settings/RenderSettingsController.hpp"
+#include "editor/theme/EditorWidgets.hpp"
 
 #include <imgui.h>
 
@@ -13,13 +14,13 @@ namespace RenderSettingsControls {
 void drawStorage(EditorContext& context, RenderSettingsController& controller) {
     const EditorRenderSettings& settings = controller.settings();
     ImGui::BeginDisabled(!settings.unsaved());
-    if (ImGui::Button("Save")) {
+    if (widgets::Button("Save")) {
         if (const EditorRenderSettingsResult result = controller.save(); !result) {
             context.diagnostics.reportError(result.error);
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Revert")) {
+    if (widgets::Button("Revert")) {
         if (const EditorRenderSettingsResult result = controller.load(context.app.rendering); !result) {
             context.diagnostics.reportError(result.error);
         }

@@ -7,6 +7,8 @@
 
 #include "editor/application/EntityCommands.hpp"
 #include "editor/operators/ObjectOperators.hpp"
+#include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/ThemeChrome.hpp"
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
@@ -24,13 +26,13 @@ constexpr const char* renamePopup = "ObjectRename";
 ImU32 axisColor(TransformAxis axis) {
     switch (axis) {
     case TransformAxis::X:
-        return IM_COL32(230, 70, 70, 255);
+        return toImU32(palette::axisX);
     case TransformAxis::Y:
-        return IM_COL32(120, 200, 60, 255);
+        return toImU32(palette::axisY);
     case TransformAxis::Z:
-        return IM_COL32(70, 130, 240, 255);
+        return toImU32(palette::axisZ);
     }
-    return IM_COL32_WHITE;
+    return toImU32(palette::guideLine);
 }
 
 // Typed characters for modal numeric input, from the main row and the numpad.
@@ -370,7 +372,7 @@ void EditorSession::drawModalTransformOverlay(const ViewportPanel& viewport, con
         for (float start = 0.0f; start < length; start += dash * 2.0f) {
             const glm::vec2 from = pivot + span * (start / length);
             const glm::vec2 to = pivot + span * (std::min(start + dash, length) / length);
-            drawList->AddLine({from.x, from.y}, {to.x, to.y}, IM_COL32(20, 20, 20, 230), 1.5f);
+            drawList->AddLine({from.x, from.y}, {to.x, to.y}, toImU32(palette::guideLine), 1.5f);
         }
     }
 
@@ -383,10 +385,9 @@ void EditorSession::drawModalTransformOverlay(const ViewportPanel& viewport, con
     const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
     const ImVec2 descriptionSize = ImGui::CalcTextSize(result.description.c_str());
     const ImVec2 hintSize = ImGui::CalcTextSize(hint);
-    drawList->AddRectFilled(
-        {position.x - 6.0f, position.y - 4.0f},
-        {position.x + std::max(descriptionSize.x, hintSize.x) + 6.0f, position.y + lineHeight + hintSize.y + 4.0f},
-        IM_COL32(24, 24, 24, 220), 4.0f);
+    ThemeChrome::paintSmokedGlass(
+        drawList, {position.x - 6.0f, position.y - 4.0f},
+        {position.x + std::max(descriptionSize.x, hintSize.x) + 6.0f, position.y + lineHeight + hintSize.y + 4.0f});
     drawList->AddText(position, ImGui::GetColorU32(ImGuiCol_Text), result.description.c_str());
     drawList->AddText({position.x, position.y + lineHeight}, ImGui::GetColorU32(ImGuiCol_TextDisabled), hint);
     drawList->PopClipRect();

@@ -1,5 +1,6 @@
 #include "GraphicsSettingsEditor.hpp"
 
+#include "editor/theme/EditorWidgets.hpp"
 #include "engine/graphics/DepthOfField.hpp"
 #include "engine/graphics/MotionBlur.hpp"
 
@@ -465,34 +466,34 @@ bool drawSettings(RenderSettings& settings, const RenderCapabilities& capabiliti
     changed |= enumCombo("Viewport shading", settings.viewShading,
                          std::array<EnumOption, 4>{
                              {{"Rendered"}, {"Material preview"}, {"Solid"}, {"Wireframe", capabilities.wireframe}}});
-    if (ImGui::CollapsingHeader("Anti-aliasing and resolution", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (widgets::SectionHeader("Anti-aliasing and resolution", ImGuiTreeNodeFlags_DefaultOpen)) {
         changed |= drawAntialiasingAndResolution(settings, capabilities);
     }
-    if (ImGui::CollapsingHeader("Lighting and environment", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (widgets::SectionHeader("Lighting and environment", ImGuiTreeNodeFlags_DefaultOpen)) {
         changed |= drawLighting(settings, capabilities);
     }
-    if (ImGui::CollapsingHeader("Shadows", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (widgets::SectionHeader("Shadows", ImGuiTreeNodeFlags_DefaultOpen)) {
         changed |= drawShadows(settings);
     }
-    if (ImGui::CollapsingHeader("Screen-space effects", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (widgets::SectionHeader("Screen-space effects", ImGuiTreeNodeFlags_DefaultOpen)) {
         changed |= drawScreenSpaceEffects(settings, capabilities);
     }
-    if (ImGui::CollapsingHeader("Motion blur")) {
+    if (widgets::SectionHeader("Motion blur")) {
         changed |= drawMotionBlur(settings, capabilities);
     }
-    if (ImGui::CollapsingHeader("Bloom and tone mapping")) {
+    if (widgets::SectionHeader("Bloom and tone mapping")) {
         changed |= drawBloomAndToneMapping(settings);
     }
-    if (ImGui::CollapsingHeader("Exposure")) {
+    if (widgets::SectionHeader("Exposure")) {
         changed |= drawExposure(settings.exposure);
     }
-    if (ImGui::CollapsingHeader("Colour grading")) {
+    if (widgets::SectionHeader("Colour grading")) {
         changed |= drawColorGrading(settings);
     }
-    if (ImGui::CollapsingHeader("Geometry and submission")) {
+    if (widgets::SectionHeader("Geometry and submission")) {
         changed |= drawGeometryAndSubmission(settings, capabilities);
     }
-    if (ImGui::CollapsingHeader("Pass budgets")) {
+    if (widgets::SectionHeader("Pass budgets")) {
         changed |= drawBudgets(settings.budgets);
     }
     ImGui::PopItemWidth();

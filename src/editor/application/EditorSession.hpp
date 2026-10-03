@@ -26,6 +26,7 @@
 #include "editor/settings/EditorRenderSettings.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "editor/settings/RenderSettingsController.hpp"
+#include "editor/theme/ThemeChrome.hpp"
 #include "engine/application/Application.hpp"
 #include "engine/jobs/JobSystem.hpp"
 #include "engine/scene/AdditiveSceneManager.hpp"
@@ -148,6 +149,7 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void handleGlobalShortcuts(ApplicationContext& context);
     void drawPanels(ApplicationContext& context);
     void drawStatusBar(const RenderStats& stats);
+    void drawPlayModePill() const;
     void drawPathDialog(ApplicationContext& context);
     void drawUnsavedChangesDialog(ApplicationContext& context);
     void drawRecoveryDialog(ApplicationContext& context);
@@ -253,6 +255,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
 
     std::filesystem::path m_sceneRoot;
     std::filesystem::path m_fontPath;
+    // The wallpaper and glass behind every window.
+    ThemeChrome m_themeChrome;
     EditorSceneLoader m_initialSceneLoader;
     std::string m_clipboardFragment;
     std::array<char, 1024> m_pathBuffer{};

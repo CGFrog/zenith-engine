@@ -3,6 +3,8 @@
 #include "editor/areas/AreaRegistry.hpp"
 #include "editor/areas/DefaultWorkspaces.hpp"
 #include "editor/areas/Workspace.hpp"
+#include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/ThemeChrome.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -44,7 +46,7 @@ AreaWindowRequest drawAreaHeader(const AreaType& type, const AreaRegistry& regis
 } // namespace
 
 AreaWindowResult drawAreaWindow(AreaInstance& area, const AreaType& type, const AreaRegistry& registry, int windowFlags,
-                                const std::function<void()>& drawContents) {
+                                const ThemeChrome& chrome, const std::function<void()>& drawContents) {
     if (area.dockRequest != 0) {
         ImGui::SetNextWindowDockID(area.dockRequest, ImGuiCond_Always);
         area.dockRequest = 0;
@@ -52,7 +54,12 @@ AreaWindowResult drawAreaWindow(AreaInstance& area, const AreaType& type, const 
     AreaWindowResult result;
     bool open = true;
     const std::string name = area.windowName(type.title);
-    if (ImGui::Begin(name.c_str(), &open, windowFlags | ImGuiWindowFlags_MenuBar)) {
+    // The theme paints the area's glass frame and pane in place of its background.
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, toImVec4(palette::transparent));
+    const bool visible = ImGui::Begin(name.c_str(), &open, windowFlags | ImGuiWindowFlags_MenuBar);
+    ImGui::PopStyleColor();
+    if (visible) {
+        chrome.paintAreaWindow();
         if (ImGui::BeginMenuBar()) {
             result.request = drawAreaHeader(type, registry);
             ImGui::EndMenuBar();

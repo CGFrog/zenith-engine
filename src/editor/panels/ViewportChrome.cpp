@@ -1,6 +1,7 @@
 #include "ViewportChrome.hpp"
 
 #include "editor/interaction/EditorCamera.hpp"
+#include "editor/theme/EditorWidgets.hpp"
 
 #include <imgui.h>
 
@@ -21,13 +22,14 @@ struct ToolChoice {
     const char* label;
     const char* description;
     GizmoMode mode;
+    EditorIcon icon;
 };
 
 constexpr std::array<ToolChoice, 4> toolChoices{{
-    {"Tweak", "Select objects by clicking; no gizmo", GizmoMode::Select},
-    {"Move", "Move the selection with a gizmo", GizmoMode::Translate},
-    {"Rotate", "Rotate the selection with a gizmo", GizmoMode::Rotate},
-    {"Scale", "Scale the selection with a gizmo", GizmoMode::Scale},
+    {"Tweak", "Select objects by clicking; no gizmo", GizmoMode::Select, EditorIcon::ToolTweak},
+    {"Move", "Move the selection with a gizmo", GizmoMode::Translate, EditorIcon::ToolMove},
+    {"Rotate", "Rotate the selection with a gizmo", GizmoMode::Rotate, EditorIcon::ToolRotate},
+    {"Scale", "Scale the selection with a gizmo", GizmoMode::Scale, EditorIcon::ToolScale},
 }};
 
 constexpr const char* noViewportError = "No viewport is open";
@@ -158,19 +160,10 @@ void drawGizmosMenu(TransformToolSettings& tools) {
 
 void drawToolShelf(TransformToolSettings& tools, float buttonWidth) {
     for (const ToolChoice& choice : toolChoices) {
-        const bool active = tools.gizmo == choice.mode;
-        if (active) {
-            const ImVec4 activeColor = ImGui::GetStyle().Colors[ImGuiCol_ButtonActive];
-            ImGui::PushStyleColor(ImGuiCol_Button, activeColor);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, activeColor);
-        }
-        if (ImGui::Button(choice.label, {buttonWidth, 0.0f})) {
+        if (widgets::ToolButton(choice.label, choice.icon, tools.gizmo == choice.mode, {buttonWidth, buttonWidth})) {
             tools.gizmo = choice.mode;
         }
-        if (active) {
-            ImGui::PopStyleColor(2);
-        }
-        ImGui::SetItemTooltip("%s", choice.description);
+        ImGui::SetItemTooltip("%s: %s", choice.label, choice.description);
     }
 }
 

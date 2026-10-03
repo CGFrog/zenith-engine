@@ -2,6 +2,9 @@
 
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/panels/EditorContext.hpp"
+#include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/EditorWidgets.hpp"
+#include "editor/theme/ThemeChrome.hpp"
 #include "engine/graphics/ViewShading.hpp"
 
 #include <imgui.h>
@@ -14,7 +17,14 @@
 
 namespace {
 constexpr float chromeMargin = 4.0f;
-constexpr ImU32 chromeBackground = IM_COL32(28, 28, 32, 225);
+
+// Smoked glass behind the current chrome child window, which has no
+// background of its own.
+void paintChildGlass() {
+    const ImVec2 min = ImGui::GetWindowPos();
+    const ImVec2 size = ImGui::GetWindowSize();
+    ThemeChrome::paintSmokedGlass(ImGui::GetWindowDrawList(), min, {min.x + size.x, min.y + size.y});
+}
 
 const char* entityName(const Scene& scene, Entity entity) {
     const auto* name = scene.registry().try_get<NameComponent>(entity);
@@ -306,8 +316,9 @@ void ViewportPanel::drawViewImage(UiTextureHandle texture, const char* placehold
 bool ViewportPanel::drawChrome(EditorContext& context) {
     const ImVec2 cursor = ImGui::GetCursorScreenPos();
     const float headerHeight = ImGui::GetFrameHeight();
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, chromeBackground);
-    ImGui::PushStyleColor(ImGuiCol_MenuBarBg, chromeBackground);
+    // Each chrome child paints smoked glass in place of a background.
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, toImVec4(palette::transparent));
+    ImGui::PushStyleColor(ImGuiCol_MenuBarBg, toImVec4(palette::transparent));
     bool hovered = drawHeader(context);
     m_labelOrigin = {m_position.x + 2.0f * chromeMargin, m_position.y + headerHeight + 2.0f * chromeMargin};
     if (m_chrome.toolbarVisible) {
@@ -327,6 +338,7 @@ bool ViewportPanel::drawHeader(EditorContext& context) {
         ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
     bool hovered = false;
     if (ImGui::BeginChild("##ViewportHeader", {m_size.x, ImGui::GetFrameHeight()}, ImGuiChildFlags_None, flags)) {
+        paintChildGlass();
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("View")) {
                 drawViewMenu(context);
@@ -396,13 +408,15 @@ void ViewportPanel::drawViewMenu(EditorContext& context) {
 
 bool ViewportPanel::drawToolShelf(float headerHeight) {
     const ImGuiStyle& style = ImGui::GetStyle();
-    const float buttonWidth = ImGui::CalcTextSize("Rotate").x + style.FramePadding.x * 2.0f;
+    // Square icon buttons a little taller than a text row.
+    const float buttonWidth = ImGui::GetFrameHeight() + editorArtPixel() * 4.0f;
     const ImVec2 shelfSize{buttonWidth + style.WindowPadding.x * 2.0f,
-                           ImGui::GetFrameHeight() * 4.0f + style.ItemSpacing.y * 3.0f + style.WindowPadding.y * 2.0f};
+                           buttonWidth * 4.0f + style.ItemSpacing.y * 3.0f + style.WindowPadding.y * 2.0f};
     ImGui::SetCursorScreenPos({m_position.x + chromeMargin, m_position.y + headerHeight + chromeMargin});
     bool hovered = false;
     if (ImGui::BeginChild("##ViewportToolShelf", shelfSize, ImGuiChildFlags_None,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+        paintChildGlass();
         ViewportChromeWidgets::drawToolShelf(m_tools, buttonWidth);
         hovered = ImGui::IsWindowHovered();
     }
@@ -417,6 +431,7 @@ bool ViewportPanel::drawSidebar(EditorContext& context, float headerHeight) {
     ImGui::SetCursorScreenPos({m_position.x + m_size.x - width, m_position.y + headerHeight});
     bool hovered = false;
     if (ImGui::BeginChild("##ViewportSidebar", sidebarSize, ImGuiChildFlags_None)) {
+        paintChildGlass();
         if (ImGui::BeginTabBar("##ViewportSidebarTabs")) {
             if (ImGui::BeginTabItem(BuiltInViewportSidebarTab::item)) {
                 drawItemTab(context);
@@ -429,7 +444,7 @@ bool ViewportPanel::drawSidebar(EditorContext& context, float headerHeight) {
             if (ImGui::BeginTabItem(BuiltInViewportSidebarTab::view)) {
                 if (m_cameraView) {
                     ImGui::TextDisabled("Looking through a scene camera.");
-                    if (ImGui::Button("Exit Camera View")) {
+                    if (widgets::Button("Exit Camera View")) {
                         exitCameraView();
                     }
                     ImGui::Separator();
@@ -509,10 +524,11 @@ void ViewportPanel::drawActiveName(EditorContext& context) const {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     const ImVec2 labelPosition{m_labelOrigin.x, m_labelOrigin.y};
     const ImVec2 labelSize = ImGui::CalcTextSize(name.c_str());
-    drawList->AddRectFilled({labelPosition.x - 4.0f, labelPosition.y - 2.0f},
-                            {labelPosition.x + labelSize.x + 4.0f, labelPosition.y + labelSize.y + 2.0f},
-                            IM_COL32(20, 20, 24, 210), 3.0f);
-    drawList->AddText(labelPosition, IM_COL32(255, 190, 60, 255), name.c_str());
+    const float artPixel = editorArtPixel();
+    ThemeChrome::paintSmokedGlass(
+        drawList, {labelPosition.x - 4.0f * artPixel, labelPosition.y - 2.0f * artPixel},
+        {labelPosition.x + labelSize.x + 4.0f * artPixel, labelPosition.y + labelSize.y + 2.0f * artPixel});
+    drawList->AddText(labelPosition, toImU32(palette::activeObjectLabel), name.c_str());
 }
 
 bool ViewportPanel::drawGizmo(EditorContext& context) {

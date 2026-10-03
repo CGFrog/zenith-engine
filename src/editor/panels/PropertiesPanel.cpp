@@ -3,6 +3,7 @@
 #include "editor/document/EditorDocument.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/RenderSettingsControls.hpp"
+#include "editor/theme/EditorWidgets.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
 #include <imgui.h>
@@ -14,6 +15,22 @@
 #include <utility>
 
 namespace {
+EditorIcon tabIcon(PropertiesTabKind kind) {
+    switch (kind) {
+    case PropertiesTabKind::Object:
+        return EditorIcon::Mesh;
+    case PropertiesTabKind::Components:
+        return EditorIcon::Components;
+    case PropertiesTabKind::World:
+        return EditorIcon::Environment;
+    case PropertiesTabKind::Render:
+        return EditorIcon::Camera;
+    case PropertiesTabKind::Scene:
+        return EditorIcon::Scene;
+    }
+    return EditorIcon::Empty;
+}
+
 // Area state of a Components tab: the prefix followed by the category label.
 constexpr std::string_view componentsStatePrefix = "components:";
 
@@ -191,6 +208,7 @@ void PropertiesPanel::drawTabStrip(const std::vector<PropertiesTab>& tabs, const
     for (const PropertiesTab& tab : tabs) {
         labelWidth = std::max(labelWidth, ImGui::CalcTextSize(tab.label().c_str()).x);
     }
+    labelWidth += ImGui::CalcTextSize(widgets::IconLabelPadding()).x;
     const ImGuiStyle& style = ImGui::GetStyle();
     const float maximumWidth = ImGui::GetContentRegionAvail().x * 0.4f;
     const float width = std::min(labelWidth + (style.FramePadding.x + style.WindowPadding.x) * 2.0f, maximumWidth);
@@ -202,9 +220,13 @@ void PropertiesPanel::drawTabStrip(const std::vector<PropertiesTab>& tabs, const
                 ImGui::Separator();
             }
             ImGui::PushID(static_cast<int>(index));
+            // The icon sits beside the selectable, whose label keeps its id.
+            const float iconWidth = ImGui::CalcTextSize(widgets::IconLabelPadding()).x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + iconWidth);
             if (ImGui::Selectable(tab.label().c_str(), tab == active)) {
                 selectTab(tab);
             }
+            widgets::ItemIcon(tabIcon(tab.kind), -iconWidth);
             ImGui::PopID();
         }
     }
@@ -277,21 +299,21 @@ void PropertiesPanel::drawWorldTab(EditorContext& context) {
     ImGui::SeparatorText("Sun");
     if (const std::optional<SceneEntityId> sun = worldEntity<DirectionalLightComponent>(scene)) {
         drawWorldComponent("directional_light", *sun);
-    } else if (ImGui::Button("Add Sun")) {
+    } else if (widgets::Button("Add Sun")) {
         context.invoke("object.add_sun");
     }
 
     ImGui::SeparatorText("Environment");
     if (const std::optional<SceneEntityId> environment = worldEntity<EnvironmentLightComponent>(scene)) {
         drawWorldComponent("environment_light", *environment);
-    } else if (ImGui::Button("Add Environment")) {
+    } else if (widgets::Button("Add Environment")) {
         context.invoke("object.add_environment");
     }
 
     ImGui::SeparatorText("Fog");
     if (const std::optional<SceneEntityId> fog = worldEntity<VolumetricFogComponent>(scene)) {
         drawWorldComponent("volumetric_fog", *fog);
-    } else if (ImGui::Button("Add Fog")) {
+    } else if (widgets::Button("Add Fog")) {
         context.invoke("object.add_fog");
     }
 

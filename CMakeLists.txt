@@ -142,12 +142,33 @@ FetchContent_Declare(
     URL_HASH SHA256=a467155ee60a262430478a06c6534ab56fe62b053b896308581f5aa7057f5094
 )
 
-# Inter is the editor UI font (SIL Open Font License); only its TTF files are used.
+# Inter is the editor's fallback UI font (SIL Open Font License); only its TTF
+# files are used.
 FetchContent_Declare(
     inter
     URL https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
     URL_HASH SHA256=9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e
 )
+
+# Press Start 2P (titles) and VT323 (body text) are the editor's pixel fonts
+# (SIL Open Font License), pinned to one google/fonts revision.
+set(ZENITH_PIXEL_FONT_REVISION 9710da1eacb3be272583c3224dcb70f9da6eadbb)
+set(ZENITH_PIXEL_FONT_DIR "${CMAKE_CURRENT_BINARY_DIR}/_deps/pixel-fonts")
+function(zenith_download_pixel_font source name hash)
+    file(DOWNLOAD
+        "https://raw.githubusercontent.com/google/fonts/${ZENITH_PIXEL_FONT_REVISION}/ofl/${source}"
+        "${ZENITH_PIXEL_FONT_DIR}/${name}"
+        EXPECTED_HASH SHA256=${hash}
+        TLS_VERIFY ON)
+endfunction()
+zenith_download_pixel_font(pressstart2p/PressStart2P-Regular.ttf PressStart2P-Regular.ttf
+    034c77f1f05ec89421e4a63f0e3a4ca1ecf852cc6d2bf611f126f275728e017d)
+zenith_download_pixel_font(pressstart2p/OFL.txt PressStart2P-OFL.txt
+    705960c3281a5765ecc0b59bd4ed7ca59eed165748076bc2fc3e8fdbfeb944b0)
+zenith_download_pixel_font(vt323/VT323-Regular.ttf VT323-Regular.ttf
+    cf4de751ada78ceac033dbe16a687742939995b77bc2a052ae17a4957958594d)
+zenith_download_pixel_font(vt323/OFL.txt VT323-OFL.txt
+    27d9af34210253e7ca1251fbace86c6f65b40031d6ce1a75493a1b2093631298)
 
 FetchContent_Declare(
     cgltf
@@ -402,6 +423,7 @@ add_library(zenith_engine SHARED
     src/engine/graphics/resources/BindlessTextureTable.cpp
     src/engine/graphics/resources/GeometryArena.cpp
     src/engine/graphics/resources/ImageReadback.cpp
+    src/engine/graphics/resources/UiImageStore.cpp
     src/engine/graphics/resources/ViewportTarget.cpp
     src/engine/graphics/resources/MipChainBlit.cpp
     src/engine/graphics/resources/DescriptorPoolSizes.cpp
@@ -509,7 +531,6 @@ add_library(zenith_editor_app STATIC
     src/editor/application/EditorObjectCommands.cpp
     src/editor/application/EditorViewports.cpp
     src/editor/application/EditorPlayMode.cpp
-    src/editor/application/EditorTheme.cpp
     src/editor/application/NativeFileDialog.cpp
     src/editor/application/EditorSession.cpp
     src/editor/application/EntityCommands.cpp
@@ -574,6 +595,16 @@ add_library(zenith_editor_app STATIC
     src/editor/settings/EditorRenderSettings.cpp
     src/editor/settings/EditorSettings.cpp
     src/editor/settings/RenderSettingsController.cpp
+    src/editor/theme/EditorPalette.cpp
+    src/editor/theme/EditorTheme.cpp
+    src/editor/theme/EditorWidgets.cpp
+    src/editor/theme/EntityIcon.cpp
+    src/editor/theme/GlassBackdrop.cpp
+    src/editor/theme/PixelIconBitmaps.cpp
+    src/editor/theme/PixelIcons.cpp
+    src/editor/theme/PixelPainter.cpp
+    src/editor/theme/PixelWallpaper.cpp
+    src/editor/theme/ThemeChrome.cpp
 )
 target_link_libraries(zenith_editor_app PUBLIC zenith_engine)
 if(WIN32)
@@ -592,6 +623,10 @@ add_custom_target(zenith_editor_resources
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${inter_SOURCE_DIR}/extras/ttf/Inter-Regular.ttf"
         "${inter_SOURCE_DIR}/LICENSE.txt"
+        "${ZENITH_PIXEL_FONT_DIR}/PressStart2P-Regular.ttf"
+        "${ZENITH_PIXEL_FONT_DIR}/PressStart2P-OFL.txt"
+        "${ZENITH_PIXEL_FONT_DIR}/VT323-Regular.ttf"
+        "${ZENITH_PIXEL_FONT_DIR}/VT323-OFL.txt"
         "${ZENITH_EDITOR_FONT_BINARY_DIR}"
     COMMENT "Copying Zenith editor resources"
 )
@@ -978,6 +1013,20 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_editor_settings COMMAND zenith_editor_settings_tests)
 
+    add_executable(zenith_editor_palette_tests
+        tests/editor/EditorPaletteTests.cpp
+        src/editor/theme/EditorPalette.cpp
+        src/editor/theme/PixelIconBitmaps.cpp
+        src/editor/theme/PixelWallpaper.cpp
+    )
+    target_include_directories(zenith_editor_palette_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    if(MSVC)
+        target_compile_options(zenith_editor_palette_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_editor_palette_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_editor_palette COMMAND zenith_editor_palette_tests)
+
     add_executable(zenith_scene_document_tests tests/engine/SceneDocumentTests.cpp)
     target_compile_definitions(zenith_scene_document_tests PRIVATE
         ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}"
@@ -1359,6 +1408,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_viewport_chrome_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_viewport_chrome COMMAND zenith_viewport_chrome_tests)
+
+    add_executable(zenith_editor_theme_tests tests/editor/EditorThemeTests.cpp)
+    target_link_libraries(zenith_editor_theme_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_editor_theme_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_editor_theme_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_editor_theme COMMAND zenith_editor_theme_tests)
 
     add_executable(zenith_multi_viewport_tests tests/editor/MultiViewportTests.cpp)
     target_link_libraries(zenith_multi_viewport_tests PRIVATE zenith_editor_app)

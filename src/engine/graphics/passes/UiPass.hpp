@@ -22,6 +22,13 @@ class UiPass {
                 bool clearColor = false);
     uint64_t addTexture(VkSampler sampler, VkImageView view);
     void removeTexture(uint64_t texture);
+
+    // Whether the UI renders into an sRGB target, which re-encodes the linear
+    // values its shader writes.
+    bool targetIsSrgb() const {
+        return m_linearizeVertexColors;
+    }
+
     bool wantsKeyboardCapture() const;
     bool wantsMouseCapture() const;
     void shutdown();

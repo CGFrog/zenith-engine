@@ -191,3 +191,67 @@ const RenderRuntime::ViewSlot* RenderRuntime::findView(RenderViewId view) const 
 bool RenderRuntime::anyViewInputActive() const {
     return std::ranges::any_of(m_views, [](const ViewSlot& slot) { return slot.alive && slot.inputActive; });
 }
+
+UiImageId RenderRuntime::createUiImage(UiImage image) {
+    if (!image.valid()) {
+        return {};
+    }
+    const auto free = std::ranges::find_if(m_uiImages, [](const UiImageSlot& slot) { return !slot.alive; });
+    const auto index = static_cast<uint32_t>(free - m_uiImages.begin());
+    if (free == m_uiImages.end()) {
+        m_uiImages.emplace_back();
+    }
+    UiImageSlot& slot = m_uiImages[index];
+    const uint32_t generation = slot.generation + 1;
+    slot = {};
+    slot.generation = generation;
+    slot.alive = true;
+    slot.pending = std::move(image);
+    return {.index = index, .generation = generation};
+}
+
+bool RenderRuntime::updateUiImage(UiImageId id, UiImage image) {
+    UiImageSlot* slot = findUiImage(id);
+    if (slot == nullptr || !image.valid()) {
+        return false;
+    }
+    slot->pending = std::move(image);
+    return true;
+}
+
+bool RenderRuntime::destroyUiImage(UiImageId id) {
+    UiImageSlot* slot = findUiImage(id);
+    if (slot == nullptr) {
+        return false;
+    }
+    // Keep the generation so createUiImage issues a newer one for this slot.
+    const uint32_t generation = slot->generation;
+    *slot = {};
+    slot->generation = generation;
+    return true;
+}
+
+bool RenderRuntime::uiImageAlive(UiImageId id) const {
+    return findUiImage(id) != nullptr;
+}
+
+UiTextureHandle RenderRuntime::uiImageTexture(UiImageId id) const {
+    const UiImageSlot* slot = findUiImage(id);
+    return slot != nullptr ? slot->texture : UiTextureHandle{};
+}
+
+RenderRuntime::UiImageSlot* RenderRuntime::findUiImage(UiImageId id) {
+    if (id.index >= m_uiImages.size() || !m_uiImages[id.index].alive ||
+        m_uiImages[id.index].generation != id.generation) {
+        return nullptr;
+    }
+    return &m_uiImages[id.index];
+}
+
+const RenderRuntime::UiImageSlot* RenderRuntime::findUiImage(UiImageId id) const {
+    if (id.index >= m_uiImages.size() || !m_uiImages[id.index].alive ||
+        m_uiImages[id.index].generation != id.generation) {
+        return nullptr;
+    }
+    return &m_uiImages[id.index];
+}

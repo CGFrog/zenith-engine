@@ -40,7 +40,7 @@ src/
 |  |- module/              game module loading and system scheduling
 |  `- project/             shared project manifests and scene paths
 |- editor/                 authoring application
-|  |- application/ document/ interaction/ modules/ operators/ panels/ project/ settings/
+|  |- application/ document/ interaction/ modules/ operators/ panels/ project/ settings/ theme/
 |- game/                   current demo client
 |  |- application/ scene/  game executable composition
 |  |- gameplay/ input/ player/  gameplay registered by the demo game module
@@ -404,8 +404,9 @@ editor lifecycle, the session coordinator, undoable scene editing
 (`SceneEditing`), and shared entity commands; `document/` owns scene file state
 and command history; `interaction/` owns camera, picking, selection, gizmos,
 and component widgets; `panels/` holds one `EditorPanel` per dockable window;
-and `settings/` owns persisted editor preferences. The editor depends on the
-engine, while neither the engine nor demo depends on editor code.
+`settings/` owns persisted editor preferences; and `theme/` owns the editor's
+look. The editor depends on the engine, while neither the engine nor demo
+depends on editor code.
 
 `EditorSession` owns the panels that hold editor-wide state and builds an
 `EditorContext` each frame: the application context, a `SceneEditing` view over
@@ -597,6 +598,23 @@ editor; the host removes everything it registered before unloading. The
 status bar and Module menu show the loaded module, its version, and pending
 or failed reloads. `zenith_editor_module_smoke` runs the editor smoke on a
 generated project naming `zenith_editor_test_module` and hot reloads it once.
+
+### `src/editor/theme/`
+
+The "Pixel Aero Night" theme: Frutiger Aero's glass-over-nature look drawn as
+palette-limited pixel art. `EditorPalette` holds every colour the editor
+draws (panels never write colour literals). `EditorTheme` puts ImGui on a
+whole-number art-pixel grid (no rounding, no anti-aliasing), applies the
+palette to ImGui and ImGuizmo, and loads the pixel fonts (VT323 for body
+text, Press Start 2P for titles, Inter merged in for missing glyphs).
+`PixelWallpaper` generates the deterministic, dithered night wallpaper and a
+frosted copy on the CPU; `GlassBackdrop` uploads both as UI images and draws
+glass by sampling the frosted copy where it lies on screen, so no blur pass
+is needed. `ThemeChrome` paints the wallpaper, the glass frames behind docked
+areas and the editor bars, and popup bevels. `EditorWidgets` wraps ImGui
+buttons and headers with the same ids, painting the pixel look over them;
+`PixelIcons` draws the pixel-art icon set and `EntityIcon` picks an entity's
+icon from its components.
 
 ### `src/editor/settings/EditorRenderSettings.*`
 

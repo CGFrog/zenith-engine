@@ -6,6 +6,7 @@
 #include <string_view>
 
 class AreaRegistry;
+class ThemeChrome;
 class Workspace;
 class WorkspaceSet;
 struct AreaInstance;
@@ -36,12 +37,12 @@ struct AreaWindowResult {
 };
 
 // Draws a visible area as an ImGui window named area.windowName(type.title):
-// moves it into its requested dock node, draws the header (a menu bar whose
-// editor-type dropdown lists every registered type), then drawContents while
-// the window is open. drawContents may run operators that remove the area,
+// moves it into its requested dock node, paints its themed frame with
+// chrome, draws the header (a menu bar whose editor-type dropdown lists every
+// registered type), then drawContents while the window is open. drawContents may run operators that remove the area,
 // so the area is not touched after it; the caller stores the dock node.
 AreaWindowResult drawAreaWindow(AreaInstance& area, const AreaType& type, const AreaRegistry& registry, int windowFlags,
-                                const std::function<void()>& drawContents);
+                                const ThemeChrome& chrome, const std::function<void()>& drawContents);
 
 // The ImGui settings (windows and docking) as text, for Workspace::layout.
 std::string captureImGuiLayout();

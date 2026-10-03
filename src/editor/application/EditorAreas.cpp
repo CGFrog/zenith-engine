@@ -306,12 +306,13 @@ void EditorSession::drawAreas(ApplicationContext& context) {
             panel->hidden(editor);
             continue;
         }
-        const AreaWindowResult result = drawAreaWindow(*area, *type, m_areaTypes, panel->windowFlags(), [&] {
-            const bool readOnly = panel->editModeOnly() && !editor.editMode();
-            ImGui::BeginDisabled(readOnly);
-            panel->draw(editor);
-            ImGui::EndDisabled();
-        });
+        const AreaWindowResult result =
+            drawAreaWindow(*area, *type, m_areaTypes, panel->windowFlags(), m_themeChrome, [&] {
+                const bool readOnly = panel->editModeOnly() && !editor.editMode();
+                ImGui::BeginDisabled(readOnly);
+                panel->draw(editor);
+                ImGui::EndDisabled();
+            });
         if (AreaInstance* drawn = workspace.find(id)) {
             drawn->dockId = result.dockId;
         }

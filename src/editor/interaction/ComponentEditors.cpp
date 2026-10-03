@@ -1,5 +1,7 @@
 #include "ComponentEditors.hpp"
 
+#include "editor/theme/EditorTheme.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
@@ -33,7 +35,7 @@ glm::mat4 composeTransform(const EditableTransform& transform) {
 bool drawTransform(TransformComponent& component) {
     EditableTransform transform;
     if (!decomposeTransform(component.local, transform)) {
-        ImGui::TextColored({1.0f, 0.35f, 0.35f, 1.0f}, "Transform cannot be decomposed.");
+        ImGui::TextColored(toImVec4(palette::error), "Transform cannot be decomposed.");
         return false;
     }
     bool changed = ImGui::DragFloat3("Position", &transform.translation.x, 0.05f);
@@ -136,7 +138,7 @@ bool drawIrradianceVolume(IrradianceVolumeComponent& component) {
     if (component.bakeAsset.empty()) {
         ImGui::TextDisabled("Bake: (not baked)");
     } else if (!component.bakedData) {
-        ImGui::TextColored({1.0f, 0.35f, 0.35f, 1.0f}, "Bake missing: %s", component.bakeAsset.c_str());
+        ImGui::TextColored(toImVec4(palette::error), "Bake missing: %s", component.bakeAsset.c_str());
     } else {
         ImGui::TextDisabled("Bake: %s", component.bakeAsset.c_str());
     }

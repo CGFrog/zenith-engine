@@ -7,6 +7,7 @@
 #include "editor/areas/WorkspaceFile.hpp"
 #include "editor/panels/EditorPanel.hpp"
 #include "editor/settings/EditorSettings.hpp"
+#include "editor/theme/ThemeChrome.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -397,6 +398,7 @@ struct HeadlessAreaHost {
     AreaRegistry& registry;
     std::map<std::string, int> draws;
     ImGuiID dockspace{0};
+    ThemeChrome chrome;
 
     void draw(Workspace& workspace) {
         dockspace = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
@@ -406,7 +408,8 @@ struct HeadlessAreaHost {
                 continue;
             }
             const std::string id = area.id();
-            const AreaWindowResult result = drawAreaWindow(area, *type, registry, 0, [this, &id] { ++draws[id]; });
+            const AreaWindowResult result =
+                drawAreaWindow(area, *type, registry, 0, chrome, [this, &id] { ++draws[id]; });
             area.dockId = result.dockId;
         }
     }

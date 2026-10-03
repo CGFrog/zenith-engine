@@ -747,6 +747,15 @@ only on frames it is drawn, and sets its shading through a per-view settings
 override, never the frame settings. The editor makes the active viewport's view
 the renderer's active view, so shadow cascades follow the view being worked in.
 
+UI images follow the same request-and-publish contract for CPU pixels the UI
+draws, such as the editor's wallpaper: `RenderRuntime::createUiImage` and
+`updateUiImage` queue RGBA8 pixels with a linear or nearest filter, the
+renderer's `UiImageStore` uploads them while recording the next frame, and
+`uiImageTexture` then returns an opaque `UiTextureHandle`. An updated image
+keeps its previous texture until the new one is published, and replaced or
+destroyed images are released only after the frames that may sample them
+complete.
+
 Editor camera policy, selection, and gizmo state remain in `src/editor/`.
 `RenderView` is the narrow engine-facing camera override. Picking uses a
 bounded CPU ray test against transformed mesh bounding spheres; this avoids a

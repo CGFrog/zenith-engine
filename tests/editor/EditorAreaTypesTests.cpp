@@ -19,6 +19,7 @@
 #include "editor/project/ProjectAssets.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "editor/settings/RenderSettingsController.hpp"
+#include "editor/theme/ThemeChrome.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/audio/AudioSystem.hpp"
 #include "engine/diagnostics/Logger.hpp"
@@ -369,6 +370,7 @@ void testDefaultWorkspaces(const std::filesystem::path& directory) {
     for (Workspace& workspace : workspaces.workspaces()) {
         const DefaultWorkspace& defaults = defaultWorkspaceFor(workspace.name());
         restoreImGuiLayout({});
+        const ThemeChrome chrome;
         const auto drawAreas = [&](bool buildLayout) {
             const ImGuiID dockspace = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
             if (buildLayout) {
@@ -381,7 +383,7 @@ void testDefaultWorkspaces(const std::filesystem::path& directory) {
                 }
                 EditorContext editor = fixture.context();
                 area.panel->update(editor, InputState{}, 1.0f / 60.0f);
-                area.dockId = drawAreaWindow(area, *type, fixture.registry, area.panel->windowFlags(), [&] {
+                area.dockId = drawAreaWindow(area, *type, fixture.registry, area.panel->windowFlags(), chrome, [&] {
                                   area.panel->draw(editor);
                               }).dockId;
             }

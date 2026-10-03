@@ -138,6 +138,35 @@ void testRemapLocalShadowTiles() {
 }
 } // namespace
 
+UiImage solidImage(uint32_t width, uint32_t height) {
+    return {.width = width,
+            .height = height,
+            .rgba = std::vector<uint8_t>(static_cast<size_t>(width) * height * 4u, 255),
+            .filter = UiImageFilter::Nearest};
+}
+
+void testUiImages() {
+    RenderRuntime rendering;
+    expect(!rendering.createUiImage({}), "an empty UI image is rejected");
+    UiImage mismatched = solidImage(2, 2);
+    mismatched.rgba.pop_back();
+    expect(!rendering.createUiImage(mismatched), "a UI image whose pixels do not match its size is rejected");
+
+    const UiImageId first = rendering.createUiImage(solidImage(4, 2));
+    expect(first && rendering.uiImageAlive(first), "a valid UI image is created");
+    expect(!rendering.uiImageTexture(first), "no UI image texture before the renderer publishes one");
+    expect(rendering.updateUiImage(first, solidImage(8, 8)), "a live UI image can be updated");
+    expect(!rendering.updateUiImage(first, {}), "an invalid update is rejected");
+
+    expect(rendering.destroyUiImage(first), "a UI image can be destroyed");
+    expect(!rendering.uiImageAlive(first) && !rendering.destroyUiImage(first), "a destroyed UI image is stale");
+    expect(!rendering.updateUiImage(first, solidImage(1, 1)), "a stale UI image handle is rejected");
+    const UiImageId reused = rendering.createUiImage(solidImage(1, 1));
+    expect(reused.index == first.index && reused.generation != first.generation,
+           "a freed UI image slot is reused with a new generation");
+    expect(!rendering.uiImageAlive(first), "the old UI image handle stays stale after reuse");
+}
+
 int main() {
     testDefaultView();
     testCreateAndDestroy();
@@ -147,6 +176,7 @@ int main() {
     testComposeViewSettings();
     testOrderRenderedViews();
     testRemapLocalShadowTiles();
+    testUiImages();
     if (failures != 0) {
         std::cerr << failures << " render view test(s) failed\n";
         return 1;

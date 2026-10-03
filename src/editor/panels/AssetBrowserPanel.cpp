@@ -3,6 +3,8 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/project/ProjectFileOperations.hpp"
+#include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/EditorWidgets.hpp"
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
@@ -29,6 +31,23 @@ constexpr const char* trashName = "trash";
 // In EditorAssetKind order, so a kind's value indexes the type filter.
 constexpr std::array<EditorAssetKind, 4> filterableKinds{EditorAssetKind::Model, EditorAssetKind::Texture,
                                                          EditorAssetKind::Audio, EditorAssetKind::Scene};
+
+EditorIcon assetIcon(const EditorAssetRecord* asset) {
+    if (asset == nullptr) {
+        return EditorIcon::Folder;
+    }
+    switch (asset->kind) {
+    case EditorAssetKind::Model:
+        return EditorIcon::Mesh;
+    case EditorAssetKind::Texture:
+        return EditorIcon::Texture;
+    case EditorAssetKind::Audio:
+        return EditorIcon::AudioClip;
+    case EditorAssetKind::Scene:
+        return EditorIcon::Scene;
+    }
+    return EditorIcon::Empty;
+}
 
 const char* kindName(EditorAssetKind kind) {
     switch (kind) {
@@ -315,7 +334,7 @@ void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetB
         // Promoted: this browser's view is now the one remembered.
         rememberView(diagnostics);
     }
-    if (ImGui::Button("Refresh")) {
+    if (widgets::Button("Refresh")) {
         refresh(diagnostics);
     }
     ImGui::SameLine();
@@ -347,7 +366,7 @@ void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetB
 }
 
 void AssetBrowserPanel::drawToolbar(EditorDiagnostics& diagnostics) {
-    if (ImGui::Button("New")) {
+    if (widgets::Button("New")) {
         ImGui::OpenPopup("##NewMenu");
     }
     if (ImGui::BeginPopup("##NewMenu")) {
@@ -363,7 +382,7 @@ void AssetBrowserPanel::drawToolbar(EditorDiagnostics& diagnostics) {
         setViewMode(AssetBrowserViewMode::List, diagnostics);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Types")) {
+    if (widgets::Button("Types")) {
         ImGui::OpenPopup("##TypeFilter");
     }
     if (ImGui::BeginPopup("##TypeFilter")) {
@@ -413,7 +432,7 @@ void AssetBrowserPanel::drawBreadcrumbs() {
 }
 
 void AssetBrowserPanel::drawFolderPane() {
-    if (ImGui::CollapsingHeader("Favourites", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (widgets::SectionHeader("Favourites", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (m_project.settings().favourites.empty()) {
             ImGui::TextDisabled("Right-click a folder to add it.");
         }
@@ -441,7 +460,7 @@ void AssetBrowserPanel::drawFolderPane() {
             ImGui::PopID();
         }
     }
-    if (ImGui::CollapsingHeader("Folders", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (widgets::SectionHeader("Folders", ImGuiTreeNodeFlags_DefaultOpen)) {
         for (const std::filesystem::path& root : m_project.catalog().roots()) {
             if (const EditorAssetFolder* folder = m_project.catalog().findFolder(root)) {
                 drawFolderNode(*folder, rootLabel(root));
@@ -572,9 +591,12 @@ void AssetBrowserPanel::drawList(const std::vector<BrowserEntry>& entries, const
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
         ImGui::PushID(genericUtf8(entry.path).c_str());
+        // The label leaves room for the kind icon; the id stays fixed.
+        const std::string label = widgets::IconLabelPadding() + entry.label + "###entry";
         const bool pressed =
-            ImGui::Selectable(entry.label.c_str(), m_selected == entry.path,
+            ImGui::Selectable(label.c_str(), m_selected == entry.path,
                               ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
+        widgets::ItemIcon(assetIcon(entry.asset), 0.0f);
         handleEntryInteraction(entry, pressed, actions);
         ImGui::TableNextColumn();
         if (entry.asset == nullptr) {
@@ -606,19 +628,19 @@ void AssetBrowserPanel::drawGrid(const std::vector<BrowserEntry>& entries, const
                               ImVec2(gridTileWidth, gridTileHeight));
         handleEntryInteraction(entry, pressed, actions);
 
-        // Kind badges stand in for previews until the renderer can show UI
-        // textures; ready texture thumbnails add their dimensions.
-        const char* badge = entry.asset == nullptr ? "Folder" : kindName(entry.asset->kind);
+        // Large kind icons stand in for previews until the browser shows
+        // thumbnails; ready texture thumbnails add their dimensions.
         const std::string detail = entry.asset == nullptr ? std::string{} : textureDetail(*entry.asset);
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         const float lineHeight = ImGui::GetTextLineHeight();
-        const float badgeTop = tileMin.y + (gridTileHeight - lineHeight * (detail.empty() ? 1.0f : 2.0f)) * 0.5f;
-        const ImU32 badgeColour = ImGui::GetColorU32(entry.asset == nullptr ? ImGuiCol_Text : ImGuiCol_TextDisabled);
-        drawList->AddText(ImVec2(tileMin.x + (gridTileWidth - ImGui::CalcTextSize(badge).x) * 0.5f, badgeTop),
-                          badgeColour, badge);
+        const float iconPixel = editorArtPixel() * 3.0f;
+        const float iconExtent = iconPixel * static_cast<float>(iconBitmapSize);
+        const float iconTop = tileMin.y + (gridTileHeight - iconExtent - (detail.empty() ? 0.0f : lineHeight)) * 0.5f;
+        drawIcon(drawList, assetIcon(entry.asset), {tileMin.x + (gridTileWidth - iconExtent) * 0.5f, iconTop},
+                 iconPixel);
         if (!detail.empty()) {
             drawList->AddText(ImVec2(tileMin.x + (gridTileWidth - ImGui::CalcTextSize(detail.c_str()).x) * 0.5f,
-                                     badgeTop + lineHeight),
+                                     iconTop + iconExtent),
                               ImGui::GetColorU32(ImGuiCol_TextDisabled), detail.c_str());
         }
         ImGui::TextUnformatted(fitText(entry.label, gridTileWidth).c_str());
@@ -721,7 +743,7 @@ void AssetBrowserPanel::drawSelectedAsset(const AssetBrowserActions& actions) {
     ImGui::TextWrapped("%s", utf8PathText(m_selected).c_str());
     const EditorAssetRecord* asset = m_project.catalog().findAsset(m_selected);
     if (asset != nullptr && asset->kind == EditorAssetKind::Model && actions.reloadModel &&
-        ImGui::Button("Reload Model")) {
+        widgets::Button("Reload Model")) {
         actions.reloadModel(asset->absolutePath);
     }
 }
@@ -798,13 +820,13 @@ void AssetBrowserPanel::drawModals(EditorDiagnostics& diagnostics) {
         if (!m_project.catalog().findFolder(m_modalTarget) && !m_modalTarget.extension().empty()) {
             ImGui::TextDisabled("The %s extension is kept.", utf8PathText(m_modalTarget.extension()).c_str());
         }
-        if (submitted || ImGui::Button("Rename")) {
+        if (submitted || widgets::Button("Rename")) {
             renameItem(m_modalTarget, m_renameText, diagnostics);
             m_openModal = OpenModal::None;
             ImGui::CloseCurrentPopup();
         } else {
             ImGui::SameLine();
-            if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            if (widgets::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                 m_openModal = OpenModal::None;
                 ImGui::CloseCurrentPopup();
             }
@@ -814,13 +836,13 @@ void AssetBrowserPanel::drawModals(EditorDiagnostics& diagnostics) {
     if (ImGui::BeginPopupModal(deleteTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Move '%s' to the %s?", name.c_str(), trashName);
         ImGui::TextDisabled("It can be restored from there.");
-        if (ImGui::Button("Move to Trash")) {
+        if (widgets::Button("Move to Trash")) {
             moveItemToTrash(m_modalTarget, diagnostics);
             m_openModal = OpenModal::None;
             ImGui::CloseCurrentPopup();
         } else {
             ImGui::SameLine();
-            if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            if (widgets::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                 m_openModal = OpenModal::None;
                 ImGui::CloseCurrentPopup();
             }

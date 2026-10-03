@@ -1,5 +1,8 @@
 #include "KeymapEditor.hpp"
 
+#include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/EditorWidgets.hpp"
+
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
 
@@ -9,7 +12,7 @@
 #include <vector>
 
 namespace {
-constexpr ImVec4 warningColor{1.0f, 0.7f, 0.25f, 1.0f};
+const ImVec4 warningColor = toImVec4(palette::warning);
 
 bool modifierKey(ImGuiKey key) {
     return key >= ImGuiKey_LeftCtrl && key <= ImGuiKey_RightSuper;
@@ -124,7 +127,7 @@ bool KeymapEditor::drawOperator(Keymap& keymap, const std::string& operatorId, c
         }
         ImGui::PushID(static_cast<int>(index));
         const bool capturingThis = m_capture && m_capture->bindingIndex == index;
-        if (ImGui::Button(capturingThis ? "Press a key..." : bindingLabel(binding).c_str())) {
+        if (widgets::Button(capturingThis ? "Press a key..." : bindingLabel(binding).c_str())) {
             captureRebind(index);
         }
         if (!binding.properties.empty()) {
@@ -189,7 +192,7 @@ bool KeymapEditor::draw(bool& open, Keymap& keymap, const OperatorRegistry& regi
             ImGui::EndCombo();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Reset All")) {
+        if (widgets::Button("Reset All")) {
             m_capture.reset();
             m_message.clear();
             keymap.resetToDefaults();

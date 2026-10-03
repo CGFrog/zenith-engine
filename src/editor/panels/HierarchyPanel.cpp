@@ -1,6 +1,10 @@
 #include "HierarchyPanel.hpp"
 
 #include "editor/panels/EditorContext.hpp"
+#include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/EditorWidgets.hpp"
+#include "editor/theme/EntityIcon.hpp"
+#include "editor/theme/PixelPainter.hpp"
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
@@ -14,6 +18,28 @@
 namespace {
 constexpr const char* entityPayload = "ZENITH_SCENE_ENTITY";
 
+// Pixel decoration of the tree row just drawn: the entity's icon in the
+// label's reserved space, and for a selected row lit edges and, where no
+// expand arrow is drawn, a cursor.
+void decorateEntityRow(const entt::registry& registry, Entity entity, bool selected, bool leaf) {
+    using namespace palette;
+    const float artPixel = editorArtPixel();
+    const float labelOffset = ImGui::GetTreeNodeToLabelSpacing();
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const ImVec2 max = ImGui::GetItemRectMax();
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    if (selected) {
+        drawList->AddRectFilled(min, {max.x, min.y + artPixel}, widgets::color(rowSelectedHighlight));
+        drawList->AddRectFilled({min.x, max.y - artPixel}, max, widgets::color(rowSelectedShade));
+        if (leaf) {
+            const float cursor = artPixel * 6.0f;
+            pixel::triangle(drawList, {min.x + (labelOffset - cursor) / 2.0f, (min.y + max.y - cursor) / 2.0f}, cursor,
+                            ImGuiDir_Right, widgets::color(pixelGlow));
+        }
+    }
+    widgets::ItemIcon(entityIcon(registry, entity), labelOffset);
+}
+
 std::string lowercase(std::string text) {
     std::ranges::transform(text, text.begin(),
                            [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
@@ -23,7 +49,7 @@ std::string lowercase(std::string text) {
 void operatorButton(EditorContext& context, const char* label, std::string_view operatorId,
                     std::string_view properties = {}) {
     ImGui::BeginDisabled(!context.canInvoke(operatorId));
-    if (ImGui::Button(label)) {
+    if (widgets::Button(label)) {
         context.invoke(operatorId, properties);
     }
     ImGui::EndDisabled();
@@ -117,8 +143,14 @@ void HierarchyPanel::drawEntity(EditorContext& context, Entity entity) {
     if (m_setAllOpen) {
         ImGui::SetNextItemOpen(*m_setAllOpen);
     }
-    const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<uintptr_t>(entityId.value)), flags, "%s",
-                                        name.empty() ? "Unnamed Entity" : name.c_str());
+    // The label starts with room for the entity's icon.
+    const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<uintptr_t>(entityId.value)), flags, "%s%s",
+                                        widgets::IconLabelPadding(), name.empty() ? "Unnamed Entity" : name.c_str());
+    decorateEntityRow(registry, entity, (flags & ImGuiTreeNodeFlags_Selected) != 0,
+                      (flags & ImGuiTreeNodeFlags_Leaf) != 0);
+    // Where a dotted guide joins this row's children to it.
+    const float guideX = ImGui::GetItemRectMin().x + ImGui::GetTreeNodeToLabelSpacing() / 2.0f;
+    const float guideTop = ImGui::GetItemRectMax().y;
     if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
         context.selection.click(entityId,
                                 ImGui::GetIO().KeyCtrl ? SelectionClickMode::Extend : SelectionClickMode::Replace);
@@ -141,6 +173,9 @@ void HierarchyPanel::drawEntity(EditorContext& context, Entity entity) {
                 }
             }
         }
+        pixel::dottedVerticalLine(ImGui::GetWindowDrawList(), guideX, guideTop,
+                                  ImGui::GetCursorScreenPos().y - ImGui::GetStyle().ItemSpacing.y,
+                                  widgets::color(palette::indentGuide), editorArtPixel());
         ImGui::TreePop();
     }
 }

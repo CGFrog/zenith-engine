@@ -4,6 +4,7 @@
 #include "editor/panels/EditorContext.hpp"
 #include "editor/project/ExternalEditor.hpp"
 #include "editor/settings/EditorSettings.hpp"
+#include "editor/theme/EditorWidgets.hpp"
 
 #include <imgui.h>
 
@@ -12,6 +13,18 @@
 #include <vector>
 
 namespace {
+EditorIcon severityIcon(EditorDiagnosticSeverity severity) {
+    switch (severity) {
+    case EditorDiagnosticSeverity::Error:
+        return EditorIcon::Error;
+    case EditorDiagnosticSeverity::Warning:
+        return EditorIcon::Warning;
+    case EditorDiagnosticSeverity::Info:
+        return EditorIcon::Info;
+    }
+    return EditorIcon::Info;
+}
+
 const char* severityName(EditorDiagnosticSeverity severity) {
     switch (severity) {
     case EditorDiagnosticSeverity::Error:
@@ -64,7 +77,9 @@ void DiagnosticsPanel::drawDiagnostics(EditorDiagnostics& diagnostics) {
     std::optional<EditorSourceLocation> open;
     for (const EditorDiagnostic& diagnostic : diagnostics.entries()) {
         ImGui::PushID(static_cast<int>(diagnostic.id));
-        ImGui::Text("[%s] %s", severityName(diagnostic.severity), diagnostic.source.c_str());
+        ImGui::Text("%s[%s] %s", widgets::IconLabelPadding(), severityName(diagnostic.severity),
+                    diagnostic.source.c_str());
+        widgets::ItemIcon(severityIcon(diagnostic.severity), 0.0f);
         ImGui::TextWrapped("%s", diagnostic.message.c_str());
         if (diagnostic.location) {
             const EditorSourceLocation& location = *diagnostic.location;
@@ -104,7 +119,7 @@ void DiagnosticsPanel::drawAssetLifetime(EditorContext& context) {
         ImGui::SameLine();
         ImGui::TextDisabled("Budget: %llu bytes", static_cast<unsigned long long>(budget.cpuBytes));
     }
-    if (ImGui::Button("Collect unused assets")) {
+    if (widgets::Button("Collect unused assets")) {
         // The scene may have changed during this UI callback. This fresh
         // lease set protects it while collection runs; renderer frame leases
         // protect submitted GPU work independently.

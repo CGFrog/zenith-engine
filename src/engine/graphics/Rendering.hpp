@@ -653,6 +653,38 @@ struct RenderViewId {
     bool operator==(const RenderViewId&) const = default;
 };
 
+// How the UI samples a UiImage when it is drawn larger or smaller than its
+// pixel size. Nearest keeps pixel art crisp at whole-number scales.
+enum class UiImageFilter : uint8_t {
+    Linear,
+    Nearest,
+};
+
+// A CPU image for the UI to draw, such as tool decoration: tightly packed
+// RGBA8 rows, top row first, sRGB-encoded like ImGui colours.
+struct UiImage {
+    uint32_t width{0};
+    uint32_t height{0};
+    std::vector<uint8_t> rgba;
+    UiImageFilter filter{UiImageFilter::Linear};
+
+    bool valid() const {
+        return width != 0 && height != 0 && rgba.size() == static_cast<size_t>(width) * height * 4u;
+    }
+};
+
+// Generational handle of a UI image (RenderRuntime::createUiImage).
+struct UiImageId {
+    uint32_t index{0};
+    uint32_t generation{0};
+
+    explicit operator bool() const {
+        return generation != 0;
+    }
+
+    bool operator==(const UiImageId&) const = default;
+};
+
 // What the renderer did with one view in the latest submitted frame. Counts
 // cover that view's own passes; work shared by every view (shadows, uploads,
 // environment) is reported once in RenderStats.
@@ -818,9 +850,36 @@ class RenderRuntime {
     uint32_t viewHeight(RenderViewId view) const;
     RenderViewStats viewStats(RenderViewId view) const;
 
+    // UI images. The renderer uploads a created or updated image while it
+    // records the next frame and then publishes its texture, so
+    // uiImageTexture is empty until the frame after the request; after an
+    // update it returns the previous texture until the new one is published.
+    // A texture stays valid for UI draw data recorded before the image is
+    // updated or destroyed. Invalid images and stale handles are rejected.
+    UiImageId createUiImage(UiImage image);
+    bool updateUiImage(UiImageId id, UiImage image);
+    bool destroyUiImage(UiImageId id);
+    bool uiImageAlive(UiImageId id) const;
+    UiTextureHandle uiImageTexture(UiImageId id) const;
+
   private:
     friend class Renderer;
     friend class MeshPass;
+    friend class UiImageStore;
+
+    // Requests and published texture of one UI image slot. Generations work
+    // like view slots: a destroyed slot keeps its generation until reuse.
+    struct UiImageSlot {
+        uint32_t generation{0};
+        bool alive{false};
+        // Pixels waiting for upload; the renderer takes them.
+        std::optional<UiImage> pending;
+        // Published by the Renderer.
+        UiTextureHandle texture;
+    };
+
+    UiImageSlot* findUiImage(UiImageId id);
+    const UiImageSlot* findUiImage(UiImageId id) const;
 
     // Requests and published results of one view slot. A slot keeps its
     // generation when its view is destroyed, then increments it, so stale
@@ -859,4 +918,5 @@ class RenderRuntime {
     // Slot 0 is the default view; other slots are reused after destruction.
     std::vector<ViewSlot> m_views;
     RenderViewId m_activeView;
+    std::vector<UiImageSlot> m_uiImages;
 };

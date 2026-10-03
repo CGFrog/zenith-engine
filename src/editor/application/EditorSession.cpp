@@ -1,6 +1,5 @@
 #include "EditorSession.hpp"
 
-#include "editor/application/EditorTheme.hpp"
 #include "editor/application/EntityCommands.hpp"
 #include "editor/areas/AreaWindows.hpp"
 #include "editor/areas/DefaultWorkspaces.hpp"
@@ -8,6 +7,8 @@
 #include "editor/document/SceneFragment.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/ObjectOperators.hpp"
+#include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/EditorWidgets.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -18,12 +19,13 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
+#include <cstdio>
 #include <limits>
 #include <utility>
 
 namespace {
 constexpr const char* sceneExtension = ".zenith-scene";
-constexpr float editorFontPixelSize = 15.0f;
 constexpr float autosaveIntervalSeconds = 30.0f;
 
 // Native dialogs need an existing absolute folder to start in. A trailing
@@ -302,16 +304,23 @@ SceneResult EditorSession::load(ApplicationContext& context) {
 
     ImGuiIO& io = ImGui::GetIO();
     // Size the UI for the display's scale factor so text stays crisp on
-    // high-DPI monitors instead of being stretched.
+    // high-DPI monitors instead of being stretched. The pixel theme rounds it
+    // to a whole number of screen pixels per art pixel.
     float contentScale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
     if (contentScale <= 0.0f) {
         contentScale = 1.0f;
     }
-    applyEditorTheme(ImGui::GetStyle());
-    ImGui::GetStyle().ScaleAllSizes(contentScale);
-    if (const EditorFontResult result = loadEditorFont(io, m_fontPath, editorFontPixelSize * contentScale); !result) {
-        m_diagnostics.reportError(result.error);
+    const float artPixel = artPixelForScale(contentScale);
+    applyEditorMetrics(ImGui::GetStyle(), artPixel);
+    applyEditorColors(ImGui::GetStyle());
+    const EditorFontResult fonts = loadEditorFonts(io, m_fontPath.parent_path(), m_fontPath, artPixel);
+    if (!fonts) {
+        m_diagnostics.reportError(fonts.error);
     }
+    for (const std::string& warning : fonts.warnings) {
+        m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Theme", warning);
+    }
+    ThemeChrome::installPopupBevels(*ImGui::GetCurrentContext());
     // Each workspace keeps its own ImGui layout in workspaces.json.
     io.IniFilename = nullptr;
     // Asset paths in render settings (the colour-grading LUT) resolve against
@@ -531,7 +540,11 @@ void EditorSession::requestQuit(ApplicationContext& context) {
 
 void EditorSession::drawUi(ApplicationContext& context) {
     ImGuizmo::BeginFrame();
+    m_themeChrome.beginFrame(context.rendering);
+    // The dockspace host is transparent so the wallpaper shows between areas.
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, toImVec4(palette::transparent));
     const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+    ImGui::PopStyleColor();
     if (m_buildDefaultLayout) {
         buildDefaultDockLayout(dockspaceId, defaultWorkspaceFor(m_workspaces.active().name()), m_workspaces.active(),
                                m_areaTypes);
@@ -563,6 +576,7 @@ void EditorSession::unload(ApplicationContext& context) {
     context.rendering.setGridOverlay(std::nullopt);
     context.rendering.clearOutlinedObjects();
     context.rendering.clearViewOverride();
+    m_themeChrome.release(context.rendering);
     if (!m_workspaces.empty()) {
         m_workspaces.active().setLayout(captureImGuiLayout());
         saveWorkspaces();
@@ -582,9 +596,13 @@ void EditorSession::handleGlobalShortcuts(ApplicationContext& context) {
 
 void EditorSession::drawMainMenu(ApplicationContext& context) {
     handleGlobalShortcuts(context);
-    if (!ImGui::BeginMainMenuBar()) {
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, toImVec4(palette::transparent));
+    const bool menuBarOpen = ImGui::BeginMainMenuBar();
+    ImGui::PopStyleColor();
+    if (!menuBarOpen) {
         return;
     }
+    m_themeChrome.paintBarWindow();
 
     if (ImGui::BeginMenu("File")) {
         operatorMenuItem(context, "file.new", "New");
@@ -658,40 +676,68 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
 }
 
 void EditorSession::drawStatusBar(const RenderStats& stats) {
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    const float height = ImGui::GetFrameHeight();
-    ImGui::SetNextWindowPos({viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - height});
-    ImGui::SetNextWindowSize({viewport->WorkSize.x, height});
+    const float height = ImGui::GetFrameHeight() + editorArtPixel() * 2.0f;
+    // A viewport side bar reserves its strip, so the dockspace ends above it
+    // from the next frame on, as it does below the main menu bar.
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking |
                                        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                                        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBringToFrontOnFocus;
-    if (ImGui::Begin("##EditorStatus", nullptr, flags)) {
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, toImVec4(palette::transparent));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {editorArtPixel() * 4.0f, editorArtPixel()});
+    const bool open =
+        ImGui::BeginViewportSideBar("##EditorStatus", ImGui::GetMainViewport(), ImGuiDir_Down, height, flags);
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+    if (open) {
+        m_themeChrome.paintBarWindow();
         constexpr const char* modeNames[] = {"Select", "Move", "Rotate", "Scale"};
         constexpr const char* spaceNames[] = {"Global", "Local"};
-        constexpr const char* playModeNames[] = {"Edit", "Play", "Paused"};
-        ImGui::Text("%s | %s", m_document.displayName().c_str(),
-                    m_diagnostics.hasUnacknowledgedError() ? "Diagnostics available" : "Ready");
+        std::array<char, 160> text{};
+        const auto segment = [](const char* caption, ThemeColor ink) {
+            ImGui::SameLine();
+            widgets::CaptionText(caption, ink);
+        };
+        widgets::CaptionText(m_document.displayName().c_str(), palette::captionInk);
+        if (m_diagnostics.hasUnacknowledgedError()) {
+            segment("Diagnostics available", palette::warning);
+        } else {
+            segment("Ready", palette::success);
+        }
         // The transform tools are the active viewport's.
         if (const ViewportPanel* activeViewport = m_viewports.active()) {
             const TransformToolSettings& tools = activeViewport->tools();
-            ImGui::SameLine();
-            ImGui::Text("| Mode: %s | Space: %s | Snap: %s", modeNames[static_cast<int>(tools.gizmo)],
-                        spaceNames[static_cast<int>(tools.space)], tools.snapping ? "On" : "Off");
+            std::snprintf(text.data(), text.size(), "Mode: %s  Space: %s  Snap: %s",
+                          modeNames[static_cast<int>(tools.gizmo)], spaceNames[static_cast<int>(tools.space)],
+                          tools.snapping ? "On" : "Off");
+            segment(text.data(), palette::captionInk);
         } else {
-            ImGui::SameLine();
-            ImGui::TextDisabled("| No viewport");
+            segment("No viewport", palette::inkMuted);
         }
+        std::snprintf(text.data(), text.size(), "Selection: %zu  Draws %u  Visible %u  GPU %.2f ms", m_selection.size(),
+                      stats.drawCalls, stats.visibleCount, stats.gpuFrameMilliseconds);
+        segment(text.data(), palette::captionInk);
         ImGui::SameLine();
-        ImGui::Text("| Selection: %zu | Draws %u | Visible %u | GPU %.2f ms", m_selection.size(), stats.drawCalls,
-                    stats.visibleCount, stats.gpuFrameMilliseconds);
-        ImGui::SameLine();
-        ImGui::Text("| %s", playModeNames[static_cast<int>(m_playMode.mode())]);
+        drawPlayModePill();
         if (m_moduleHost.status() != GameModuleStatus::None) {
-            ImGui::SameLine();
-            ImGui::Text("| %s", gameModuleStatusText().c_str());
+            segment(gameModuleStatusText().c_str(), palette::captionInk);
         }
     }
     ImGui::End();
+}
+
+void EditorSession::drawPlayModePill() const {
+    using namespace palette;
+    switch (m_playMode.mode()) {
+    case EditorMode::Edit:
+        widgets::StatusPill(EditorIcon::Stop, "Edit", buttonTop, buttonBottom, ink);
+        break;
+    case EditorMode::Play:
+        widgets::StatusPill(EditorIcon::Play, "Play", buttonActiveTop, buttonActiveBottom, activeInk);
+        break;
+    case EditorMode::Paused:
+        widgets::StatusPill(EditorIcon::Pause, "Paused", buttonHoverTop, buttonHoverBottom, ink);
+        break;
+    }
 }
 
 void EditorSession::drawPathDialog(ApplicationContext& context) {
@@ -706,7 +752,7 @@ void EditorSession::drawPathDialog(ApplicationContext& context) {
         return;
     }
     ImGui::InputText("Path", m_pathBuffer.data(), m_pathBuffer.size());
-    if (ImGui::Button(m_pathDialogSaves ? "Save" : "Open")) {
+    if (widgets::Button(m_pathDialogSaves ? "Save" : "Open")) {
         const std::filesystem::path path(m_pathBuffer.data());
         const bool completed = m_pathDialogSaves ? completeSaveAs(context, path) : completeOpen(context, path);
         if (completed) {
@@ -718,7 +764,7 @@ void EditorSession::drawPathDialog(ApplicationContext& context) {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel")) {
+    if (widgets::Button("Cancel")) {
         m_continuePendingAfterSaveAs = false;
         m_pendingAction = PendingAction::None;
         ImGui::CloseCurrentPopup();
@@ -791,7 +837,7 @@ void EditorSession::drawUnsavedChangesDialog(ApplicationContext& context) {
         return;
     }
     ImGui::TextWrapped("%s has unsaved changes.", m_document.displayName().c_str());
-    if (ImGui::Button("Save")) {
+    if (widgets::Button("Save")) {
         if (m_document.path()) {
             if (saveDocument(context)) {
                 ImGui::CloseCurrentPopup();
@@ -804,14 +850,14 @@ void EditorSession::drawUnsavedChangesDialog(ApplicationContext& context) {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Discard")) {
+    if (widgets::Button("Discard")) {
         std::string ignored;
         m_recovery.discard(ignored);
         ImGui::CloseCurrentPopup();
         finishPendingAction(context);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel")) {
+    if (widgets::Button("Cancel")) {
         m_pendingAction = PendingAction::None;
         m_pendingOpenPath.reset();
         ImGui::CloseCurrentPopup();
@@ -828,7 +874,7 @@ void EditorSession::drawRecoveryDialog(ApplicationContext& context) {
         return;
     }
     ImGui::TextWrapped("A recovery document is available from the previous editor session.");
-    if (ImGui::Button("Recover")) {
+    if (widgets::Button("Recover")) {
         if (const SceneDocumentResult result = m_recovery.recover(context.scene, context.assets, m_document.options());
             !result) {
             m_diagnostics.reportError("Recovery failed: " + result.error);
@@ -839,7 +885,7 @@ void EditorSession::drawRecoveryDialog(ApplicationContext& context) {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Discard Recovery")) {
+    if (widgets::Button("Discard Recovery")) {
         std::string error;
         if (!m_recovery.discard(error)) {
             m_diagnostics.reportError(error);

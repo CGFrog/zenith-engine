@@ -3,6 +3,8 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/operators/OperatorHistory.hpp"
 #include "editor/panels/EditorContext.hpp"
+#include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/EditorWidgets.hpp"
 #include "engine/diagnostics/Logger.hpp"
 
 #include <imgui.h>
@@ -145,16 +147,29 @@ std::string sourceLabel(const InfoRecord& record) {
     return label;
 }
 
+EditorIcon severityIcon(InfoSeverity severity) {
+    switch (severity) {
+    case InfoSeverity::Debug:
+    case InfoSeverity::Info:
+        return EditorIcon::Info;
+    case InfoSeverity::Warning:
+        return EditorIcon::Warning;
+    case InfoSeverity::Error:
+        return EditorIcon::Error;
+    }
+    return EditorIcon::Info;
+}
+
 ImVec4 severityColor(InfoSeverity severity) {
     switch (severity) {
     case InfoSeverity::Debug:
         return ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
     case InfoSeverity::Info:
-        return {0.55f, 0.75f, 1.0f, 1.0f};
+        return toImVec4(palette::info);
     case InfoSeverity::Warning:
-        return {1.0f, 0.82f, 0.36f, 1.0f};
+        return toImVec4(palette::warning);
     case InfoSeverity::Error:
-        return {1.0f, 0.42f, 0.42f, 1.0f};
+        return toImVec4(palette::error);
     }
     return ImGui::GetStyleColorVec4(ImGuiCol_Text);
 }
@@ -362,14 +377,14 @@ void InfoPanel::drawToolbar(EditorDiagnostics& diagnostics) {
     ImGui::SameLine();
     ImGui::Checkbox("Auto-scroll", &m_autoScroll);
     ImGui::SameLine();
-    if (ImGui::Button("Copy")) {
+    if (widgets::Button("Copy")) {
         ImGui::SetClipboardText(copyText().c_str());
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Copies the selected rows, or every shown row when none is selected");
     }
     ImGui::SameLine();
-    if (ImGui::Button("Clear")) {
+    if (widgets::Button("Clear")) {
         clear(diagnostics);
     }
     if (ImGui::IsItemHovered()) {
@@ -421,8 +436,10 @@ void InfoPanel::drawRecords() {
             ImGui::PopID();
             ImGui::TableNextColumn();
             ImGui::PushStyleColor(ImGuiCol_Text, severityColor(record.severity));
-            ImGui::TextUnformatted(infoSeverityName(record.severity).data());
+            ImGui::Text("%s%s", widgets::IconLabelPadding(), infoSeverityName(record.severity).data());
             ImGui::PopStyleColor();
+            widgets::ItemIcon(severityIcon(record.severity), 0.0f,
+                              {.disabled = record.severity == InfoSeverity::Debug});
             ImGui::TableNextColumn();
             const std::string source = sourceLabel(record);
             ImGui::TextUnformatted(source.c_str());

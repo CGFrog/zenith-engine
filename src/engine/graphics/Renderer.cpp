@@ -223,6 +223,9 @@ bool Renderer::init(const Window& window, RenderRuntime& rendering, FrameTaskExe
     if (!m_uiPass.init(m_context, window, m_swapchain.format(), m_swapchain.imageCount())) {
         return false;
     }
+    if (!m_uiImages.init(m_context, m_uiPass)) {
+        return false;
+    }
     if (!m_viewportTarget.init(m_context, m_uiPass, m_swapchain.format(), m_swapchain.depthFormat(), framesInFlight,
                                m_swapchain.extent())) {
         return false;
@@ -313,6 +316,9 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
         return false;
     }
     pruneUnusedUiTextures(assets);
+    // This slot's previous submission, and every earlier one, has completed.
+    const uint64_t recordingSerial = m_submittedFrames + 1;
+    m_uiImages.collect(recordingSerial > framesInFlight ? recordingSerial - framesInFlight : 0);
     // Replacing this slot's leases is safe after its fence signals; assets used
     // by the previous submission can now be collected without a queue idle.
     m_frameAssets[m_currentFrame] = assets.leaseSceneAssets(scene);
@@ -592,6 +598,9 @@ bool Renderer::recordFrame(const FrameResources& frame, uint32_t imageIndex, con
     if (!frame.beginRecording()) {
         return false;
     }
+    // Before the UI pass samples them; UI draw data of this frame still uses
+    // the textures published by earlier frames.
+    m_uiImages.sync(frame.commandBuffer(), m_submittedFrames + 1, *m_rendering);
     // View shading: the plan, the graph shape and every recorded pass read the
     // shading mode's reduced settings until this frame is recorded.
     const ScopedViewShadingSettings viewShading{*m_rendering};
@@ -1443,6 +1452,7 @@ void Renderer::shutdown() {
             m_uiPass.removeTexture(texture);
         }
         m_gameUiTextures.clear();
+        m_uiImages.shutdown();
         m_readback.release();
         for (FrameResources& frame : m_frames) {
             frame.shutdown(device);

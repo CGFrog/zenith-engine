@@ -17,6 +17,7 @@ depend on this subtree.
 | `panels/` | One class per dockable window, drawn from an `EditorContext`. |
 | `project/` | Project tooling: the shared asset service (`ProjectAssets`: catalog, watchers, change dispatch, favourites), asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, and IDE launching. |
 | `settings/` | Persistent editor preferences (legacy panel flags are only read, for migration). |
+| `theme/` | The "Pixel Aero Night" look: palette, art-pixel metrics, pixel fonts, the procedural wallpaper and frosted glass, window chrome, themed widget wrappers, and pixel-art icons. |
 
 ## Local rules
 
@@ -55,6 +56,12 @@ depend on this subtree.
   panel can keep view state with its area by overriding
   `EditorPanel::areaState`/`restoreAreaState`. Areas, workspaces, and layouts
   are user data, never scene data.
+- Colours come from `theme/EditorPalette` and sizes from the art-pixel grid
+  (`editorArtPixel`); never write colour literals or rounded corners in
+  panels. Use `widgets::Button`, `widgets::SectionHeader`, and the other
+  `theme/EditorWidgets` wrappers for themed controls; they keep ImGui's ids,
+  so tests can address them by label. Area windows get their glass frame from
+  `ThemeChrome` in `drawAreaWindow`; panels draw only their contents.
 - Automated editor runs must set `ZENITH_EDITOR_SETTINGS_DIR` so they never
   read or replace the user's settings directory.
 - Viewports are multiple-instance areas registered with the session's

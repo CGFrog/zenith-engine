@@ -4,6 +4,8 @@
 #include "editor/panels/EditorContext.hpp"
 #include "editor/project/ExternalEditor.hpp"
 #include "editor/settings/EditorSettings.hpp"
+#include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/EditorWidgets.hpp"
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
@@ -30,11 +32,11 @@ EditorDiagnosticSeverity editorSeverity(CompilerDiagnosticSeverity severity) {
 ImVec4 severityColor(CompilerDiagnosticSeverity severity) {
     switch (severity) {
     case CompilerDiagnosticSeverity::Error:
-        return {1.0f, 0.42f, 0.42f, 1.0f};
+        return toImVec4(palette::error);
     case CompilerDiagnosticSeverity::Warning:
-        return {1.0f, 0.82f, 0.36f, 1.0f};
+        return toImVec4(palette::warning);
     case CompilerDiagnosticSeverity::Note:
-        return {0.55f, 0.75f, 1.0f, 1.0f};
+        return toImVec4(palette::info);
     }
     return ImGui::GetStyleColorVec4(ImGuiCol_Text);
 }
@@ -116,10 +118,10 @@ void BuildPanel::drawContents(EditorDiagnostics& diagnostics) {
 void BuildPanel::drawToolbar(EditorDiagnostics& diagnostics) {
     const bool running = m_runner.running();
     if (running) {
-        if (ImGui::Button("Cancel")) {
+        if (widgets::Button("Cancel")) {
             m_runner.cancel();
         }
-    } else if (ImGui::Button("Build")) {
+    } else if (widgets::Button("Build")) {
         startBuild(diagnostics);
     }
     ImGui::SameLine();
@@ -129,7 +131,7 @@ void BuildPanel::drawToolbar(EditorDiagnostics& diagnostics) {
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputTextWithHint("##command", "Build command, run by the shell", &m_tools.buildCommand);
     ImGui::EndDisabled();
-    if (ImGui::CollapsingHeader("Settings")) {
+    if (widgets::SectionHeader("Settings")) {
         ImGui::BeginDisabled(running);
         ImGui::InputTextWithHint("Directory", "Editor working directory", &m_tools.buildDirectory);
         ImGui::EndDisabled();
@@ -153,11 +155,13 @@ void BuildPanel::drawStatus() const {
         ImGui::Text("Building...");
         break;
     case BuildState::Succeeded:
-        ImGui::TextColored({0.45f, 0.85f, 0.45f, 1.0f}, "Build succeeded");
+        ImGui::TextColored(toImVec4(palette::success), "%sBuild succeeded", widgets::IconLabelPadding());
+        widgets::ItemIcon(EditorIcon::Success, 0.0f);
         break;
     case BuildState::Failed:
-        ImGui::TextColored(severityColor(CompilerDiagnosticSeverity::Error), "Build failed (exit code %d)",
-                           m_runner.exitCode().value_or(-1));
+        ImGui::TextColored(severityColor(CompilerDiagnosticSeverity::Error), "%sBuild failed (exit code %d)",
+                           widgets::IconLabelPadding(), m_runner.exitCode().value_or(-1));
+        widgets::ItemIcon(EditorIcon::Error, 0.0f);
         break;
     case BuildState::Cancelled:
         ImGui::TextDisabled("Build cancelled");
