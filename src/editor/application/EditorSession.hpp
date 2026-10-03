@@ -203,6 +203,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // area when no viewport is open.
     glm::vec2 lastOperatorAnchor() const;
     bool updateSmokeViewports(ApplicationContext& context);
+    // GPU click picking and local view in the active viewport
+    // (EditorPickingSmoke.cpp).
+    bool updateSmokePicking(ApplicationContext& context);
     // Exercises multi-entity component operators and their undo.
     bool updateSmokeComponents(ApplicationContext& context);
 
@@ -327,6 +330,21 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     std::string m_smokeLayout;
     // Entities in the scene before the menu smoke added one.
     size_t m_smokeEntityCount{0};
+    // The picking smoke's step, the whole-view pick it waits for, and the
+    // object it clicked.
+    enum class SmokePickPhase : uint8_t {
+        Idle,
+        WholeView,
+        Click,
+        LocalView,
+        LocalViewPick,
+        LeftLocalView,
+        Done,
+    };
+    SmokePickPhase m_smokePickPhase{SmokePickPhase::Idle};
+    PickTicket m_smokePickTicket;
+    SceneEntityId m_smokePickEntity;
+    RenderObjectId m_smokePickObject{0};
 
     struct ActiveTransform {
         ModalTransform transform;

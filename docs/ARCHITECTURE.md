@@ -713,12 +713,23 @@ runtime's `SceneVisibilityMode` draws (`SceneVisibility`: `renderable` flags
 always, the editor's viewport hide only in `Editor` mode, which the editor
 sets while editing and clears in Play mode, so games never see it), plus the
 draws `expandCollectionInstances` produces for collection instances; light and
-particle gathering apply the same filter. A view may then be isolated to a set
-of objects (`setViewVisibleEntities`, the editor's local view), which filters
-its CPU-submitted draws; a collection-instance draw belongs to its instancing
-entity. GPU-driven submission draws every record, so an isolated default view
-uses CPU submission. Shared work (shadow maps, light lists, particles) still
-covers the whole filtered scene. Instance draws compose several entities'
+particle gathering apply the same filter, and so does the scene-wide lighting:
+the frame's sun, environment, and fog (`frameDirectionalLight`,
+`frameEnvironmentLight`, `frameVolumetricFog` in `Lighting.hpp`) and the bound
+irradiance volume come from drawn primary components only. A scene without a
+primary sun or environment keeps the defaults; one whose primary components
+are all hidden or not renderable gets none (a zero-intensity sun without
+shadows, a black sky). A view may then be isolated to a set of objects
+(`setViewVisibleEntities`, the editor's local view), which filters its
+CPU-submitted draws and its picks; a collection-instance draw belongs to its
+instancing entity. GPU-driven submission draws every record, so an isolated
+default view uses CPU submission. The directional shadow cascades are shared
+by every view of a frame (they follow the leading, active view's camera), so
+casters are limited only while every rendered view is isolated, to the union of
+their sets: a lone viewport in local view casts shadows from its isolated
+objects only, while an isolated view next to a non-isolated one keeps the
+whole scene's casters. Other shared work (local-light shadows, light lists,
+particles) still covers the whole filtered scene. Instance draws compose several entities'
 transforms, so while any exist a transform or skin change rebuilds the render
 packets instead of updating them in place.
 
@@ -868,7 +879,14 @@ when full.
 Selection policy stays in the editor: `editor/interaction/PickQueries.*` holds
 the pure point (with tolerance), box, lasso, depth, and Alt+click cycling
 queries over a result's id grid, with the viewport integration contract in its
-header. `tests/engine/RenderPickingTests.cpp` and
+header. `editor/viewport/ViewportPicker` drives one viewport pick: it requests
+the id buffer on mouse press, applies the result the frame it arrives, and
+answers on the CPU (`pickThroughLens`, `pickAllThroughLens` for occluded
+cycling candidates, projected bounds centres for box and lasso) at once when
+the view does not render, or when the GPU pick fails, is cancelled, or is still
+pending after a short frame budget. It reaches the renderer through a
+`ViewportPickProvider`, which tests replace with a synthetic id grid
+(`tests/editor/ViewportPickingTests.cpp`). `tests/engine/RenderPickingTests.cpp` and
 `tests/editor/PickQueriesTests.cpp` cover the CPU side;
 `tests/engine/PickingSmokeTests.cpp` picks known objects through both
 submission paths under strict validation.

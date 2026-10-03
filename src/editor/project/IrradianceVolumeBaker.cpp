@@ -432,20 +432,6 @@ class Baker {
     float m_maximumDistance{1.0f};
 };
 
-template <typename Component> const Component* primaryComponent(const Scene& scene) {
-    // Mirrors resolvePrimary in MeshPass.cpp: the primary component on the
-    // lowest entity handle.
-    const auto components = scene.registry().view<const Component>();
-    Entity selected = entt::null;
-    for (Entity entity : components) {
-        if (components.template get<const Component>(entity).primary &&
-            (selected == entt::null || entt::to_integral(entity) < entt::to_integral(selected))) {
-            selected = entity;
-        }
-    }
-    return selected == entt::null ? nullptr : &components.template get<const Component>(selected);
-}
-
 glm::vec3 srgbToLinear(uint8_t red, uint8_t green, uint8_t blue) {
     const auto convert = [](uint8_t value) {
         const float encoded = static_cast<float>(value) / 255.0f;
@@ -602,9 +588,10 @@ IrradianceVolumeBakeResult writeAtomically(const std::filesystem::path& destinat
 IrradianceBakeScene gatherIrradianceBakeScene(const Scene& scene, const AssetManager& assets) {
     IrradianceBakeScene result;
     appendMeshTriangles(scene, assets, result.triangles);
-    // The renderer falls back to default lights when none is primary; so does the bake.
-    const DirectionalLightComponent* primarySun = primaryComponent<DirectionalLightComponent>(scene);
-    const DirectionalLightComponent sun = primarySun ? *primarySun : DirectionalLightComponent{};
+    // The bake lights the scene as the renderer does at runtime (Lighting.hpp):
+    // default lights when none is primary, none when the primary ones are not
+    // renderable.
+    const DirectionalLightComponent sun = frameDirectionalLight(scene, SceneVisibilityMode::Runtime);
     if (glm::dot(sun.direction, sun.direction) > 0.0f) {
         result.sun =
             IrradianceBakeSun{.direction = glm::normalize(sun.direction),
@@ -612,9 +599,7 @@ IrradianceBakeScene gatherIrradianceBakeScene(const Scene& scene, const AssetMan
                               .castsShadows = sun.shadows.enabled};
     }
     result.localLights = gatherLocalLights(scene);
-    const EnvironmentLightComponent* primaryEnvironment = primaryComponent<EnvironmentLightComponent>(scene);
-    const EnvironmentLightComponent environment =
-        primaryEnvironment ? *primaryEnvironment : EnvironmentLightComponent{};
+    const EnvironmentLightComponent environment = frameEnvironmentLight(scene, SceneVisibilityMode::Runtime);
     const float intensity = std::max(environment.diffuseIntensity, 0.0f);
     std::vector<glm::vec3> sky =
         filteredSky(environment.environmentMap ? assets.texture(environment.environmentMap) : nullptr);

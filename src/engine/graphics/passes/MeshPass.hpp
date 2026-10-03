@@ -589,10 +589,13 @@ class MeshPass {
     bool drawLocalShadowCasters(VkCommandBuffer commandBuffer, uint32_t frameIndex, const glm::mat4& viewProjection,
                                 RenderStats& stats);
     // Clears and redraws the dirty cascades; cached cascades keep their depth.
+    // casterObjects, when not null, limits CPU-culled casters to those sorted
+    // objects (every view of the frame isolated); GPU culling never runs then.
     bool recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, const std::vector<RenderItem>& items,
                       const DirectionalLightComponent& light, const std::array<glm::mat4, 3>& lightViewProjections,
                       uint32_t cascadeCount, const std::array<bool, 3>& dirtyCascades, ShadowCulling culling,
-                      const MeshLodView& lodView, OptionalPassTimestamps& passTimestamps, RenderStats& stats);
+                      const std::vector<RenderObjectId>* casterObjects, const MeshLodView& lodView,
+                      OptionalPassTimestamps& passTimestamps, RenderStats& stats);
     // Draws a GPU-culled cascade's indirect commands; called inside the
     // cascade's rendering scope with the shadow pipeline bound.
     void recordGpuShadowCascade(VkCommandBuffer commandBuffer, uint32_t frameIndex, uint32_t cascade,
@@ -763,6 +766,13 @@ class MeshPass {
     VkFormat m_shadowFormat{VK_FORMAT_UNDEFINED};
     bool m_shadowInitialized{false};
     SceneRevisions m_shadowRevisions{};
+    // This frame's directional shadow casters: nullopt for every object, or
+    // the union of the views' isolation sets when every view is isolated.
+    std::optional<std::vector<RenderObjectId>> m_frameShadowCasters;
+    // What the cached cascades were drawn for besides the scene revisions: the
+    // visibility mode and the caster limit.
+    SceneVisibilityMode m_shadowVisibilityMode{SceneVisibilityMode::Runtime};
+    std::optional<std::vector<RenderObjectId>> m_shadowCasterObjects;
     std::array<glm::mat4, 3> m_cachedLightViewProjections{};
     uint32_t m_cachedCascadeCount{0};
     LocalShadowPass m_localShadows;

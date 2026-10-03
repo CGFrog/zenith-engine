@@ -65,6 +65,10 @@ std::vector<KeymapBinding> defaultEditorKeymap() {
         binding("view3d.view_orbit", viewport, ImGuiKey_Keypad6, R"({"direction":"right"})"),
         binding("view3d.view_orbit", viewport, ImGuiKey_Keypad8, R"({"direction":"up"})"),
         binding("view3d.view_orbit", viewport, ImGuiKey_Keypad2, R"({"direction":"down"})"),
+        // Clicks and the Ctrl+RMB lasso are mouse gestures the viewport turns
+        // into view3d.select, view3d.select_cycle, and view3d.select_lasso.
+        binding("view3d.select_box", viewport, ImGuiKey_B),
+        binding("view3d.localview", viewport, ImGuiKey_KeypadDivide),
     };
     addObjectKey(bindings, "object.location_clear", ImGuiMod_Alt | ImGuiKey_G);
     addObjectKey(bindings, "object.rotation_clear", ImGuiMod_Alt | ImGuiKey_R);

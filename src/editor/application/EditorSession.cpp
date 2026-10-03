@@ -501,10 +501,11 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     const bool viewportsDone = updateSmokeViewports(context);
     const bool componentsDone = updateSmokeComponents(context);
     const bool menusDone = updateSmokeMenus(context);
+    const bool pickingDone = updateSmokePicking(context);
     if (m_smokeFrame == 500 && !m_smokeStreamCompleted) {
         m_diagnostics.reportError("Streaming smoke did not commit while frames were being presented");
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    } else if (areasDone && viewportsDone && componentsDone && menusDone && m_smokeStreamCompleted) {
+    } else if (areasDone && viewportsDone && componentsDone && menusDone && pickingDone && m_smokeStreamCompleted) {
         updateSmokeModuleReload(context);
     }
 }

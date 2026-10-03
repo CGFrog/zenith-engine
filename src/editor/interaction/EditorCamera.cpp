@@ -105,8 +105,13 @@ glm::mat4 lensGizmoProjectionMatrix(const RenderView& lens, float aspectRatio) {
     return glm::perspectiveRH_NO(lens.verticalFovRadians, aspectRatio, lens.nearPlane, lens.farPlane);
 }
 
-Entity pickThroughLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
-                       glm::vec2 normalizedViewportPosition, float aspectRatio) {
+namespace {
+struct LensRay {
+    glm::vec3 origin{0.0f};
+    glm::vec3 direction{0.0f, 0.0f, -1.0f};
+};
+
+LensRay lensRay(const RenderView& lens, glm::vec2 normalizedViewportPosition, float aspectRatio) {
     const glm::mat4 inverseViewProjection =
         glm::inverse(lensProjectionMatrix(lens, aspectRatio) * lensViewMatrix(lens));
     const glm::vec2 ndc = normalizedViewportPosition * 2.0f - 1.0f;
@@ -114,38 +119,103 @@ Entity pickThroughLens(const Scene& scene, const AssetManager& assets, const Ren
     glm::vec4 farPoint = inverseViewProjection * glm::vec4(ndc, 1.0f, 1.0f);
     nearPoint /= nearPoint.w;
     farPoint /= farPoint.w;
-    const glm::vec3 direction = glm::normalize(glm::vec3(farPoint - nearPoint));
-    const glm::vec3 origin = lens.position;
+    return {.origin = lens.position, .direction = glm::normalize(glm::vec3(farPoint - nearPoint))};
+}
 
-    Entity closest = entt::null;
-    float closestDistance = std::numeric_limits<float>::max();
-    const auto consider = [&](Entity meshEntity, const glm::mat4& world, Entity picked) {
-        const MeshAsset* mesh = assets.mesh(scene.registry().get<MeshRendererComponent>(meshEntity).mesh);
-        float distance = 0.0f;
-        if (mesh != nullptr && intersectMesh(*mesh, world, origin, direction, closestDistance, distance)) {
-            closest = picked;
-            closestDistance = distance;
-        }
-    };
-    // Hidden entities, unselectable ones, and those in hidden or unselectable
-    // collections cannot be picked.
+bool insideIsolation(const std::vector<RenderObjectId>* isolatedObjects, Entity picked) {
+    return isolatedObjects == nullptr ||
+           std::ranges::binary_search(*isolatedObjects, static_cast<RenderObjectId>(entt::to_integral(picked)));
+}
+
+// Calls visit(meshEntity, world, picked) for every mesh draw the editor may
+// pick: hidden entities, unselectable ones, those in hidden or unselectable
+// collections, and those outside isolatedObjects are skipped, and a
+// collection instance's draws pick the entity instancing them.
+template <typename Visit>
+void forEachPickableDraw(const Scene& scene, const std::vector<RenderObjectId>* isolatedObjects, Visit visit) {
     const SceneVisibility visibility(scene, SceneVisibilityMode::Editor);
     auto renderables = scene.registry().view<const MeshRendererComponent, const TransformComponent>();
     for (Entity entity : renderables) {
-        if (visibility.selectable(entity)) {
-            consider(entity, renderables.get<const TransformComponent>(entity).world, entity);
+        if (visibility.selectable(entity) && insideIsolation(isolatedObjects, entity)) {
+            visit(entity, renderables.get<const TransformComponent>(entity).world, entity);
         }
     }
-    // Clicking a collection instance picks the entity instancing it.
     std::vector<CollectionInstanceDraw> instances;
     expandCollectionInstances(scene, visibility, instances);
     for (const CollectionInstanceDraw& instance : instances) {
         if (scene.registry().all_of<MeshRendererComponent>(instance.member) &&
-            visibility.selectable(instance.instancer)) {
-            consider(instance.member, instance.world, instance.instancer);
+            visibility.selectable(instance.instancer) && insideIsolation(isolatedObjects, instance.instancer)) {
+            visit(instance.member, instance.world, instance.instancer);
         }
     }
+}
+} // namespace
+
+Entity pickThroughLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
+                       glm::vec2 normalizedViewportPosition, float aspectRatio,
+                       const std::vector<RenderObjectId>* isolatedObjects) {
+    const LensRay ray = lensRay(lens, normalizedViewportPosition, aspectRatio);
+    Entity closest = entt::null;
+    float closestDistance = std::numeric_limits<float>::max();
+    forEachPickableDraw(scene, isolatedObjects, [&](Entity meshEntity, const glm::mat4& world, Entity picked) {
+        const MeshAsset* mesh = assets.mesh(scene.registry().get<MeshRendererComponent>(meshEntity).mesh);
+        float distance = 0.0f;
+        if (mesh != nullptr && intersectMesh(*mesh, world, ray.origin, ray.direction, closestDistance, distance)) {
+            closest = picked;
+            closestDistance = distance;
+        }
+    });
     return closest;
+}
+
+std::vector<LensHit> pickAllThroughLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
+                                        glm::vec2 normalizedViewportPosition, float aspectRatio,
+                                        const std::vector<RenderObjectId>* isolatedObjects) {
+    const LensRay ray = lensRay(lens, normalizedViewportPosition, aspectRatio);
+    std::vector<LensHit> hits;
+    forEachPickableDraw(scene, isolatedObjects, [&](Entity meshEntity, const glm::mat4& world, Entity picked) {
+        const MeshAsset* mesh = assets.mesh(scene.registry().get<MeshRendererComponent>(meshEntity).mesh);
+        float distance = 0.0f;
+        if (mesh == nullptr ||
+            !intersectMesh(*mesh, world, ray.origin, ray.direction, std::numeric_limits<float>::max(), distance)) {
+            return;
+        }
+        // An instancer drawing several members keeps its nearest hit.
+        const auto found = std::ranges::find(hits, picked, &LensHit::entity);
+        if (found == hits.end()) {
+            hits.push_back({.entity = picked, .distance = distance});
+        } else {
+            found->distance = std::min(found->distance, distance);
+        }
+    });
+    std::ranges::stable_sort(hits, {}, &LensHit::distance);
+    return hits;
+}
+
+std::vector<Entity> pickInsideLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
+                                   float aspectRatio, const std::function<bool(glm::vec2)>& contains,
+                                   const std::vector<RenderObjectId>* isolatedObjects) {
+    const glm::mat4 viewProjection = lensProjectionMatrix(lens, aspectRatio) * lensViewMatrix(lens);
+    std::vector<Entity> inside;
+    forEachPickableDraw(scene, isolatedObjects, [&](Entity meshEntity, const glm::mat4& world, Entity picked) {
+        if (std::ranges::find(inside, picked) != inside.end()) {
+            return;
+        }
+        const MeshAsset* mesh = assets.mesh(scene.registry().get<MeshRendererComponent>(meshEntity).mesh);
+        const glm::vec3 center =
+            mesh != nullptr ? glm::vec3(world * glm::vec4(mesh->bounds.center, 1.0f)) : glm::vec3(world[3]);
+        const glm::vec4 clip = viewProjection * glm::vec4(center, 1.0f);
+        if (clip.w <= 0.0f) {
+            return;
+        }
+        // Clip space is Y-down here (lensProjectionMatrix), as viewport
+        // positions are.
+        const glm::vec2 normalized = glm::vec2(clip) / clip.w * 0.5f + 0.5f;
+        if (contains(normalized)) {
+            inside.push_back(picked);
+        }
+    });
+    return inside;
 }
 
 std::optional<RenderView> sceneCameraLens(const Scene& scene, Entity entity) {

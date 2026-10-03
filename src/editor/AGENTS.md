@@ -19,6 +19,7 @@ depend on this subtree.
 | `project/` | Project tooling: the shared asset service (`ProjectAssets`: catalog, watchers, change dispatch, favourites), asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, and IDE launching. |
 | `settings/` | Persistent editor preferences, including the component inspector's section order and collapse state (legacy panel flags are only read, for migration). |
 | `theme/` | The "Pixel Aero Night" look: palette, art-pixel metrics, pixel fonts, the procedural wallpaper and frosted glass, window chrome, themed widget wrappers, and pixel-art icons. |
+| `viewport/` | The viewport's selection tools: GPU-first picking with CPU fallback (`ViewportPicker`, `ViewportPickProvider`), the modal box and lasso tools, view framing, and the select and local view operators. |
 
 ## Local rules
 

@@ -1,13 +1,16 @@
 #include "ViewportPanel.hpp"
 
 #include "editor/interaction/ComponentEditors.hpp"
+#include "editor/interaction/PickQueries.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
 #include "editor/theme/ThemeChrome.hpp"
+#include "editor/viewport/ViewFraming.hpp"
 #include "engine/graphics/ViewShading.hpp"
 
 #include <imgui.h>
+#include <nlohmann/json.hpp>
 
 #include <ImGuizmo.h>
 
@@ -29,6 +32,20 @@ void paintChildGlass() {
 const char* entityName(const Scene& scene, Entity entity) {
     const auto* name = scene.registry().try_get<NameComponent>(entity);
     return name != nullptr ? name->name.c_str() : "Camera";
+}
+
+const char* selectionSetModeName(SelectionSetMode mode) {
+    switch (mode) {
+    case SelectionSetMode::Auto:
+        return "auto";
+    case SelectionSetMode::Set:
+        return "set";
+    case SelectionSetMode::Extend:
+        return "extend";
+    case SelectionSetMode::Subtract:
+        return "subtract";
+    }
+    return "auto";
 }
 } // namespace
 
@@ -74,6 +91,10 @@ void ViewportPanel::releaseRenderView() {
     m_rendering = nullptr;
     m_view = {};
     m_inputActive = false;
+    // The registry resets a released default view's isolation, and a
+    // created view is destroyed, so the next view needs it handed over again.
+    m_isolationView = {};
+    m_sentIsolation.reset();
 }
 
 const char* ViewportPanel::title() const {
@@ -157,13 +178,121 @@ void ViewportPanel::suppressCameraUntilRightRelease() {
     m_suppressCameraUntilRelease = true;
 }
 
+void ViewportPanel::requestClickSelect(glm::vec2 viewPoint, bool extend, bool cycle) {
+    m_queuedSelect = QueuedSelect{
+        .kind = cycle ? ViewportPickKind::Cycle : ViewportPickKind::Click, .point = viewPoint, .extend = extend};
+}
+
+glm::vec2 ViewportPanel::mouseInView() const {
+    return m_mouseInView;
+}
+
+void ViewportPanel::beginBoxSelect(SelectionSetMode mode) {
+    m_lassoSelect.cancel();
+    m_boxSelect.begin(mode);
+}
+
+void ViewportPanel::beginLassoSelect(SelectionSetMode mode, bool rightDrag) {
+    m_boxSelect.cancel();
+    // The gesture's press is the outline's first point.
+    m_lassoSelect.begin(mode, rightDrag, m_mouseInView);
+    if (rightDrag) {
+        suppressCameraUntilRightRelease();
+    }
+}
+
+void ViewportPanel::cancelSelectTool() {
+    m_boxSelect.cancel();
+    m_lassoSelect.cancel();
+}
+
+bool ViewportPanel::selectToolActive() const {
+    return m_boxSelect.active() || m_lassoSelect.active();
+}
+
+const BoxSelect& ViewportPanel::boxSelect() const {
+    return m_boxSelect;
+}
+
+const LassoSelect& ViewportPanel::lassoSelect() const {
+    return m_lassoSelect;
+}
+
+bool ViewportPanel::pickPending() const {
+    return m_queuedSelect.has_value() || m_picker.pending();
+}
+
+const std::optional<ViewportPickOutcome>& ViewportPanel::lastPickOutcome() const {
+    return m_lastPickOutcome;
+}
+
+bool ViewportPanel::enterLocalView(Scene& scene, const AssetManager& assets, std::span<const SceneEntityId> entities) {
+    if (m_localView) {
+        return false;
+    }
+    std::vector<SceneEntityId> existing;
+    for (SceneEntityId id : entities) {
+        if (scene.findEntity(id) != entt::null && std::ranges::find(existing, id) == existing.end()) {
+            existing.push_back(id);
+        }
+    }
+    if (existing.empty()) {
+        return false;
+    }
+    m_localView = LocalView{.entities = existing, .previousCamera = m_camera, .previousCameraView = m_cameraView};
+    exitCameraView();
+    // Frame the whole isolated hierarchy, as the view will show it.
+    std::vector<SceneEntityId> framed;
+    std::vector<Entity> traversal;
+    for (SceneEntityId id : existing) {
+        traversal.push_back(scene.findEntity(id));
+    }
+    while (!traversal.empty()) {
+        const Entity entity = traversal.back();
+        traversal.pop_back();
+        framed.push_back(scene.id(entity));
+        if (const auto* relationship = scene.registry().try_get<RelationshipComponent>(entity)) {
+            traversal.insert(traversal.end(), relationship->children.begin(), relationship->children.end());
+        }
+    }
+    frameEntities(m_camera, scene, assets, framed);
+    return true;
+}
+
+void ViewportPanel::exitLocalView() {
+    if (!m_localView) {
+        return;
+    }
+    m_camera = m_localView->previousCamera;
+    m_cameraView = m_localView->previousCameraView;
+    m_localView.reset();
+    m_localViewObjects.reset();
+}
+
+bool ViewportPanel::localViewActive() const {
+    return m_localView.has_value();
+}
+
+std::span<const SceneEntityId> ViewportPanel::localViewEntities() const {
+    return m_localView ? std::span<const SceneEntityId>(m_localView->entities) : std::span<const SceneEntityId>{};
+}
+
+const std::optional<std::vector<RenderObjectId>>& ViewportPanel::localViewObjects() const {
+    return m_localViewObjects;
+}
+
 void ViewportPanel::update(EditorContext& context, const InputState& input, float deltaSeconds) {
     if (m_suppressCameraUntilRelease && !input.mouseButtonDown(MouseButton::Right)) {
         m_suppressCameraUntilRelease = false;
     }
     // Looking through a scene camera is read-only: the editor camera waits.
-    const bool cameraInputActive =
-        m_inputActive && !context.actions.modalTransformActive() && !m_suppressCameraUntilRelease && !m_cameraView;
+    // So does it during a box or lasso, and from a Ctrl+RMB press, which
+    // starts a lasso rather than fly navigation.
+    const bool ctrlDown = input.keyDown(Key::LeftControl) || input.keyDown(Key::RightControl);
+    const bool lassoGesture = ctrlDown && input.mouseButtonDown(MouseButton::Right) && !m_navigating;
+    const bool cameraInputActive = m_inputActive && !context.actions.modalTransformActive() &&
+                                   !m_suppressCameraUntilRelease && !m_cameraView && !selectToolActive() &&
+                                   !lassoGesture;
     m_navigating =
         cameraInputActive && (input.mouseButtonDown(MouseButton::Middle) || input.mouseButtonDown(MouseButton::Right));
     m_camera.update(input, deltaSeconds, cameraInputActive);
@@ -219,6 +348,7 @@ void ViewportPanel::updateSelectionOutline(EditorContext& context) {
 
 void ViewportPanel::hidden(EditorContext& context) {
     setInputActive(context, false);
+    cancelSelectTool();
 }
 
 void ViewportPanel::setInputActive(EditorContext& context, bool active) {
@@ -282,19 +412,32 @@ void ViewportPanel::draw(EditorContext& context) {
         // After the chrome, whose menus may change the shading or overlays.
         syncRenderView(context);
     }
+    syncLocalView(context);
+    const ImVec2 mouse = ImGui::GetMousePos();
+    m_mouseInView = glm::vec2(mouse.x, mouse.y) - m_position;
     if (modal) {
         // Only the viewport the transform started in advances it.
         context.actions.updateModalTransform(context.app, m_id);
+        processPicks(context);
         return;
     }
 
-    const bool gizmoBlocksPicking = m_chrome.overlays.gizmo && drawGizmo(context);
-    if (imageHovered || chromeHovered) {
-        context.actions.handleObjectKeys(context.app, KeymapRegion::Viewport);
+    if (selectToolActive()) {
+        // A box or lasso owns the mouse and keys until it ends.
+        updateSelectTools(imageHovered);
+    } else {
+        const bool gizmoBlocksPicking = m_chrome.overlays.gizmo && drawGizmo(context);
+        if (imageHovered || chromeHovered) {
+            context.actions.handleObjectKeys(context.app, KeymapRegion::Viewport);
+        }
+        if (imageClicked && !gizmoBlocksPicking && !context.actions.modalTransformActive()) {
+            selectAtMouse(context);
+        } else if (imageHovered && ImGui::GetIO().KeyCtrl && ImGui::IsMouseClicked(ImGuiMouseButton_Right) &&
+                   !gizmoBlocksPicking && !context.eyedropperArmed()) {
+            startLassoGesture(context);
+        }
     }
-    if (imageClicked && !gizmoBlocksPicking && !context.actions.modalTransformActive()) {
-        pickAtMouse(context);
-    }
+    processPicks(context);
     if (m_chrome.overlays.activeName) {
         drawActiveName(context);
     }
@@ -497,25 +640,138 @@ void ViewportPanel::drawItemTab(EditorContext& context) {
     ImGui::EndDisabled();
 }
 
-void ViewportPanel::pickAtMouse(EditorContext& context) {
-    const ImVec2 mouse = ImGui::GetMousePos();
-    const glm::vec2 normalized = (glm::vec2(mouse.x, mouse.y) - m_position) / m_size;
+void ViewportPanel::selectAtMouse(EditorContext& context) {
+    const ImGuiIO& io = ImGui::GetIO();
+    const nlohmann::json properties{{"x", m_mouseInView.x}, {"y", m_mouseInView.y}, {"extend", io.KeyShift}};
+    context.actions.invokeOperator(context.app, io.KeyAlt ? "view3d.select_cycle" : "view3d.select", properties.dump(),
+                                   KeymapRegion::Viewport);
+}
+
+void ViewportPanel::startLassoGesture(EditorContext& context) {
+    // Ctrl is the gesture itself, so Shift extends and Alt subtracts.
+    const ImGuiIO& io = ImGui::GetIO();
+    const SelectionSetMode mode =
+        io.KeyShift ? SelectionSetMode::Extend : (io.KeyAlt ? SelectionSetMode::Subtract : SelectionSetMode::Set);
+    const nlohmann::json properties{{"mode", selectionSetModeName(mode)}, {"right_drag", true}};
+    context.actions.invokeOperator(context.app, "view3d.select_lasso", properties.dump(), KeymapRegion::Viewport);
+}
+
+void ViewportPanel::updateSelectTools(bool imageHovered) {
+    const ImGuiIO& io = ImGui::GetIO();
+    const SelectionGestureInput input{.mouse = m_mouseInView,
+                                      .hovered = imageHovered,
+                                      .leftPressed = ImGui::IsMouseClicked(ImGuiMouseButton_Left),
+                                      .leftDown = ImGui::IsMouseDown(ImGuiMouseButton_Left),
+                                      .rightPressed = ImGui::IsMouseClicked(ImGuiMouseButton_Right),
+                                      .rightDown = ImGui::IsMouseDown(ImGuiMouseButton_Right),
+                                      .escapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape, false),
+                                      .shift = io.KeyShift,
+                                      .ctrl = io.KeyCtrl};
+    if (input.rightPressed && !m_lassoSelect.drawsWithRightButton()) {
+        // The right press cancels the tool; it must not start fly navigation.
+        suppressCameraUntilRightRelease();
+    }
+    std::optional<RegionSelection> region =
+        m_boxSelect.active() ? m_boxSelect.update(input) : m_lassoSelect.update(input);
+    if (region) {
+        m_queuedSelect = QueuedSelect{.kind = ViewportPickKind::Region, .region = std::move(*region)};
+    }
+    ImDrawList& drawList = *ImGui::GetWindowDrawList();
+    m_boxSelect.draw(drawList, m_position);
+    m_lassoSelect.draw(drawList, m_position);
+}
+
+void ViewportPanel::processPicks(EditorContext& context) {
+    RenderPickProvider rendererPicks(context.app.rendering);
+    ViewportPickProvider* provider = m_registry.pickProvider();
+    ViewportPickProvider& picks = provider != nullptr ? *provider : rendererPicks;
     Scene& scene = context.app.scene;
+    if (m_queuedSelect) {
+        QueuedSelect queued = std::move(*m_queuedSelect);
+        m_queuedSelect.reset();
+        scene.updateWorldTransforms();
+        m_pendingIntent =
+            SelectIntent{.kind = queued.kind,
+                         .extend = queued.extend,
+                         .mode = queued.region.mode,
+                         .eyedropper = queued.kind != ViewportPickKind::Region && context.eyedropperArmed()};
+        m_picker.start(picks, m_view,
+                       ViewportPickQuery{.kind = queued.kind,
+                                         .point = queued.point,
+                                         .region = std::move(queued.region),
+                                         .lens = lens(scene),
+                                         .viewSize = m_size,
+                                         .isolatedObjects = m_localViewObjects});
+    }
+    if (!m_picker.pending()) {
+        return;
+    }
     scene.updateWorldTransforms();
-    const Entity picked = pickThroughLens(scene, context.app.assets, lens(scene), normalized, m_size.x / m_size.y);
-    if (context.eyedropperArmed()) {
+    if (const std::optional<ViewportPickOutcome> outcome = m_picker.poll(picks, scene, context.app.assets)) {
+        applyPick(context, m_pendingIntent, *outcome);
+    }
+}
+
+void ViewportPanel::applyPick(EditorContext& context, const SelectIntent& intent, const ViewportPickOutcome& outcome) {
+    m_lastPickOutcome = outcome;
+    if (intent.kind == ViewportPickKind::Region) {
+        applySelectionSet(context.selection, outcome.entities, intent.mode);
+        return;
+    }
+    std::optional<SceneEntityId> picked;
+    if (intent.kind == ViewportPickKind::Cycle && !intent.eyedropper) {
+        picked = cycleCandidate(outcome.entities, context.selection.active());
+    } else if (!outcome.entities.empty()) {
+        picked = outcome.entities.front();
+    }
+    if (intent.eyedropper) {
         // An armed eyedropper takes the click and leaves the selection alone;
         // a click on empty space keeps it waiting.
-        if (picked != entt::null) {
-            context.pickEyedropperEntity(scene.id(picked));
+        if (picked && context.eyedropperArmed()) {
+            context.pickEyedropperEntity(*picked);
         }
         return;
     }
-    if (picked == entt::null) {
-        context.selection.clear();
+    if (!picked) {
+        // Blender keeps the selection when a Shift click misses.
+        if (!intent.extend) {
+            context.selection.clear();
+        }
+        return;
+    }
+    context.selection.click(*picked, intent.extend ? SelectionClickMode::Extend : SelectionClickMode::Replace);
+}
+
+void ViewportPanel::syncLocalView(EditorContext& context) {
+    if (!m_localView) {
+        m_localViewObjects.reset();
     } else {
-        context.selection.click(scene.id(picked),
-                                ImGui::GetIO().KeyShift ? SelectionClickMode::Extend : SelectionClickMode::Replace);
+        const Scene& scene = context.app.scene;
+        std::vector<RenderObjectId> objects;
+        m_outlineTraversal.clear();
+        for (SceneEntityId id : m_localView->entities) {
+            if (const Entity entity = scene.findEntity(id); entity != entt::null) {
+                m_outlineTraversal.push_back(entity);
+            }
+        }
+        while (!m_outlineTraversal.empty()) {
+            const Entity entity = m_outlineTraversal.back();
+            m_outlineTraversal.pop_back();
+            objects.push_back(static_cast<RenderObjectId>(entt::to_integral(entity)));
+            if (const auto* relationship = scene.registry().try_get<RelationshipComponent>(entity)) {
+                m_outlineTraversal.insert(m_outlineTraversal.end(), relationship->children.begin(),
+                                          relationship->children.end());
+            }
+        }
+        std::ranges::sort(objects);
+        const auto duplicates = std::ranges::unique(objects);
+        objects.erase(duplicates.begin(), duplicates.end());
+        m_localViewObjects = std::move(objects);
+    }
+    if (m_view && (m_isolationView != m_view || m_sentIsolation != m_localViewObjects)) {
+        context.app.rendering.setViewVisibleEntities(m_view, m_localViewObjects);
+        m_isolationView = m_view;
+        m_sentIsolation = m_localViewObjects;
     }
 }
 
