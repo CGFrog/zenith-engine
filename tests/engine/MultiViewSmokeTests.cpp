@@ -2,7 +2,10 @@
 // default view renders into the swapchain while two created views render
 // offscreen with their own cameras, sizes, and settings. One view resizes,
 // one skips frames, one is destroyed and its slot reused, and the default
-// view keeps rendering after every created view is gone. Run with
+// view keeps rendering after every created view is gone. Views are isolated
+// to one object (local view) for a while, the default one falling back to CPU
+// submission, and the scene's editor visibility mode and a collection
+// instance change what renders. Run with
 // ZENITH_SMOKE_FRAMES (the test registration uses 120) and optionally
 // ZENITH_VALIDATION_STRICT=1.
 
@@ -16,6 +19,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -29,6 +33,7 @@ struct SmokeResults {
     uint64_t trackedViewBytesWithViews{0};
     double viewAMilliseconds{0.0};
     double viewBMilliseconds{0.0};
+    uint32_t runtimeRenderables{0};
 
     void expect(bool condition, uint32_t frame, const std::string& message) {
         if (!condition) {
@@ -89,6 +94,21 @@ class MultiViewScene final : public ApplicationScene {
         const Entity fog = scene.createEntity("Fog");
         registry.emplace<VolumetricFogComponent>(fog);
         scene.markLightDirty(fog);
+        // One cube is drawn again by a collection instance above the grid, and
+        // another is hidden in editor views only.
+        SceneCollections collections;
+        SceneCollectionId instanced;
+        if (CollectionResult created = collections.create("Instanced", {}, instanced); !created) {
+            return {.success = false, .error = created.error};
+        }
+        scene.setCollections(std::move(collections));
+        linkToCollection(scene, m_cubes.front(), instanced);
+        m_instancer = scene.createEntity("Instancer");
+        registry.get<TransformComponent>(m_instancer).local =
+            glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 3.0f, 0.0f));
+        scene.markTransformDirty(m_instancer);
+        registry.emplace<CollectionInstanceComponent>(m_instancer, instanced);
+        registry.emplace<VisibilityComponent>(m_cubes[1], VisibilityComponent{.hidden = true});
         return {.success = true};
     }
 
@@ -99,6 +119,7 @@ class MultiViewScene final : public ApplicationScene {
         if (m_frame == 1) {
             createViews(rendering);
         }
+        updateIsolation(context);
         if (m_frame == 25) {
             m_results.expect(rendering.setActiveView(m_viewB), m_frame, "view B becomes the active view");
         }
@@ -157,6 +178,67 @@ class MultiViewScene final : public ApplicationScene {
     void unload(ApplicationContext&) override {}
 
   private:
+    RenderObjectId centerCube() const {
+        return static_cast<RenderObjectId>(entt::to_integral(m_cubes[m_cubes.size() / 2]));
+    }
+
+    // Local view and visibility modes. View B shows only the center cube for
+    // frames 10-19 and the default view for 30-39 (CPU submission); editor
+    // visibility hides one cube for 45-54; the instancer moves from frame 56.
+    void updateIsolation(ApplicationContext& context) {
+        RenderRuntime& rendering = context.rendering;
+        const std::vector<RenderObjectId> center{centerCube()};
+        if (m_frame == 10) {
+            m_results.expect(rendering.setViewVisibleEntities(m_viewB, center), m_frame, "view B accepts isolation");
+        } else if (m_frame == 20) {
+            m_results.expect(rendering.setViewVisibleEntities(m_viewB, std::nullopt) &&
+                                 !rendering.viewVisibleEntities(m_viewB),
+                             m_frame, "view B leaves isolation");
+        } else if (m_frame == 30) {
+            m_results.expect(rendering.setViewVisibleEntities(rendering.defaultView(), center), m_frame,
+                             "the default view accepts isolation");
+        } else if (m_frame == 40) {
+            rendering.setViewVisibleEntities(rendering.defaultView(), std::nullopt);
+        } else if (m_frame == 45) {
+            rendering.setSceneVisibilityMode(SceneVisibilityMode::Editor);
+        } else if (m_frame == 55) {
+            rendering.setSceneVisibilityMode(SceneVisibilityMode::Runtime);
+        }
+        if (m_frame >= 56) {
+            Scene& scene = context.scene;
+            scene.registry().get<TransformComponent>(m_instancer).local =
+                glm::translate(glm::mat4(1.0f), glm::vec3(std::sin(static_cast<float>(m_frame) * 0.1f), 3.0f, 0.0f));
+            scene.markTransformDirty(m_instancer);
+        }
+    }
+
+    // Stats of the frame before this update, for the isolation phases.
+    void checkIsolation(const RenderRuntime& rendering, uint32_t frame) {
+        const uint32_t renderables = rendering.stats().renderableCount;
+        if (frame == 5) {
+            m_results.runtimeRenderables = renderables;
+            // 25 cubes, the ground, and the instanced cube share one mesh.
+            m_results.expect(renderables > 0 && renderables % 27 == 0, frame,
+                             "the collection instance adds one cube's items");
+        }
+        if (frame >= 12 && frame < 20) {
+            const RenderViewStats b = rendering.viewStats(m_viewB);
+            m_results.expect(b.visibleCount == 1, frame, "isolated view B draws only the isolated cube");
+        }
+        if (frame >= 32 && frame < 40) {
+            const RenderViewStats isolated = rendering.viewStats(rendering.defaultView());
+            m_results.expect(isolated.visibleCount == 1, frame, "the isolated default view draws only one cube");
+        }
+        if (frame >= 47 && frame < 55) {
+            m_results.expect(renderables * 27 == m_results.runtimeRenderables * 26, frame,
+                             "editor visibility hides the hidden cube");
+        }
+        if (frame >= 57 && frame < 90) {
+            m_results.expect(renderables == m_results.runtimeRenderables, frame,
+                             "the runtime mode draws hidden cubes and the moving instance");
+        }
+    }
+
     void createViews(RenderRuntime& rendering) {
         m_viewA = rendering.createView();
         m_viewB = rendering.createView();
@@ -193,6 +275,7 @@ class MultiViewScene final : public ApplicationScene {
         if (frame == 0) {
             return;
         }
+        checkIsolation(rendering, frame);
         const RenderViewStats defaultStats = rendering.viewStats(rendering.defaultView());
         m_results.expect(defaultStats.rendered, frame, "the default view renders every frame");
         const RenderViewStats a = rendering.viewStats(m_viewA);
@@ -238,6 +321,7 @@ class MultiViewScene final : public ApplicationScene {
 
     SmokeResults& m_results;
     std::vector<Entity> m_cubes;
+    Entity m_instancer{entt::null};
     RenderViewId m_viewA;
     RenderViewId m_viewB;
     RenderViewId m_viewC;

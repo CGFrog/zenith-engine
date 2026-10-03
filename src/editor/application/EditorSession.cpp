@@ -475,6 +475,8 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
             m_diagnostics.reportError("The Info panel received no engine log entries");
             context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
         }
+    } else if (m_smokeFrame == 7 || m_smokeFrame == 8) {
+        updateSmokeHide(context);
     }
     if (m_smokeStreamInstance && !m_smokeStreamCompleted) {
         const auto state = m_smokeLayers->state(*m_smokeStreamInstance);
@@ -549,6 +551,44 @@ bool EditorSession::updateSmokeComponents(ApplicationContext& context) {
         m_selection.clear();
     }
     return m_smokeFrame > firstFrame + 1;
+}
+
+// H hides everything in the editor views (the frame rendered in between draws
+// fewer items), then Alt+H reveals it again.
+void EditorSession::updateSmokeHide(ApplicationContext& context) {
+    const auto fail = [&](const std::string& error) {
+        context.logger.log(LogLevel::Error, "editor", "Hide smoke: " + error);
+        m_diagnostics.reportError("Hide smoke: " + error);
+        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+    };
+    if (m_smokeFrame == 7) {
+        m_smokeRenderablesBeforeHide = context.rendering.stats().renderableCount;
+        invokeOperator(context, "object.select_all", R"({"action":"select"})", KeymapRegion::Viewport);
+        if (m_selection.empty()) {
+            // An empty startup scene has nothing to hide.
+            context.logger.log(
+                LogLevel::Info, "editor",
+                "Hide smoke skipped: " +
+                    std::to_string(context.scene.registry().view<const SceneEntityIdComponent>().size()) +
+                    " entities, none selectable");
+            m_smokeHideSkipped = true;
+            return;
+        }
+        if (!invokeOperator(context, "object.hide", {}, KeymapRegion::Viewport)) {
+            fail("object.hide did not run");
+        }
+        return;
+    }
+    if (m_smokeHideSkipped) {
+        return;
+    }
+    const uint32_t renderablesWhileHidden = context.rendering.stats().renderableCount;
+    if (m_smokeRenderablesBeforeHide > 0 && renderablesWhileHidden >= m_smokeRenderablesBeforeHide) {
+        fail("hidden objects were still rendered");
+    }
+    if (!invokeOperator(context, "object.unhide", {}, KeymapRegion::Viewport)) {
+        fail("object.unhide did not run");
+    }
 }
 
 void EditorSession::updateSmokeModuleReload(ApplicationContext& context) {

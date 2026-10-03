@@ -49,7 +49,8 @@ Important boundaries:
   dockable panels in `src/editor/panels/`. Panels see the session only through
   a per-frame `EditorContext` and change the scene only through undoable
   `SceneEditing` commands. Each command stores the document form of only the
-  entities an edit touched and undoes or redoes it by patching them in place
+  entities an edit touched (and the collection definitions when it changed
+  them) and undoes or redoes it by patching them in place
   (`SceneDocument::diff` and `applyChanges`), so untouched entities keep their
   EnTT handles; selections and other long-lived references still use stable
   `SceneEntityId`s because restored entities receive new handles. Patched
@@ -196,7 +197,10 @@ loading a scene without the module that defines a component never loses data.
 The document itself is versioned too: document-level migrations upgrade older
 files on load, and version 2 records each asset reference as a project-relative
 path plus, when an `AssetDatabase` is supplied, the asset's GUID, which wins
-over the path on load so references survive renames and moves.
+over the path on load so references survive renames and moves. Version 3 adds
+scene-level collection definitions (`Scene::collections()`), which entities
+join through a membership component; undo patches cover them alongside
+entities (`SceneChanges`).
 
 `SceneDocument::parse` produces an immutable validated scene description.
 `SceneDocument::commit` performs the main-thread ECS and asset operations, so a
@@ -696,6 +700,20 @@ skip all temporal and screen-space work. Shadows, environment and probe
 quality, indirect diffuse, local lights and their shadows, particles,
 GPU-driven submission, and streaming stay frame settings.
 
+What renders is filtered twice. Render packets include only entities the
+runtime's `SceneVisibilityMode` draws (`SceneVisibility`: `renderable` flags
+always, the editor's viewport hide only in `Editor` mode, which the editor
+sets while editing and clears in Play mode, so games never see it), plus the
+draws `expandCollectionInstances` produces for collection instances; light and
+particle gathering apply the same filter. A view may then be isolated to a set
+of objects (`setViewVisibleEntities`, the editor's local view), which filters
+its CPU-submitted draws; a collection-instance draw belongs to its instancing
+entity. GPU-driven submission draws every record, so an isolated default view
+uses CPU submission. Shared work (shadow maps, light lists, particles) still
+covers the whole filtered scene. Instance draws compose several entities'
+transforms, so while any exist a transform or skin change rebuilds the render
+packets instead of updating them in place.
+
 The default view renders into the swapchain until a size is requested and
 offscreen every frame after that. A created view renders only on frames that
 called `requestViewSize` for it, so hidden panels cost nothing. The Renderer
@@ -740,7 +758,8 @@ the frame that released a view can still sample its texture. The renderer's
 per-view stats add up the views' draws; `RenderViewStats` reports each view's
 own counts and CPU recording time. `tests/engine/RenderViewTests.cpp` covers the
 registry and planning; `tests/engine/MultiViewSmokeTests.cpp` renders two
-created views beside the default one under strict validation.
+created views beside the default one under strict validation, isolating views,
+switching the visibility mode, and moving a collection instance.
 
 ### Debug drawing
 

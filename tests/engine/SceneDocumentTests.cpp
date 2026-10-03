@@ -57,7 +57,7 @@ std::vector<uint64_t> childIds(const Scene& scene, SceneEntityId parent) {
     return ids;
 }
 
-void expectPatchRejected(std::span<const SceneEntityChange> changes, std::string_view expectedError, Scene& scene,
+void expectPatchRejected(const SceneChanges& changes, std::string_view expectedError, Scene& scene,
                          AssetManager& assets, const SceneDocumentOptions& options) {
     const std::string before = serialize(scene, assets, options);
     const SceneDocumentResult result =
@@ -93,17 +93,19 @@ void testEntityChanges(AssetManager& assets, const SceneDocumentOptions& options
     scene.setParent(e, b);
     const std::string after = serialize(scene, assets, options);
 
-    std::vector<SceneEntityChange> changes;
+    SceneChanges changes;
     const SceneDocumentResult diffed = SceneDocument::diff(before, after, changes);
     expect(diffed.success, diffed.error);
+    expect(!changes.collections, "an edit that leaves collections alone should not record them");
     std::vector<uint64_t> changedIds;
-    for (const SceneEntityChange& change : changes) {
+    for (const SceneEntityChange& change : changes.entities) {
         changedIds.push_back(change.id.value);
     }
     expect(changedIds == std::vector<uint64_t>{2, 3, 4, 5}, "a diff should list only added, removed, and changed ids");
-    expect(changes[1].before && !changes[1].after && !changes[3].before && changes[3].after,
+    expect(changes.entities[1].before && !changes.entities[1].after && !changes.entities[3].before &&
+               changes.entities[3].after,
            "a diff should mark removed and added entities as absent on one side");
-    std::vector<SceneEntityChange> none;
+    SceneChanges none;
     expect(SceneDocument::diff(before, before, none).success && none.empty(), "identical documents should not differ");
 
     const SceneDocumentResult undone =
@@ -127,20 +129,20 @@ void testEntityChanges(AssetManager& assets, const SceneDocumentOptions& options
            "patching a scene already in the target state should change nothing");
     expect(childIds(scene, {1}) == std::vector<uint64_t>{2, 4, 6}, "a moved entity should be placed by id");
 
-    const std::vector<SceneEntityChange> missingParent{{.id = {7}, .after = entityJson(7, "H", "99")}};
+    const SceneChanges missingParent{.entities = {{.id = {7}, .after = entityJson(7, "H", "99")}}};
     expectPatchRejected(missingParent, "missing parent", scene, assets, options);
-    const std::vector<SceneEntityChange> cycle{{.id = {1}, .after = entityJson(1, "A", "2")}};
+    const SceneChanges cycle{.entities = {{.id = {1}, .after = entityJson(1, "A", "2")}}};
     expectPatchRejected(cycle, "cycle", scene, assets, options);
-    const std::vector<SceneEntityChange> orphan{{.id = {2}, .before = entityJson(2, "B", "1")}};
+    const SceneChanges orphan{.entities = {{.id = {2}, .before = entityJson(2, "B", "1")}}};
     expectPatchRejected(orphan, "unchanged child", scene, assets, options);
-    const std::vector<SceneEntityChange> wrongId{{.id = {2}, .after = entityJson(3, "B", "1")}};
+    const SceneChanges wrongId{.entities = {{.id = {2}, .after = entityJson(3, "B", "1")}}};
     expectPatchRejected(wrongId, "different entity", scene, assets, options);
-    const std::vector<SceneEntityChange> twice{{.id = {6}, .after = entityJson(6, "G", "1")},
-                                               {.id = {6}, .after = entityJson(6, "G", "null")}};
+    const SceneChanges twice{
+        .entities = {{.id = {6}, .after = entityJson(6, "G", "1")}, {.id = {6}, .after = entityJson(6, "G", "null")}}};
     expectPatchRejected(twice, "twice", scene, assets, options);
-    const std::vector<SceneEntityChange> invalidComponent{
-        {.id = {6}, .after = entityJson(6, "G", "1", R"({"volumetric_fog":{"density":-1}})")},
-        {.id = {8}, .after = entityJson(8, "I", "null")}};
+    const SceneChanges invalidComponent{
+        .entities = {{.id = {6}, .after = entityJson(6, "G", "1", R"({"volumetric_fog":{"density":-1}})")},
+                     {.id = {8}, .after = entityJson(8, "I", "null")}}};
     expectPatchRejected(invalidComponent, "Entity 6", scene, assets, options);
     expect(scene.findEntity({8}) == entt::null, "a rejected patch should not create any of its entities");
 }
@@ -230,7 +232,7 @@ void testAssetReferences(const std::filesystem::path& sourceAssets, const std::f
 
     Scene rejected;
     std::string future = version1;
-    future.replace(future.find(R"("version":1)"), 11, R"("version":3)");
+    future.replace(future.find(R"("version":1)"), 11, R"("version":4)");
     const SceneDocumentResult futureResult = SceneDocument::deserialize(future, assets, pathOnly, rejected);
     expect(!futureResult.success && futureResult.error.find("newer") != std::string::npos,
            "documents from a newer format version should be rejected with a clear message");

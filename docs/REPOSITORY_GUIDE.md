@@ -81,7 +81,8 @@ explicit, so a file move must update `CMakeLists.txt` as well as include sites.
 | `zenith_asset_tests` | Test executable | Asset importing and scene hierarchy behavior. |
 | `zenith_game_module_tests` | Test executable | Loads, reloads, and unloads the `zenith_test_*_module` libraries: registration, system order and modes, shadow copies, and refused modules. |
 | `zenith_game_module_host_tests` | Test executable | Hosts `zenith_editor_test_module` in the editor's `GameModuleHost` without a window: module components through the document, edit/play systems, editor operators and panels, hot reload over the `_v2` build, and a failed reload that keeps module data as JSON. |
-| `zenith_asset_reference_workflow_tests` | Test executable | Editor end-to-end GUID references: version 2 scene saves, browser and external renames and moves followed by the watcher, the open scene following its file, automatic model reloads, and every checked-in scene loading through migration. |
+| `zenith_collection_tests` | Test executable | Collections, visibility rules and modes, collection-instance expansion, the version 3 document form and v2 migration, and undo patches of collection definitions. |
+| `zenith_asset_reference_workflow_tests` | Test executable | Editor end-to-end GUID references: current-version scene saves, browser and external renames and moves followed by the watcher, the open scene following its file, automatic model reloads, and every checked-in scene loading through migration. |
 | `zenith_asset_database_tests` | Test executable | Content hashing, asset GUIDs, `.meta` sidecars, and asset database scans, moves, external changes, and dependencies on real temporary directories. |
 | `zenith_physics_tests` | Test executable | Rigid bodies, contacts, impulses, raycasts, mesh collision, and cleanup. |
 | `zenith_application_tests` | Test executable | Lifecycle ordering, deferred switching, failed-load cleanup, demo composition, controls, and reload behavior. |
@@ -251,12 +252,13 @@ validation, sanitizing, texture bindings, and schema migrations, and a
 its own. `SceneDocument` saves and loads every registered component, and keeps
 components with unknown keys verbatim in `PreservedComponentsComponent`.
 `SceneDocument::diff` lists the entities whose document form differs between
-two serialized documents, and `SceneDocument::applyChanges` patches those
-entities in place toward either side atomically, leaving every other entity,
-its EnTT handle, and its child order untouched.
+two serialized documents (plus the collection definitions when they changed,
+as `SceneChanges`), and `SceneDocument::applyChanges` patches those entities
+and collections in place toward either side atomically, leaving every other
+entity, its EnTT handle, and its child order untouched.
 `SceneAssetReferences.*` converts project-relative asset references for codecs.
 
-Scene documents are versioned (`SceneDocument::currentVersion`, now 2).
+Scene documents are versioned (`SceneDocument::currentVersion`, now 3).
 `parse` runs ordered document-level migrations (`fromVersion` to
 `fromVersion + 1`, on the raw JSON) before validating, so older files load
 unchanged in behavior and save as the current version; a newer version is
@@ -269,12 +271,42 @@ when `SceneDocumentOptions::assetDatabase` knows the asset, its `guid`; an
 empty string still means "no asset". Loading resolves a GUID through the
 database first, so a scene keeps working after its assets are renamed or
 moved, and falls back to the path without a database or for unknown GUIDs.
-Component structs keep path strings at runtime; GUIDs live only at the
-document boundary. Texture paths (`ComponentTypeBuilder::texture`) and other
+Version 3 adds a top-level `collections` array (see Collections below);
+version 2 documents migrate with none. Component structs keep path strings at
+runtime; GUIDs live only at the document boundary. Texture paths (`ComponentTypeBuilder::texture`) and other
 `assetReference` fields are converted after component migrations run. Inside
 component JSON the key `path` is reserved for asset references, which lets
 `relocateSceneAssetReferences` rewrite references to moved files generically.
 Prefab documents (`Prefab.*`) still reference models by path.
+
+### `src/engine/scene/Collections.*`, `SceneVisibility.*`, `CollectionComponentTypes.cpp`
+
+Blender-style collections: named, nested groups of entities kept in
+`Scene::collections()` (`SceneCollections`, ascending stable ids) and
+replaced as a whole with `Scene::setCollections`, which invalidates render and
+light caches. Collections are independent of the transform hierarchy, and an
+entity joins any number of them through `CollectionMembershipComponent`
+(`collection_membership`, sorted ids); an entity in none belongs to the
+implicit scene root. `linkToCollection`, `unlinkFromCollection`, and
+`deleteCollection` (contents move to the parent collection, instancers lose
+their component) keep membership and definitions consistent. Documents store
+each collection as `{id, name, parent, visible, selectable, renderable,
+instance_offset}`; every membership and `collection_instance` reference must
+name a defined collection, or loading and patching fail.
+
+Visibility (`SceneVisibility`) combines the entity's `VisibilityComponent`
+(`visibility`: `hidden`, `selectable`, `renderable`) with its collections; an
+entity in collections needs at least one of them (and all of that one's
+enclosing collections) to allow a flag. `SceneVisibilityMode::Runtime`, the
+renderer's default, honours only `renderable`, so games and Play mode draw
+editor-hidden entities; `Editor` also applies the viewport hide (entity
+`hidden`, collection `visible`), and picking requires `selectable`. An entity
+with `CollectionInstanceComponent` (`collection_instance`) draws the
+renderable members of a collection and its nested collections at its
+transform, minus the collection's `instance_offset`; `expandCollectionInstances`
+does the CPU expansion (nested instances to depth 8, cycles skipped) for the
+renderer and the editor picker. Instances ignore the viewport hide, so the
+source collection can be hidden while its instances show.
 
 ### `src/engine/scene/Prefab.*`
 
@@ -517,7 +549,9 @@ navigation operator or View > Exit Camera View returns to the editor camera.
 its widgets. `EditorCamera` owns the lens (field of view and clip planes) that
 its render view, projections, and picking share; `lensViewMatrix`,
 `lensProjectionMatrix`, `pickThroughLens`, and `sceneCameraLens` do the same
-math for any `RenderView`. `tests/editor/ViewportChromeTests.cpp` and
+math for any `RenderView`. `RenderRuntime::setViewVisibleEntities` isolates a
+render view to a set of objects for local view (a default view falls back to
+CPU submission while isolated). `tests/editor/ViewportChromeTests.cpp` and
 `tests/editor/MultiViewportTests.cpp` cover this headless.
 
 `panels/InfoPanel` is the unified log view. Its CPU-only `InfoLog` model
@@ -569,8 +603,14 @@ Viewport, Outliner) with conflict detection and double-tap triggers; only the
 user's differences from `DefaultKeymap` are saved to `keymap.json` in the
 editor settings directory. `OperatorSearch` is the F3 popup and `KeymapEditor`
 the rebinding window. `ObjectOperators` holds the document-only object
-operators, which run headless in `tests/editor/OperatorTests.cpp`;
-`ComponentOperators` the component value operators (reset, copy, paste, copy
+operators, which run headless in `tests/editor/OperatorTests.cpp`, and
+registers `CollectionOperators` (`collection.new`, `delete`, `link`, `unlink`,
+`set_flag`, and `object.collection_instance_add`) and `VisibilityOperators`
+(`object.hide` H, `object.unhide` Alt+H, `object.isolate` Shift+H). The
+viewport hide is editor-only: `EditorSession` renders with
+`SceneVisibilityMode::Editor` while editing and `Runtime` in Play mode, and
+hidden or unselectable entities (or collections) cannot be picked or selected
+with Select All. `ComponentOperators` holds the component value operators (reset, copy, paste, copy
 to selected, move), tested in `tests/editor/ComponentOperatorTests.cpp`.
 `EyedropperOperators` arms (`ui.eyedropper_entity`), completes
 (`ui.eyedropper_pick`, one undo step), and cancels (`ui.eyedropper_cancel`) the

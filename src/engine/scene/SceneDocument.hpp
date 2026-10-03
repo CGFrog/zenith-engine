@@ -62,6 +62,24 @@ struct SceneEntityChange {
     std::optional<std::string> after;
 };
 
+// The scene's collection definitions on each side of an edit: the compact
+// JSON `collections` array exactly as SceneDocument::serialize writes it.
+struct SceneCollectionsChange {
+    std::string before;
+    std::string after;
+};
+
+// Everything an edit changed between two documents: the entities, sorted by
+// id, and the collection definitions when they differ.
+struct SceneChanges {
+    std::vector<SceneEntityChange> entities;
+    std::optional<SceneCollectionsChange> collections;
+
+    bool empty() const {
+        return entities.empty() && !collections;
+    }
+};
+
 enum class SceneChangeDirection {
     // Moves each changed entity to its after state.
     Forward,
@@ -79,9 +97,15 @@ enum class SceneChangeDirection {
 //   2  Every asset reference is an object holding its project-relative `path`
 //      and, when an asset database knows the asset, its `guid`. An empty
 //      string still means "no asset".
+//   3  A top-level `collections` array, sorted by id, holds the collection
+//      definitions: {id, name, parent (id or null), visible, selectable,
+//      renderable, instance_offset [x, y, z]}. Entities join collections
+//      through the `collection_membership` component and instance them
+//      through `collection_instance`; both must name collections the
+//      document defines. Version 2 documents migrate with no collections.
 class SceneDocument {
   public:
-    static constexpr uint32_t currentVersion = 2;
+    static constexpr uint32_t currentVersion = 3;
 
     static SceneDocumentResult serialize(const Scene& scene, const AssetManager& assets,
                                          const SceneDocumentOptions& options, std::string& output);
@@ -96,15 +120,16 @@ class SceneDocument {
                                     const SceneDocumentOptions& options, Scene& destination);
 
     // Lists, sorted by id, the entities whose document form differs between
-    // two serialized documents. Entities equal on both sides are omitted, so
-    // the result is empty when the documents describe the same scene.
-    static SceneDocumentResult diff(std::string_view before, std::string_view after,
-                                    std::vector<SceneEntityChange>& changes);
+    // two serialized documents, and the collection definitions when they
+    // differ. Entities equal on both sides are omitted, so the result is
+    // empty when the documents describe the same scene.
+    static SceneDocumentResult diff(std::string_view before, std::string_view after, SceneChanges& changes);
 
     // Patches destination in place so every listed entity matches its state
     // on the chosen side: absent entities are destroyed, others are created
     // or rebuilt from their JSON with the same stable id. Unlisted entities
     // are untouched and keep their EnTT handles, components, and child order.
+    // Listed collection definitions replace the scene's.
     //
     // A rebuilt entity keeps its EnTT handle, loses every component the
     // document does not describe (as a full document load would), and keeps
@@ -114,11 +139,12 @@ class SceneDocument {
     // produces when siblings are already in id order.
     //
     // The patch is atomic: entity JSON, components, parent references,
-    // hierarchy cycles, and children orphaned by a removal are all validated
-    // before the scene changes, and a failure leaves destination untouched.
-    // Removing an entity that does not exist is not an error, so a patch can
-    // be applied to a scene already in the target state.
-    static SceneDocumentResult applyChanges(std::span<const SceneEntityChange> changes, SceneChangeDirection direction,
+    // hierarchy cycles, children orphaned by a removal, collection
+    // definitions, and every collection reference of the resulting scene are
+    // all validated before the scene changes, and a failure leaves
+    // destination untouched. Removing an entity that does not exist is not an
+    // error, so a patch can be applied to a scene already in the target state.
+    static SceneDocumentResult applyChanges(const SceneChanges& changes, SceneChangeDirection direction,
                                             AssetManager& assets, const SceneDocumentOptions& options,
                                             Scene& destination);
 };

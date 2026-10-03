@@ -19,7 +19,9 @@ glm::mat4 lensProjectionMatrix(const RenderView& lens, float aspectRatio);
 // The OpenGL-style projection ImGuizmo expects.
 glm::mat4 lensGizmoProjectionMatrix(const RenderView& lens, float aspectRatio);
 // The closest mesh hit by the ray through normalizedViewportPosition (0..1,
-// top-left origin), or entt::null.
+// top-left origin), or entt::null. Only entities the editor may select
+// (SceneVisibility::selectable) are hit; a collection instance's draw picks
+// its instancing entity.
 Entity pickThroughLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
                        glm::vec2 normalizedViewportPosition, float aspectRatio);
 // The lens of entity's CameraComponent at its world transform (scale is

@@ -110,6 +110,24 @@ last hovered. `Numpad 0` (or **View > Look Through**) looks through a scene
 camera; navigation is locked while you do, and any view key or **View > Exit
 Camera View** returns to the editor camera.
 
+Group objects into **collections** the way Blender does: they are separate
+from parenting, and an object can be in several. Search (`F3`) for **New
+Collection** to create one holding the selection; **Link to Collection** and
+**Remove from Collection** change membership, and **Delete Collection** moves
+its objects and nested collections to its parent. Each collection can be
+hidden in the viewport, made unselectable, or excluded from rendering
+altogether (`collection.set_flag`), and **Add Collection Instance** places an
+empty that draws a collection's objects at its own transform, offset by the
+collection's instance offset; hide the source collection and its instances
+still show. Collections are saved with the scene and every change undoes.
+
+With the mouse over the viewport or Hierarchy, `H` hides the selected objects,
+`Shift+H` hides everything else, and `Alt+H` reveals and selects every hidden
+object. Hiding is an editor aid: hidden objects are saved as hidden, cannot be
+clicked or selected with `A`, and still appear in Play mode and in the game.
+To leave something out of the game, turn off **Renderable** on its
+**Visibility** component or its collection.
+
 New, Open, Exit, and the native window close button ask what to do when the
 scene has unsaved changes. **Cancel** always leaves the active document intact.
 

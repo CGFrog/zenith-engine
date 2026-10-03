@@ -1,6 +1,7 @@
 #include "Particles.hpp"
 
 #include "engine/scene/Scene.hpp"
+#include "engine/scene/SceneVisibility.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -196,13 +197,14 @@ ParticleFramePlan ParticleScheduler::plan(std::span<const EmitterSnapshot> snaps
     return result;
 }
 
-std::vector<EmitterSnapshot> gatherEmitters(const Scene& scene) {
+std::vector<EmitterSnapshot> gatherEmitters(const Scene& scene, SceneVisibilityMode visibilityMode) {
     std::vector<EmitterSnapshot> snapshots;
+    const SceneVisibility visibility(scene, visibilityMode);
     const auto view = scene.registry().view<const ParticleEmitterComponent, const TransformComponent>();
     for (Entity entity : view) {
         const SceneEntityId id = scene.id(entity);
         const auto& emitter = view.get<const ParticleEmitterComponent>(entity);
-        if (!id || !validateParticleEmitter(emitter).empty()) {
+        if (!id || !validateParticleEmitter(emitter).empty() || !visibility.drawn(entity)) {
             continue;
         }
         snapshots.push_back(

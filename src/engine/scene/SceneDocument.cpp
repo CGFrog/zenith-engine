@@ -90,6 +90,16 @@ SceneDocumentResult migrateVersion1To2(Json& document) {
     return {.success = true};
 }
 
+// Version 2 to 3: documents gain a top-level collections array. Older scenes
+// had no collections, so every entity stays in the implicit root collection.
+SceneDocumentResult migrateVersion2To3(Json& document) {
+    if (document.contains("collections")) {
+        return {.error = "A version 2 document cannot define collections"};
+    }
+    document["collections"] = Json::array();
+    return {.success = true};
+}
+
 // Upgrades the raw JSON of a document written at fromVersion to
 // fromVersion + 1. Steps run in order before the document is validated.
 struct DocumentMigration {
@@ -97,7 +107,7 @@ struct DocumentMigration {
     SceneDocumentResult (*apply)(Json& document);
 };
 
-constexpr std::array<DocumentMigration, 1> documentMigrations{{{1, migrateVersion1To2}}};
+constexpr std::array<DocumentMigration, 2> documentMigrations{{{1, migrateVersion1To2}, {2, migrateVersion2To3}}};
 static_assert(documentMigrations.size() + 1 == SceneDocument::currentVersion,
               "every earlier scene document version needs a migration");
 
@@ -127,7 +137,70 @@ SceneDocumentResult upgradeDocument(Json& document) {
                              " failed: " + result.error};
         }
     }
+    if (!document.contains("collections") || !document["collections"].is_array()) {
+        return {.error = "Scene document must contain a collections array"};
+    }
     document["version"] = SceneDocument::currentVersion;
+    return {.success = true};
+}
+
+Json vector3Json(const glm::vec3& value) {
+    return Json::array({value.x, value.y, value.z});
+}
+
+Json collectionsJson(const SceneCollections& collections) {
+    Json result = Json::array();
+    for (const SceneCollection& collection : collections.all()) {
+        result.push_back({{"id", collection.id.value},
+                          {"name", collection.name},
+                          {"parent", collection.parent ? Json(collection.parent.value) : Json(nullptr)},
+                          {"visible", collection.visible},
+                          {"selectable", collection.selectable},
+                          {"renderable", collection.renderable},
+                          {"instance_offset", vector3Json(collection.instanceOffset)}});
+    }
+    return result;
+}
+
+// Reads a collections array. Parents may follow their children in the array
+// (a collection moved under a newer one keeps its smaller id), so every
+// collection is added first and nested afterwards, which also rejects cycles.
+SceneDocumentResult readCollections(const Json& array, SceneCollections& output) {
+    if (!array.is_array()) {
+        return {.error = "Scene collections must be an array"};
+    }
+    SceneCollections collections;
+    std::vector<std::pair<SceneCollectionId, SceneCollectionId>> parents;
+    for (const Json& serialized : array) {
+        SceneCollection collection{.id = {serialized.at("id").get<uint64_t>()},
+                                   .name = serialized.at("name").get<std::string>(),
+                                   .visible = serialized.at("visible").get<bool>(),
+                                   .selectable = serialized.at("selectable").get<bool>(),
+                                   .renderable = serialized.at("renderable").get<bool>()};
+        const Json& offset = serialized.at("instance_offset");
+        if (!offset.is_array() || offset.size() != 3) {
+            return {.error = "Collection " + std::to_string(collection.id.value) +
+                             " instance_offset must contain three numbers"};
+        }
+        collection.instanceOffset = {offset[0].get<float>(), offset[1].get<float>(), offset[2].get<float>()};
+        if (const Json& parent = serialized.at("parent"); !parent.is_null()) {
+            const SceneCollectionId parentId{parent.get<uint64_t>()};
+            if (!parentId) {
+                return {.error = "Collection " + std::to_string(collection.id.value) +
+                                 " references invalid parent collection 0"};
+            }
+            parents.emplace_back(collection.id, parentId);
+        }
+        if (CollectionResult result = collections.add(std::move(collection)); !result) {
+            return {.error = result.error};
+        }
+    }
+    for (const auto& [child, parent] : parents) {
+        if (CollectionResult result = collections.setParent(child, parent); !result) {
+            return {.error = "Collection " + std::to_string(child.value) + ": " + result.error};
+        }
+    }
+    output = std::move(collections);
     return {.success = true};
 }
 
@@ -334,6 +407,36 @@ SceneDocumentResult validateHierarchy(const PatchPlan& plan, const Scene& scene)
     return {.success = true};
 }
 
+// Every collection the patched scene references must exist in its final
+// collection set: the staged entities' references, and those of existing
+// entities the patch keeps unchanged.
+SceneDocumentResult validateCollectionReferences(const PatchPlan& plan, const Scene& staging, const Scene& scene,
+                                                 const SceneCollections& collections) {
+    if (std::string missing = findMissingCollectionReference(staging, collections); !missing.empty()) {
+        return {.error = std::move(missing)};
+    }
+    const auto unchanged = [&plan](uint64_t id) {
+        return !plan.removals.contains(id) && !plan.upsertIndices.contains(id);
+    };
+    for (const auto [entity, membership] : scene.registry().view<const CollectionMembershipComponent>().each()) {
+        const uint64_t id = scene.id(entity).value;
+        for (const SceneCollectionId collection : membership.collections) {
+            if (unchanged(id) && collections.find(collection) == nullptr) {
+                return {.error = "Entity " + std::to_string(id) + " is a member of missing collection " +
+                                 std::to_string(collection.value)};
+            }
+        }
+    }
+    for (const auto [entity, instance] : scene.registry().view<const CollectionInstanceComponent>().each()) {
+        const uint64_t id = scene.id(entity).value;
+        if (unchanged(id) && collections.find(instance.collection) == nullptr) {
+            return {.error = "Entity " + std::to_string(id) + " instances missing collection " +
+                             std::to_string(instance.collection.value)};
+        }
+    }
+    return {.success = true};
+}
+
 // Removes every component except the stable id, name, transform, and
 // hierarchy, so the entity starts from what a fresh document load creates.
 // Scene-private transform caches are recreated when the transform is marked
@@ -454,7 +557,9 @@ struct ParsedSceneDocument::Impl {
 
 SceneDocumentResult SceneDocument::serialize(const Scene& scene, const AssetManager& assets,
                                              const SceneDocumentOptions& options, std::string& output) {
-    Json document = {{"version", currentVersion}, {"entities", Json::array()}};
+    Json document = {{"version", currentVersion},
+                     {"collections", collectionsJson(scene.collections())},
+                     {"entities", Json::array()}};
     std::vector<Entity> entities;
     auto view = scene.registry().view<const SceneEntityIdComponent>();
     entities.assign(view.begin(), view.end());
@@ -516,6 +621,10 @@ SceneDocumentResult SceneDocument::parse(std::string_view input, ParsedSceneDocu
                 ancestor = found == parents.end() ? 0 : found->second;
             }
         }
+        SceneCollections collections;
+        if (SceneDocumentResult result = readCollections(document["collections"], collections); !result) {
+            return result;
+        }
 
         auto parsed = std::make_shared<ParsedSceneDocument::Impl>();
         parsed->document = std::move(document);
@@ -537,6 +646,11 @@ SceneDocumentResult SceneDocument::commit(const ParsedSceneDocument& parsed, Ass
         const Json& document = parsed.m_impl->document;
 
         Scene loaded;
+        SceneCollections collections;
+        if (SceneDocumentResult result = readCollections(document["collections"], collections); !result) {
+            return result;
+        }
+        loaded.setCollections(std::move(collections));
         std::unordered_map<uint64_t, Entity> entities;
         // Children are attached in document order, which serialize writes
         // in ascending id order, so a loaded hierarchy lists siblings by id.
@@ -568,6 +682,9 @@ SceneDocumentResult SceneDocument::commit(const ParsedSceneDocument& parsed, Ass
                 !result) {
                 return {.error = "Entity " + std::to_string(id) + ": " + result.error};
             }
+        }
+        if (std::string missing = findMissingCollectionReference(loaded, loaded.collections()); !missing.empty()) {
+            return {.error = std::move(missing)};
         }
         loaded.updateWorldTransforms();
         destination.replaceWith(std::move(loaded));
@@ -625,8 +742,7 @@ SceneDocumentResult SceneDocument::load(const std::filesystem::path& path, Asset
     return deserialize(contents.str(), assets, options, destination);
 }
 
-SceneDocumentResult SceneDocument::diff(std::string_view before, std::string_view after,
-                                        std::vector<SceneEntityChange>& changes) {
+SceneDocumentResult SceneDocument::diff(std::string_view before, std::string_view after, SceneChanges& changes) {
     try {
         Json beforeDocument;
         Json afterDocument;
@@ -661,21 +777,36 @@ SceneDocumentResult SceneDocument::diff(std::string_view before, std::string_vie
                 ++afterEntity;
             }
         }
-        changes = std::move(result);
+        changes.entities = std::move(result);
+        changes.collections.reset();
+        if (const Json& beforeCollections = beforeDocument["collections"];
+            beforeCollections != afterDocument["collections"]) {
+            changes.collections = SceneCollectionsChange{.before = beforeCollections.dump(),
+                                                         .after = afterDocument["collections"].dump()};
+        }
         return {.success = true};
     } catch (const nlohmann::json::exception& error) {
         return {.error = "Invalid scene document: " + std::string(error.what())};
     }
 }
 
-SceneDocumentResult SceneDocument::applyChanges(std::span<const SceneEntityChange> changes,
-                                                SceneChangeDirection direction, AssetManager& assets,
-                                                const SceneDocumentOptions& options, Scene& destination) {
+SceneDocumentResult SceneDocument::applyChanges(const SceneChanges& changes, SceneChangeDirection direction,
+                                                AssetManager& assets, const SceneDocumentOptions& options,
+                                                Scene& destination) {
     try {
         PatchPlan plan;
         Scene staging;
+        std::optional<SceneCollections> collections;
+        if (changes.collections) {
+            const std::string& target =
+                direction == SceneChangeDirection::Forward ? changes.collections->after : changes.collections->before;
+            collections.emplace();
+            if (SceneDocumentResult result = readCollections(Json::parse(target), *collections); !result) {
+                return result;
+            }
+        }
         std::unordered_set<uint64_t> listed;
-        for (const SceneEntityChange& change : changes) {
+        for (const SceneEntityChange& change : changes.entities) {
             if (!change.id) {
                 return {.error = "Scene change contains invalid entity ID 0"};
             }
@@ -708,7 +839,15 @@ SceneDocumentResult SceneDocument::applyChanges(std::span<const SceneEntityChang
         if (SceneDocumentResult result = validateHierarchy(plan, destination); !result) {
             return result;
         }
+        const SceneCollections& finalCollections = collections ? *collections : destination.collections();
+        if (SceneDocumentResult result = validateCollectionReferences(plan, staging, destination, finalCollections);
+            !result) {
+            return result;
+        }
         applyPlan(plan, staging, options, destination);
+        if (collections) {
+            destination.setCollections(std::move(*collections));
+        }
         return {.success = true};
     } catch (const nlohmann::json::exception& error) {
         return {.error = "Invalid scene change: " + std::string(error.what())};

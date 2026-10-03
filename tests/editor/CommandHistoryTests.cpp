@@ -113,8 +113,8 @@ void testPrefabAuthoring(const std::filesystem::path& directory) {
            "inspection should report orphaned overrides separately");
 }
 
-std::vector<SceneEntityChange> diff(const std::string& before, const std::string& after) {
-    std::vector<SceneEntityChange> changes;
+SceneChanges diff(const std::string& before, const std::string& after) {
+    SceneChanges changes;
     const SceneDocumentResult result = SceneDocument::diff(before, after, changes);
     expect(result.success, "documents should diff");
     return changes;

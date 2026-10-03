@@ -224,11 +224,11 @@ EnvironmentSource environmentSource(TextureHandle map, const AssetManager& asset
 // nearest the camera first, returned in entity order with their sources.
 std::vector<ReflectionProbeVolume> selectPerPixelProbes(const Scene& scene, const AssetManager& assets,
                                                         const EnvironmentLightComponent& environment,
-                                                        const glm::vec3& cameraPosition,
+                                                        const glm::vec3& cameraPosition, SceneVisibilityMode visibility,
                                                         std::vector<EnvironmentSource>& sources) {
     std::vector<ReflectionProbeVolume> mapped;
     std::vector<EnvironmentSource> mappedSources;
-    for (const ReflectionProbeVolume& probe : gatherReflectionProbes(scene)) {
+    for (const ReflectionProbeVolume& probe : gatherReflectionProbes(scene, visibility)) {
         const auto& component = scene.registry().get<ReflectionProbeComponent>(probe.entity);
         const EnvironmentSource source = environmentSource(component.environmentMap, assets, environment);
         if (source.mapAsset) {
@@ -785,7 +785,7 @@ std::vector<GpuDecal> MeshPass::prepareDecals(const Scene& scene, const AssetMan
     if (settings.decals == DecalQuality::Off) {
         return {};
     }
-    const std::vector<DecalProjector> sceneDecals = gatherDecals(scene);
+    const std::vector<DecalProjector> sceneDecals = gatherDecals(scene, m_sceneVisibilityMode);
     sceneDecalCount = static_cast<uint32_t>(sceneDecals.size());
     // Textures resolve before the frame's bindless writes. A decal whose
     // texture is still uploading (or was rejected) is left out until it lands,
@@ -2265,53 +2265,87 @@ void MeshPass::setSceneViewport(const DrawContext& draw) const {
     vkCmdSetScissor(draw.commandBuffer, 0, 1, &scissor);
 }
 
+bool MeshPass::appendRenderItems(const Scene& scene, const AssetManager& assets,
+                                 const std::vector<RenderObjectId>& outlinedObjects, Entity entity, Entity instancer,
+                                 const glm::mat4& world, std::vector<RenderItem>& items) {
+    const Entity renderObject = instancer == entt::null ? entity : instancer;
+    const RenderObjectId objectId = static_cast<RenderObjectId>(entt::to_integral(renderObject));
+    const bool outlined = std::binary_search(outlinedObjects.begin(), outlinedObjects.end(), objectId);
+    const MeshHandle meshHandle = scene.registry().get<MeshRendererComponent>(entity).mesh;
+    const MeshAsset* mesh = assets.mesh(meshHandle);
+    if (!mesh) {
+        return false;
+    }
+    // A mesh whose upload could not be staged this frame (the staging ring is
+    // full while a scene loads) is skipped and retried on the next frame;
+    // the pending flag forces that rebuild even when nothing else changed.
+    const GpuMesh* gpuMesh = ensureMesh(meshHandle, assets);
+    if (!gpuMesh) {
+        m_meshUploadsPending = m_meshUploadsPending ||
+                               m_deferredUploads.deferredThisFrame(DeferredUploadKind::Mesh, handleKey(meshHandle));
+        return true;
+    }
+    const SkinComponent* skin = scene.registry().try_get<SkinComponent>(entity);
+    const glm::vec3 center = glm::vec3(world * glm::vec4(mesh->bounds.center, 1.0f));
+    const float scale = std::max(
+        {glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])), glm::length(glm::vec3(world[2]))});
+    for (const MeshPrimitive& primitive : mesh->primitives) {
+        const MaterialAsset* material = assets.material(primitive.material);
+        const GpuMaterial* gpuMaterial = ensureMaterial(primitive.material, assets);
+        if (!material || !gpuMaterial) {
+            return false;
+        }
+        items.push_back({.meshHandle = meshHandle,
+                         .entity = entity,
+                         .instancer = instancer,
+                         .materialHandle = primitive.material,
+                         .mesh = mesh,
+                         .primitive = &primitive,
+                         .lod = primitive.lod(0),
+                         .material = material,
+                         .gpuMesh = gpuMesh,
+                         .gpuMaterial = gpuMaterial,
+                         .world = world,
+                         .previousWorld = world,
+                         .boundsCenter = center,
+                         .boundsRadius = mesh->bounds.radius * scale,
+                         .outlined = outlined,
+                         .jointPalette = skin ? skin->jointPalette : std::vector<glm::mat4>{}});
+    }
+    return true;
+}
+
 bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
                                 const std::vector<RenderObjectId>& outlinedObjects, std::vector<RenderItem>& items) {
     m_meshUploadsPending = false;
+    const SceneVisibility visibility(scene, m_sceneVisibilityMode);
+    m_builtVisibilityMode = m_sceneVisibilityMode;
     const auto renderables = scene.registry().view<const TransformComponent, const MeshRendererComponent>();
     for (Entity entity : renderables) {
-        const RenderObjectId objectId = static_cast<RenderObjectId>(entt::to_integral(entity));
-        const bool outlined = std::binary_search(outlinedObjects.begin(), outlinedObjects.end(), objectId);
-        const MeshHandle meshHandle = renderables.get<const MeshRendererComponent>(entity).mesh;
-        const MeshAsset* mesh = assets.mesh(meshHandle);
-        if (!mesh) {
-            return false;
-        }
-        // A mesh whose upload could not be staged this frame (the staging ring is
-        // full while a scene loads) is skipped and retried on the next frame;
-        // the pending flag forces that rebuild even when nothing else changed.
-        const GpuMesh* gpuMesh = ensureMesh(meshHandle, assets);
-        if (!gpuMesh) {
-            m_meshUploadsPending = m_meshUploadsPending ||
-                                   m_deferredUploads.deferredThisFrame(DeferredUploadKind::Mesh, handleKey(meshHandle));
+        if (!visibility.drawn(entity)) {
             continue;
         }
-        const glm::mat4 world = renderables.get<const TransformComponent>(entity).world;
-        const SkinComponent* skin = scene.registry().try_get<SkinComponent>(entity);
-        const glm::vec3 center = glm::vec3(world * glm::vec4(mesh->bounds.center, 1.0f));
-        const float scale = std::max(
-            {glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])), glm::length(glm::vec3(world[2]))});
-        for (const MeshPrimitive& primitive : mesh->primitives) {
-            const MaterialAsset* material = assets.material(primitive.material);
-            const GpuMaterial* gpuMaterial = ensureMaterial(primitive.material, assets);
-            if (!material || !gpuMaterial) {
-                return false;
-            }
-            items.push_back({.meshHandle = meshHandle,
-                             .entity = entity,
-                             .materialHandle = primitive.material,
-                             .mesh = mesh,
-                             .primitive = &primitive,
-                             .lod = primitive.lod(0),
-                             .material = material,
-                             .gpuMesh = gpuMesh,
-                             .gpuMaterial = gpuMaterial,
-                             .world = world,
-                             .previousWorld = world,
-                             .boundsCenter = center,
-                             .boundsRadius = mesh->bounds.radius * scale,
-                             .outlined = outlined,
-                             .jointPalette = skin ? skin->jointPalette : std::vector<glm::mat4>{}});
+        if (!appendRenderItems(scene, assets, outlinedObjects, entity, entt::null,
+                               renderables.get<const TransformComponent>(entity).world, items)) {
+            return false;
+        }
+    }
+    // Instance draws follow the scene's own items; their position in the
+    // expansion keeps record ids distinct when one member is drawn twice.
+    m_collectionInstanceDraws.clear();
+    expandCollectionInstances(scene, visibility, m_collectionInstanceDraws);
+    m_hasCollectionInstances = !m_collectionInstanceDraws.empty();
+    for (size_t ordinal = 0; ordinal < m_collectionInstanceDraws.size(); ++ordinal) {
+        const CollectionInstanceDraw& draw = m_collectionInstanceDraws[ordinal];
+        if (!scene.registry().all_of<MeshRendererComponent>(draw.member)) {
+            continue;
+        }
+        const size_t first = items.size();
+        if (!appendRenderItems(scene, assets, outlinedObjects, draw.member, draw.instancer, draw.world, items)) {
+            return false;
+        }
+        for (size_t index = first; index < items.size(); ++index) {
+            items[index].instanceOrdinal = static_cast<uint32_t>(ordinal + 1);
         }
     }
     std::sort(items.begin(), items.end(), [](const RenderItem& first, const RenderItem& second) {
@@ -2338,13 +2372,17 @@ bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
     m_gpuHandleItems.clear();
     for (size_t index = 0; index < items.size(); ++index) {
         RenderItem& item = items[index];
-        const RenderObjectId objectId = static_cast<RenderObjectId>(entt::to_integral(item.entity));
+        const RenderObjectId objectId = static_cast<RenderObjectId>(entt::to_integral(item.renderObject()));
         m_objectItems[objectId].push_back(index);
         item.recordId = static_cast<uint64_t>(objectId) * 0x9e3779b97f4a7c15ull;
         item.recordId ^=
             handleKey(item.meshHandle) + 0x9e3779b97f4a7c15ull + (item.recordId << 6) + (item.recordId >> 2);
         item.recordId ^=
             handleKey(item.materialHandle) + item.primitive->firstIndex + (item.recordId << 6) + (item.recordId >> 2);
+        if (item.instanceOrdinal != 0) {
+            item.recordId ^= (static_cast<uint64_t>(entt::to_integral(item.entity)) << 32 | item.instanceOrdinal) +
+                             0x9e3779b97f4a7c15ull + (item.recordId << 6) + (item.recordId >> 2);
+        }
         const GpuSceneObject gpuObject{.recordId = item.recordId,
                                        .objectId = objectId,
                                        .meshKey = handleKey(item.meshHandle),
@@ -2382,6 +2420,10 @@ uint32_t MeshPass::updateRenderItems(const Scene& scene, std::span<const Entity>
         const SkinComponent* skin = scene.registry().try_get<SkinComponent>(entity);
         for (size_t itemIndex : found->second) {
             RenderItem& item = m_renderItems[itemIndex];
+            if (item.instancer != entt::null) {
+                // Instance draws are rebuilt instead (m_hasCollectionInstances).
+                continue;
+            }
             item.previousWorld = item.world;
             item.world = transform->world;
             item.boundsCenter = glm::vec3(item.world * glm::vec4(item.mesh->bounds.center, 1.0f));
@@ -2415,13 +2457,15 @@ std::vector<int32_t> MeshPass::recordLocalShadows(VkCommandBuffer commandBuffer,
     const SceneRevisions& revisions = scene.revisions();
     collectShadowCasterChanges(scene);
     const bool enabled = settings.localLights != LocalLightingQuality::Disabled;
-    const LocalShadowFrameInput input{.quality = enabled ? settings.localShadows : LocalShadowQuality::Off,
-                                      .lights = lights,
-                                      .cameraPosition = cameraPosition,
-                                      .changedCasters = m_changedShadowCasters,
-                                      .invalidateAll = revisions.renderable != m_localShadowRevisions.renderable ||
-                                                       revisions.material != m_localShadowRevisions.material ||
-                                                       assets.revision() != m_localShadowAssetRevision};
+    const LocalShadowFrameInput input{
+        .quality = enabled ? settings.localShadows : LocalShadowQuality::Off,
+        .lights = lights,
+        .cameraPosition = cameraPosition,
+        .changedCasters = m_changedShadowCasters,
+        .invalidateAll = revisions.renderable != m_localShadowRevisions.renderable ||
+                         revisions.material != m_localShadowRevisions.material ||
+                         (m_hasCollectionInstances && revisions.transform != m_localShadowRevisions.transform) ||
+                         assets.revision() != m_localShadowAssetRevision};
     const CameraBuffer& camera = m_cameras[frameIndex];
     const std::array<VkDescriptorSet, 2> cameraSets{camera.descriptor, camera.gpuDrivenDescriptor};
     m_localShadowObjectCount = 0;
@@ -2850,6 +2894,7 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const 
     pruneUnusedAssets(assets);
     m_textureStreamingBytesPerFrame = rendering.settings().textureStreamingBytesPerFrame;
 
+    m_sceneVisibilityMode = rendering.sceneVisibilityMode();
     // Render packets mark the union of every view's outlines; views filter.
     m_outlinedObjects.clear();
     for (const MeshPassViewRequest& request : views) {
@@ -3010,7 +3055,8 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
     std::vector<EnvironmentSource> residentProbeSources;
     // Probe residency is frame-level, so every view shares the lead's choice.
     frame.residentProbes = lead.plan.perPixelReflectionProbes
-                               ? selectPerPixelProbes(scene, assets, environment, cameraPosition, residentProbeSources)
+                               ? selectPerPixelProbes(scene, assets, environment, cameraPosition, m_sceneVisibilityMode,
+                                                      residentProbeSources)
                                : std::vector<ReflectionProbeVolume>{};
     passTimestamps.write(FrameTimestamp::environmentPrecomputeBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     const std::optional<EnvironmentFrameState> environmentState = m_environmentPass.prepare(
@@ -3056,19 +3102,36 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
             static_cast<uint64_t>(outlined) + 0x9e3779b97f4a7c15ull + (outlineRevision << 6) + (outlineRevision >> 2);
     }
     const SceneRevisions& revisions = scene.revisions();
-    const bool rebuildPackets = !m_packetCachingEnabled || m_meshUploadsPending ||
-                                revisions.renderable != m_sceneRevisions.renderable ||
-                                revisions.material != m_sceneRevisions.material ||
-                                assets.revision() != m_assetRevision || outlineRevision != m_outlineRevision;
+    const bool instancesMoved = m_hasCollectionInstances && (revisions.transform != m_sceneRevisions.transform ||
+                                                             revisions.skin != m_sceneRevisions.skin);
+    const bool rebuildPackets =
+        !m_packetCachingEnabled || m_meshUploadsPending || revisions.renderable != m_sceneRevisions.renderable ||
+        revisions.material != m_sceneRevisions.material || assets.revision() != m_assetRevision ||
+        outlineRevision != m_outlineRevision || m_sceneVisibilityMode != m_builtVisibilityMode || instancesMoved;
     const auto packetBuildStart = std::chrono::steady_clock::now();
     uint32_t scannedRenderables = 0;
     uint32_t updatedObjectRecords = 0;
     uint32_t allocationCount = 0;
     if (rebuildPackets) {
+        // Rebuilt items normally start without motion; when instances force
+        // the rebuild, each record keeps last frame's transform and palette.
+        std::unordered_map<uint64_t, std::pair<glm::mat4, std::vector<glm::mat4>>> previousState;
+        if (instancesMoved) {
+            for (RenderItem& item : m_renderItems) {
+                previousState.emplace(item.recordId,
+                                      std::pair(item.previousWorld, std::move(item.previousJointPalette)));
+            }
+        }
         m_renderItems.clear();
         const size_t previousCapacity = m_renderItems.capacity();
         if (!buildRenderItems(scene, assets, m_outlinedObjects, m_renderItems)) {
             return false;
+        }
+        for (RenderItem& item : m_renderItems) {
+            if (const auto previous = previousState.find(item.recordId); previous != previousState.end()) {
+                item.previousWorld = previous->second.first;
+                item.previousJointPalette = std::move(previous->second.second);
+            }
         }
         scannedRenderables = static_cast<uint32_t>(scene.registry().view<const MeshRendererComponent>().size());
         updatedObjectRecords = static_cast<uint32_t>(m_renderItems.size());
@@ -3102,7 +3165,7 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
     FrameTaskGraph taskGraph(++m_taskGeneration);
     taskGraph.add("light-selection", lightResources, [&](const FrameTaskContext&) {
         if (frame.localLightLimit > 0) {
-            frame.sceneLights = gatherLocalLights(scene);
+            frame.sceneLights = gatherLocalLights(scene, m_sceneVisibilityMode);
             frame.leadLights = selectLocalLights(frame.sceneLights, cameraPosition, frame.localLightLimit);
         }
     });
@@ -3439,7 +3502,8 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
     if (timestampQueries) {
         vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 1);
     }
-    if (!collectCpuSubmittedItems(view, gpuDrivenActive, cameraPosition, request.outlinedObjects)) {
+    if (!collectCpuSubmittedItems(view, gpuDrivenActive, cameraPosition, request.outlinedObjects,
+                                  request.visibleObjects)) {
         return false;
     }
     uploadCpuSubmittedObjects(draw);
@@ -4005,7 +4069,8 @@ void MeshPass::prepareShadowMapForSampling(VkCommandBuffer commandBuffer) {
 bool MeshPass::recordParticleSimulation(const DrawContext& draw, const Scene& scene, const AssetManager& assets,
                                         ParticleQuality quality, const ParticleSimulationFrame& frame) {
     const std::vector<particles::EmitterSnapshot> emitters =
-        quality == ParticleQuality::Off ? std::vector<particles::EmitterSnapshot>{} : particles::gatherEmitters(scene);
+        quality == ParticleQuality::Off ? std::vector<particles::EmitterSnapshot>{}
+                                        : particles::gatherEmitters(scene, m_sceneVisibilityMode);
     // Sprite slot 0 is the procedural sprite; its view only keeps the
     // descriptor array valid. Emitters share a slot per distinct texture.
     m_particleSpriteViews.fill(m_whiteTexture.view);
@@ -4113,12 +4178,15 @@ void MeshPass::restoreDepthAfterPyramid(VkCommandBuffer commandBuffer, VkImage d
 }
 
 bool MeshPass::collectCpuSubmittedItems(ViewState& view, bool gpuDrivenActive, const glm::vec3& cameraPosition,
-                                        std::span<const RenderObjectId> outlinedObjects) {
+                                        std::span<const RenderObjectId> outlinedObjects,
+                                        const std::vector<RenderObjectId>* visibleObjects) {
+    const auto objectId = [](const RenderItem& item) {
+        return static_cast<RenderObjectId>(entt::to_integral(item.renderObject()));
+    };
     // RenderItem::outlined marks every recorded view's outlines; this view
     // keeps only its own.
     const auto outlinedHere = [&](const RenderItem& item) {
-        return item.outlined &&
-               std::ranges::binary_search(outlinedObjects, static_cast<RenderObjectId>(entt::to_integral(item.entity)));
+        return item.outlined && std::ranges::binary_search(outlinedObjects, objectId(item));
     };
     view.visibleItems.clear();
     for (GpuSceneHandle handle : view.visibility.visibleInstances) {
@@ -4127,6 +4195,9 @@ bool MeshPass::collectCpuSubmittedItems(ViewState& view, bool gpuDrivenActive, c
             continue;
         }
         const RenderItem& item = m_renderItems[found->second];
+        if (visibleObjects != nullptr && !std::ranges::binary_search(*visibleObjects, objectId(item))) {
+            continue;
+        }
         // With GPU culling the CPU only submits what the indirect path cannot:
         // blended surfaces and the editor's outline passes.
         if (gpuDrivenActive && !item.material->translucent() && !outlinedHere(item)) {

@@ -48,7 +48,7 @@ void SceneEditing::commit(std::string name, std::string coalesceKey, std::string
     if (before == after) {
         return;
     }
-    std::vector<SceneEntityChange> changes;
+    SceneChanges changes;
     if (const SceneDocumentResult result = SceneDocument::diff(before, after, changes); !result) {
         m_diagnostics.reportError("Could not record editor command: " + result.error);
         return;

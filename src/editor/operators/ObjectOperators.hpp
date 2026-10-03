@@ -70,4 +70,6 @@ struct AddEmptyWithProperties {
     glm::vec3 location{0.0f};
 };
 
+// Also registers the collection and visibility operators
+// (CollectionOperators.hpp, VisibilityOperators.hpp).
 OperatorRegistrationResult registerObjectOperators(OperatorRegistry& registry);

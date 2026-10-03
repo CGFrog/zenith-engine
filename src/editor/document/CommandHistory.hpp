@@ -61,17 +61,18 @@ class SceneStateCommand final : public EditorCommand {
 };
 
 // Records an edit as the document form of only the entities it added,
-// removed, or changed (SceneDocument::diff), and undoes or redoes it by
-// patching those entities in place (SceneDocument::applyChanges). Memory and
-// time scale with the size of the edit rather than the scene, and entities
-// the edit did not touch keep their EnTT handles across undo and redo.
+// removed, or changed, plus the collection definitions when it changed them
+// (SceneDocument::diff), and undoes or redoes it by patching those in place
+// (SceneDocument::applyChanges). Memory and time scale with the size of the
+// edit rather than the scene, and entities the edit did not touch keep their
+// EnTT handles across undo and redo.
 //
 // Commands with the same non-empty coalesce key merge: the merged command
-// keeps each entity's state before the first edit and after the last one,
-// dropping entities that ended where they started.
+// keeps each entity's (and the collections') state before the first edit and
+// after the last one, dropping what ended where it started.
 class EntityDiffCommand final : public EditorCommand {
   public:
-    EntityDiffCommand(std::string name, std::vector<SceneEntityChange> changes, std::string coalesceKey = {});
+    EntityDiffCommand(std::string name, SceneChanges changes, std::string coalesceKey = {});
 
     std::string_view name() const override;
     EditorCommandResult execute(EditorCommandContext& context) override;
@@ -79,12 +80,12 @@ class EntityDiffCommand final : public EditorCommand {
     bool mergeWith(const EditorCommand& newer) override;
     size_t storedBytes() const override;
 
-    // Sorted by entity id.
-    const std::vector<SceneEntityChange>& changes() const;
+    // Entities sorted by id.
+    const SceneChanges& changes() const;
 
   private:
     std::string m_name;
-    std::vector<SceneEntityChange> m_changes;
+    SceneChanges m_changes;
     std::string m_coalesceKey;
 };
 

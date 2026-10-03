@@ -29,7 +29,9 @@ struct ReflectionProbeVolume {
 };
 
 // Every probe in the scene, in ascending entity order.
-std::vector<ReflectionProbeVolume> gatherReflectionProbes(const Scene& scene);
+// Only probes the visibility mode draws (see SceneVisibility.hpp).
+std::vector<ReflectionProbeVolume>
+gatherReflectionProbes(const Scene& scene, SceneVisibilityMode visibility = SceneVisibilityMode::Runtime);
 
 // Distance from point to the probe's box; zero inside it.
 float reflectionProbeDistance(const ReflectionProbeVolume& probe, const glm::vec3& point);

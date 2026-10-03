@@ -3,6 +3,7 @@
 #include "../../assets/Assets.hpp"
 #include "../../jobs/FrameTaskGraph.hpp"
 #include "../../scene/Scene.hpp"
+#include "../../scene/SceneVisibility.hpp"
 #include "../DeferredUploadTracker.hpp"
 #include "../MeshLodSelection.hpp"
 #include "../MeshPassFramePlan.hpp"
@@ -79,6 +80,10 @@ struct MeshPassViewRequest {
     std::optional<GridOverlay> grid;
     // Sorted object ids drawn with the editor outline.
     std::span<const RenderObjectId> outlinedObjects;
+    // Sorted object ids the view is isolated to (RenderRuntime::
+    // setViewVisibleEntities); null draws every object. An isolated view must
+    // clear plan.gpuDrivenSubmission, since GPU culling draws every record.
+    const std::vector<RenderObjectId>* visibleObjects{nullptr};
     // Receives the view's statistics when not null.
     RenderViewStats* stats{nullptr};
     // Pick regions to draw into the id buffer; empty skips the pass.
@@ -286,7 +291,21 @@ class MeshPass {
 
     struct RenderItem {
         MeshHandle meshHandle;
+        // The entity whose mesh, material, and skin are drawn.
         Entity entity{entt::null};
+        // For a draw produced by a collection instance, the instancing entity
+        // (see expandCollectionInstances); null otherwise. Outlines, object
+        // ids, and view isolation follow renderObject().
+        Entity instancer{entt::null};
+        // One-based position of the instance draw in the frame's expansion,
+        // mixed into recordId so repeated draws of one member stay distinct;
+        // zero for the scene's own items.
+        uint32_t instanceOrdinal{0};
+
+        Entity renderObject() const {
+            return instancer == entt::null ? entity : instancer;
+        }
+
         uint64_t recordId{0};
         GpuSceneHandle gpuSceneHandle;
         MaterialHandle materialHandle;
@@ -536,8 +555,15 @@ class MeshPass {
     const MeshPipelineSet* meshPipelines(MeshShadingVariant variant);
     bool createWireframeOverlay(MeshPipelineSet& pipelines, VkShaderModule meshVertex);
     bool createShadowResources(VkFormat depthFormat);
+    // Builds the items of every entity m_sceneVisibilityMode draws, plus the
+    // draws collection instances expand to.
     bool buildRenderItems(const Scene& scene, const AssetManager& assets,
                           const std::vector<RenderObjectId>& outlinedObjects, std::vector<RenderItem>& items);
+    // Appends one item per primitive of entity's mesh drawn at world. Returns
+    // false when an asset is invalid; a mesh still uploading is skipped.
+    bool appendRenderItems(const Scene& scene, const AssetManager& assets,
+                           const std::vector<RenderObjectId>& outlinedObjects, Entity entity, Entity instancer,
+                           const glm::mat4& world, std::vector<RenderItem>& items);
     uint32_t updateRenderItems(const Scene& scene, std::span<const Entity> changedEntities);
     // Who selects the directional shadow casters of each dirty cascade.
     enum class ShadowCulling {
@@ -622,9 +648,11 @@ class MeshPass {
     void prepareDepthForPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const;
     void restoreDepthAfterPyramid(VkCommandBuffer commandBuffer, VkImage depthImage) const;
     // Fills view.visibleItems with what the CPU submits this frame, in draw
-    // order, and marks the entries outlined in this view.
+    // order, and marks the entries outlined in this view. visibleObjects, when
+    // not null, isolates the view to those sorted objects.
     bool collectCpuSubmittedItems(ViewState& view, bool gpuDrivenActive, const glm::vec3& cameraPosition,
-                                  std::span<const RenderObjectId> outlinedObjects);
+                                  std::span<const RenderObjectId> outlinedObjects,
+                                  const std::vector<RenderObjectId>* visibleObjects);
     void uploadCpuSubmittedObjects(const DrawContext& draw);
     // Empty unless the view's latest recording for frameIndex ran the depth
     // prepass.
@@ -717,6 +745,15 @@ class MeshPass {
     // Union of every recorded view's outlined objects; RenderItem::outlined
     // marks it, and each view filters by its own list.
     std::vector<RenderObjectId> m_outlinedObjects;
+    // RenderRuntime::sceneVisibilityMode for the frame being recorded, and the
+    // mode the current render items were built with.
+    SceneVisibilityMode m_sceneVisibilityMode{SceneVisibilityMode::Runtime};
+    SceneVisibilityMode m_builtVisibilityMode{SceneVisibilityMode::Runtime};
+    // Set when the render items include collection-instance draws. Their
+    // worlds compose several entities' transforms, so any transform or skin
+    // change rebuilds the items instead of updating them in place.
+    bool m_hasCollectionInstances{false};
+    std::vector<CollectionInstanceDraw> m_collectionInstanceDraws;
     std::vector<const RenderItem*> m_shadowVisibleItems;
     GpuTexture m_whiteTexture;
     GpuTexture m_normalTexture;

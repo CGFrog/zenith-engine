@@ -14,7 +14,7 @@ depend on this subtree.
 | `modules/` | Game module hosting: loading the project's module, running its systems, hot reload, and the header-only editor extension API modules implement. |
 | `menus/` | Menus as data: the `MenuRegistry` of named menus, entries, and dynamic sections (owner tokens for module cleanup), the searchable popup and menu-item drawing, `wm.call_menu`, and the default Add and Add Component menus. |
 | `interaction/` | Editor camera, picking, selection, gizmos, component editing widgets (including entity reference fields), and the entity eyedropper. |
-| `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object operators, the per-region keymap with `keymap.json` overrides, F3 search, and the keymap editor. |
+| `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object, component, collection, and visibility (hide) operators, the per-region keymap with `keymap.json` overrides, F3 search, and the keymap editor. |
 | `panels/` | One class per dockable window, drawn from an `EditorContext`. |
 | `project/` | Project tooling: the shared asset service (`ProjectAssets`: catalog, watchers, change dispatch, favourites), asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, and IDE launching. |
 | `settings/` | Persistent editor preferences, including the component inspector's section order and collapse state (legacy panel flags are only read, for migration). |
@@ -73,6 +73,9 @@ depend on this subtree.
   `theme/EditorWidgets` wrappers for themed controls; they keep ImGui's ids,
   so tests can address them by label. Area windows get their glass frame from
   `ThemeChrome` in `drawAreaWindow`; panels draw only their contents.
+- The viewport hide (`VisibilityComponent::hidden`, collection `visible`) is
+  editor-only: anything that picks or selects in the viewport uses
+  `SceneVisibility` in `Editor` mode, and Play mode renders in `Runtime` mode.
 - Automated editor runs must set `ZENITH_EDITOR_SETTINGS_DIR` so they never
   read or replace the user's settings directory.
 - Viewports are multiple-instance areas registered with the session's

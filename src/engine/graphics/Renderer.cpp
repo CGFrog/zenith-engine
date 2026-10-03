@@ -748,9 +748,13 @@ void Renderer::collectViewRequests(VkImage swapchainImage, VkImageView swapchain
             request.settings = &m_rendering->m_settings;
         }
         request.plan = m_meshPass.planFrame(*request.settings, m_rendering->capabilities());
-        if (slot != 0) {
+        if (view.visibleObjects) {
+            request.visibleObjects = &*view.visibleObjects;
+        }
+        if (slot != 0 || view.visibleObjects) {
             // GPU-driven submission and its occlusion history belong to the
-            // default view.
+            // default view, which falls back to CPU submission while
+            // isolated: GPU culling would draw every record.
             request.plan.gpuDrivenSubmission = false;
             request.plan.gpuShadowCulling = false;
         }

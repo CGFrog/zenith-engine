@@ -1,5 +1,7 @@
 #include "EditorCamera.hpp"
 
+#include "engine/scene/SceneVisibility.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
@@ -43,6 +45,50 @@ bool intersectTriangle(glm::vec3 origin, glm::vec3 direction, glm::vec3 a, glm::
     distance = glm::dot(edgeAC, crossOffset) * inverseDeterminant;
     return distance >= 0.0f;
 }
+
+// The nearest triangle of mesh drawn at world hit by the ray, when it is
+// closer than maximumDistance. Distances are along the mesh-local ray, as
+// the picker has always compared them.
+bool intersectMesh(const MeshAsset& mesh, const glm::mat4& world, glm::vec3 origin, glm::vec3 direction,
+                   float maximumDistance, float& distance) {
+    const glm::vec3 center = glm::vec3(world * glm::vec4(mesh.bounds.center, 1.0f));
+    const float scale = std::max(
+        {glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])), glm::length(glm::vec3(world[2]))});
+    float boundsDistance = 0.0f;
+    if (!intersectSphere(origin, direction, center, mesh.bounds.radius * scale, boundsDistance)) {
+        return false;
+    }
+    if (std::abs(glm::determinant(glm::mat3(world))) < 0.000001f) {
+        return false;
+    }
+    const glm::mat4 inverseWorld = glm::inverse(world);
+    const glm::vec3 localOrigin = glm::vec3(inverseWorld * glm::vec4(origin, 1.0f));
+    const glm::vec3 localDirection = glm::vec3(inverseWorld * glm::vec4(direction, 0.0f));
+    bool hit = false;
+    distance = maximumDistance;
+    // Pick against full-detail ranges only; simplified LOD ranges follow
+    // them in the same index buffer.
+    for (const MeshPrimitive& primitive : mesh.primitives) {
+        const size_t end =
+            std::min<size_t>(static_cast<size_t>(primitive.firstIndex) + primitive.indexCount, mesh.indices.size());
+        for (size_t index = primitive.firstIndex; index + 2 < end; index += 3) {
+            const uint32_t a = mesh.indices[index];
+            const uint32_t b = mesh.indices[index + 1];
+            const uint32_t c = mesh.indices[index + 2];
+            if (a >= mesh.vertices.size() || b >= mesh.vertices.size() || c >= mesh.vertices.size()) {
+                continue;
+            }
+            float triangleDistance = 0.0f;
+            if (intersectTriangle(localOrigin, localDirection, mesh.vertices[a].position, mesh.vertices[b].position,
+                                  mesh.vertices[c].position, triangleDistance) &&
+                triangleDistance < distance) {
+                distance = triangleDistance;
+                hit = true;
+            }
+        }
+    }
+    return hit;
+}
 } // namespace
 
 glm::mat4 lensViewMatrix(const RenderView& lens) {
@@ -73,47 +119,30 @@ Entity pickThroughLens(const Scene& scene, const AssetManager& assets, const Ren
 
     Entity closest = entt::null;
     float closestDistance = std::numeric_limits<float>::max();
+    const auto consider = [&](Entity meshEntity, const glm::mat4& world, Entity picked) {
+        const MeshAsset* mesh = assets.mesh(scene.registry().get<MeshRendererComponent>(meshEntity).mesh);
+        float distance = 0.0f;
+        if (mesh != nullptr && intersectMesh(*mesh, world, origin, direction, closestDistance, distance)) {
+            closest = picked;
+            closestDistance = distance;
+        }
+    };
+    // Hidden entities, unselectable ones, and those in hidden or unselectable
+    // collections cannot be picked.
+    const SceneVisibility visibility(scene, SceneVisibilityMode::Editor);
     auto renderables = scene.registry().view<const MeshRendererComponent, const TransformComponent>();
     for (Entity entity : renderables) {
-        const MeshAsset* mesh = assets.mesh(renderables.get<const MeshRendererComponent>(entity).mesh);
-        if (mesh == nullptr) {
-            continue;
+        if (visibility.selectable(entity)) {
+            consider(entity, renderables.get<const TransformComponent>(entity).world, entity);
         }
-        const glm::mat4& world = renderables.get<const TransformComponent>(entity).world;
-        const glm::vec3 center = glm::vec3(world * glm::vec4(mesh->bounds.center, 1.0f));
-        const float scale = std::max(
-            {glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])), glm::length(glm::vec3(world[2]))});
-        float boundsDistance = 0.0f;
-        if (!intersectSphere(origin, direction, center, mesh->bounds.radius * scale, boundsDistance)) {
-            continue;
-        }
-        const glm::mat3 linearWorld(world);
-        if (std::abs(glm::determinant(linearWorld)) < 0.000001f) {
-            continue;
-        }
-        const glm::mat4 inverseWorld = glm::inverse(world);
-        const glm::vec3 localOrigin = glm::vec3(inverseWorld * glm::vec4(origin, 1.0f));
-        const glm::vec3 localDirection = glm::vec3(inverseWorld * glm::vec4(direction, 0.0f));
-        // Pick against full-detail ranges only; simplified LOD ranges follow
-        // them in the same index buffer.
-        for (const MeshPrimitive& primitive : mesh->primitives) {
-            const size_t end = std::min<size_t>(static_cast<size_t>(primitive.firstIndex) + primitive.indexCount,
-                                                mesh->indices.size());
-            for (size_t index = primitive.firstIndex; index + 2 < end; index += 3) {
-                const uint32_t a = mesh->indices[index];
-                const uint32_t b = mesh->indices[index + 1];
-                const uint32_t c = mesh->indices[index + 2];
-                if (a >= mesh->vertices.size() || b >= mesh->vertices.size() || c >= mesh->vertices.size()) {
-                    continue;
-                }
-                float triangleDistance = 0.0f;
-                if (intersectTriangle(localOrigin, localDirection, mesh->vertices[a].position,
-                                      mesh->vertices[b].position, mesh->vertices[c].position, triangleDistance) &&
-                    triangleDistance < closestDistance) {
-                    closest = entity;
-                    closestDistance = triangleDistance;
-                }
-            }
+    }
+    // Clicking a collection instance picks the entity instancing it.
+    std::vector<CollectionInstanceDraw> instances;
+    expandCollectionInstances(scene, visibility, instances);
+    for (const CollectionInstanceDraw& instance : instances) {
+        if (scene.registry().all_of<MeshRendererComponent>(instance.member) &&
+            visibility.selectable(instance.instancer)) {
+            consider(instance.member, instance.world, instance.instancer);
         }
     }
     return closest;

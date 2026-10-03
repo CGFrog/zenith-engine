@@ -30,8 +30,11 @@ class Selection {
     void assign(std::vector<SceneEntityId> ids);
     void selectOnly(SceneEntityId id);
     void click(SceneEntityId id, SelectionClickMode mode);
-    // Selects every entity, keeping the current active entity active.
+    // Selects every entity the editor may select (SceneVisibility::selectable:
+    // not hidden, selectable, renderable), keeping the current active entity
+    // active.
     void selectAll(const Scene& scene);
+    // Selects the selectable entities that are not selected.
     void invert(const Scene& scene);
     // Drops ids whose entities no longer exist, for example after undo.
     void removeMissing(const Scene& scene);

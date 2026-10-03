@@ -3,6 +3,7 @@
 // Presentation hints mirror the ranges the inspector has always offered.
 
 #include "../assets/IrradianceVolumeAsset.hpp"
+#include "CollectionComponentTypes.hpp"
 #include "ComponentTypes.hpp"
 #include "SceneAssetReferences.hpp"
 
@@ -785,5 +786,6 @@ SceneDocumentResult registerBuiltInComponentTypes(ComponentTypeRegistry& registr
             return result;
         }
     }
-    return {.success = true};
+    // Registered from their own translation unit to keep this one small.
+    return registerCollectionComponentTypes(registry);
 }

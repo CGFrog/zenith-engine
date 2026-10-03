@@ -222,7 +222,7 @@ void Scene::destroyEntity(Entity entity) {
     if (m_registry.any_of<ColliderComponent, RigidBodyComponent>(entity)) {
         m_physicsLifecycleEvents.push_back({entity, PhysicsLifecycleOperation::Destroy});
     }
-    const bool renderable = m_registry.any_of<MeshRendererComponent>(entity);
+    const bool renderable = m_registry.any_of<MeshRendererComponent, CollectionInstanceComponent>(entity);
     const bool light =
         m_registry.any_of<DirectionalLightComponent, EnvironmentLightComponent, PointLightComponent, SpotLightComponent,
                           ReflectionProbeComponent, IrradianceVolumeComponent, DecalComponent>(entity);
@@ -245,6 +245,7 @@ void Scene::clear() {
     m_dirtyTransformRoots.clear();
     m_transformAuditScratch.clear();
     m_physicsLifecycleEvents.clear();
+    m_collections = {};
     ++m_revisions.transform;
     ++m_revisions.renderable;
     ++m_revisions.light;
@@ -274,6 +275,8 @@ void Scene::replaceWith(Scene&& scene) {
     m_physicsLifecycleEvents = std::move(scene.m_physicsLifecycleEvents);
     m_renderPacketRevision = nextRevision;
     m_contentGeneration = std::max(m_contentGeneration, scene.m_contentGeneration) + 1;
+    m_collections = std::move(scene.m_collections);
+    scene.m_collections = {};
     scene.m_nextEntityId = 1;
 }
 
@@ -299,6 +302,7 @@ void Scene::swap(Scene& other) noexcept {
     std::swap(m_transformAuditScratch, other.m_transformAuditScratch);
     std::swap(m_transformAuditCountdown, other.m_transformAuditCountdown);
     std::swap(m_physicsLifecycleEvents, other.m_physicsLifecycleEvents);
+    std::swap(m_collections, other.m_collections);
     const uint64_t nextRevision = std::max(m_renderPacketRevision, other.m_renderPacketRevision) + 1;
     m_renderPacketRevision = nextRevision;
     other.m_renderPacketRevision = nextRevision + 1;
@@ -473,6 +477,17 @@ const entt::registry& Scene::registry() const {
     return m_registry;
 }
 
+const SceneCollections& Scene::collections() const {
+    return m_collections;
+}
+
+void Scene::setCollections(SceneCollections collections) {
+    m_collections = std::move(collections);
+    ++m_revisions.renderable;
+    ++m_revisions.light;
+    ++m_renderPacketRevision;
+}
+
 Entity Scene::cloneBranch(Entity source, Entity parent, bool appendCopySuffix) {
     const auto& sourceName = m_registry.get<NameComponent>(source).name;
     const Entity duplicate = createEntity(sourceName + (appendCopySuffix ? " Copy" : ""));
@@ -504,6 +519,9 @@ Entity Scene::cloneBranch(Entity source, Entity parent, bool appendCopySuffix) {
     copy.operator()<AudioListenerComponent>();
     copy.operator()<AudioEmitterComponent>();
     copy.operator()<PreservedComponentsComponent>();
+    copy.operator()<CollectionMembershipComponent>();
+    copy.operator()<CollectionInstanceComponent>();
+    copy.operator()<VisibilityComponent>();
 
     reparent(duplicate, parent);
     const std::vector<Entity> children = m_registry.get<RelationshipComponent>(source).children;

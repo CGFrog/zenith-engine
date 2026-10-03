@@ -169,7 +169,8 @@ void testWorkflow(const std::filesystem::path& sourceAssets, const std::filesyst
     const SceneDocumentResult saved = editor.document.saveAs(scenePath, editor.scene, editor.assets);
     expect(saved.success, "the scene should save: " + saved.error);
     const nlohmann::json savedDocument = readJson(scenePath);
-    expect(savedDocument.value("version", 0) == 2, "the scene should save as version 2");
+    expect(savedDocument.value("version", 0u) == SceneDocument::currentVersion,
+           "the scene should save as the current version");
     expect(componentOf(savedDocument, "model").value("guid", "") == modelGuid.toString() &&
                componentOf(savedDocument, "decal").at("albedo_asset").value("guid", "") == textureGuid.toString(),
            "saved references should carry the assets' GUIDs");
@@ -264,7 +265,8 @@ void testCheckedInScenes(const std::filesystem::path& assets, const std::filesys
         expect(loaded.success, name + " should load through migration: " + loaded.error);
         std::string upgraded;
         expect(SceneDocument::serialize(scene, assetManager, options, upgraded).success, name + " should serialize");
-        expect(nlohmann::json::parse(upgraded).value("version", 0) == 2, name + " should save as version 2");
+        expect(nlohmann::json::parse(upgraded).value("version", 0u) == SceneDocument::currentVersion,
+               name + " should save as the current version");
         Scene again;
         std::string roundTrip;
         expect(SceneDocument::deserialize(upgraded, assetManager, options, again).success &&
