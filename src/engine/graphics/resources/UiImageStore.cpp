@@ -73,7 +73,9 @@ void UiImageStore::sync(VkCommandBuffer commandBuffer, uint64_t recordingSerial,
         // A failed upload keeps the previous texture rather than retrying every frame.
         slot.pending.reset();
         if (!uploaded) {
-            destroy(replacement);
+            // The upload may have recorded a copy into the image before
+            // failing, so it can only be destroyed after this frame.
+            retire(recordingSerial, replacement);
             continue;
         }
         if (current.image != VK_NULL_HANDLE) {
