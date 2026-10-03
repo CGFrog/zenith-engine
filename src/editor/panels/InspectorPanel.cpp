@@ -4,6 +4,9 @@
 
 #include <imgui.h>
 
+InspectorPanel::InspectorPanel(ComponentInspectorLayout& layout)
+    : m_view(layout) {}
+
 const char* InspectorPanel::title() const {
     return "Inspector";
 }
@@ -20,6 +23,9 @@ void InspectorPanel::draw(EditorContext& context) {
     }
     if (context.selection.size() != 1) {
         m_view.drawMultipleSelection(context);
+        ImGui::Separator();
+        m_view.drawFilter("##InspectorFilter", m_filter);
+        m_view.drawComponents(context, context.selection.ids(), m_filter);
         return;
     }
     const SceneEntityId entityId = *context.selection.active();
@@ -30,7 +36,7 @@ void InspectorPanel::draw(EditorContext& context) {
     ImGui::Separator();
     m_view.drawFilter("##InspectorFilter", m_filter);
     m_view.drawTransform(context, entityId, m_filter);
-    m_view.drawComponents(context, entityId, m_filter);
+    m_view.drawComponents(context, context.selection.ids(), m_filter);
     m_view.drawPreservedComponents(context, entityId);
     m_view.drawIrradianceBakeButton(context, entityId);
     m_view.drawAssetWarnings(context, entityId);

@@ -5,6 +5,7 @@
 #include <vector>
 
 class BuildPanel;
+class ComponentInspectorLayout;
 class InfoPanel;
 class ProjectAssets;
 class RenderSettingsController;
@@ -17,6 +18,8 @@ struct EditorAreaServices {
     ProjectAssets& projectAssets;
     // Shared by every Properties and Graphics area.
     RenderSettingsController& renderSettings;
+    // Shared by every Inspector and Properties area.
+    ComponentInspectorLayout& componentLayout;
     const EditorToolSettings& tools;
     // Panels the session owns because other workflows use them: module
     // reloads wait for the build, and the smoke checks the engine log.

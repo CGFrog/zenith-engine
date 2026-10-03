@@ -19,6 +19,10 @@ constexpr const char* titleFontFile = "PressStart2P-Regular.ttf";
 float g_artPixel = 1.0f;
 ImFont* g_titleFont = nullptr;
 
+// Latin-1 plus the em dash the inspector shows for values that differ
+// between selected entities (mixedValueText).
+constexpr ImWchar editorGlyphRanges[]{0x0020, 0x00FF, 0x2014, 0x2014, 0};
+
 std::string utf8Path(const std::filesystem::path& path) {
     // ImGui opens files from UTF-8 paths on every platform.
     const std::u8string utf8 = path.u8string();
@@ -32,6 +36,7 @@ ImFont* addPixelFont(ImGuiIO& io, const std::filesystem::path& font, float pixel
     config.OversampleH = 1;
     config.OversampleV = 1;
     config.PixelSnapH = true;
+    config.GlyphRanges = editorGlyphRanges;
     ImFont* added = io.Fonts->AddFontFromFileTTF(utf8Path(font).c_str(), pixelSize, &config);
     if (added == nullptr) {
         return nullptr;
@@ -43,6 +48,7 @@ ImFont* addPixelFont(ImGuiIO& io, const std::filesystem::path& font, float pixel
         merge.MergeMode = true;
         merge.OversampleH = 2;
         merge.OversampleV = 2;
+        merge.GlyphRanges = editorGlyphRanges;
         io.Fonts->AddFontFromFileTTF(utf8Path(fallbackFont).c_str(), pixelSize * 0.85f, &merge);
     }
     return added;
@@ -214,6 +220,7 @@ EditorFontResult loadEditorFonts(ImGuiIO& io, const std::filesystem::path& fontD
     ImFontConfig config;
     config.OversampleH = 2;
     config.OversampleV = 2;
+    config.GlyphRanges = editorGlyphRanges;
     ImFont* font = io.Fonts->AddFontFromFileTTF(utf8Path(fallbackFont).c_str(), fallbackFontSize * artPixel, &config);
     if (font == nullptr) {
         result.error = "Could not load editor font: " + fallbackFont.string();

@@ -545,6 +545,7 @@ add_library(zenith_editor_app STATIC
     src/editor/application/EditorSession.cpp
     src/editor/application/EntityCommands.cpp
     src/editor/application/SceneEditing.cpp
+    src/editor/application/SystemClipboard.cpp
     src/editor/areas/AreaRegistry.cpp
     src/editor/areas/AreaWindows.cpp
     src/editor/areas/DefaultWorkspaces.cpp
@@ -567,6 +568,7 @@ add_library(zenith_editor_app STATIC
     src/editor/interaction/ReflectedFieldEditor.cpp
     src/editor/interaction/Selection.cpp
     src/editor/modules/GameModuleHost.cpp
+    src/editor/operators/ComponentOperators.cpp
     src/editor/operators/DefaultKeymap.cpp
     src/editor/operators/Keymap.cpp
     src/editor/operators/KeymapEditor.cpp
@@ -606,6 +608,7 @@ add_library(zenith_editor_app STATIC
     src/editor/project/ReflectionProbeBaker.cpp
     src/editor/project/ThumbnailCache.cpp
     src/editor/settings/AssetBrowserSettings.cpp
+    src/editor/settings/ComponentInspectorLayout.cpp
     src/editor/settings/EditorRenderSettings.cpp
     src/editor/settings/EditorSettings.cpp
     src/editor/settings/RenderSettingsController.cpp
@@ -1641,6 +1644,16 @@ if(BUILD_TESTING)
         target_compile_options(zenith_entity_reference_field_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_entity_reference_field COMMAND zenith_entity_reference_field_tests)
+
+
+    add_executable(zenith_component_operator_tests tests/editor/ComponentOperatorTests.cpp)
+    target_link_libraries(zenith_component_operator_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_component_operator_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_component_operator_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_component_operators COMMAND zenith_component_operator_tests)
 
     add_executable(zenith_logger_tests tests/engine/LoggerTests.cpp)
     target_link_libraries(zenith_logger_tests PRIVATE zenith_engine)

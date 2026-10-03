@@ -104,6 +104,7 @@ void EditorSession::registerAreaTypes() {
                  }});
     for (AreaType& type : builtInAreaTypes({.projectAssets = m_projectAssets,
                                             .renderSettings = m_renderSettings,
+                                            .componentLayout = m_componentLayout,
                                             .tools = m_settings.tools(),
                                             .build = m_buildPanel,
                                             .info = m_infoPanel})) {

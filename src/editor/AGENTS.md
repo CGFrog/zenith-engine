@@ -16,7 +16,7 @@ depend on this subtree.
 | `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object operators, the per-region keymap with `keymap.json` overrides, F3 search, and the keymap editor. |
 | `panels/` | One class per dockable window, drawn from an `EditorContext`. |
 | `project/` | Project tooling: the shared asset service (`ProjectAssets`: catalog, watchers, change dispatch, favourites), asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, and IDE launching. |
-| `settings/` | Persistent editor preferences (legacy panel flags are only read, for migration). |
+| `settings/` | Persistent editor preferences, including the component inspector's section order and collapse state (legacy panel flags are only read, for migration). |
 | `theme/` | The "Pixel Aero Night" look: palette, art-pixel metrics, pixel fonts, the procedural wallpaper and frosted glass, window chrome, themed widget wrappers, and pixel-art icons. |
 
 ## Local rules
@@ -32,7 +32,10 @@ depend on this subtree.
 - Component inspectors come from the engine's component registry. Prefer
   better field presentation hints over a custom editor; register a custom
   editor in `interaction/EntityPropertiesView` (shared by the Inspector and
-  Properties panels) only when reflected fields cannot express the UI.
+  Properties panels) only when reflected fields cannot express the UI. The
+  view edits several selected entities at once: a custom editor edits only the
+  component it is given, and the view copies the document keys it changed to
+  the others.
 - Every user action is a registered `Operator` with a stable id
   (`object.duplicate`, `file.save`). Menus, buttons, and keys invoke it by id
   (`EditorContext::invoke`); add default keys in `operators/DefaultKeymap.cpp`.

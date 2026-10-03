@@ -5,6 +5,7 @@
 #include "editor/areas/DefaultWorkspaces.hpp"
 #include "editor/document/DefaultScene.hpp"
 #include "editor/document/SceneFragment.hpp"
+#include "editor/operators/ComponentOperators.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/EyedropperOperators.hpp"
 #include "editor/operators/ObjectOperators.hpp"
@@ -63,6 +64,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_keymapPath(settingsDirectory / "keymap.json")
     , m_projectAssets(std::move(assetRoot), sceneRoot, settingsDirectory / "asset-browser.json")
     , m_renderSettings(std::move(renderSettings))
+    , m_componentLayoutPath(settingsDirectory / "component-inspector.json")
     , m_workspacesPath(settingsDirectory / "workspaces.json")
     , m_legacyLayoutPath(settingsDirectory / "layout.ini")
     , m_sceneRoot(std::move(sceneRoot))
@@ -82,6 +84,11 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
         m_diagnostics.reportError(result.error);
     }
     if (const OperatorRegistrationResult result = registerEyedropperOperators(m_operators, m_eyedropper); !result) {
+        m_diagnostics.reportError(result.error);
+    }
+    if (const OperatorRegistrationResult result =
+            registerComponentOperators(m_operators, {.clipboard = m_componentClipboard, .layout = m_componentLayout});
+        !result) {
         m_diagnostics.reportError(result.error);
     }
     // Scene references resolve through the project's asset database by GUID.
@@ -297,6 +304,9 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     if (const EditorRenderSettingsResult result = m_renderSettings.load(context.rendering); !result) {
         m_diagnostics.reportError(result.error);
     }
+    if (const ComponentInspectorLayoutResult result = m_componentLayout.load(m_componentLayoutPath); !result) {
+        m_diagnostics.reportError(result.error);
+    }
     const KeymapResult keymap = m_keymap.load(m_keymapPath);
     if (!keymap) {
         m_diagnostics.reportError(keymap.error);
@@ -388,6 +398,16 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
     updateAreas(context, input, deltaSeconds);
     updateGameModule(context, input, deltaSeconds);
     syncAreaTypes();
+    saveComponentLayoutIfChanged();
+}
+
+void EditorSession::saveComponentLayoutIfChanged() {
+    if (!m_componentLayout.takeChanged()) {
+        return;
+    }
+    if (const ComponentInspectorLayoutResult result = m_componentLayout.save(m_componentLayoutPath); !result) {
+        m_diagnostics.reportError(result.error);
+    }
 }
 
 ProjectAssetActions EditorSession::projectAssetActions(ApplicationContext& context) {
@@ -465,12 +485,61 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     }
     const bool areasDone = updateSmokeAreas(context);
     const bool viewportsDone = updateSmokeViewports(context);
+    const bool componentsDone = updateSmokeComponents(context);
     if (m_smokeFrame == 500 && !m_smokeStreamCompleted) {
         m_diagnostics.reportError("Streaming smoke did not commit while frames were being presented");
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    } else if (areasDone && viewportsDone && m_smokeStreamCompleted) {
+    } else if (areasDone && viewportsDone && componentsDone && m_smokeStreamCompleted) {
         updateSmokeModuleReload(context);
     }
+}
+
+bool EditorSession::updateSmokeComponents(ApplicationContext& context) {
+    // Frames 20-21: add two empties, select both, give the active one a
+    // point light, copy it to the other and reset both through the component
+    // operators (the Inspector draws the shared component in between), then
+    // undo every step.
+    constexpr uint32_t firstFrame = 20;
+    const auto fail = [&](const std::string& message) {
+        m_diagnostics.reportError("Component smoke failed: " + message);
+        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+    };
+    const auto pointLights = [&] {
+        return static_cast<size_t>(std::ranges::count_if(m_smokeComponentEntities, [&](SceneEntityId id) {
+            return context.scene.registry().all_of<PointLightComponent>(context.scene.findEntity(id));
+        }));
+    };
+    if (m_smokeFrame == firstFrame) {
+        m_smokeComponentUndoSteps = m_history.size();
+        m_smokeComponentEntities.clear();
+        for (int index = 0; index < 2; ++index) {
+            invokeOperator(context, "object.add_empty", {}, KeymapRegion::Global);
+            if (const std::optional<SceneEntityId> added = m_selection.active()) {
+                m_smokeComponentEntities.push_back(*added);
+            }
+        }
+        m_selection.assign(
+            std::vector<SceneEntityId>(m_smokeComponentEntities.rbegin(), m_smokeComponentEntities.rend()));
+        constexpr std::string_view light = R"({"component":"point_light"})";
+        for (const char* operatorId :
+             {"object.component_add", "object.component_copy_to_selected", "object.component_reset"}) {
+            invokeOperator(context, operatorId, light, KeymapRegion::Global);
+        }
+        m_smokeComponentUndoSteps = m_history.size() - m_smokeComponentUndoSteps;
+        if (m_smokeComponentEntities.size() != 2 || pointLights() != 2) {
+            fail("the point light was not copied to both selected entities");
+        }
+    } else if (m_smokeFrame == firstFrame + 1) {
+        for (size_t step = 0; step < m_smokeComponentUndoSteps && m_history.canUndo(); ++step) {
+            undo(context);
+        }
+        if (std::ranges::any_of(m_smokeComponentEntities,
+                                [&](SceneEntityId id) { return context.scene.findEntity(id) != entt::null; })) {
+            fail("undo did not remove the smoke entities");
+        }
+        m_selection.clear();
+    }
+    return m_smokeFrame > firstFrame + 1;
 }
 
 void EditorSession::updateSmokeModuleReload(ApplicationContext& context) {
@@ -629,6 +698,7 @@ void EditorSession::unload(ApplicationContext& context) {
     if (const EditorSettingsResult result = m_settings.save(); !result) {
         m_diagnostics.reportError(result.error);
     }
+    saveComponentLayoutIfChanged();
 }
 
 void EditorSession::handleGlobalShortcuts(ApplicationContext& context) {

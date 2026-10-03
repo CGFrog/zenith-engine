@@ -26,12 +26,15 @@ AreaType perArea(std::string id, std::string title, AreaPanelFactory create) {
 std::vector<AreaType> builtInAreaTypes(const EditorAreaServices& services) {
     ProjectAssets& projectAssets = services.projectAssets;
     RenderSettingsController& renderSettings = services.renderSettings;
+    ComponentInspectorLayout& componentLayout = services.componentLayout;
     const EditorToolSettings& tools = services.tools;
     std::vector<AreaType> types;
     types.push_back(perArea("hierarchy", "Hierarchy", [] { return std::make_unique<HierarchyPanel>(); }));
-    types.push_back(perArea("inspector", "Inspector", [] { return std::make_unique<InspectorPanel>(); }));
-    types.push_back(perArea("properties", "Properties",
-                            [&renderSettings] { return std::make_unique<PropertiesPanel>(renderSettings); }));
+    types.push_back(perArea("inspector", "Inspector",
+                            [&componentLayout] { return std::make_unique<InspectorPanel>(componentLayout); }));
+    types.push_back(perArea("properties", "Properties", [&renderSettings, &componentLayout] {
+        return std::make_unique<PropertiesPanel>(renderSettings, componentLayout);
+    }));
     types.push_back(
         perArea("diagnostics", "Diagnostics", [&tools] { return std::make_unique<DiagnosticsPanel>(tools); }));
     types.push_back(

@@ -38,16 +38,21 @@ const ComponentTypeRegistry& componentTypes(const EditorContext& context) {
     return componentTypesFor(context.editing.document().options());
 }
 
-// The single selected entity, when exactly one exists.
-std::optional<SceneEntityId> singleSelection(const EditorContext& context) {
-    if (context.selection.size() != 1) {
-        return std::nullopt;
-    }
+// The active entity, when it exists.
+std::optional<SceneEntityId> activeEntity(const EditorContext& context) {
     const std::optional<SceneEntityId> active = context.selection.active();
     if (!active || context.app.scene.findEntity(*active) == entt::null) {
         return std::nullopt;
     }
     return active;
+}
+
+// The single selected entity, when exactly one exists.
+std::optional<SceneEntityId> singleSelection(const EditorContext& context) {
+    if (context.selection.size() != 1) {
+        return std::nullopt;
+    }
+    return activeEntity(context);
 }
 
 // The entity the World tab shows for Component: the one the renderer uses
@@ -103,8 +108,9 @@ std::string PropertiesTab::label() const {
     return {};
 }
 
-PropertiesPanel::PropertiesPanel(RenderSettingsController& renderSettings)
-    : m_renderSettings(renderSettings) {}
+PropertiesPanel::PropertiesPanel(RenderSettingsController& renderSettings, ComponentInspectorLayout& layout)
+    : m_renderSettings(renderSettings)
+    , m_view(layout) {}
 
 const char* PropertiesPanel::title() const {
     return "Properties";
@@ -112,7 +118,7 @@ const char* PropertiesPanel::title() const {
 
 std::vector<PropertiesTab> PropertiesPanel::tabs(const EditorContext& context) const {
     std::vector<PropertiesTab> result{{.kind = PropertiesTabKind::Object}};
-    if (const std::optional<SceneEntityId> entity = singleSelection(context)) {
+    if (const std::optional<SceneEntityId> entity = activeEntity(context)) {
         for (std::string& category : entityComponentCategories(componentTypes(context), context.app.scene, *entity)) {
             result.push_back({.kind = PropertiesTabKind::Components, .category = std::move(category)});
         }
@@ -240,6 +246,7 @@ void PropertiesPanel::drawObjectTab(EditorContext& context) {
     }
     const std::optional<SceneEntityId> entityId = singleSelection(context);
     if (!entityId) {
+        // The shared components are on the Components tabs.
         m_view.drawMultipleSelection(context);
         return;
     }
@@ -255,14 +262,22 @@ void PropertiesPanel::drawObjectTab(EditorContext& context) {
 }
 
 void PropertiesPanel::drawComponentsTab(EditorContext& context, const std::string& category) {
-    const std::optional<SceneEntityId> entityId = singleSelection(context);
+    const std::optional<SceneEntityId> entityId = activeEntity(context);
     if (!entityId) {
         return;
     }
-    ImGui::TextUnformatted(
-        context.app.scene.registry().get<NameComponent>(context.app.scene.findEntity(*entityId)).name.c_str());
+    const bool single = context.selection.size() == 1;
+    if (single) {
+        ImGui::TextUnformatted(
+            context.app.scene.registry().get<NameComponent>(context.app.scene.findEntity(*entityId)).name.c_str());
+    } else {
+        ImGui::Text("%zu entities selected", context.selection.size());
+    }
     m_view.drawFilter("##PropertiesFilter", m_filter);
-    m_view.drawComponents(context, *entityId, m_filter, category);
+    m_view.drawComponents(context, context.selection.ids(), m_filter, category);
+    if (!single) {
+        return;
+    }
     // The bake button belongs beside the volume it bakes.
     if (const ComponentType* volume = componentTypes(context).find("irradiance_volume");
         volume != nullptr && componentCategoryLabel(*volume) == category) {
@@ -277,8 +292,8 @@ void PropertiesPanel::drawWorldTab(EditorContext& context) {
     const ComponentTypeRegistry& types = componentTypes(context);
     m_view.drawFilter("##PropertiesFilter", m_filter);
 
-    // Draws one world component of another entity. Its header has no Remove,
-    // since component removal acts on the active object.
+    // Draws one world component of another entity. Its header has no
+    // component menu, since the component operators act on the selection.
     const auto drawWorldComponent = [&](std::string_view key, SceneEntityId entityId) {
         const ComponentType* type = types.find(key);
         const Entity entity = scene.findEntity(entityId);
@@ -292,7 +307,8 @@ void PropertiesPanel::drawWorldTab(EditorContext& context) {
         if (ImGui::SmallButton("Select")) {
             context.selection.selectOnly(entityId);
         }
-        m_view.drawComponent(context, *type, entityId, {.filter = m_filter, .removable = false});
+        m_view.drawComponent(context, *type, std::span(&entityId, 1),
+                             {.filter = m_filter, .actions = EntityPropertiesView::HeaderActions::None});
         ImGui::PopID();
     };
 

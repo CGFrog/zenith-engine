@@ -92,6 +92,19 @@ void ComponentType::assign(void* component, const std::any& value) const {
     m_assign(component, value);
 }
 
+std::any ComponentType::makeDefault() const {
+    return m_makeDefault();
+}
+
+bool ComponentType::resetToDefault(Scene& scene, Entity entity) const {
+    void* component = find(scene, entity);
+    if (component == nullptr) {
+        return false;
+    }
+    assign(component, makeDefault());
+    return true;
+}
+
 void ComponentType::sanitize(void* component) const {
     if (m_sanitize) {
         m_sanitize(component);

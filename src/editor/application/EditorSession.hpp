@@ -4,6 +4,7 @@
 #include "editor/application/EditorPlayMode.hpp"
 #include "editor/application/NativeFileDialog.hpp"
 #include "editor/application/SceneEditing.hpp"
+#include "editor/application/SystemClipboard.hpp"
 #include "editor/areas/AreaRegistry.hpp"
 #include "editor/areas/Workspace.hpp"
 #include "editor/document/CommandHistory.hpp"
@@ -24,6 +25,7 @@
 #include "editor/panels/InfoPanel.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/project/ProjectAssets.hpp"
+#include "editor/settings/ComponentInspectorLayout.hpp"
 #include "editor/settings/EditorRenderSettings.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "editor/settings/RenderSettingsController.hpp"
@@ -112,6 +114,7 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
                           std::string_view properties = {}, bool selected = false);
     void drawOperatorWindows(ApplicationContext& context);
     void saveKeymap();
+    void saveComponentLayoutIfChanged();
 
     // Game module hosting.
     void loadGameModule();
@@ -197,6 +200,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // area when no viewport is open.
     glm::vec2 lastOperatorAnchor() const;
     bool updateSmokeViewports(ApplicationContext& context);
+    // Exercises multi-entity component operators and their undo.
+    bool updateSmokeComponents(ApplicationContext& context);
 
     enum class PendingAction {
         None,
@@ -237,6 +242,13 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
 
     // Shared by the Graphics and Properties areas, so declared before them.
     RenderSettingsController m_renderSettings;
+    // Component section order and collapse state, shared by the Inspector
+    // and Properties areas and the component operators, so declared before
+    // them; saved to component-inspector.json whenever it changes.
+    ComponentInspectorLayout m_componentLayout;
+    std::filesystem::path m_componentLayoutPath;
+    // Where the component copy and paste operators exchange values.
+    SystemClipboard m_componentClipboard;
     // Every viewport area registers here; declared before the areas, which
     // own the viewport panels, so it outlives them.
     ViewportRegistry m_viewports;
@@ -289,6 +301,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     std::string m_smokeWorkspace;
     std::string m_smokeArea;
     bool m_smokeShowedHierarchy{false};
+    // The entities the component smoke added and the undo steps it recorded.
+    std::vector<SceneEntityId> m_smokeComponentEntities;
+    size_t m_smokeComponentUndoSteps{0};
     // The multi-viewport smoke: the second Viewport area it opened, the two
     // viewports it compares, and their render views.
     std::string m_smokeViewportArea;
