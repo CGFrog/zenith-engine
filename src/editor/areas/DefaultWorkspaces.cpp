@@ -9,16 +9,16 @@ namespace {
 using enum DefaultDockSlot;
 
 constexpr std::array layoutAreas{
-    DefaultArea{"viewport", Center},          DefaultArea{"hierarchy", Left},         DefaultArea{"inspector", Right},
-    DefaultArea{"properties", Right},
-    DefaultArea{"graphics", RightBottom},     DefaultArea{"diagnostics", Bottom},     DefaultArea{"build", Bottom},
-    DefaultArea{"render_statistics", Bottom}, DefaultArea{"asset_browser", Bottom},
+    DefaultArea{"viewport", Center},  DefaultArea{"hierarchy", Left},           DefaultArea{"inspector", Right},
+    DefaultArea{"properties", Right}, DefaultArea{"graphics", RightBottom},     DefaultArea{"diagnostics", Bottom},
+    DefaultArea{"build", Bottom},     DefaultArea{"render_statistics", Bottom}, DefaultArea{"asset_browser", Bottom},
     DefaultArea{"info", Bottom},
 };
 
 constexpr std::array lightingAreas{
-    DefaultArea{"viewport", Center},       DefaultArea{"hierarchy", Left},           DefaultArea{"graphics", Right},
-    DefaultArea{"inspector", RightBottom}, DefaultArea{"properties", RightBottom}, DefaultArea{"render_statistics", Bottom},
+    DefaultArea{"viewport", Center},        DefaultArea{"hierarchy", Left},
+    DefaultArea{"graphics", Right},         DefaultArea{"inspector", RightBottom},
+    DefaultArea{"properties", RightBottom}, DefaultArea{"render_statistics", Bottom},
 };
 
 constexpr std::array debugAreas{
