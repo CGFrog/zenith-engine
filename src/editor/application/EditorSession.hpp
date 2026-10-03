@@ -148,6 +148,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     ProjectAssetActions projectAssetActions(ApplicationContext& context);
     void updateSmokeScenario(ApplicationContext& context);
     void updateSmokeHide(ApplicationContext& context);
+    // Prefab create, instantiate, structural override, and apply on a
+    // staging scene under a temporary asset root.
+    void updateSmokePrefabs(ApplicationContext& context);
     void updateSmokeModuleReload(ApplicationContext& context);
     void releaseSmokeLayers();
     void updateAutosave(ApplicationContext& context, float deltaSeconds);

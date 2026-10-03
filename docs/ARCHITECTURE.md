@@ -237,9 +237,29 @@ instance's placement and never an override. The editor's `PrefabAuthoring`
 service and `prefab.*` operators create, instantiate, apply, revert, revert one
 field, and unpack. Apply writes the prefab file, then refreshes every other
 instance in the scene against the new content while keeping the overrides it
-had against the old content (deleting or reparenting a prefab entity in an instance is not an override, so a refresh restores it); orphaned overrides are reported as diagnostics.
+had against the old content; orphaned overrides are reported as diagnostics.
+Structural changes are overrides too: moving a prefab entity under another
+entity of its instance is a `/parent` override found by the diff, and deleting
+one through the editor's delete commands records a `/removed` override on the
+instance root (`recordPrefabEntityRemoval`), since a missing entity is
+otherwise indistinguishable from one the prefab gained since the last refresh.
+Collection membership and collection instances are scene organization: prefabs
+never store them, instances keep their own through every refresh, and they are
+never overrides. Entity references are remapped by one generic pass over
+component JSON (`engine/scene/EntityReferenceRemap.hpp`, driven by the
+registry's reflected `EntityReference` fields, nested structs included, plus
+the model node and skin instance roots): prefab capture turns references
+between captured entities into prefab-local ids and clears (with a diagnostic)
+references outside the prefab; instantiate and refresh map them to the
+instance's entities; duplicate and paste (`SceneFragment`) map references
+inside the copied set to the copies and keep the rest.
 Operators are undoable for their scene changes only: prefab files are asset
-content and stay as written when a step is undone.
+content and stay as written when a step is undone. In the editor, the
+Inspector and Properties show an instance header (prefab name, Apply, Revert,
+Unpack, Select Prefab Asset) and mark overridden values with a bar in the
+`palette::prefabOverride` accent and bold override ink, with "Revert to
+Prefab" on right click; Add > Prefab lists the project's prefabs, and `.prefab`
+files dragged from the Asset Browser instantiate in viewports and the outliner.
 
 ## Runtime game-UI flow
 

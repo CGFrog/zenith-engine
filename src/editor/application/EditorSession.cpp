@@ -4,6 +4,7 @@
 #include "editor/areas/AreaWindows.hpp"
 #include "editor/areas/DefaultWorkspaces.hpp"
 #include "editor/document/DefaultScene.hpp"
+#include "editor/document/PrefabAuthoring.hpp"
 #include "editor/document/SceneFragment.hpp"
 #include "editor/menus/DefaultMenus.hpp"
 #include "editor/operators/ComponentOperators.hpp"
@@ -96,10 +97,23 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     if (const OperatorRegistrationResult result = registerMenuOperators(m_operators, m_menus); !result) {
         m_diagnostics.reportError(result.error);
     }
-    if (const MenuResult result = registerDefaultMenus(m_menus.registry()); !result) {
+    const auto projectPrefabs = [this] {
+        std::vector<std::filesystem::path> prefabs;
+        for (const EditorAssetRecord& asset : m_projectAssets.catalog().assets()) {
+            if (asset.kind == EditorAssetKind::Prefab) {
+                prefabs.push_back(asset.absolutePath);
+            }
+        }
+        return prefabs;
+    };
+    if (const MenuResult result = registerDefaultMenus(m_menus.registry(), {.projectPrefabs = projectPrefabs});
+        !result) {
         m_diagnostics.reportError(result.error);
     }
-    if (const OperatorRegistrationResult result = registerPrefabOperators(m_operators); !result) {
+    if (const OperatorRegistrationResult result = registerPrefabOperators(
+            m_operators,
+            {.revealAsset = [this](const std::filesystem::path& asset) { m_projectAssets.requestReveal(asset); }});
+        !result) {
         m_diagnostics.reportError(result.error);
     }
     // Scene references resolve through the project's asset database by GUID.
@@ -481,6 +495,8 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
         }
     } else if (m_smokeFrame == 7 || m_smokeFrame == 8) {
         updateSmokeHide(context);
+    } else if (m_smokeFrame == 9) {
+        updateSmokePrefabs(context);
     }
     if (m_smokeStreamInstance && !m_smokeStreamCompleted) {
         const auto state = m_smokeLayers->state(*m_smokeStreamInstance);
@@ -507,6 +523,47 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     } else if (areasDone && viewportsDone && componentsDone && menusDone && m_smokeStreamCompleted) {
         updateSmokeModuleReload(context);
     }
+}
+
+void EditorSession::updateSmokePrefabs(ApplicationContext& context) {
+    // Prefab authoring on a staging scene, with prefabs written under a
+    // temporary asset root beside the smoke scene so the project is never
+    // touched: create, instantiate twice, delete an entity from one instance
+    // (a structural override), apply the other, and check both.
+    const auto fail = [&](const std::string& message) {
+        m_diagnostics.reportError("Prefab smoke failed: " + message);
+        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+    };
+    SceneDocumentOptions options = m_document.options();
+    options.assetRoot = m_smokeScenePath.parent_path() / "prefab-smoke";
+    std::error_code error;
+    std::filesystem::remove_all(options.assetRoot, error);
+    PrefabAuthoring prefabs(context.assets, options);
+    Scene staging;
+    const Entity lamp = staging.createEntity("Lamp");
+    staging.registry().emplace<PointLightComponent>(lamp);
+    staging.setParent(staging.createEntity("Shade"), lamp);
+    Entity first = entt::null;
+    Entity second = entt::null;
+    if (PrefabResult created = prefabs.create(staging, lamp, "smoke/lamp.prefab"); !created) {
+        fail(created.error);
+    } else if (!prefabs.instantiate(staging, "smoke/lamp.prefab", entt::null, first) ||
+               !prefabs.instantiate(staging, "smoke/lamp.prefab", entt::null, second)) {
+        fail("the prefab did not instantiate");
+    } else {
+        const SceneEntityId firstId = staging.id(first);
+        const Entity shade = staging.registry().get<RelationshipComponent>(first).children.front();
+        recordPrefabEntityRemoval(staging, shade);
+        staging.destroyEntity(shade);
+        staging.registry().get<PointLightComponent>(second).intensity = 9.0f;
+        if (PrefabResult applied = prefabs.apply(staging, second); !applied) {
+            fail(applied.error);
+        } else if (staging.registry().get<PointLightComponent>(staging.findEntity(firstId)).intensity != 9.0f ||
+                   !staging.registry().get<RelationshipComponent>(staging.findEntity(firstId)).children.empty()) {
+            fail("apply did not update the other instance while keeping its deletion");
+        }
+    }
+    std::filesystem::remove_all(options.assetRoot, error);
 }
 
 bool EditorSession::updateSmokeComponents(ApplicationContext& context) {
@@ -814,6 +871,18 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         ImGui::Separator();
         operatorMenuItem(context, "wm.search_menu", "Search Operators...");
         operatorMenuItem(context, "wm.keymap_editor", "Keymap...");
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Object")) {
+        if (ImGui::BeginMenu("Prefab")) {
+            operatorMenuItem(context, "prefab.create_from_selection", "Create from Selection");
+            ImGui::Separator();
+            operatorMenuItem(context, "prefab.apply", "Apply");
+            operatorMenuItem(context, "prefab.revert", "Revert");
+            operatorMenuItem(context, "prefab.unpack", "Unpack");
+            operatorMenuItem(context, "prefab.select_asset", "Select Prefab Asset");
+            ImGui::EndMenu();
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {

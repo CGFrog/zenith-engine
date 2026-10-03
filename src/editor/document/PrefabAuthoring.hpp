@@ -2,7 +2,10 @@
 
 #include "engine/scene/Prefab.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,18 +39,27 @@ struct PrefabEntityOverrides {
     bool added{false};
     bool name{false};
     bool localTransform{false};
+    // Moved under another entity of the instance.
+    bool parent{false};
     // Sorted by component key.
     std::vector<PrefabComponentOverrides> components;
+    // The whole instance's override count, and how many of those are prefab
+    // entities deleted from it, for the instance header.
+    size_t instanceOverrides{0};
+    size_t removedEntities{0};
 
     // Whether a component field (a JSON pointer into the component's document
     // object), a value containing it, or a value inside it is overridden. The
-    // empty pointer asks about the component as a whole.
+    // empty pointer asks about the component as a whole. With an empty
+    // component, field is "/name", "/local_transform", or "/parent".
     bool overridden(std::string_view component, std::string_view field) const;
 };
 
-// Overrides cover values only: deleting a prefab entity from an instance or
-// moving one under another parent is not an override, so the next refresh of
-// that instance (revert, revertField, or another instance's apply) restores it.
+// Structural changes are overrides too: deleting a prefab entity from an
+// instance (through the editor's delete commands, which record it with
+// recordPrefabEntityRemoval) and moving one under another entity of the
+// instance survive refreshes; revert restores them and apply writes them into
+// the prefab.
 //
 // Prefab authoring workflows on an open scene. Each call edits the scene
 // directly and records no history: callers (the prefab operators) wrap them in
@@ -82,6 +94,46 @@ class PrefabAuthoring {
     // The overrides of one entity of an instance; reads the prefab file.
     PrefabResult overrides(const Scene& scene, Entity entity, PrefabEntityOverrides& output) const;
 
+    // A free project-relative path for a new prefab made from entity:
+    // "prefabs/<name>.prefab", numbered when that file exists.
+    std::filesystem::path suggestPath(const Scene& scene, Entity entity) const;
+    // The file a project-relative prefab reference names.
+    PrefabResult resolve(const std::filesystem::path& reference, std::filesystem::path& path) const;
+
   private:
     PrefabSystem m_prefabs;
+};
+
+// Keeps one entity's overrides between frames, so a panel does not reload and
+// compare the prefab every frame. A result is reused while the entity, the
+// document revision (CommandHistory::revision), and the prefab file's write
+// time stay the same.
+class PrefabOverrideCache {
+  public:
+    // The entity's overrides; on failure they are empty (not linked) and
+    // error() says why.
+    const PrefabEntityOverrides& get(const PrefabAuthoring& authoring, const Scene& scene, SceneEntityId entity,
+                                     uint64_t revision);
+
+    const std::string& error() const {
+        return m_error;
+    }
+
+    void clear();
+
+  private:
+    struct Key {
+        SceneEntityId entity;
+        uint64_t revision{0};
+        // Scene::contentGeneration, so a replaced scene (Play mode) is reread.
+        uint64_t sceneGeneration{0};
+        std::string prefab;
+        std::filesystem::file_time_type prefabWriteTime{};
+
+        bool operator==(const Key&) const = default;
+    };
+
+    std::optional<Key> m_key;
+    PrefabEntityOverrides m_overrides;
+    std::string m_error;
 };

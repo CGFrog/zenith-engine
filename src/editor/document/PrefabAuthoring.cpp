@@ -1,6 +1,8 @@
 #include "PrefabAuthoring.hpp"
 
 #include <algorithm>
+#include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace {
@@ -51,7 +53,8 @@ void linkCapture(Scene& scene, Entity root, const std::filesystem::path& referen
 
 bool PrefabEntityOverrides::overridden(std::string_view component, std::string_view field) const {
     if (component.empty()) {
-        return (field == "/name" && name) || (field == "/local_transform" && localTransform);
+        return (field == "/name" && name) || (field == "/local_transform" && localTransform) ||
+               (field == "/parent" && parent);
     }
     const auto found = std::ranges::find(components, component, &PrefabComponentOverrides::component);
     if (found == components.end()) {
@@ -85,14 +88,15 @@ PrefabResult PrefabAuthoring::create(Scene& scene, Entity root, const std::files
         return {.error = "A file already exists at " + reference.generic_string()};
     }
     PrefabCapture capture;
-    if (PrefabResult captured = m_prefabs.capture(scene, root, reference, capture); !captured) {
+    PrefabResult captured = m_prefabs.capture(scene, root, reference, capture);
+    if (!captured) {
         return captured;
     }
     if (PrefabResult saved = savePrefab(path, capture.document); !saved) {
         return saved;
     }
     linkCapture(scene, root, reference, capture);
-    return {.success = true};
+    return captured;
 }
 
 PrefabResult PrefabAuthoring::instantiate(Scene& scene, const std::filesystem::path& reference, Entity parent,
@@ -127,8 +131,9 @@ PrefabResult PrefabAuthoring::apply(Scene& scene, Entity entity) {
     }
 
     PrefabCapture capture;
-    if (PrefabResult captured = m_prefabs.capture(scene, root, reference, capture); !captured) {
-        return captured;
+    PrefabResult result = m_prefabs.capture(scene, root, reference, capture);
+    if (!result) {
+        return result;
     }
     std::filesystem::path path;
     if (PrefabResult resolved = m_prefabs.resolve(reference, path); !resolved) {
@@ -139,7 +144,6 @@ PrefabResult PrefabAuthoring::apply(Scene& scene, Entity entity) {
     }
     linkCapture(scene, root, reference, capture);
 
-    PrefabResult result{.success = true};
     for (const auto& [id, overrides] : others) {
         // An earlier refresh may have removed this instance (it was added to
         // another instance of the same prefab).
@@ -231,13 +235,18 @@ PrefabResult PrefabAuthoring::overrides(const Scene& scene, Entity entity, Prefa
     if (PrefabResult compared = m_prefabs.overrides(scene, root, source, all); !compared) {
         return compared;
     }
+    output.instanceOverrides = all.size();
     for (const PrefabOverride& value : all) {
+        if (value.component.empty() && value.field == "/removed") {
+            ++output.removedEntities;
+        }
         if (value.entity != marker->entity) {
             continue;
         }
         if (value.component.empty()) {
             output.name |= value.field == "/name";
             output.localTransform |= value.field == "/local_transform";
+            output.parent |= value.field == "/parent";
             continue;
         }
         auto found = std::ranges::find(output.components, value.component, &PrefabComponentOverrides::component);
@@ -255,4 +264,78 @@ PrefabResult PrefabAuthoring::overrides(const Scene& scene, Entity entity, Prefa
     }
     // Overrides arrive sorted by component, then field.
     return {.success = true};
+}
+
+std::filesystem::path PrefabAuthoring::suggestPath(const Scene& scene, Entity entity) const {
+    std::string stem = "Prefab";
+    if (entity != entt::null && scene.registry().valid(entity)) {
+        // Keep the name a portable file name; prefab references are stored as
+        // generic narrow strings, so other characters become underscores.
+        std::string name;
+        for (const char character : scene.registry().get<NameComponent>(entity).name) {
+            const auto code = static_cast<unsigned char>(character);
+            const bool reserved = std::string_view("<>:\"/\\|?*").find(character) != std::string_view::npos;
+            name += reserved || code < 0x20 || code >= 0x7F ? '_' : character;
+        }
+        while (!name.empty() && (name.back() == ' ' || name.back() == '.')) {
+            name.pop_back();
+        }
+        if (!name.empty()) {
+            stem = std::move(name);
+        }
+    }
+    for (int number = 1;; ++number) {
+        const std::string suffix = number == 1 ? std::string() : " " + std::to_string(number);
+        std::filesystem::path reference = std::filesystem::path("prefabs") / (stem + suffix + ".prefab");
+        std::filesystem::path path;
+        std::error_code error;
+        if (!m_prefabs.resolve(reference, path) || !std::filesystem::exists(path, error)) {
+            return reference;
+        }
+    }
+}
+
+PrefabResult PrefabAuthoring::resolve(const std::filesystem::path& reference, std::filesystem::path& path) const {
+    return m_prefabs.resolve(reference, path);
+}
+
+const PrefabEntityOverrides& PrefabOverrideCache::get(const PrefabAuthoring& authoring, const Scene& scene,
+                                                      SceneEntityId entityId, uint64_t revision) {
+    const Entity entity = scene.findEntity(entityId);
+    Key key{.entity = entityId, .revision = revision, .sceneGeneration = scene.contentGeneration()};
+    if (const Entity root = entity == entt::null ? entt::null : prefabInstanceRoot(scene, entity); root != entt::null) {
+        key.prefab = scene.registry().get<PrefabInstanceComponent>(root).prefab;
+        std::filesystem::path path;
+        std::error_code error;
+        if (authoring.resolve(key.prefab, path)) {
+            key.prefabWriteTime = std::filesystem::last_write_time(path, error);
+        }
+    }
+    if (m_key == key) {
+        return m_overrides;
+    }
+    m_key = key;
+    m_error.clear();
+    if (entity == entt::null) {
+        m_overrides = {};
+        return m_overrides;
+    }
+    if (PrefabResult result = authoring.overrides(scene, entity, m_overrides); !result) {
+        m_error = std::move(result.error);
+        // Keep the link, so the instance header still offers its actions.
+        const bool linked = m_overrides.linked;
+        m_overrides = {};
+        m_overrides.linked = linked || !key.prefab.empty();
+        m_overrides.prefab = key.prefab;
+        if (m_overrides.linked) {
+            m_overrides.instanceRoot = scene.id(prefabInstanceRoot(scene, entity));
+        }
+    }
+    return m_overrides;
+}
+
+void PrefabOverrideCache::clear() {
+    m_key.reset();
+    m_overrides = {};
+    m_error.clear();
 }

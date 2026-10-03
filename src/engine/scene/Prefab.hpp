@@ -58,9 +58,20 @@ struct PrefabEntity {
 // One overridden value of one prefab entity. Fields are RFC 6901 JSON pointers:
 //
 //   component ""            field "/name" or "/local_transform"
+//   component ""            field "/parent"  value <prefab-local id>
+//                           (moved under another entity of the instance)
+//   component ""            field "/removed" value true
+//                           (deleted from the instance, with its descendants)
 //   component "point_light" field "/intensity" (a value inside the component)
 //   component "point_light" field ""  value {...}  (component added or replaced)
 //   component "point_light" field ""  value null   (component removed)
+//
+// Entity references inside override values hold prefab-local ids for entities
+// of the instance, and for entities outside it their scene id with the top
+// bit (1 << 63) set, so the two cannot be confused. Scene-local
+// components (collection membership and collection instances) are never
+// overrides: they are scene organization, which a prefab does not store and a
+// refresh keeps.
 struct PrefabOverride {
     PrefabEntityId entity;
     std::string component;
@@ -159,6 +170,14 @@ std::vector<Entity> prefabInstancesOf(const Scene& scene, const std::filesystem:
 // member's PrefabEntityComponent. Nested instances stay linked to their own
 // prefabs as instances placed directly in the scene.
 void unpackPrefabInstance(Scene& scene, Entity root);
+// Records, on its instance root's persisted overrides, that entity (a prefab
+// entity of an instance, not the root) is about to be deleted, so refreshes
+// keep it deleted until the instance is reverted or the prefab applied. Call
+// it before destroying the entity; descendants need no record of their own.
+// Returns false, changing nothing, for entities outside instances, instance
+// roots (including nested ones), and entities added to an instance in the
+// scene.
+bool recordPrefabEntityRemoval(Scene& scene, Entity entity);
 
 struct PrefabInstanceResult {
     bool success{false};
@@ -219,7 +238,9 @@ class PrefabSystem {
     // The instance's current differences from its prefab file, sorted by
     // entity, component, and field. The root's local transform is the
     // instance's placement and never reported. Entities added in the scene
-    // are not reported.
+    // are not reported; prefab entities the instance lacks are reported as
+    // removed only when their deletion was recorded (recordPrefabEntityRemoval),
+    // since a prefab entity added after the last refresh is missing too.
     PrefabResult overrides(const Scene& scene, Entity root, std::vector<PrefabOverride>& output) const;
     // The same, against a given document of the instance's prefab (for
     // example its content before an apply replaced the file).
@@ -231,7 +252,9 @@ class PrefabSystem {
     // an instance of reference itself (an apply), its entities keep their
     // prefab-local ids and nested records keep their ids; otherwise ids are
     // assigned depth first from 1. Fails when saving would make a nested
-    // cycle.
+    // cycle. Entity references between captured entities become prefab-local
+    // ids; references to anything else become none and are reported as
+    // diagnostics. Scene-local components are not captured.
     PrefabResult capture(const Scene& scene, Entity root, const std::filesystem::path& reference,
                          PrefabCapture& output) const;
 

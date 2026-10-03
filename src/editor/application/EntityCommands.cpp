@@ -4,6 +4,7 @@
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/SceneFragment.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/scene/Prefab.hpp"
 
 #include <utility>
 #include <vector>
@@ -27,6 +28,8 @@ void deleteEntities(const SceneEditing& editing, std::span<const SceneEntityId> 
         for (SceneEntityId id : targets) {
             // Deleting a parent removes its children, so look each one up again.
             if (const Entity entity = scene.findEntity(id); entity != entt::null) {
+                // A prefab entity deleted from an instance stays deleted.
+                recordPrefabEntityRemoval(scene, entity);
                 scene.destroyEntity(entity);
             }
         }

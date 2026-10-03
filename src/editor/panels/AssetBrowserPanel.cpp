@@ -1,6 +1,7 @@
 #include "AssetBrowserPanel.hpp"
 
 #include "editor/application/EditorDiagnostics.hpp"
+#include "editor/panels/AssetDragPayloads.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/project/ProjectFileOperations.hpp"
 #include "editor/theme/EditorTheme.hpp"
@@ -18,7 +19,8 @@ namespace {
 constexpr float folderPaneWidth = 200.0f;
 constexpr float gridTileWidth = 96.0f;
 constexpr float gridTileHeight = 72.0f;
-constexpr const char* modelPayloadType = "ZENITH_MODEL_ASSET";
+constexpr const char* modelPayloadType = modelAssetPayload;
+constexpr const char* prefabPayloadType = prefabAssetPayload;
 // Any other file or folder dragged within the browser, to move it.
 constexpr const char* itemPayloadType = "ZENITH_PROJECT_ITEM";
 #if defined(_WIN32)
@@ -29,8 +31,9 @@ constexpr const char* revealLabel = "Show in File Manager";
 constexpr const char* trashName = "trash";
 #endif
 // In EditorAssetKind order, so a kind's value indexes the type filter.
-constexpr std::array<EditorAssetKind, 4> filterableKinds{EditorAssetKind::Model, EditorAssetKind::Texture,
-                                                         EditorAssetKind::Audio, EditorAssetKind::Scene};
+constexpr std::array<EditorAssetKind, 5> filterableKinds{EditorAssetKind::Model, EditorAssetKind::Texture,
+                                                         EditorAssetKind::Audio, EditorAssetKind::Scene,
+                                                         EditorAssetKind::Prefab};
 
 EditorIcon assetIcon(const EditorAssetRecord* asset) {
     if (asset == nullptr) {
@@ -45,6 +48,8 @@ EditorIcon assetIcon(const EditorAssetRecord* asset) {
         return EditorIcon::AudioClip;
     case EditorAssetKind::Scene:
         return EditorIcon::Scene;
+    case EditorAssetKind::Prefab:
+        return EditorIcon::Components;
     }
     return EditorIcon::Empty;
 }
@@ -59,6 +64,8 @@ const char* kindName(EditorAssetKind kind) {
         return "Audio";
     case EditorAssetKind::Scene:
         return "Scene";
+    case EditorAssetKind::Prefab:
+        return "Prefab";
     }
     return "Asset";
 }
@@ -244,6 +251,15 @@ void AssetBrowserPanel::navigateTo(const std::filesystem::path& folder, EditorDi
     rememberView(diagnostics);
 }
 
+void AssetBrowserPanel::revealAsset(const std::filesystem::path& item, EditorDiagnostics& diagnostics) {
+    const std::filesystem::path normalized = normalizedCatalogPath(item);
+    navigateTo(normalized.parent_path(), diagnostics);
+    if (m_currentFolder == normalizedCatalogPath(normalized.parent_path())) {
+        m_selected = normalized;
+        m_search.clear();
+    }
+}
+
 AssetBrowserViewMode AssetBrowserPanel::viewMode() const {
     return m_viewMode;
 }
@@ -333,6 +349,9 @@ void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetB
     if (m_project.claimPrimaryView(m_viewId) && !wasPrimary) {
         // Promoted: this browser's view is now the one remembered.
         rememberView(diagnostics);
+    }
+    if (const std::optional<std::filesystem::path> reveal = m_project.takeRevealRequest(m_viewId)) {
+        revealAsset(*reveal, diagnostics);
     }
     if (widgets::Button("Refresh")) {
         refresh(diagnostics);
@@ -670,11 +689,14 @@ void AssetBrowserPanel::handleEntryInteraction(const BrowserEntry& entry, bool p
         }
     }
     if (ImGui::BeginDragDropSource()) {
-        // Models keep the payload the viewport places; folders accept both.
+        // Models and prefabs keep the payloads viewports place; folders
+        // accept every payload.
         const bool model = !folder && entry.asset->kind == EditorAssetKind::Model;
+        const bool prefab = !folder && entry.asset->kind == EditorAssetKind::Prefab;
+        const char* payloadType = model ? modelPayloadType : prefab ? prefabPayloadType : itemPayloadType;
         const std::string path = entry.path.string();
-        ImGui::SetDragDropPayload(model ? modelPayloadType : itemPayloadType, path.c_str(), path.size() + 1);
-        ImGui::Text("%s %s", model ? "Place" : "Move", entry.label.c_str());
+        ImGui::SetDragDropPayload(payloadType, path.c_str(), path.size() + 1);
+        ImGui::Text("%s %s", model || prefab ? "Place" : "Move", entry.label.c_str());
         ImGui::EndDragDropSource();
     }
     if (folder) {
@@ -691,7 +713,7 @@ void AssetBrowserPanel::acceptItemDrop(const std::filesystem::path& folder) {
     if (!ImGui::BeginDragDropTarget()) {
         return;
     }
-    for (const char* type : {itemPayloadType, modelPayloadType}) {
+    for (const char* type : {itemPayloadType, modelPayloadType, prefabPayloadType}) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(type)) {
             const std::filesystem::path item(static_cast<const char*>(payload->Data));
             m_deferred = DeferredCommand{CommandKind::Move, item, folder};

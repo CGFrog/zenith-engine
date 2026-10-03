@@ -5,6 +5,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 
 struct EntityReferenceFieldContext;
@@ -25,7 +26,27 @@ struct ReflectedFieldEditorOptions {
     // differ. When false the first object's values are shown and the others
     // are only edit targets (an Alt-applied edit).
     bool showMixedValues{true};
+    // Prefab override highlighting. A field is addressed by its RFC 6901
+    // pointer inside the component's document object: pointerPrefix (the
+    // pointer of the object whose fields are drawn, empty at the top level)
+    // followed by "/" and its key, so nested struct fields get full paths.
+    // A field for which overridden returns true is marked (markPrefabOverride)
+    // and right-clicking it offers "Revert to Prefab", which calls
+    // revertOverride with its pointer. Without overridden nothing is marked.
+    std::string pointerPrefix;
+    std::function<bool(std::string_view pointer)> overridden;
+    std::function<void(std::string_view pointer)> revertOverride;
 };
+
+// Marks the last drawn item as a prefab override: a bar in the override
+// accent beside it and, when label (its visible text, drawn at the item's
+// right end as ImGui widgets draw labels) is not empty, the label in bold
+// override ink. Pass an empty label for items whose text sits elsewhere
+// (headers, tree nodes).
+void markPrefabOverride(std::string_view label);
+// The last item's right-click menu offering "Revert to Prefab"; returns
+// whether it was chosen. id names the popup and must be unique per item.
+bool prefabOverrideMenu(const char* id);
 
 // Draws one ImGui widget per visible field of object, using each field's
 // presentation hints, and returns whether any value changed. Edits are applied

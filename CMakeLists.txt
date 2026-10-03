@@ -470,6 +470,7 @@ add_library(zenith_engine SHARED
     src/engine/scene/ComponentTypes.cpp
     src/engine/scene/SceneAssetReferences.cpp
     src/engine/scene/SceneDocument.cpp
+    src/engine/scene/EntityReferenceRemap.cpp
     src/engine/scene/SceneVisibility.cpp
     src/engine/scene/AdditiveSceneManager.cpp
     src/engine/scene/Prefab.cpp
@@ -1760,6 +1761,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_prefab_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_prefabs COMMAND zenith_prefab_tests)
+
+    add_executable(zenith_prefab_ui_tests tests/editor/PrefabUiTests.cpp)
+    target_link_libraries(zenith_prefab_ui_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_prefab_ui_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_prefab_ui_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_prefab_ui COMMAND zenith_prefab_ui_tests)
 
     add_executable(zenith_workspace_tests tests/editor/WorkspaceTests.cpp)
     target_link_libraries(zenith_workspace_tests PRIVATE zenith_editor_app)

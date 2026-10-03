@@ -8,6 +8,7 @@
 #include "editor/operators/VisibilityOperators.hpp"
 #include "editor/project/IrradianceVolumeBaker.hpp"
 #include "engine/scene/ComponentTypes.hpp"
+#include "engine/scene/Prefab.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -176,6 +177,8 @@ Operator deleteOperator() {
                 for (SceneEntityId id : context.selection.ids()) {
                     // Deleting a parent removes its children, so look each one up again.
                     if (const Entity entity = scene.findEntity(id); entity != entt::null) {
+                        // A prefab entity deleted from an instance stays deleted.
+                        recordPrefabEntityRemoval(scene, entity);
                         scene.destroyEntity(entity);
                     }
                 }

@@ -82,6 +82,10 @@ class AssetBrowserPanel final : public EditorPanel {
     const std::filesystem::path& currentFolder() const;
     // Shows a catalog folder; unknown folders are refused with a diagnostic.
     void navigateTo(const std::filesystem::path& folder, EditorDiagnostics& diagnostics);
+    // Opens the folder holding item (an absolute path) and selects item.
+    // drawBrowser does this for the reveal the project hands the primary
+    // browser (ProjectAssets::requestReveal).
+    void revealAsset(const std::filesystem::path& item, EditorDiagnostics& diagnostics);
     AssetBrowserViewMode viewMode() const;
     void setViewMode(AssetBrowserViewMode mode, EditorDiagnostics& diagnostics);
     // Favourites are shared by every browser on the project.
@@ -172,7 +176,7 @@ class AssetBrowserPanel final : public EditorPanel {
     std::filesystem::path m_currentFolder;
     std::filesystem::path m_selected;
     std::string m_search;
-    std::array<bool, 4> m_shownKinds{true, true, true, true};
+    std::array<bool, 5> m_shownKinds{true, true, true, true, true};
     std::optional<DeferredCommand> m_deferred;
     // The last service move this view has followed.
     uint64_t m_followedItemMove{0};

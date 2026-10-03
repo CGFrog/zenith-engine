@@ -105,6 +105,9 @@ std::optional<EditorAssetKind> editorAssetKind(const std::filesystem::path& path
     if (extension == ".zenith-scene") {
         return EditorAssetKind::Scene;
     }
+    if (extension == ".prefab") {
+        return EditorAssetKind::Prefab;
+    }
     return std::nullopt;
 }
 

@@ -1,6 +1,7 @@
 #include "HierarchyPanel.hpp"
 
 #include "editor/interaction/EntityReferenceField.hpp"
+#include "editor/panels/AssetDragPayloads.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
@@ -125,6 +126,10 @@ void HierarchyPanel::acceptReparentDrop(EditorContext& context, Entity parent) c
         const ReparentMode mode =
             m_preserveWorldOnReparent ? ReparentMode::PreserveWorldTransform : ReparentMode::PreserveLocalTransform;
         context.editing.perform("Reparent Entity", {}, [&] { return scene.reparent(child, parent, mode); });
+    }
+    // A prefab dragged from the Asset Browser is instantiated under the row.
+    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(prefabAssetPayload)) {
+        context.placePrefab(static_cast<const char*>(payload->Data), parent);
     }
     ImGui::EndDragDropTarget();
 }

@@ -14,6 +14,14 @@ void EditorContext::placeModel(const std::filesystem::path& path, Entity parent)
     EntityCommands::placeModel(editing, selection, path, parent);
 }
 
+void EditorContext::placePrefab(const std::filesystem::path& path, Entity parent) {
+    nlohmann::json properties{{"asset", path.generic_string()}};
+    if (parent != entt::null) {
+        properties["parent"] = std::to_string(app.scene.id(parent).value);
+    }
+    invoke("prefab.instantiate", properties.dump());
+}
+
 bool EditorContext::eyedropperArmed() const {
     return eyedropper != nullptr && eyedropper->armed();
 }

@@ -90,6 +90,10 @@ struct EditorContext {
     // Places a model asset as an undoable edit; models can only be placed in
     // Edit mode.
     void placeModel(const std::filesystem::path& path, Entity parent);
+    // Instantiates a prefab asset (absolute inside the asset root, or
+    // project-relative) under parent, or at the scene root when parent is
+    // null, by running prefab.instantiate.
+    void placePrefab(const std::filesystem::path& path, Entity parent);
 
     // Whether the entity eyedropper is picking for a reference field. While
     // it is, an entity click in a viewport or the outliner goes to

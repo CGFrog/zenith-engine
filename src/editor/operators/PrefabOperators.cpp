@@ -5,6 +5,7 @@
 #include "editor/document/PrefabAuthoring.hpp"
 
 #include <charconv>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -40,8 +41,18 @@ bool activeInInstance(const OperatorContext& context) {
            prefabInstanceRoot(context.editing.scene(), active) != entt::null;
 }
 
-// Reports recoverable problems (orphaned overrides) and turns failures into
-// operator results.
+// A decimal stable id; nullopt when text is not one.
+std::optional<SceneEntityId> parseEntityId(const std::string& text) {
+    uint64_t id = 0;
+    const char* end = text.data() + text.size();
+    if (const auto parsed = std::from_chars(text.data(), end, id); parsed.ec != std::errc{} || parsed.ptr != end) {
+        return std::nullopt;
+    }
+    return SceneEntityId{id};
+}
+
+// Reports recoverable problems (orphaned overrides, references a prefab cannot
+// hold) and turns failures into operator results.
 OperatorResult finish(OperatorContext& context, const PrefabResult& result) {
     for (const std::string& diagnostic : result.diagnostics) {
         context.editing.diagnostics().add(EditorDiagnosticSeverity::Warning, "Prefabs", diagnostic);
@@ -53,18 +64,31 @@ Operator createOperator() {
     return {.id = "prefab.create_from_selection",
             .label = "Create Prefab",
             .description = "Save the active object and its children as a new prefab and link them to it",
-            .flags = OperatorFlags::Undo | OperatorFlags::Register | OperatorFlags::Internal,
+            .flags = OperatorFlags::Undo | OperatorFlags::Register,
             .properties = OperatorProperties::make(
                 CreatePrefabProperties{},
                 std::move(Fields<CreatePrefabProperties>().add("path", &CreatePrefabProperties::path))),
             .poll = hasActive,
             .execute = typed<CreatePrefabProperties>([](OperatorContext& context, CreatePrefabProperties& values) {
+                PrefabAuthoring prefabs = authoring(context);
+                Scene& scene = context.editing.scene();
                 if (values.path.empty()) {
-                    return OperatorResult::cancelled("Choose where to save the prefab");
+                    values.path = prefabs.suggestPath(scene, activeEntity(context)).generic_string();
                 }
-                return finish(context,
-                              authoring(context).create(context.editing.scene(), activeEntity(context), values.path));
+                return finish(context, prefabs.create(scene, activeEntity(context), values.path));
             })};
+}
+
+// The project-relative form of an asset path; absolute paths must lie under
+// the asset root.
+std::filesystem::path projectRelative(const OperatorContext& context, const std::string& asset) {
+    const std::filesystem::path path(asset);
+    if (!path.is_absolute()) {
+        return path;
+    }
+    const std::filesystem::path root =
+        std::filesystem::absolute(context.editing.document().options().assetRoot).lexically_normal();
+    return path.lexically_normal().lexically_relative(root);
 }
 
 Operator instantiateOperator() {
@@ -72,9 +96,10 @@ Operator instantiateOperator() {
             .label = "Instantiate Prefab",
             .description = "Add an instance of a prefab to the scene and select it",
             .flags = OperatorFlags::Undo | OperatorFlags::Register | OperatorFlags::Internal,
-            .properties = OperatorProperties::make(
-                InstantiatePrefabProperties{},
-                std::move(Fields<InstantiatePrefabProperties>().add("asset", &InstantiatePrefabProperties::asset))),
+            .properties = OperatorProperties::make(InstantiatePrefabProperties{},
+                                                   std::move(Fields<InstantiatePrefabProperties>()
+                                                                 .add("asset", &InstantiatePrefabProperties::asset)
+                                                                 .add("parent", &InstantiatePrefabProperties::parent))),
             .poll = [](const OperatorContext& context) { return context.editMode(); },
             .execute =
                 typed<InstantiatePrefabProperties>([](OperatorContext& context, InstantiatePrefabProperties& values) {
@@ -82,8 +107,17 @@ Operator instantiateOperator() {
                         return OperatorResult::cancelled("Choose a prefab to instantiate");
                     }
                     Scene& scene = context.editing.scene();
+                    Entity parent = entt::null;
+                    if (!values.parent.empty()) {
+                        const std::optional<SceneEntityId> parentId = parseEntityId(values.parent);
+                        parent = parentId ? scene.findEntity(*parentId) : entt::null;
+                        if (parent == entt::null) {
+                            return OperatorResult::failed("'" + values.parent + "' is not an entity of the scene");
+                        }
+                    }
                     Entity root = entt::null;
-                    const PrefabResult result = authoring(context).instantiate(scene, values.asset, entt::null, root);
+                    const PrefabResult result =
+                        authoring(context).instantiate(scene, projectRelative(context, values.asset), parent, root);
                     if (result) {
                         context.selection.selectOnly(scene.id(root));
                     }
@@ -109,7 +143,7 @@ Operator instanceOperator(std::string id, std::string label, std::string descrip
 
 Operator revertFieldOperator() {
     return {.id = "prefab.revert_field",
-            .label = "Revert Prefab Value",
+            .label = "Revert to Prefab",
             .description = "Reset one overridden value of a prefab instance entity to the prefab's value",
             .flags = OperatorFlags::Undo | OperatorFlags::Internal,
             .properties = OperatorProperties::make(
@@ -123,13 +157,11 @@ Operator revertFieldOperator() {
                 Scene& scene = context.editing.scene();
                 Entity entity = activeEntity(context);
                 if (!values.entity.empty()) {
-                    uint64_t id = 0;
-                    const char* end = values.entity.data() + values.entity.size();
-                    if (const auto parsed = std::from_chars(values.entity.data(), end, id);
-                        parsed.ec != std::errc{} || parsed.ptr != end) {
+                    const std::optional<SceneEntityId> id = parseEntityId(values.entity);
+                    if (!id) {
                         return OperatorResult::failed("'" + values.entity + "' is not an entity id");
                     }
-                    entity = scene.findEntity({id});
+                    entity = scene.findEntity(*id);
                 }
                 if (entity == entt::null) {
                     return OperatorResult::cancelled("There is no entity to revert");
@@ -137,9 +169,32 @@ Operator revertFieldOperator() {
                 return finish(context, authoring(context).revertField(scene, entity, values.component, values.field));
             })};
 }
+
+Operator selectAssetOperator(std::function<void(const std::filesystem::path&)> revealAsset) {
+    return {.id = "prefab.select_asset",
+            .label = "Select Prefab Asset",
+            .description = "Show the active instance's prefab in the Asset Browser",
+            .poll = [hasReveal = static_cast<bool>(revealAsset)](
+                        const OperatorContext& context) { return hasReveal && activeInInstance(context); },
+            .execute =
+                [revealAsset = std::move(revealAsset)](OperatorContext& context, OperatorProperties&) {
+                    const Scene& scene = context.editing.scene();
+                    const Entity root = prefabInstanceRoot(scene, activeEntity(context));
+                    if (root == entt::null) {
+                        return OperatorResult::cancelled("The active object is not part of a prefab instance");
+                    }
+                    const std::string& reference = scene.registry().get<PrefabInstanceComponent>(root).prefab;
+                    std::filesystem::path path;
+                    if (PrefabResult resolved = authoring(context).resolve(reference, path); !resolved) {
+                        return OperatorResult::failed(resolved.error);
+                    }
+                    revealAsset(path);
+                    return OperatorResult::finished();
+                }};
+}
 } // namespace
 
-OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry) {
+OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, PrefabOperatorServices services) {
     std::vector<Operator> operators;
     operators.push_back(createOperator());
     operators.push_back(instantiateOperator());
@@ -153,6 +208,7 @@ OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry) {
                                          "Keep the instance's objects but remove their link to the prefab",
                                          &PrefabAuthoring::unpack));
     operators.push_back(revertFieldOperator());
+    operators.push_back(selectAssetOperator(std::move(services.revealAsset)));
     for (Operator& op : operators) {
         if (OperatorRegistrationResult result = registry.add(std::move(op)); !result) {
             return result;
