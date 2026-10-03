@@ -87,6 +87,7 @@ class ColorGradePass {
     void destroy(Image& image) const;
 
     VkDevice m_device{VK_NULL_HANDLE};
+    LogChannel m_log;
     VmaAllocator m_allocator{VK_NULL_HANDLE};
     VkPipelineCache m_pipelineCache{VK_NULL_HANDLE};
     VkDescriptorSetLayout m_layout{VK_NULL_HANDLE};

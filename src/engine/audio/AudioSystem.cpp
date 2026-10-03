@@ -11,7 +11,6 @@
 #include <condition_variable>
 #include <cstring>
 #include <fstream>
-#include <iostream>
 #include <iterator>
 #include <mutex>
 #include <thread>
@@ -268,7 +267,11 @@ void SDLCALL fillAudio(void* userdata, SDL_AudioStream* stream, int additionalAm
 } // namespace
 
 AudioSystem::AudioSystem()
-    : m_impl(std::make_unique<Impl>()) {}
+    : AudioSystem(nullptr) {}
+
+AudioSystem::AudioSystem(Logger* logger)
+    : m_impl(std::make_unique<Impl>())
+    , m_log(logger, "audio") {}
 
 AudioSystem::~AudioSystem() {
     shutdown();
@@ -289,7 +292,7 @@ AudioResult AudioSystem::init(const AudioConfig& config) {
         return {.success = true};
     }
     if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
-        std::cerr << "Audio output disabled: " << SDL_GetError() << '\n';
+        m_log.warning(std::string("Audio output disabled: ") + SDL_GetError());
         return {.success = true};
     }
     m_impl->audioSubsystem = true;
@@ -297,7 +300,7 @@ AudioResult AudioSystem::init(const AudioConfig& config) {
     m_impl->output =
         SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &specification, fillAudio, m_impl.get());
     if (!m_impl->output) {
-        std::cerr << "Audio output disabled: " << SDL_GetError() << '\n';
+        m_log.warning(std::string("Audio output disabled: ") + SDL_GetError());
         return {.success = true};
     }
     SDL_ResumeAudioStreamDevice(m_impl->output);

@@ -5,6 +5,7 @@
 #include "assets/Assets.hpp"
 #include "audio/AudioSystem.hpp"
 #include "diagnostics/FrameCaptureConfig.hpp"
+#include "diagnostics/Logger.hpp"
 #include "graphics/Renderer.hpp"
 #include "input/InputManager.hpp"
 #include "jobs/FrameTaskGraph.hpp"
@@ -25,6 +26,8 @@ class Engine {
     PhysicsWorld& physics();
     AudioSystem& audio();
     RenderRuntime& rendering();
+    // Engine and subsystem messages; outlives every subsystem the engine owns.
+    Logger& logger();
     // Validation-layer results, including messages emitted during shutdown.
     GraphicsValidationReport graphicsValidation() const;
 
@@ -33,6 +36,9 @@ class Engine {
     // Takes the requested capture from the frame just drawn and writes it.
     bool writeFrameCapture(const FrameCaptureRequest& request);
 
+    // Declared first: subsystems log through it until they are destroyed.
+    Logger m_logger;
+    LogChannel m_log{&m_logger, "engine"};
     FrameCaptureConfig m_captureConfig;
     Window m_window;
     InputManager m_input;

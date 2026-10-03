@@ -112,6 +112,7 @@ class LocalShadowPass {
     void uploadTiles(uint32_t frameIndex);
 
     VkDevice m_device{VK_NULL_HANDLE};
+    LogChannel m_log;
     VmaAllocator m_allocator{VK_NULL_HANDLE};
     VkFormat m_depthFormat{VK_FORMAT_UNDEFINED};
     VkSampler m_sampler{VK_NULL_HANDLE};

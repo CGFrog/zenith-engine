@@ -112,6 +112,7 @@ void EditorSession::registerAreaTypes() {
     addAreaType(AreaType::shared("asset_browser", m_assetBrowser));
     addAreaType(AreaType::shared("graphics", m_graphics));
     addAreaType(AreaType::shared("build", m_buildPanel));
+    addAreaType(AreaType::shared("info", m_infoPanel));
 }
 
 void EditorSession::registerAreaOperators() {

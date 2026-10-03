@@ -16,9 +16,35 @@ OperatorResult OperatorRunner::reportFailure(OperatorContext& context, OperatorR
     return result;
 }
 
+OperatorHistoryEntry OperatorRunner::pendingInvocation(std::string_view id, const Operator* op,
+                                                       std::string propertiesJson) {
+    return {.id = std::string(id),
+            .label = op != nullptr ? op->label : std::string(),
+            .propertiesJson = std::move(propertiesJson)};
+}
+
+void OperatorRunner::recordInvocation(OperatorHistoryEntry entry, const OperatorResult& result) {
+    entry.status = result.status;
+    entry.message = result.message;
+    m_invocations.record(std::move(entry));
+}
+
 OperatorResult OperatorRunner::invoke(std::string_view id, OperatorContext& context,
                                       const OperatorProperties* properties) {
     const Operator* op = m_registry.find(id);
+    // Copied before running: an operator may unregister operators (a module
+    // reload) or change what id and properties refer to.
+    OperatorHistoryEntry entry = pendingInvocation(id, op,
+                                                   properties != nullptr ? properties->toJson()
+                                                   : op != nullptr       ? op->properties.toJson()
+                                                                         : std::string());
+    OperatorResult result = run(op, id, context, properties);
+    recordInvocation(std::move(entry), result);
+    return result;
+}
+
+OperatorResult OperatorRunner::run(const Operator* op, std::string_view id, OperatorContext& context,
+                                   const OperatorProperties* properties) {
     if (op == nullptr) {
         return reportFailure(context, OperatorResult::failed("Unknown operator '" + std::string(id) + "'"));
     }
@@ -79,7 +105,9 @@ OperatorResult OperatorRunner::invokeWithJson(std::string_view id, OperatorConte
     }
     OperatorProperties values = op->properties;
     if (const std::string error = values.applyJson(propertiesJson); !error.empty()) {
-        return reportFailure(context, OperatorResult::failed(op->label + ": " + error));
+        OperatorResult result = reportFailure(context, OperatorResult::failed(op->label + ": " + error));
+        recordInvocation(pendingInvocation(id, op, std::string(propertiesJson)), result);
+        return result;
     }
     return invoke(id, context, &values);
 }

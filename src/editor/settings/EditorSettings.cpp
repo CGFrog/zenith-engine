@@ -92,6 +92,8 @@ EditorSettingsResult EditorSettings::load() {
             destination = &loaded.build;
         } else if (key == "panel.properties") {
             destination = &loaded.properties;
+        } else if (key == "panel.info") {
+            destination = &loaded.info;
         } else {
             continue;
         }

@@ -71,14 +71,16 @@ FrameTaskGraphConfig frameTaskConfiguration() {
 
 Engine::Engine()
     : m_captureConfig(frameCaptureConfigFromEnvironment())
-    , m_frameTasks(frameTaskConfiguration()) {}
+    , m_frameTasks(frameTaskConfiguration())
+    , m_assets(&m_logger)
+    , m_audio(&m_logger) {}
 
 bool Engine::init(const PhysicsWorldConfig& physicsConfig, const AudioConfig& audioConfig) {
     // Read before anything can fail so a strict run without a usable Vulkan
     // loader still reports as skipped rather than failed.
     m_graphicsValidation = graphicsValidationOptionsFromEnvironment();
     if (!m_captureConfig) {
-        std::cerr << "Invalid frame capture configuration: " << m_captureConfig.error << '\n';
+        m_log.error("Invalid frame capture configuration: " + m_captureConfig.error);
         return false;
     }
     if (m_captureConfig.windowSize) {
@@ -93,17 +95,18 @@ bool Engine::init(const PhysicsWorldConfig& physicsConfig, const AudioConfig& au
                                           .fixedFrameSeconds = m_captureConfig.fixedFrameTime
                                                                    ? std::optional<float>(physicsConfig.fixedTimeStep)
                                                                    : std::nullopt,
-                                          .validation = m_graphicsValidation};
+                                          .validation = m_graphicsValidation,
+                                          .logger = &m_logger};
     if (!m_renderer.init(m_window, m_rendering, m_frameTasks, rendererOptions)) {
         return false;
     }
     m_assets.setTextureFormatCapabilities(m_renderer.textureFormatCapabilities());
     if (const PhysicsResult result = m_physics.init(physicsConfig); !result) {
-        std::cerr << "Physics initialization failed: " << result.error << '\n';
+        m_log.error("Physics initialization failed: " + result.error);
         return false;
     }
     if (const AudioResult result = m_audio.init(audioConfig); !result) {
-        std::cerr << "Audio initialization failed: " << result.error << '\n';
+        m_log.error("Audio initialization failed: " + result.error);
         return false;
     }
     return true;
@@ -122,17 +125,18 @@ bool Engine::run(Application& application) {
         if (frameLimit == 0) {
             frameLimit = capture->frame;
         } else if (frameLimit < capture->frame) {
-            std::cerr << "ZENITH_CAPTURE_FRAME " << capture->frame << " is beyond the " << frameLimit
-                      << "-frame run limit\n";
+            m_log.error("ZENITH_CAPTURE_FRAME " + std::to_string(capture->frame) + " is beyond the " +
+                        std::to_string(frameLimit) + "-frame run limit");
             return false;
         }
     }
     BenchmarkReport benchmarkReport;
     addBuildMetadata(benchmarkReport);
 
-    ApplicationSession applicationSession(application, m_scene, m_assets, m_physics, m_audio, m_rendering, m_gameUi);
+    ApplicationSession applicationSession(application, m_scene, m_assets, m_physics, m_audio, m_rendering, m_gameUi,
+                                          m_logger);
     if (const SceneResult result = applicationSession.start(); !result) {
-        std::cerr << "Application startup failed: " << result.error << '\n';
+        m_log.error("Application startup failed: " + result.error);
         return false;
     }
 
@@ -182,7 +186,7 @@ bool Engine::run(Application& application) {
             const AnimationTaskResult animationResult =
                 updateAnimations(m_scene, m_assets, deltaSeconds, m_frameTasks, ++taskGeneration);
             if (!animationResult) {
-                std::cerr << "Animation task graph failed: " << animationResult.error << '\n';
+                m_log.error("Animation task graph failed: " + animationResult.error);
                 runSucceeded = false;
                 running = false;
                 break;
@@ -205,7 +209,7 @@ bool Engine::run(Application& application) {
                 }
                 const auto physicsBegin = std::chrono::steady_clock::now();
                 if (const PhysicsResult result = m_physics.step(m_scene, m_assets, fixedStep); !result) {
-                    std::cerr << "Physics update failed: " << result.error << '\n';
+                    m_log.error("Physics update failed: " + result.error);
                     runSucceeded = false;
                     running = false;
                     break;
@@ -307,7 +311,7 @@ bool Engine::run(Application& application) {
         const bool lifecycleActionPending = applicationSession.actionPending();
         const ApplicationFrameResult frameResult = applicationSession.finishFrame();
         if (!frameResult) {
-            std::cerr << "Application scene transition failed: " << frameResult.error << '\n';
+            m_log.error("Application scene transition failed: " + frameResult.error);
             applicationSession.shutdown();
             return false;
         }
@@ -373,6 +377,10 @@ RenderRuntime& Engine::rendering() {
     return m_rendering;
 }
 
+Logger& Engine::logger() {
+    return m_logger;
+}
+
 GraphicsValidationReport Engine::graphicsValidation() const {
     GraphicsValidationReport report = m_renderer.validationReport();
     report.strict = m_graphicsValidation.strict;
@@ -382,11 +390,12 @@ GraphicsValidationReport Engine::graphicsValidation() const {
 bool Engine::writeFrameCapture(const FrameCaptureRequest& request) {
     const FrameCaptureResult result = m_renderer.takeFrameCapture();
     if (!result.error.empty()) {
-        std::cerr << "Frame capture failed: " << result.error << '\n';
+        m_log.error("Frame capture failed: " + result.error);
         return false;
     }
     if (!result.image) {
-        std::cerr << "Frame " << request.frame << " was not rendered (minimized window or out-of-date swapchain)\n";
+        m_log.error("Frame " + std::to_string(request.frame) +
+                    " was not rendered (minimized window or out-of-date swapchain)");
         return false;
     }
     // A capture taken while content is still arriving would not be repeatable.
@@ -394,12 +403,12 @@ bool Engine::writeFrameCapture(const FrameCaptureRequest& request) {
     const uint64_t pendingBytes = stats.uploadBytes + stats.streamingUploadBacklogBytes +
                                   stats.streamingDecodeBacklogBytes + stats.textureStreamingBacklogBytes;
     if (pendingBytes != 0) {
-        std::cerr << "Frame " << request.frame << " was captured while " << pendingBytes
-                  << " bytes of assets were still uploading; capture a later frame\n";
+        m_log.error("Frame " + std::to_string(request.frame) + " was captured while " + std::to_string(pendingBytes) +
+                    " bytes of assets were still uploading; capture a later frame");
         return false;
     }
     if (const ImageFileResult written = writePng(request.outputPath, *result.image); !written) {
-        std::cerr << "Frame capture failed: " << written.error << '\n';
+        m_log.error("Frame capture failed: " + written.error);
         return false;
     }
     std::cout << "Captured frame " << request.frame << " (" << result.image->width << 'x' << result.image->height

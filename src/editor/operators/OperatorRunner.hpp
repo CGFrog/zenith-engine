@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/operators/OperatorHistory.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 
 #include <optional>
@@ -24,8 +25,9 @@ struct LastOperator {
 };
 
 // Invokes operators: checks poll, runs execute, wraps Undo operators in one
-// undo step, reports failures to diagnostics, and remembers the last Register
-// operator so it can be re-run with edited properties. It holds references to
+// undo step, reports failures to diagnostics, records every invocation in a
+// bounded history, and remembers the last Register operator so it can be
+// re-run with edited properties. It holds references to
 // the registry and the history the invocation contexts edit; both must
 // outlive it.
 class OperatorRunner {
@@ -49,10 +51,25 @@ class OperatorRunner {
     OperatorResult adjustLast(OperatorContext& context, const OperatorProperties& properties);
     void forgetLast();
 
+    // Every invocation through invoke, invokeWithJson, or adjustLast's re-run,
+    // whatever its outcome.
+    const OperatorHistory& history() const {
+        return m_invocations;
+    }
+
+    void clearHistory() {
+        m_invocations.clear();
+    }
+
   private:
     OperatorResult reportFailure(OperatorContext& context, OperatorResult result) const;
+    OperatorResult run(const Operator* op, std::string_view id, OperatorContext& context,
+                       const OperatorProperties* properties);
+    static OperatorHistoryEntry pendingInvocation(std::string_view id, const Operator* op, std::string propertiesJson);
+    void recordInvocation(OperatorHistoryEntry entry, const OperatorResult& result);
 
     const OperatorRegistry& m_registry;
     const CommandHistory& m_history;
     std::optional<LastOperator> m_last;
+    OperatorHistory m_invocations;
 };

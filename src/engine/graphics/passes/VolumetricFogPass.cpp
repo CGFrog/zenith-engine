@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <iostream>
 #include <limits>
 
 namespace {
@@ -124,7 +123,7 @@ bool VolumetricFogPass::init(const VulkanContext& context, uint32_t frameCount) 
                                               VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
     m_supported = (properties.optimalTilingFeatures & required) == required;
     if (!m_supported) {
-        std::cerr << "Volumetric fog disabled: RGBA16F storage images are unsupported\n";
+        context.log().info("Volumetric fog disabled: RGBA16F storage images are unsupported");
     }
     if (!createLayouts() || (m_supported && !createPipelines(context.pipelineCache())) ||
         !createUniformBuffers(frameCount) || !createVolumes(VolumetricFogQuality::Off, m_volumes)) {

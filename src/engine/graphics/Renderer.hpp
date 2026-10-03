@@ -66,6 +66,9 @@ struct RendererOptions {
     std::optional<float> fixedFrameSeconds;
     // Validation-layer policy; strict runs enable synchronization validation.
     GraphicsValidationOptions validation;
+    // Receives renderer and validation-layer messages; must outlive the
+    // renderer. Null writes them to stderr.
+    Logger* logger{nullptr};
 };
 
 // Outcome of a requested frame capture: an image or an error. Neither is set

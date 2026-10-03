@@ -147,6 +147,9 @@ std::pair<std::filesystem::path, std::string> normalizedPath(const std::filesyst
 }
 } // namespace
 
+AssetManager::AssetManager(Logger* logger)
+    : m_log(logger, "assets") {}
+
 AssetLoadResult<ModelHandle> AssetManager::loadModel(const std::filesystem::path& path) {
     const auto [normalized, key] = normalizedPath(path);
     if (const auto found = m_modelCache.find(key); found != m_modelCache.end()) {

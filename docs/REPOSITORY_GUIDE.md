@@ -134,6 +134,27 @@ zero or more fixed physics steps, interpolates visible transforms, renders, and
 presents. It also implements bounded smoke runs and rendering benchmarks via
 environment variables.
 
+### `src/engine/diagnostics/Logger.*`
+
+`Engine` owns one `Logger` (declared first, so it outlives every subsystem)
+and passes it explicitly; there is no process-wide logger. Each message has a
+level, category, wall and steady timestamps, and a sequence number; the logger
+keeps a bounded ring of recent entries, echoes each message unchanged to
+stderr by default (so command-line output and validation tooling see the same
+text), and calls subscribed sinks. It is thread-safe: renderer, asset worker,
+and Vulkan debug-callback threads log through it. Subsystems hold a
+`LogChannel` (logger plus category: `engine`, `graphics`, `assets`, `audio`,
+`module`), which writes to stderr when it has no logger, so standalone tools
+and tests that build a subsystem directly keep working. The renderer takes the
+logger through `RendererOptions::logger` and `VulkanContext::initInstance`;
+passes log through `VulkanContext::log()`. `AssetManager` and `AudioSystem`
+take it at construction and `GameModule` through `GameModuleOptions`.
+Applications reach it as `ApplicationContext::logger`. Still on plain stderr:
+`checkVulkan` (`vulkan/VulkanCheck.hpp`), `ShaderModule`, ImGui's Vulkan error
+callback (which carries no user data), the validation summary in
+`GraphicsValidation.cpp` (a tooling contract), and the benchmark and capture
+lines on stdout.
+
 ## Window and input
 
 ### `src/engine/window/Window.*`
@@ -432,6 +453,18 @@ operators, which run headless in `tests/editor/ViewportChromeTests.cpp`.
 `EditorCamera` owns the lens (field of view and clip planes) that its render
 view, projections, and picking share.
 
+`panels/InfoPanel` is the unified log view. Its CPU-only `InfoLog` model
+merges, by time, the engine log (`ApplicationContext::logger`), editor
+diagnostics (sources `Build` and `Game Module` get their own source filter),
+and the `OperatorRunner`'s bounded `OperatorHistory` (id, label, status,
+message, properties JSON, time). The panel filters by severity, source, and
+case-insensitive text, auto-scrolls while resting at the end, copies the
+selected rows (or every shown row) to the clipboard, and clears the view; clear
+also clears editor diagnostics but never the engine log. `EditorDiagnostics`
+entries carry wall and steady timestamps and a revision counter so readers
+re-read only after a change. The editor smoke run fails when the Info model has
+received no engine entries by its sixth frame.
+
 `SceneEditing` captures transient whole-scene snapshots around an edit but
 records only the entities it added, removed, or changed as an
 `EntityDiffCommand`, so history memory and undo/redo time scale with the edit
@@ -461,7 +494,8 @@ Blender-style operators: every menu item, button, and key runs an `Operator`
 reflected `Fields<T>`, and `Undo`/`Register` flags) registered in the
 `OperatorRegistry`; game modules register their own (see Game module hosting). The
 `OperatorRunner` checks poll, wraps `Undo` operators in one `SceneEditing`
-undo step, reports failures to diagnostics, and keeps the last `Register`
+undo step, reports failures to diagnostics, records every invocation in an
+`OperatorHistory` (shown by the Info panel), and keeps the last `Register`
 operator so the Adjust Last Operation panel can undo it and re-run it with
 edited properties. `Keymap` binds chords to operator ids per region (Global,
 Viewport, Outliner) with conflict detection and double-tap triggers; only the

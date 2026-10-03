@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/diagnostics/Logger.hpp"
+
 #include <compare>
 #include <cstddef>
 #include <cstdint>
@@ -116,6 +118,9 @@ struct AudioEmitterComponent {
 class AudioSystem {
   public:
     AudioSystem();
+    // logger receives device messages and must outlive the system; null
+    // writes them to stderr.
+    explicit AudioSystem(Logger* logger);
     ~AudioSystem();
     AudioSystem(const AudioSystem&) = delete;
     AudioSystem& operator=(const AudioSystem&) = delete;
@@ -156,4 +161,5 @@ class AudioSystem {
 
   private:
     std::unique_ptr<Impl> m_impl;
+    LogChannel m_log;
 };

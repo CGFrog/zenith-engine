@@ -3,10 +3,24 @@
 #include <algorithm>
 #include <utility>
 
+namespace {
+void stamp(EditorDiagnostic& diagnostic) {
+    diagnostic.wallTime = std::chrono::system_clock::now();
+    diagnostic.steadyTime = std::chrono::steady_clock::now();
+}
+} // namespace
+
 uint64_t EditorDiagnostics::add(EditorDiagnosticSeverity severity, std::string source, std::string message,
                                 std::string action) {
     const uint64_t id = m_nextId++;
-    m_entries.push_back({id, severity, std::move(source), std::move(message), std::move(action), std::nullopt});
+    EditorDiagnostic& entry = m_entries.emplace_back();
+    entry.id = id;
+    entry.severity = severity;
+    entry.source = std::move(source);
+    entry.message = std::move(message);
+    entry.action = std::move(action);
+    stamp(entry);
+    ++m_revision;
     return id;
 }
 
@@ -29,16 +43,21 @@ void EditorDiagnostics::replaceSource(std::string_view source, std::vector<Edito
     for (EditorDiagnostic& replacement : replacements) {
         replacement.id = m_nextId++;
         replacement.source = std::string(source);
+        stamp(replacement);
         m_entries.push_back(std::move(replacement));
     }
+    ++m_revision;
 }
 
 void EditorDiagnostics::dismiss(uint64_t id) {
-    std::erase_if(m_entries, [id](const EditorDiagnostic& entry) { return entry.id == id; });
+    if (std::erase_if(m_entries, [id](const EditorDiagnostic& entry) { return entry.id == id; }) > 0) {
+        ++m_revision;
+    }
 }
 
 void EditorDiagnostics::clear() {
     m_entries.clear();
+    ++m_revision;
 }
 
 const std::vector<EditorDiagnostic>& EditorDiagnostics::entries() const {

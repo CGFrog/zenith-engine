@@ -13,6 +13,7 @@ constexpr std::array layoutAreas{
     DefaultArea{"properties", Right},
     DefaultArea{"graphics", RightBottom},     DefaultArea{"diagnostics", Bottom},     DefaultArea{"build", Bottom},
     DefaultArea{"render_statistics", Bottom}, DefaultArea{"asset_browser", Bottom},
+    DefaultArea{"info", Bottom},
 };
 
 constexpr std::array lightingAreas{
@@ -23,6 +24,7 @@ constexpr std::array lightingAreas{
 constexpr std::array debugAreas{
     DefaultArea{"viewport", Center},       DefaultArea{"hierarchy", Left},     DefaultArea{"render_statistics", Right},
     DefaultArea{"inspector", RightBottom}, DefaultArea{"diagnostics", Bottom}, DefaultArea{"build", Bottom},
+    DefaultArea{"info", Bottom},
 };
 
 constexpr std::array workspaces{

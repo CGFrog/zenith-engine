@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <array>
-#include <iostream>
 
 namespace {
 // Mirrors maximumLevels in shaders/depth_pyramid_single_pass.comp. Covers
@@ -106,8 +105,8 @@ bool DepthPyramid::init(const VulkanContext& context, VkExtent2D storageExtent, 
     const bool perLevelRequested = SDL_getenv("ZENITH_DEPTH_PYRAMID_PER_LEVEL") != nullptr;
     m_singlePass = context.storageImageArrayDynamicIndexingSupported() && !perLevelRequested;
     if (!m_singlePass && !perLevelRequested) {
-        std::cerr << "Depth pyramid: shaderStorageImageArrayDynamicIndexing is unsupported; "
-                     "building one dispatch per level\n";
+        context.log().info("Depth pyramid: shaderStorageImageArrayDynamicIndexing is unsupported; "
+                           "building one dispatch per level");
     }
     const VkSamplerCreateInfo sampler = pointSampler();
     if (!checkVulkan(vkCreateSampler(m_device, &sampler, nullptr, &m_sampler), "Create depth-pyramid sampler") ||

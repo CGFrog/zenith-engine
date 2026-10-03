@@ -2,6 +2,7 @@
 
 #include "AssetStreaming.hpp"
 #include "ProductionAssetPipeline.hpp"
+#include "engine/diagnostics/Logger.hpp"
 
 #include <algorithm>
 #include <array>
@@ -411,6 +412,11 @@ template <typename Handle> struct AssetLoadResult {
 
 class AssetManager {
   public:
+    AssetManager() = default;
+    // logger receives import warnings, possibly from asset worker threads,
+    // and must outlive the manager; null writes them to stderr.
+    explicit AssetManager(Logger* logger);
+
     AssetLoadResult<ModelHandle> loadModel(const std::filesystem::path& path);
     // Imports a fresh immutable model graph and updates future lookups while
     // retaining old handles for scenes and GPU frames that still use them.
@@ -454,6 +460,10 @@ class AssetManager {
 
     const TextureFormatCapabilities& textureFormatCapabilities() const {
         return m_textureCapabilities;
+    }
+
+    const LogChannel& log() const {
+        return m_log;
     }
 
     DerivedAssetResidencyManager& streaming() {
@@ -503,4 +513,5 @@ class AssetManager {
     DerivedAssetResidencyManager m_streaming;
     std::filesystem::path m_cookedTextureRoot;
     TextureFormatCapabilities m_textureCapabilities;
+    LogChannel m_log;
 };

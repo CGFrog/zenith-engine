@@ -470,6 +470,7 @@ class MeshPass {
     bool m_meshUploadsPending{false};
     // Capacity failures retried every frame are logged once per episode.
     bool m_geometryArenaFullReported{false};
+    LogChannel m_log;
     bool m_textureTableFullReported{false};
     std::unordered_map<uint64_t, GpuMaterial> m_materials;
     std::vector<uint32_t> m_freeMaterialIndices;

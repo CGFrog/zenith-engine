@@ -10,7 +10,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <glm/gtc/type_ptr.hpp>
-#include <iostream>
 #include <limits>
 #include <memory>
 #include <string_view>
@@ -239,7 +238,7 @@ ImageDecodeResult decodeExternalImage(const AssetManager& assets, const std::fil
             return {.texture = std::move(*cooked.texture)};
         }
         if (!cooked.error.empty()) {
-            std::cerr << cooked.error << "; decoding the source image instead\n";
+            assets.log().warning(cooked.error + "; decoding the source image instead");
         }
     }
     return decodeImageFile(source);
@@ -415,7 +414,7 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
         for (cgltf_size primitiveIndex = 0; primitiveIndex < sourceMesh.primitives_count; ++primitiveIndex) {
             const cgltf_primitive& primitive = sourceMesh.primitives[primitiveIndex];
             if (primitive.type != cgltf_primitive_type_triangles) {
-                std::cerr << "Skipping non-triangle primitive in " << path << '\n';
+                m_assets.log().warning("Skipping non-triangle primitive in " + path.string());
                 continue;
             }
 
@@ -427,7 +426,7 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
             const cgltf_accessor* sourceWeights = findAttribute(primitive, cgltf_attribute_type_weights);
 
             if (!positions || positions->type != cgltf_type_vec3) {
-                std::cerr << "Skipping primitive without POSITION vec3 in " << path << '\n';
+                m_assets.log().warning("Skipping primitive without POSITION vec3 in " + path.string());
                 continue;
             }
             if (positions->count > maximumVertices || primitive.targets_count > maximumMorphTargets) {

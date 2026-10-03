@@ -18,7 +18,6 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <iostream>
 #include <limits>
 #include <utility>
 
@@ -423,6 +422,11 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
             m_diagnostics.reportError("Viewport chrome smoke: the sidebar and toolbar should be visible");
             context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
         }
+        // The renderer logs at least its validation-layer state at startup.
+        if (m_infoPanel.log().count(InfoSource::Engine) == 0) {
+            m_diagnostics.reportError("The Info panel received no engine log entries");
+            context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+        }
     }
     if (m_smokeStreamInstance && !m_smokeStreamCompleted) {
         const auto state = m_smokeLayers->state(*m_smokeStreamInstance);
@@ -467,7 +471,7 @@ void EditorSession::updateSmokeModuleReload(ApplicationContext& context) {
         return;
     }
     const std::string error = "Game module smoke reload failed: " + m_moduleHost.error();
-    std::cerr << error << '\n';
+    context.logger.log(LogLevel::Error, "editor", error);
     m_diagnostics.reportError(error);
     context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
 }

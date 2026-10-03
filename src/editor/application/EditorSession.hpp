@@ -23,6 +23,7 @@
 #include "editor/panels/BuildPanel.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/GraphicsPanel.hpp"
+#include "editor/panels/InfoPanel.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/project/ProjectAssets.hpp"
 #include "editor/settings/EditorRenderSettings.hpp"
@@ -224,6 +225,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     AssetBrowserPanel m_assetBrowser;
     GraphicsPanel m_graphics{m_renderSettings};
     BuildPanel m_buildPanel{m_settings.tools()};
+    // Shows the engine log, diagnostics, and operator history.
+    InfoPanel m_infoPanel{m_operatorRunner.history()};
 
     // Declared after everything area panels refer to (the panels above, the
     // settings, and the module host), so the areas are destroyed first.

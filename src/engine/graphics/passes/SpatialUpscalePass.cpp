@@ -9,7 +9,6 @@
 #include <SDL3/SDL_stdinc.h>
 
 #include <array>
-#include <iostream>
 
 namespace {
 constexpr uint32_t workgroupSize = 8;
@@ -76,14 +75,14 @@ bool SpatialUpscalePass::init(const VulkanContext& context, VkFormat outputForma
                   hasFeatures(context, outputFormat,
                               VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
     if (!m_supported) {
-        std::cerr << "FSR 1 upscaling disabled: the output or RGBA8 storage format lacks required features\n";
+        context.log().info("FSR 1 upscaling disabled: the output or RGBA8 storage format lacks required features");
         return true;
     }
     // ZENITH_DISABLE_SPATIAL_UPSCALING reports FSR 1 as unsupported, so the
     // capability fallback can be validated on devices that have it.
     if (SDL_getenv("ZENITH_DISABLE_SPATIAL_UPSCALING") != nullptr) {
         m_supported = false;
-        std::cerr << "FSR 1 upscaling disabled by ZENITH_DISABLE_SPATIAL_UPSCALING\n";
+        context.log().info("FSR 1 upscaling disabled by ZENITH_DISABLE_SPATIAL_UPSCALING");
         return true;
     }
     ShaderModule easu(m_device);

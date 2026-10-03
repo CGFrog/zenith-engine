@@ -199,6 +199,7 @@ class EnvironmentPass {
     void destroyEnvironment(const Environment& environment);
 
     VkDevice m_device{VK_NULL_HANDLE};
+    LogChannel m_log;
     VmaAllocator m_allocator{VK_NULL_HANDLE};
     uint32_t m_frameCount{0};
     uint64_t m_frameSerial{0};
