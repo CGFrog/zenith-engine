@@ -9,13 +9,14 @@ depend on this subtree.
 | --- | --- |
 | `main.cpp` | Editor executable composition root. |
 | `application/` | Editor application lifecycle and the UI/session coordinator. |
+| `areas/` | Blender-style areas and workspaces: the area type registry, per-workspace areas and their ImGui dock layouts, the default workspaces, legacy layout migration, and `workspaces.json`. |
 | `document/` | Scene document state, persistence workflow, and undo/redo history. |
 | `modules/` | Game module hosting: loading the project's module, running its systems, hot reload, and the header-only editor extension API modules implement. |
 | `interaction/` | Editor camera, picking, selection, gizmos, and component editing widgets. |
 | `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object operators, the per-region keymap with `keymap.json` overrides, F3 search, and the keymap editor. |
 | `panels/` | One class per dockable window, drawn from an `EditorContext`. |
 | `project/` | Project tooling: asset catalog, thumbnails, bakers, the build runner, compiler-output parsing, and IDE launching. |
-| `settings/` | Persistent editor preferences and panel/layout state. |
+| `settings/` | Persistent editor preferences (legacy panel flags are only read, for migration). |
 
 ## Local rules
 
@@ -39,6 +40,15 @@ depend on this subtree.
 - A new window is an `EditorPanel` in `panels/`. Panels receive everything
   through `EditorContext`, record scene changes through `SceneEditing` so they
   are undoable, and never reach into other panels.
+- A panel becomes visible to users by registering an area type in
+  `EditorSession::registerAreaTypes` (`application/EditorAreas.cpp`) with one
+  `addAreaType` call: a panel with per-window state uses a factory and
+  `AreaInstancing::Multiple`; a panel the session must own (because other
+  workflows use it) is a member shown with `AreaType::shared("id", m_panel)`.
+  The type id is persisted in `workspaces.json` and window names, so never
+  rename it; add the type to a default workspace in
+  `areas/DefaultWorkspaces.cpp` if it should be open for new users. Areas,
+  workspaces, and layouts are user data, never scene data.
 - Never cache a game module's `ComponentType` pointers or registries across
   frames: read them from `EditorDocument::options()`. Before a module unloads,
   `GameModuleHost` releases its registries, systems, operators, and panels and

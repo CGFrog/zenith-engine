@@ -485,6 +485,7 @@ endif()
 
 add_library(zenith_editor_app STATIC
     src/editor/application/EditorApplication.cpp
+    src/editor/application/EditorAreas.cpp
     src/editor/application/EditorDiagnostics.cpp
     src/editor/application/EditorModuleCommands.cpp
     src/editor/application/EditorObjectCommands.cpp
@@ -494,6 +495,11 @@ add_library(zenith_editor_app STATIC
     src/editor/application/EditorSession.cpp
     src/editor/application/EntityCommands.cpp
     src/editor/application/SceneEditing.cpp
+    src/editor/areas/AreaRegistry.cpp
+    src/editor/areas/AreaWindows.cpp
+    src/editor/areas/DefaultWorkspaces.cpp
+    src/editor/areas/Workspace.cpp
+    src/editor/areas/WorkspaceFile.cpp
     src/editor/document/CommandHistory.cpp
     src/editor/document/DefaultScene.cpp
     src/editor/document/EditorDocument.cpp
@@ -520,6 +526,7 @@ add_library(zenith_editor_app STATIC
     src/editor/panels/BuildPanel.cpp
     src/editor/panels/DiagnosticsPanel.cpp
     src/editor/panels/EditorContext.cpp
+    src/editor/panels/GameModulePanel.cpp
     src/editor/panels/GraphicsPanel.cpp
     src/editor/panels/HierarchyPanel.cpp
     src/editor/panels/InspectorPanel.cpp
@@ -1408,6 +1415,15 @@ if(BUILD_TESTING)
         target_compile_options(zenith_operator_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_operators COMMAND zenith_operator_tests)
+
+    add_executable(zenith_workspace_tests tests/editor/WorkspaceTests.cpp)
+    target_link_libraries(zenith_workspace_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_workspace_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_workspace_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_workspaces COMMAND zenith_workspace_tests)
 
     # Game modules with editor extensions for zenith_game_module_host_tests and
     # the editor module smoke: one source built as two versions, so a test can

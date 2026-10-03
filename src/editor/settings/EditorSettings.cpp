@@ -126,16 +126,9 @@ EditorSettingsResult EditorSettings::save() const {
     if (!output) {
         return {.error = "Could not write editor settings: " + m_path.string()};
     }
+    // Panel visibility and layout live in workspaces.json; the legacy keys
+    // are only read, for migration.
     output << "# Zenith editor settings\n"
-           << "layout.version=" << m_layoutVersion << '\n'
-           << "panel.viewport=" << (m_panels.viewport ? "true" : "false") << '\n'
-           << "panel.hierarchy=" << (m_panels.hierarchy ? "true" : "false") << '\n'
-           << "panel.inspector=" << (m_panels.inspector ? "true" : "false") << '\n'
-           << "panel.diagnostics=" << (m_panels.diagnostics ? "true" : "false") << '\n'
-           << "panel.render_statistics=" << (m_panels.renderStatistics ? "true" : "false") << '\n'
-           << "panel.asset_browser=" << (m_panels.assetBrowser ? "true" : "false") << '\n'
-           << "panel.graphics=" << (m_panels.graphics ? "true" : "false") << '\n'
-           << "panel.build=" << (m_panels.build ? "true" : "false") << '\n'
            << "build.command=" << m_tools.buildCommand << '\n'
            << "build.directory=" << m_tools.buildDirectory << '\n'
            << "ide.command=" << m_tools.ideCommand << '\n';

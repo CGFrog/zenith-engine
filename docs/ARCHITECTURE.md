@@ -54,9 +54,10 @@ Important boundaries:
   EnTT handles; selections and other long-lived references still use stable
   `SceneEntityId`s because restored entities receive new handles. Patched
   entities are placed among their siblings in stable-id order, which is the
-  order a full document load produces. Panel visibility and docking layout are stored
-  separately from runtime scene data, so changing the workspace cannot mutate
-  the scene.
+  order a full document load produces. Workspaces, their areas (editor-type
+  windows, see `src/editor/areas/`), and each workspace's docking layout are
+  user data in `workspaces.json`, stored separately from runtime scene data,
+  so changing the workspace cannot mutate the scene.
 
 ## Shared engine library and game modules
 

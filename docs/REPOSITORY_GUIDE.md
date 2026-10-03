@@ -386,9 +386,38 @@ and component widgets; `panels/` holds one `EditorPanel` per dockable window;
 and `settings/` owns persisted editor preferences. The editor depends on the
 engine, while neither the engine nor demo depends on editor code.
 
-`EditorSession` owns the panels and builds an `EditorContext` each frame: the
-application context, a `SceneEditing` view over the document and history, the
-selection, diagnostics, camera, and the session workflows panels may request.
+`EditorSession` owns the panels that hold editor-wide state and builds an
+`EditorContext` each frame: the application context, a `SceneEditing` view over
+the document and history, the selection, diagnostics, camera, and the session
+workflows panels may request.
+
+### Areas and workspaces (`src/editor/areas/`)
+
+Windows are Blender-style areas. `AreaRegistry` holds the editor types an area
+can show: a stable id (persisted, so never renamed), a title, a panel factory,
+and whether a workspace may show several at once. Hierarchy, Inspector,
+Diagnostics, and Render Statistics are multiple-instance, each area with its
+own panel; Viewport, Asset Browser, Graphics, and Build stay single-instance
+views (`AreaType::shared`) of panels the session owns. Each game module panel
+becomes a single-instance type `module:<title>` while the module provides it.
+`EditorSession::registerAreaTypes` (`application/EditorAreas.cpp`) registers
+the built-in types with one `addAreaType` call each.
+
+A `Workspace` (Layout, Lighting, and Debug by default, shown as tabs in the
+main menu bar) lists its areas, each with an id `<type>.<n>` and an ImGui
+window named `<title>##<type>.<n>`, and keeps its own ImGui dock layout as
+`SaveIniSettingsToMemory` text. Every registered type has at least one area in
+each workspace; closing the last one only hides it so it reopens in place.
+The header menu of each area switches its editor type in place (the new type
+takes the area's dock node), opens another area of the type, or closes it.
+Area changes are the `wm.toggle_panel` (by type id), `wm.area_new`,
+`wm.area_change_type`, `wm.area_close`, `wm.workspace_activate`, and
+`wm.workspace_reset` operators. Workspace switches are applied between frames,
+because ImGui settings may only be replaced outside a frame. `workspaces.json`
+in the editor settings directory stores the workspaces, their areas, and
+layouts; when it is missing, the `panel.*` flags and `layout.version` from an
+older `settings.ini` and its `layout.ini` are migrated into the Layout
+workspace (window sections renamed to the area windows).
 
 `SceneEditing` captures transient whole-scene snapshots around an edit but
 records only the entities it added, removed, or changed as an
@@ -454,7 +483,7 @@ JSON until a later reload succeeds.
 A module may also export `zenith_module_register_editor`
 (`ZENITH_EDITOR_MODULE_REGISTER` in `modules/EditorModuleApi.hpp`) to add
 operators (undoable, Edit mode only, bindable like any operator) and ImGui
-panels (toggled in the Module menu). The API is header-only and dispatches
+panels (area types toggled in the Module menu). The API is header-only and dispatches
 through a virtual registrar, because a module links the engine but never the
 editor; the host removes everything it registered before unloading. The
 status bar and Module menu show the loaded module, its version, and pending
@@ -1250,7 +1279,7 @@ The source directory is copied as a whole to `build/assets/` for runtime use.
 | Path | Coverage |
 | --- | --- |
 | `tests/engine/` | Audio, asset importing, scene documents/hierarchy, and physics contracts. |
-| `tests/editor/` | Settings, build output parsing, build runner and IDE launching, render-settings persistence and graphics-panel helpers, document state, command history, undoable scene editing and entity commands, operators and keymaps, asset browser, selection, camera behavior, and component editing helpers. |
+| `tests/editor/` | Settings, build output parsing, build runner and IDE launching, render-settings persistence and graphics-panel helpers, document state, command history, undoable scene editing and entity commands, operators and keymaps, areas and workspaces (registry, type switching, layout switching, `workspaces.json`, and legacy layout migration), asset browser, selection, camera behavior, and component editing helpers. |
 | `tests/game/` | Application callback order, scene changes, cleanup, demo composition, controls, and reload behavior; the `zenith_game_demo` module loaded with `GameModule::load`, parity with the linked gameplay, and authored character controllers playing in the game. |
 | `tests/capture/`, `tests/references/` | Reference capture driver, showcase capture manifest, and reference PNGs (`docs/RENDERER_VALIDATION.md`). |
 

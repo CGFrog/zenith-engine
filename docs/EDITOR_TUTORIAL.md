@@ -36,6 +36,18 @@ a new key chord to rebind it (conflicts in the same region are refused), `+`
 adds a shortcut, and **Reset** restores the defaults. Your changes are saved to
 `keymap.json` in the editor settings folder.
 
+The tabs at the right of the main menu bar are workspaces: **Layout** for
+general editing, **Lighting** with the Graphics settings beside the viewport,
+and **Debug** with Diagnostics, Build, and Render Statistics. Each remembers
+its own windows and docking. Every window is an area with a header menu named
+after its editor type: pick another type to show it in the same place, **New
+Area** to open a second Hierarchy, Inspector, Diagnostics, or Render Statistics
+beside it, or **Close Area**. **View** shows or hides each editor type in the
+current workspace, and **View > Reset Workspace** restores its default layout.
+Workspaces are saved to `workspaces.json` in the editor settings folder; the
+panel layout of older editor versions is migrated into the Layout workspace
+the first time.
+
 New, Open, Exit, and the native window close button ask what to do when the
 scene has unsaved changes. **Cancel** always leaves the active document intact.
 

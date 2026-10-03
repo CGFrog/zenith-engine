@@ -4,6 +4,9 @@
 #include <filesystem>
 #include <string>
 
+// Panel visibility as editors before workspaces.json stored it in
+// settings.ini (panel.* keys). Read only, to migrate it into the Layout
+// workspace; new panels are area types and need no flag here.
 struct EditorPanelVisibility {
     bool viewport{true};
     bool hierarchy{true};
@@ -42,6 +45,7 @@ struct EditorSettingsResult {
 };
 
 // Persists editor policy separately from scene data and engine configuration.
+// Workspaces and the panel layout are saved in workspaces.json instead.
 class EditorSettings {
   public:
     explicit EditorSettings(std::filesystem::path settingsPath);
@@ -49,10 +53,14 @@ class EditorSettings {
     EditorSettingsResult load();
     EditorSettingsResult save() const;
 
+    // The legacy panel.* flags read from the file (defaults when absent).
+    // They are not saved: workspaces.json replaces them.
     EditorPanelVisibility& panels();
     const EditorPanelVisibility& panels() const;
     EditorToolSettings& tools();
     const EditorToolSettings& tools() const;
+    // The legacy layout.version read from the file (0 when absent), which
+    // says whether layout.ini is recent enough to migrate. Not saved.
     uint32_t layoutVersion() const;
     void setLayoutVersion(uint32_t version);
     const std::filesystem::path& path() const;
