@@ -840,6 +840,12 @@ Resolves platform writable locations, performs atomic user-data writes and
 backup recovery, writes local-only structured diagnostics, and serializes exact
 release provenance.
 
+### `src/engine/platform/FileContents.*`
+
+Reads a whole file into bytes or text with one sized read, reporting whether
+opening or reading failed. Asset loaders use it instead of per-byte stream
+iterators, which dominated Debug-build load times.
+
 ### `src/engine/platform/FileWatcher.*`
 
 Watches a directory tree recursively on a background thread

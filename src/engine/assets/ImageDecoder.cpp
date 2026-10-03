@@ -2,6 +2,7 @@
 #include "ImageDecoder.hpp"
 #include "CompressedTexture.hpp"
 #include "ProductionAssetPipeline.hpp"
+#include "engine/platform/FileContents.hpp"
 
 #include <stb_image.h>
 
@@ -10,7 +11,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <fstream>
 #include <limits>
 
 namespace {
@@ -99,11 +99,10 @@ ImageDecodeResult decodeKtx2(std::span<const uint8_t> bytes, std::string_view la
 
 ImageDecodeResult decodeImageFile(const std::filesystem::path& path) {
     if (path.extension() == ".ktx2") {
-        std::ifstream input(path, std::ios::binary);
-        if (!input) {
+        std::vector<uint8_t> bytes;
+        if (readFileBytes(path, bytes) != FileReadStatus::Success) {
             return {.error = "Cannot open KTX2 image " + path.string()};
         }
-        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
         return decodeKtx2(bytes, path.string());
     }
     int width = 0;

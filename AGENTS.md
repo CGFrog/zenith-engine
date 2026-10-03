@@ -104,10 +104,17 @@ cmake -S . -B build
 cmake --build build --config Debug --parallel 4
 ```
 
-Run the automated tests:
+Run the automated tests (in parallel; GPU tests count double against `-j`, so
+at most half the slots launch the engine at once):
 
 ```powershell
-ctest --test-dir build -C Debug --output-on-failure
+ctest --test-dir build -C Debug --output-on-failure -j 8
+```
+
+For a quick CPU-only loop while iterating, skip the Vulkan and benchmark tests:
+
+```powershell
+ctest --test-dir build -C Debug --output-on-failure -j 8 -LE "vulkan|benchmark"
 ```
 
 Format C++ sources after editing them:

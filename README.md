@@ -225,7 +225,7 @@ thresholded bloom, ACES tone mapping, and edge-adaptive anti-aliasing.
 ## Tests
 
 ```powershell
-ctest --test-dir build -C Debug --output-on-failure
+ctest --test-dir build -C Debug --output-on-failure -j 8
 ```
 
 The CPU-side tests cover audio decoding, caching, mixing, buses, handle and

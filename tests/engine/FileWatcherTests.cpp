@@ -349,18 +349,31 @@ void testPollingRootRemoval(const fs::path& base) {
 }
 } // namespace
 
-int main() {
-    testCoalescerRules();
+// The optional argument selects one backend ("native" or "polling") so CTest
+// can run the two timing-bound halves in parallel; no argument runs both.
+int main(int argc, char** argv) {
+    const std::string backend = argc > 1 ? argv[1] : "all";
+    if (backend != "all" && backend != "native" && backend != "polling") {
+        std::cerr << "Usage: zenith_file_watcher_tests [native|polling]\n";
+        return 1;
+    }
+    const bool runNative = backend != "polling";
+    const bool runPolling = backend != "native";
 
-    const fs::path base = fs::temp_directory_path() / "zenith_file_watcher_tests";
+    const fs::path base = fs::temp_directory_path() / ("zenith_file_watcher_tests_" + backend);
     std::error_code error;
     fs::remove_all(base, error);
     fs::create_directories(base);
 
-    testCreateFailures(base);
-    testWatcher(base, FileWatchBackendPreference::Automatic, "native");
-    testWatcher(base, FileWatchBackendPreference::Polling, "polling");
-    testPollingRootRemoval(base);
+    if (runNative) {
+        testCoalescerRules();
+        testCreateFailures(base);
+        testWatcher(base, FileWatchBackendPreference::Automatic, "native");
+    }
+    if (runPolling) {
+        testWatcher(base, FileWatchBackendPreference::Polling, "polling");
+        testPollingRootRemoval(base);
+    }
 
     fs::remove_all(base, error);
     if (failures == 0) {

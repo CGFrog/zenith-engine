@@ -237,8 +237,20 @@ FetchContent_MakeAvailable(
     nlohmann_json
     JoltPhysics
     VulkanMemoryAllocator
-    meshoptimizer
 )
+
+# meshoptimizer runs per primitive on every model import, so an unoptimized
+# Debug build of it dominates Debug startup (and every GPU test that launches
+# the engine). It is third-party code nobody steps through, so its directory
+# gets the RelWithDebInfo flags in Debug; the variable change is scoped to
+# that subdirectory and restored for the rest of the project.
+set(ZENITH_SAVED_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+set(ZENITH_SAVED_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_RELWITHDEBINFO}")
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+FetchContent_MakeAvailable(meshoptimizer)
+set(CMAKE_C_FLAGS_DEBUG "${ZENITH_SAVED_C_FLAGS_DEBUG}")
+set(CMAKE_CXX_FLAGS_DEBUG "${ZENITH_SAVED_CXX_FLAGS_DEBUG}")
 
 # Dear ImGui is compiled into zenith_engine (whose renderer owns the context
 # and uses the engine's volk function table), and exported from it with
@@ -411,6 +423,7 @@ add_library(zenith_engine SHARED
     src/engine/physics/PhysicsWorld.cpp
     src/engine/platform/FileWatcher.cpp
     src/engine/platform/ChildProcess.cpp
+    src/engine/platform/FileContents.cpp
     src/engine/platform/PlatformServices.cpp
     src/engine/project/ProjectConfig.cpp
     src/engine/reflection/FieldJson.cpp
@@ -839,7 +852,12 @@ if(BUILD_TESTING)
     else()
         target_compile_options(zenith_file_watcher_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
-    add_test(NAME zenith_file_watcher COMMAND zenith_file_watcher_tests)
+    # One CTest per backend: each half waits on real file-system latency, so
+    # they run in parallel rather than back to back.
+    foreach(file_watcher_backend IN ITEMS native polling)
+        add_test(NAME zenith_file_watcher_${file_watcher_backend}
+            COMMAND zenith_file_watcher_tests ${file_watcher_backend})
+    endforeach()
 
     add_executable(zenith_asset_tests
         tests/engine/AssetSceneTests.cpp
@@ -982,6 +1000,35 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_component_types COMMAND zenith_component_types_tests)
 
+    add_executable(zenith_reflection_tests tests/engine/ReflectionTests.cpp)
+    target_link_libraries(zenith_reflection_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_reflection_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_reflection_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_reflection COMMAND zenith_reflection_tests)
+
+    add_executable(zenith_file_contents_tests tests/engine/FileContentsTests.cpp)
+    target_link_libraries(zenith_file_contents_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_file_contents_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_file_contents_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_file_contents COMMAND zenith_file_contents_tests)
+
+    add_executable(zenith_input_manager_tests tests/engine/InputManagerTests.cpp)
+    target_link_libraries(zenith_input_manager_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_input_manager_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_input_manager_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_input_manager COMMAND zenith_input_manager_tests)
+    # Skips (77) where SDL's offscreen video driver cannot create a window.
+    set_tests_properties(zenith_input_manager PROPERTIES SKIP_RETURN_CODE 77)
+
     # Game modules for zenith_game_module_tests: a working module, one built for
     # another module API version, and a library without module entry points.
     add_library(zenith_test_game_module MODULE tests/engine/modules/TestGameModule.cpp)
@@ -1094,6 +1141,7 @@ if(BUILD_TESTING)
     set_tests_properties(zenith_multi_view_vulkan_smoke PROPERTIES
         ENVIRONMENT "ZENITH_SMOKE_FRAMES=120"
         LABELS "vulkan;smoke"
+        SKIP_RETURN_CODE 77
         TIMEOUT 120
     )
 
@@ -1220,17 +1268,28 @@ if(BUILD_TESTING)
     add_dependencies(zenith_reference_capture zenith zenith_cooked_textures)
     add_custom_target(zenith_update_references)
     foreach(reference_set IN ITEMS showcase irradiance_room)
+        set(capture_manifest "${CMAKE_CURRENT_SOURCE_DIR}/tests/references/${reference_set}/captures.json")
         set(capture_arguments
             --executable "$<TARGET_FILE:zenith>"
-            --manifest "${CMAKE_CURRENT_SOURCE_DIR}/tests/references/${reference_set}/captures.json"
+            --manifest "${capture_manifest}"
             --output "${CMAKE_CURRENT_BINARY_DIR}/captures/${reference_set}")
-        add_test(NAME zenith_${reference_set}_reference_captures
-            COMMAND zenith_reference_capture ${capture_arguments})
-        set_tests_properties(zenith_${reference_set}_reference_captures PROPERTIES
-            LABELS "vulkan;capture"
-            SKIP_RETURN_CODE 77
-            TIMEOUT 900
-        )
+        # One CTest per manifest view, so views capture in parallel and a
+        # failure names its view. Editing the manifest re-runs configure.
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${capture_manifest}")
+        file(READ "${capture_manifest}" capture_manifest_json)
+        string(JSON capture_view_count LENGTH "${capture_manifest_json}" views)
+        math(EXPR capture_last_view "${capture_view_count} - 1")
+        foreach(capture_view_index RANGE ${capture_last_view})
+            string(JSON capture_view GET "${capture_manifest_json}" views ${capture_view_index} name)
+            add_test(NAME zenith_${reference_set}_capture_${capture_view}
+                COMMAND zenith_reference_capture ${capture_arguments} --view ${capture_view})
+            set_tests_properties(zenith_${reference_set}_capture_${capture_view} PROPERTIES
+                LABELS "vulkan;capture"
+                SKIP_RETURN_CODE 77
+                TIMEOUT 120
+                PROCESSORS 2
+            )
+        endforeach()
         add_custom_target(zenith_update_${reference_set}_references
             COMMAND zenith_reference_capture ${capture_arguments} --update
             DEPENDS zenith_reference_capture zenith zenith_cooked_textures
@@ -1245,6 +1304,14 @@ if(BUILD_TESTING)
 
     add_executable(zenith_simulation_benchmark tests/engine/SimulationBenchmark.cpp)
     target_link_libraries(zenith_simulation_benchmark PRIVATE zenith_engine)
+
+    # The benchmarks are run by hand for numbers; CTest only checks that they
+    # complete and exit cleanly so they cannot silently rot.
+    add_test(NAME zenith_render_packet_benchmark_run COMMAND zenith_render_packet_benchmark)
+    add_test(NAME zenith_simulation_benchmark_run COMMAND zenith_simulation_benchmark)
+    set_tests_properties(zenith_render_packet_benchmark_run zenith_simulation_benchmark_run PROPERTIES
+        LABELS "benchmark"
+    )
 
     add_executable(zenith_benchmark_tests tests/engine/BenchmarkTests.cpp)
     target_link_libraries(zenith_benchmark_tests PRIVATE zenith_engine)
@@ -1497,6 +1564,20 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_workspaces COMMAND zenith_workspace_tests)
 
+    # The full editor session driven headlessly, as zenith_editor composes it.
+    add_executable(zenith_editor_session_tests tests/editor/EditorSessionTests.cpp)
+    target_link_libraries(zenith_editor_session_tests PRIVATE zenith_editor_app)
+    target_compile_definitions(zenith_editor_session_tests PRIVATE
+        ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}"
+        ZENITH_EDITOR_FONT="${inter_SOURCE_DIR}/extras/ttf/Inter-Regular.ttf")
+    add_dependencies(zenith_editor_session_tests zenith_assets)
+    if(MSVC)
+        target_compile_options(zenith_editor_session_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_editor_session_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_editor_session COMMAND zenith_editor_session_tests)
+
     add_executable(zenith_editor_area_types_tests tests/editor/EditorAreaTypesTests.cpp)
     target_link_libraries(zenith_editor_area_types_tests PRIVATE zenith_editor_app)
     if(MSVC)
@@ -1603,6 +1684,9 @@ if(BUILD_TESTING)
             LABELS "vulkan;validation"
             SKIP_RETURN_CODE 77
             TIMEOUT 300
+            # Counts double against ctest -j so at most half the slots run an
+            # engine instance on the shared GPU.
+            PROCESSORS 2
         )
     endfunction()
 
@@ -1665,4 +1749,28 @@ if(BUILD_TESTING)
         COMMAND zenith_multi_view_smoke_tests
         ENVIRONMENT ZENITH_SMOKE_FRAMES=120
     )
+    set_tests_properties(zenith_multi_view_vulkan_smoke zenith_editor_vulkan_smoke zenith_editor_module_smoke
+        PROPERTIES PROCESSORS 2)
+
+    # Test targets declared without the project's test warning level.
+    foreach(test_target IN ITEMS
+            zenith_game_module_tests zenith_render_submission_tests zenith_gpu_resource_table_tests
+            zenith_mesh_lod_tests zenith_mesh_pass_frame_plan_tests zenith_view_shading_tests
+            zenith_render_view_tests zenith_multi_view_smoke_tests zenith_deferred_upload_tracker_tests
+            zenith_gpu_cull_layout_tests zenith_packed_vertex_stream_tests zenith_depth_prepass_tests
+            zenith_screen_space_reflection_tests zenith_ambient_occlusion_tests zenith_clustered_lighting_tests
+            zenith_local_shadow_tests zenith_volumetric_fog_tests zenith_motion_blur_tests
+            zenith_depth_of_field_tests zenith_color_grading_tests zenith_particle_tests
+            zenith_frame_task_graph_tests zenith_render_graph_tests zenith_temporal_quality_tests
+            zenith_spatial_upscale_tests zenith_tone_mapping_tests zenith_reflection_probe_tests
+            zenith_decal_tests zenith_environment_lighting_tests zenith_asset_streaming_tests
+            zenith_render_regression_tests zenith_frame_capture_tests zenith_capture_camera_tests
+            zenith_reference_capture zenith_render_packet_benchmark zenith_simulation_benchmark
+            zenith_benchmark_tests zenith_game_module_host_tests zenith_graphics_validation_tests)
+        if(MSVC)
+            target_compile_options(${test_target} PRIVATE /W4 /permissive-)
+        else()
+            target_compile_options(${test_target} PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+    endforeach()
 endif()

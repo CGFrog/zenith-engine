@@ -1,11 +1,10 @@
 #include "IrradianceVolumeAsset.hpp"
+#include "engine/platform/FileContents.hpp"
 
 #include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstring>
-#include <fstream>
-#include <iterator>
 
 namespace {
 constexpr std::array<char, 4> magic{'Z', 'V', 'O', 'L'};
@@ -165,16 +164,13 @@ IrradianceVolumeResult decodeIrradianceVolume(std::span<const std::byte> input, 
 }
 
 IrradianceVolumeResult loadIrradianceVolume(const std::filesystem::path& path, IrradianceVolumeData& output) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        return {.error = "Could not open irradiance volume: " + path.string()};
+    std::vector<uint8_t> bytes;
+    if (const FileReadStatus status = readFileBytes(path, bytes); status != FileReadStatus::Success) {
+        return {.error = (status == FileReadStatus::OpenFailed ? "Could not open irradiance volume: "
+                                                               : "Could not read irradiance volume: ") +
+                         path.string()};
     }
-    std::vector<char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    if (file.bad()) {
-        return {.error = "Could not read irradiance volume: " + path.string()};
-    }
-    IrradianceVolumeResult result =
-        decodeIrradianceVolume(std::as_bytes(std::span<const char>(bytes.data(), bytes.size())), output);
+    IrradianceVolumeResult result = decodeIrradianceVolume(std::as_bytes(std::span<const uint8_t>(bytes)), output);
     if (!result) {
         result.error = path.string() + ": " + result.error;
     }

@@ -184,9 +184,11 @@ writes `<view>.diff.png` (amplified absolute difference) beside the capture in
 few 8-bit steps in a handful of pixels; the default limits (3 per channel, RMSE
 1.5, 0.1% of pixels) leave room for that and nothing larger.
 
-The CTests `zenith_<set>_reference_captures` (labels `vulkan;capture`) run the
-comparison and return 77, reported as skipped, when the machine has no
-hardware Vulkan device. CI runs it in the Vulkan-labelled step only.
+Each manifest view is its own CTest, `zenith_<set>_capture_<view>` (labels
+`vulkan;capture`), registered from `captures.json` at configure time, so views
+capture in parallel and a failure names its view; editing a manifest re-runs
+configure. Each returns 77, reported as skipped, when the machine has no
+hardware Vulkan device. CI runs them in the Vulkan-labelled step only.
 
 **Regenerate the references** after an intentional visual change, a content
 change, or a driver/GPU change, then review the PNG diff before committing.

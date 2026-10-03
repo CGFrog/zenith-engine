@@ -204,8 +204,10 @@ void testLargeSceneHistory() {
     const SceneEditing editing(scene, assets, document, history, diagnostics);
     const SceneDocumentOptions& options = document.options();
 
-    constexpr uint32_t entityCount = 5'000;
-    constexpr uint32_t groupSize = 50;
+    // Large enough that one full snapshot dwarfs the per-entity diffs; every
+    // recorded edit serializes the whole scene twice, so this sets the cost.
+    constexpr uint32_t entityCount = 1'000;
+    constexpr uint32_t groupSize = 10;
     std::vector<Entity> entities;
     for (uint32_t index = 0; index < entityCount; ++index) {
         const Entity entity = scene.createEntity("Entity " + std::to_string(index));
@@ -223,8 +225,9 @@ void testLargeSceneHistory() {
     const Entity untouched = entities[1];
 
     constexpr int editCount = 6;
+    constexpr uint32_t editStride = entityCount / editCount;
     for (int edit = 0; edit < editCount; ++edit) {
-        const Entity target = entities[static_cast<size_t>(100 + edit * 397)];
+        const Entity target = entities[100 + static_cast<size_t>(edit) * editStride];
         editing.perform("Edit", {}, [&] {
             if (edit % 3 == 0) {
                 scene.registry().get<NameComponent>(target).name = "Edited " + std::to_string(edit);

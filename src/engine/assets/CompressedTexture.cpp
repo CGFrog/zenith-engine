@@ -1,10 +1,9 @@
 #include "engine/assets/CompressedTexture.hpp"
+#include "engine/platform/FileContents.hpp"
 
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <fstream>
-#include <iterator>
 
 namespace {
 constexpr std::array<uint8_t, 12> ktx2Identifier{0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32,
@@ -76,11 +75,6 @@ std::vector<uint8_t> dataFormatDescriptor(const TextureAsset& texture) {
         write32(descriptor, offset + 12, 0xFFFFFFFFu);
     }
     return descriptor;
-}
-
-std::vector<uint8_t> readFile(const std::filesystem::path& path) {
-    std::ifstream input(path, std::ios::binary);
-    return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
 std::string_view usageName(TextureUsage usage) {
@@ -266,7 +260,8 @@ CookedTextureLookup loadCookedTexture(const std::filesystem::path& derivedRoot, 
     if (!cache.key(cookedTextureRequest(source, usage), key) || !cache.inspect(key, record)) {
         return {};
     }
-    const std::vector<uint8_t> bytes = readFile(record.path);
+    std::vector<uint8_t> bytes;
+    readFileBytes(record.path, bytes);
     if (const AssetPipelineResult valid = validateKtx2(bytes); !valid) {
         return {.error = "Cooked texture " + record.path.string() + " is invalid: " + valid.error};
     }

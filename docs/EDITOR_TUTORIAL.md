@@ -97,7 +97,7 @@ scene has unsaved changes. **Cancel** always leaves the active document intact.
 For contributor checks, run:
 
 ```powershell
-ctest --test-dir build -C Debug --output-on-failure
+ctest --test-dir build -C Debug --output-on-failure -j 8
 $env:ZENITH_EDITOR_SMOKE='1'; $env:ZENITH_SMOKE_FRAMES='12'; build\Debug\zenith_editor.exe
 ```
 

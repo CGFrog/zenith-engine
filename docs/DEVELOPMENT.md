@@ -58,8 +58,13 @@ cmake --build build --config Release --parallel 4
 ## Tests
 
 ```powershell
-ctest --test-dir build -C Debug --output-on-failure
+ctest --test-dir build -C Debug --output-on-failure -j 8
 ```
+
+`CMakePresets.json` carries the same settings: `ctest --preset debug` runs
+everything in parallel and `ctest --preset debug-cpu` skips the Vulkan and
+benchmark tests for a fast CPU-only loop. GPU tests set `PROCESSORS 2`, so
+`-j 8` runs at most four engine instances on the GPU at once.
 
 Run one test by name:
 
@@ -134,6 +139,9 @@ specific systems:
 .\build\Release\zenith_simulation_benchmark.exe
 ```
 
+CTest also runs both (label `benchmark`) to check that they complete and exit
+cleanly; read timings from a Release build, not from those runs.
+
 The packet benchmark reports rebuild/sort and cached-revision distributions after
 warmup. The simulation benchmark reports separate 256-body sleeping and active
 Jolt workloads, including sync phases, solver time, contacts, and active/sleeping
@@ -153,7 +161,7 @@ Before handing off a normal code change:
 
 ```powershell
 cmake --build build --config Debug --parallel 4
-ctest --test-dir build -C Debug --output-on-failure
+ctest --test-dir build -C Debug --output-on-failure -j 8
 git diff --check
 ```
 

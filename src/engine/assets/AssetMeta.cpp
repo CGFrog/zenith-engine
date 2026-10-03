@@ -1,7 +1,7 @@
 #include "engine/assets/AssetMeta.hpp"
+#include "engine/platform/FileContents.hpp"
 
 #include <fstream>
-#include <iterator>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -72,13 +72,10 @@ std::string serializeAssetMeta(const AssetMeta& meta) {
 }
 
 AssetMetaResult readAssetMeta(const std::filesystem::path& metaPath, AssetMeta& meta) {
-    std::ifstream input(metaPath, std::ios::binary);
-    if (!input) {
-        return {.error = "could not open asset meta"};
-    }
-    const std::string text{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-    if (input.bad()) {
-        return {.error = "could not read asset meta"};
+    std::string text;
+    if (const FileReadStatus status = readFileText(metaPath, text); status != FileReadStatus::Success) {
+        return {.error =
+                    status == FileReadStatus::OpenFailed ? "could not open asset meta" : "could not read asset meta"};
     }
     return parseAssetMeta(text, meta);
 }

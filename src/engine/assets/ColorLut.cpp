@@ -1,9 +1,8 @@
 #include "ColorLut.hpp"
+#include "engine/platform/FileContents.hpp"
 
 #include <charconv>
 #include <cmath>
-#include <fstream>
-#include <iterator>
 #include <optional>
 
 namespace {
@@ -165,13 +164,11 @@ ColorLutResult parseColorLut(std::string_view text, ColorLut& output) {
 }
 
 ColorLutResult loadColorLut(const std::filesystem::path& path, ColorLut& output) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        return {.error = "Could not open colour LUT: " + path.string()};
-    }
-    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    if (file.bad()) {
-        return {.error = "Could not read colour LUT: " + path.string()};
+    std::string text;
+    if (const FileReadStatus status = readFileText(path, text); status != FileReadStatus::Success) {
+        return {.error = (status == FileReadStatus::OpenFailed ? "Could not open colour LUT: "
+                                                               : "Could not read colour LUT: ") +
+                         path.string()};
     }
     ColorLutResult result = parseColorLut(text, output);
     if (!result) {

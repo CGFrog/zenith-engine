@@ -2,12 +2,11 @@
 #include "ImageDecoder.hpp"
 #include "ModelImporter.hpp"
 #include "PackedVertexStreams.hpp"
+#include "engine/platform/FileContents.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <algorithm>
 #include <array>
-#include <fstream>
-#include <iterator>
 #include <numeric>
 #include <utility>
 
@@ -231,12 +230,10 @@ AssetLoadResult<FontHandle> AssetManager::loadFont(const std::filesystem::path& 
         return {.handle = found->second};
     }
 
-    std::ifstream input(normalized, std::ios::binary);
-    if (!input) {
+    FontAsset asset;
+    if (readFileBytes(normalized, asset.bytes) == FileReadStatus::OpenFailed) {
         return {.error = "Could not open font: " + normalized.string()};
     }
-    FontAsset asset;
-    asset.bytes.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
     if (asset.bytes.empty()) {
         return {.error = "Font file is empty: " + normalized.string()};
     }

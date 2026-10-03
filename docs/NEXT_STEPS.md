@@ -567,6 +567,25 @@ Exit criteria:
 - No change regresses median or p95 GPU frame time on the demo, the showcase,
   or the 4,000-object benchmark beyond measured noise.
 
+## Test suite follow-ups
+
+The suite runs in parallel, captures one reference view per CTest, and has
+direct tests for reflection, `InputManager`, and the headless `EditorSession`.
+Remaining coverage gaps, highest value first:
+
+- [ ] Prefab and additive-scene tests: instantiation, overrides, nested
+      prefabs, broken references, and additive load/unload ownership (today
+      only sections of `ProductionMilestonesTests.cpp`).
+- [ ] `JobSystem` tests: ordering, dependencies, exceptions, and shutdown while
+      busy.
+- [ ] `ThumbnailCache` and `HierarchyPanel` tests: downsampling,
+      request/find/invalidate, worker shutdown, filtering, and reparent drops.
+- [ ] Cook optimized meshes and LOD chains into the derived-asset cache, as
+      textures are, so imports skip meshoptimizer at load time.
+- [ ] Record editor edits without serializing the whole scene twice per
+      command (`SceneEditing::perform`); large scenes pay for it on every edit,
+      and it bounds the size of `zenith_scene_editing`'s large-scene test.
+
 ## Recommended next implementation slice
 
 Start with Milestone 22: validation runs and built-in frame capture protect
