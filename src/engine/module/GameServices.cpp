@@ -29,6 +29,10 @@ Timers& GameServices::timers() {
     return m_timers;
 }
 
+Effects& GameServices::effects() {
+    return m_effects;
+}
+
 DebugDraw& GameServices::debugDraw() {
     return m_debugDraw;
 }
@@ -47,6 +51,7 @@ void GameServices::advanceTimers(Scene& scene, float simulatedSeconds) {
 }
 
 void GameServices::flush(Scene& scene) {
+    m_effects.flush(scene);
     if (!m_behaviours) {
         m_commands.flush(scene, m_prefabs, m_events, m_log);
         return;

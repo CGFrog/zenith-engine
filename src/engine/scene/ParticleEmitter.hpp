@@ -75,6 +75,10 @@ struct ParticleEmitterComponent {
     TextureHandle texture{};
     // Disabled emitters stop spawning; live particles finish their lifetimes.
     bool emitting{true};
+    // Runtime only, not serialized: changing it restarts the emitter as if it
+    // had just been created, so its first burst fires again (as when a pooled
+    // effect is reused).
+    uint32_t restartGeneration{0};
 };
 
 // Upper bound on ParticleEmitterComponent::maxParticles.

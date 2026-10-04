@@ -150,6 +150,7 @@ ParticleFramePlan ParticleScheduler::plan(std::span<const EmitterSnapshot> snaps
             m_states[index].id = scheduled[index]->id;
             m_states[index].capacity = capacities[index];
             m_states[index].space = scheduled[index]->emitter.space;
+            m_states[index].restartGeneration = scheduled[index]->emitter.restartGeneration;
         }
         m_budget = budget;
         m_sceneGeneration = sceneGeneration;
@@ -160,6 +161,12 @@ ParticleFramePlan ParticleScheduler::plan(std::span<const EmitterSnapshot> snaps
     for (size_t index = 0; index < scheduled.size(); ++index) {
         const ParticleEmitterComponent& emitter = scheduled[index]->emitter;
         EmitterState& state = m_states[index];
+        if (state.restartGeneration != emitter.restartGeneration) {
+            state.restartGeneration = emitter.restartGeneration;
+            state.started = false;
+            state.burstTimer = 0.0;
+            state.spawnAccumulator = 0.0;
+        }
         uint64_t spawns = 0;
         if (emitter.emitting) {
             if (!state.started) {

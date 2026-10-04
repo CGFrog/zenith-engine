@@ -244,6 +244,8 @@ class ParticleScheduler {
         uint64_t spawned{0};
         uint32_t cursor{0};
         bool started{false};
+        // The emitter's restartGeneration when it last (re)started.
+        uint32_t restartGeneration{0};
     };
 
     std::vector<EmitterState> m_states;

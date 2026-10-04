@@ -450,9 +450,26 @@ Follow-ups:
 
 ### B4. Effects and pooling
 
-- [ ] Add `effects.spawn(prefab, transform, lifetime)` to `GameServices`. The
+- [x] Add `effects.spawn(prefab, transform, lifetime)` to `GameServices`. The
       spawned entity is destroyed, or returned to a pool, when its particle
       burst ends or its lifetime expires.
+
+Result:
+- `src/engine/module/Effects.*`, reached as `GameServices::effects()`.
+  Particles simulate on the GPU, so "the burst ends" is derived on the CPU:
+  the longest `lifetimeMax` of the prefab's one-shot emitters
+  (`derivedEffectLifetime`). Continuous or repeating emitters need an
+  explicit lifetime; without one the spawn is logged and destroyed.
+- Pooling parks the instance with its emitters off; reuse moves it and bumps
+  the new runtime-only `ParticleEmitterComponent::restartGeneration`, which
+  the particle scheduler treats as a restart of the first burst.
+- Coverage: `testEffects` in `GameServicesTests.cpp` and
+  `testSchedulerRestart` in `ParticleTests.cpp`.
+
+Follow-ups:
+- Parked instances stay visible: pooling suits particle-only effects until
+  there is a way to hide an entity subtree from rendering.
+- Pools are unbounded and live as long as the gameplay session.
 
 ### B5. Save game
 

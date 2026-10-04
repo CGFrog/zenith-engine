@@ -145,6 +145,14 @@ It holds:
   - `TriggerEntered` and `TriggerExited`.
 - The physics events of the last step for the behaviours' trigger and
   collision hooks (`publishPhysicsEvents`, `takePhysicsEvents`).
+- `Effects`: `spawn(prefab, transform, EffectOptions)` places a prefab that
+  removes itself when it ends: after an explicit lifetime, or the longest
+  particle lifetime of its one-shot emitters (a continuous or repeating
+  emitter needs an explicit lifetime). Lifetimes run on the session's timers.
+  A pooled effect parks its instance (emitters stopped) instead of being
+  destroyed, and the next pooled spawn of that prefab moves and restarts it,
+  which avoids restarting every emitter in the scene as entity changes do.
+  Spawns apply at the next flush, before the entity commands.
 - `Timers`: one-shot or repeating callbacks on simulated time. They follow the
   clock's time scale and stop while paused. A timer may have an owner entity;
   the timer is dropped when its owner is gone.

@@ -136,7 +136,10 @@ CPU side of the particle system: quality budgets, the emitter scheduler (pool
 layout and deterministic spawn counts), GPU struct layouts mirrored by the
 shaders, emitter packing, and the bitonic sort plan with a CPU reference of
 the network; `tests/engine/ParticleTests.cpp` covers it with the emitter
-validation and scene round trip of `engine/scene/ParticleEmitter.*`.
+validation and scene round trip of `engine/scene/ParticleEmitter.*`. An
+emitter fires its first burst when it starts; changing its runtime-only
+`restartGeneration` starts it again without a pool reset (pooled effects use
+it).
 
 ## `src/engine/graphics/VolumetricFog.*`
 

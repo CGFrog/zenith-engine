@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Effects.hpp"
 #include "EntityCommandBuffer.hpp"
 #include "EventQueue.hpp"
 #include "SystemScheduler.hpp"
@@ -33,7 +34,8 @@ struct GameplayPhysicsEvents {
 };
 
 // Gameplay mechanisms a host gives its systems for one play session: prefab
-// spawning, deferred scene changes, events, timers, and debug drawing. Hosts
+// spawning, deferred scene changes, events, timers, effects, and debug
+// drawing. Hosts
 // create it when gameplay starts (a game's scene loads, the editor enters
 // Play or Simulate) and destroy it when gameplay ends. Systems reach it
 // through SystemContext::services, which is null in Edit mode.
@@ -56,6 +58,8 @@ class GameServices {
     EntityCommandBuffer& commands();
     EventQueue& events();
     Timers& timers();
+    // Short-lived effects that remove themselves when they end.
+    Effects& effects();
     // Lines and shapes drawn this frame in every view; cleared after the
     // frame renders.
     DebugDraw& debugDraw();
@@ -66,7 +70,7 @@ class GameServices {
     // Runs the timers due after simulatedSeconds, then flushes the commands
     // they recorded. The host calls it once per frame after the Update phase.
     void advanceTimers(Scene& scene, float simulatedSeconds);
-    // Applies the recorded entity commands.
+    // Applies the requested effects, then the recorded entity commands.
     void flush(Scene& scene);
     // Publishes a physics step's sensor events as TriggerEntered and
     // TriggerExited, and keeps them and the step's new contacts between solid
@@ -86,6 +90,7 @@ class GameServices {
     LogChannel m_log;
     std::shared_ptr<const BehaviourRegistry> m_behaviours;
     GameplayPhysicsEvents m_physicsEvents;
+    Effects m_effects{m_commands, m_timers, m_log};
 };
 
 // Runs one phase of systems and then, when context.services is set, flushes

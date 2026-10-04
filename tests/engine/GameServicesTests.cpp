@@ -6,6 +6,7 @@
 #include "engine/graphics/DebugDraw.hpp"
 #include "engine/module/GameEvents.hpp"
 #include "engine/module/GameServices.hpp"
+#include "engine/scene/ParticleEmitter.hpp"
 #include "engine/scene/Prefab.hpp"
 #include "engine/scene/Scene.hpp"
 
@@ -162,6 +163,93 @@ void testPrefabSpawn() {
     std::filesystem::remove_all(root, error);
 }
 
+// Writes a prefab whose root has the emitter.
+void writeEffectPrefab(const std::filesystem::path& root, const std::string& name,
+                       const ParticleEmitterComponent& emitter) {
+    ServicesFixture authoring(root);
+    const Entity effect = authoring.scene.createEntity(name);
+    authoring.scene.registry().emplace<ParticleEmitterComponent>(effect, emitter);
+    PrefabCapture capture;
+    const PrefabResult captured =
+        authoring.services.prefabs().capture(authoring.scene, effect, name + ".zprefab", capture);
+    expect(captured.success && savePrefab(root / (name + ".zprefab"), capture.document).success,
+           "an effect prefab is written");
+}
+
+void testEffects() {
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith_game_services_effects";
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    std::filesystem::create_directories(root, error);
+    writeEffectPrefab(root, "Spark", {.spawnRate = 0.0f, .burstCount = 10, .lifetimeMin = 0.25f, .lifetimeMax = 0.5f});
+    writeEffectPrefab(root, "Smoke", {.spawnRate = 10.0f, .lifetimeMax = 2.0f});
+
+    std::string message;
+    Scene scene;
+    const Entity spark = scene.createEntity("Spark");
+    scene.registry().emplace<ParticleEmitterComponent>(spark, ParticleEmitterComponent{.spawnRate = 0.0f});
+    const Entity child = scene.createEntity("Child");
+    scene.registry().emplace<ParticleEmitterComponent>(
+        child, ParticleEmitterComponent{.spawnRate = 0.0f, .burstCount = 1, .lifetimeMax = 3.0f});
+    scene.setParent(child, spark);
+    expect(derivedEffectLifetime(scene, spark, message) == 3.0f,
+           "a one-shot effect lasts its longest particle lifetime");
+    scene.registry().get<ParticleEmitterComponent>(child).burstInterval = 1.0f;
+    expect(!derivedEffectLifetime(scene, spark, message) && !message.empty(),
+           "a repeating emitter has no derived lifetime");
+
+    ServicesFixture fixture(root);
+    Effects& effects = fixture.services.effects();
+    effects.spawn("Spark.zprefab", glm::translate(glm::mat4(1.0f), {1.0f, 2.0f, 3.0f}));
+    expect(findNamed(fixture.scene, "Spark") == entt::null, "an effect spawns at the next flush");
+    fixture.services.flush(fixture.scene);
+    const Entity spawned = findNamed(fixture.scene, "Spark");
+    expect(spawned != entt::null && effects.activeCount() == 1 &&
+               fixture.scene.registry().get<TransformComponent>(spawned).local[3] == glm::vec4(1.0f, 2.0f, 3.0f, 1.0f),
+           "an effect plays at its transform");
+    fixture.services.advanceTimers(fixture.scene, 0.0f);
+    fixture.services.advanceTimers(fixture.scene, 0.4f);
+    expect(findNamed(fixture.scene, "Spark") != entt::null, "an effect lasts its derived lifetime");
+    fixture.services.advanceTimers(fixture.scene, 0.2f);
+    expect(findNamed(fixture.scene, "Spark") == entt::null && effects.activeCount() == 0,
+           "an effect is destroyed when it ends");
+
+    effects.spawn("Smoke.zprefab", glm::mat4(1.0f));
+    fixture.services.flush(fixture.scene);
+    expect(findNamed(fixture.scene, "Smoke") == entt::null && effects.activeCount() == 0,
+           "a continuous effect without a lifetime is refused and destroyed");
+    effects.spawn("Smoke.zprefab", glm::mat4(1.0f), {.lifetime = 1.0f});
+    fixture.services.flush(fixture.scene);
+    fixture.services.advanceTimers(fixture.scene, 0.9f);
+    expect(findNamed(fixture.scene, "Smoke") != entt::null, "an explicit lifetime keeps a continuous effect");
+    fixture.services.advanceTimers(fixture.scene, 0.2f);
+    expect(findNamed(fixture.scene, "Smoke") == entt::null, "an explicit lifetime ends a continuous effect");
+
+    effects.spawn("Spark.zprefab", glm::mat4(1.0f), {.pooled = true});
+    fixture.services.flush(fixture.scene);
+    const Entity pooled = findNamed(fixture.scene, "Spark");
+    const SceneEntityId pooledId = fixture.scene.id(pooled);
+    fixture.services.advanceTimers(fixture.scene, 0.6f);
+    const auto* parkedEmitter = fixture.scene.registry().try_get<ParticleEmitterComponent>(pooled);
+    expect(parkedEmitter != nullptr && !parkedEmitter->emitting && effects.parkedCount("Spark.zprefab") == 1,
+           "a pooled effect that ends is parked with its emitters stopped");
+    const uint32_t generation = parkedEmitter != nullptr ? parkedEmitter->restartGeneration : 0;
+    effects.spawn("Spark.zprefab", glm::translate(glm::mat4(1.0f), {5.0f, 0.0f, 0.0f}), {.pooled = true});
+    fixture.services.flush(fixture.scene);
+    const Entity reused = fixture.scene.findEntity(pooledId);
+    const auto* restarted =
+        reused != entt::null ? fixture.scene.registry().try_get<ParticleEmitterComponent>(reused) : nullptr;
+    expect(reused == pooled && restarted != nullptr && restarted->emitting &&
+               restarted->restartGeneration == generation + 1 && effects.parkedCount("Spark.zprefab") == 0 &&
+               fixture.scene.registry().get<TransformComponent>(reused).local[3].x == 5.0f,
+           "a pooled spawn reuses the parked instance, moved and restarted");
+    expect(fixture.scene.registry().view<ParticleEmitterComponent>().size() == 1,
+           "reusing an instance spawns nothing new");
+    fixture.services.advanceTimers(fixture.scene, 0.6f);
+    expect(effects.parkedCount("Spark.zprefab") == 1 && effects.activeCount() == 0, "the reused instance parks again");
+    std::filesystem::remove_all(root, error);
+}
+
 void testEventsLastOneFrame() {
     EventQueue events;
     events.publish(DoorOpened{1});
@@ -233,6 +321,7 @@ int main() {
     testCommandsApplyAtFlush();
     testCommandsRunInPhases();
     testPrefabSpawn();
+    testEffects();
     testEventsLastOneFrame();
     testTimers();
     if (failures == 0) {

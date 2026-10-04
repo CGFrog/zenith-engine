@@ -253,6 +253,20 @@ void testSchedulerLayout() {
            "at most maximumEmitters emitters are simulated");
 }
 
+// A pooled effect restarts its emitter by changing restartGeneration: the
+// first burst fires again without a layout change.
+void testSchedulerRestart() {
+    particles::ParticleScheduler scheduler;
+    std::vector<particles::EmitterSnapshot> once{snapshot(4, {.maxParticles = 16, .spawnRate = 0.0f, .burstCount = 5})};
+    expect(scheduler.plan(once, 64, 0.25f).totalSpawns == 5, "a one-shot emitter bursts when it starts");
+    expect(scheduler.plan(once, 64, 0.25f).totalSpawns == 0, "a one-shot emitter bursts once");
+    ++once[0].emitter.restartGeneration;
+    const particles::ParticleFramePlan restarted = scheduler.plan(once, 64, 0.25f);
+    expect(restarted.totalSpawns == 5 && !restarted.resetPool,
+           "a new restart generation fires the burst again without resetting the pool");
+    expect(scheduler.plan(once, 64, 0.25f).totalSpawns == 0, "a restart bursts once");
+}
+
 void testSchedulerSpawns() {
     particles::ParticleScheduler scheduler;
     // Rates and steps are exact in binary so the expected counts are exact.
@@ -349,6 +363,7 @@ int main() {
     testSortPlan();
     testSchedulerLayout();
     testSchedulerSpawns();
+    testSchedulerRestart();
     testPackEmitter();
     testGatherEmitters();
     if (failures == 0) {
