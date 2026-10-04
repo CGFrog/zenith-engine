@@ -7,21 +7,21 @@
 #include <span>
 #include <string_view>
 
-// The tunable parts of the "Pixel Aero Night" theme. There is one look; these
+// The tunable parts of the "8-bit Blender" theme. There is one look; these
 // only adjust it. The defaults are the theme as designed. The editor session
 // owns the values (from settings.ini) and hands them explicitly to whatever
-// paints: applyEditorColors, ThemeChrome, and the glass backdrop.
+// paints: applyEditorColors and ThemeChrome.
 
 // The highlight colour of focus rings, active overlines, drag targets, and
-// the gizmo selection. Every accent is a palette hue and stands out from the
-// panes, fields, and glass it is drawn on (see EditorPaletteTests).
+// the gizmo selection. Every accent stands out from the panes, fields,
+// buttons, and headers it is drawn on (see EditorPaletteTests).
 enum class ThemeAccent : uint8_t {
-    Mint,
-    Aqua,
-    Lime,
-    Sky,
-    Amber,
+    Blue,
+    Orange,
+    Teal,
+    Green,
     Violet,
+    Red,
 };
 
 // The largest UI scale override: screen pixels per art pixel.
@@ -29,35 +29,19 @@ inline constexpr uint32_t maximumUiScale = 4;
 
 struct ThemeAccentInfo {
     ThemeAccent accent;
-    // Stored in settings.ini, for example "mint".
+    // Stored in settings.ini, for example "blue".
     std::string_view key;
     std::string_view label;
     ThemeColor color;
 };
 
-// Every accent, the default (Mint, palette::pixelGlow) first.
+// Every accent, the default (Blue, palette::accentBlue) first.
 std::span<const ThemeAccentInfo> themeAccents();
 const ThemeAccentInfo& themeAccentInfo(ThemeAccent accent);
 std::optional<ThemeAccent> parseThemeAccent(std::string_view key);
 
 struct ThemeParameters {
-    // Wallpaper cells the frosted glass blurs over; 0 shows it sharp.
-    static constexpr uint32_t maximumFrostRadius = 6;
-    // How far the glass mixes the blurred wallpaper toward palette::glassTint.
-    static constexpr float minimumGlassOpacity = 0.15f;
-    static constexpr float maximumGlassOpacity = 0.75f;
-    // Panes stay opaque enough that every text colour keeps 4.5:1 over the
-    // brightest wallpaper colour behind them.
-    static constexpr float minimumPaneOpacity = 0.9f;
-
-    // Paints the procedural wallpaper behind the editor. Off, the desktop is
-    // the flat night sky and glass is the flat fallback fill.
-    bool wallpaper{true};
-    uint32_t frostRadius{3};
-    float glassOpacity{palette::glassTintAmount};
-    // Opacity of the solid content panes inside the glass frames.
-    float paneOpacity{1.0f};
-    ThemeAccent accent{ThemeAccent::Mint};
+    ThemeAccent accent{ThemeAccent::Blue};
 
     bool operator==(const ThemeParameters&) const = default;
 };
@@ -75,7 +59,6 @@ enum class ThemeModeTint : uint8_t {
 // for None.
 std::optional<ThemeColor> themeModeTintColor(ThemeModeTint tint);
 
-// The parameters with every value moved into its supported range.
+// The parameters with every value moved into its supported range: an unknown
+// accent becomes the default.
 ThemeParameters clampedThemeParameters(ThemeParameters parameters);
-// The pane colour as painted with the parameters' opacity.
-ThemeColor paneColor(const ThemeParameters& parameters);

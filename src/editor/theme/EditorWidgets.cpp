@@ -6,59 +6,30 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
-#include <cfloat>
 #include <cmath>
 #include <string>
 
 namespace widgets {
 namespace {
-enum class ButtonState {
-    Normal,
-    Hovered,
-    Pressed,
-    Active,
-};
-
-ButtonState buttonState(bool active) {
+ButtonFrame buttonFrame(bool active) {
     const bool hovered = ImGui::IsItemHovered();
     if (ImGui::IsItemActive() && hovered) {
-        return ButtonState::Pressed;
+        return ButtonFrame::Pressed;
     }
     if (active) {
-        return ButtonState::Active;
+        return ButtonFrame::Active;
     }
-    return hovered ? ButtonState::Hovered : ButtonState::Normal;
+    return hovered ? ButtonFrame::Hovered : ButtonFrame::Normal;
 }
 
-void paintButton(ImDrawList* drawList, ImVec2 min, ImVec2 max, ButtonState state) {
-    using namespace palette;
+// A square raised block: flat fill, a hard bevel, and a black outline.
+void paintRaised(ImDrawList* drawList, ImVec2 min, ImVec2 max, ThemeColor fill, ThemeColor highlight,
+                 ThemeColor shade) {
     const float artPixel = editorArtPixel();
-    switch (state) {
-    case ButtonState::Normal:
-        pixel::splitGloss(drawList, min, max, color(buttonTop), color(buttonBottom), artPixel);
-        break;
-    case ButtonState::Hovered:
-        pixel::splitGloss(drawList, min, max, color(buttonHoverTop), color(buttonHoverBottom), artPixel);
-        break;
-    case ButtonState::Pressed:
-        pixel::notchedRect(drawList, min, max, color(buttonBottom), artPixel);
-        break;
-    case ButtonState::Active:
-        pixel::splitGloss(drawList, min, max, color(buttonActiveTop), color(buttonActiveBottom), artPixel);
-        break;
-    }
-    const ImVec2 innerMin{min.x + artPixel, min.y + artPixel};
-    const ImVec2 innerMax{max.x - artPixel, max.y - artPixel};
-    if (state == ButtonState::Pressed) {
-        // Pressed in: the shadow falls along the top and left edges.
-        pixel::bevel(drawList, innerMin, innerMax, color(glassShade), color(buttonBottom), artPixel);
-    } else {
-        pixel::bevel(drawList, innerMin, innerMax, color(buttonHighlight), color(glassShade), artPixel);
-    }
-    pixel::notchedOutline(drawList, min, max, color(glassBorder), artPixel);
-    if (state == ButtonState::Hovered || state == ButtonState::Active) {
-        pixel::glowRing(drawList, min, max, color(editorAccent()), artPixel);
-    }
+    pixel::rect(drawList, min, max, color(fill));
+    pixel::bevel(drawList, {min.x + artPixel, min.y + artPixel}, {max.x - artPixel, max.y - artPixel}, color(highlight),
+                 color(shade), artPixel);
+    pixel::outline(drawList, min, max, color(palette::outline), artPixel);
 }
 
 // Calls an ImGui widget with its frame and text drawn invisibly.
@@ -87,24 +58,34 @@ void drawButtonLabel(ImVec2 min, ImVec2 max, const char* label, ThemeColor ink, 
                              labelEnd, &labelSize, style.ButtonTextAlign, &bounds);
     ImGui::PopStyleColor();
 }
-
-struct TitleText {
-    ImFont* font;
-    float size;
-};
-
-// The title font, or the current font without the pixel fonts.
-TitleText titleText() {
-    ImFont* title = editorTitleFont();
-    if (title != nullptr) {
-        return {title, title->FontSize};
-    }
-    return {ImGui::GetFont(), ImGui::GetFontSize()};
-}
 } // namespace
 
 ImU32 color(ThemeColor themeColor) {
     return ImGui::GetColorU32(toImVec4(themeColor));
+}
+
+void PaintButtonFrame(ImDrawList* drawList, ImVec2 min, ImVec2 max, ButtonFrame frame) {
+    using namespace palette;
+    switch (frame) {
+    case ButtonFrame::Normal:
+        paintRaised(drawList, min, max, button, bevelHighlight, bevelShade);
+        break;
+    case ButtonFrame::Hovered:
+        paintRaised(drawList, min, max, buttonHovered, bevelHighlight, bevelShade);
+        break;
+    case ButtonFrame::Pressed:
+        // Pressed in: the shadow falls along the top and left edges.
+        paintRaised(drawList, min, max, buttonPressed, bevelShade, buttonPressed);
+        break;
+    case ButtonFrame::Active:
+        paintRaised(drawList, min, max, buttonActive, buttonActiveHighlight, buttonActiveShade);
+        break;
+    case ButtonFrame::Disabled:
+        // Flat and sunk into the pane: nothing to press.
+        pixel::rect(drawList, min, max, color(pane));
+        pixel::outline(drawList, min, max, color(outline), editorArtPixel());
+        break;
+    }
 }
 
 bool Button(const char* label, ImVec2 size, bool active) {
@@ -112,12 +93,12 @@ bool Button(const char* label, ImVec2 size, bool active) {
     if (!ImGui::IsItemVisible()) {
         return pressed;
     }
-    const ButtonState state = buttonState(active);
+    const ButtonFrame frame = buttonFrame(active);
     const ImVec2 min = ImGui::GetItemRectMin();
     const ImVec2 max = ImGui::GetItemRectMax();
-    paintButton(ImGui::GetWindowDrawList(), min, max, state);
-    drawButtonLabel(min, max, label, state == ButtonState::Active ? palette::activeInk : palette::ink,
-                    state == ButtonState::Pressed ? editorArtPixel() : 0.0f);
+    PaintButtonFrame(ImGui::GetWindowDrawList(), min, max, frame);
+    drawButtonLabel(min, max, label, frame == ButtonFrame::Active ? palette::activeInk : palette::ink,
+                    frame == ButtonFrame::Pressed ? editorArtPixel() : 0.0f);
     return pressed;
 }
 
@@ -126,17 +107,17 @@ bool ToolButton(const char* label, EditorIcon icon, bool active, ImVec2 size) {
     if (!ImGui::IsItemVisible()) {
         return pressed;
     }
-    const ButtonState state = buttonState(active);
+    const ButtonFrame frame = buttonFrame(active);
     const ImVec2 min = ImGui::GetItemRectMin();
     const ImVec2 max = ImGui::GetItemRectMax();
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    paintButton(drawList, min, max, state);
+    PaintButtonFrame(drawList, min, max, frame);
     const float artPixel = editorArtPixel();
     // The largest whole pixel size that leaves a two-pixel margin.
     const float side = std::min(max.x - min.x, max.y - min.y);
     const float pixelSize = std::max(1.0f, std::floor((side - 4.0f * artPixel) / static_cast<float>(iconBitmapSize)));
     const float extent = pixelSize * static_cast<float>(iconBitmapSize);
-    const float shift = state == ButtonState::Pressed ? artPixel : 0.0f;
+    const float shift = frame == ButtonFrame::Pressed ? artPixel : 0.0f;
     drawIcon(drawList, icon,
              {std::floor((min.x + max.x - extent) / 2.0f) + shift, std::floor((min.y + max.y - extent) / 2.0f) + shift},
              pixelSize, {.disabled = (ImGui::GetItemFlags() & ImGuiItemFlags_Disabled) != 0});
@@ -144,32 +125,22 @@ bool ToolButton(const char* label, EditorIcon icon, bool active, ImVec2 size) {
 }
 
 bool SectionHeader(const char* label, ImGuiTreeNodeFlags flags) {
-    ImFont* title = editorTitleFont();
-    if (title != nullptr) {
-        ImGui::PushFont(title);
-    }
     const bool open = invisibly([&] { return ImGui::CollapsingHeader(label, flags); });
     if (ImGui::IsItemVisible()) {
         using namespace palette;
-        const float artPixel = editorArtPixel();
-        const bool hovered = ImGui::IsItemHovered();
         const ImVec2 min = ImGui::GetItemRectMin();
         const ImVec2 max = ImGui::GetItemRectMax();
         ImDrawList* drawList = ImGui::GetWindowDrawList();
-        pixel::splitGloss(drawList, min, max, color(hovered ? buttonTop : sectionTop),
-                          color(hovered ? buttonBottom : sectionBottom), 0.0f);
-        drawList->AddRectFilled(min, {max.x, min.y + artPixel}, color(buttonHighlight));
-        drawList->AddRectFilled({min.x, max.y - artPixel}, max, color(glassBorder));
+        paintRaised(drawList, min, max, ImGui::IsItemHovered() ? sectionHovered : section, bevelHighlight, bevelShade);
         const ImGuiStyle& style = ImGui::GetStyle();
         const float fontSize = ImGui::GetFontSize();
         const float textY = std::floor((min.y + max.y - fontSize) / 2.0f);
-        pixel::triangle(drawList, {min.x + style.FramePadding.x, textY}, fontSize,
+        // The chevron is two thirds of a line, like the font's capitals.
+        const float chevron = std::floor(fontSize * 2.0f / 3.0f);
+        pixel::triangle(drawList, {min.x + style.FramePadding.x, std::floor((min.y + max.y - chevron) / 2.0f)}, chevron,
                         open ? ImGuiDir_Down : ImGuiDir_Right, color(sectionInk));
-        drawList->AddText({min.x + fontSize + style.FramePadding.x * 3.0f, textY}, color(sectionInk), label,
+        drawList->AddText({min.x + chevron + style.FramePadding.x * 3.0f, textY}, color(sectionInk), label,
                           ImGui::FindRenderedTextEnd(label));
-    }
-    if (title != nullptr) {
-        ImGui::PopFont();
     }
     return open;
 }
@@ -195,34 +166,37 @@ const char* IconLabelPadding() {
     return padding.c_str();
 }
 
-void StatusPill(EditorIcon icon, const char* text, ThemeColor top, ThemeColor bottom, ThemeColor ink) {
+void StatusPill(EditorIcon icon, const char* text, StatusPillStyle style) {
+    using namespace palette;
     const float artPixel = editorArtPixel();
-    const TitleText title = titleText();
-    const ImVec2 textSize = title.font->CalcTextSizeA(title.size, FLT_MAX, 0.0f, text);
+    const ImVec2 textSize = ImGui::CalcTextSize(text);
     const float extent = iconSize(artPixel);
     const ImVec2 size{artPixel * 11.0f + extent + textSize.x, ImGui::GetFrameHeight()};
     const ImVec2 min = ImGui::GetCursorScreenPos();
     ImGui::Dummy(size);
     const ImVec2 max{min.x + size.x, min.y + size.y};
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    pixel::splitGloss(drawList, min, max, color(top), color(bottom), artPixel);
-    pixel::notchedOutline(drawList, min, max, color(palette::glassBorder), artPixel);
+    if (style == StatusPillStyle::Lit) {
+        paintRaised(drawList, min, max, buttonActive, buttonActiveHighlight, buttonActiveShade);
+    } else {
+        paintRaised(drawList, min, max, button, bevelHighlight, bevelShade);
+    }
     drawIcon(drawList, icon, {min.x + artPixel * 4.0f, std::floor((min.y + max.y - extent) / 2.0f)}, artPixel);
-    drawList->AddText(title.font, title.size,
-                      {min.x + artPixel * 7.0f + extent, std::floor((min.y + max.y - textSize.y) / 2.0f)}, color(ink),
-                      text);
+    const ThemeColor textInk = style == StatusPillStyle::Lit       ? activeInk
+                               : style == StatusPillStyle::Warning ? warning
+                                                                   : ink;
+    drawList->AddText({min.x + artPixel * 7.0f + extent, std::floor((min.y + max.y - textSize.y) / 2.0f)},
+                      color(textInk), text);
 }
 
 void CaptionText(const char* text, ThemeColor ink) {
     const float artPixel = editorArtPixel();
-    const TitleText title = titleText();
-    const ImVec2 textSize = title.font->CalcTextSizeA(title.size, FLT_MAX, 0.0f, text);
+    const ImVec2 textSize = ImGui::CalcTextSize(text);
     const float height = ImGui::GetFrameHeight();
     const ImVec2 min = ImGui::GetCursorScreenPos();
     ImGui::Dummy({textSize.x + artPixel * 2.0f, height});
-    pixel::outlinedText(ImGui::GetWindowDrawList(), title.font, title.size,
-                        {min.x + artPixel, std::floor(min.y + (height - textSize.y) / 2.0f)}, color(ink),
-                        color(palette::captionOutline), text, artPixel);
+    ImGui::GetWindowDrawList()->AddText(pixel::snap({min.x + artPixel, min.y + (height - textSize.y) / 2.0f}),
+                                        color(ink), text);
 }
 
 } // namespace widgets

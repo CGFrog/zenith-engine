@@ -938,7 +938,7 @@ override, never the frame settings. The editor makes the active viewport's view
 the renderer's active view, so shadow cascades follow the view being worked in.
 
 UI images follow the same request-and-publish contract for CPU pixels the UI
-draws, such as the editor's wallpaper: `RenderRuntime::createUiImage` and
+draws, such as generated images: `RenderRuntime::createUiImage` and
 `updateUiImage` queue RGBA8 pixels with a linear or nearest filter, the
 renderer's `UiImageStore` uploads them while recording the next frame, and
 `uiImageTexture` then returns an opaque `UiTextureHandle`. An updated image

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <cstdint>
 
 // One sRGB-encoded colour with straight alpha, every component in [0, 1].
@@ -29,88 +28,80 @@ float contrastRatio(ThemeColor first, ThemeColor second);
 // The opaque colour of over drawn on top of an opaque under.
 ThemeColor composite(ThemeColor over, ThemeColor under);
 
-// The editor's "Pixel Aero Night" theme: Frutiger Aero glass-over-nature
-// rendered as palette-limited pixel art. Every colour the editor draws comes
-// from here; panels and widgets never write colour literals.
+// The editor's "8-bit Blender" theme: Blender's dark interface drawn as
+// palette-limited pixel art, with square areas, hard one-art-pixel bevels, and
+// a pixel font. Every colour the editor draws comes from here; panels and
+// widgets never write colour literals.
 namespace palette {
-// The procedural wallpaper's colours. Every wallpaper pixel is one of these.
-inline constexpr std::array<ThemeColor, 21> wallpaper{
-    ThemeColor::hex(0x01040E), ThemeColor::hex(0x030A1E), ThemeColor::hex(0x061536), ThemeColor::hex(0x0A2350),
-    ThemeColor::hex(0x103466), ThemeColor::hex(0x1A4A7A), ThemeColor::hex(0x0C3A4A), ThemeColor::hex(0x13606A),
-    ThemeColor::hex(0x1E8A80), ThemeColor::hex(0x2FC0A0), ThemeColor::hex(0x5EF0C0), ThemeColor::hex(0xB6FFE6),
-    ThemeColor::hex(0xFFFFFF), ThemeColor::hex(0xFFF2B0), ThemeColor::hex(0xD8E4FF), ThemeColor::hex(0x021A16),
-    ThemeColor::hex(0x04302A), ThemeColor::hex(0x0A4A40), ThemeColor::hex(0x3A1E6A), ThemeColor::hex(0x6A3AA0),
-    ThemeColor::hex(0xD0FF60),
-};
+// The near-black gap between areas, also behind empty dock space.
+inline constexpr ThemeColor areaGap = ThemeColor::hex(0x050505);
+// Area headers (dock tab bars), the main menu bar, and the status bar.
+inline constexpr ThemeColor header = ThemeColor::hex(0x1B1B1B);
+inline constexpr ThemeColor headerHighlight = ThemeColor::hex(0x333333);
+// The hard bevel raised controls, headers, and popups carry: highlight along
+// the top and left edges, shade along the bottom and right.
+inline constexpr ThemeColor bevelHighlight = ThemeColor::hex(0x8C8C8C);
+inline constexpr ThemeColor bevelShade = ThemeColor::hex(0x000000);
+// The one-art-pixel line around areas, controls, and popups.
+inline constexpr ThemeColor outline = ThemeColor::hex(0x000000);
+// Chrome floating over the 3D viewport: a translucent header.
+inline constexpr ThemeColor overlayPanel = ThemeColor::hex(0x1B1B1B, 0.85f);
+// Caption text. Over the 3D viewport it is outlined so it reads over any
+// scene; on solid headers it is drawn plain.
+inline constexpr ThemeColor captionInk = ThemeColor::hex(0xF0F0F0);
+inline constexpr ThemeColor captionOutline = ThemeColor::hex(0x000000);
 
-// Frosted glass: the blurred wallpaper mixed toward glassTint, or the
-// fallback fill while no wallpaper texture is available.
-inline constexpr ThemeColor glassTint = ThemeColor::hex(0x0C3A4A);
-inline constexpr float glassTintAmount = 0.35f;
-inline constexpr ThemeColor glassFallback = ThemeColor::hex(0x0C2A36);
-inline constexpr ThemeColor glassFallbackDither = ThemeColor::hex(0x103440);
-inline constexpr ThemeColor glassHighlight = ThemeColor::hex(0x96FFE6, 0.32f);
-inline constexpr ThemeColor glassShade = ThemeColor::hex(0x000000, 0.45f);
-inline constexpr ThemeColor glassBorder = ThemeColor::hex(0x00060C);
-inline constexpr ThemeColor glassGlint = ThemeColor::hex(0xFFFFFF, 0.14f);
-inline constexpr ThemeColor glassGlintFaint = ThemeColor::hex(0xFFFFFF, 0.09f);
-// Glass over the 3D viewport, which cannot sample the wallpaper.
-inline constexpr ThemeColor smokedGlass = ThemeColor::hex(0x0A2832, 0.62f);
-inline constexpr ThemeColor smokedHighlight = ThemeColor::hex(0x96FFE6, 0.30f);
-// Caption text drawn on glass, outlined so it reads over any wallpaper cell.
-inline constexpr ThemeColor captionInk = ThemeColor::hex(0xE6FFF7);
-inline constexpr ThemeColor captionOutline = ThemeColor::hex(0x020C14);
+// Area contents.
+inline constexpr ThemeColor pane = ThemeColor::hex(0x161616);
+inline constexpr ThemeColor paneAlternate = ThemeColor::hex(0x1C1C1C);
+inline constexpr ThemeColor popup = ThemeColor::hex(0x1F1F1F, 0.98f);
+inline constexpr ThemeColor ink = ThemeColor::hex(0xF0F0F0);
+inline constexpr ThemeColor inkMuted = ThemeColor::hex(0x9A9A9A);
+inline constexpr ThemeColor inkDisabled = ThemeColor::hex(0x6E6E6E);
+inline constexpr ThemeColor separator = ThemeColor::hex(0x2E2E2E);
 
-// Solid content panes inside the glass frames.
-inline constexpr ThemeColor pane = ThemeColor::hex(0x081C2A);
-inline constexpr ThemeColor paneShadow = ThemeColor::hex(0x040F18);
-inline constexpr ThemeColor paneAlternate = ThemeColor::hex(0x0B2232);
-inline constexpr ThemeColor popup = ThemeColor::hex(0x0A2230, 0.98f);
-inline constexpr ThemeColor ink = ThemeColor::hex(0xD4EFE8);
-inline constexpr ThemeColor inkMuted = ThemeColor::hex(0x7AA89C);
-inline constexpr ThemeColor inkDisabled = ThemeColor::hex(0x5E8A80);
-inline constexpr ThemeColor separator = ThemeColor::hex(0x1E4A50);
-
-// Split-gloss buttons: a hard step between the top and bottom halves.
-inline constexpr ThemeColor buttonTop = ThemeColor::hex(0x24605E);
-inline constexpr ThemeColor buttonBottom = ThemeColor::hex(0x123E44);
-inline constexpr ThemeColor buttonHighlight = ThemeColor::hex(0x4F9A8E);
-inline constexpr ThemeColor buttonHoverTop = ThemeColor::hex(0x22726A);
-inline constexpr ThemeColor buttonHoverBottom = ThemeColor::hex(0x186660);
-inline constexpr ThemeColor buttonActiveTop = ThemeColor::hex(0xB0FFE0);
-inline constexpr ThemeColor buttonActiveBottom = ThemeColor::hex(0x1FB08A);
-inline constexpr ThemeColor activeInk = ThemeColor::hex(0x05261C);
-// The 1-art-pixel ring around hovered and active controls.
-inline constexpr ThemeColor pixelGlow = ThemeColor::hex(0x35FFB0);
+// Raised buttons: flat grey with the bevel. A pressed button sinks; an active
+// one (the current tool or tab) is lit in Blender's selection blue.
+inline constexpr ThemeColor button = ThemeColor::hex(0x3C3C3C);
+inline constexpr ThemeColor buttonHovered = ThemeColor::hex(0x4C4C4C);
+inline constexpr ThemeColor buttonPressed = ThemeColor::hex(0x2A2A2A);
+inline constexpr ThemeColor buttonActive = ThemeColor::hex(0x4772B3);
+inline constexpr ThemeColor buttonActiveHighlight = ThemeColor::hex(0xB8D4FA);
+inline constexpr ThemeColor buttonActiveShade = ThemeColor::hex(0x1A3560);
+inline constexpr ThemeColor activeInk = ThemeColor::hex(0xFFFFFF);
 
 // Recessed fields.
-inline constexpr ThemeColor field = ThemeColor::hex(0x051824);
-inline constexpr ThemeColor fieldHovered = ThemeColor::hex(0x082434);
-inline constexpr ThemeColor fieldActive = ThemeColor::hex(0x0A2C3C);
-inline constexpr ThemeColor textSelection = ThemeColor::hex(0x17625A);
+inline constexpr ThemeColor field = ThemeColor::hex(0x0A0A0A);
+inline constexpr ThemeColor fieldHovered = ThemeColor::hex(0x121212);
+inline constexpr ThemeColor fieldActive = ThemeColor::hex(0x1A1A1A);
+inline constexpr ThemeColor textSelection = ThemeColor::hex(0x2C4A78);
 
-// Collapsible section headers.
-inline constexpr ThemeColor sectionTop = ThemeColor::hex(0x174A50);
-inline constexpr ThemeColor sectionBottom = ThemeColor::hex(0x0D3038);
-inline constexpr ThemeColor sectionInk = ThemeColor::hex(0x9FF5D5);
+// Collapsible section headers. Titles share the body font and stand out by
+// colour.
+inline constexpr ThemeColor section = ThemeColor::hex(0x2A2A2A);
+inline constexpr ThemeColor sectionHovered = ThemeColor::hex(0x343434);
+inline constexpr ThemeColor sectionInk = ThemeColor::hex(0xFFD070);
 
 // List rows.
-inline constexpr ThemeColor rowSelected = ThemeColor::hex(0x114440);
-inline constexpr ThemeColor rowSelectedHighlight = ThemeColor::hex(0x38A48C);
-inline constexpr ThemeColor rowSelectedShade = ThemeColor::hex(0x08342E);
-inline constexpr ThemeColor rowHovered = ThemeColor::hex(0x0E3040);
-inline constexpr ThemeColor indentGuide = ThemeColor::hex(0x2A6A68);
+inline constexpr ThemeColor rowSelected = ThemeColor::hex(0x233A5E);
+inline constexpr ThemeColor rowSelectedHighlight = ThemeColor::hex(0x4772B3);
+inline constexpr ThemeColor rowSelectedShade = ThemeColor::hex(0x14243C);
+inline constexpr ThemeColor rowHovered = ThemeColor::hex(0x222222);
+inline constexpr ThemeColor indentGuide = ThemeColor::hex(0x3A3A3A);
 
 // Sliders, checkboxes and scrollbars.
-inline constexpr ThemeColor sliderFill = ThemeColor::hex(0x1FB08A);
-inline constexpr ThemeColor sliderHandle = ThemeColor::hex(0xB0FFE0);
-inline constexpr ThemeColor scrollbarThumb = ThemeColor::hex(0x24605E);
-inline constexpr ThemeColor scrollbarThumbHovered = ThemeColor::hex(0x22726A);
-inline constexpr ThemeColor scrollbarThumbActive = ThemeColor::hex(0x35FFB0);
+inline constexpr ThemeColor sliderFill = ThemeColor::hex(0x4772B3);
+inline constexpr ThemeColor sliderHandle = ThemeColor::hex(0xDCDCDC);
+inline constexpr ThemeColor scrollbarThumb = ThemeColor::hex(0x3C3C3C);
+inline constexpr ThemeColor scrollbarThumbHovered = ThemeColor::hex(0x4C4C4C);
+
+// The default accent (ThemeAccent::Blue): focus rings, active tab overlines,
+// drag targets, and the gizmo selection.
+inline constexpr ThemeColor accentBlue = ThemeColor::hex(0x5A8EE0);
 
 // Message severities, as text and icon colours.
-inline constexpr ThemeColor success = ThemeColor::hex(0x35FFB0);
-inline constexpr ThemeColor info = ThemeColor::hex(0x5EF0E0);
+inline constexpr ThemeColor success = ThemeColor::hex(0x7CD860);
+inline constexpr ThemeColor info = ThemeColor::hex(0x6AB0FF);
 inline constexpr ThemeColor warning = ThemeColor::hex(0xFFC857);
 inline constexpr ThemeColor error = ThemeColor::hex(0xFF8C8C);
 
@@ -118,29 +109,29 @@ inline constexpr ThemeColor error = ThemeColor::hex(0xFF8C8C);
 inline constexpr ThemeColor axisX = ThemeColor::hex(0xFF5A5A);
 inline constexpr ThemeColor axisY = ThemeColor::hex(0x6CC23A);
 inline constexpr ThemeColor axisZ = ThemeColor::hex(0x4F9BFF);
-inline constexpr ThemeColor guideLine = ThemeColor::hex(0xE6FFF7, 0.85f);
-inline constexpr ThemeColor activeObjectLabel = ThemeColor::hex(0xFFCF8A);
+inline constexpr ThemeColor guideLine = ThemeColor::hex(0xF0F0F0, 0.85f);
+inline constexpr ThemeColor activeObjectLabel = ThemeColor::hex(0xFFD070);
 
 // Viewport scene overlays (editor/viewport/SceneGizmoDraw): 1px debug lines
 // and name labels the renderer draws over the tone-mapped image, so these are
 // display-referred like every other token. Selected and active objects take
-// the selection hues whatever their kind.
+// Blender's selection orange whatever their kind.
 inline constexpr ThemeColor overlayLight = ThemeColor::hex(0xFFE27A);
-inline constexpr ThemeColor overlayEnvironment = ThemeColor::hex(0xB6FFE6);
-inline constexpr ThemeColor overlayCamera = ThemeColor::hex(0xC8D6E0);
-inline constexpr ThemeColor overlayActiveCamera = ThemeColor::hex(0x5EF0E0);
+inline constexpr ThemeColor overlayEnvironment = ThemeColor::hex(0xD8D8D8);
+inline constexpr ThemeColor overlayCamera = ThemeColor::hex(0xC8C8C8);
+inline constexpr ThemeColor overlayActiveCamera = ThemeColor::hex(0x6AB0FF);
 inline constexpr ThemeColor overlayCollider = ThemeColor::hex(0x6CFF8A);
 inline constexpr ThemeColor overlayReflectionProbe = ThemeColor::hex(0x7AD8FF);
 inline constexpr ThemeColor overlayDecal = ThemeColor::hex(0xC58AFF);
 inline constexpr ThemeColor overlayIrradianceVolume = ThemeColor::hex(0x4F9BFF);
-inline constexpr ThemeColor overlaySelected = ThemeColor::hex(0xFF9A3C);
-inline constexpr ThemeColor overlayActive = ThemeColor::hex(0xFFE0A8);
-inline constexpr ThemeColor overlayLabel = ThemeColor::hex(0xE6FFF7);
+inline constexpr ThemeColor overlaySelected = ThemeColor::hex(0xFF9A1F);
+inline constexpr ThemeColor overlayActive = ThemeColor::hex(0xFFD070);
+inline constexpr ThemeColor overlayLabel = ThemeColor::hex(0xF0F0F0);
 // The 3D cursor (editor/viewport/Cursor3D): a ring of alternating dashes with
 // dark crosshair ticks, as in Blender, so it reads over light and dark scenes.
 inline constexpr ThemeColor cursorRing = ThemeColor::hex(0xFF5A5A);
-inline constexpr ThemeColor cursorRingAlternate = ThemeColor::hex(0xF4FFFB);
-inline constexpr ThemeColor cursorCrosshair = ThemeColor::hex(0x020C14);
+inline constexpr ThemeColor cursorRingAlternate = ThemeColor::hex(0xF4F4F4);
+inline constexpr ThemeColor cursorCrosshair = ThemeColor::hex(0x000000);
 // The point a modal move snapped to (surface or vertex snapping).
 inline constexpr ThemeColor snapIndicator = ThemeColor::hex(0xFFE27A);
 
@@ -149,7 +140,7 @@ inline constexpr ThemeColor prefabOverride = ThemeColor::hex(0x4FA8FF);
 inline constexpr ThemeColor prefabOverrideInk = ThemeColor::hex(0xCFE6FF);
 
 // Pixel icon hues, chosen by meaning.
-inline constexpr ThemeColor iconOutline = ThemeColor::hex(0x00060C);
+inline constexpr ThemeColor iconOutline = ThemeColor::hex(0x000000);
 inline constexpr ThemeColor iconGloss = ThemeColor::hex(0xFFFFFF, 0.55f);
 inline constexpr ThemeColor iconBlue = ThemeColor::hex(0x2A86E0);
 inline constexpr ThemeColor iconYellow = ThemeColor::hex(0xE6C21A);
@@ -157,11 +148,11 @@ inline constexpr ThemeColor iconOrange = ThemeColor::hex(0xE0801C);
 inline constexpr ThemeColor iconGreen = ThemeColor::hex(0x46A81C);
 inline constexpr ThemeColor iconTeal = ThemeColor::hex(0x16A6A0);
 inline constexpr ThemeColor iconPurple = ThemeColor::hex(0x7050D0);
-inline constexpr ThemeColor iconSlate = ThemeColor::hex(0x6D8296);
+inline constexpr ThemeColor iconSlate = ThemeColor::hex(0x8A8A8A);
 inline constexpr ThemeColor iconRed = ThemeColor::hex(0xE04848);
-inline constexpr ThemeColor iconWhite = ThemeColor::hex(0xF4FFFB);
+inline constexpr ThemeColor iconWhite = ThemeColor::hex(0xF4F4F4);
 
-// The wash over the editor's glass, panes, and edge while a game runs
+// The wash over the editor's headers, panes, and edge while a game runs
 // (ThemeChrome::setModeTint): warm for Play, violet for Simulate, so the two
 // are told apart at a glance. The play viewport's banner uses the Play hue.
 inline constexpr ThemeColor playTint = ThemeColor::hex(0xFF7A2E, 0.2f);

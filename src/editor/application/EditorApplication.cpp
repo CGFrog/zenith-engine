@@ -86,7 +86,7 @@ EditorSceneLoader startupSceneLoader(const ProjectConfig& project, bool recoverW
     };
 }
 
-// The hub as an application scene: no world, only the hub over the wallpaper,
+// The hub as an application scene: no world, only the hub over the area gap,
 // in the look of the application's appearance (the last session's).
 class ProjectHubScene final : public ApplicationScene {
   public:
@@ -114,7 +114,7 @@ class ProjectHubScene final : public ApplicationScene {
 
     void drawUi(ApplicationContext& context) override {
         m_chrome.setParameters(m_appearance.theme());
-        m_chrome.beginFrame(context.rendering);
+        m_chrome.beginFrame();
         const std::optional<std::filesystem::path> chosen = m_hub.draw(context.assets, &m_chrome);
         if (!chosen) {
             return;
@@ -124,9 +124,7 @@ class ProjectHubScene final : public ApplicationScene {
         }
     }
 
-    void unload(ApplicationContext& context) override {
-        m_chrome.release(context.rendering);
-    }
+    void unload(ApplicationContext&) override {}
 
   private:
     EditorApplication& m_application;

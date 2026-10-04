@@ -106,7 +106,7 @@ default project.
      `zenith --project <project> --scene <temporary scene>`. Its output
      appears in the Info log under `game`; Stop ends the process, and the
      editor leaves Play when the game exits on its own.
-   While Play runs the editor's glass and panes are tinted warm; Simulate
+   While Play runs the editor's headers and panes are tinted warm; Simulate
    tints them violet. `Alt+F5` (**Play > Simulate**) runs physics and the
    fixed-update systems on a clone instead, keeping the editor camera and
    ignoring your input; choose which systems Simulate runs with **Play >
@@ -152,8 +152,7 @@ click closes a pie.
 
 **Edit > Preferences...** tunes the editor and applies each change at once:
 
-- **Interface**: the wallpaper, how frosted and how opaque the glass is, panel
-  opacity, the accent colour, the UI scale (Automatic follows your
+- **Interface**: the accent colour, the UI scale (Automatic follows your
   display; 1x to 4x keep the pixel grid crisp), and **Pie menus**.
 - **Keymap**: where `keymap.json` lives and a button to the keymap editor.
 - **External IDE**: the command that opens a compiler error, with `{file}`,

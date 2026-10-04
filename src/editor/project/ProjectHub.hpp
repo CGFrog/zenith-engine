@@ -59,7 +59,7 @@ class ProjectHub {
     // removes an entry.
     ProjectHub(RecentProjects& recentProjects, ProjectHubConfig config);
 
-    // Draws one frame over the main viewport, on chrome's glass when given.
+    // Draws one frame over the main viewport, on chrome's pane when given.
     // Returns the project file the user opened or created this frame.
     std::optional<std::filesystem::path> draw(AssetManager& assets, const ThemeChrome* chrome = nullptr);
 

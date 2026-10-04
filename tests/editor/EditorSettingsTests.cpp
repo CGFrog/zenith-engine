@@ -85,15 +85,10 @@ int main() {
     expect(defaults.load().success && defaults.appearance() == EditorAppearanceSettings{} &&
                defaults.autosave().intervalSeconds == 30.0f && defaults.tools().packageDirectory == "build-release",
            "a missing file should keep the default preferences");
-    expect(defaults.appearance().theme.wallpaper && defaults.appearance().theme.frostRadius == 3 &&
-               defaults.appearance().theme.accent == ThemeAccent::Mint && defaults.appearance().uiScale == 0,
-           "the default theme is Pixel Aero Night as designed, at the display's scale");
+    expect(defaults.appearance().theme.accent == ThemeAccent::Blue && defaults.appearance().uiScale == 0,
+           "the default theme is 8-bit Blender as designed, at the display's scale");
     EditorSettings tuned(directory / "tuned.ini");
-    tuned.appearance().theme = {.wallpaper = false,
-                                .frostRadius = 5,
-                                .glassOpacity = 0.6f,
-                                .paneOpacity = 0.95f,
-                                .accent = ThemeAccent::Violet};
+    tuned.appearance().theme = {.accent = ThemeAccent::Violet};
     tuned.appearance().uiScale = 3;
     tuned.autosave().intervalSeconds = 0.0f;
     tuned.tools().packageDirectory = "out/release pkg";
@@ -104,22 +99,18 @@ int main() {
            "theme, UI scale, autosave, and package settings should round trip");
 
     EditorSettings clamped(directory / "clamped.ini");
-    clamped.appearance().theme.frostRadius = 99;
-    clamped.appearance().theme.paneOpacity = 0.1f;
+    clamped.appearance().theme.accent = static_cast<ThemeAccent>(99);
     clamped.appearance().uiScale = 12;
     clamped.autosave().intervalSeconds = -4.0f;
     expect(clamped.save().success, "out-of-range preferences should still save");
     EditorSettings clampedRestored(directory / "clamped.ini");
-    expect(clampedRestored.load().success &&
-               clampedRestored.appearance().theme.frostRadius == ThemeParameters::maximumFrostRadius &&
-               clampedRestored.appearance().theme.paneOpacity == ThemeParameters::minimumPaneOpacity &&
+    expect(clampedRestored.load().success && clampedRestored.appearance().theme.accent == ThemeAccent::Blue &&
                clampedRestored.appearance().uiScale == maximumUiScale &&
                clampedRestored.autosave().intervalSeconds == 0.0f,
            "out-of-range preferences should be stored clamped so they load again");
 
-    for (const char* invalid : {"theme.frost=7\n", "theme.frost=-1\n", "theme.accent=pink\n", "theme.wallpaper=yes\n",
-                                "theme.glass_opacity=0.9\n", "theme.panel_opacity=nan\n", "ui.scale=0\n",
-                                "ui.scale=1.5\n", "autosave.interval=-1\n", "autosave.interval=4000\n"}) {
+    for (const char* invalid : {"theme.accent=pink\n", "ui.scale=0\n", "ui.scale=1.5\n", "autosave.interval=-1\n",
+                                "autosave.interval=4000\n"}) {
         {
             std::ofstream bad(directory / "bad.ini", std::ios::trunc);
             bad << "build.command=kept\n" << invalid;
@@ -132,14 +123,23 @@ int main() {
     }
     {
         std::ofstream automatic(directory / "auto.ini", std::ios::trunc);
-        automatic << "ui.scale=auto\ntheme.accent=sky\nautosave.interval=12.5\n";
+        automatic << "ui.scale=auto\ntheme.accent=teal\nautosave.interval=12.5\n";
     }
     EditorSettings automaticScale(directory / "auto.ini");
     automaticScale.appearance().uiScale = 2;
     expect(automaticScale.load().success && automaticScale.appearance().uiScale == 0 &&
-               automaticScale.appearance().theme.accent == ThemeAccent::Sky &&
+               automaticScale.appearance().theme.accent == ThemeAccent::Teal &&
                automaticScale.autosave().intervalSeconds == 12.5f,
            "ui.scale=auto, accents by name, and fractional intervals should load");
+    {
+        std::ofstream aero(directory / "aero.ini", std::ios::trunc);
+        aero << "theme.wallpaper=false\ntheme.frost=5\ntheme.glass_opacity=0.6\ntheme.panel_opacity=0.95\n"
+             << "theme.accent=mint\nbuild.command=kept\n";
+    }
+    EditorSettings aeroSettings(directory / "aero.ini");
+    expect(aeroSettings.load().success && aeroSettings.appearance().theme.accent == ThemeAccent::Teal &&
+               aeroSettings.tools().buildCommand == "kept",
+           "a Pixel Aero Night settings file loads, its glass keys skipped and its accent mapped");
 
     // ZENITH_EDITOR_SETTINGS_DIR replaces the user's directory when set.
     const std::filesystem::path user = directory / "user";

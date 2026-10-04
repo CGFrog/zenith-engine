@@ -30,12 +30,12 @@
 namespace {
 constexpr float chromeMargin = 4.0f;
 
-// Smoked glass behind the current chrome child window, which has no
+// A translucent header behind the current chrome child window, which has no
 // background of its own.
-void paintChildGlass() {
+void paintChildPanel() {
     const ImVec2 min = ImGui::GetWindowPos();
     const ImVec2 size = ImGui::GetWindowSize();
-    ThemeChrome::paintSmokedGlass(ImGui::GetWindowDrawList(), min, {min.x + size.x, min.y + size.y});
+    ThemeChrome::paintOverlayPanel(ImGui::GetWindowDrawList(), min, {min.x + size.x, min.y + size.y});
 }
 
 const char* entityName(const Scene& scene, Entity entity) {
@@ -634,7 +634,7 @@ void ViewportPanel::drawViewImage(UiTextureHandle texture, const char* placehold
 bool ViewportPanel::drawChrome(EditorContext& context) {
     const ImVec2 cursor = ImGui::GetCursorScreenPos();
     const float headerHeight = ImGui::GetFrameHeight();
-    // Each chrome child paints smoked glass in place of a background.
+    // Each chrome child paints a translucent header in place of a background.
     ImGui::PushStyleColor(ImGuiCol_ChildBg, toImVec4(palette::transparent));
     ImGui::PushStyleColor(ImGuiCol_MenuBarBg, toImVec4(palette::transparent));
     bool hovered = drawHeader(context);
@@ -656,7 +656,7 @@ bool ViewportPanel::drawHeader(EditorContext& context) {
         ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
     bool hovered = false;
     if (ImGui::BeginChild("##ViewportHeader", {m_size.x, ImGui::GetFrameHeight()}, ImGuiChildFlags_None, flags)) {
-        paintChildGlass();
+        paintChildPanel();
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("View")) {
                 drawViewMenu(context);
@@ -756,7 +756,7 @@ bool ViewportPanel::drawToolShelf(float headerHeight) {
     bool hovered = false;
     if (ImGui::BeginChild("##ViewportToolShelf", shelfSize, ImGuiChildFlags_None,
                           ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-        paintChildGlass();
+        paintChildPanel();
         ViewportChromeWidgets::drawToolShelf(m_tools, buttonWidth);
         hovered = ImGui::IsWindowHovered();
     }
@@ -771,7 +771,7 @@ bool ViewportPanel::drawSidebar(EditorContext& context, float headerHeight) {
     ImGui::SetCursorScreenPos({m_position.x + m_size.x - width, m_position.y + headerHeight});
     bool hovered = false;
     if (ImGui::BeginChild("##ViewportSidebar", sidebarSize, ImGuiChildFlags_None)) {
-        paintChildGlass();
+        paintChildPanel();
         if (ImGui::BeginTabBar("##ViewportSidebarTabs")) {
             if (ImGui::BeginTabItem(BuiltInViewportSidebarTab::item)) {
                 drawItemTab(context);
@@ -993,7 +993,7 @@ void ViewportPanel::drawActiveName(EditorContext& context) const {
     const ImVec2 labelPosition{m_labelOrigin.x, m_labelOrigin.y};
     const ImVec2 labelSize = ImGui::CalcTextSize(name.c_str());
     const float artPixel = editorArtPixel();
-    ThemeChrome::paintSmokedGlass(
+    ThemeChrome::paintOverlayPanel(
         drawList, {labelPosition.x - 4.0f * artPixel, labelPosition.y - 2.0f * artPixel},
         {labelPosition.x + labelSize.x + 4.0f * artPixel, labelPosition.y + labelSize.y + 2.0f * artPixel});
     drawList->AddText(labelPosition, toImU32(palette::activeObjectLabel), name.c_str());
@@ -1042,8 +1042,8 @@ void ViewportPanel::drawGameView(EditorContext& context, bool imageHovered, bool
                      std::floor(m_position.y + ImGui::GetFrameHeight() + 4.0f * artPixel)};
     const ImVec2 max{min.x + textSize.x + padding.x * 2.0f, min.y + textSize.y + padding.y * 2.0f};
     ImDrawList* drawList = ImGui::GetWindowDrawList();
-    pixel::notchedRect(drawList, min, max, toImU32(palette::playBanner), artPixel);
-    pixel::notchedOutline(drawList, min, max, toImU32(palette::playTint.withAlpha(1.0f)), artPixel);
+    pixel::rect(drawList, min, max, toImU32(palette::playBanner));
+    pixel::outline(drawList, min, max, toImU32(palette::playTint.withAlpha(1.0f)), artPixel);
     drawList->AddText({min.x + padding.x, min.y + padding.y}, toImU32(palette::playBannerInk), text.data(),
                       text.data() + text.size());
 }

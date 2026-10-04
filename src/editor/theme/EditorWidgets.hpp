@@ -14,23 +14,47 @@ namespace widgets {
 // items fade too).
 ImU32 color(ThemeColor themeColor);
 
-// A split-gloss button: bevelled, an accent ring when hovered, pressed in while
-// held. An active button is drawn lit (the current tool or tab).
+// The look of a button-like frame: raised, lighter when hovered, sunk while
+// pressed, lit in the selection blue when active (the current tool or tab),
+// and flat when it cannot be used.
+enum class ButtonFrame {
+    Normal,
+    Hovered,
+    Pressed,
+    Active,
+    Disabled,
+};
+
+// Paints a square button frame over min-max, for custom-drawn controls (the
+// pie menu) that must match Button.
+void PaintButtonFrame(ImDrawList* drawList, ImVec2 min, ImVec2 max, ButtonFrame frame);
+
+// How a StatusPill is lit: a plain raised pill, the selection blue (a running
+// mode), or a plain pill with warning ink.
+enum class StatusPillStyle {
+    Normal,
+    Lit,
+    Warning,
+};
+
+// A raised square button: flat grey with a hard bevel, lighter when hovered,
+// pressed in while held. An active button is drawn lit in the selection blue
+// (the current tool or tab).
 bool Button(const char* label, ImVec2 size = {0.0f, 0.0f}, bool active = false);
 // A square tool button showing an icon; label is its id and tooltip-free
 // name, as with ImGui::Button(label).
 bool ToolButton(const char* label, EditorIcon icon, bool active, ImVec2 size);
-// A collapsing section header drawn as a split-gloss bar with a pixel
-// chevron and the title font. Returns whether the section is open.
+// A collapsing section header drawn as a raised bar with a pixel chevron and
+// its title in palette::sectionInk. Returns whether the section is open.
 bool SectionHeader(const char* label, ImGuiTreeNodeFlags flags = 0);
 // Draws icon in the label slot of the last item, offset by labelOffset from
 // the item's left edge and centred vertically.
 void ItemIcon(EditorIcon icon, float labelOffset, IconState state = {});
 // Leading spaces that reserve room for an ItemIcon at the start of a label.
 const char* IconLabelPadding();
-// A lit pill with an icon and caption, as in the status bar.
-void StatusPill(EditorIcon icon, const char* text, ThemeColor top, ThemeColor bottom, ThemeColor ink);
-// Caption text in the title font with a one-pixel outline, for glass.
+// A raised pill with an icon and caption, as in the status bar.
+void StatusPill(EditorIcon icon, const char* text, StatusPillStyle style = StatusPillStyle::Normal);
+// Caption text centred on a frame-high line, for header bars.
 void CaptionText(const char* text, ThemeColor ink);
 
 } // namespace widgets

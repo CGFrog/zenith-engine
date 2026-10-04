@@ -155,8 +155,8 @@ FetchContent_Declare(
     URL_HASH SHA256=9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e
 )
 
-# Press Start 2P (titles) and VT323 (body text) are the editor's pixel fonts
-# (SIL Open Font License), pinned to one google/fonts revision.
+# VT323 is the editor's pixel font (SIL Open Font License), pinned to one
+# google/fonts revision.
 set(ZENITH_PIXEL_FONT_REVISION 9710da1eacb3be272583c3224dcb70f9da6eadbb)
 set(ZENITH_PIXEL_FONT_DIR "${PROJECT_BINARY_DIR}/_deps/pixel-fonts")
 zenith_seed_pixel_fonts_from_shared_dir()
@@ -167,10 +167,6 @@ function(zenith_download_pixel_font source name hash)
         EXPECTED_HASH SHA256=${hash}
         TLS_VERIFY ON)
 endfunction()
-zenith_download_pixel_font(pressstart2p/PressStart2P-Regular.ttf PressStart2P-Regular.ttf
-    034c77f1f05ec89421e4a63f0e3a4ca1ecf852cc6d2bf611f126f275728e017d)
-zenith_download_pixel_font(pressstart2p/OFL.txt PressStart2P-OFL.txt
-    705960c3281a5765ecc0b59bd4ed7ca59eed165748076bc2fc3e8fdbfeb944b0)
 zenith_download_pixel_font(vt323/VT323-Regular.ttf VT323-Regular.ttf
     cf4de751ada78ceac033dbe16a687742939995b77bc2a052ae17a4957958594d)
 zenith_download_pixel_font(vt323/OFL.txt VT323-OFL.txt

@@ -64,7 +64,7 @@ AreaWindowResult drawAreaWindow(AreaInstance& area, const AreaType& type, const 
     AreaWindowResult result;
     bool open = true;
     const std::string name = area.windowName(type.title);
-    // The theme paints the area's glass frame and pane in place of its background.
+    // The theme paints the area's header strip and pane in place of its background.
     ImGui::PushStyleColor(ImGuiCol_WindowBg, toImVec4(palette::transparent));
     const bool visible = ImGui::Begin(name.c_str(), &open, windowFlags | ImGuiWindowFlags_MenuBar);
     ImGui::PopStyleColor();

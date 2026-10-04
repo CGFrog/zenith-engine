@@ -531,13 +531,14 @@ void testSelectedRowCursorFollowsTheAccent() {
         const int before = drawList->VtxBuffer.Size;
         decorateOutlinerRow(EditorIcon::Empty, true, true);
         const ImU32 accent = widgets::color(editorAccent());
-        const ImU32 designedGlow = widgets::color(palette::pixelGlow);
+        const ImU32 defaultAccent = widgets::color(palette::accentBlue);
         for (int index = before; index < drawList->VtxBuffer.Size; ++index) {
             accentDrawn = accentDrawn || drawList->VtxBuffer[index].col == accent;
-            defaultDrawn = defaultDrawn || drawList->VtxBuffer[index].col == designedGlow;
+            defaultDrawn = defaultDrawn || drawList->VtxBuffer[index].col == defaultAccent;
         }
     }
-    expect(accentDrawn && !defaultDrawn, "a selected row's cursor should use the chosen accent, not the default glow");
+    expect(accentDrawn && !defaultDrawn,
+           "a selected row's cursor should use the chosen accent, not the default accent");
 }
 } // namespace
 

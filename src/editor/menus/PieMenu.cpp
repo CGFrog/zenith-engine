@@ -257,17 +257,15 @@ void PieMenu::drawPie(EditorContext& context, const ResolvedMenu& menu, const st
     const float zone = deadZone();
 
     // The dead zone ring, with a lit cell on it pointing at the mouse.
-    pixel::notchedRect(drawList, pixel::snap({m_center.x - zone, m_center.y - zone}),
-                       pixel::snap({m_center.x + zone, m_center.y + zone}), widgets::color(palette::smokedGlass),
-                       artPixel);
-    pixel::notchedOutline(drawList, pixel::snap({m_center.x - zone, m_center.y - zone}),
-                          pixel::snap({m_center.x + zone, m_center.y + zone}), widgets::color(palette::buttonHighlight),
-                          artPixel);
+    const ImVec2 zoneMin{m_center.x - zone, m_center.y - zone};
+    const ImVec2 zoneMax{m_center.x + zone, m_center.y + zone};
+    pixel::rect(drawList, zoneMin, zoneMax, widgets::color(palette::overlayPanel));
+    pixel::outline(drawList, zoneMin, zoneMax, widgets::color(palette::bevelHighlight), artPixel);
     if (m_highlighted) {
         const ImVec2 direction = pieDirectionVector(pieDirection(*m_highlighted));
         const ImVec2 cell = pixel::snap(add(m_center, scale(direction, zone - artPixel * 2.0f)));
         drawList->AddRectFilled({cell.x - artPixel, cell.y - artPixel}, {cell.x + artPixel, cell.y + artPixel},
-                                widgets::color(palette::pixelGlow));
+                                widgets::color(editorAccent()));
     }
 
     const float paddingX = artPixel * 4.0f;
@@ -295,18 +293,10 @@ void PieMenu::drawPie(EditorContext& context, const ResolvedMenu& menu, const st
         const ImVec2 max = add(min, size);
         const bool enabled = context.canInvoke(item.operatorId);
         const bool lit = enabled && m_highlighted == index;
-        if (!enabled) {
-            pixel::notchedRect(drawList, min, max, widgets::color(palette::pane), artPixel);
-        } else if (lit) {
-            pixel::splitGloss(drawList, min, max, widgets::color(palette::buttonHoverTop),
-                              widgets::color(palette::buttonHoverBottom), artPixel);
-            pixel::glowRing(drawList, min, max, widgets::color(palette::pixelGlow), artPixel);
-        } else {
-            pixel::splitGloss(drawList, min, max, widgets::color(palette::buttonTop),
-                              widgets::color(palette::buttonBottom), artPixel);
-        }
-        pixel::notchedOutline(drawList, min, max, widgets::color(palette::glassBorder), artPixel);
-        const ThemeColor ink = !enabled ? palette::inkDisabled : (lit ? palette::captionInk : palette::ink);
+        widgets::PaintButtonFrame(drawList, min, max,
+                                  !enabled ? widgets::ButtonFrame::Disabled
+                                           : (lit ? widgets::ButtonFrame::Active : widgets::ButtonFrame::Normal));
+        const ThemeColor ink = !enabled ? palette::inkDisabled : (lit ? palette::activeInk : palette::ink);
         drawList->AddText(pixel::snap({min.x + (size.x - textSize.x) * 0.5f, min.y + (size.y - textSize.y) * 0.5f}),
                           widgets::color(ink), item.label.c_str());
     }

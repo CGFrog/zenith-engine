@@ -4,20 +4,16 @@
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
 #include "editor/theme/EntityIcon.hpp"
-#include "editor/theme/GlassBackdrop.hpp"
 #include "editor/theme/PixelIcons.hpp"
 #include "editor/theme/PixelPainter.hpp"
 #include "editor/theme/ThemeChrome.hpp"
 #include "engine/audio/AudioSystem.hpp"
-#include "engine/graphics/Rendering.hpp"
 #include "engine/physics/PhysicsComponents.hpp"
 
-#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <string>
-#include <thread>
 
 namespace {
 int failures = 0;
@@ -61,7 +57,9 @@ void testColorsComeFromThePalette() {
     expect(text.x == palette::ink.r && text.y == palette::ink.g && text.z == palette::ink.b,
            "text uses the palette ink");
     expect(style.Colors[ImGuiCol_DockingEmptyBg].w == 0.0f && style.Colors[ImGuiCol_MenuBarBg].w == 0.0f,
-           "empty dock space and menu bars let the painted glass show");
+           "empty dock space and menu bars let the painted gap and header strips show");
+    expect(style.Colors[ImGuiCol_WindowBg].w == 1.0f && style.Colors[ImGuiCol_WindowBg].x == palette::pane.r,
+           "windows are the opaque pane grey");
 }
 
 void testThemeParametersApply() {
@@ -70,49 +68,31 @@ void testThemeParametersApply() {
            "the UI scale follows the display unless overridden by a whole multiplier");
     ImGuiStyle designed;
     applyEditorColors(designed);
-    const ImVec4 glow = designed.Colors[ImGuiCol_NavCursor];
-    expect(glow.x == palette::pixelGlow.r && glow.y == palette::pixelGlow.g &&
-               designed.Colors[ImGuiCol_WindowBg].w == 1.0f,
-           "the default parameters keep the designed glow and opaque panes");
+    const ImVec4 designedAccent = designed.Colors[ImGuiCol_NavCursor];
+    expect(designedAccent.x == palette::accentBlue.r && designedAccent.y == palette::accentBlue.g,
+           "the default parameters keep the designed blue accent");
 
     ImGuiStyle tuned;
-    const ThemeParameters violet{.paneOpacity = 0.95f, .accent = ThemeAccent::Violet};
+    const ThemeParameters violet{.accent = ThemeAccent::Violet};
     applyEditorColors(tuned, violet);
     const ThemeColor accent = themeAccentInfo(ThemeAccent::Violet).color;
     expect(tuned.Colors[ImGuiCol_NavCursor].x == accent.r && tuned.Colors[ImGuiCol_TabSelectedOverline].z == accent.b &&
                tuned.Colors[ImGuiCol_SliderGrabActive].y == accent.g,
-           "the accent replaces the glow everywhere it is drawn");
-    expect(std::abs(tuned.Colors[ImGuiCol_WindowBg].w - 0.95f) < 0.0001f, "pane opacity reaches the window background");
-    expect(tuned.Colors[ImGuiCol_Text].x == palette::ink.r, "the accent leaves text colours alone");
+           "the accent replaces the default everywhere it is drawn");
+    expect(tuned.Colors[ImGuiCol_Text].x == palette::ink.r && tuned.Colors[ImGuiCol_WindowBg].x == palette::pane.r,
+           "the accent leaves text and pane colours alone");
 
     ImGui::GetStyle() = tuned;
     expect(editorAccent() == accent.withAlpha(1.0f), "widgets read the accent from the current style");
     applyEditorColors(ImGui::GetStyle());
 }
 
-void testBackdropWithoutWallpaper() {
-    RenderRuntime rendering;
-    GlassBackdrop backdrop;
-    for (int frame = 0; frame < 20; ++frame) {
-        backdrop.update(rendering, {0.0f, 0.0f}, {320.0f, 180.0f}, 1.0f, {.wallpaper = false});
-    }
-    expect(!rendering.uiImageAlive({.index = 0, .generation = 1}), "with the wallpaper off no wallpaper is generated");
-    expect(!backdrop.wallpaperShown(), "with the wallpaper off the backdrop shows no wallpaper");
-    {
-        HeadlessImGuiFrame frame("No wallpaper");
-        ImDrawList* drawList = ImGui::GetWindowDrawList();
-        const int before = drawList->VtxBuffer.Size;
-        backdrop.drawWallpaper(drawList);
-        backdrop.drawFrosted(drawList, {10.0f, 10.0f}, {100.0f, 60.0f}, 1.0f);
-        expect(drawList->VtxBuffer.Size > before, "the flat sky and glass fill are drawn instead");
-    }
-    backdrop.release(rendering);
-
+void testChromeClampsParameters() {
     ThemeChrome chrome;
-    chrome.setParameters({.frostRadius = 99, .accent = ThemeAccent::Sky});
-    expect(chrome.parameters().frostRadius == ThemeParameters::maximumFrostRadius &&
-               chrome.parameters().accent == ThemeAccent::Sky,
-           "the chrome keeps its parameters clamped");
+    chrome.setParameters({.accent = ThemeAccent::Teal});
+    expect(chrome.parameters().accent == ThemeAccent::Teal, "the chrome keeps a supported accent");
+    chrome.setParameters({.accent = static_cast<ThemeAccent>(99)});
+    expect(chrome.parameters().accent == ThemeAccent::Blue, "the chrome keeps its parameters clamped");
 }
 
 void testIconsAndPainterDraw() {
@@ -128,14 +108,13 @@ void testIconsAndPainterDraw() {
         }
     }
     const int before = drawList->VtxBuffer.Size;
-    pixel::notchedRect(drawList, {10.0f, 10.0f}, {10.0f, 40.0f}, IM_COL32_WHITE, 2.0f);
-    pixel::notchedRect(drawList, {40.0f, 40.0f}, {10.0f, 10.0f}, IM_COL32_WHITE, 2.0f);
-    pixel::splitGloss(drawList, {0.0f, 0.0f}, {0.0f, 0.0f}, IM_COL32_WHITE, IM_COL32_BLACK, 1.0f);
-    pixel::notchedOutline(drawList, {5.0f, 5.0f}, {5.0f, 9.0f}, IM_COL32_WHITE, 1.0f);
+    pixel::rect(drawList, {10.0f, 10.0f}, {10.0f, 40.0f}, IM_COL32_WHITE);
+    pixel::rect(drawList, {40.0f, 40.0f}, {10.0f, 10.0f}, IM_COL32_WHITE);
+    pixel::outline(drawList, {5.0f, 5.0f}, {5.0f, 9.0f}, IM_COL32_WHITE, 1.0f);
+    pixel::bevel(drawList, {0.0f, 0.0f}, {0.0f, 0.0f}, IM_COL32_WHITE, IM_COL32_BLACK, 1.0f);
     expect(drawList->VtxBuffer.Size == before, "empty and inverted rectangles draw nothing");
-    pixel::notchedRect(drawList, {0.0f, 0.0f}, {3.0f, 3.0f}, IM_COL32_WHITE, 10.0f);
-    pixel::glintStripes(drawList, {0.0f, 0.0f}, {200.0f, 30.0f}, IM_COL32_WHITE, IM_COL32_WHITE, 1.0f);
-    expect(drawList->VtxBuffer.Size > before, "an oversized notch still leaves a body to fill");
+    pixel::outline(drawList, {0.0f, 0.0f}, {3.0f, 3.0f}, IM_COL32_WHITE, 10.0f);
+    expect(drawList->VtxBuffer.Size > before, "an outline thicker than its rectangle still fills it");
 }
 
 void testWidgetsKeepImGuiIds() {
@@ -146,8 +125,9 @@ void testWidgetsKeepImGuiIds() {
         buttonId = ImGui::GetItemID();
         widgets::ToolButton("Move", EditorIcon::ToolMove, true, {24.0f, 24.0f});
         widgets::SectionHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
-        widgets::StatusPill(EditorIcon::Play, "Play", palette::buttonActiveTop, palette::buttonActiveBottom,
-                            palette::activeInk);
+        widgets::StatusPill(EditorIcon::Play, "Play", widgets::StatusPillStyle::Lit);
+        widgets::PaintButtonFrame(ImGui::GetWindowDrawList(), {0.0f, 0.0f}, {40.0f, 20.0f},
+                                  widgets::ButtonFrame::Disabled);
         widgets::CaptionText("Ready", palette::captionInk);
     }
     const ImGuiWindow* window = HeadlessImGuiContext::findWindow("Widgets");
@@ -187,33 +167,8 @@ void testEntityIcons() {
     expect(entityIcon(registry, entt::null) == EditorIcon::Empty, "an invalid entity is empty");
 }
 
-void testBackdropWithoutRenderer() {
-    RenderRuntime rendering;
-    GlassBackdrop backdrop;
-    // The first wallpaper is generated on a worker thread; wait for it.
-    for (int attempt = 0; attempt < 400 && !rendering.uiImageAlive({.index = 0, .generation = 1}); ++attempt) {
-        backdrop.update(rendering, {0.0f, 0.0f}, {320.0f, 180.0f}, 1.0f);
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-    expect(rendering.uiImageAlive({.index = 0, .generation = 1}) &&
-               rendering.uiImageAlive({.index = 1, .generation = 1}),
-           "the backdrop requests a sharp and a frosted wallpaper image");
-    expect(!backdrop.texturesReady(), "without a renderer no wallpaper texture is published");
-    {
-        HeadlessImGuiFrame frame("Backdrop");
-        ImDrawList* drawList = ImGui::GetWindowDrawList();
-        const int before = drawList->VtxBuffer.Size;
-        backdrop.drawWallpaper(drawList);
-        backdrop.drawFrosted(drawList, {10.0f, 10.0f}, {100.0f, 60.0f}, 1.0f);
-        expect(drawList->VtxBuffer.Size > before, "the backdrop draws fallbacks until its textures exist");
-    }
-    backdrop.release(rendering);
-    expect(!rendering.uiImageAlive({.index = 0, .generation = 1}), "releasing destroys the wallpaper images");
-}
-
 void testChromeOverSeveralFrames() {
     ThemeChrome chrome;
-    RenderRuntime rendering;
     ThemeChrome::installPopupBevels(*ImGui::GetCurrentContext());
     ThemeChrome::installPopupBevels(*ImGui::GetCurrentContext());
     int bevelHooks = 0;
@@ -222,9 +177,11 @@ void testChromeOverSeveralFrames() {
     }
     expect(bevelHooks == 1, "installing popup bevels twice adds one hook");
     for (int frame = 0; frame < 4; ++frame) {
+        // Later frames run with the Play tint, which also paints the edge.
+        chrome.setModeTint(frame >= 2 ? ThemeModeTint::Play : ThemeModeTint::None);
         ImGui::NewFrame();
-        chrome.beginFrame(rendering);
-        ImGui::Begin("Glass bar");
+        chrome.beginFrame();
+        ImGui::Begin("Header bar");
         chrome.paintBarWindow();
         chrome.paintAreaWindow();
         if (frame == 1) {
@@ -237,7 +194,6 @@ void testChromeOverSeveralFrames() {
         ImGui::End();
         ImGui::Render();
     }
-    chrome.release(rendering);
     expect(ImGui::GetDrawData() != nullptr && ImGui::GetDrawData()->CmdListsCount > 0, "the chrome frames render");
 }
 
@@ -257,7 +213,7 @@ void testAppearanceAppliesPreferences() {
     expect(scaledFont != nullptr, "the UI scale's fonts become the default");
 
     expect(static_cast<bool>(appearance.apply({})) && editorArtPixel() == 1.0f &&
-               editorAccent() == palette::pixelGlow.withAlpha(1.0f),
+               editorAccent() == palette::accentBlue.withAlpha(1.0f),
            "applying the defaults restores the designed look");
     const int fontCount = io.Fonts->Fonts.Size;
     expect(static_cast<bool>(appearance.apply(tuned)) && io.FontDefault == scaledFont &&
@@ -287,11 +243,10 @@ int main() {
     testMetricsSitOnThePixelGrid();
     testColorsComeFromThePalette();
     testThemeParametersApply();
-    testBackdropWithoutWallpaper();
+    testChromeClampsParameters();
     testIconsAndPainterDraw();
     testWidgetsKeepImGuiIds();
     testEntityIcons();
-    testBackdropWithoutRenderer();
     testChromeOverSeveralFrames();
     testAppearanceAppliesPreferences();
     if (failures != 0) {

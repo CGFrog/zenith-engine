@@ -87,7 +87,7 @@ void drawProblems(std::span<const PreferenceProblem> problems, PreferenceSection
     }
 }
 
-// A swatch per accent; the chosen one carries the pixel glow ring.
+// A swatch per accent; the chosen one carries a focus ring.
 bool drawAccentSwatches(ThemeAccent& chosen) {
     bool changed = false;
     const float side = ImGui::GetFrameHeight();
@@ -102,8 +102,8 @@ bool drawAccentSwatches(ThemeAccent& chosen) {
         }
         ImGui::SetItemTooltip("%.*s", static_cast<int>(accent.label.size()), accent.label.data());
         if (chosen == accent.accent) {
-            pixel::glowRing(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-                            widgets::color(palette::captionInk), editorArtPixel());
+            pixel::focusRing(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                             widgets::color(palette::captionInk), editorArtPixel());
         }
         ImGui::PopID();
         ImGui::SameLine();
@@ -275,26 +275,9 @@ bool PreferencesWindow::drawInterface(const PreferencesContext& context) {
     ImGui::PushID(sectionId(PreferenceSection::Interface));
     EditorAppearanceSettings& appearance = m_draft.appearance;
     ThemeParameters& theme = appearance.theme;
-    bool edited = ImGui::Checkbox("Wallpaper", &theme.wallpaper);
-    ImGui::BeginDisabled(!theme.wallpaper);
-    int frost = static_cast<int>(theme.frostRadius);
-    if (ImGui::SliderInt("Frost", &frost, 0, static_cast<int>(ThemeParameters::maximumFrostRadius), "%d cells",
-                         ImGuiSliderFlags_AlwaysClamp)) {
-        theme.frostRadius = static_cast<uint32_t>(frost);
-        edited = true;
-    }
-    ImGui::SetItemTooltip("How much the glass blurs the wallpaper behind it.");
-    edited = ImGui::SliderFloat("Glass opacity", &theme.glassOpacity, ThemeParameters::minimumGlassOpacity,
-                                ThemeParameters::maximumGlassOpacity, "%.2f", ImGuiSliderFlags_AlwaysClamp) ||
-             edited;
-    ImGui::EndDisabled();
-    edited = ImGui::SliderFloat("Panel opacity", &theme.paneOpacity, ThemeParameters::minimumPaneOpacity, 1.0f, "%.2f",
-                                ImGuiSliderFlags_AlwaysClamp) ||
-             edited;
-    ImGui::SetItemTooltip("Panels stay opaque enough for every text colour to read over the wallpaper.");
     ImGui::TextUnformatted("Accent");
     ImGui::SameLine();
-    edited = drawAccentSwatches(theme.accent) || edited;
+    bool edited = drawAccentSwatches(theme.accent);
 
     ImGui::TextUnformatted("UI scale");
     const std::string automatic =

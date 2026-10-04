@@ -7,17 +7,13 @@
 #include <system_error>
 
 namespace {
-// Pixel font sizes in art pixels. Press Start 2P is drawn on an 8-pixel grid;
-// VT323 reads best at 18.
-constexpr float bodyFontSize = 18.0f;
-constexpr float titleFontSize = 8.0f;
-// The fallback (Inter) when the pixel fonts are missing.
+// The pixel font's size in art pixels; VT323 reads best at 18.
+constexpr float pixelFontSize = 18.0f;
+// The fallback (Inter) when the pixel font is missing.
 constexpr float fallbackFontSize = 15.0f;
-constexpr const char* bodyFontFile = "VT323-Regular.ttf";
-constexpr const char* titleFontFile = "PressStart2P-Regular.ttf";
+constexpr const char* pixelFontFile = "VT323-Regular.ttf";
 
 float g_artPixel = 1.0f;
-ImFont* g_titleFont = nullptr;
 
 // Latin-1 plus the em dash the inspector shows for values that differ
 // between selected entities (mixedValueText).
@@ -83,8 +79,8 @@ void applyEditorMetrics(ImGuiStyle& style, float artPixel) {
     style.ScrollbarSize = 8.0f;
     style.GrabMinSize = 8.0f;
     style.TabBarOverlineSize = 2.0f;
-    // Wide gaps between docked areas let the wallpaper show through.
-    style.DockingSeparatorSize = 9.0f;
+    // A thin dark gap between docked areas, as in Blender.
+    style.DockingSeparatorSize = 2.0f;
 
     style.WindowRounding = 0.0f;
     style.ChildRounding = 0.0f;
@@ -123,18 +119,18 @@ void applyEditorColors(ImGuiStyle& style, const ThemeParameters& requested) {
     const ImVec4 clear = toImVec4(transparent);
     colors[ImGuiCol_Text] = toImVec4(ink);
     colors[ImGuiCol_TextDisabled] = toImVec4(inkDisabled);
-    colors[ImGuiCol_WindowBg] = toImVec4(paneColor(parameters));
+    colors[ImGuiCol_WindowBg] = toImVec4(pane);
     colors[ImGuiCol_ChildBg] = clear;
     colors[ImGuiCol_PopupBg] = toImVec4(popup);
-    colors[ImGuiCol_Border] = toImVec4(glassBorder);
+    colors[ImGuiCol_Border] = toImVec4(outline);
     colors[ImGuiCol_BorderShadow] = clear;
     colors[ImGuiCol_FrameBg] = toImVec4(field);
     colors[ImGuiCol_FrameBgHovered] = toImVec4(fieldHovered);
     colors[ImGuiCol_FrameBgActive] = toImVec4(fieldActive);
-    colors[ImGuiCol_TitleBg] = toImVec4(glassFallback);
-    colors[ImGuiCol_TitleBgActive] = toImVec4(buttonBottom);
-    colors[ImGuiCol_TitleBgCollapsed] = toImVec4(glassFallback);
-    // Menu bars sit on painted glass.
+    colors[ImGuiCol_TitleBg] = toImVec4(header);
+    colors[ImGuiCol_TitleBgActive] = toImVec4(section);
+    colors[ImGuiCol_TitleBgCollapsed] = toImVec4(header);
+    // Menu bars sit on painted header strips.
     colors[ImGuiCol_MenuBarBg] = clear;
     colors[ImGuiCol_ScrollbarBg] = toImVec4(field);
     colors[ImGuiCol_ScrollbarGrab] = toImVec4(scrollbarThumb);
@@ -143,34 +139,36 @@ void applyEditorColors(ImGuiStyle& style, const ThemeParameters& requested) {
     colors[ImGuiCol_CheckMark] = toImVec4(sliderHandle);
     colors[ImGuiCol_SliderGrab] = toImVec4(sliderHandle);
     colors[ImGuiCol_SliderGrabActive] = toImVec4(accent);
-    colors[ImGuiCol_Button] = toImVec4(buttonTop);
-    colors[ImGuiCol_ButtonHovered] = toImVec4(buttonHoverTop);
-    colors[ImGuiCol_ButtonActive] = toImVec4(buttonActiveBottom);
+    colors[ImGuiCol_Button] = toImVec4(button);
+    colors[ImGuiCol_ButtonHovered] = toImVec4(buttonHovered);
+    colors[ImGuiCol_ButtonActive] = toImVec4(buttonActive);
     colors[ImGuiCol_Header] = toImVec4(rowSelected);
     colors[ImGuiCol_HeaderHovered] = toImVec4(rowHovered);
     colors[ImGuiCol_HeaderActive] = toImVec4(rowSelectedHighlight);
     colors[ImGuiCol_Separator] = toImVec4(separator);
     colors[ImGuiCol_SeparatorHovered] = toImVec4(accent.withAlpha(0.6f));
     colors[ImGuiCol_SeparatorActive] = toImVec4(accent);
-    colors[ImGuiCol_ResizeGrip] = toImVec4(buttonTop.withAlpha(0.3f));
+    colors[ImGuiCol_ResizeGrip] = toImVec4(button.withAlpha(0.3f));
     colors[ImGuiCol_ResizeGripHovered] = toImVec4(accent.withAlpha(0.6f));
     colors[ImGuiCol_ResizeGripActive] = toImVec4(accent);
-    colors[ImGuiCol_Tab] = toImVec4(buttonBottom.withAlpha(0.85f));
-    colors[ImGuiCol_TabHovered] = toImVec4(buttonHoverTop);
-    colors[ImGuiCol_TabSelected] = toImVec4(rowSelected);
+    // Tabs sit in the header strip: the selected one is lifted to the section
+    // grey with the accent along its top, as Blender's active area tab.
+    colors[ImGuiCol_Tab] = toImVec4(header);
+    colors[ImGuiCol_TabHovered] = toImVec4(buttonHovered);
+    colors[ImGuiCol_TabSelected] = toImVec4(section);
     colors[ImGuiCol_TabSelectedOverline] = toImVec4(accent);
-    colors[ImGuiCol_TabDimmed] = toImVec4(glassFallback.withAlpha(0.85f));
-    colors[ImGuiCol_TabDimmedSelected] = toImVec4(sectionTop);
+    colors[ImGuiCol_TabDimmed] = toImVec4(header);
+    colors[ImGuiCol_TabDimmedSelected] = toImVec4(section);
     colors[ImGuiCol_TabDimmedSelectedOverline] = clear;
     colors[ImGuiCol_DockingPreview] = toImVec4(accent.withAlpha(0.5f));
-    // Empty dock space shows the wallpaper.
+    // Empty dock space shows the painted gap.
     colors[ImGuiCol_DockingEmptyBg] = clear;
     colors[ImGuiCol_PlotLines] = toImVec4(inkMuted);
     colors[ImGuiCol_PlotLinesHovered] = toImVec4(accent);
     colors[ImGuiCol_PlotHistogram] = toImVec4(sliderFill);
     colors[ImGuiCol_PlotHistogramHovered] = toImVec4(accent);
-    colors[ImGuiCol_TableHeaderBg] = toImVec4(sectionTop);
-    colors[ImGuiCol_TableBorderStrong] = toImVec4(glassBorder);
+    colors[ImGuiCol_TableHeaderBg] = toImVec4(section);
+    colors[ImGuiCol_TableBorderStrong] = toImVec4(outline);
     colors[ImGuiCol_TableBorderLight] = toImVec4(separator);
     colors[ImGuiCol_TableRowBg] = clear;
     colors[ImGuiCol_TableRowBgAlt] = toImVec4(paneAlternate);
@@ -208,23 +206,19 @@ ImU32 toImU32(ThemeColor color) {
 
 EditorFontResult loadEditorFonts(ImGuiIO& io, const std::filesystem::path& fontDirectory,
                                  const std::filesystem::path& fallbackFont, float artPixel) {
-    g_titleFont = nullptr;
     EditorFontResult result;
     std::error_code error;
-    const std::filesystem::path bodyPath = fontDirectory / bodyFontFile;
-    const std::filesystem::path titlePath = fontDirectory / titleFontFile;
-    if (std::filesystem::is_regular_file(bodyPath, error) && std::filesystem::is_regular_file(titlePath, error)) {
-        ImFont* body = addPixelFont(io, bodyPath, bodyFontSize * artPixel, fallbackFont);
-        ImFont* title = addPixelFont(io, titlePath, titleFontSize * artPixel, fallbackFont);
-        if (body != nullptr && title != nullptr) {
-            result.fonts = {.artPixel = artPixel, .body = body, .title = title};
+    const std::filesystem::path pixelPath = fontDirectory / pixelFontFile;
+    if (std::filesystem::is_regular_file(pixelPath, error)) {
+        if (ImFont* font = addPixelFont(io, pixelPath, pixelFontSize * artPixel, fallbackFont)) {
+            result.fonts = {.artPixel = artPixel, .font = font};
             useEditorFonts(io, result.fonts);
             result.success = true;
             return result;
         }
-        result.warnings.push_back("Could not load the editor pixel fonts from " + fontDirectory.string());
+        result.warnings.push_back("Could not load the editor pixel font from " + fontDirectory.string());
     } else {
-        result.warnings.push_back("Editor pixel fonts not found in " + fontDirectory.string() +
+        result.warnings.push_back("Editor pixel font not found in " + fontDirectory.string() +
                                   "; using the fallback font");
     }
     if (!std::filesystem::is_regular_file(fallbackFont, error)) {
@@ -240,17 +234,12 @@ EditorFontResult loadEditorFonts(ImGuiIO& io, const std::filesystem::path& fontD
         result.error = "Could not load editor font: " + fallbackFont.string();
         return result;
     }
-    result.fonts = {.artPixel = artPixel, .body = font, .title = nullptr};
+    result.fonts = {.artPixel = artPixel, .font = font};
     useEditorFonts(io, result.fonts);
     result.success = true;
     return result;
 }
 
 void useEditorFonts(ImGuiIO& io, const EditorFonts& fonts) {
-    io.FontDefault = fonts.body;
-    g_titleFont = fonts.title;
-}
-
-ImFont* editorTitleFont() {
-    return g_titleFont;
+    io.FontDefault = fonts.font;
 }

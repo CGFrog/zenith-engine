@@ -58,8 +58,8 @@ void EditorSession::drawStatusBar(const RenderStats& stats) {
         if (m_moduleReloadPending && m_playMode.mode() != EditorMode::Edit) {
             // The rebuilt module waits for Stop (EditorSession::updateGameModule).
             ImGui::SameLine();
-            widgets::StatusPill(EditorIcon::Warning, "Reload pending - stop to apply", palette::buttonHoverTop,
-                                palette::buttonHoverBottom, palette::warning);
+            widgets::StatusPill(EditorIcon::Warning, "Reload pending - stop to apply",
+                                widgets::StatusPillStyle::Warning);
         }
         if (m_moduleHost.status() != GameModuleStatus::None) {
             segment(gameModuleStatusText().c_str(), palette::captionInk);
@@ -69,24 +69,22 @@ void EditorSession::drawStatusBar(const RenderStats& stats) {
 }
 
 void EditorSession::drawPlayModePill() const {
-    using namespace palette;
     switch (m_playMode.mode()) {
     case EditorMode::Edit:
         if (m_standalone.running()) {
-            widgets::StatusPill(EditorIcon::Play, "Standalone", buttonActiveTop, buttonActiveBottom, activeInk);
+            widgets::StatusPill(EditorIcon::Play, "Standalone", widgets::StatusPillStyle::Lit);
         } else {
-            widgets::StatusPill(EditorIcon::Stop, "Edit", buttonTop, buttonBottom, ink);
+            widgets::StatusPill(EditorIcon::Stop, "Edit");
         }
         break;
     case EditorMode::Play:
-        widgets::StatusPill(EditorIcon::Play, "Play", buttonActiveTop, buttonActiveBottom, activeInk);
+        widgets::StatusPill(EditorIcon::Play, "Play", widgets::StatusPillStyle::Lit);
         break;
     case EditorMode::Simulate:
-        widgets::StatusPill(EditorIcon::Play, "Simulate", buttonActiveTop, buttonActiveBottom, activeInk);
+        widgets::StatusPill(EditorIcon::Play, "Simulate", widgets::StatusPillStyle::Lit);
         break;
     case EditorMode::Paused:
-        widgets::StatusPill(EditorIcon::Pause, m_playMode.simulating() ? "Simulate Paused" : "Paused", buttonHoverTop,
-                            buttonHoverBottom, ink);
+        widgets::StatusPill(EditorIcon::Pause, m_playMode.simulating() ? "Simulate Paused" : "Paused");
         break;
     }
 }

@@ -59,14 +59,14 @@ void testValidation(const std::filesystem::path& directory) {
 
     values = {};
     values.autosave.intervalSeconds = -1.0f;
-    values.appearance.theme.paneOpacity = 0.2f;
+    values.appearance.theme.accent = static_cast<ThemeAccent>(99);
     problems = validatePreferences(values, directory);
     expect(hasProblem(problems, PreferenceSection::Saving, "autosave") &&
                hasProblem(problems, PreferenceSection::Interface, "range"),
            "out-of-range autosave and theme values are reported");
 
     EditorPreferenceValues edited;
-    edited.appearance.theme.accent = ThemeAccent::Lime;
+    edited.appearance.theme.accent = ThemeAccent::Green;
     edited.appearance.uiScale = 2;
     edited.tools.buildCommand = "make";
     edited.tools.ideCommand = "vim +{line} {file}";
@@ -123,8 +123,8 @@ void testWindowAppliesValidEdits(const std::filesystem::path& directory) {
     };
     expect(!draw(), "drawing without edits changes nothing");
 
-    HeadlessImGuiContext::activateNextFrame(itemInPreferences("interface", "Wallpaper"));
-    expect(draw() && !settings.appearance().theme.wallpaper, "unticking Wallpaper applies at once");
+    HeadlessImGuiContext::activateNextFrame(itemInPreferences("interface", "Pie menus"));
+    expect(draw() && settings.appearance().pieMenus, "ticking Pie menus applies at once");
 
     HeadlessImGuiContext::activateNextFrame(itemInPreferences("interface", "3x"));
     expect(draw() && settings.appearance().uiScale == 3, "choosing a UI scale override applies at once");

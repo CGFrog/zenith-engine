@@ -154,11 +154,9 @@ add_library(zenith_editor_app STATIC
     theme/EditorTheme.cpp
     theme/EditorWidgets.cpp
     theme/EntityIcon.cpp
-    theme/GlassBackdrop.cpp
     theme/PixelIconBitmaps.cpp
     theme/PixelIcons.cpp
     theme/PixelPainter.cpp
-    theme/PixelWallpaper.cpp
     theme/ThemeChrome.cpp
     viewport/SceneGizmoDraw.cpp
     viewport/BoxSelect.cpp
@@ -190,8 +188,6 @@ add_custom_target(zenith_editor_resources
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${inter_SOURCE_DIR}/extras/ttf/Inter-Regular.ttf"
         "${inter_SOURCE_DIR}/LICENSE.txt"
-        "${ZENITH_PIXEL_FONT_DIR}/PressStart2P-Regular.ttf"
-        "${ZENITH_PIXEL_FONT_DIR}/PressStart2P-OFL.txt"
         "${ZENITH_PIXEL_FONT_DIR}/VT323-Regular.ttf"
         "${ZENITH_PIXEL_FONT_DIR}/VT323-OFL.txt"
         "${ZENITH_EDITOR_FONT_BINARY_DIR}"

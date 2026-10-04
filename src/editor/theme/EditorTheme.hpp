@@ -10,9 +10,9 @@
 #include <string>
 #include <vector>
 
-// Presentation state of the editor's "Pixel Aero Night" theme. Like ImGui's
-// own style it is global: widgets anywhere read the art-pixel size and the
-// title font without the theme being threaded through every call.
+// Presentation state of the editor's "8-bit Blender" theme. Like ImGui's own
+// style it is global: widgets anywhere read the art-pixel size and the accent
+// without the theme being threaded through every call.
 
 // The theme's pixel grid: one art pixel in screen pixels, a whole number so
 // pixel art and hard edges stay crisp. Display scales round to the nearest.
@@ -27,7 +27,7 @@ float editorArtPixel();
 // anti-aliasing switched off.
 void applyEditorMetrics(ImGuiStyle& style, float artPixel);
 // Every ImGui and ImGuizmo colour from the palette, with the parameters'
-// accent and pane opacity. The accent is also kept in the style (as its
+// accent. The accent is also kept in the style (as its
 // NavCursor colour), where editorAccent reads it.
 void applyEditorColors(ImGuiStyle& style, const ThemeParameters& parameters = {});
 // The accent of the current ImGui style.
@@ -36,12 +36,11 @@ ThemeColor editorAccent();
 ImVec4 toImVec4(ThemeColor color);
 ImU32 toImU32(ThemeColor color);
 
-// The fonts loaded for one art pixel size. title is null without the pixel
-// fonts.
+// The font loaded for one art pixel size: the pixel font, or the fallback
+// without it.
 struct EditorFonts {
     float artPixel{0.0f};
-    ImFont* body{nullptr};
-    ImFont* title{nullptr};
+    ImFont* font{nullptr};
 };
 
 struct EditorFontResult {
@@ -56,17 +55,13 @@ struct EditorFontResult {
     }
 };
 
-// Loads the pixel fonts from fontDirectory: VT323 for body text (the ImGui
-// default) and Press Start 2P for titles, each with the fallback font merged
-// in for glyphs the pixel fonts lack. Without the pixel fonts the fallback
-// alone is the default. Must run before the first UI frame so the backend
-// uploads the atlas with these fonts; fonts added later (another UI scale)
-// must be added between frames, and the renderer uploads the grown atlas at
-// the next frame.
+// Loads the pixel font (VT323) from fontDirectory as the ImGui default, with
+// the fallback font merged in for glyphs it lacks; titles use the same font
+// and stand out by colour. Without the pixel font the fallback alone is the
+// default. Must run before the first UI frame so the backend uploads the
+// atlas with these fonts; fonts added later (another UI scale) must be added
+// between frames, and the renderer uploads the grown atlas at the next frame.
 EditorFontResult loadEditorFonts(ImGuiIO& io, const std::filesystem::path& fontDirectory,
                                  const std::filesystem::path& fallbackFont, float artPixel);
-// Makes fonts loaded earlier the default and title fonts again.
+// Makes a font loaded earlier the default again.
 void useEditorFonts(ImGuiIO& io, const EditorFonts& fonts);
-// The title font, or null to use the current font (before fonts load or
-// without the pixel fonts).
-ImFont* editorTitleFont();

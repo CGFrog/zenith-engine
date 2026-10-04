@@ -227,7 +227,7 @@ class EditorSession final : public ApplicationScene,
     // Preferences and packaging (EditorPreferences.cpp).
     // Applies the appearance settings through the application's appearance
     // when they changed (art-pixel metrics, fonts for that size, colours) and
-    // the theme tuning to the glass. Runs between frames, where fonts may be
+    // the theme tuning to the chrome. Runs between frames, where fonts may be
     // added to the atlas.
     void applyAppearance();
     PreferencesContext preferencesContext(ApplicationContext& context);
@@ -474,7 +474,7 @@ class EditorSession final : public ApplicationScene,
     bool m_workspacesDirty{false};
 
     std::filesystem::path m_sceneRoot;
-    // The wallpaper and glass behind every window.
+    // The gap, area headers, and panes behind every window.
     ThemeChrome m_themeChrome;
     EditorSceneLoader m_initialSceneLoader;
     std::string m_clipboardFragment;

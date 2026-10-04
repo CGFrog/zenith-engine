@@ -11,7 +11,6 @@ zenith_add_test(zenith_editor_palette
         EditorPaletteTests.cpp
         ${PROJECT_SOURCE_DIR}/src/editor/theme/EditorPalette.cpp
         ${PROJECT_SOURCE_DIR}/src/editor/theme/PixelIconBitmaps.cpp
-        ${PROJECT_SOURCE_DIR}/src/editor/theme/PixelWallpaper.cpp
         ${PROJECT_SOURCE_DIR}/src/editor/theme/ThemeParameters.cpp
     INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src")
 zenith_add_test(zenith_editor_document

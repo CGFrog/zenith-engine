@@ -118,47 +118,36 @@ bool* legacyPanelFlag(std::string_view key, EditorPanelVisibility& panels) {
     return nullptr;
 }
 
+// The accent closest to one the "Pixel Aero Night" theme stored, so its
+// settings keep loading; the wallpaper, frost, and opacity keys it also
+// stored are now unknown keys, which loading skips.
+std::optional<ThemeAccent> legacyThemeAccent(std::string_view key) {
+    if (key == "mint" || key == "aqua") {
+        return ThemeAccent::Teal;
+    }
+    if (key == "lime") {
+        return ThemeAccent::Green;
+    }
+    if (key == "sky") {
+        return ThemeAccent::Blue;
+    }
+    if (key == "amber") {
+        return ThemeAccent::Orange;
+    }
+    return std::nullopt;
+}
+
 // Reads one appearance or autosave key. Returns an error message for an
 // invalid value, an empty string when the key was read, and nullopt when the
 // key is not one of these.
 std::optional<std::string> readPreference(std::string_view key, std::string_view value, size_t lineNumber,
                                           LoadedSettings& loaded) {
     ThemeParameters& theme = loaded.appearance.theme;
-    if (key == "theme.wallpaper") {
-        return parseBoolean(value, theme.wallpaper) ? "" : lineError(key, lineNumber, "true or false");
-    }
-    if (key == "theme.frost") {
-        const std::optional<uint32_t> radius = parseWholeNumber(value);
-        if (!radius || *radius > ThemeParameters::maximumFrostRadius) {
-            return lineError(key, lineNumber,
-                             "a whole number of cells from 0 to " +
-                                 std::to_string(ThemeParameters::maximumFrostRadius));
-        }
-        theme.frostRadius = *radius;
-        return "";
-    }
-    if (key == "theme.glass_opacity") {
-        const std::optional<float> opacity = parseNumber(value);
-        if (!opacity || *opacity < ThemeParameters::minimumGlassOpacity ||
-            *opacity > ThemeParameters::maximumGlassOpacity) {
-            return lineError(key, lineNumber,
-                             "a number from " + formatNumber(ThemeParameters::minimumGlassOpacity) + " to " +
-                                 formatNumber(ThemeParameters::maximumGlassOpacity));
-        }
-        theme.glassOpacity = *opacity;
-        return "";
-    }
-    if (key == "theme.panel_opacity") {
-        const std::optional<float> opacity = parseNumber(value);
-        if (!opacity || *opacity < ThemeParameters::minimumPaneOpacity || *opacity > 1.0f) {
-            return lineError(key, lineNumber,
-                             "a number from " + formatNumber(ThemeParameters::minimumPaneOpacity) + " to 1");
-        }
-        theme.paneOpacity = *opacity;
-        return "";
-    }
     if (key == "theme.accent") {
-        const std::optional<ThemeAccent> accent = parseThemeAccent(value);
+        std::optional<ThemeAccent> accent = parseThemeAccent(value);
+        if (!accent) {
+            accent = legacyThemeAccent(value);
+        }
         if (!accent) {
             std::string names;
             for (const ThemeAccentInfo& info : themeAccents()) {
@@ -316,10 +305,6 @@ EditorSettingsResult EditorSettings::save() const {
            << "ide.debug_command=" << m_tools.debugCommand << '\n'
            << "package.directory=" << m_tools.packageDirectory << '\n'
            << "build.on_save=" << (m_tools.buildOnSave ? "true" : "false") << '\n'
-           << "theme.wallpaper=" << (theme.wallpaper ? "true" : "false") << '\n'
-           << "theme.frost=" << theme.frostRadius << '\n'
-           << "theme.glass_opacity=" << formatNumber(theme.glassOpacity) << '\n'
-           << "theme.panel_opacity=" << formatNumber(theme.paneOpacity) << '\n'
            << "theme.accent=" << themeAccentInfo(theme.accent).key << '\n'
            << "ui.scale=" << (uiScale == 0 ? std::string("auto") : std::to_string(uiScale)) << '\n'
            << "ui.pie_menus=" << (m_appearance.pieMenus ? "true" : "false") << '\n'

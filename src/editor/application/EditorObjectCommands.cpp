@@ -397,7 +397,7 @@ void EditorSession::drawModalTransformOverlay(const ViewportPanel& viewport, con
     const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
     const ImVec2 descriptionSize = ImGui::CalcTextSize(result.description.c_str());
     const ImVec2 hintSize = ImGui::CalcTextSize(hint);
-    ThemeChrome::paintSmokedGlass(
+    ThemeChrome::paintOverlayPanel(
         drawList, {position.x - 6.0f, position.y - 4.0f},
         {position.x + std::max(descriptionSize.x, hintSize.x) + 6.0f, position.y + lineHeight + hintSize.y + 4.0f});
     drawList->AddText(position, ImGui::GetColorU32(ImGuiCol_Text), result.description.c_str());

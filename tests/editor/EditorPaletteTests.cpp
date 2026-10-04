@@ -1,13 +1,10 @@
 #include "editor/theme/EditorPalette.hpp"
 #include "editor/theme/PixelIconBitmaps.hpp"
-#include "editor/theme/PixelWallpaper.hpp"
 #include "editor/theme/ThemeParameters.hpp"
 
-#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <string>
-#include <utility>
 
 namespace {
 int failures = 0;
@@ -21,12 +18,6 @@ void expect(bool condition, const std::string& message) {
 
 constexpr float textContrast = 4.5f;
 constexpr float graphicContrast = 3.0f;
-
-ThemeColor pixelAt(const PixelImage& image, size_t index) {
-    const uint8_t* rgba = &image.rgba[index * 4u];
-    return {static_cast<float>(rgba[0]) / 255.0f, static_cast<float>(rgba[1]) / 255.0f,
-            static_cast<float>(rgba[2]) / 255.0f, 1.0f};
-}
 
 void testContrastHelpers() {
     const ThemeColor black = ThemeColor::hex(0x000000);
@@ -47,148 +38,60 @@ void testTextContrast() {
             expect(contrastRatio(text, surface) >= textContrast, "text and severity colours reach 4.5:1 on rows");
         }
     }
-    for (const ThemeColor surface :
-         {sectionTop, sectionBottom, buttonTop, buttonBottom, buttonHoverTop, buttonHoverBottom}) {
+    for (const ThemeColor surface : {header, section, sectionHovered, button, buttonHovered, buttonPressed}) {
         expect(contrastRatio(ink, surface) >= textContrast, "ink reaches 4.5:1 on headers and buttons");
+        expect(contrastRatio(warning, surface) >= textContrast, "warning ink reads on headers and buttons");
     }
-    for (const ThemeColor surface : {pane, field, paneAlternate}) {
+    for (const ThemeColor surface : {header, composite(overlayPanel, pane)}) {
+        expect(contrastRatio(captionInk, surface) >= textContrast, "captions read on header bars");
+    }
+    for (const ThemeColor surface : {pane, field, paneAlternate, header}) {
         expect(contrastRatio(inkMuted, surface) >= textContrast, "muted text reaches 4.5:1 on panes and fields");
         expect(contrastRatio(inkDisabled, surface) >= graphicContrast, "disabled text stays distinguishable");
-        expect(contrastRatio(pixelGlow, surface) >= graphicContrast, "the glow ring stands out from panes");
     }
-    for (const ThemeColor surface : {sectionTop, sectionBottom}) {
+    for (const ThemeColor surface : {section, sectionHovered}) {
         expect(contrastRatio(sectionInk, surface) >= textContrast, "section titles read on their bar");
     }
-    for (const ThemeColor surface : {buttonActiveTop, buttonActiveBottom}) {
-        expect(contrastRatio(activeInk, surface) >= textContrast, "lit buttons keep dark text readable");
-    }
+    expect(contrastRatio(activeInk, buttonActive) >= textContrast, "lit buttons keep their text readable");
     for (const ThemeColor axis : {axisX, axisY, axisZ, activeObjectLabel}) {
-        expect(contrastRatio(axis, composite(smokedGlass, pane)) >= graphicContrast,
-               "axis and label colours stand out from smoked glass");
+        expect(contrastRatio(axis, composite(overlayPanel, pane)) >= graphicContrast,
+               "axis and label colours stand out from the viewport's overlay panels");
     }
 }
 
-// Caption text is outlined, so one of ink and outline must contrast with
-// every frosted wallpaper cell it may sit on.
-void testCaptionContrastOverFrostedGlass() {
-    const WallpaperImages images = generateNightWallpaper(160, 90);
-    float worst = 21.0f;
-    for (size_t index = 0; index < static_cast<size_t>(images.frosted.width) * images.frosted.height; ++index) {
-        const ThemeColor cell = pixelAt(images.frosted, index);
-        worst = std::min(
-            worst, std::max(contrastRatio(palette::captionInk, cell), contrastRatio(palette::captionOutline, cell)));
+// The bevel is what makes a control read as raised: its highlight stands out
+// from every raised fill, and its shade from the gap between areas.
+void testBevelsReadAsEdges() {
+    using namespace palette;
+    for (const ThemeColor surface : {button, section, header}) {
+        expect(contrastRatio(bevelHighlight, surface) >= graphicContrast, "the bevel highlight stands out");
     }
-    expect(worst >= textContrast, "outlined captions read over every frosted wallpaper cell");
+    expect(contrastRatio(buttonActiveHighlight, buttonActive) >= graphicContrast,
+           "a lit button's highlight stands out from its fill");
+    expect(relativeLuminance(areaGap) < relativeLuminance(pane) &&
+               relativeLuminance(pane) < relativeLuminance(header) &&
+               relativeLuminance(header) < relativeLuminance(button),
+           "surfaces step up in lightness from the gap to the controls, as Blender's do");
 }
 
-// Every accent works as the glow ring, overline, and drag target on what it
-// is drawn over; the default is the designed glow.
+// Every accent works as the focus ring, overline, and drag target on what it
+// is drawn over; the default is Blender's blue.
 void testAccentContrast() {
     using namespace palette;
-    expect(themeAccents().front().accent == ThemeAccent::Mint && themeAccentInfo(ThemeAccent::Mint).color == pixelGlow,
-           "the default accent is the theme's own glow");
+    expect(themeAccents().front().accent == ThemeAccent::Blue && themeAccentInfo(ThemeAccent::Blue).color == accentBlue,
+           "the default accent is the theme's blue");
     for (const ThemeAccentInfo& accent : themeAccents()) {
-        for (const ThemeColor surface : {pane, paneAlternate, field, fieldHovered, glassFallback, buttonTop,
-                                         buttonBottom, sectionTop, rowSelected}) {
+        for (const ThemeColor surface :
+             {pane, paneAlternate, field, fieldHovered, header, button, section, rowSelected}) {
             expect(contrastRatio(accent.color, surface) >= graphicContrast,
-                   "accent " + std::string(accent.key) + " stands out from panes, fields, glass, and buttons");
+                   "accent " + std::string(accent.key) + " stands out from panes, fields, headers, and buttons");
         }
         expect(parseThemeAccent(accent.key) == accent.accent, "accent " + std::string(accent.key) + " parses back");
     }
     expect(!parseThemeAccent("pink").has_value(), "unknown accents are rejected");
-}
-
-// Panes at their lowest opacity over the brightest wallpaper colour keep
-// every text colour readable.
-void testPaneOpacityKeepsTextReadable() {
-    using namespace palette;
-    ThemeParameters thinnest;
-    thinnest.paneOpacity = ThemeParameters::minimumPaneOpacity;
-    for (const ThemeColor behind : wallpaper) {
-        const ThemeColor surface = composite(paneColor(thinnest), behind);
-        for (const ThemeColor text : {ink, inkMuted, success, info, warning, error}) {
-            expect(contrastRatio(text, surface) >= textContrast,
-                   "text reaches 4.5:1 on the most transparent pane over any wallpaper colour");
-        }
-    }
-    ThemeParameters wild{.frostRadius = 40, .glassOpacity = 3.0f, .paneOpacity = 0.0f};
-    const ThemeParameters clamped = clampedThemeParameters(wild);
-    expect(clamped.frostRadius == ThemeParameters::maximumFrostRadius &&
-               clamped.glassOpacity == ThemeParameters::maximumGlassOpacity &&
-               clamped.paneOpacity == ThemeParameters::minimumPaneOpacity,
-           "parameters are clamped into their supported ranges");
+    expect(clampedThemeParameters({.accent = static_cast<ThemeAccent>(99)}).accent == ThemeAccent::Blue,
+           "an unknown accent is clamped to the default");
     expect(clampedThemeParameters(ThemeParameters{}) == ThemeParameters{}, "the defaults are in range");
-}
-
-// Captions stay readable over the frosted wallpaper at every frost setting.
-void testCaptionContrastAtEveryFrost() {
-    for (const uint32_t radius : {0u, ThemeParameters::maximumFrostRadius}) {
-        for (const float opacity : {ThemeParameters::minimumGlassOpacity, ThemeParameters::maximumGlassOpacity}) {
-            const WallpaperImages images = generateNightWallpaper(96, 54, radius, opacity);
-            float worst = 21.0f;
-            for (size_t index = 0; index < static_cast<size_t>(images.frosted.width) * images.frosted.height; ++index) {
-                const ThemeColor cell = pixelAt(images.frosted, index);
-                worst = std::min(worst, std::max(contrastRatio(palette::captionInk, cell),
-                                                 contrastRatio(palette::captionOutline, cell)));
-            }
-            expect(worst >= textContrast, "outlined captions read over frosted glass at every frost and opacity");
-        }
-    }
-    const WallpaperImages sharp = generateNightWallpaper(64, 36, 0, ThemeParameters::minimumGlassOpacity);
-    const WallpaperImages soft =
-        generateNightWallpaper(64, 36, ThemeParameters::maximumFrostRadius, ThemeParameters::minimumGlassOpacity);
-    expect(sharp.sharp.rgba == soft.sharp.rgba && sharp.frosted.rgba != soft.frosted.rgba,
-           "frost changes only the frosted copy");
-}
-
-void testWallpaperIsDeterministicAndPaletted() {
-    const WallpaperImages first = generateNightWallpaper(96, 54);
-    const WallpaperImages second = generateNightWallpaper(96, 54);
-    expect(first.sharp.rgba == second.sharp.rgba && first.frosted.rgba == second.frosted.rgba,
-           "the same size always produces the same wallpaper");
-    expect(first.sharp.width == 96 && first.sharp.height == 54 && first.sharp.rgba.size() == 96u * 54u * 4u,
-           "the wallpaper covers the requested grid");
-    bool paletted = true;
-    for (const PixelImage* image : {&first.sharp, &first.frosted}) {
-        for (size_t index = 0; index < static_cast<size_t>(image->width) * image->height; ++index) {
-            const ThemeColor cell = pixelAt(*image, index);
-            paletted = paletted && std::ranges::any_of(palette::wallpaper, [&](const ThemeColor& entry) {
-                           return std::abs(entry.r - cell.r) < 0.003f && std::abs(entry.g - cell.g) < 0.003f &&
-                                  std::abs(entry.b - cell.b) < 0.003f && image->rgba[index * 4u + 3u] == 255;
-                       });
-        }
-    }
-    expect(paletted, "every wallpaper pixel is an opaque palette colour");
-}
-
-float neighbourVariation(const SceneImage& image) {
-    float total = 0.0f;
-    for (uint32_t y = 0; y < image.height; ++y) {
-        for (uint32_t x = 1; x < image.width; ++x) {
-            const SceneImage::Pixel& left = image.pixels[y * image.width + x - 1];
-            const SceneImage::Pixel& right = image.pixels[y * image.width + x];
-            total += std::abs(left.r - right.r) + std::abs(left.g - right.g) + std::abs(left.b - right.b);
-        }
-    }
-    return total;
-}
-
-void testFrostSoftensTheScene() {
-    const SceneImage scene = paintNightScene(120, 68);
-    const SceneImage frosted = frost(scene, 3, palette::glassTint, 0.0f);
-    expect(neighbourVariation(frosted) < neighbourVariation(scene) * 0.5f, "frosting blurs away fine detail");
-    const SceneImage tinted = frost(scene, 0, palette::glassTint, 1.0f);
-    expect(std::abs(tinted.pixels.front().b - palette::glassTint.b) < 0.001f, "a full tint replaces the colour");
-}
-
-void testDegenerateWallpaperSizes() {
-    for (const auto& [width, height] : {std::pair<uint32_t, uint32_t>{1, 1}, {3, 5}, {7, 2}}) {
-        const WallpaperImages images = generateNightWallpaper(width, height);
-        expect(images.sharp.rgba.size() == static_cast<size_t>(width) * height * 4u &&
-                   images.frosted.rgba.size() == images.sharp.rgba.size(),
-               "tiny and odd wallpaper sizes are produced whole");
-    }
-    expect(generateNightWallpaper(0, 4).sharp.rgba.empty(), "an empty grid produces no pixels");
 }
 
 void testIconBitmaps() {
@@ -213,13 +116,8 @@ void testIconBitmaps() {
 int main() {
     testContrastHelpers();
     testTextContrast();
-    testCaptionContrastOverFrostedGlass();
+    testBevelsReadAsEdges();
     testAccentContrast();
-    testPaneOpacityKeepsTextReadable();
-    testCaptionContrastAtEveryFrost();
-    testWallpaperIsDeterministicAndPaletted();
-    testFrostSoftensTheScene();
-    testDegenerateWallpaperSizes();
     testIconBitmaps();
     if (failures != 0) {
         std::cerr << failures << " editor palette test(s) failed\n";

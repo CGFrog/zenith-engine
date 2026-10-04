@@ -432,8 +432,8 @@ void EditorSession::drawUi(ApplicationContext& context) {
     drawGameViewUi(context);
     ImGuizmo::BeginFrame();
     m_themeChrome.setModeTint(playModeTint(m_playMode.mode(), m_playMode.simulating()));
-    m_themeChrome.beginFrame(context.rendering);
-    // The dockspace host is transparent so the wallpaper shows between areas.
+    m_themeChrome.beginFrame();
+    // The dockspace host is transparent so the dark gap shows between areas.
     ImGui::PushStyleColor(ImGuiCol_WindowBg, toImVec4(palette::transparent));
     const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
     ImGui::PopStyleColor();
@@ -481,14 +481,14 @@ void EditorSession::updateEyedropper(ApplicationContext& context) {
         }
         return;
     }
-    // The hint follows the mouse on smoked glass, like the viewport labels.
+    // The hint follows the mouse on a translucent header, like the viewport labels.
     const std::string hint = "Pick " + resolved.field->presentation.label + ": click an entity (Esc cancels)";
     const float artPixel = editorArtPixel();
     const ImVec2 mouse = ImGui::GetMousePos();
     const ImVec2 textPosition{mouse.x + 8.0f * artPixel, mouse.y + 8.0f * artPixel};
     const ImVec2 textSize = ImGui::CalcTextSize(hint.c_str());
     ImDrawList* drawList = ImGui::GetForegroundDrawList();
-    ThemeChrome::paintSmokedGlass(
+    ThemeChrome::paintOverlayPanel(
         drawList, {textPosition.x - 3.0f * artPixel, textPosition.y - 2.0f * artPixel},
         {textPosition.x + textSize.x + 3.0f * artPixel, textPosition.y + textSize.y + 2.0f * artPixel});
     drawList->AddText(textPosition, toImU32(palette::activeObjectLabel), hint.c_str());
@@ -510,7 +510,6 @@ void EditorSession::unload(ApplicationContext& context) {
     context.rendering.setGridOverlay(std::nullopt);
     context.rendering.clearOutlinedObjects();
     context.rendering.clearViewOverride();
-    m_themeChrome.release(context.rendering);
     if (!m_workspaces.empty()) {
         m_workspaces.active().setLayout(captureImGuiLayout());
         saveWorkspaces();
