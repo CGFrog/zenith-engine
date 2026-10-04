@@ -117,14 +117,14 @@ Approved 2026-10-04. Nothing is implemented yet.
 | A2 | System phases and `GameServices` | — | done 7f4f340 |
 | A3 | Physics queries, layers, triggers | A2 (trigger events) | done 71dfd12 |
 | A4 | Shared input actions | A2 | done 618c2ad |
-| B1 | Engine character controller | A3, A2 | todo |
-| B2 | Behaviours | A2, A3 | todo |
-| B3 | Animation state machine | A2 | todo |
-| B4 | Effects and pooling | A2 | todo |
-| B5 | Save game | A2 | todo |
-| B6 | Game UI widgets and settings screen | A2 | todo |
-| B7 | Navigation | A3 | todo |
-| B8 | Audio polish | A3 | todo |
+| B1 | Engine character controller | A3, A2 | done ce2cb6f |
+| B2 | Behaviours | A2, A3 | done ebd2b43 |
+| B3 | Animation state machine | A2 | done a0c37f2 |
+| B4 | Effects and pooling | A2 | done e4f9ef2 |
+| B5 | Save game | A2 | done f98cdbb |
+| B6 | Game UI widgets and settings screen | A2 | done c8ed439 |
+| B7 | Navigation | A3 | done 106f547 |
+| B8 | Audio polish | A3 | done 41ac78d |
 | C1 | Build as an operator | — | todo |
 | C2 | Code generators | B2, C1 | todo |
 | C3 | Inspector integration for Behaviours | B2 | todo |
@@ -697,6 +697,10 @@ These items are independent and can go into any batch.
   migration.
 
 ## Open questions and follow-ups
+
+- `zenith_file_watcher_polling` hung twice under the parallel CPU suite while
+  Phase B landed, though it passes alone in about 3 s. Its waits are bounded,
+  so a deadlock in `FileWatcher`'s polling backend is likely.
 
 - Hot reload during Play is out of scope for now. Reloads stay queued until
   Stop.
