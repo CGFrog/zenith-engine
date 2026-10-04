@@ -50,3 +50,24 @@ the time-scale field. `tests/editor/PlayTargetsTests.cpp` and
 `EditorSessionTests` cover the targets headless; the editor smoke plays the
 startup scene in the active viewport and, when `zenith` is built, launches it
 standalone for a moment (its `play targets` step, see [Editor smoke](smoke.md)).
+
+## Debugging the game
+
+- **Debug draw.** Gameplay `DebugDraw` (`GameServices`) lines and labels show
+  in every view, game views included; editor gizmos and their labels only
+  where `viewportDrawsSceneGizmos` allows.
+- **Watched fields.** A reflected field's context menu (right click) has
+  **Watch Field** (`debug.watch_field {entity, component, field, label}`,
+  `operators/DebugOperators`), which adds it to the session's
+  `interaction/WatchList`. The Properties panel shows a **Watched** section
+  above every tab with each field's value in the active scene, read every
+  frame through `watchedValueText` (runtime-state fields included): the
+  running scene's in Play and Simulate. The list is editor state (no undo,
+  not saved) and keeps watches on entities that Stop removes, so they show
+  again in the next Play. `debug.unwatch_field` (the row's `x`) and
+  `debug.clear_watches` (Module menu) remove them.
+- **Attach Debugger** (`debug.attach`, Module menu) runs `ide.debug_command`
+  (Preferences > External IDE; `vsjitdebugger.exe -p {pid}` by default on
+  Windows) with the editor's process id (`currentProcessId`), so breakpoints
+  in the game module's shadow-copied code hit. `expandDebuggerCommand` shares
+  `ExternalEditor`'s tokenizing with `{pid}` as its only placeholder.

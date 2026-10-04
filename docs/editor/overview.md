@@ -32,8 +32,10 @@ workflows panels may request.
 merges, by time, the engine log (`ApplicationContext::logger`), editor
 diagnostics (sources `Build` and `Game Module` get their own source filter),
 and the `OperatorRunner`'s bounded `OperatorHistory` (id, label, status,
-message, properties JSON, time). The panel filters by severity, source, and
-case-insensitive text, auto-scrolls while resting at the end, copies the
+message, properties JSON, time). The panel filters by severity, source,
+engine log category (the **Categories** dropdown lists every category
+received, such as a game's `gameplay.<name>` channels from
+`GameServices::log(name)`), and case-insensitive text, auto-scrolls while resting at the end, copies the
 selected rows (or every shown row) to the clipboard, and clears the view; clear
 also clears editor diagnostics but never the engine log. `EditorDiagnostics`
 entries carry wall and steady timestamps and a revision counter so readers

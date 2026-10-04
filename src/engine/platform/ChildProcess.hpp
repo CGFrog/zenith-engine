@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -88,3 +89,6 @@ class ChildProcess {
 
     std::unique_ptr<State> m_state;
 };
+
+// This process's id, as debuggers and process tools name it.
+uint32_t currentProcessId();

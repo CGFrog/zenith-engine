@@ -458,7 +458,10 @@ void ViewportPanel::recordSceneGizmos(EditorContext& context) {
 }
 
 void ViewportPanel::drawSceneLabels(EditorContext& context) const {
-    if (!m_view || !viewportDrawsSceneGizmos(context.mode, showsSceneCamera(), m_chrome.overlays)) {
+    // The view's labels are the gameplay debug draw's, which every view shows
+    // (game views too), and the editor gizmos' own, which recordSceneGizmos
+    // records only where gizmos are drawn; so no further gate is needed.
+    if (!m_view) {
         return;
     }
     const RenderRuntime& rendering = context.app.rendering;

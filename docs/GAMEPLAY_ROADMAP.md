@@ -136,7 +136,7 @@ Approved 2026-10-04. Nothing is implemented yet.
 | C1 | Build as an operator | — | done |
 | C2 | Code generators | B2, C1 | done |
 | C3 | Inspector integration for Behaviours | B2 | done |
-| C4 | Debugging tools | A2 | todo |
+| C4 | Debugging tools | A2 | done |
 | C5 | Project settings editors | A3, A4 | todo |
 | C6 | FPS template and tutorial | B1–B6, C2, C3 | todo |
 | D1 | Split `PrefabSystem.cpp` | — | todo |
@@ -668,13 +668,32 @@ Result:
 
 ### C4. Debugging tools
 
-- [ ] Add a `debug.attach` operator that runs the configurable
+- [x] Add a `debug.attach` operator that runs the configurable
       `ide.debugCommand` with the editor's process id. Module PDBs are already
       shadow-copied.
-- [ ] Add gameplay log categories that can be filtered in the Info panel.
-- [ ] Show gameplay debug draw (from A2) in the game view.
-- [ ] Add a list of pinned fields in the Properties panel to watch during
+- [x] Add gameplay log categories that can be filtered in the Info panel.
+- [x] Show gameplay debug draw (from A2) in the game view.
+- [x] Add a list of pinned fields in the Properties panel to watch during
       Play.
+
+Result:
+- `operators/DebugOperators.*` is the `debug` family: `debug.attach` (the
+  setting is `ide.debug_command`), `debug.watch_field`,
+  `debug.unwatch_field` and `debug.clear_watches`. `currentProcessId` is in
+  `engine/platform/ChildProcess.hpp`, and `ExternalEditor` gained
+  `expandToolCommand` for any placeholder set.
+- `GameServices::log(name)` logs under `gameplay.<name>`; the Info panel's
+  Categories dropdown hides categories (`InfoFilter::hiddenCategories`).
+- Gameplay debug lines already drew in game views; their labels now do too.
+- Watched fields are `interaction/WatchList.*`, shown by the Properties
+  panel. The field context menu is now one `##FieldMenu` with Revert to
+  Prefab and Watch Field.
+- Coverage: `DebugToolsTests` (`zenith_debug_tools`), `InfoPanelTests`,
+  `GameServicesTests`, `PrefabUiTests`, `EditorSettingsTests`.
+
+Follow-ups:
+- No test draws a game view's labels; that needs a rendered frame.
+- The watch list is not saved with the session's other settings.
 
 ### C5. Project settings editors
 

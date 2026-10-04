@@ -61,6 +61,8 @@ struct InfoFilter {
     std::array<bool, infoSourceCount> sources{true, true, true, true, true};
     // Case-insensitive substring of the text or category; empty accepts all.
     std::string text;
+    // Engine log categories ("gameplay.weapons") whose records are hidden.
+    std::set<std::string> hiddenCategories;
 
     bool accepts(const InfoRecord& record) const;
     bool operator==(const InfoFilter&) const = default;
@@ -84,6 +86,13 @@ class InfoLog {
     }
 
     size_t count(InfoSource source) const;
+
+    // Every engine log category received so far, sorted; kept by Clear, so
+    // a hidden category can be shown again.
+    const std::set<std::string>& categories() const {
+        return m_categories;
+    }
+
     // Hides every engine and operator record received so far. The engine log
     // and operator history keep theirs; diagnostics are cleared at their owner.
     void clearStreams();
@@ -99,6 +108,7 @@ class InfoLog {
 
     size_t m_streamCapacity;
     std::deque<InfoRecord> m_streamed;
+    std::set<std::string> m_categories;
     std::vector<InfoRecord> m_diagnosticRecords;
     std::vector<InfoRecord> m_records;
     uint64_t m_engineSequence{0};
@@ -143,6 +153,8 @@ class InfoPanel final : public EditorPanel {
     using RecordKey = std::pair<InfoSource, uint64_t>;
 
     void drawToolbar(EditorDiagnostics& diagnostics);
+    // The Categories dropdown, which hides engine log categories.
+    void drawCategoryFilter();
     void drawRecords();
     void selectRecord(const InfoRecord& record, bool toggle);
 

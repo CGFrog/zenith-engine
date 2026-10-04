@@ -36,6 +36,9 @@ struct ReflectedFieldEditorOptions {
     std::string pointerPrefix;
     std::function<bool(std::string_view pointer)> overridden;
     std::function<void(std::string_view pointer)> revertOverride;
+    // When set, each field's context menu offers Watch Field, which calls
+    // it with the field's pointer and label.
+    std::function<void(std::string_view pointer, std::string_view label)> watch;
 };
 
 // Marks the last drawn item as a prefab override: a bar in the override

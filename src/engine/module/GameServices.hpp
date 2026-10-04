@@ -80,6 +80,9 @@ class GameServices {
     // frame renders.
     DebugDraw& debugDraw();
     const LogChannel& log() const;
+    // A channel for one part of the game, category "gameplay.<name>", so the
+    // editor's Info panel can show or hide it on its own.
+    LogChannel log(std::string_view name) const;
 
     // Starts a rendered frame: last frame's events become readable.
     void beginFrame();

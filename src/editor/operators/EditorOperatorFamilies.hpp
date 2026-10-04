@@ -30,6 +30,7 @@ class PreferencesWindow;
 class ProjectBuild;
 class TextClipboard;
 class ViewportRegistry;
+class WatchList;
 class WorkspaceSet;
 struct EditorToolSettings;
 
@@ -53,6 +54,8 @@ struct EditorOperatorServices {
     PackageRunner& packageRunner;
     // The session's build, which the Build panel shows.
     ProjectBuild& build;
+    // The fields the Properties panel watches (debug.watch_field).
+    WatchList& watches;
     // The preview navigation mesh the viewports draw.
     NavigationWorld& navigationPreview;
     const EditorToolSettings& tools;

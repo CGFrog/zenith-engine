@@ -188,10 +188,37 @@ void testHeadlessPanel() {
 }
 } // namespace
 
+// A game's gameplay.<name> channels are categories the panel can hide.
+void testCategoryFilter() {
+    InfoFixture fixture;
+    LogChannel(&fixture.logger, "gameplay.weapons").info("fired");
+    LogChannel(&fixture.logger, "gameplay.ai").info("thinking");
+    InfoPanel panel(fixture.runner.history());
+    panel.sync(&fixture.logger, fixture.diagnostics);
+    expect(panel.log().categories().contains("gameplay.weapons") && panel.log().categories().contains("gameplay.ai"),
+           "the log should collect the categories it received");
+    const auto shown = [&panel](std::string_view text) {
+        const std::vector<InfoRecord>& records = panel.log().records();
+        return std::ranges::any_of(panel.visibleRecords(),
+                                   [&records, text](size_t index) { return records[index].text == text; });
+    };
+    expect(shown("fired") && shown("thinking"), "every category should show by default");
+    panel.filter().hiddenCategories.insert("gameplay.ai");
+    expect(shown("fired") && !shown("thinking"), "a hidden category's records should be filtered out");
+    panel.clear(fixture.diagnostics);
+    expect(panel.log().categories().contains("gameplay.ai"), "Clear should keep the categories, to show them again");
+    {
+        HeadlessImGuiContext imgui;
+        HeadlessImGuiFrame frame("Info");
+        panel.drawContents(fixture.diagnostics);
+    }
+}
+
 int main() {
     testOperatorHistory();
     testMergedModel();
     testHeadlessPanel();
+    testCategoryFilter();
     if (failures == 0) {
         std::cout << "Info panel tests passed\n";
     }

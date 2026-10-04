@@ -6,6 +6,7 @@
 #include "editor/application/EditorSessionCommands.hpp"
 #include "editor/areas/AreaRegistry.hpp"
 #include "editor/areas/Workspace.hpp"
+#include "editor/interaction/WatchList.hpp"
 #include "editor/modules/GameModuleHost.hpp"
 #include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/panels/PreferencesWindow.hpp"
@@ -132,6 +133,7 @@ struct OperatorFamilyFixture : EditorTestFixture {
     NavigationWorld navigationPreview;
     EditorToolSettings tools;
     ProjectBuild build{tools, diagnostics};
+    WatchList watches;
     WorkspaceSet workspaces;
     AreaRegistry areaTypes;
     NoSessionCommands session;
@@ -151,6 +153,7 @@ struct OperatorFamilyFixture : EditorTestFixture {
                 .preferences = preferences,
                 .packageRunner = packageRunner,
                 .build = build,
+                .watches = watches,
                 .navigationPreview = navigationPreview,
                 .tools = tools,
                 .projectFile = {},
@@ -188,11 +191,27 @@ void testEveryFamilyRegisters() {
         expect(ids.insert(op->id).second, "operator '" + op->id + "' is registered once");
     }
     // A sample from each kind of family, as menus and keymaps name them.
-    for (const char* id :
-         {"file.save", "play.start", "wm.search_menu", "transform.translate", "view3d.view_axis",
-          "view3d.cursor3d_place", "module.reload", "wm.toggle_panel", "file.build_package", "object.duplicate",
-          "ui.eyedropper_cancel", "object.component_copy", "wm.call_menu", "prefab.apply", "play.set_time_scale",
-          "build.run", "build.cancel", "module.new_behaviour", "module.generate_code"}) {
+    for (const char* id : {"file.save",
+                           "play.start",
+                           "wm.search_menu",
+                           "transform.translate",
+                           "view3d.view_axis",
+                           "view3d.cursor3d_place",
+                           "module.reload",
+                           "wm.toggle_panel",
+                           "file.build_package",
+                           "object.duplicate",
+                           "ui.eyedropper_cancel",
+                           "object.component_copy",
+                           "wm.call_menu",
+                           "prefab.apply",
+                           "play.set_time_scale",
+                           "build.run",
+                           "build.cancel",
+                           "module.new_behaviour",
+                           "module.generate_code",
+                           "debug.attach",
+                           "debug.watch_field"}) {
         expect(fixture.operators.find(id) != nullptr, std::string("operator '") + id + "' is registered");
     }
 }

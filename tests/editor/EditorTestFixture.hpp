@@ -170,6 +170,8 @@ struct EditorTestFixture {
     EditorPlayMode* followedPlayMode{nullptr};
     // What panels learn about the game module's behaviours; none by default.
     const EditorScriptInfo* scripts{nullptr};
+    // The Properties panel's watch list; none by default.
+    const WatchList* watches{nullptr};
     TestSessionActions defaultActions{operators, runner, sessionContextSource()};
 
     // The context the session runs an operator in: operatorContext() with
@@ -231,7 +233,8 @@ struct EditorTestFixture {
                 .menus = menus,
                 .simulating = followedPlayMode != nullptr ? followedPlayMode->simulating() : simulating,
                 .componentEditors = &componentEditors,
-                .scripts = scripts};
+                .scripts = scripts,
+                .watches = watches};
     }
 
   private:

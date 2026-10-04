@@ -214,6 +214,9 @@ bool InfoFilter::accepts(const InfoRecord& record) const {
     if (!severities[static_cast<size_t>(record.severity)] || !sources[static_cast<size_t>(record.source)]) {
         return false;
     }
+    if (!record.category.empty() && hiddenCategories.contains(record.category)) {
+        return false;
+    }
     if (text.empty()) {
         return true;
     }
@@ -272,6 +275,9 @@ void InfoLog::clearStreams() {
 }
 
 void InfoLog::appendStreamed(InfoRecord record) {
+    if (!record.category.empty()) {
+        m_categories.insert(record.category);
+    }
     if (m_streamed.size() == m_streamCapacity) {
         m_streamed.pop_front();
     }
@@ -370,6 +376,7 @@ void InfoPanel::drawToolbar(EditorDiagnostics& diagnostics) {
         ImGui::Checkbox(label.c_str(), &m_filter.sources[index]);
     }
 
+    drawCategoryFilter();
     ImGui::SetNextItemWidth(std::max(ImGui::GetContentRegionAvail().x * 0.4f, 120.0f));
     if (ImGui::InputTextWithHint("##search", "Search text or category", m_searchBuffer.data(), m_searchBuffer.size())) {
         m_filter.text = m_searchBuffer.data();
@@ -390,6 +397,36 @@ void InfoPanel::drawToolbar(EditorDiagnostics& diagnostics) {
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Hides the engine log and operator history so far and clears editor diagnostics");
     }
+}
+
+void InfoPanel::drawCategoryFilter() {
+    const std::set<std::string>& categories = m_log.categories();
+    const std::string preview = m_filter.hiddenCategories.empty()
+                                    ? std::string("All categories")
+                                    : std::to_string(m_filter.hiddenCategories.size()) + " hidden";
+    ImGui::SetNextItemWidth(ImGui::CalcTextSize("All categories").x + ImGui::GetFrameHeight() * 2.0f);
+    if (!ImGui::BeginCombo("##categories", preview.c_str())) {
+        ImGui::SetItemTooltip("Show or hide engine log categories, such as a game's gameplay.<name> channels");
+        ImGui::SameLine();
+        return;
+    }
+    if (categories.empty()) {
+        ImGui::TextDisabled("No categories logged yet");
+    } else if (ImGui::Selectable("Show All", false, ImGuiSelectableFlags_DontClosePopups)) {
+        m_filter.hiddenCategories.clear();
+    }
+    for (const std::string& category : categories) {
+        bool shown = !m_filter.hiddenCategories.contains(category);
+        if (ImGui::Checkbox(category.c_str(), &shown)) {
+            if (shown) {
+                m_filter.hiddenCategories.erase(category);
+            } else {
+                m_filter.hiddenCategories.insert(category);
+            }
+        }
+    }
+    ImGui::EndCombo();
+    ImGui::SameLine();
 }
 
 void InfoPanel::selectRecord(const InfoRecord& record, bool toggle) {

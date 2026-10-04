@@ -18,6 +18,7 @@
 #include "editor/interaction/EntityEyedropper.hpp"
 #include "editor/interaction/ModalTransform.hpp"
 #include "editor/interaction/Selection.hpp"
+#include "editor/interaction/WatchList.hpp"
 #include "editor/menus/EditorMenus.hpp"
 #include "editor/modules/EditorScriptInfo.hpp"
 #include "editor/modules/GameModuleHost.hpp"
@@ -339,6 +340,9 @@ class EditorSession final : public ApplicationScene,
     // panel, or build on save, and polled every frame. Declared before the
     // operators that refer to it.
     ProjectBuild m_projectBuild{m_settings.tools(), m_diagnostics};
+    // The fields the Properties panel watches; declared before the operators
+    // that edit it.
+    WatchList m_watches;
     CommandHistory m_history;
     EditorPlayMode m_playMode;
     // The target F5 (play.start without a target) runs: the last one used.

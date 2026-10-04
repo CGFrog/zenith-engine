@@ -21,6 +21,7 @@ class EntityEyedropper;
 class EditorMenus;
 class EditorScriptInfo;
 class NavigationWorld;
+class WatchList;
 
 // Session-level workflows a panel can trigger but does not own: running
 // operators, the region keymaps, document replacement, and modal transforms.
@@ -102,6 +103,9 @@ struct EditorContext {
     // The game module's behaviour sources and build state, for the
     // inspector's Edit Script button and badges; null where there is none.
     const EditorScriptInfo* scripts{nullptr};
+    // The fields the Properties panel watches; null where there is none.
+    // Change it through debug.watch_field and debug.unwatch_field.
+    const WatchList* watches{nullptr};
 
     bool editMode() const {
         return mode == EditorMode::Edit;

@@ -684,6 +684,16 @@ EntityPropertiesView::drawComponentValues(EditorContext& context, const Componen
                                       .properties = revertFieldProperties(shownId, type.key(), pointer)};
             };
         }
+        if (context.watches != nullptr) {
+            fieldOptions.watch = [&revert, &type, shownId](std::string_view pointer, std::string_view label) {
+                revert = HeaderAction{.operatorId = "debug.watch_field",
+                                      .properties = Json{{"entity", std::to_string(shownId.value)},
+                                                         {"component", type.key()},
+                                                         {"field", pointer},
+                                                         {"label", type.displayName() + " " + std::string(label)}}
+                                                        .dump()};
+            };
+        }
         changed = drawReflectedFields(components, type.fields(), fieldOptions);
     }
     if (changed) {

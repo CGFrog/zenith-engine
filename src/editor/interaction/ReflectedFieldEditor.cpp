@@ -365,20 +365,30 @@ std::string escapePointerToken(std::string_view key) {
     return escaped;
 }
 
-// Marks the field just drawn when it is a prefab override, and offers its
-// revert. Struct fields (tree nodes) and read-only text draw their label at
-// the left, so only the bar marks them.
-void decoratePrefabOverride(const FieldDescriptor& field, const std::string& pointer,
-                            const ReflectedFieldEditorOptions& options) {
-    if (!options.overridden || !options.overridden(pointer)) {
+// Marks the field just drawn when it is a prefab override, and gives it a
+// context menu (##FieldMenu) with Revert to Prefab for an override and Watch
+// Field when the options watch. Struct fields (tree nodes) and read-only text
+// draw their label at the left, so only the bar marks them.
+void decorateField(const FieldDescriptor& field, const std::string& pointer,
+                   const ReflectedFieldEditorOptions& options) {
+    const bool overridden = options.overridden && options.overridden(pointer);
+    if (overridden) {
+        const bool labelAtRight =
+            field.kind != FieldKind::Struct && !(field.kind == FieldKind::String && field.presentation.readOnly);
+        markPrefabOverride(labelAtRight ? std::string_view(field.presentation.label) : std::string_view{});
+    }
+    const bool canRevert = overridden && options.revertOverride;
+    const bool canWatch = static_cast<bool>(options.watch) && field.kind != FieldKind::Struct;
+    if ((!canRevert && !canWatch) || !ImGui::BeginPopupContextItem("##FieldMenu")) {
         return;
     }
-    const bool labelAtRight =
-        field.kind != FieldKind::Struct && !(field.kind == FieldKind::String && field.presentation.readOnly);
-    markPrefabOverride(labelAtRight ? std::string_view(field.presentation.label) : std::string_view{});
-    if (options.revertOverride && prefabOverrideMenu("##PrefabOverride")) {
+    if (canRevert && ImGui::MenuItem("Revert to Prefab")) {
         options.revertOverride(pointer);
     }
+    if (canWatch && ImGui::MenuItem("Watch Field")) {
+        options.watch(pointer, field.presentation.label);
+    }
+    ImGui::EndPopup();
 }
 
 bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
@@ -391,7 +401,7 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
     if (field.kind == FieldKind::String && presentation.readOnly) {
         const std::optional<bool> loaded = options.assetLoaded ? options.assetLoaded(field.key) : std::nullopt;
         drawReadOnlyText(label, field.value<std::string>(object), loaded, mixed.any);
-        decoratePrefabOverride(field, pointer, options);
+        decorateField(field, pointer, options);
         return false;
     }
     const Json before = objects.size() > 1 ? fieldValue(object, field) : Json{};
@@ -467,7 +477,7 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
     case FieldKind::Struct: {
         const bool open = ImGui::TreeNode(label);
         // Marked before the children are drawn, while the node is the last item.
-        decoratePrefabOverride(field, pointer, options);
+        decorateField(field, pointer, options);
         if (open) {
             // A struct matched by its own label shows all of its fields.
             ReflectedFieldEditorOptions childOptions = options;
@@ -492,7 +502,7 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
         ImGui::SetTooltip("%s", presentation.tooltip.c_str());
     }
     if (field.kind != FieldKind::Struct) {
-        decoratePrefabOverride(field, pointer, options);
+        decorateField(field, pointer, options);
     }
     if (changed && objects.size() > 1 && field.kind != FieldKind::Struct) {
         applyToOthers(objects, field, before, fieldValue(object, field), committed);

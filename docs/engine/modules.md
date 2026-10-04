@@ -123,6 +123,10 @@ and started again.
 
 ## `GameServices`
 
+`log()` is the `gameplay` log channel; `log(name)` is a channel for one part
+of the game, category `gameplay.<name>`, which the editor's Info panel can
+show or hide on its own.
+
 `GameServices` is owned by whatever runs gameplay:
 - `GameplayRunner`, from a game scene's load to its unload;
 - `GameModuleHost` in the editor, from entering Play or Simulate to stopping.

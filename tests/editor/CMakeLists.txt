@@ -108,6 +108,9 @@ zenith_add_test(zenith_code_generator SOURCES CodeGeneratorTests.cpp LIBS zenith
         ZENITH_TEMPLATE_DIR="${PROJECT_SOURCE_DIR}/templates"
         ZENITH_TEST_CMAKE="${CMAKE_COMMAND}")
 
+zenith_add_test(zenith_debug_tools SOURCES DebugToolsTests.cpp LIBS zenith_editor_app
+    DEFINITIONS ZENITH_TEST_CMAKE="${CMAKE_COMMAND}")
+
 zenith_add_test(zenith_package_workflow SOURCES PackageWorkflowTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_preferences SOURCES PreferencesTests.cpp LIBS zenith_editor_app
     DEFINITIONS ZENITH_TEST_CMAKE="${CMAKE_COMMAND}")

@@ -5,6 +5,7 @@
 #include "editor/operators/BuildOperators.hpp"
 #include "editor/operators/CodeOperators.hpp"
 #include "editor/operators/ComponentOperators.hpp"
+#include "editor/operators/DebugOperators.hpp"
 #include "editor/operators/EyedropperOperators.hpp"
 #include "editor/operators/NavigationOperators.hpp"
 #include "editor/operators/ObjectOperators.hpp"
@@ -40,6 +41,7 @@ constexpr std::array operatorFamilies{
     OperatorFamily{"navigation", registerNavigationOperatorFamily},
     OperatorFamily{"build", registerBuildOperatorFamily},
     OperatorFamily{"code", registerCodeOperatorFamily},
+    OperatorFamily{"debug", registerDebugOperatorFamily},
 };
 } // namespace
 

@@ -69,6 +69,10 @@ const LogChannel& GameServices::log() const {
     return m_log;
 }
 
+LogChannel GameServices::log(std::string_view name) const {
+    return m_log.withCategory("gameplay." + std::string(name));
+}
+
 void GameServices::beginFrame() {
     m_events.advanceFrame();
 }

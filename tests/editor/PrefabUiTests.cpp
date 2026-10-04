@@ -163,7 +163,13 @@ bool contains(const std::vector<std::string>& values, std::string_view value) {
 
 // Activates the item labelled label in the open popup menu next frame.
 void activateMenuItem(const char* label) {
-    const ImGuiWindow* popup = HeadlessImGuiContext::findWindow("##Popup_");
+    // The open popup: an earlier menu's window stays in the list, closed.
+    const ImGuiWindow* popup = nullptr;
+    for (const ImGuiWindow* window : ImGui::GetCurrentContext()->Windows) {
+        if (std::string_view(window->Name).find("##Popup_") != std::string_view::npos && window->Active) {
+            popup = window;
+        }
+    }
     expect(popup != nullptr, "a popup menu should be open");
     if (popup != nullptr) {
         HeadlessImGuiContext::activateNextFrame(HeadlessImGuiContext::itemId(*popup, label));
@@ -203,7 +209,7 @@ void testFieldHighlight() {
     expect(overrideBars() == 2, "the overridden nested field and its struct should be marked, and nothing else");
 
     openPopup = HeadlessImGuiContext::itemId(*HeadlessImGuiContext::findWindow("Headless test"), "settings", "Settings",
-                                             "damping", "##PrefabOverride");
+                                             "damping", "##FieldMenu");
     draw();
     activateMenuItem("Revert to Prefab");
     draw();
@@ -213,6 +219,19 @@ void testFieldHighlight() {
     options.overridden = [](std::string_view) { return false; };
     draw();
     expect(overrideBars() == 0, "fields that are not overridden should not be marked");
+
+    // The same menu offers Watch Field when the view watches.
+    std::vector<std::string> watched;
+    options.watch = [&watched](std::string_view pointer, std::string_view label) {
+        watched.push_back(std::string(pointer) + " " + std::string(label));
+    };
+    openPopup =
+        HeadlessImGuiContext::itemId(*HeadlessImGuiContext::findWindow("Headless test"), "length", "##FieldMenu");
+    draw();
+    activateMenuItem("Watch Field");
+    draw();
+    expect(watched.size() == 1 && watched.front().starts_with("/length "),
+           "Watch Field in a field's menu should watch that field's pointer");
 }
 
 void testInspector() {
@@ -241,7 +260,7 @@ void testInspector() {
     const ImGuiWindow& window = *HeadlessImGuiContext::findWindow("Headless test");
 
     // Revert to Prefab from the intensity field's menu.
-    openPopup = HeadlessImGuiContext::itemId(window, "point_light", "intensity", "##PrefabOverride");
+    openPopup = HeadlessImGuiContext::itemId(window, "point_light", "intensity", "##FieldMenu");
     draw();
     activateMenuItem("Revert to Prefab");
     draw();

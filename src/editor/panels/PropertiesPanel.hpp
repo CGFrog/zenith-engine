@@ -69,6 +69,9 @@ class PropertiesPanel final : public EditorPanel {
     void drawWorldTab(EditorContext& context);
     void drawRenderTab(EditorContext& context);
     void drawSceneTab(EditorContext& context) const;
+    // The watched fields (debug.watch_field) above every tab, with the
+    // active scene's values: the running scene's in Play and Simulate.
+    static void drawWatchedFields(EditorContext& context);
 
     RenderSettingsController& m_renderSettings;
     EntityPropertiesView m_view;

@@ -36,6 +36,9 @@ int main() {
     settings.tools().ideCommand = R"(clion --line {line} "{file}")";
     expect(!settings.tools().buildOnSave, "build on save should be off by default");
     settings.tools().buildOnSave = true;
+    expect(settings.tools().debugCommand == std::string(defaultDebugCommand),
+           "the debugger command should start as the platform default");
+    settings.tools().debugCommand = "gdb -p {pid}";
     expect(settings.save().success, "settings should save");
 
     EditorSettings restored(settingsPath);

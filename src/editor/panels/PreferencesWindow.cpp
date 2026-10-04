@@ -46,6 +46,7 @@ void copySection(EditorPreferenceValues& target, const EditorPreferenceValues& s
         break;
     case PreferenceSection::ExternalIde:
         target.tools.ideCommand = source.tools.ideCommand;
+        target.tools.debugCommand = source.tools.debugCommand;
         break;
     case PreferenceSection::Saving:
         target.autosave = source.autosave;
@@ -136,6 +137,12 @@ std::vector<PreferenceProblem> validatePreferences(const EditorPreferenceValues&
                    expandExternalEditorCommand(values.tools.ideCommand, {"file.cpp", 1, 1});
                !expanded) {
         report(PreferenceSection::ExternalIde, "The IDE command is invalid: " + expanded.error);
+    }
+    if (!blank(values.tools.debugCommand)) {
+        if (const ExternalEditorCommandResult expanded = expandDebuggerCommand(values.tools.debugCommand, 1);
+            !expanded) {
+            report(PreferenceSection::ExternalIde, "The debugger command is invalid: " + expanded.error);
+        }
     }
 
     if (blank(values.tools.buildCommand)) {
@@ -328,6 +335,12 @@ bool PreferencesWindow::drawExternalIde(const PreferencesContext& context) {
     bool edited =
         ImGui::InputTextWithHint("##ide_command", R"(code -g "{file}:{line}:{column}")", &m_draft.tools.ideCommand);
     ImGui::TextDisabled("Placeholders: {file} {line} {column}");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    edited = ImGui::InputTextWithHint("##debug_command", "Debugger command, for example vsjitdebugger.exe -p {pid}",
+                                      &m_draft.tools.debugCommand) ||
+             edited;
+    ImGui::SetItemTooltip("Module > Attach Debugger runs this to debug the editor and its game module. "
+                          "Placeholder: {pid}");
     if (widgets::Button("Test")) {
         const ChildProcessResult opened = openInExternalEditor(m_draft.tools.ideCommand, {context.ideTestFile, 1, 1});
         m_ideTestFailed = !opened;

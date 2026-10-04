@@ -75,6 +75,9 @@ std::string* toolText(std::string_view key, EditorToolSettings& tools) {
     if (key == "ide.command") {
         return &tools.ideCommand;
     }
+    if (key == "ide.debug_command") {
+        return &tools.debugCommand;
+    }
     if (key == "package.directory") {
         return &tools.packageDirectory;
     }
@@ -277,8 +280,8 @@ EditorSettingsResult EditorSettings::load() {
 }
 
 EditorSettingsResult EditorSettings::save() const {
-    for (const std::string* value :
-         {&m_tools.buildCommand, &m_tools.buildDirectory, &m_tools.ideCommand, &m_tools.packageDirectory}) {
+    for (const std::string* value : {&m_tools.buildCommand, &m_tools.buildDirectory, &m_tools.ideCommand,
+                                     &m_tools.debugCommand, &m_tools.packageDirectory}) {
         if (value->find_first_of("\r\n") != std::string::npos) {
             return {.error = "Editor tool settings cannot contain line breaks"};
         }
@@ -310,6 +313,7 @@ EditorSettingsResult EditorSettings::save() const {
            << "build.command=" << m_tools.buildCommand << '\n'
            << "build.directory=" << m_tools.buildDirectory << '\n'
            << "ide.command=" << m_tools.ideCommand << '\n'
+           << "ide.debug_command=" << m_tools.debugCommand << '\n'
            << "package.directory=" << m_tools.packageDirectory << '\n'
            << "build.on_save=" << (m_tools.buildOnSave ? "true" : "false") << '\n'
            << "theme.wallpaper=" << (theme.wallpaper ? "true" : "false") << '\n'

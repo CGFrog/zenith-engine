@@ -3,6 +3,8 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "engine/platform/ChildProcess.hpp"
 
+#include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,6 +17,19 @@ struct ExternalEditorCommandResult {
         return error.empty();
     }
 };
+
+// One {name} a tool command template may use, and its value.
+struct ToolCommandPlaceholder {
+    std::string_view name;
+    std::string value;
+};
+
+// Turns a tool command template into program arguments, as described for
+// expandExternalEditorCommand, with the given placeholders. commandName
+// ("IDE command") names the setting in errors.
+ExternalEditorCommandResult expandToolCommand(std::string_view commandTemplate,
+                                              std::span<const ToolCommandPlaceholder> placeholders,
+                                              std::string_view commandName);
 
 // Turns an IDE command template into program arguments for one location.
 //
@@ -38,3 +53,10 @@ ChildProcessResult openInExternalEditor(std::string_view commandTemplate, const 
 // diagnostic (source "IDE") instead of returning it.
 void openSourceLocation(std::string_view ideCommand, const EditorSourceLocation& location,
                         EditorDiagnostics& diagnostics);
+
+// The debugger command (ide.debug_command) for a process: its only
+// placeholder is {pid}, for example `vsjitdebugger.exe -p {pid}`.
+ExternalEditorCommandResult expandDebuggerCommand(std::string_view commandTemplate, uint32_t processId);
+// Expands the debugger command and launches it detached, to attach to
+// processId.
+ChildProcessResult attachDebugger(std::string_view commandTemplate, uint32_t processId);

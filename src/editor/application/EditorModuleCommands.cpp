@@ -189,6 +189,9 @@ void EditorSession::drawModuleMenu(ApplicationContext& context) {
     operatorMenuItem(context, "module.new_behaviour", "New Behaviour...");
     operatorMenuItem(context, "module.new_component", "New Component...");
     operatorMenuItem(context, "module.new_system", "New System...");
+    ImGui::Separator();
+    operatorMenuItem(context, "debug.attach", "Attach Debugger");
+    operatorMenuItem(context, "debug.clear_watches", "Clear Watched Fields");
     // Module panels are area types (see syncAreaTypes), toggled like any
     // other in the active workspace.
     std::span<GameModuleHost::Panel> panels = m_moduleHost.panels();

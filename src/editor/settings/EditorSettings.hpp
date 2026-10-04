@@ -35,6 +35,14 @@ struct EditorPanelVisibility {
     auto operator<=>(const EditorPanelVisibility&) const = default;
 };
 
+// The debugger command a new settings file starts with: Visual Studio's
+// just-in-time debugger on Windows, none elsewhere.
+#ifdef _WIN32
+inline constexpr const char* defaultDebugCommand = "vsjitdebugger.exe -p {pid}";
+#else
+inline constexpr const char* defaultDebugCommand = "";
+#endif
+
 // External tools the editor runs. Each value is stored verbatim on one line,
 // so it may contain '=' but not line breaks.
 struct EditorToolSettings {
@@ -47,6 +55,10 @@ struct EditorToolSettings {
     // Command template that opens a file at a line in the IDE. Placeholders:
     // {file}, {line}, {column} (see expandExternalEditorCommand).
     std::string ideCommand{R"(code -g "{file}:{line}:{column}")"};
+    // Command template that attaches a debugger to the editor (debug.attach),
+    // whose game module code then stops at breakpoints. Placeholder: {pid}.
+    // Empty where no default debugger is known.
+    std::string debugCommand{defaultDebugCommand};
     // The release build tree Build and Package configures and builds,
     // relative to the build directory. Kept apart from the tree the Build
     // panel uses so packaging never replaces the editor's own build.

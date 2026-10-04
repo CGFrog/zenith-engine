@@ -900,3 +900,11 @@ void ChildProcess::finish() {
     m_state->release();
     m_state.reset();
 }
+
+uint32_t currentProcessId() {
+#ifdef _WIN32
+    return static_cast<uint32_t>(GetCurrentProcessId());
+#else
+    return static_cast<uint32_t>(getpid());
+#endif
+}

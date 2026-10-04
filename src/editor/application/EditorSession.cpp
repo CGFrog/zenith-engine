@@ -127,7 +127,8 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .simulating = m_playMode.simulating(),
             .componentEditors = &m_componentEditors,
             .navigationPreview = &m_navigationPreview,
-            .scripts = this};
+            .scripts = this,
+            .watches = &m_watches};
 }
 
 OperatorContext EditorSession::operatorContext(ApplicationContext& context, KeymapRegion region) {
@@ -153,6 +154,7 @@ EditorOperatorServices EditorSession::operatorServices() {
             .preferences = m_preferences,
             .packageRunner = m_packageRunner,
             .build = m_projectBuild,
+            .watches = m_watches,
             .navigationPreview = m_navigationPreview,
             .tools = m_settings.tools(),
             .projectFile = m_renderSettings.settings().projectFile(),

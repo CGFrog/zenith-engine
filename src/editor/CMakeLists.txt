@@ -10,6 +10,7 @@ add_library(zenith_editor_app STATIC
     application/EditorModuleCommands.cpp
     application/EditorObjectCommands.cpp
     application/NewCodeDialog.cpp
+    interaction/WatchList.cpp
     application/EditorViewports.cpp
     application/EditorPlayMode.cpp
     application/EditorPlayback.cpp
@@ -56,6 +57,7 @@ add_library(zenith_editor_app STATIC
     operators/ComponentOperators.cpp
     operators/BuildOperators.cpp
     operators/CodeOperators.cpp
+    operators/DebugOperators.cpp
     operators/CollectionOperators.cpp
     operators/DefaultKeymap.cpp
     operators/EditorOperatorFamilies.cpp

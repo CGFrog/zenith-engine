@@ -1,6 +1,7 @@
 #include "PropertiesPanel.hpp"
 
 #include "editor/document/EditorDocument.hpp"
+#include "editor/interaction/WatchList.hpp"
 #include "editor/menus/AddComponentMenu.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/RenderSettingsControls.hpp"
@@ -8,14 +9,18 @@
 #include "engine/scene/ComponentTypes.hpp"
 
 #include <imgui.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 
 namespace {
+using Json = nlohmann::json;
+
 EditorIcon tabIcon(PropertiesTabKind kind) {
     switch (kind) {
     case PropertiesTabKind::Object:
@@ -185,6 +190,7 @@ void PropertiesPanel::draw(EditorContext& context) {
     drawTabStrip(available, active);
     ImGui::SameLine();
     if (ImGui::BeginChild("##PropertiesContent")) {
+        drawWatchedFields(context);
         // In Play and Simulate the entity and World tabs edit the running
         // scene live; the notice says those edits are lost on Stop.
         if (isEntityTab(active.kind) || active.kind == PropertiesTabKind::World) {
@@ -209,6 +215,51 @@ void PropertiesPanel::draw(EditorContext& context) {
         }
     }
     ImGui::EndChild();
+}
+
+void PropertiesPanel::drawWatchedFields(EditorContext& context) {
+    if (context.watches == nullptr || context.watches->fields().empty()) {
+        return;
+    }
+    if (!widgets::SectionHeader("Watched", ImGuiTreeNodeFlags_DefaultOpen)) {
+        return;
+    }
+    const Scene& scene = context.app.scene;
+    const SceneDocumentOptions& options = context.editing.document().options();
+    std::optional<std::string> unwatch;
+    constexpr ImGuiTableFlags tableFlags = ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg;
+    if (ImGui::BeginTable("##Watched", 3, tableFlags)) {
+        ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        ImGui::TableSetupColumn("##Remove", ImGuiTableColumnFlags_WidthFixed);
+        const std::span<const WatchedField> fields = context.watches->fields();
+        for (size_t index = 0; index < fields.size(); ++index) {
+            const WatchedField& field = fields[index];
+            ImGui::PushID(static_cast<int>(index));
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            const Entity entity = scene.findEntity(field.entity);
+            const auto* name = entity != entt::null ? scene.registry().try_get<NameComponent>(entity) : nullptr;
+            ImGui::Text("%s: %s", name != nullptr ? name->name.c_str() : "(missing)", field.label.c_str());
+            ImGui::TableNextColumn();
+            const std::string value = watchedValueText(scene, context.app.assets, options, field);
+            ImGui::TextUnformatted(value.c_str());
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton("x")) {
+                unwatch = Json{{"entity", std::to_string(field.entity.value)},
+                               {"component", field.component},
+                               {"field", field.pointer}}
+                              .dump();
+            }
+            ImGui::SetItemTooltip("Stop watching");
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    // After drawing, so the list is not changed while it is iterated.
+    if (unwatch) {
+        context.invoke("debug.unwatch_field", *unwatch);
+    }
 }
 
 void PropertiesPanel::drawTabStrip(const std::vector<PropertiesTab>& tabs, const PropertiesTab& active) {

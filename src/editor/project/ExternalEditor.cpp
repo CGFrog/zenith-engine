@@ -1,5 +1,7 @@
 #include "ExternalEditor.hpp"
 
+#include <algorithm>
+#include <array>
 #include <optional>
 
 namespace {
@@ -8,7 +10,7 @@ struct TokenizeResult {
     std::string error;
 };
 
-TokenizeResult tokenize(std::string_view commandTemplate) {
+TokenizeResult tokenize(std::string_view commandTemplate, std::string_view commandName) {
     TokenizeResult result;
     std::string current;
     bool inToken = false;
@@ -28,19 +30,19 @@ TokenizeResult tokenize(std::string_view commandTemplate) {
             continue;
         }
         if (character == '\r' || character == '\n') {
-            return {.error = "The IDE command must be a single line"};
+            return {.error = "The " + std::string(commandName) + " must be a single line"};
         }
         current.push_back(character);
         inToken = true;
     }
     if (quoted) {
-        return {.error = "The IDE command has an unmatched quote"};
+        return {.error = "The " + std::string(commandName) + " has an unmatched quote"};
     }
     if (inToken) {
         result.tokens.push_back(std::move(current));
     }
     if (result.tokens.empty()) {
-        return {.error = "No IDE command is configured"};
+        return {.error = "No " + std::string(commandName) + " is configured"};
     }
     return result;
 }
@@ -50,10 +52,22 @@ std::string pathArgument(const std::filesystem::path& path) {
     return std::string(utf8.begin(), utf8.end());
 }
 
+// "{file}, {line}, or {column}".
+std::string placeholderList(std::span<const ToolCommandPlaceholder> placeholders) {
+    std::string list;
+    for (size_t index = 0; index < placeholders.size(); ++index) {
+        if (index > 0) {
+            list += index + 1 == placeholders.size() ? (placeholders.size() > 2 ? ", or " : " or ") : ", ";
+        }
+        list += "{" + std::string(placeholders[index].name) + "}";
+    }
+    return list;
+}
+
 // Replaces placeholders in one argument. Returns nothing and sets error when
 // a placeholder is unknown or unterminated.
-std::optional<std::string> substitute(std::string_view token, const EditorSourceLocation& location,
-                                      std::string& error) {
+std::optional<std::string> substitute(std::string_view token, std::span<const ToolCommandPlaceholder> placeholders,
+                                      std::string_view commandName, std::string& error) {
     std::string expanded;
     for (size_t index = 0; index < token.size(); ++index) {
         const char character = token[index];
@@ -63,7 +77,7 @@ std::optional<std::string> substitute(std::string_view token, const EditorSource
             continue;
         }
         if (character == '}') {
-            error = "The IDE command has an unmatched '}'";
+            error = "The " + std::string(commandName) + " has an unmatched '}'";
             return std::nullopt;
         }
         if (character != '{') {
@@ -72,45 +86,53 @@ std::optional<std::string> substitute(std::string_view token, const EditorSource
         }
         const size_t close = token.find('}', index);
         if (close == std::string_view::npos) {
-            error = "The IDE command has an unterminated placeholder";
+            error = "The " + std::string(commandName) + " has an unterminated placeholder";
             return std::nullopt;
         }
         const std::string_view name = token.substr(index + 1, close - index - 1);
-        if (name == "file") {
-            expanded += pathArgument(location.file);
-        } else if (name == "line") {
-            expanded += std::to_string(location.line == 0 ? 1 : location.line);
-        } else if (name == "column") {
-            expanded += std::to_string(location.column == 0 ? 1 : location.column);
-        } else {
-            error = "Unknown IDE command placeholder {" + std::string(name) + "}; use {file}, {line}, or {column}";
+        const auto placeholder = std::ranges::find(placeholders, name, &ToolCommandPlaceholder::name);
+        if (placeholder == placeholders.end()) {
+            error = "Unknown " + std::string(commandName) + " placeholder {" + std::string(name) + "}; use " +
+                    placeholderList(placeholders);
             return std::nullopt;
         }
+        expanded += placeholder->value;
         index = close;
     }
     return expanded;
 }
 } // namespace
 
-ExternalEditorCommandResult expandExternalEditorCommand(std::string_view commandTemplate,
-                                                        const EditorSourceLocation& location) {
-    TokenizeResult tokens = tokenize(commandTemplate);
+ExternalEditorCommandResult expandToolCommand(std::string_view commandTemplate,
+                                              std::span<const ToolCommandPlaceholder> placeholders,
+                                              std::string_view commandName) {
+    TokenizeResult tokens = tokenize(commandTemplate, commandName);
     if (!tokens.error.empty()) {
         return {.error = std::move(tokens.error)};
     }
     ExternalEditorCommandResult result;
     for (const std::string& token : tokens.tokens) {
         std::string error;
-        std::optional<std::string> argument = substitute(token, location, error);
+        std::optional<std::string> argument = substitute(token, placeholders, commandName, error);
         if (!argument) {
             return {.error = std::move(error)};
         }
         result.arguments.push_back(std::move(*argument));
     }
     if (result.arguments.front().empty()) {
-        return {.error = "The IDE command does not name a program"};
+        return {.error = "The " + std::string(commandName) + " does not name a program"};
     }
     return result;
+}
+
+ExternalEditorCommandResult expandExternalEditorCommand(std::string_view commandTemplate,
+                                                        const EditorSourceLocation& location) {
+    const std::array placeholders{
+        ToolCommandPlaceholder{.name = "file", .value = pathArgument(location.file)},
+        ToolCommandPlaceholder{.name = "line", .value = std::to_string(location.line == 0 ? 1 : location.line)},
+        ToolCommandPlaceholder{.name = "column", .value = std::to_string(location.column == 0 ? 1 : location.column)},
+    };
+    return expandToolCommand(commandTemplate, placeholders, "IDE command");
 }
 
 ChildProcessResult openInExternalEditor(std::string_view commandTemplate, const EditorSourceLocation& location) {
@@ -131,4 +153,17 @@ void openSourceLocation(std::string_view ideCommand, const EditorSourceLocation&
                         "Could not open " + location.file.string() + ": " + opened.error,
                         "Set ide.command in the editor settings.ini, for example: code -g \"{file}:{line}:{column}\"");
     }
+}
+
+ExternalEditorCommandResult expandDebuggerCommand(std::string_view commandTemplate, uint32_t processId) {
+    const std::array placeholders{ToolCommandPlaceholder{.name = "pid", .value = std::to_string(processId)}};
+    return expandToolCommand(commandTemplate, placeholders, "debugger command");
+}
+
+ChildProcessResult attachDebugger(std::string_view commandTemplate, uint32_t processId) {
+    ExternalEditorCommandResult command = expandDebuggerCommand(commandTemplate, processId);
+    if (!command) {
+        return {.error = std::move(command.error)};
+    }
+    return ChildProcess::launchDetached({.command = ChildProcessCommand::program(std::move(command.arguments))});
 }

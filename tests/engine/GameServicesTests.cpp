@@ -317,6 +317,14 @@ void testTimers() {
 }
 } // namespace
 
+void testLogChannels() {
+    ServicesFixture fixture;
+    expect(fixture.services.log().category() == "gameplay", "the game's own channel is gameplay");
+    const LogChannel weapons = fixture.services.log("weapons");
+    expect(weapons.category() == "gameplay.weapons" && weapons.logger() == &fixture.logger,
+           "a named channel is gameplay.<name> on the same logger");
+}
+
 int main() {
     testCommandsApplyAtFlush();
     testCommandsRunInPhases();
@@ -324,6 +332,7 @@ int main() {
     testEffects();
     testEventsLastOneFrame();
     testTimers();
+    testLogChannels();
     if (failures == 0) {
         std::cout << "Game services tests passed\n";
     }
