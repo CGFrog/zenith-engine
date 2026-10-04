@@ -1,6 +1,7 @@
 // The zenith_game_demo shared library: the entry points through which the
-// editor loads the demo's gameplay. The zenith executable links the same
-// gameplay statically and calls registerDemoGameplay directly.
+// editor, and the zenith executable for the demo project, load the demo's
+// gameplay. The executable also links the same gameplay statically, for runs
+// without a game module, and calls registerDemoGameplay directly.
 
 #include "engine/module/ModuleApi.hpp"
 #include "game/gameplay/DemoGameplay.hpp"

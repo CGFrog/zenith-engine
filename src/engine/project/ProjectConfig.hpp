@@ -44,5 +44,11 @@ ProjectConfigResult resolveProjectScene(const ProjectConfig& config, const std::
 ProjectConfigResult loadProjectScene(const ProjectConfig& config, const std::filesystem::path& reference,
                                      AssetManager& assets, Scene& scene,
                                      std::shared_ptr<const ComponentTypeRegistry> componentTypes = nullptr);
+// Loads the scene document at sceneFile (any path, inside the scene root or
+// not, such as a copy an editor saved for a test run) with the project's asset
+// root and componentTypes, as loadProjectScene does.
+ProjectConfigResult loadProjectSceneFile(const ProjectConfig& config, const std::filesystem::path& sceneFile,
+                                         AssetManager& assets, Scene& scene,
+                                         std::shared_ptr<const ComponentTypeRegistry> componentTypes = nullptr);
 ProjectConfigResult loadProjectStartupScene(const ProjectConfig& config, AssetManager& assets, Scene& scene,
                                             std::shared_ptr<const ComponentTypeRegistry> componentTypes = nullptr);

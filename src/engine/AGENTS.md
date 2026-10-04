@@ -13,7 +13,7 @@ This subtree is the reusable `zenith_engine` library. It must not include from
 | `audio/` | SDL audio device, decoding, mixing, streaming, and audio handles. |
 | `graphics/` | Renderer and Vulkan implementation; nested folders separate passes, resources, pipelines, surfaces, swapchains, shaders, and Vulkan setup. |
 | `input/` | Device-state translation; gameplay meaning belongs in `src/game/`. |
-| `module/` | Game module ABI, shadow-copied loading and unloading, module registration, and the system registry and scheduler (Simulate mask, per-system CPU profile). |
+| `module/` | Game module ABI, shadow-copied or in-place loading and unloading, module registration, the system registry and scheduler (Simulate mask, per-system CPU profile), and `Gameplay` (the component types and systems a game plays). |
 | `physics/` | Jolt-backed simulation exposed through Zenith domain types; `JoltRuntime` shares Jolt's process-wide state between worlds. |
 | `platform/` | OS services: user-data locations, atomic writes, diagnostics bundles, and child processes. |
 | `reflection/` | Plain-data field descriptors and their JSON codec; no scene or asset knowledge (types such as `SceneEntityId` opt into a kind through `ReflectedFieldKind`). |

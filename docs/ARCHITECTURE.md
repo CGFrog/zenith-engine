@@ -7,7 +7,7 @@ current content, behavior, and authoring policy.
 ## Dependency direction
 
 ```text
-main.cpp ------> DemoApplication / GameplayScene --+
+main.cpp ------> DemoApplication|ProjectApplication --+
                                                      |
 editor/main.cpp -> EditorApplication / EditorSession +
                                                      v
@@ -91,7 +91,10 @@ to the scene (null otherwise) and interprets it with its own bindings. Module co
 registered functions, EnTT storage created by module code, and component
 values, so a host releases all of them, destroying affected scenes after
 serializing what must survive, before unloading. Wiring modules and systems
-into `Engine` and the editor is application composition. The editor's
+into `Engine` and the editor is application composition. The game executable
+loads the project's module in place when it ships inside the package (from a
+shadow copy otherwise, so it can be rebuilt) and runs its Play systems with
+the frame's input (`Gameplay`, `engine/module/Gameplay.hpp`). The editor's
 `GameModuleHost` (`editor/modules/`) does this for the project's module,
 hot reloading it by serializing the scene, replacing the scene's registry, and
 restoring it with the new module's registry. A module's optional editor
@@ -100,7 +103,9 @@ engine never sees.
 
 ## Ownership and lifetime
 
-`main` owns `Engine` and `DemoApplication`. The engine owns subsystems by value.
+`main` owns, in declaration order, the `RuntimeGameplay` (the project's game
+module and what it registered), `Engine`, and the application, so the
+module's code outlives the engine's scene. The engine owns subsystems by value.
 Initialization proceeds window, renderer, then physics. During `run`, an
 `ApplicationSession` owns the active `ApplicationScene`. Shutdown unloads that
 scene, stops the application, then releases physics, renderer, and window state.
@@ -129,7 +134,8 @@ main
             -> physical/logical device, queue, and VMA
             -> swapchain, depth resources, frame resources, render passes
        -> PhysicsWorld::init
-  -> Engine::run(DemoApplication)
+  -> parse the command line; load the project and its game module
+  -> Engine::run(DemoApplication or ProjectApplication)
        -> Application::onStart
        -> create initial ApplicationScene
        -> ApplicationScene::load
@@ -181,11 +187,26 @@ per-pass CPU/GPU budget choices, and may name a project-relative game module
 library. Versions 1 to 3 remain readable; version 1 has no startup scene until
 it is saved in the current format.
 
-The game executable accepts `--project <project-file>`. `DemoApplication`
-selects the gameplay scene, while `GameplayScene` loads the configured authored
-scene before adding demo-specific entities and behavior. Other game scenes can
-load a scene-root-relative reference with `loadProjectScene`; the engine does
-not assign gameplay meaning to those references.
+The game executable accepts `[--verify-package] [--project <project-file>]
+[--scene <scene-file>]` (`game/application/GameLaunch`). Without `--project`, a
+release package (a resource root holding `content-manifest.json`) plays the one
+project at its root, and a build tree plays the built-in demo room. `--scene`
+plays that scene file (which must exist) with the project's asset root and
+module; a file outside the scene root (an editor's standalone play) brings its
+folder as the scene root, and without any project it plays with the runtime's
+own `assets/`. Arguments are read as UTF-8 (on Windows from the wide command
+line), so paths outside the ANSI code page work. What plays is
+chosen by `loadRuntimeGameplay`: a project with a game module plays that module
+alone, presented by `DemoApplication` when it is the demo's module (named
+`demo`) and otherwise by the project-agnostic `ProjectApplication`, which only
+loads the scene and runs the module's Play systems. Runs without a module (the
+built-in demo room, or a project such as the showcase that names none) play the
+demo gameplay linked into the executable, presented by `DemoApplication` with
+its first-person player. `GameplayScene` loads the authored scene before adding
+demo-specific entities and behavior. Other game scenes can load a
+scene-root-relative reference with `loadProjectScene`, or any scene file with
+`loadProjectSceneFile`; the engine does not assign gameplay meaning to those
+references.
 
 ## Asynchronous and additive scene flow
 
@@ -320,7 +341,7 @@ Components are capabilities:
   the demo's `CharacterControllerComponent` is one example. The demo registers
   it as `character_controller`, with its first-person systems, through
   `registerDemoGameplay`, which both the `zenith_game_demo` module and the
-  statically linked game executable call.
+  game executable (for runs without a game module) call.
 
 Imported models do not become monolithic render objects. The model root gets a
 `ModelComponent`; every imported node gets its own entity and transform; nodes

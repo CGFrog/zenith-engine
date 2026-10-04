@@ -233,8 +233,14 @@ ProjectConfigResult loadProjectScene(const ProjectConfig& config, const std::fil
     if (ProjectConfigResult result = resolveProjectScene(config, reference, scenePath); !result) {
         return result;
     }
+    return loadProjectSceneFile(config, scenePath, assets, scene, std::move(componentTypes));
+}
+
+ProjectConfigResult loadProjectSceneFile(const ProjectConfig& config, const std::filesystem::path& sceneFile,
+                                         AssetManager& assets, Scene& scene,
+                                         std::shared_ptr<const ComponentTypeRegistry> componentTypes) {
     const SceneDocumentOptions options{.assetRoot = config.assetRoot, .componentTypes = std::move(componentTypes)};
-    const SceneDocumentResult result = SceneDocument::load(scenePath, assets, options, scene);
+    const SceneDocumentResult result = SceneDocument::load(sceneFile, assets, options, scene);
     return {.success = result.success, .error = result.error};
 }
 

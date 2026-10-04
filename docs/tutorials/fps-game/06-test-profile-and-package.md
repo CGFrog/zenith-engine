@@ -89,6 +89,13 @@ Resolve content with the engine `ResourceLocator`, never a source/build path.
 See [Release packaging](../../RELEASING.md) for archive generation and the
 clean-extraction verification command.
 
+A game that does not need its own executable can instead register its
+components and systems in a game module (a C++ project from the editor's
+Project Hub) and ship with the stock `zenith` runtime: packaging the project
+installs its module, assets, and every scene, and the packaged `zenith` loads
+the module and runs its Play systems with the player's input (Release
+packaging, "The packaged runtime").
+
 ## Where to go next
 
 Good game-layer extensions are enemy state machines, pickups, score rules,

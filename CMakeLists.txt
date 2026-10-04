@@ -447,6 +447,7 @@ add_library(zenith_engine SHARED
     src/engine/jobs/JobSystem.cpp
     src/engine/jobs/FrameTaskGraph.cpp
     src/engine/module/GameModule.cpp
+    src/engine/module/Gameplay.cpp
     src/engine/module/ModuleApi.cpp
     src/engine/module/ModuleRegistrar.cpp
     src/engine/module/ModuleShadowCopy.cpp
@@ -490,9 +491,10 @@ if(MSVC)
 endif()
 
 # The demo's gameplay: component types and systems registered through
-# registerDemoGameplay. Linked into the zenith_game_demo module the editor
-# loads and statically into the zenith executable, so both run the same
-# registration.
+# registerDemoGameplay. Linked into the zenith_game_demo module the editor and
+# the game load for the demo project, and statically into the zenith
+# executable for runs without a game module (the built-in demo room and
+# module-less projects), so every host runs the same registration.
 add_library(zenith_demo_gameplay STATIC
     src/game/gameplay/DemoGameplay.cpp
     src/game/gameplay/ItemCollection.cpp
@@ -520,12 +522,18 @@ if(ZENITH_COPY_PROJECT_MODULE)
         VERBATIM)
 endif()
 
-# Application composition for the zenith executable: menus, settings, audio,
-# and scene switching around the linked gameplay.
+# Application composition for the zenith executable: its command line,
+# package verification, the gameplay it plays (a project's game module, or
+# the demo gameplay linked in for runs without one), the project-agnostic
+# ProjectApplication, and the demo's menus, settings, audio, and scenes.
 add_library(zenith_demo STATIC
     src/game/application/DemoApplication.cpp
+    src/game/application/GameLaunch.cpp
     src/game/application/GameSettings.cpp
     src/game/application/LinkedGameplay.cpp
+    src/game/application/PackageVerification.cpp
+    src/game/application/ProjectApplication.cpp
+    src/game/application/RuntimeGameplay.cpp
     src/game/scene/CaptureCamera.cpp
     src/game/scene/DemoScene.cpp
     src/game/scene/GameplayScene.cpp
@@ -534,8 +542,8 @@ target_link_libraries(zenith_demo PUBLIC zenith_demo_gameplay)
 
 add_executable(zenith src/main.cpp)
 target_link_libraries(zenith PRIVATE zenith_demo)
-# The game links its gameplay statically, but the module is built with it so a
-# build of the game also refreshes the module the demo project names.
+# The demo project plays through the zenith_game_demo module, so a build of
+# the game also builds the module (and refreshes the copy the project names).
 add_dependencies(zenith zenith_game_demo)
 if(APPLE)
     set_target_properties(zenith PROPERTIES MACOSX_BUNDLE TRUE
@@ -789,13 +797,27 @@ add_custom_target(zenith_assets ALL
 )
 add_dependencies(zenith_engine zenith_assets)
 
-# The project a release package ships (its project file, startup scene, game
-# module, and assets). Build and Package (file.build_package) configures its
-# release tree with the editor's open project.
+# The project a release package ships (its project file, scenes, game module,
+# and assets). Build and Package (file.build_package) configures its release
+# tree with the editor's open project.
 set(ZENITH_PACKAGE_PROJECT "${CMAKE_CURRENT_SOURCE_DIR}/projects/demo.zenith-project" CACHE FILEPATH
     "The .zenith-project a release package ships")
+# Files under assets/ that the runtime itself needs, whatever the project:
+# none today (the game's UI font is built in and its shaders ship in
+# shaders/), so a package's assets/ holds only the project's assets. A
+# project asset at one of these paths fails the configure unless the path is
+# in ZENITH_PACKAGE_ASSET_OVERRIDES.
+set(ZENITH_ENGINE_RUNTIME_ASSETS "" CACHE STRING
+    "Paths under assets/ every package ships for the runtime itself (a semicolon-separated list)")
+set(ZENITH_PACKAGE_ASSET_OVERRIDES "" CACHE STRING
+    "Engine runtime asset paths the packaged project may replace with its own files")
 include(cmake/PackageProject.cmake)
 zenith_read_package_project("${ZENITH_PACKAGE_PROJECT}")
+cmake_path(COMPARE "${ZENITH_PACKAGE_ASSET_DIR}" NOT_EQUAL "${ZENITH_ASSET_SOURCE_DIR}" ZENITH_PACKAGE_HAS_OWN_ASSETS)
+if(ZENITH_PACKAGE_HAS_OWN_ASSETS)
+    zenith_check_package_asset_collisions("${ZENITH_ASSET_SOURCE_DIR}" "${ZENITH_ENGINE_RUNTIME_ASSETS}"
+        "${ZENITH_PACKAGE_ASSET_DIR}" "${ZENITH_PACKAGE_ASSET_OVERRIDES}")
+endif()
 
 # Cook every shipped model's external textures (the engine's assets and the
 # packaged project's) to block-compressed KTX2 in the derived-data cache the
@@ -803,7 +825,6 @@ zenith_read_package_project("${ZENITH_PACKAGE_PROJECT}")
 # bytes, so unchanged textures are skipped on rebuild.
 set(ZENITH_DERIVED_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/derived")
 set(ZENITH_COOKED_ASSET_DIRS "${ZENITH_ASSET_SOURCE_DIR}")
-cmake_path(COMPARE "${ZENITH_PACKAGE_ASSET_DIR}" NOT_EQUAL "${ZENITH_ASSET_SOURCE_DIR}" ZENITH_PACKAGE_HAS_OWN_ASSETS)
 if(ZENITH_PACKAGE_HAS_OWN_ASSETS)
     list(APPEND ZENITH_COOKED_ASSET_DIRS "${ZENITH_PACKAGE_ASSET_DIR}")
 endif()
@@ -904,16 +925,44 @@ install(TARGETS zenith_engine SDL3-shared
 )
 install(DIRECTORY "${ZENITH_SHADER_BINARY_DIR}/" DESTINATION shaders FILES_MATCHING PATTERN "*.spv")
 install(DIRECTORY "${ZENITH_DERIVED_BINARY_DIR}/" DESTINATION derived FILES_MATCHING PATTERN "*.zderived")
-# The runtime's own assets, then the packaged project (ZENITH_PACKAGE_PROJECT):
-# its assets merged into the same folder (its packaged assetRoot), the project
-# file at the root, and its startup scene and game module at the paths the
-# project file names.
-install(DIRECTORY "${ZENITH_ASSET_SOURCE_DIR}/" DESTINATION assets)
+# The runtime's own assets (ZENITH_ENGINE_RUNTIME_ASSETS, none by default),
+# then the packaged project (ZENITH_PACKAGE_PROJECT): its assets in the same
+# folder (its packaged assetRoot), the project file at the root, every scene
+# under its sceneRoot, and its game module at the path the project file names.
+# The engine's development content (the demo room, its audio, the showcase)
+# ships only when it is the project's asset root, as for the demo project.
+set(ZENITH_OVERRIDDEN_RUNTIME_ASSETS "")
 if(ZENITH_PACKAGE_HAS_OWN_ASSETS)
-    install(DIRECTORY "${ZENITH_PACKAGE_ASSET_DIR}/" DESTINATION assets)
+    # Collisions that reach this point are overrides: the project's file ships
+    # alone, so the archive never holds both spellings of one path.
+    zenith_find_package_asset_collisions(ZENITH_OVERRIDDEN_RUNTIME_ASSETS "${ZENITH_ASSET_SOURCE_DIR}"
+        "${ZENITH_ENGINE_RUNTIME_ASSETS}" "${ZENITH_PACKAGE_ASSET_DIR}")
+    string(TOLOWER "${ZENITH_OVERRIDDEN_RUNTIME_ASSETS}" ZENITH_OVERRIDDEN_RUNTIME_ASSETS)
 endif()
+foreach(engine_runtime_asset IN LISTS ZENITH_ENGINE_RUNTIME_ASSETS)
+    string(TOLOWER "${engine_runtime_asset}" folded_runtime_asset)
+    if(folded_runtime_asset IN_LIST ZENITH_OVERRIDDEN_RUNTIME_ASSETS)
+        continue()
+    endif()
+    cmake_path(GET engine_runtime_asset PARENT_PATH engine_runtime_asset_folder)
+    install(FILES "${ZENITH_ASSET_SOURCE_DIR}/${engine_runtime_asset}"
+        DESTINATION "assets/${engine_runtime_asset_folder}")
+    if(EXISTS "${ZENITH_ASSET_SOURCE_DIR}/${engine_runtime_asset}.meta")
+        install(FILES "${ZENITH_ASSET_SOURCE_DIR}/${engine_runtime_asset}.meta"
+            DESTINATION "assets/${engine_runtime_asset_folder}")
+    endif()
+endforeach()
+install(DIRECTORY "${ZENITH_PACKAGE_ASSET_DIR}/" DESTINATION assets)
 install(FILES "${ZENITH_PACKAGE_PROJECT_INSTALL_FILE}" DESTINATION .)
-install(FILES "${ZENITH_PACKAGE_STARTUP_SCENE}" DESTINATION "${ZENITH_PACKAGE_SCENE_DESTINATION}")
+foreach(package_scene IN LISTS ZENITH_PACKAGE_SCENES)
+    cmake_path(GET package_scene PARENT_PATH package_scene_folder)
+    cmake_path(APPEND ZENITH_PACKAGE_SCENE_ROOT "${package_scene_folder}" OUTPUT_VARIABLE package_scene_destination)
+    cmake_path(NORMAL_PATH package_scene_destination)
+    install(FILES "${ZENITH_PACKAGE_SCENE_DIR}/${package_scene}" DESTINATION "${package_scene_destination}")
+    if(EXISTS "${ZENITH_PACKAGE_SCENE_DIR}/${package_scene}.meta")
+        install(FILES "${ZENITH_PACKAGE_SCENE_DIR}/${package_scene}.meta" DESTINATION "${package_scene_destination}")
+    endif()
+endforeach()
 if(ZENITH_PACKAGE_MODULE_TARGET)
     install(FILES "$<TARGET_FILE:${ZENITH_PACKAGE_MODULE_TARGET}>" DESTINATION "${ZENITH_PACKAGE_MODULE_DESTINATION}"
         RENAME "${ZENITH_PACKAGE_MODULE_NAME}")
@@ -1143,6 +1192,21 @@ if(BUILD_TESTING)
         target_compile_options(zenith_demo_game_module_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_demo_game_module COMMAND zenith_demo_game_module_tests)
+
+    # The game's project-agnostic runtime; plays the engine's test game module
+    # (declared with the module tests below) and the demo module.
+    add_executable(zenith_project_runtime_tests tests/game/ProjectRuntimeTests.cpp)
+    target_link_libraries(zenith_project_runtime_tests PRIVATE zenith_demo)
+    target_compile_definitions(zenith_project_runtime_tests PRIVATE
+        ZENITH_TEST_GAME_MODULE="$<TARGET_FILE:zenith_test_game_module>"
+        ZENITH_DEMO_GAME_MODULE="$<TARGET_FILE:zenith_game_demo>")
+    add_dependencies(zenith_project_runtime_tests zenith_test_game_module zenith_game_demo)
+    if(MSVC)
+        target_compile_options(zenith_project_runtime_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_project_runtime_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_project_runtime COMMAND zenith_project_runtime_tests)
 
     add_executable(zenith_editor_settings_tests
         tests/editor/EditorSettingsTests.cpp
@@ -1937,6 +2001,12 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_package_workflow COMMAND zenith_package_workflow_tests)
 
+    # The packaging configure check against project assets replacing engine
+    # runtime assets (cmake/PackageProject.cmake).
+    add_test(NAME zenith_package_asset_collisions
+        COMMAND "${CMAKE_COMMAND}" "-DZENITH_TEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/package-asset-collision-tests"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/packaging/PackageAssetCollisionTests.cmake")
+
     add_executable(zenith_preferences_tests tests/editor/PreferencesTests.cpp)
     target_link_libraries(zenith_preferences_tests PRIVATE zenith_editor_app)
     target_compile_definitions(zenith_preferences_tests PRIVATE ZENITH_TEST_CMAKE="${CMAKE_COMMAND}")
@@ -2205,6 +2275,46 @@ if(BUILD_TESTING)
     zenith_add_validation_smoke(zenith_validation_demo_cpu_shading_wireframe_fallback
         COMMAND zenith
         ENVIRONMENT ZENITH_SMOKE_FRAMES=120 ZENITH_FORCE_VIEW_SHADING=wireframe ZENITH_DISABLE_WIREFRAME=1
+    )
+    # The game with a project's game module (docs/RELEASING.md): the demo
+    # project through this build's zenith_game_demo module, also with --scene
+    # choosing another scene, and the project-agnostic runtime playing the
+    # engine's test module.
+    file(RELATIVE_PATH ZENITH_GAME_PROJECT_ASSET_ROOT "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+    file(RELATIVE_PATH ZENITH_GAME_PROJECT_SCENE_ROOT "${CMAKE_CURRENT_BINARY_DIR}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/projects/scenes")
+    foreach(game_project IN ITEMS demo_module test_module)
+        if(game_project STREQUAL "demo_module")
+            set(game_project_module zenith_game_demo)
+            set(game_project_scene demo.zenith-scene)
+        else()
+            set(game_project_module zenith_test_game_module)
+            set(game_project_scene irradiance_room.zenith-scene)
+        endif()
+        file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/game-${game_project}-$<CONFIG>.zenith-project" CONTENT
+"{
+  \"version\": 4,
+  \"displayName\": \"Zenith Game ${game_project}\",
+  \"assetRoot\": \"${ZENITH_GAME_PROJECT_ASSET_ROOT}\",
+  \"sceneRoot\": \"${ZENITH_GAME_PROJECT_SCENE_ROOT}\",
+  \"startupScene\": \"${game_project_scene}\",
+  \"gameModule\": \"$<PATH:RELATIVE_PATH,$<TARGET_FILE:${game_project_module}>,${CMAKE_CURRENT_BINARY_DIR}>\",
+  \"renderSettings\": ${ZENITH_DEMO_RENDER_SETTINGS}
+}
+")
+    endforeach()
+    zenith_add_validation_smoke(zenith_validation_demo_module
+        COMMAND zenith --project "${CMAKE_CURRENT_BINARY_DIR}/game-demo_module-$<CONFIG>.zenith-project"
+        ENVIRONMENT ZENITH_SMOKE_FRAMES=120
+    )
+    zenith_add_validation_smoke(zenith_validation_demo_module_scene
+        COMMAND zenith --project "${CMAKE_CURRENT_BINARY_DIR}/game-demo_module-$<CONFIG>.zenith-project"
+            --scene "${CMAKE_CURRENT_SOURCE_DIR}/projects/scenes/irradiance_room.zenith-scene"
+        ENVIRONMENT ZENITH_SMOKE_FRAMES=120
+    )
+    zenith_add_validation_smoke(zenith_validation_project_runtime
+        COMMAND zenith --project "${CMAKE_CURRENT_BINARY_DIR}/game-test_module-$<CONFIG>.zenith-project"
+        ENVIRONMENT ZENITH_SMOKE_FRAMES=120
     )
     zenith_add_validation_smoke(zenith_validation_editor
         COMMAND zenith_editor

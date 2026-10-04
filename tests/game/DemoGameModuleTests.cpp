@@ -1,5 +1,6 @@
-// The demo gameplay as both of its hosts see it: the zenith_game_demo module
-// the editor loads, and the same registration linked into the game.
+// The demo gameplay as its hosts see it: the zenith_game_demo module the editor
+// and the game load for the demo project, and the same registration linked
+// into the game for runs without a module.
 
 #include "engine/application/Application.hpp"
 #include "engine/assets/Assets.hpp"
@@ -10,6 +11,7 @@
 #include "engine/scene/SceneDocument.hpp"
 #include "game/application/DemoApplication.hpp"
 #include "game/application/LinkedGameplay.hpp"
+#include "game/application/RuntimeGameplay.hpp"
 #include "game/gameplay/DemoGameplay.hpp"
 #include "game/gameplay/ItemCollection.hpp"
 #include "game/player/FirstPersonController.hpp"
@@ -176,8 +178,8 @@ void testModule(const std::filesystem::path& modulePath, const std::filesystem::
 }
 
 void testLinkedGameplay() {
-    LinkedGameplay gameplay;
-    const LinkedGameplayResult linked = linkDemoGameplay(gameplay);
+    Gameplay gameplay;
+    const GameplayResult linked = linkDemoGameplay(gameplay);
     expect(linked.success && gameplay.componentTypes != nullptr && gameplay.systems != nullptr,
            "the game links the demo gameplay through a module registrar");
     if (!linked) {
@@ -264,7 +266,7 @@ void testPhysicsSensorCollection() {
 }
 
 void testCheckedInCollectionLevel() {
-    LinkedGameplay gameplay;
+    Gameplay gameplay;
     expect(static_cast<bool>(linkDemoGameplay(gameplay)), "checked-in level gameplay links");
     ProjectConfig project;
     const ProjectConfigResult projectResult =
@@ -303,7 +305,7 @@ void testCheckedInCollectionLevel() {
 // A controller authored in a project scene is the game's player: no second
 // player spawns, its camera child is adopted, and its tuning survives.
 void testAuthoredControllerPlays(const std::filesystem::path& directory) {
-    LinkedGameplay gameplay;
+    Gameplay gameplay;
     if (!linkDemoGameplay(gameplay)) {
         expect(false, "the game links the demo gameplay for the authored scene");
         return;
@@ -377,6 +379,62 @@ void testAuthoredControllerPlays(const std::filesystem::path& directory) {
            "the authored camera child is adopted and oriented");
     session.shutdown();
 }
+
+// The checked-in demo project plays through the zenith_game_demo module, as
+// the game runs it: the demo presents it, and its authored player turns with
+// the module's view system.
+void testDemoProjectPlaysThroughModule() {
+    ProjectConfig project;
+    if (!loadProjectConfig(std::filesystem::path(ZENITH_PROJECT_DIR) / "demo.zenith-project", project)) {
+        expect(false, "checked-in demo project loads for the module run");
+        return;
+    }
+    expect(project.gameModule.filename() == "zenith_game_demo.zmodule", "the demo project names the demo module");
+    // This build's module, whichever configuration last refreshed the copy
+    // beside the project.
+    project.gameModule = ZENITH_DEMO_GAME_MODULE;
+    // Before every scene: the module's code must outlive them. In place, as
+    // the shared default shadow folder is cleaned by concurrent tests.
+    RuntimeGameplay runtime;
+    const GameplayResult loaded = loadRuntimeGameplay(&project, GameModuleLoading::InPlace, runtime);
+    expect(loaded.success && runtime.module != nullptr && runtime.presentation == GamePresentation::Demo,
+           "the demo project's module loads and the demo presents it");
+    if (!loaded) {
+        std::cerr << loaded.error << '\n';
+        return;
+    }
+
+    DemoApplication application(project, {}, std::nullopt, runtime.gameplay);
+    Scene scene;
+    AssetManager assets;
+    PhysicsWorld physics;
+    AudioSystem audio;
+    audio.init(AudioConfig{.outputEnabled = false});
+    ApplicationSession session(application, scene, assets, physics, audio);
+    const SceneResult started = session.start();
+    expect(started.success, "the demo project starts through its module");
+    if (!started) {
+        std::cerr << started.error << '\n';
+        return;
+    }
+    const auto controllers = scene.registry().view<CharacterControllerComponent>();
+    expect(controllers.size() == 1 && scene.registry().view<CollectibleItemComponent>().size() == 5,
+           "the module's component types load the authored player and pickups");
+    if (controllers.empty()) {
+        session.shutdown();
+        return;
+    }
+    InputState startGame;
+    startGame.setKeyPressed(Key::Space);
+    session.update(startGame, 1.0f / 60.0f);
+    session.drawUi();
+    InputState look;
+    look.mouseDelta = {100.0f, 0.0f};
+    session.update(look, 1.0f / 60.0f);
+    expect(scene.registry().get<CharacterControllerComponent>(controllers.front()).yawRadians < 0.0f,
+           "the module's view system turns the authored player");
+    session.shutdown();
+}
 } // namespace
 
 int main() {
@@ -391,6 +449,7 @@ int main() {
     testPhysicsSensorCollection();
     testCheckedInCollectionLevel();
     testAuthoredControllerPlays(directory);
+    testDemoProjectPlaysThroughModule();
 
     std::filesystem::remove_all(directory, error);
     return failures == 0 ? 0 : 1;

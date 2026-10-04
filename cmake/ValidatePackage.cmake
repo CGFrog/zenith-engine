@@ -6,8 +6,9 @@ endif()
 if(NOT DEFINED ZENITH_PACKAGE_VERSION)
     set(ZENITH_PACKAGE_VERSION "unknown")
 endif()
-# The packaged project's files (project file, startup scene, game module), as
-# cmake/PackageProject.cmake lists them.
+# The packaged project's files (project file, every scene, game module), as
+# cmake/PackageProject.cmake lists them. The runtime needs nothing else from
+# assets/, so no engine asset is required.
 if(NOT DEFINED ZENITH_PACKAGE_PROJECT_PATHS OR ZENITH_PACKAGE_PROJECT_PATHS STREQUAL "")
     message(FATAL_ERROR "ZENITH_PACKAGE_PROJECT_PATHS is required")
 endif()
@@ -15,9 +16,6 @@ endif()
 cmake_path(ABSOLUTE_PATH ZENITH_PACKAGE_ROOT NORMALIZE OUTPUT_VARIABLE package_root)
 set(required_paths
     "assets"
-    "assets/basic_map.gltf"
-    "assets/audio/ambient.ogg"
-    "assets/audio/interaction.wav"
     "shaders"
     "licenses"
     ${ZENITH_PACKAGE_PROJECT_PATHS}

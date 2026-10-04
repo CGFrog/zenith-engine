@@ -1,7 +1,8 @@
 # Reads the .zenith-project a release package ships and works out where its
 # files go in the package. The package layout is fixed: the project file at the
-# package root, its scenes under its sceneRoot, its game module at the path it
-# names, and its assets in assets/ (where the runtime looks for them).
+# package root, every scene under its sceneRoot at the same place under the
+# package's sceneRoot, its game module at the path it names, and its assets in
+# assets/ (where the runtime looks for them).
 #
 # zenith_read_package_project(<project file>) sets, in the caller's scope:
 #   ZENITH_PACKAGE_PROJECT_INSTALL_FILE  the project file to install; a copy in
@@ -9,8 +10,11 @@
 #                                        to be pointed at the packaged assets/
 #   ZENITH_PACKAGE_PROJECT_FILE_NAME     its name at the package root
 #   ZENITH_PACKAGE_ASSET_DIR             the project's asset root (absolute)
-#   ZENITH_PACKAGE_STARTUP_SCENE         the startup scene file (absolute)
-#   ZENITH_PACKAGE_SCENE_DESTINATION     its folder in the package
+#   ZENITH_PACKAGE_SCENE_DIR             the project's scene root (absolute)
+#   ZENITH_PACKAGE_SCENE_ROOT            the scene root in the package
+#   ZENITH_PACKAGE_SCENES                every .zenith-scene under the scene
+#                                        root, relative to it; adding or
+#                                        removing one reconfigures
 #   ZENITH_PACKAGE_MODULE                the game module file, or empty
 #   ZENITH_PACKAGE_MODULE_TARGET         the MODULE target that builds it, or
 #                                        empty when the module comes prebuilt
@@ -83,13 +87,24 @@ function(zenith_read_package_project project_file)
     if(NOT EXISTS "${scene_file}")
         message(FATAL_ERROR "Cannot package ${project_file}: its startup scene does not exist: ${scene_file}")
     endif()
-    cmake_path(APPEND scene_root "${startup_scene}" OUTPUT_VARIABLE scene_package_path)
-    cmake_path(NORMAL_PATH scene_package_path)
-    cmake_path(GET scene_package_path PARENT_PATH scene_destination)
-    if(scene_destination STREQUAL "")
-        set(scene_destination ".")
+    # Every scene ships, so the game can open any of them (an editor's
+    # standalone play of another level, a scene the startup scene loads).
+    cmake_path(APPEND project_directory "${scene_root}" OUTPUT_VARIABLE scene_dir)
+    cmake_path(NORMAL_PATH scene_dir)
+    string(REGEX REPLACE "/$" "" scene_dir "${scene_dir}")
+    cmake_path(NORMAL_PATH scene_root OUTPUT_VARIABLE package_scene_root)
+    string(REGEX REPLACE "/$" "" package_scene_root "${package_scene_root}")
+    if(package_scene_root STREQUAL "")
+        set(package_scene_root ".")
     endif()
-    set(required_paths "${project_name}" "${scene_package_path}")
+    file(GLOB_RECURSE scenes RELATIVE "${scene_dir}" CONFIGURE_DEPENDS "${scene_dir}/*.zenith-scene")
+    list(SORT scenes)
+    set(required_paths "${project_name}")
+    foreach(scene IN LISTS scenes)
+        cmake_path(APPEND package_scene_root "${scene}" OUTPUT_VARIABLE scene_package_path)
+        cmake_path(NORMAL_PATH scene_package_path)
+        list(APPEND required_paths "${scene_package_path}")
+    endforeach()
 
     # The runtime reads assets from assets/ beside it, so the packaged project
     # must name that folder; only the assetRoot value is rewritten.
@@ -140,11 +155,77 @@ function(zenith_read_package_project project_file)
     set(ZENITH_PACKAGE_PROJECT_INSTALL_FILE "${install_file}" PARENT_SCOPE)
     set(ZENITH_PACKAGE_PROJECT_FILE_NAME "${project_name}" PARENT_SCOPE)
     set(ZENITH_PACKAGE_ASSET_DIR "${asset_dir}" PARENT_SCOPE)
-    set(ZENITH_PACKAGE_STARTUP_SCENE "${scene_file}" PARENT_SCOPE)
-    set(ZENITH_PACKAGE_SCENE_DESTINATION "${scene_destination}" PARENT_SCOPE)
+    set(ZENITH_PACKAGE_SCENE_DIR "${scene_dir}" PARENT_SCOPE)
+    set(ZENITH_PACKAGE_SCENE_ROOT "${package_scene_root}" PARENT_SCOPE)
+    set(ZENITH_PACKAGE_SCENES "${scenes}" PARENT_SCOPE)
     set(ZENITH_PACKAGE_MODULE "${module}" PARENT_SCOPE)
     set(ZENITH_PACKAGE_MODULE_TARGET "${module_target}" PARENT_SCOPE)
     set(ZENITH_PACKAGE_MODULE_DESTINATION "${module_destination}" PARENT_SCOPE)
     set(ZENITH_PACKAGE_MODULE_NAME "${module_name}" PARENT_SCOPE)
     set(ZENITH_PACKAGE_PROJECT_PATHS "${required_paths}" PARENT_SCOPE)
+endfunction()
+
+# The engine's runtime assets (ZENITH_ENGINE_RUNTIME_ASSETS: paths under the
+# engine's asset folder that every package ships for the runtime itself) share
+# the package's assets/ folder with the project's assets, so a project file at
+# the same path would silently replace one.
+#
+# zenith_find_package_asset_collisions(<output> <engine asset dir>
+#     <engine runtime assets> <project asset dir>) sets <output> to the engine
+# runtime assets the project also has, compared case-insensitively (a package
+# must extract on case-insensitive file systems), with the project's spelling.
+function(zenith_find_package_asset_collisions output engine_dir engine_assets project_dir)
+    set(collisions "")
+    if(NOT "${engine_assets}" STREQUAL "")
+        file(GLOB_RECURSE project_assets RELATIVE "${project_dir}" "${project_dir}/*")
+        set(folded_project_assets "")
+        foreach(project_asset IN LISTS project_assets)
+            string(TOLOWER "${project_asset}" folded)
+            list(APPEND folded_project_assets "${folded}")
+        endforeach()
+        foreach(engine_asset IN LISTS engine_assets)
+            if(NOT EXISTS "${engine_dir}/${engine_asset}" OR IS_DIRECTORY "${engine_dir}/${engine_asset}")
+                message(FATAL_ERROR "ZENITH_ENGINE_RUNTIME_ASSETS names '${engine_asset}', which is not a file under "
+                    "${engine_dir}")
+            endif()
+            string(TOLOWER "${engine_asset}" folded)
+            list(FIND folded_project_assets "${folded}" index)
+            if(NOT index EQUAL -1)
+                list(GET project_assets ${index} project_asset)
+                list(APPEND collisions "${project_asset}")
+            endif()
+        endforeach()
+    endif()
+    set(${output} "${collisions}" PARENT_SCOPE)
+endfunction()
+
+# zenith_check_package_asset_collisions(<engine asset dir> <engine runtime
+#     assets> <project asset dir> <overrides>) stops the configure when a
+# project asset has the path of an engine runtime asset, unless the path is in
+# <overrides> (ZENITH_PACKAGE_ASSET_OVERRIDES), in which case the project's file
+# ships in its place and the configure warns about each one.
+function(zenith_check_package_asset_collisions engine_dir engine_assets project_dir overrides)
+    zenith_find_package_asset_collisions(collisions "${engine_dir}" "${engine_assets}" "${project_dir}")
+    set(folded_overrides "")
+    foreach(override IN LISTS overrides)
+        string(TOLOWER "${override}" folded)
+        list(APPEND folded_overrides "${folded}")
+    endforeach()
+    set(refused "")
+    foreach(collision IN LISTS collisions)
+        string(TOLOWER "${collision}" folded)
+        list(FIND folded_overrides "${folded}" index)
+        if(index EQUAL -1)
+            list(APPEND refused "${collision}")
+        else()
+            message(WARNING "The packaged project's asset '${collision}' replaces the engine runtime asset at the "
+                "same path (listed in ZENITH_PACKAGE_ASSET_OVERRIDES).")
+        endif()
+    endforeach()
+    if(NOT "${refused}" STREQUAL "")
+        list(JOIN refused "\n  " refused_list)
+        message(FATAL_ERROR "The packaged project's assets in ${project_dir} have the same paths as engine runtime "
+            "assets the package also ships in assets/, so they would replace them:\n  ${refused_list}\nRename the "
+            "project's files, or list the paths in ZENITH_PACKAGE_ASSET_OVERRIDES to ship the project's versions.")
+    endif()
 endfunction()

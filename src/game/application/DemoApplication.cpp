@@ -2,22 +2,26 @@
 
 #include "engine/graphics/RenderConfiguration.hpp"
 #include "engine/resources/ResourceLocator.hpp"
+#include "game/application/LinkedGameplay.hpp"
 #include "game/scene/GameplayScene.hpp"
 
 #include <filesystem>
 #include <iostream>
 
 DemoApplication::DemoApplication(std::optional<ProjectConfig> project, std::filesystem::path settingsPath,
-                                 std::optional<CaptureCameraPath> captureCamera)
-    : m_inputActions(createDemoInputMap())
+                                 std::optional<CaptureCameraPath> captureCamera, Gameplay gameplay)
+    : m_gameplay(std::move(gameplay))
+    , m_inputActions(createDemoInputMap())
     , m_settings(std::make_shared<GameSettings>())
     , m_settingsPath(captureCamera ? std::filesystem::path{} : std::move(settingsPath))
     , m_project(std::move(project))
     , m_captureCamera(captureCamera) {}
 
 SceneResult DemoApplication::onStart(ApplicationContext& context) {
-    if (const LinkedGameplayResult result = linkDemoGameplay(m_gameplay); !result) {
-        return {.error = result.error};
+    if (!m_gameplay) {
+        if (const GameplayResult result = linkDemoGameplay(m_gameplay); !result) {
+            return {.error = result.error};
+        }
     }
     if (!m_settingsPath.empty() && std::filesystem::exists(m_settingsPath)) {
         if (const GameSettingsResult result = loadGameSettings(m_settingsPath, *m_settings); !result) {

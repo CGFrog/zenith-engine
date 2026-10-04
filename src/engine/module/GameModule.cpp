@@ -49,16 +49,19 @@ GameModuleResult GameModule::load(const std::filesystem::path& path, const GameM
     std::unique_ptr<GameModule> module(new GameModule());
     module->m_sourcePath = sourcePath;
     module->m_log = LogChannel(options.logger, "module");
-    const std::filesystem::path shadowDirectory =
-        options.shadowDirectory.empty() ? defaultShadowDirectory() : options.shadowDirectory;
-    if (ModuleShadowCopyResult result = ModuleShadowCopy::create(
-            sourcePath, std::filesystem::absolute(shadowDirectory).lexically_normal(), module->m_shadowCopy);
-        !result) {
-        return {.error = result.error};
+    module->m_loadedPath = sourcePath;
+    if (options.loading == GameModuleLoading::ShadowCopy) {
+        const std::filesystem::path shadowDirectory =
+            options.shadowDirectory.empty() ? defaultShadowDirectory() : options.shadowDirectory;
+        if (ModuleShadowCopyResult result = ModuleShadowCopy::create(
+                sourcePath, std::filesystem::absolute(shadowDirectory).lexically_normal(), module->m_shadowCopy);
+            !result) {
+            return {.error = result.error};
+        }
+        module->m_loadedPath = module->m_shadowCopy.library();
     }
-    // The copy's dependencies are found beside the original library.
-    if (SharedLibraryResult result = module->m_library.open(module->m_shadowCopy.library(), sourcePath.parent_path());
-        !result) {
+    // A copy's dependencies are found beside the original library.
+    if (SharedLibraryResult result = module->m_library.open(module->m_loadedPath, sourcePath.parent_path()); !result) {
         return {.error = "Game module '" + sourcePath.string() + "' could not be loaded: " + result.error};
     }
 
@@ -119,7 +122,7 @@ const std::filesystem::path& GameModule::sourcePath() const {
 }
 
 const std::filesystem::path& GameModule::loadedPath() const {
-    return m_shadowCopy.library();
+    return m_loadedPath;
 }
 
 std::shared_ptr<const ComponentTypeRegistry> GameModule::componentTypes() const {
