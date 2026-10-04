@@ -73,7 +73,7 @@ Approved 2026-10-04. Nothing is implemented yet.
 | A1 | Scene costs that grow with entity count | — | done d1519ef |
 | A2 | System phases and `GameServices` | — | done 7f4f340 |
 | A3 | Physics queries, layers, triggers | A2 (trigger events) | done 71dfd12 |
-| A4 | Shared input actions | A2 | done |
+| A4 | Shared input actions | A2 | done 618c2ad |
 | B1 | Engine character controller | A3, A2 | todo |
 | B2 | Behaviours | A2, A3 | todo |
 | B3 | Animation state machine | A2 | todo |
