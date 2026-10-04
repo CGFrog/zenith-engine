@@ -509,37 +509,23 @@
     {
       "components": {
         "character_controller": {
+          "$version": 2,
           "acceleration": 30.0,
           "air_control": 0.25,
+          "ground_probe_distance": 0.25,
           "half_height": 0.5,
+          "jump_action": "Jump",
           "jump_speed": 5.5,
-          "look_sensitivity": 0.0024999999441206455,
-          "move_speed": 4.0,
-          "pitch": 0.0,
-          "radius": 0.4000000059604645,
-          "sprint_multiplier": 1.75,
-          "yaw": 0.0
-        },
-        "collider": {
-          "half_height": 0.5,
-          "radius": 0.4000000059604645,
-          "type": "capsule"
-        },
-        "item_collector": {},
-        "rigid_body": {
-          "allow_sleeping": true,
-          "angular_damping": 1.0,
-          "continuous_collision": true,
-          "friction": 0.0,
-          "gravity_factor": 1.0,
           "layer": 2,
-          "linear_damping": 0.05000000074505806,
-          "lock_rotation": true,
-          "mass": 80.0,
-          "motion_type": 2,
-          "restitution": 0.0,
-          "sensor": false
-        }
+          "move_action": "Move",
+          "move_speed": 4.0,
+          "radius": 0.4000000059604645,
+          "slope_limit": 0.8726646304130554,
+          "sprint_action": "Sprint",
+          "sprint_multiplier": 1.75,
+          "step_height": 0.3499999940395355
+        },
+        "item_collector": {}
       },
       "id": 11,
       "local_transform": [
@@ -570,6 +556,15 @@
           "near_plane": 0.10000000149011612,
           "primary": true,
           "vertical_fov": 1.0471975803375244
+        },
+        "first_person_camera": {
+          "gamepad_look_speed": 800.0,
+          "look_action": "Look",
+          "maximum_pitch": 1.5533430576324463,
+          "minimum_pitch": -1.5533430576324463,
+          "pitch": 0.0,
+          "sensitivity": 0.0024999999441206455,
+          "yaw": 0.0
         }
       },
       "id": 12,

@@ -4,6 +4,8 @@
 
 #include "engine/application/Application.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/gameplay/FirstPerson.hpp"
+#include "engine/module/BuiltInSystems.hpp"
 #include "engine/module/GameModule.hpp"
 #include "engine/module/SystemScheduler.hpp"
 #include "engine/scene/ComponentTypes.hpp"
@@ -14,7 +16,6 @@
 #include "game/application/RuntimeGameplay.hpp"
 #include "game/gameplay/DemoGameplay.hpp"
 #include "game/gameplay/ItemCollection.hpp"
-#include "game/player/FirstPersonController.hpp"
 
 #include <array>
 #include <filesystem>
@@ -54,39 +55,35 @@ void setFloatField(const ComponentType& type, void* component, std::string_view 
     }
 }
 
-const std::vector<std::string> viewSystems{std::string(DemoGameplay::FirstPersonViewSystem)};
-const std::vector<std::string> fixedSystems{std::string(DemoGameplay::FirstPersonMovementSystem),
+// The engine's character systems run first, then the demo's.
+const std::vector<std::string> fixedSystems{std::string(EngineSystems::CharacterInput),
                                             std::string(DemoGameplay::ItemCollectionSystem)};
+const std::vector<std::string> lateSystems{std::string(EngineSystems::FirstPersonCamera)};
 
 void expectGameplaySchedule(const SystemScheduler& scheduler, const char* host) {
-    const bool playScheduled = scheduler.schedule(SystemPhase::Update, SimulationMode::Play) == viewSystems &&
-                               scheduler.schedule(SystemPhase::FixedUpdate, SimulationMode::Play) == fixedSystems;
+    const bool playScheduled = scheduler.schedule(SystemPhase::Update, SimulationMode::Play).empty() &&
+                               scheduler.schedule(SystemPhase::FixedUpdate, SimulationMode::Play) == fixedSystems &&
+                               scheduler.schedule(SystemPhase::LateUpdate, SimulationMode::Play) == lateSystems;
     const bool editIdle = scheduler.schedule(SystemPhase::Update, SimulationMode::Edit).empty() &&
                           scheduler.schedule(SystemPhase::FixedUpdate, SimulationMode::Edit).empty();
     if (!playScheduled || !editIdle) {
         std::cerr << "In the " << host << ":\n";
     }
-    expect(playScheduled, "view, movement, and collection systems run in play mode and registration order");
+    expect(playScheduled, "character, collection, and camera systems run in play mode and registration order");
     expect(editIdle, "demo gameplay systems do not run while a scene is edited");
 }
 
+// The demo plays the engine's character controller rather than its own.
 void expectControllerType(const ComponentType* type) {
-    expect(type != nullptr && type->displayName() == "Character Controller" && type->category() == "Gameplay" &&
+    expect(type != nullptr && type->displayName() == "Character Controller" && type->category() == "Physics" &&
                !type->internal(),
-           "character_controller is an authorable gameplay component");
+           "the engine's character_controller is an authorable component");
     if (type == nullptr) {
         return;
     }
-    const FieldDescriptor* yaw = findField(*type, "yaw");
-    const FieldDescriptor* airControl = findField(*type, "air_control");
-    expect(findField(*type, "radius") != nullptr && findField(*type, "move_speed") != nullptr &&
-               findField(*type, "look_sensitivity") != nullptr && yaw != nullptr && airControl != nullptr,
-           "the controller's tuning fields are reflected");
-    expect(yaw != nullptr && yaw->presentation.angle && airControl != nullptr &&
-               airControl->presentation.widget == NumberWidget::Slider,
-           "controller fields carry inspector hints");
-    expect(findField(*type, "grounded") == nullptr && findField(*type, "camera") == nullptr,
-           "runtime controller state is not serialized");
+    expect(findField(*type, "move_speed") != nullptr && findField(*type, "look_sensitivity") == nullptr &&
+               findField(*type, "grounded") == nullptr,
+           "the controller reflects its tuning but not look settings or runtime state");
 }
 
 void testModule(const std::filesystem::path& modulePath, const std::filesystem::path& shadowDirectory) {
@@ -99,13 +96,12 @@ void testModule(const std::filesystem::path& modulePath, const std::filesystem::
     }
     expect(module->name() == "demo", "the module identifies itself as the demo");
     const std::span<const std::string> keys = module->moduleComponentKeys();
-    expect(keys.size() == 3 && keys[0] == DemoGameplay::CharacterControllerKey &&
-               keys[1] == DemoGameplay::CollectibleItemKey && keys[2] == DemoGameplay::ItemCollectorKey,
-           "the module registers the controller and item collection components");
+    expect(keys.size() == 2 && keys[0] == DemoGameplay::CollectibleItemKey && keys[1] == DemoGameplay::ItemCollectorKey,
+           "the module registers the item collection components");
 
     {
         std::shared_ptr<const ComponentTypeRegistry> types = module->componentTypes();
-        const ComponentType* controllerType = types->find(DemoGameplay::CharacterControllerKey);
+        const ComponentType* controllerType = types->find("character_controller");
         const ComponentType* itemType = types->find(DemoGameplay::CollectibleItemKey);
         const ComponentType* collectorType = types->find(DemoGameplay::ItemCollectorKey);
         expectControllerType(controllerType);
@@ -131,10 +127,14 @@ void testModule(const std::filesystem::path& modulePath, const std::filesystem::
             collectorType->addDefault(scene, player);
             void* controller = controllerType->find(scene, player);
             expect(floatField(*controllerType, controller, "move_speed") == 4.0f,
-                   "a controller added in the editor starts with the game's defaults");
+                   "a controller added in the editor starts with the engine's defaults");
+            const Entity camera = scene.createEntity("Player Camera");
+            scene.registry().emplace<CameraComponent>(camera);
+            scene.registry().emplace<FirstPersonCameraComponent>(camera);
+            scene.setParent(camera, player);
             setFloatField(*controllerType, controller, "move_speed", 6.5f);
             expect(SceneDocument::serialize(scene, assets, documentOptions, serialized).success &&
-                       serialized.find(DemoGameplay::CharacterControllerKey) != std::string::npos &&
+                       serialized.find("\"character_controller\"") != std::string::npos &&
                        serialized.find("\"item_collector\": {}") != std::string::npos,
                    "scenes serialize controllers and the collector tag without runtime state");
 
@@ -158,9 +158,15 @@ void testModule(const std::filesystem::path& modulePath, const std::filesystem::
             return;
         }
 
-        scheduler.run(SystemPhase::Update, {.scene = reloaded, .mode = SimulationMode::Play, .deltaSeconds = 0.1f});
-        expect(floatField(*controllerType, controllerType->find(reloaded, reloadedPlayer), "yaw") == 0.0f,
-               "the view system ignores frames without input");
+        const auto views = reloaded.registry().view<FirstPersonCameraComponent>();
+        expect(views.size() == 1, "the first-person camera survives a document round trip");
+        if (views.empty()) {
+            return;
+        }
+        const Entity reloadedCamera = views.front();
+        scheduler.run(SystemPhase::LateUpdate, {.scene = reloaded, .mode = SimulationMode::Play, .deltaSeconds = 0.1f});
+        expect(reloaded.registry().get<FirstPersonCameraComponent>(reloadedCamera).yawRadians == 0.0f,
+               "the camera system ignores frames without input");
         // The module declares its actions; hosts evaluate them for systems.
         const std::shared_ptr<const InputActionMap> actionMap = module->inputActions();
         expect(actionMap->contains(DemoAction::Look) && actionMap->contains(DemoAction::Move) &&
@@ -169,15 +175,15 @@ void testModule(const std::filesystem::path& modulePath, const std::filesystem::
         InputState look;
         look.mouseDelta = {100.0f, 0.0f};
         const InputActionState lookActions = actionMap->evaluate(look);
-        scheduler.run(SystemPhase::Update, {.scene = reloaded,
-                                            .mode = SimulationMode::Play,
-                                            .deltaSeconds = 0.1f,
-                                            .input = &look,
-                                            .actions = &lookActions});
-        expect(floatField(*controllerType, controllerType->find(reloaded, reloadedPlayer), "yaw") < 0.0f,
-               "the module's view system turns the look action into yaw");
-        // Without application services there is no physics to move; the
-        // movement system must leave the scene alone rather than fail.
+        scheduler.run(SystemPhase::LateUpdate, {.scene = reloaded,
+                                                .mode = SimulationMode::Play,
+                                                .deltaSeconds = 0.1f,
+                                                .input = &look,
+                                                .actions = &lookActions});
+        expect(reloaded.registry().get<FirstPersonCameraComponent>(reloadedCamera).yawRadians < 0.0f,
+               "the camera system turns the demo's look action into yaw");
+        // Without application services there is no physics; the input
+        // system only records intent and must not fail.
         scheduler.run(SystemPhase::FixedUpdate, {.scene = reloaded,
                                                  .mode = SimulationMode::Play,
                                                  .deltaSeconds = 0.1f,
@@ -198,12 +204,12 @@ void testLinkedGameplay() {
         std::cerr << linked.error << '\n';
         return;
     }
-    expect(gameplay.componentTypes->types().size() == builtInComponentTypes()->types().size() + 3 &&
+    expect(gameplay.componentTypes->types().size() == builtInComponentTypes()->types().size() + 2 &&
                gameplay.componentTypes->find(DemoGameplay::CollectibleItemKey) != nullptr &&
                gameplay.componentTypes->find(DemoGameplay::ItemCollectorKey) != nullptr &&
                gameplay.componentTypes->find("point_light") != nullptr,
            "linked gameplay extends the built-in component types");
-    expectControllerType(gameplay.componentTypes->find(DemoGameplay::CharacterControllerKey));
+    expectControllerType(gameplay.componentTypes->find("character_controller"));
     expectGameplaySchedule(*gameplay.systems, "game");
 }
 
@@ -310,12 +316,13 @@ void testCheckedInCollectionLevel() {
             ++solidBodies;
         }
     }
-    expect(solidBodies == 9 && sensorBodies == 5,
-           "collection level has eight walkable map colliders, one player body, and five sensors");
+    expect(solidBodies == 8 && sensorBodies == 5, "collection level has eight walkable map colliders and five sensors");
+    const auto views = scene.registry().view<FirstPersonCameraComponent, CameraComponent>();
+    expect(std::distance(views.begin(), views.end()) == 1, "the collection level's camera has a first-person view");
 }
 
 // A controller authored in a project scene is the game's player: no second
-// player spawns, its camera child is adopted, and its tuning survives.
+// player spawns, its first-person camera turns, and its tuning survives.
 void testAuthoredControllerPlays(const std::filesystem::path& directory) {
     Gameplay gameplay;
     if (!linkDemoGameplay(gameplay)) {
@@ -338,6 +345,7 @@ void testAuthoredControllerPlays(const std::filesystem::path& directory) {
                                                                   CharacterControllerComponent{.moveSpeed = 7.0f});
         const Entity camera = authored.createEntity("Hero Camera");
         authored.registry().emplace<CameraComponent>(camera);
+        authored.registry().emplace<FirstPersonCameraComponent>(camera);
         authored.setParent(camera, hero);
         expect(SceneDocument::save(project.startupScene, authored, assets,
                                    {.assetRoot = project.assetRoot, .componentTypes = gameplay.componentTypes})
@@ -369,9 +377,8 @@ void testAuthoredControllerPlays(const std::filesystem::path& directory) {
     expect(controllers.get<NameComponent>(hero).name == "Hero" &&
                controllers.get<CharacterControllerComponent>(hero).moveSpeed == 7.0f,
            "the authored controller keeps its name and tuning");
-    expect(scene.registry().all_of<ColliderComponent, RigidBodyComponent>(hero) &&
-               scene.registry().get<RigidBodyComponent>(hero).lockRotation,
-           "an authored controller without a body gets the player's collider and body");
+    expect(!scene.registry().any_of<ColliderComponent, RigidBodyComponent>(hero),
+           "an authored controller needs no collider or body");
     expect(scene.registry().view<AudioListenerComponent>().size() == 1,
            "an authored player's camera becomes the audio listener");
 
@@ -382,13 +389,13 @@ void testAuthoredControllerPlays(const std::filesystem::path& directory) {
     InputState look;
     look.mouseDelta = {100.0f, 20.0f};
     session.update(look, 1.0f / 60.0f);
-    const auto& controller = scene.registry().get<CharacterControllerComponent>(hero);
-    expect(controller.yawRadians < 0.0f && controller.pitchRadians < 0.0f,
-           "the game's linked view system turns the authored controller");
-    expect(controller.camera != entt::null &&
-               scene.registry().get<NameComponent>(controller.camera).name == "Hero Camera" &&
-               scene.registry().get<TransformComponent>(controller.camera).local != glm::mat4(1.0f),
-           "the authored camera child is adopted and oriented");
+    session.lateUpdate(look, 1.0f / 60.0f);
+    const Entity camera = findCameraChild(scene, hero);
+    expect(camera != entt::null && scene.registry().get<NameComponent>(camera).name == "Hero Camera" &&
+               scene.registry().get<FirstPersonCameraComponent>(camera).yawRadians < 0.0f &&
+               scene.registry().get<FirstPersonCameraComponent>(camera).pitchRadians < 0.0f &&
+               scene.registry().get<TransformComponent>(camera).local != glm::mat4(1.0f),
+           "the engine's camera system turns the authored camera");
     session.shutdown();
 }
 
@@ -443,8 +450,10 @@ void testDemoProjectPlaysThroughModule() {
     InputState look;
     look.mouseDelta = {100.0f, 0.0f};
     session.update(look, 1.0f / 60.0f);
-    expect(scene.registry().get<CharacterControllerComponent>(controllers.front()).yawRadians < 0.0f,
-           "the module's view system turns the authored player");
+    session.lateUpdate(look, 1.0f / 60.0f);
+    const Entity camera = findCameraChild(scene, controllers.front());
+    expect(camera != entt::null && scene.registry().get<FirstPersonCameraComponent>(camera).yawRadians < 0.0f,
+           "the engine's camera system turns the authored player's view");
     session.shutdown();
 }
 } // namespace

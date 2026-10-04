@@ -118,6 +118,8 @@ add_library(zenith_engine SHARED
     input/InputProfiles.cpp
     jobs/JobSystem.cpp
     jobs/FrameTaskGraph.cpp
+    gameplay/FirstPerson.cpp
+    module/BuiltInSystems.cpp
     module/EntityCommandBuffer.cpp
     module/EventQueue.cpp
     module/GameModule.cpp
@@ -149,6 +151,7 @@ add_library(zenith_engine SHARED
     scene/AnimationComponentTypes.cpp
     scene/LightComponentTypes.cpp
     scene/PhysicsComponentTypes.cpp
+    scene/GameplayComponentTypes.cpp
     scene/ComponentTypeHelpers.cpp
     scene/CollectionComponentTypes.cpp
     scene/Collections.cpp

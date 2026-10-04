@@ -1,6 +1,6 @@
 #include "engine/application/Application.hpp"
+#include "engine/gameplay/FirstPerson.hpp"
 #include "game/application/DemoApplication.hpp"
-#include "game/player/FirstPersonController.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -279,12 +279,12 @@ int main() {
         expect(models.begin() != models.end(), "gameplay scene instantiates its model");
         const ModelHandle firstModel =
             models.begin() != models.end() ? models.get<ModelComponent>(*models.begin()).model : ModelHandle{};
-        const auto controllers = scene.registry().view<CharacterControllerComponent, RigidBodyComponent>();
+        const auto controllers = scene.registry().view<CharacterControllerComponent>();
         expect(std::distance(controllers.begin(), controllers.end()) == 1, "gameplay scene creates one player");
-        if (controllers.begin() != controllers.end()) {
-            expect(controllers.get<RigidBodyComponent>(*controllers.begin()).lockRotation,
-                   "player rotation lock is expressed by generic physics configuration");
-        }
+        const Entity camera =
+            controllers.begin() != controllers.end() ? findCameraChild(scene, *controllers.begin()) : entt::null;
+        expect(camera != entt::null && scene.registry().all_of<FirstPersonCameraComponent>(camera),
+               "the spawned player has a first-person camera");
 
         InputState startGame;
         startGame.setKeyPressed(Key::Space);
@@ -294,9 +294,10 @@ int main() {
         InputState look;
         look.mouseDelta = {100.0f, 20.0f};
         session.update(look, 1.0f / 60.0f);
-        const auto& controller = controllers.get<CharacterControllerComponent>(*controllers.begin());
-        expect(controller.yawRadians < 0.0f && controller.pitchRadians < 0.0f,
-               "demo controller maps mouse input to view rotation");
+        session.lateUpdate(look, 1.0f / 60.0f);
+        expect(camera != entt::null && scene.registry().get<FirstPersonCameraComponent>(camera).yawRadians < 0.0f &&
+                   scene.registry().get<FirstPersonCameraComponent>(camera).pitchRadians < 0.0f,
+               "the player's camera maps mouse input to view rotation");
 
         InputState reload;
         reload.setKeyPressed(Key::R);

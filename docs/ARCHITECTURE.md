@@ -342,11 +342,14 @@ Components are capabilities:
   primary direct, shadow, and indirect-light settings used by the renderer.
 - `ColliderComponent` plus `RigidBodyComponent` and `TransformComponent` makes
   an entity discoverable by physics.
-- Game-defined components can add behavior without becoming engine dependencies;
-  the demo's `CharacterControllerComponent` is one example. The demo registers
-  it as `character_controller`, with its first-person systems, through
-  `registerDemoGameplay`, which both the `zenith_game_demo` module and the
-  game executable (for runs without a game module) call.
+- `CharacterControllerComponent` makes it a walking character that physics
+  moves without a rigid body; a camera child with `FirstPersonCameraComponent`
+  gives it a first-person view (see [Gameplay](engine/gameplay.md)).
+- Game-defined components can add behavior without becoming engine
+  dependencies; the demo's item collection components are an example. The
+  demo registers them through `registerDemoGameplay`, which both the
+  `zenith_game_demo` module and the game executable (for runs without a game
+  module) call.
 
 Imported models do not become monolithic render objects. The model root gets a
 `ModelComponent`; every imported node gets its own entity and transform; nodes

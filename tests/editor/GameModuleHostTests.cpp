@@ -32,6 +32,12 @@ void expect(bool condition, const char* message) {
     }
 }
 
+// The host also lists the engine's own systems ("zenith." names).
+size_t moduleSystemCount(std::span<const SystemDescriptor* const> systems) {
+    return static_cast<size_t>(std::ranges::count_if(
+        systems, [](const SystemDescriptor* system) { return !system->name.starts_with("zenith."); }));
+}
+
 constexpr std::string_view counterKey = "editor_test_counter";
 constexpr std::string_view addCounterOperator = "editor_test.add_counter";
 constexpr std::string_view moduleMenu = "EDITOR_TEST_MT_tools";
@@ -351,9 +357,9 @@ void testSimulate(HostFixture& fixture, SceneEntityId counterId) {
     const int32_t value = fixture.counterValue(counterId, "value");
     const int32_t fixedTicks = fixture.counterValue(counterId, "fixed_ticks");
     const int32_t inputTicks = fixture.counterValue(counterId, "input_ticks");
-    expect(fixture.host.systems(SystemPhase::Update).size() == 3 &&
-               fixture.host.systems(SystemPhase::FixedUpdate).size() == 1 &&
-               fixture.host.systems(SystemPhase::Ui).size() == 1,
+    expect(moduleSystemCount(fixture.host.systems(SystemPhase::Update)) == 3 &&
+               moduleSystemCount(fixture.host.systems(SystemPhase::FixedUpdate)) == 1 &&
+               moduleSystemCount(fixture.host.systems(SystemPhase::Ui)) == 1,
            "the host lists the module's systems by phase");
 
     fixture.host.finishSystemFrame();

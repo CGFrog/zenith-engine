@@ -2,9 +2,9 @@
 
 #include "DemoScene.hpp"
 
+#include "engine/gameplay/FirstPerson.hpp"
 #include "game/application/DemoApplication.hpp"
 #include "game/gameplay/ItemCollection.hpp"
-#include "game/player/FirstPersonController.hpp"
 
 #include <SDL3/SDL_stdinc.h>
 #include <charconv>
@@ -35,31 +35,6 @@ uint32_t benchmarkObjectCount() {
 uint32_t benchmarkLightCount(uint32_t objectCount) {
     constexpr uint32_t objectBenchmarkLights = 96;
     return environmentCount("ZENITH_BENCHMARK_LIGHTS", 8192).value_or(objectCount > 0 ? objectBenchmarkLights : 0);
-}
-
-// The body the movement system drives: upright, frictionless, and heavy
-// enough to push props.
-RigidBodyComponent playerBody() {
-    RigidBodyComponent body{};
-    body.motionType = PhysicsMotionType::Dynamic;
-    body.layer = PhysicsLayer::Player;
-    body.mass = 80.0f;
-    body.friction = 0.0f;
-    body.angularDamping = 1.0f;
-    body.continuousCollision = true;
-    body.lockRotation = true;
-    return body;
-}
-
-Entity firstCameraChild(const Scene& scene, Entity entity) {
-    if (const auto* relationship = scene.registry().try_get<RelationshipComponent>(entity)) {
-        for (Entity child : relationship->children) {
-            if (scene.registry().valid(child) && scene.registry().all_of<CameraComponent>(child)) {
-                return child;
-            }
-        }
-    }
-    return entt::null;
 }
 } // namespace
 
@@ -99,7 +74,7 @@ SceneResult GameplayScene::load(ApplicationContext& context) {
         m_captureElapsedSeconds = 0.0f;
         m_screen = Screen::Playing;
     } else if (scene.registry().view<CharacterControllerComponent>().empty()) {
-        spawnPlayer(scene);
+        spawnFirstPersonPlayer(scene, {0.0f, 1.2f, 4.0f});
     } else {
         // A scene authored with its own character controller keeps it.
         completeAuthoredPlayers(scene);
@@ -110,45 +85,15 @@ SceneResult GameplayScene::load(ApplicationContext& context) {
     return {.success = true};
 }
 
-void GameplayScene::spawnPlayer(Scene& scene) {
-    const Entity player = scene.createEntity("Player");
-    scene.registry().get<TransformComponent>(player).local =
-        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.2f, 4.0f));
-    CharacterControllerComponent controller;
-    const Entity camera = scene.createEntity("Player Camera");
-    controller.camera = camera;
-    scene.registry().emplace<CharacterControllerComponent>(player, controller);
-    scene.registry().emplace<ColliderComponent>(player, CapsuleCollider{controller.halfHeight, controller.radius});
-    scene.registry().emplace<RigidBodyComponent>(player, playerBody());
-
-    scene.registry().emplace<CameraComponent>(camera);
-    scene.registry().emplace<AudioListenerComponent>(camera);
-    scene.setParent(camera, player);
-    scene.registry().get<TransformComponent>(camera).local =
-        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, controller.halfHeight + controller.radius, 0.0f));
-}
-
 void GameplayScene::completeAuthoredPlayers(Scene& scene) {
     entt::registry& registry = scene.registry();
-    const bool hasListener = !registry.view<AudioListenerComponent>().empty();
-    bool listenerAdded = false;
-    std::vector<Entity> controllers;
-    for (const Entity entity : registry.view<CharacterControllerComponent>()) {
-        controllers.push_back(entity);
+    if (!registry.view<AudioListenerComponent>().empty()) {
+        return;
     }
-    for (const Entity entity : controllers) {
-        const auto& controller = registry.get<CharacterControllerComponent>(entity);
-        if (!registry.all_of<ColliderComponent>(entity)) {
-            registry.emplace<ColliderComponent>(entity, CapsuleCollider{controller.halfHeight, controller.radius});
-        }
-        if (!registry.all_of<RigidBodyComponent>(entity)) {
-            registry.emplace<RigidBodyComponent>(entity, playerBody());
-        }
-        if (!hasListener && !listenerAdded) {
-            if (const Entity camera = firstCameraChild(scene, entity); camera != entt::null) {
-                registry.emplace<AudioListenerComponent>(camera);
-                listenerAdded = true;
-            }
+    for (const Entity entity : registry.view<CharacterControllerComponent>()) {
+        if (const Entity camera = findCameraChild(scene, entity); camera != entt::null) {
+            registry.emplace<AudioListenerComponent>(camera);
+            return;
         }
     }
 }

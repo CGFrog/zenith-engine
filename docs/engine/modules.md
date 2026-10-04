@@ -12,7 +12,11 @@ copy to name it) to a unique shadow file, or with
 `GameModuleLoading::InPlace` (a packaged game) uses the library itself, loads that with
 `SharedLibrary` (`LoadLibrary`/`dlopen`), and registers into a copy of the
 built-in (or host-supplied) `ComponentTypeRegistry` plus its own
-`SystemRegistry`, recording which component keys the module added.
+`SystemRegistry`, recording which component keys the module added. Every
+registry starts with the engine's own systems (`BuiltInSystems.*`:
+`zenith.character_input` and `zenith.first_person_camera`, see
+[Gameplay](gameplay.md)), so they run before a game's systems of the same
+phase and order.
 `SystemScheduler` runs a registry's systems per `SystemPhase` (`Update`,
 `FixedUpdate`, `LateUpdate`, `Ui`) by ascending order, filtered by `RunIn`
 edit/play flags; in `SimulationMode::Simulate` it runs the Play systems its
@@ -23,7 +27,7 @@ destroyed, before the `GameModule` is destroyed; otherwise the library is
 deliberately left loaded. `Gameplay.hpp` is what a game plays: a component
 type registry and a `SystemScheduler`, from a module (`gameplayFromModule`),
 from registration linked into the executable (`linkGameplay`), or the built-in
-types alone. `GameplayRunner` plays a `Gameplay` in a game's
+types and systems alone. `GameplayRunner` plays a `Gameplay` in a game's
 `ApplicationScene` (the project application and the demo use it).
 `EngineExport.hpp` defines `ZENITH_ENGINE_API` for data that must cross the
 engine library boundary.
@@ -62,7 +66,7 @@ Besides the scene, mode, and delta, a system gets:
   [Window and input](window-input.md).
 
 Changing `SystemContext`, `ModuleRegistrar`, or a registered descriptor bumps
-`ZENITH_MODULE_API_VERSION` (now 4: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`).
+`ZENITH_MODULE_API_VERSION` (now 5: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, and B1 made `character_controller` an engine component type with engine systems).
 
 ## `GameServices`
 
@@ -100,5 +104,5 @@ services are destroyed before the module that used them unloads.
 `src/engine/module/`: Game module ABI, shadow-copied or in-place loading and
 unloading, module registration, the system registry and scheduler (Simulate
 mask, per-system CPU profile), `Gameplay` (the component types and systems a
-game plays) with `GameplayRunner`, and `GameServices` (entity commands,
-events, timers).
+game plays) with `GameplayRunner`, the engine's built-in systems, and
+`GameServices` (entity commands, events, timers).

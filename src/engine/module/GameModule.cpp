@@ -1,5 +1,6 @@
 #include "GameModule.hpp"
 
+#include "BuiltInSystems.hpp"
 #include "ModuleApi.hpp"
 #include "ModuleRegistrar.hpp"
 #include "engine/scene/ComponentTypes.hpp"
@@ -91,7 +92,8 @@ GameModuleResult GameModule::load(const std::filesystem::path& path, const GameM
 
     auto componentTypes = std::make_shared<ComponentTypeRegistry>(
         options.baseComponentTypes ? *options.baseComponentTypes : *builtInComponentTypes());
-    auto systems = std::make_shared<SystemRegistry>();
+    // A module's systems run after the engine's.
+    auto systems = std::make_shared<SystemRegistry>(*builtInSystems());
     auto inputActions = std::make_shared<InputActionMap>();
     // Owned by the module before registration runs, so a failure releases the
     // module's functions before the library unloads.

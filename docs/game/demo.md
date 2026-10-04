@@ -4,17 +4,17 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 
 The demo is split into the gameplay a game module registers and the
 application composition around it. `gameplay/DemoGameplay.*` defines
-`registerDemoGameplay(ModuleRegistrar&)`: the `character_controller` component
-type (`CharacterControllerComponent` with reflected tuning fields; `grounded`
-and `camera` stay runtime-only, and a controller without a camera adopts its
-first camera child) and two play-mode systems, `demo.first_person_view`
-(Update) and `demo.first_person_movement` (FixedUpdate; it needs
-`SystemContext::application` for physics). The registration declares the demo's
-actions (`createDemoInputMap`) with `addInputActions`. The systems read the
-host-evaluated `SystemContext::actions`, and do nothing without them.
-`GameplayScene`'s menus read the same map through its `GameplayRunner`. Look preferences reach
-them as a `FirstPersonViewPreferences` value in the scene registry's context,
-which `GameplayScene` refreshes every frame from `GameSettings`.
+`registerDemoGameplay(ModuleRegistrar&)`: the item collection component types
+and the `demo.item_collection` system. The player is the engine's
+`CharacterControllerComponent` with a `FirstPersonCameraComponent` camera,
+which the engine's built-in systems drive (see
+[Gameplay](../engine/gameplay.md)); the demo's action names (`Move`, `Look`,
+`Jump`, `Sprint`) are the components' defaults. The registration declares the
+demo's actions (`createDemoInputMap`) with `addInputActions`.
+`GameplayScene`'s menus read the same map through its `GameplayRunner`. Look
+preferences reach the engine's camera system as a `FirstPersonViewPreferences`
+value in the scene registry's context, which `GameplayScene` refreshes every
+frame from `GameSettings`.
 `module/DemoGameModule.cpp` is the only module-specific file: it exports the
 entry points and calls `registerDemoGameplay`. For runs without a game module
 the `zenith` executable calls `linkDemoGameplay` (`application/LinkedGameplay.*`),
@@ -38,13 +38,11 @@ systems every frame with the player's input; a capture camera
 `GameplayScene` loads the room, creates props and the player, and requests a
 fresh gameplay scene through the Reload action. It loads project scenes with
 the gameplay's component types (the demo module's, or the linked ones), spawns
-a player only when the scene has no
-authored character controller (otherwise it adds the player's collider, body,
-and audio listener an authored one lacks), and runs the gameplay's systems while the game is
-not paused. It also composes the title screen, HUD, pause menu, and persisted
+a player (`spawnFirstPersonPlayer`) only when the scene has no authored
+character controller (otherwise it gives an authored one's camera the audio
+listener when the scene has none), and runs the gameplay's systems while the
+game is not paused. It also composes the title screen, HUD, pause menu, and persisted
 audio, rendering, and input settings with the engine game-UI API.
-`FirstPersonController` interprets semantic movement and view input and
-remains entirely outside `zenith_engine`.
 
 ## Folder contents
 

@@ -24,6 +24,7 @@ zenith_add_test(zenith_material_extensions EXECUTABLE zenith_material_extension_
 zenith_add_test(zenith_compressed_texture SOURCES CompressedTextureTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_animation SOURCES AnimationTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_physics SOURCES PhysicsTests.cpp LIBS zenith_engine NEEDS_ASSETS)
+zenith_add_test(zenith_character_controller SOURCES CharacterControllerTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_physics_queries SOURCES PhysicsQueryTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_system_scheduler SOURCES SystemSchedulerTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_game_services SOURCES GameServicesTests.cpp LIBS zenith_engine)

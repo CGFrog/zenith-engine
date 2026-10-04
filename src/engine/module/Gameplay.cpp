@@ -1,5 +1,6 @@
 #include "Gameplay.hpp"
 
+#include "BuiltInSystems.hpp"
 #include "GameEvents.hpp"
 #include "GameModule.hpp"
 #include "ModuleRegistrar.hpp"
@@ -87,7 +88,7 @@ void GameplayRunner::run(SystemPhase phase, ApplicationContext& context, const I
 
 Gameplay builtInGameplay() {
     return {.componentTypes = builtInComponentTypes(),
-            .systems = std::make_shared<const SystemScheduler>(std::make_shared<const SystemRegistry>()),
+            .systems = std::make_shared<const SystemScheduler>(builtInSystems()),
             .inputActions = std::make_shared<const InputActionMap>()};
 }
 
@@ -99,7 +100,7 @@ Gameplay gameplayFromModule(const GameModule& module) {
 
 GameplayResult linkGameplay(const std::function<void(ModuleRegistrar&)>& registration, Gameplay& gameplay) {
     auto componentTypes = std::make_shared<ComponentTypeRegistry>(*builtInComponentTypes());
-    auto systems = std::make_shared<SystemRegistry>();
+    auto systems = std::make_shared<SystemRegistry>(*builtInSystems());
     auto inputActions = std::make_shared<InputActionMap>();
     ModuleRegistrar registrar(*componentTypes, *systems, *inputActions);
     registration(registrar);

@@ -10,7 +10,6 @@ add_library(zenith_demo_gameplay STATIC
     gameplay/DemoGameplay.cpp
     gameplay/ItemCollection.cpp
     input/DemoInput.cpp
-    player/FirstPersonController.cpp
 )
 set_target_properties(zenith_demo_gameplay PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(zenith_demo_gameplay PUBLIC zenith_engine)

@@ -11,6 +11,7 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollideShape.h>
@@ -115,6 +116,27 @@ class PhysicsWorld::Impl {
         glm::quat previousRotation{1.0f, 0.0f, 0.0f, 0.0f};
         glm::quat currentRotation{1.0f, 0.0f, 0.0f, 0.0f};
         bool activeLastStep{false};
+    };
+
+    // A CharacterControllerComponent's Jolt character, with the capsule it
+    // was built from (a change rebuilds it) and the positions interpolation
+    // blends between.
+    struct CharacterState {
+        JPH::Ref<JPH::CharacterVirtual> character;
+        SceneEntityId sceneId;
+        uint32_t innerBodyKey{0};
+        float radius{0.0f};
+        float halfHeight{0.0f};
+        uint32_t layer{0};
+        float slopeLimit{0.0f};
+        // Horizontal velocity relative to the ground, approaching the
+        // desired velocity at the component's acceleration.
+        glm::vec3 horizontalVelocity{0.0f};
+        glm::vec3 previousPosition{0.0f};
+        glm::vec3 currentPosition{0.0f};
+        // The position last written to the entity's transform; any other
+        // position there means gameplay moved (teleported) the character.
+        glm::vec3 writtenPosition{0.0f};
     };
 
     class BroadPhaseLayers final : public JPH::BroadPhaseLayerInterface {
@@ -235,6 +257,31 @@ class PhysicsWorld::Impl {
         interface.DestroyBody(existing->second.id);
         bodyEntities.erase(key);
         bodies.erase(existing);
+        endSensorPairs(key);
+    }
+
+    // Removes the entity's character and its inner body, reporting the end of
+    // its sensor overlaps.
+    void removeCharacter(Entity entity) {
+        const auto existing = characters.find(entity);
+        if (existing == characters.end()) {
+            return;
+        }
+        const uint32_t key = existing->second.innerBodyKey;
+        // The character removes and destroys its inner body.
+        characters.erase(existing);
+        bodyEntities.erase(key);
+        endSensorPairs(key);
+    }
+
+    void removeCharacters() {
+        while (!characters.empty()) {
+            removeCharacter(characters.begin()->first);
+        }
+    }
+
+    // Reports the end of every sensor overlap the body was part of.
+    void endSensorPairs(uint32_t key) {
         for (auto pair = sensorPairs.begin(); pair != sensorPairs.end();) {
             if (pair->second.sensorBody == key || pair->second.otherBody == key) {
                 pendingTriggerEvents.push_back(exited(pair->second));
@@ -254,7 +301,12 @@ class PhysicsWorld::Impl {
             if (entity == bodyEntities.end()) {
                 return false;
             }
-            const BodyState& state = bodies.at(entity->second);
+            // A character's inner body never sleeps.
+            const auto body = bodies.find(entity->second);
+            if (body == bodies.end()) {
+                continue;
+            }
+            const BodyState& state = body->second;
             if (state.motionType != PhysicsMotionType::Static && !interface.IsActive(state.id)) {
                 return true;
             }
@@ -311,15 +363,15 @@ class PhysicsWorld::Impl {
             if (pair.contacts++ > 0) {
                 continue;
             }
-            const bool firstIsSensor = bodies.at(first->second).sensor;
+            const bool firstIsSensor = isSensor(first->second);
             const auto& sensor = firstIsSensor ? *first : *second;
             const auto& other = firstIsSensor ? *second : *first;
             pair.sensorBody = sensor.first;
             pair.otherBody = other.first;
             pair.sensor = sensor.second;
             pair.other = other.second;
-            pair.sensorId = bodies.at(sensor.second).sceneId;
-            pair.otherId = bodies.at(other.second).sceneId;
+            pair.sensorId = sceneIdOf(sensor.second);
+            pair.otherId = sceneIdOf(other.second);
             pendingTriggerEvents.push_back({.type = TriggerEventType::Entered,
                                             .sensor = pair.sensor,
                                             .other = pair.other,
@@ -328,6 +380,20 @@ class PhysicsWorld::Impl {
         }
         triggerEvents.swap(pendingTriggerEvents);
         pendingTriggerEvents.clear();
+    }
+
+    // Characters are never sensors.
+    bool isSensor(Entity entity) const {
+        const auto body = bodies.find(entity);
+        return body != bodies.end() && body->second.sensor;
+    }
+
+    SceneEntityId sceneIdOf(Entity entity) const {
+        if (const auto body = bodies.find(entity); body != bodies.end()) {
+            return body->second.sceneId;
+        }
+        const auto character = characters.find(entity);
+        return character != characters.end() ? character->second.sceneId : SceneEntityId{};
     }
 
     PhysicsWorldConfig config;
@@ -343,7 +409,9 @@ class PhysicsWorld::Impl {
     ObjectBroadPhaseFilter broadPhaseFilter;
     Contacts contacts;
     std::unordered_map<Entity, BodyState> bodies;
+    // Every body's entity by body key, characters' inner bodies included.
     std::unordered_map<uint32_t, Entity> bodyEntities;
+    std::unordered_map<Entity, CharacterState> characters;
     std::vector<PendingContact> pendingContacts;
     std::vector<ContactEvent> contactEvents;
     std::unordered_map<uint64_t, SensorPair> sensorPairs;
@@ -418,6 +486,7 @@ void PhysicsWorld::clear() {
     m_impl->pendingTriggerEvents.clear();
     m_impl->triggerEvents.clear();
     if (!m_impl->initialized) {
+        m_impl->characters.clear();
         m_impl->bodies.clear();
         m_impl->bodyEntities.clear();
         m_impl->pendingContacts.clear();
@@ -427,6 +496,7 @@ void PhysicsWorld::clear() {
         return;
     }
 
+    m_impl->removeCharacters();
     JPH::BodyInterface& bodies = m_impl->system->GetBodyInterface();
     for (const auto& [_, state] : m_impl->bodies) {
         bodies.RemoveBody(state.id);
@@ -520,6 +590,29 @@ JPH::RefConst<JPH::Shape> createShape(const ColliderComponent& collider, const g
         },
         collider.shape);
 }
+
+// Moves a character's entity to position, keeping its rotation and scale.
+void writeCharacterPosition(Scene& scene, Entity entity, const glm::vec3& position) {
+    entt::registry& registry = scene.registry();
+    auto& transform = registry.get<TransformComponent>(entity);
+    glm::mat4 world = transform.world;
+    world[3] = glm::vec4(position, 1.0f);
+    const Entity parent = registry.get<RelationshipComponent>(entity).parent;
+    transform.world = world;
+    transform.local = parent != entt::null && registry.valid(parent)
+                          ? glm::inverse(registry.get<TransformComponent>(parent).world) * world
+                          : world;
+    scene.markTransformDirty(entity);
+}
+
+// Whether the entity should have a rigid body: a character controller replaces
+// one.
+bool hasBodyComponents(const Scene& scene, Entity entity) {
+    const entt::registry& registry = scene.registry();
+    return registry.valid(entity) &&
+           registry.all_of<TransformComponent, ColliderComponent, RigidBodyComponent>(entity) &&
+           !registry.all_of<CharacterControllerComponent>(entity);
+}
 } // namespace
 
 PhysicsResult PhysicsWorld::refreshBody(Entity entity, Scene& scene, const AssetManager& assets) {
@@ -532,8 +625,7 @@ PhysicsResult PhysicsWorld::refreshBodyFromWorld(Entity entity, Scene& scene, co
         return {.error = "Physics world is not initialized"};
     }
     m_impl->removeBody(entity);
-    if (!scene.registry().valid(entity) ||
-        !scene.registry().all_of<TransformComponent, ColliderComponent, RigidBodyComponent>(entity)) {
+    if (!hasBodyComponents(scene, entity)) {
         return {.success = true};
     }
 
@@ -608,6 +700,143 @@ PhysicsResult PhysicsWorld::refreshBodyFromWorld(Entity entity, Scene& scene, co
     return {.success = true};
 }
 
+namespace {
+// Farther than this from where the character last put its entity, the entity
+// was moved by gameplay; closer is rounding through a parent's transform.
+constexpr float characterTeleportDistance = 1.0e-4f;
+} // namespace
+
+PhysicsResult PhysicsWorld::stepCharacters(Scene& scene, float deltaSeconds) {
+    Impl& impl = *m_impl;
+    entt::registry& registry = scene.registry();
+    for (auto iterator = impl.characters.begin(); iterator != impl.characters.end();) {
+        const Entity entity = iterator->first;
+        ++iterator;
+        if (!registry.valid(entity) || !registry.all_of<TransformComponent, CharacterControllerComponent>(entity)) {
+            impl.removeCharacter(entity);
+        }
+    }
+
+    const JPH::Vec3 gravity = toJolt(impl.config.gravity);
+    for (const Entity entity : registry.view<TransformComponent, CharacterControllerComponent>()) {
+        auto& controller = registry.get<CharacterControllerComponent>(entity);
+        const glm::vec3 position(registry.get<TransformComponent>(entity).world[3]);
+        // A layer the table lacks would collide with nothing.
+        const uint32_t layer =
+            impl.config.layers.contains(controller.layer) ? controller.layer.index : PhysicsLayer::Player.index;
+        const float slopeLimit = std::clamp(controller.slopeLimitRadians, 0.0f, glm::radians(89.0f));
+
+        auto existing = impl.characters.find(entity);
+        if (existing != impl.characters.end() &&
+            (existing->second.radius != controller.radius || existing->second.halfHeight != controller.halfHeight ||
+             existing->second.layer != layer || existing->second.slopeLimit != slopeLimit)) {
+            impl.removeCharacter(entity);
+            existing = impl.characters.end();
+        }
+        if (existing == impl.characters.end()) {
+            if (!(controller.radius > 0.0f) || !(controller.halfHeight > 0.0f)) {
+                return {.error = "Character controller capsule dimensions must be positive"};
+            }
+            JPH::Ref<JPH::CharacterVirtualSettings> settings = new JPH::CharacterVirtualSettings();
+            settings->mShape = new JPH::CapsuleShape(controller.halfHeight, controller.radius);
+            settings->mInnerBodyShape = settings->mShape;
+            settings->mInnerBodyLayer = objectLayer(layer, true);
+            settings->mMaxSlopeAngle = slopeLimit;
+            // Only contacts below the lower cap's centre hold the character up.
+            settings->mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), controller.halfHeight);
+            JPH::Ref<JPH::CharacterVirtual> character = new JPH::CharacterVirtual(
+                settings, JPH::RVec3(position.x, position.y, position.z), JPH::Quat::sIdentity(),
+                static_cast<uint64_t>(entt::to_integral(entity)), impl.system.get());
+            const uint32_t innerBodyKey = bodyKey(character->GetInnerBodyID());
+            existing = impl.characters
+                           .emplace(entity, Impl::CharacterState{.character = std::move(character),
+                                                                 .sceneId = scene.id(entity),
+                                                                 .innerBodyKey = innerBodyKey,
+                                                                 .radius = controller.radius,
+                                                                 .halfHeight = controller.halfHeight,
+                                                                 .layer = layer,
+                                                                 .slopeLimit = slopeLimit,
+                                                                 .previousPosition = position,
+                                                                 .currentPosition = position,
+                                                                 .writtenPosition = position})
+                           .first;
+            impl.bodyEntities[innerBodyKey] = entity;
+        } else if (glm::distance(position, existing->second.writtenPosition) > characterTeleportDistance) {
+            existing->second.character->SetPosition(JPH::RVec3(position.x, position.y, position.z));
+            existing->second.previousPosition = position;
+            existing->second.currentPosition = position;
+        }
+
+        Impl::CharacterState& state = existing->second;
+        JPH::CharacterVirtual& character = *state.character;
+        // The ground may have changed speed since the last step (a platform).
+        character.UpdateGroundVelocity();
+        const glm::vec3 groundVelocity = fromJolt(character.GetGroundVelocity());
+        const float verticalSpeed = character.GetLinearVelocity().GetY();
+        const bool onGround = character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+        const bool movingTowardGround = verticalSpeed - groundVelocity.y < 0.1f;
+
+        const glm::vec3 desired = fromJolt(character.CancelVelocityTowardsSteepSlopes(
+            JPH::Vec3(controller.desiredVelocity.x, 0.0f, controller.desiredVelocity.z)));
+        const float control = onGround ? 1.0f : std::clamp(controller.airControl, 0.0f, 1.0f);
+        const float blend = std::min(1.0f, std::max(controller.acceleration, 0.0f) * control * deltaSeconds);
+        state.horizontalVelocity = glm::mix(state.horizontalVelocity, glm::vec3(desired.x, 0.0f, desired.z), blend);
+
+        glm::vec3 velocity(0.0f, verticalSpeed, 0.0f);
+        if (onGround && movingTowardGround) {
+            velocity = groundVelocity;
+            if (controller.jumpRequested) {
+                velocity.y += controller.jumpSpeed;
+            }
+        }
+        controller.jumpRequested = false;
+        velocity += impl.config.gravity * deltaSeconds + state.horizontalVelocity;
+        character.SetLinearVelocity(toJolt(velocity));
+
+        const JPH::ObjectLayer characterLayer = objectLayer(layer, true);
+        JPH::CharacterVirtual::ExtendedUpdateSettings update;
+        update.mStickToFloorStepDown = JPH::Vec3(0.0f, -std::max(controller.groundProbeDistance, 0.0f), 0.0f);
+        update.mWalkStairsStepUp = JPH::Vec3(0.0f, std::max(controller.stepHeight, 0.0f), 0.0f);
+        character.ExtendedUpdate(deltaSeconds, gravity, update,
+                                 impl.system->GetDefaultBroadPhaseLayerFilter(characterLayer),
+                                 impl.system->GetDefaultLayerFilter(characterLayer), JPH::BodyFilter{},
+                                 JPH::ShapeFilter{}, *impl.tempAllocator);
+
+        const JPH::RVec3 moved = character.GetPosition();
+        state.previousPosition = state.currentPosition;
+        state.currentPosition = {static_cast<float>(moved.GetX()), static_cast<float>(moved.GetY()),
+                                 static_cast<float>(moved.GetZ())};
+        state.writtenPosition = state.currentPosition;
+        writeCharacterPosition(scene, entity, state.currentPosition);
+
+        controller.grounded = character.GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+        controller.groundNormal =
+            controller.grounded ? fromJolt(character.GetGroundNormal()) : glm::vec3(0.0f, 1.0f, 0.0f);
+        controller.groundVelocity = controller.grounded ? fromJolt(character.GetGroundVelocity()) : glm::vec3(0.0f);
+        controller.velocity = fromJolt(character.GetLinearVelocity());
+        controller.groundDistance = probeGround(entity, controller, state.currentPosition, layer);
+    }
+    return {.success = true};
+}
+
+float PhysicsWorld::probeGround(Entity entity, const CharacterControllerComponent& controller,
+                                const glm::vec3& position, uint32_t layer) const {
+    // A sphere slightly narrower than the capsule's lower cap, starting a
+    // little above the capsule's bottom so that it does not begin inside the
+    // ground the character stands on.
+    const float inset = controller.radius * 0.1f;
+    const float distance = std::max(controller.groundProbeDistance, 0.0f) + inset;
+    const Entity self[] = {entity};
+    PhysicsShapeHit hit;
+    if (controller.groundProbeDistance <= 0.0f ||
+        !shapeCast(PhysicsQuerySphere{controller.radius - inset},
+                   {.position = position - glm::vec3(0.0f, controller.halfHeight, 0.0f)}, glm::vec3(0.0f, -1.0f, 0.0f),
+                   distance, hit, {.layerMask = m_impl->config.layers.mask(PhysicsLayer{layer}), .ignore = self})) {
+        return -1.0f;
+    }
+    return std::max(0.0f, hit.fraction * distance - inset);
+}
+
 PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float deltaSeconds) {
     m_stats = {};
     const auto start = std::chrono::steady_clock::now();
@@ -628,6 +857,8 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
     if (newScene) {
         m_impl->observedScene = &scene;
         m_impl->stepsUntilAudit = 0;
+        // Characters hold entity handles of the previous scene.
+        m_impl->removeCharacters();
     }
     const std::span<const PhysicsLifecycleEvent> lifecycleEvents = scene.physicsLifecycleEvents();
     for (size_t index = 0; index < lifecycleEvents.size(); ++index) {
@@ -643,8 +874,7 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
             continue;
         }
         ++m_stats.lifecycleOperations;
-        if (event.operation == PhysicsLifecycleOperation::Destroy || !scene.registry().valid(event.entity) ||
-            !scene.registry().all_of<TransformComponent, ColliderComponent, RigidBodyComponent>(event.entity)) {
+        if (event.operation == PhysicsLifecycleOperation::Destroy || !hasBodyComponents(scene, event.entity)) {
             removeBody(event.entity);
         } else if (PhysicsResult refresh = refreshBodyFromWorld(event.entity, scene, assets); !refresh) {
             return refresh;
@@ -654,7 +884,8 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
 
     const bool audit = newScene || (m_impl->config.debugAuditInterval != 0 && m_impl->stepsUntilAudit == 0);
     if (audit) {
-        auto view = scene.registry().view<TransformComponent, ColliderComponent, RigidBodyComponent>();
+        auto view = scene.registry().view<TransformComponent, ColliderComponent, RigidBodyComponent>(
+            entt::exclude<CharacterControllerComponent>);
         for (Entity entity : view) {
             ++m_stats.auditedEntities;
             if (!m_impl->bodies.contains(entity)) {
@@ -666,8 +897,7 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
         for (auto iterator = m_impl->bodies.begin(); iterator != m_impl->bodies.end();) {
             const Entity entity = iterator->first;
             ++iterator;
-            if (!scene.registry().valid(entity) ||
-                !scene.registry().all_of<TransformComponent, ColliderComponent, RigidBodyComponent>(entity)) {
+            if (!hasBodyComponents(scene, entity)) {
                 removeBody(entity);
             }
         }
@@ -693,6 +923,11 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
     {
         std::scoped_lock lock(m_impl->contactMutex);
         m_impl->pendingContacts.clear();
+    }
+    // After the kinematic bodies have their velocities, so characters ride
+    // moving platforms; their inner bodies' contacts land in this step.
+    if (PhysicsResult characters = stepCharacters(scene, deltaSeconds); !characters) {
+        return characters;
     }
     const auto syncDone = std::chrono::steady_clock::now();
     m_stats.synchronizeInMilliseconds = milliseconds(transformsDone, syncDone);
@@ -779,6 +1014,12 @@ void PhysicsWorld::interpolate(Scene& scene, float alpha) const {
         transform.local =
             parented ? glm::inverse(scene.registry().get<TransformComponent>(parent).world) * world : world;
         scene.markTransformDirty(entity);
+    }
+    for (auto& [entity, state] : m_impl->characters) {
+        if (scene.registry().valid(entity)) {
+            state.writtenPosition = glm::mix(state.previousPosition, state.currentPosition, amount);
+            writeCharacterPosition(scene, entity, state.writtenPosition);
+        }
     }
 }
 

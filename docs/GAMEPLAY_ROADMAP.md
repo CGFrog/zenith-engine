@@ -61,6 +61,23 @@ Approved 2026-10-04. Nothing is implemented yet.
     each step's events and the host forwards them to the `EventQueue`.
   - A body that falls asleep inside a sensor stays inside. Jolt drops a
     sleeping body's contacts, which would otherwise look like an exit.
+- **2026-10-04: the engine character controller (B1).**
+  - The engine's `CharacterControllerComponent` took over the demo's
+    `character_controller` key at schema version 2. The version 1 migration
+    drops the look settings and adds the new fields at their defaults.
+  - A character is not a rigid body: an entity with the component gets a Jolt
+    `CharacterVirtual` and no body. Its kinematic inner body carries the
+    entity, so queries, sensors and contacts see it.
+  - The view's yaw and pitch live on the camera child's
+    `FirstPersonCameraComponent`; the character's own rotation never changes.
+    The camera keeps the eye height it was placed at.
+  - The components name the input actions that drive them (`Move`, `Look`,
+    `Jump`, `Sprint` by default). An empty move action leaves a character to
+    code, so engine code never hard-codes a game's action map.
+  - The engine's own systems (`registerBuiltInSystems`) seed every
+    `SystemRegistry`, so they run in games and in editor Play alike, before a
+    game's systems of the same phase and order. Later items add theirs there.
+  - `ZENITH_MODULE_API_VERSION` is 5.
 - **2026-10-04: engine owns mechanisms, games own rules.** The character
   controller, physics queries, events, timers, effects, save slots and UI
   widgets are reusable engine mechanisms. Weapons, damage, HUD contents and
@@ -308,18 +325,39 @@ Read first: Phase A docs plus [Assets](engine/assets.md) and [UI](engine/ui.md).
 
 ### B1. Engine character controller
 
-- [ ] Add `CharacterControllerComponent` backed by Jolt `CharacterVirtual`,
+- [x] Add `CharacterControllerComponent` backed by Jolt `CharacterVirtual`,
       with Jolt kept private. It has a slope limit, step height, a ground probe
       (an A3 shape cast), ground normal and velocity, and moving-platform
       support.
-- [ ] Add `FirstPersonCameraComponent` (pitch clamp, sensitivity) and a
+- [x] Add `FirstPersonCameraComponent` (pitch clamp, sensitivity) and a
       LateUpdate camera system.
-- [ ] Move the generic parts of `src/game/player/FirstPersonController.*` and
+- [x] Move the generic parts of `src/game/player/FirstPersonController.*` and
       the player bootstrap in `src/game/scene/GameplayScene.cpp` into the
       engine. Remove the duplicate `firstCameraChild`/`resolveCamera`.
-- [ ] Port the demo. Fix the stale controller line in `docs/engine/physics.md`.
-- [ ] Tests: walking up steps, the slope limit, staying grounded on a moving
+- [x] Port the demo. Fix the stale controller line in `docs/engine/physics.md`.
+- [x] Tests: walking up steps, the slope limit, staying grounded on a moving
       platform, jumping.
+
+Result:
+- `src/engine/physics/CharacterController.hpp` and `PhysicsWorld` step the
+  characters before the bodies; `src/engine/gameplay/FirstPerson.*` holds the
+  camera component, `applyCharacterInput`, `updateFirstPersonCameras`,
+  `spawnFirstPersonPlayer` and `findCameraChild`.
+- `src/engine/module/BuiltInSystems.*` registers `zenith.character_input`
+  (FixedUpdate) and `zenith.first_person_camera` (LateUpdate).
+- The demo lost `src/game/player/`; its scenes were re-saved with the engine
+  components. The physics doc had no stale line left; `docs/game/demo.md` and
+  `ARCHITECTURE.md` were fixed instead.
+- Coverage is `tests/engine/CharacterControllerTests.cpp`
+  (`zenith_character_controller`), plus the demo's module and lifecycle tests.
+
+Follow-ups:
+- The editor draws no gizmo for a character's capsule.
+- Characters do not push each other (Jolt's character-vs-character
+  collision is not set up), and a character leaving a moving platform loses
+  the platform's velocity.
+- `docs/tutorials/fps-game/` still teaches the removed demo controller; C6
+  rewrites it.
 
 ### B2. Behaviours
 

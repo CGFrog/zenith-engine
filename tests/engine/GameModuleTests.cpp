@@ -1,5 +1,6 @@
 #include "engine/assets/Assets.hpp"
 #include "engine/input/InputActions.hpp"
+#include "engine/module/BuiltInSystems.hpp"
 #include "engine/module/GameModule.hpp"
 #include "engine/module/ModuleApi.hpp"
 #include "engine/module/ModuleShadowCopy.hpp"
@@ -209,8 +210,9 @@ void testLoadRegisterAndUnload(const TestPaths& paths) {
         expect(scheduler.schedule(SystemPhase::Update, SimulationMode::Edit) ==
                    std::vector<std::string>{"edit_tick", "context_probe"},
                "edit mode runs only the module's edit systems");
+        // The engine's own systems come first.
         expect(scheduler.schedule(SystemPhase::LateUpdate, SimulationMode::Play) ==
-                       std::vector<std::string>{"late_tick"} &&
+                       std::vector<std::string>{std::string(EngineSystems::FirstPersonCamera), "late_tick"} &&
                    scheduler.schedule(SystemPhase::Ui, SimulationMode::Play) == std::vector<std::string>{"hud"},
                "module systems register in the LateUpdate and Ui phases");
         expect(module->inputActions() != nullptr &&

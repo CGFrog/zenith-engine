@@ -44,6 +44,36 @@ per pair of bodies. They are derived on the main thread from Jolt's contacts.
 - `GameServices::publishTriggerEvents` turns them into `TriggerEntered` and
   `TriggerExited` events.
 
+## `src/engine/physics/CharacterController.hpp`
+
+`CharacterControllerComponent` (`character_controller`, schema version 2) is a
+walking character that `PhysicsWorld` moves with Jolt's `CharacterVirtual`
+instead of a rigid body. An entity with it gets no rigid body, even if it has
+a collider and rigid body too. Each step, before the bodies are simulated, the
+world creates, rebuilds (after a capsule, layer, or slope change) or removes
+each character, then:
+
+- blends the horizontal velocity toward `desiredVelocity` at `acceleration`
+  (scaled by `airControl` in the air), cancelling movement into slopes
+  steeper than `slopeLimitRadians`;
+- on the ground, adds the ground's velocity (so a character rides a moving
+  platform) and a requested jump, then gravity;
+- runs `ExtendedUpdate`: walks onto steps up to `stepHeight`, and sticks to
+  ground within `groundProbeDistance` going down;
+- writes the new position into the entity's transform (keeping its rotation
+  and scale), and fills `grounded`, `groundNormal`, `groundVelocity`,
+  `velocity`, and `groundDistance` (a sphere cast below the capsule).
+
+`jumpRequested` is consumed by every step. A transform moved by gameplay is a
+teleport: the character follows it. Interpolation blends characters' positions
+like dynamic bodies'. Each character has a kinematic inner body on its layer
+whose user data is its entity, so queries, contacts, and sensors see the
+character as its entity, and removing it exits the sensors it was in.
+
+Version 1 was the demo's own controller; its migration drops the look
+settings (now `FirstPersonCameraComponent`, see [Gameplay](gameplay.md)) and
+adds the new fields at their defaults.
+
 ## `src/engine/physics/PhysicsLayers.*`
 
 `PhysicsLayerTable` is a project's collision layers: up to 32 names, by

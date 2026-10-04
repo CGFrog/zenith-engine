@@ -41,10 +41,8 @@ class GameplayScene final : public ApplicationScene {
     void drawPause(ApplicationContext& context);
     void drawSettings(ApplicationContext& context);
     void persistSettings() const;
-    void spawnPlayer(Scene& scene);
-    // Gives authored controllers what spawnPlayer would: the capsule collider
-    // and player body they lack, and an audio listener on a camera child when
-    // the scene has none.
+    // Gives an authored player what spawnFirstPersonPlayer would: an audio
+    // listener on a camera child when the scene has none.
     void completeAuthoredPlayers(Scene& scene);
 
     void applyViewPreferences(Scene& scene) const;

@@ -6,6 +6,7 @@
 
 #include "ComponentTypeHelpers.hpp"
 #include "ComponentTypes.hpp"
+#include "engine/physics/CharacterController.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -127,6 +128,94 @@ ComponentType rigidBodyComponentType() {
                        ? std::string{}
                        : "Physics layer " + std::to_string(body.layer.index) + " is beyond the last layer, " +
                              std::to_string(maxPhysicsLayers - 1);
+        })
+        .build();
+}
+
+ComponentType characterControllerComponentType() {
+    using C = CharacterControllerComponent;
+    return ComponentTypeBuilder<C>("character_controller", "Character Controller")
+        .category("Physics")
+        .fields(Fields<C>()
+                    .add("radius", &C::radius)
+                    .drag(0.01f, 0.01, 10.0)
+                    .format("%.2f m")
+                    .tooltip("Capsule radius")
+                    .add("half_height", &C::halfHeight)
+                    .drag(0.01f, 0.01, 10.0)
+                    .format("%.2f m")
+                    .tooltip("Half the capsule's cylinder height, excluding the end caps")
+                    .add("layer", &C::layer)
+                    .drag(0.1f, 0.0, static_cast<double>(maxPhysicsLayers - 1))
+                    .add("slope_limit", &C::slopeLimitRadians)
+                    .angle()
+                    .slider(0.0, 89.0)
+                    .tooltip("The steepest ground the character stands on and walks up")
+                    .add("step_height", &C::stepHeight)
+                    .drag(0.01f, 0.0, 2.0)
+                    .format("%.2f m")
+                    .tooltip("The tallest step the character walks onto without jumping")
+                    .add("ground_probe_distance", &C::groundProbeDistance)
+                    .drag(0.01f, 0.0, 2.0)
+                    .format("%.2f m")
+                    .tooltip("How far below its feet the character sticks to and looks for ground")
+                    .add("move_speed", &C::moveSpeed)
+                    .drag(0.05f, 0.0, 100.0)
+                    .format("%.2f m/s")
+                    .add("sprint_multiplier", &C::sprintMultiplier)
+                    .drag(0.01f, 0.0, 10.0)
+                    .format("%.2fx")
+                    .add("jump_speed", &C::jumpSpeed)
+                    .drag(0.05f, 0.0, 100.0)
+                    .format("%.2f m/s")
+                    .tooltip("Upward speed at the start of a jump")
+                    .add("acceleration", &C::acceleration)
+                    .drag(0.1f, 0.0, 500.0)
+                    .format("%.1f /s")
+                    .tooltip("How quickly horizontal velocity approaches the requested velocity")
+                    .add("air_control", &C::airControl)
+                    .slider(0.0, 1.0)
+                    .tooltip("Fraction of acceleration available while airborne")
+                    .add("move_action", &C::moveAction)
+                    .tooltip("2D input action that walks the character; empty leaves it to code")
+                    .add("jump_action", &C::jumpAction)
+                    .add("sprint_action", &C::sprintAction))
+        // Version 2: the engine's controller replaces the demo's. Look
+        // sensitivity, yaw and pitch moved to first_person_camera, and the
+        // new fields start at their defaults.
+        .schemaVersion(2)
+        .migration(1,
+                   [](nlohmann::json& component) {
+                       const C defaults;
+                       for (const char* key : {"look_sensitivity", "yaw", "pitch"}) {
+                           component.erase(key);
+                       }
+                       component.emplace("layer", defaults.layer.index);
+                       component.emplace("slope_limit", defaults.slopeLimitRadians);
+                       component.emplace("step_height", defaults.stepHeight);
+                       component.emplace("ground_probe_distance", defaults.groundProbeDistance);
+                       component.emplace("move_action", defaults.moveAction);
+                       component.emplace("jump_action", defaults.jumpAction);
+                       component.emplace("sprint_action", defaults.sprintAction);
+                       return SceneDocumentResult{.success = true};
+                   })
+        .validate([](const C& controller) -> std::string {
+            if (!(controller.radius > 0.0f) || !(controller.halfHeight > 0.0f)) {
+                return "character controller capsule dimensions must be positive";
+            }
+            if (controller.layer.index >= maxPhysicsLayers) {
+                return "Physics layer " + std::to_string(controller.layer.index) + " is beyond the last layer, " +
+                       std::to_string(maxPhysicsLayers - 1);
+            }
+            if (!(controller.stepHeight >= 0.0f) || !(controller.groundProbeDistance >= 0.0f) ||
+                !(controller.moveSpeed >= 0.0f) || !(controller.sprintMultiplier >= 0.0f) ||
+                !(controller.jumpSpeed >= 0.0f) || !(controller.acceleration >= 0.0f)) {
+                return "character controller distances, speeds and acceleration must not be negative";
+            }
+            if (!(controller.airControl >= 0.0f && controller.airControl <= 1.0f)) {
+                return "character controller air control must be between 0 and 1";
+            }
+            return {};
         })
         .build();
 }

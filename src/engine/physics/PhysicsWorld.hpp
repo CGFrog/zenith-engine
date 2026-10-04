@@ -2,6 +2,7 @@
 
 #include "../graphics/DebugDraw.hpp"
 #include "../scene/Scene.hpp"
+#include "CharacterController.hpp"
 #include "PhysicsComponents.hpp"
 #include "PhysicsLayers.hpp"
 
@@ -232,6 +233,12 @@ class PhysicsWorld {
 
   private:
     PhysicsResult refreshBodyFromWorld(Entity entity, Scene& scene, const AssetManager& assets);
+    // Creates, removes and moves the scene's character controllers for one
+    // step, before the bodies are simulated.
+    PhysicsResult stepCharacters(Scene& scene, float deltaSeconds);
+    // The ground distance CharacterControllerComponent::groundDistance reports.
+    float probeGround(Entity entity, const CharacterControllerComponent& controller, const glm::vec3& position,
+                      uint32_t layer) const;
 
     class Impl;
     std::unique_ptr<Impl> m_impl;

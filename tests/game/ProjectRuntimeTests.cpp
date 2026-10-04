@@ -344,7 +344,7 @@ void testDemoAndLinkedGameplay() {
     RuntimeGameplay runtime;
     expect(loadRuntimeGameplay(nullptr, GameModuleLoading::InPlace, runtime).success && runtime.module == nullptr &&
                runtime.presentation == GamePresentation::Demo &&
-               runtime.gameplay.componentTypes->find(DemoGameplay::CharacterControllerKey) != nullptr,
+               runtime.gameplay.componentTypes->find(DemoGameplay::CollectibleItemKey) != nullptr,
            "without a project the demo gameplay linked into the game plays");
 
     ProjectConfig moduleless;

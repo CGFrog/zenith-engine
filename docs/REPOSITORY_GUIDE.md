@@ -83,7 +83,7 @@ create these targets (`tests/*/CMakeLists.txt` add the test executables):
 | Target | Kind | Responsibility |
 | --- | --- | --- |
 | `zenith_engine` | Shared library | Reusable application lifecycle, scene, asset, audio, input, physics, graphics, window, and game module systems. Exports every function (`WINDOWS_EXPORT_ALL_SYMBOLS`) and Dear ImGui plus ImGuizmo (`IMGUI_API`); links volk, Jolt, shaderc, meshoptimizer, and bc7enc privately. |
-| `zenith_demo_gameplay` | Static library (PIC) | Demo gameplay registered by `registerDemoGameplay`: `CharacterControllerComponent`, the first-person systems, and the demo input bindings. |
+| `zenith_demo_gameplay` | Static library (PIC) | Demo gameplay registered by `registerDemoGameplay`: item collection components and system, and the demo input bindings. |
 | `zenith_game_demo` | Module | The demo game module (`ZENITH_GAME_MODULE("demo", ...)`) the editor and the game load for the demo project. Each build copies it to the git-ignored `projects/modules/zenith_game_demo.zmodule`, the path `projects/demo.zenith-project` names; `install` places it at `modules/` beside the packaged project. |
 | `zenith_demo` | Static library | Game executable composition: command line (`GameLaunch`), package verification, the gameplay to play (`RuntimeGameplay`: a project's module, or the demo gameplay linked in for runs without one), the project-agnostic `ProjectApplication`, and the demo's application, menus, settings, audio, and scenes. |
 | `zenith` | Executable | Thin composition root: parses `[--verify-package] [--project <file>] [--scene <file>]`, loads the project's game module, initializes `Engine`, and runs `DemoApplication` or `ProjectApplication`. |
@@ -150,7 +150,8 @@ Engine (`src/engine/`, `shaders/`):
 - [Projects](engine/projects.md): the project manifest and the checked-in demo, showcase, and irradiance-room projects.
 - [Assets](engine/assets.md): CPU asset types, import, streaming policy, texture cooking, GUIDs, and the asset database.
 - [Platform services](engine/platform.md): writable locations, file reads, the file watcher, and child processes.
-- [Physics](engine/physics.md): physics components, `PhysicsWorld`, and the private Jolt runtime and debug draw.
+- [Physics](engine/physics.md): physics components, the character controller, `PhysicsWorld`, and the private Jolt runtime and debug draw.
+- [Gameplay](engine/gameplay.md): reusable gameplay mechanisms such as the first-person player.
 - [Graphics](engine/graphics.md): the renderer structure, Vulkan context, swapchain, frame resources, render graph, and pipelines.
 - [Graphics scene passes](engine/graphics-passes.md): GPU-driven culling, AO, clustered and local-light shadows, fog, decals, particles, environment lighting, and `MeshPass`.
 - [Graphics post-processing](engine/graphics-post.md): post-process, colour grading, SSR, bloom and exposure, motion blur, TAA, upscaling, and depth of field.

@@ -1,0 +1,24 @@
+#pragma once
+
+#include "SystemScheduler.hpp"
+
+#include <memory>
+#include <string_view>
+
+// The engine's own systems, which every Gameplay runs before a game's
+// systems of the same phase and order. They drive the engine's reusable
+// gameplay components and do nothing in a scene without them.
+namespace EngineSystems {
+// FixedUpdate, Play: walks player-driven characters from their move, jump
+// and sprint actions (applyCharacterInput).
+inline constexpr std::string_view CharacterInput = "zenith.character_input";
+// LateUpdate, Play: turns first-person cameras by their look actions
+// (updateFirstPersonCameras), after physics has placed their characters.
+inline constexpr std::string_view FirstPersonCamera = "zenith.first_person_camera";
+} // namespace EngineSystems
+
+// Adds the engine's systems to systems; fails if a name is taken.
+SystemRegistryResult registerBuiltInSystems(SystemRegistry& systems);
+
+// A registry holding only the engine's systems, shared and never changed.
+std::shared_ptr<const SystemRegistry> builtInSystems();

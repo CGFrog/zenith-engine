@@ -103,11 +103,12 @@ struct GameplayResult {
     }
 };
 
-// The built-in component types and no systems.
+// The built-in component types and the engine's systems (builtInSystems).
 Gameplay builtInGameplay();
 // The module's component types and systems; the module must outlive them.
 Gameplay gameplayFromModule(const GameModule& module);
 // Runs registration (a module's zenith_module_register linked into the
-// executable) through a ModuleRegistrar over the built-in component types.
+// executable) through a ModuleRegistrar over the built-in component types
+// and systems.
 // Leaves gameplay unchanged on failure.
 GameplayResult linkGameplay(const std::function<void(ModuleRegistrar&)>& registration, Gameplay& gameplay);
