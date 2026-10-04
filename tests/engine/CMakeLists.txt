@@ -154,4 +154,6 @@ zenith_add_test(zenith_simulation_benchmark_run EXECUTABLE zenith_simulation_ben
     SOURCES SimulationBenchmark.cpp LIBS zenith_engine LABELS benchmark)
 zenith_add_test(zenith_scene_scaling_benchmark_run EXECUTABLE zenith_scene_scaling_benchmark
     SOURCES SceneScalingBenchmark.cpp LIBS zenith_engine LABELS benchmark)
+zenith_add_test(zenith_prefab_benchmark_run EXECUTABLE zenith_prefab_benchmark
+    SOURCES PrefabBenchmark.cpp LIBS zenith_engine LABELS benchmark TIMEOUT 600)
 zenith_add_test(zenith_benchmark SOURCES BenchmarkTests.cpp LIBS zenith_engine)

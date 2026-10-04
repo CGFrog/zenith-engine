@@ -329,8 +329,10 @@ class PrefabSystem {
     }
 
   private:
-    // Runs change and, when it fails, puts the scene back as it was.
-    PrefabInstanceResult transact(Scene& scene, const std::function<PrefabInstanceResult()>& change);
+    // Runs change and, when it fails, puts the scene back as it was. change
+    // may rebuild root's subtree (none for a new instance) and create
+    // entities, and must change nothing else.
+    PrefabInstanceResult transact(Scene& scene, Entity root, const std::function<PrefabInstanceResult()>& change);
     PrefabInstanceResult build(const std::filesystem::path& reference, Scene& scene, Entity existingRoot, Entity parent,
                                std::span<const PrefabOverride> overrides, uint64_t nestedId, PrefabRefreshMode mode,
                                std::vector<std::filesystem::path>& stack);

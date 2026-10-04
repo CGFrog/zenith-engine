@@ -102,19 +102,47 @@ PrefabResult expandModels(const std::map<uint64_t, Json>& entities, const IdMap&
 }
 } // namespace
 
-PrefabInstanceResult PrefabSystem::transact(Scene& scene, const std::function<PrefabInstanceResult()>& change) {
+PrefabInstanceResult PrefabSystem::transact(Scene& scene, Entity root,
+                                            const std::function<PrefabInstanceResult()>& change) {
     // The staging validation catches nearly every failure; this restores the
     // scene when a nested instance fails after its container was rebuilt.
-    std::string before;
-    const bool restorable = SceneDocument::serialize(scene, m_assets, m_options, before).success;
+    // Only root's subtree is saved first, so the cost follows the instance,
+    // not the scene: everything else change touches it creates, with ids
+    // from nextEntityId on.
+    std::vector<SceneEntityId> touched;
+    if (root != entt::null) {
+        for (const Entity entity : subtree(scene, root)) {
+            touched.push_back(scene.id(entity));
+        }
+    }
+    const uint64_t firstCreated = scene.nextEntityId().value;
+    std::vector<std::optional<std::string>> before;
+    const bool restorable = SceneDocument::serializeEntities(scene, m_assets, m_options, touched, before).success;
     PrefabInstanceResult result = change();
     if (result || !restorable) {
         return result;
     }
-    std::string after;
-    SceneChanges changes;
-    if (!SceneDocument::serialize(scene, m_assets, m_options, after) || !SceneDocument::diff(before, after, changes) ||
-        !SceneDocument::applyChanges(changes, SceneChangeDirection::Backward, m_assets, m_options, scene)) {
+    for (const Entity entity : scene.registry().view<const SceneEntityIdComponent>()) {
+        if (const SceneEntityId id = scene.id(entity); id.value >= firstCreated) {
+            touched.push_back(id);
+            before.emplace_back();
+        }
+    }
+    std::vector<std::optional<std::string>> after;
+    bool restored = SceneDocument::serializeEntities(scene, m_assets, m_options, touched, after).success;
+    if (restored) {
+        SceneChanges changes;
+        for (size_t index = 0; index < touched.size(); ++index) {
+            if (before[index] != after[index]) {
+                changes.entities.push_back(
+                    {.id = touched[index], .before = std::move(before[index]), .after = std::move(after[index])});
+            }
+        }
+        std::ranges::sort(changes.entities, {}, [](const SceneEntityChange& entity) { return entity.id.value; });
+        restored =
+            SceneDocument::applyChanges(changes, SceneChangeDirection::Backward, m_assets, m_options, scene).success;
+    }
+    if (!restored) {
         result.error += " (the scene could not be restored)";
     }
     return result;
@@ -157,7 +185,7 @@ PrefabInstanceResult PrefabSystem::instantiate(const std::filesystem::path& refe
         !checked) {
         return checked;
     }
-    return transact(scene, [&] {
+    return transact(scene, entt::null, [&] {
         std::vector<std::filesystem::path> stack;
         return build(reference, scene, entt::null, parent, overrides, 0, PrefabRefreshMode::RemoveAddedObjects, stack);
     });
@@ -182,7 +210,7 @@ PrefabInstanceResult PrefabSystem::refresh(Scene& scene, Entity root, std::span<
         !checked) {
         return checked;
     }
-    return transact(scene, [&] {
+    return transact(scene, root, [&] {
         std::vector<std::filesystem::path> stack;
         return build(reference, scene, root, entt::null, values, nestedId, mode, stack);
     });

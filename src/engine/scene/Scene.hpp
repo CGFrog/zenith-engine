@@ -296,6 +296,9 @@ class Scene {
     // An id no entity has had since the scene was last cleared, for callers
     // that create entities with explicit ids (createEntityWithId).
     SceneEntityId reserveEntityId();
+    // The id the next createEntity or reserveEntityId will use. Entities
+    // those create from now on have this id or a higher one.
+    SceneEntityId nextEntityId() const;
     SceneEntityId id(Entity entity) const;
     Entity findEntity(SceneEntityId id) const;
     void setParent(Entity child, Entity parent);

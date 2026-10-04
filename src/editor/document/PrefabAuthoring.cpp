@@ -119,14 +119,22 @@ PrefabResult PrefabAuthoring::apply(Scene& scene, Entity entity) {
         return loaded;
     }
     // Other instances keep what they override relative to the content being
-    // replaced, so their overrides are taken before the file changes.
+    // replaced, so their overrides are taken before the file changes. The
+    // previous content is normalized once for all of them.
     std::vector<std::pair<SceneEntityId, std::vector<PrefabOverride>>> others;
+    std::optional<PrefabComparisonSource> previousSource;
     for (const Entity other : prefabInstancesOf(scene, reference)) {
         if (other == root) {
             continue;
         }
+        if (!previousSource) {
+            previousSource.emplace();
+            if (PrefabResult prepared = m_prefabs.prepareComparison(previous, *previousSource); !prepared) {
+                return prepared;
+            }
+        }
         std::vector<PrefabOverride> overrides;
-        if (PrefabResult compared = m_prefabs.overrides(scene, other, previous, overrides); !compared) {
+        if (PrefabResult compared = m_prefabs.overrides(scene, other, *previousSource, overrides); !compared) {
             return {.error = "Instance '" + scene.registry().get<NameComponent>(other).name + "': " + compared.error};
         }
         others.emplace_back(scene.id(other), std::move(overrides));

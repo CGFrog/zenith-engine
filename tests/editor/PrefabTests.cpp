@@ -557,6 +557,45 @@ void testNestedPrefabs() {
            "instantiating a nested cycle should fail without changing the scene");
 }
 
+// A refresh that fails after rebuilding the containing instance (here in a
+// nested instance whose root no longer matches its prefab, which the isolated
+// validation build cannot see) leaves the whole scene as it was.
+void testFailedRefreshRestoresScene() {
+    const std::filesystem::path root = freshDirectory("rollback");
+    AssetManager assets;
+    const SceneDocumentOptions options{.assetRoot = root};
+    PrefabAuthoring authoring(assets, options);
+    Scene scene;
+    const Entity wheel = scene.createEntity("Wheel");
+    scene.registry().emplace<PointLightComponent>(wheel);
+    expect(authoring.create(scene, wheel, "parts/wheel.prefab").success, "rollback: the inner prefab is created");
+    const Entity cart = scene.createEntity("Cart");
+    scene.setParent(wheel, cart);
+    scene.setParent(scene.createEntity("Seat"), cart);
+    expect(authoring.create(scene, cart, "cart.prefab").success, "rollback: the cart prefab is created");
+
+    Scene level;
+    level.createEntity("Unrelated");
+    Entity instance = entt::null;
+    expect(authoring.instantiate(level, "cart.prefab", entt::null, instance).success,
+           "rollback: the cart instantiates");
+    // The rebuild resets this name before the nested instance fails.
+    level.registry().get<NameComponent>(childNamed(level, instance, "Seat")).name = "Renamed seat";
+    level.setParent(level.createEntity("Added"), instance);
+    level.registry().get<PrefabEntityComponent>(childNamed(level, instance, "Wheel")).entity.value += 100;
+    std::string before;
+    expect(SceneDocument::serialize(level, assets, options, before).success, "rollback: the level serializes");
+
+    const PrefabInstanceResult refreshed =
+        PrefabSystem(assets, options).refresh(level, instance, PrefabRefreshMode::RemoveAddedObjects);
+    std::string after;
+    expect(SceneDocument::serialize(level, assets, options, after).success, "rollback: the level still serializes");
+    expect(!refreshed && refreshed.error.find("no longer matches") != std::string::npos &&
+               refreshed.error.find("could not be restored") == std::string::npos,
+           "rollback: the refresh fails in the nested instance");
+    expect(after == before, "a refresh failing after its container was rebuilt should leave the scene unchanged");
+}
+
 void testApplyPropagation() {
     const std::filesystem::path root = freshDirectory("propagation");
     AssetManager assets;
@@ -1243,6 +1282,7 @@ int main() {
     testOverrideQuery();
     testOperators();
     testNestedPrefabs();
+    testFailedRefreshRestoresScene();
     testApplyPropagation();
     testCollectionsStayInScene();
     testEntityReferenceRemap();
@@ -1252,7 +1292,7 @@ int main() {
     testMovesUnderAddedWithoutCycles();
     testNestedReferences();
     for (const char* name :
-         {"registry", "v1", "persistence", "overrides", "operators", "nested", "propagation", "collections",
+         {"registry", "v1", "persistence", "overrides", "operators", "nested", "rollback", "propagation", "collections",
           "references", "structure", "nested-removal", "moves", "move-cycles", "nested-references"}) {
         std::error_code error;
         std::filesystem::remove_all(

@@ -55,6 +55,10 @@ SceneEntityId Scene::reserveEntityId() {
     return reserved;
 }
 
+SceneEntityId Scene::nextEntityId() const {
+    return {m_nextEntityId};
+}
+
 SceneEntityId Scene::id(Entity entity) const {
     const SceneEntityIdComponent* component = m_registry.try_get<SceneEntityIdComponent>(entity);
     return component == nullptr ? SceneEntityId{} : component->id;

@@ -128,6 +128,14 @@ class SceneDocument {
     static SceneDocumentResult load(const std::filesystem::path& path, AssetManager& assets,
                                     const SceneDocumentOptions& options, Scene& destination);
 
+    // Each listed entity's document form exactly as a SceneEntityChange holds
+    // it (the compact JSON diff writes), or nullopt for an id no entity has,
+    // without serializing the rest of the scene. Collections are not written.
+    static SceneDocumentResult serializeEntities(const Scene& scene, const AssetManager& assets,
+                                                 const SceneDocumentOptions& options,
+                                                 std::span<const SceneEntityId> ids,
+                                                 std::vector<std::optional<std::string>>& output);
+
     // Lists, sorted by id, the entities whose document form differs between
     // two serialized documents, and the collection definitions when they
     // differ. Entities equal on both sides are omitted, so the result is

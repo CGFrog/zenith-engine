@@ -71,6 +71,9 @@ two serialized documents (plus the collection definitions when they changed,
 as `SceneChanges`), and `SceneDocument::applyChanges` patches those entities
 and collections in place toward either side atomically, leaving every other
 entity, its EnTT handle, and its child order untouched.
+`SceneDocument::serializeEntities` writes chosen entities in exactly the form
+a `SceneEntityChange` holds, so a caller that knows which entities an edit
+touches can build `SceneChanges` without serializing the whole scene.
 `SceneAssetReferences.*` converts project-relative asset references for codecs.
 
 Scene documents are versioned (`SceneDocument::currentVersion`, now 3).
@@ -211,6 +214,12 @@ scene subtree as a document. It is runtime code, so primary and additive
 scenes share definitions without editor state. Entity references inside
 component JSON are remapped by `EntityReferenceRemap` (below): capture clears
 references outside the prefab with a diagnostic.
+
+A failure after the staging check (a nested instance that no longer matches
+its prefab) puts the scene back. Only the instance's own subtree is saved
+first, and the entities the change created are found through
+`Scene::nextEntityId`, so instantiating and refreshing cost what the prefab
+costs, whatever the size of the scene.
 
 ## `src/engine/scene/EntityReferenceRemap.*`
 

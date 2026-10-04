@@ -105,6 +105,15 @@ void testEntityChanges(AssetManager& assets, const SceneDocumentOptions& options
     expect(changes.entities[1].before && !changes.entities[1].after && !changes.entities[3].before &&
                changes.entities[3].after,
            "a diff should mark removed and added entities as absent on one side");
+    std::vector<std::optional<std::string>> current;
+    const std::vector<SceneEntityId> changedEntities{{2}, {3}, {4}, {5}};
+    const SceneDocumentResult serializedEntities =
+        SceneDocument::serializeEntities(scene, assets, options, changedEntities, current);
+    expect(serializedEntities.success && current.size() == changes.entities.size(), serializedEntities.error);
+    for (size_t index = 0; index < current.size() && index < changes.entities.size(); ++index) {
+        expect(current[index] == changes.entities[index].after,
+               "serializing chosen entities should match the diff's after side byte for byte");
+    }
     SceneChanges none;
     expect(SceneDocument::diff(before, before, none).success && none.empty(), "identical documents should not differ");
 

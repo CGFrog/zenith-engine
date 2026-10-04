@@ -851,8 +851,41 @@ These items are independent and can go into any batch.
   - `Keymap`: its public `serializeOverrides`/`loadOverrides` work on text,
     and it deletes its file when nothing is overridden. Adopting it would mean
     changing that API for little gain.
-- [ ] **D6.** Measure prefab compare and refresh through the staging scene.
+- [x] **D6.** Measure prefab compare and refresh through the staging scene.
       Optimize only if it shows up in the measurements.
+
+  Result: `tests/engine/PrefabBenchmark.cpp`
+  (`zenith_prefab_benchmark_run`). The scene has 5,000 background entities
+  and ten instances of a 200-entity prefab with a nested prefab, 7,050
+  entities in all. Release means, in milliseconds:
+
+  | Measure | Before | After |
+  | --- | --- | --- |
+  | Spawn a 3-entity prefab into that scene | 75.99 | 1.68 |
+  | Spawn it into an empty scene | 1.03 | 0.82 |
+  | `refresh` (keep added objects) | 97.05 | 25.59 |
+  | Apply pattern (compare 9 instances, capture, refresh 9) | 991.77 | 315.39 |
+  | `overrides` against a prepared source | 6.50 | 6.93 |
+  | `entityOverrides` (each drag frame) | 0.09 | 0.14 |
+  | `prepareComparison` | 9.60 | 9.49 |
+
+  - Spawning and refreshing serialized the whole scene before every change,
+    just to be able to roll a failure back (`PrefabSystem::transact`). Now
+    only the instance's subtree is saved, and the entities the change
+    created are found by id (`Scene::nextEntityId`). The new public
+    `SceneDocument::serializeEntities` writes the chosen entities in diff
+    form.
+  - `PrefabAuthoring::apply` prepares the previous prefab once for all the
+    other instances, instead of normalizing it again for each.
+  - Comparison is left as it is: the per-frame `entityOverrides` costs a
+    tenth of a millisecond.
+  - `testFailedRefreshRestoresScene` (`zenith_prefabs`) covers the rollback.
+
+  Follow-ups:
+  - A spawn into a large scene still costs about twice one into an empty
+    scene; what remains grows with the scene, not with the prefab.
+  - `instantiate` and `refresh` still run the full build twice, once in the
+    staging scene and once for real.
 - [x] **D7.** Docs hygiene:
   - `docs/PERFORMANCE_ROADMAP.md` is linked from `ARCHITECTURE.md`,
     `NEXT_STEPS.md` and `REPOSITORY_GUIDE.md` but does not exist. Restore it

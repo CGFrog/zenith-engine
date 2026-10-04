@@ -742,6 +742,28 @@ SceneDocumentResult SceneDocument::load(const std::filesystem::path& path, Asset
     return deserialize(contents.str(), assets, options, destination);
 }
 
+SceneDocumentResult SceneDocument::serializeEntities(const Scene& scene, const AssetManager& assets,
+                                                     const SceneDocumentOptions& options,
+                                                     std::span<const SceneEntityId> ids,
+                                                     std::vector<std::optional<std::string>>& output) {
+    std::vector<std::optional<std::string>> serialized;
+    serialized.reserve(ids.size());
+    for (const SceneEntityId id : ids) {
+        const Entity entity = scene.findEntity(id);
+        if (entity == entt::null) {
+            serialized.emplace_back();
+            continue;
+        }
+        Json json;
+        if (SceneDocumentResult result = serializeEntity(scene, entity, assets, options, json); !result) {
+            return result;
+        }
+        serialized.emplace_back(json.dump());
+    }
+    output = std::move(serialized);
+    return {.success = true};
+}
+
 SceneDocumentResult SceneDocument::diff(std::string_view before, std::string_view after, SceneChanges& changes) {
     try {
         Json beforeDocument;
