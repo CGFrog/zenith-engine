@@ -417,31 +417,33 @@ Exit criteria:
 
 ## Milestone 20: gameplay scripting and extension boundary
 
-- [ ] Define a versioned gameplay-facing API over entity IDs, components,
-      actions, scene requests, audio, physics queries, and runtime UI without
-      exposing EnTT, SDL, Vulkan, Jolt, or editor types.
-- [ ] Select an embeddable scripting runtime only after measuring startup,
-      per-frame call, memory, debugging, and packaging costs against a written
-      acceptance budget.
-- [ ] Keep script modules project-owned and make engine registration explicit;
-      scripts must not discover mutable global services.
-- [ ] Serialize script component references and typed properties with
-      descriptive validation for missing modules, functions, and migrations.
-- [ ] Define deterministic create, enable, update, fixed-update, disable, and
-      destroy ordering across scene transitions and additive instances.
-- [ ] Add editor property inspection, compile/reload diagnostics, and opt-in
-      state-preserving hot reload without mutating the saved document silently.
-- [ ] Sandbox filesystem and process access by default and apply configurable
-      instruction, memory, and recursion limits.
-- [ ] Add lifecycle, error-isolation, hot-reload, serialization, determinism,
-      and packaged-project tests.
+Decided 2026-10-04 (see `GAMEPLAY_ROADMAP.md`): gameplay is C++ in hot-reloaded
+game modules. Per-entity logic is a `Behaviour` (a reflected component type
+with lifecycle hooks); bulk logic stays in systems. No embedded scripting
+runtime is planned, so sandboxing and instruction limits no longer apply.
+
+- [x] Keep gameplay modules project-owned and make engine registration
+      explicit (`ModuleRegistrar`); modules reach services only through the
+      contexts they are handed.
+- [x] Serialize behaviours as typed component properties with schema versions,
+      migrations, and descriptive validation; a module that fails to load keeps
+      its components as preserved JSON.
+- [x] Define deterministic create, enable, start, update, fixed-update,
+      late-update, disable, and destroy ordering (`BehaviourScheduler`).
+- [x] Add editor property inspection and state-preserving hot reload
+      (`GameModuleHost`).
+- [x] Add lifecycle, hot-reload, and serialization tests
+      (`zenith_behaviours`, `zenith_game_module_host`).
+- [ ] Define the gameplay-facing API boundary: which engine types modules may
+      use, without exposing EnTT, SDL, Vulkan, Jolt, or editor types.
+- [ ] Isolate a behaviour that throws, so it is disabled with a diagnostic
+      while the rest of the game keeps running.
 
 Exit criteria:
 
-- A packaged project can implement a small gameplay loop without recompiling
-  the engine or accessing subsystem internals.
-- A failing or runaway script is stopped with a useful diagnostic while the
-  engine, editor document, and unrelated script instances remain valid.
+- A packaged project implements a small gameplay loop in its game module
+  without recompiling the engine or accessing subsystem internals (the FPS
+  template, gameplay roadmap item C6).
 
 ## Milestone 21: platform, accessibility, and release operations
 
@@ -595,10 +597,9 @@ Start with Milestone 22: validation runs and built-in frame capture protect
 everything that follows and are small. Then begin Milestone 23 with baked
 irradiance probes, which close the largest visual gap.
 
-Milestone 20 remains deferred. Its first slice should compare candidate
-scripting runtimes against a written startup, call, memory, debugging, sandbox,
-and packaging budget before adding a runtime dependency or serialized script
-component.
+Milestone 20 continues in `GAMEPLAY_ROADMAP.md` (C++ Behaviours in game
+modules); its remaining items are the gameplay API boundary and error
+isolation.
 
 Networking, multiplayer prediction, editor collaboration, advanced vehicles
 and soft-body physics, and a stable native binary-plugin ABI remain later work

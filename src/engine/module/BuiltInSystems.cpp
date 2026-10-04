@@ -1,5 +1,6 @@
 #include "BuiltInSystems.hpp"
 
+#include "engine/behaviour/BehaviourScheduler.hpp"
 #include "engine/gameplay/FirstPerson.hpp"
 
 #include <stdexcept>
@@ -27,10 +28,20 @@ SystemDescriptor firstPersonCameraSystem() {
                 updateFirstPersonCameras(context.scene, context.actions, context.deltaSeconds);
             }};
 }
+
+SystemDescriptor behaviourSystem(std::string_view name, SystemPhase phase) {
+    return {.name = std::string(name),
+            .phase = phase,
+            .runIn = RunIn::EditAndPlay,
+            .run = [phase](const SystemContext& context) { runBehaviours(phase, context); }};
+}
 } // namespace
 
 SystemRegistryResult registerBuiltInSystems(SystemRegistry& systems) {
-    for (SystemDescriptor system : {characterInputSystem(), firstPersonCameraSystem()}) {
+    for (SystemDescriptor system : {characterInputSystem(), firstPersonCameraSystem(),
+                                    behaviourSystem(EngineSystems::Behaviours, SystemPhase::Update),
+                                    behaviourSystem(EngineSystems::FixedBehaviours, SystemPhase::FixedUpdate),
+                                    behaviourSystem(EngineSystems::LateBehaviours, SystemPhase::LateUpdate)}) {
         if (SystemRegistryResult result = systems.add(std::move(system)); !result) {
             return result;
         }

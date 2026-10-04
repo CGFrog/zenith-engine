@@ -405,7 +405,8 @@ void GameModuleHost::runSystems(SystemPhase phase, Scene& scene, ApplicationCont
                       .logger = m_logger,
                       .services = mode == SimulationMode::Edit ? nullptr : m_gameServices.get(),
                       .actions = actions ? &*actions : nullptr,
-                      .ui = phase == SystemPhase::Ui ? ui : nullptr},
+                      .ui = phase == SystemPhase::Ui ? ui : nullptr,
+                      .behaviours = m_module->behaviours().get()},
                      &m_profile);
 }
 
@@ -415,7 +416,8 @@ void GameModuleHost::setLogger(Logger& logger) {
 
 void GameModuleHost::startGameplay(AssetManager& assets, SceneDocumentOptions documents, DebugDraw& debugDraw) {
     m_gameServices.reset();
-    m_gameServices = std::make_unique<GameServices>(assets, std::move(documents), debugDraw, m_logger);
+    m_gameServices = std::make_unique<GameServices>(assets, std::move(documents), debugDraw, m_logger,
+                                                    m_module ? m_module->behaviours() : nullptr);
 }
 
 void GameModuleHost::stopGameplay() {

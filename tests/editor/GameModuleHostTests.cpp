@@ -39,6 +39,7 @@ size_t moduleSystemCount(std::span<const SystemDescriptor* const> systems) {
 }
 
 constexpr std::string_view counterKey = "editor_test_counter";
+constexpr std::string_view spinnerKey = "editor_test_spinner";
 constexpr std::string_view addCounterOperator = "editor_test.add_counter";
 constexpr std::string_view moduleMenu = "EDITOR_TEST_MT_tools";
 constexpr std::string_view moduleSidebarTab = "Test Tab";
@@ -107,7 +108,13 @@ struct HostFixture : EditorTestFixture {
 
     // The counter's field, or null when the entity has no counter.
     template <typename Value> Value* counterField(SceneEntityId id, std::string_view key) {
-        const ComponentType* type = counterType();
+        return componentField<Value>(counterKey, id, key);
+    }
+
+    // The field of the entity's component of type componentKey, or null.
+    template <typename Value>
+    Value* componentField(std::string_view componentKey, SceneEntityId id, std::string_view key) {
+        const ComponentType* type = componentTypesFor(document.options()).find(componentKey);
         const Entity entity = scene.findEntity(id);
         void* counter = type != nullptr && entity != entt::null ? type->find(scene, entity) : nullptr;
         if (counter == nullptr) {
@@ -415,6 +422,11 @@ void testHotReload(HostFixture& fixture, const TestPaths& paths, SceneEntityId c
     for (GameModuleHost::Panel& panel : fixture.host.panels()) {
         panel.visible = true;
     }
+    // A behaviour's fields survive the reload.
+    const Entity spinner = fixture.scene.createEntity("Spinner");
+    const SceneEntityId spinnerId = fixture.scene.id(spinner);
+    componentTypesFor(fixture.document.options()).find(spinnerKey)->addDefault(fixture.scene, spinner);
+    *fixture.componentField<int32_t>(spinnerKey, spinnerId, "turns") = 7;
     const GameModuleHostResult reloaded = fixture.host.reload(fixture.scene, fixture.assets, fixture.document);
     expect(reloaded.success && fixture.host.module() != nullptr && fixture.host.module()->version() == "2.0.0",
            "the rebuilt module hot reloads");
@@ -425,15 +437,22 @@ void testHotReload(HostFixture& fixture, const TestPaths& paths, SceneEntityId c
            "module component values survive the reload");
     fixture.selection.removeMissing(fixture.scene);
     expect(fixture.selection.ids() == std::vector<SceneEntityId>{counterId}, "the selection survives the reload");
+    expect(fixture.componentField<int32_t>(spinnerKey, spinnerId, "turns") != nullptr &&
+               *fixture.componentField<int32_t>(spinnerKey, spinnerId, "turns") == 7,
+           "behaviour fields survive the reload");
     fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Play, 0.016f);
     expect(fixture.counterValue(counterId, "value") == 106, "the reloaded module's systems run");
+    expect(*fixture.componentField<int32_t>(spinnerKey, spinnerId, "turns") == 107 &&
+               *fixture.componentField<int32_t>(spinnerKey, spinnerId, "starts") == 1,
+           "the reloaded module's behaviour runs its new code");
     expect(fixture.operators.find(addCounterOperator) != nullptr && fixture.host.panels().size() == 1,
            "the reloaded module's editor extensions are registered again");
     expect(fixture.extensionsRegistered() && reloaded.warnings.size() == 1,
            "the reload released every extension, so registering them again succeeds once each");
     expect(!fixture.host.panels().empty() && fixture.host.panels()[0].visible, "an open module panel stays open");
-    // count_play and probe_context ran once since the reload.
-    expect(fixture.host.systemProfile().timings().size() == 2,
+    // The engine's behaviour system, count_play, and probe_context ran once
+    // since the reload.
+    expect(fixture.host.systemProfile().timings().size() == 3,
            "a reload starts the profile over with the new module's systems");
     fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Simulate, 0.016f);
     expect(fixture.host.simulateMask().enabled("count_play", SystemPhase::Update) &&

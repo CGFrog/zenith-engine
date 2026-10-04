@@ -205,14 +205,16 @@ void testLoadRegisterAndUnload(const TestPaths& paths) {
         const SystemScheduler scheduler(module->systems());
         expect(module->registriesShared(), "a scheduler shares the module's systems");
         expect(scheduler.schedule(SystemPhase::Update, SimulationMode::Play) ==
-                   std::vector<std::string>{"add_one", "double", "context_probe", "fire"},
+                   std::vector<std::string>{"add_one", std::string(EngineSystems::Behaviours), "double",
+                                            "context_probe", "fire"},
                "module systems are ordered by their order, not registration");
         expect(scheduler.schedule(SystemPhase::Update, SimulationMode::Edit) ==
-                   std::vector<std::string>{"edit_tick", "context_probe"},
+                   std::vector<std::string>{std::string(EngineSystems::Behaviours), "edit_tick", "context_probe"},
                "edit mode runs only the module's edit systems");
         // The engine's own systems come first.
         expect(scheduler.schedule(SystemPhase::LateUpdate, SimulationMode::Play) ==
-                       std::vector<std::string>{std::string(EngineSystems::FirstPersonCamera), "late_tick"} &&
+                       std::vector<std::string>{std::string(EngineSystems::FirstPersonCamera),
+                                                std::string(EngineSystems::LateBehaviours), "late_tick"} &&
                    scheduler.schedule(SystemPhase::Ui, SimulationMode::Play) == std::vector<std::string>{"hud"},
                "module systems register in the LateUpdate and Ui phases");
         expect(module->inputActions() != nullptr &&

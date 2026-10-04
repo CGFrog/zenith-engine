@@ -17,6 +17,7 @@
 #include "game/gameplay/DemoGameplay.hpp"
 #include "game/gameplay/ItemCollection.hpp"
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <iostream>
@@ -55,17 +56,25 @@ void setFloatField(const ComponentType& type, void* component, std::string_view 
     }
 }
 
-// The engine's character systems run first, then the demo's.
+// The engine's systems run first, then the demo's.
+const std::vector<std::string> updateSystems{std::string(EngineSystems::Behaviours)};
 const std::vector<std::string> fixedSystems{std::string(EngineSystems::CharacterInput),
+                                            std::string(EngineSystems::FixedBehaviours),
                                             std::string(DemoGameplay::ItemCollectionSystem)};
-const std::vector<std::string> lateSystems{std::string(EngineSystems::FirstPersonCamera)};
+const std::vector<std::string> lateSystems{std::string(EngineSystems::FirstPersonCamera),
+                                           std::string(EngineSystems::LateBehaviours)};
+
+// Only the engine's behaviour systems run in Edit, for behaviours that opt in.
+bool onlyEngineSystems(const std::vector<std::string>& names) {
+    return std::ranges::all_of(names, [](const std::string& name) { return name.starts_with("zenith."); });
+}
 
 void expectGameplaySchedule(const SystemScheduler& scheduler, const char* host) {
-    const bool playScheduled = scheduler.schedule(SystemPhase::Update, SimulationMode::Play).empty() &&
+    const bool playScheduled = scheduler.schedule(SystemPhase::Update, SimulationMode::Play) == updateSystems &&
                                scheduler.schedule(SystemPhase::FixedUpdate, SimulationMode::Play) == fixedSystems &&
                                scheduler.schedule(SystemPhase::LateUpdate, SimulationMode::Play) == lateSystems;
-    const bool editIdle = scheduler.schedule(SystemPhase::Update, SimulationMode::Edit).empty() &&
-                          scheduler.schedule(SystemPhase::FixedUpdate, SimulationMode::Edit).empty();
+    const bool editIdle = onlyEngineSystems(scheduler.schedule(SystemPhase::Update, SimulationMode::Edit)) &&
+                          onlyEngineSystems(scheduler.schedule(SystemPhase::FixedUpdate, SimulationMode::Edit));
     if (!playScheduled || !editIdle) {
         std::cerr << "In the " << host << ":\n";
     }

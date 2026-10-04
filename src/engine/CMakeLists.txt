@@ -118,6 +118,8 @@ add_library(zenith_engine SHARED
     input/InputProfiles.cpp
     jobs/JobSystem.cpp
     jobs/FrameTaskGraph.cpp
+    behaviour/BehaviourRegistry.cpp
+    behaviour/BehaviourScheduler.cpp
     gameplay/FirstPerson.cpp
     module/BuiltInSystems.cpp
     module/EntityCommandBuffer.cpp

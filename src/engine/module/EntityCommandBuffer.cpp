@@ -64,7 +64,8 @@ void EntityCommandBuffer::clear() {
     m_commands.clear();
 }
 
-void EntityCommandBuffer::flush(Scene& scene, PrefabSystem& prefabs, EventQueue& events, const LogChannel& log) {
+void EntityCommandBuffer::flush(Scene& scene, PrefabSystem& prefabs, EventQueue& events, const LogChannel& log,
+                                const DestroyingCallback& destroying) {
     for (int round = 0; !m_commands.empty(); ++round) {
         if (round == maximumFlushRounds) {
             log.error("Entity commands kept recording more commands while flushing; dropped " +
@@ -78,7 +79,12 @@ void EntityCommandBuffer::flush(Scene& scene, PrefabSystem& prefabs, EventQueue&
             if (auto* spawn = std::get_if<Spawn>(&command)) {
                 apply(*spawn, scene, prefabs, events, log);
             } else if (const auto* destroy = std::get_if<Destroy>(&command)) {
-                const Entity entity = scene.findEntity(destroy->entity);
+                Entity entity = scene.findEntity(destroy->entity);
+                if (entity != entt::null && destroying) {
+                    destroying(scene, entity);
+                    // The callback may have destroyed it already.
+                    entity = scene.findEntity(destroy->entity);
+                }
                 if (entity != entt::null) {
                     scene.destroyEntity(entity);
                     events.publish(EntityDestroyed{destroy->entity});

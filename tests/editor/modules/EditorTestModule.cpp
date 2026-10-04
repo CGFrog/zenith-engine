@@ -1,7 +1,8 @@
 // A game module with editor extensions, for GameModuleHostTests and the
 // editor's module smoke test. It is built twice: the second build defines
 // ZENITH_EDITOR_TEST_MODULE_V2, which changes its version and what its play
-// system adds, so a test can hot reload one build over the other.
+// system and behaviour add, so a test can hot reload one build over the
+// other.
 //
 // Like any game module it links only the engine: everything it uses from the
 // editor is the header-only EditorModuleApi, and it draws with the Dear ImGui
@@ -43,6 +44,22 @@ struct EditorTestCounter {
     int32_t servicesSeen{0};
 };
 
+// A behaviour: each Play update adds playIncrement to turns, and onStart
+// counts its starts.
+class EditorTestSpinner : public Behaviour {
+  public:
+    int32_t turns{0};
+    int32_t starts{0};
+
+    void onStart(BehaviourContext&) override {
+        ++starts;
+    }
+
+    void onUpdate(BehaviourContext&) override {
+        turns += playIncrement;
+    }
+};
+
 template <typename Function> void forEachCounter(Scene& scene, Function function) {
     scene.registry().view<EditorTestCounter>().each([&](EditorTestCounter& counter) { function(counter); });
 }
@@ -64,6 +81,9 @@ void zenith_module_register(ModuleRegistrar& registrar) {
                                                .add("services_seen", &EditorTestCounter::servicesSeen)
                                                .optional())
                                    .build());
+    registrar.addBehaviour<EditorTestSpinner>(
+        "editor_test_spinner", "Editor Test Spinner",
+        Fields<EditorTestSpinner>().add("turns", &EditorTestSpinner::turns).add("starts", &EditorTestSpinner::starts));
     registrar.addSystem({.name = "count_play",
                          .phase = SystemPhase::Update,
                          .runIn = RunIn::Play,

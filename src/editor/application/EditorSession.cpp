@@ -417,7 +417,7 @@ void EditorSession::fixedUpdate(ApplicationContext& context, const InputState& i
 
 void EditorSession::afterPhysicsStep(ApplicationContext& context) {
     if (GameServices* services = m_moduleHost.gameServices()) {
-        services->publishTriggerEvents(context.physics.triggerEvents());
+        services->publishPhysicsEvents(context.scene, context.physics.triggerEvents(), context.physics.contactEvents());
     }
 }
 

@@ -11,6 +11,7 @@ This subtree is the reusable `zenith_engine` library. It must not include from
 | `application/` | Application/scene lifecycle contracts, deferred requests, and the simulation clock. [Application](../../docs/engine/application.md) |
 | `assets/` | Renderer-independent import, decoding, caching, and typed asset handles. [Assets](../../docs/engine/assets.md) |
 | `audio/` | SDL audio device, decoding, mixing, streaming, and audio handles. [Audio](../../docs/engine/audio.md) |
+| `behaviour/` | The `Behaviour` base class, its registry, and the scheduler that runs behaviour hooks. [Modules](../../docs/engine/modules.md) |
 | `diagnostics/` | The engine `Logger`. [Application](../../docs/engine/application.md) |
 | `gameplay/` | Reusable gameplay mechanisms the engine's built-in systems drive (first-person players). [Gameplay](../../docs/engine/gameplay.md) |
 | `graphics/` | Renderer and Vulkan implementation. [Graphics](../../docs/engine/graphics.md), [passes](../../docs/engine/graphics-passes.md), [post](../../docs/engine/graphics-post.md) |

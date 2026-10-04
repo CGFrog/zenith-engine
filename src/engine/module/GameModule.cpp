@@ -3,6 +3,7 @@
 #include "BuiltInSystems.hpp"
 #include "ModuleApi.hpp"
 #include "ModuleRegistrar.hpp"
+#include "engine/behaviour/BehaviourRegistry.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
 #include <system_error>
@@ -35,6 +36,7 @@ GameModule::~GameModule() {
         m_shadowCopy.keep();
     }
     // Release the module's functions while its code is still mapped.
+    m_behaviours.reset();
     m_systems.reset();
     m_componentTypes.reset();
 }
@@ -95,15 +97,18 @@ GameModuleResult GameModule::load(const std::filesystem::path& path, const GameM
     // A module's systems run after the engine's.
     auto systems = std::make_shared<SystemRegistry>(*builtInSystems());
     auto inputActions = std::make_shared<InputActionMap>();
+    auto behaviours = std::make_shared<BehaviourRegistry>();
     // Owned by the module before registration runs, so a failure releases the
     // module's functions before the library unloads.
     module->m_componentTypes = componentTypes;
     module->m_systems = systems;
     module->m_inputActions = inputActions;
-    ModuleRegistrar registrar(*componentTypes, *systems, *inputActions);
+    module->m_behaviours = behaviours;
+    ModuleRegistrar registrar(*componentTypes, *systems, *inputActions, *behaviours);
     registerModule(registrar);
     componentTypes.reset();
     systems.reset();
+    behaviours.reset();
     if (!registrar.firstError().empty()) {
         return {.error = "Game module '" + module->m_name + "' failed to register: " + registrar.firstError()};
     }
@@ -145,8 +150,12 @@ std::shared_ptr<const InputActionMap> GameModule::inputActions() const {
     return m_inputActions;
 }
 
+std::shared_ptr<const BehaviourRegistry> GameModule::behaviours() const {
+    return m_behaviours;
+}
+
 bool GameModule::registriesShared() const {
-    return m_componentTypes.use_count() > 1 || m_systems.use_count() > 1;
+    return m_componentTypes.use_count() > 1 || m_systems.use_count() > 1 || m_behaviours.use_count() > 1;
 }
 
 void* GameModule::findSymbol(const char* name) const {

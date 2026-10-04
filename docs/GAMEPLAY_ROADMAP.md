@@ -78,6 +78,22 @@ Approved 2026-10-04. Nothing is implemented yet.
     `SystemRegistry`, so they run in games and in editor Play alike, before a
     game's systems of the same phase and order. Later items add theirs there.
   - `ZENITH_MODULE_API_VERSION` is 5.
+- **2026-10-04: how behaviours run (B2).**
+  - `Behaviour` lives in `src/engine/behaviour/`, with its registry and
+    scheduler.
+  - Behaviours run inside three engine systems (`zenith.behaviours`,
+    `zenith.fixed_behaviours`, `zenith.late_behaviours`), so hosts needed no
+    new phase hooks, flushes follow the existing rules, and the Simulate mask
+    applies to them as to any system.
+  - The behaviour types reach the systems through `SystemContext::behaviours`
+    and `GameServices`, not through the component registry, so `scene/`
+    knows nothing of behaviours.
+  - Trigger and collision hooks run at the start of the next FixedUpdate,
+    from events `GameServices::publishPhysicsEvents` keeps by scene id.
+  - `onDestroy` runs only for destroy commands; there is no ECS signal
+    (see the A1 decision on signals and `Scene::swap`).
+  - A copied behaviour starts uncreated; assignment keeps lifecycle state.
+  - `ZENITH_MODULE_API_VERSION` is 6.
 - **2026-10-04: engine owns mechanisms, games own rules.** The character
   controller, physics queries, events, timers, effects, save slots and UI
   widgets are reusable engine mechanisms. Weapons, damage, HUD contents and
@@ -371,23 +387,38 @@ Design:
   actions, delta.
 
 Tasks:
-- [ ] Each concrete behaviour is a reflected component type, registered with
+- [x] Each concrete behaviour is a reflected component type, registered with
       `registrar.addBehaviour<T>(key, displayName, Fields<T>()...)`. That gives
       the inspector, serialization, multi-edit, undo, prefab overrides and
       `PreservedComponentsComponent` for free.
-- [ ] The registrar stores type-erased dispatch thunks per behaviour type, and
+- [x] The registrar stores type-erased dispatch thunks per behaviour type, and
       records the declaration's `std::source_location`.
-- [ ] Add a `BehaviourScheduler` that runs behaviours in a deterministic order:
+- [x] Add a `BehaviourScheduler` that runs behaviours in a deterministic order:
       phase, then behaviour registration order, then entity creation order.
       Behaviours run in Play and Simulate. A type can opt into Edit with the
       same `RunIn` flags systems use.
-- [ ] Destroying or spawning from inside a hook goes through `EntityCommands`.
-- [ ] Reload survival uses the existing serialize/restore path.
-- [ ] Tests: hook order, `onStart` runs exactly once, destroy during
+- [x] Destroying or spawning from inside a hook goes through `EntityCommands`.
+- [x] Reload survival uses the existing serialize/restore path.
+- [x] Tests: hook order, `onStart` runs exactly once, destroy during
       iteration, trigger hooks, survival across hot reload (in the style of
       `zenith_game_module_host_tests`).
-- [ ] Document when to use a Behaviour and when to use a system in
+- [x] Document when to use a Behaviour and when to use a system in
       `docs/engine/modules.md`. Update `NEXT_STEPS.md` Milestone 20.
+
+Result:
+- `src/engine/behaviour/`: `Behaviour.hpp` (hooks, `BehaviourContext`),
+  `BehaviourRegistry.*`, and `BehaviourScheduler.*` (`runBehaviours`,
+  `destroyBehaviours`). `ModuleRegistrar::addBehaviour<T>` registers both
+  halves; `Gameplay` and `GameModule` carry the registry.
+- Coverage: `tests/engine/BehaviourTests.cpp` (`zenith_behaviours`), and a
+  behaviour in `EditorTestModule.cpp` whose fields survive the reload in
+  `GameModuleHostTests`.
+
+Follow-ups:
+- A hook that throws is not isolated (NEXT_STEPS Milestone 20).
+- Stopping a session or unloading a scene calls no `onDisable`/`onDestroy`.
+- Update systems in a game host get the unscaled frame time while timers and
+  animations use simulated time; behaviours inherit that.
 
 ### B3. Animation state machine
 
@@ -555,5 +586,3 @@ These items are independent and can go into any batch.
 
 - Hot reload during Play is out of scope for now. Reloads stay queued until
   Stop.
-- Decide whether `Behaviour` lives in `src/engine/behaviour/` or
-  `src/engine/module/` once its size is known (B2).

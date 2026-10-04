@@ -261,6 +261,15 @@ template <typename Object> class Fields {
         return *this;
     }
 
+    // Adds other's fields after these, for example a base class's fields
+    // before a derived class's own.
+    Fields& append(Fields other) {
+        for (FieldDescriptor& field : other.m_fields) {
+            m_fields.push_back(std::move(field));
+        }
+        return *this;
+    }
+
     std::vector<FieldDescriptor> build() && {
         return std::move(m_fields);
     }

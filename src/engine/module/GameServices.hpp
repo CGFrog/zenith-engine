@@ -9,7 +9,28 @@
 #include "engine/scene/Prefab.hpp"
 
 class AssetManager;
+class BehaviourRegistry;
 class DebugDraw;
+
+// A physics step's sensor entries and exits and the contacts that began
+// between two solid bodies, by scene id, kept for the behaviours' trigger and
+// collision hooks. A collision's normal points from first toward second.
+struct GameplayPhysicsEvents {
+    struct Trigger {
+        bool entered{true};
+        SceneEntityId sensor;
+        SceneEntityId other;
+    };
+
+    struct Collision {
+        SceneEntityId first;
+        SceneEntityId second;
+        glm::vec3 normal{0.0f};
+    };
+
+    std::vector<Trigger> triggers;
+    std::vector<Collision> collisions;
+};
 
 // Gameplay mechanisms a host gives its systems for one play session: prefab
 // spawning, deferred scene changes, events, timers, and debug drawing. Hosts
@@ -23,8 +44,10 @@ class GameServices {
   public:
     // documents names the gameplay's component types and asset root, for
     // spawning prefabs. assets, debugDraw, and logger must outlive the
-    // services; a null logger writes to stderr.
-    GameServices(AssetManager& assets, SceneDocumentOptions documents, DebugDraw& debugDraw, Logger* logger);
+    // services; a null logger writes to stderr. behaviours, when set, get
+    // their onDestroy hooks from destroy commands.
+    GameServices(AssetManager& assets, SceneDocumentOptions documents, DebugDraw& debugDraw, Logger* logger,
+                 std::shared_ptr<const BehaviourRegistry> behaviours = {});
 
     GameServices(const GameServices&) = delete;
     GameServices& operator=(const GameServices&) = delete;
@@ -46,8 +69,12 @@ class GameServices {
     // Applies the recorded entity commands.
     void flush(Scene& scene);
     // Publishes a physics step's sensor events as TriggerEntered and
-    // TriggerExited; the host calls it after each step.
-    void publishTriggerEvents(std::span<const TriggerEvent> events);
+    // TriggerExited, and keeps them and the step's new contacts between solid
+    // bodies for the behaviours. The host calls it after each step.
+    void publishPhysicsEvents(const Scene& scene, std::span<const TriggerEvent> triggers,
+                              std::span<const ContactEvent> contacts);
+    // The physics events kept since the last call.
+    GameplayPhysicsEvents takePhysicsEvents();
 
   private:
     PrefabSystem m_prefabs;
@@ -55,7 +82,10 @@ class GameServices {
     EventQueue m_events;
     Timers m_timers;
     DebugDraw& m_debugDraw;
+    Logger* m_logger;
     LogChannel m_log;
+    std::shared_ptr<const BehaviourRegistry> m_behaviours;
+    GameplayPhysicsEvents m_physicsEvents;
 };
 
 // Runs one phase of systems and then, when context.services is set, flushes

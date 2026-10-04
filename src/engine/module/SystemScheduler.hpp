@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+class BehaviourRegistry;
 class GameServices;
 class GameUiContext;
 class InputActionState;
@@ -85,6 +86,8 @@ std::string_view systemPhaseName(SystemPhase phase);
 //   (always in Simulate and Edit). actions is the game's input actions
 //   evaluated from that same input, and null whenever input is.
 // - ui is set only in the Ui phase.
+// - behaviours is the gameplay's behaviour types, which the engine's
+//   behaviour systems run; null when the host has none.
 struct SystemContext {
     Scene& scene;
     ApplicationContext* application{nullptr};
@@ -97,6 +100,7 @@ struct SystemContext {
     GameServices* services{nullptr};
     const InputActionState* actions{nullptr};
     GameUiContext* ui{nullptr};
+    const BehaviourRegistry* behaviours{nullptr};
 };
 
 // A named per-frame callback over a scene, usually registered by a game

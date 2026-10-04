@@ -15,8 +15,8 @@ built-in (or host-supplied) `ComponentTypeRegistry` plus its own
 `SystemRegistry`, recording which component keys the module added. Every
 registry starts with the engine's own systems (`BuiltInSystems.*`:
 `zenith.character_input` and `zenith.first_person_camera`, see
-[Gameplay](gameplay.md)), so they run before a game's systems of the same
-phase and order.
+[Gameplay](gameplay.md), and the three behaviour systems), so they run before
+a game's systems of the same phase and order.
 `SystemScheduler` runs a registry's systems per `SystemPhase` (`Update`,
 `FixedUpdate`, `LateUpdate`, `Ui`) by ascending order, filtered by `RunIn`
 edit/play flags; in `SimulationMode::Simulate` it runs the Play systems its
@@ -66,7 +66,58 @@ Besides the scene, mode, and delta, a system gets:
   [Window and input](window-input.md).
 
 Changing `SystemContext`, `ModuleRegistrar`, or a registered descriptor bumps
-`ZENITH_MODULE_API_VERSION` (now 5: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, and B1 made `character_controller` an engine component type with engine systems).
+`ZENITH_MODULE_API_VERSION` (now 6: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, B1 made `character_controller` an engine component type with engine systems, and B2 added behaviours to `ModuleRegistrar` and `SystemContext`).
+
+## Behaviours (`src/engine/behaviour/`)
+
+A `Behaviour` is per-entity logic: a class derived from `Behaviour` with
+virtual hooks, registered with
+`registrar.addBehaviour<T>(key, displayName, Fields<T>()..., BehaviourOptions)`.
+The registrar builds T's component type (category "Behaviours" unless the
+options name another, an optional `enabled` field before T's own), so the
+inspector, serialization, multi-edit, undo, prefab overrides and preserved
+JSON all work unchanged. It also records a `BehaviourType` in the gameplay's
+`BehaviourRegistry`: type-erased functions to find T's entities and cast them
+to `Behaviour`, the `RunIn` flags (Play unless the type opts into Edit), and
+the `std::source_location` of the registration.
+
+The engine's systems `zenith.behaviours` (Update), `zenith.fixed_behaviours`
+(FixedUpdate) and `zenith.late_behaviours` (LateUpdate) call `runBehaviours`
+with `SystemContext::behaviours`. Each pass:
+
+1. Runs the lifecycle hooks that are due: `onCreate` for new behaviours, then
+   `onEnable`/`onDisable` when `enabled` changed, then `onStart` once for each
+   enabled behaviour that has not started.
+2. In FixedUpdate, runs `onTriggerEnter`/`onTriggerExit` (both sides of a
+   sensor event) and `onCollision` (both sides of a new contact between solid
+   bodies) for the physics step since the last pass. The host hands the step's
+   events to `GameServices::publishPhysicsEvents`, which keeps them by scene id.
+3. Runs the phase's hook (`onUpdate`, `onFixedUpdate`, `onLateUpdate`) on
+   enabled behaviours.
+
+Types run in registration order and each type's entities in creation order
+(scene id), so the order is deterministic. Hooks receive a `BehaviourContext`:
+the scene, entity, delta, `GameServices` (null in Edit), actions and logger.
+Hooks change entities through `GameServices::commands()`; when a destroy
+command applies, `GameServices` calls `onDisable` and `onDestroy` on the
+subtree's behaviours first (`destroyBehaviours`). A copied behaviour (a
+duplicate, a prefab instance, the Play copy of the scene) starts uncreated;
+assignment (undo, Apply to Edit Scene) keeps the target's lifecycle state.
+Behaviours survive a module reload as any component does: by their serialized
+fields. Their lifecycle state does not, so a reloaded behaviour is created
+and started again.
+
+### Behaviour or system?
+
+- Use a **Behaviour** for logic that belongs to one entity and reacts to its
+  own events: a door, a pickup, a weapon, an enemy's decisions. Designers add
+  it in the inspector and tune its fields per entity.
+- Use a **system** for logic over many entities at once, or between them:
+  movement integration, AI scheduling across agents, scoring, a HUD. Systems
+  iterate component views directly and are cheaper per entity.
+- A behaviour may read anything a system can; when its per-entity work grows
+  hot, move the work into a system over a plain component and keep the
+  behaviour as configuration.
 
 ## `GameServices`
 
@@ -91,6 +142,8 @@ It holds:
   - `SceneLoaded`, published when gameplay starts;
   - `EntitySpawned` and `EntityDestroyed`;
   - `TriggerEntered` and `TriggerExited`.
+- The physics events of the last step for the behaviours' trigger and
+  collision hooks (`publishPhysicsEvents`, `takePhysicsEvents`).
 - `Timers`: one-shot or repeating callbacks on simulated time. They follow the
   clock's time scale and stop while paused. A timer may have an owner entity;
   the timer is dropped when its owner is gone.

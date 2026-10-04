@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 
+class BehaviourRegistry;
 class ComponentTypeRegistry;
 class GameModule;
 class ModuleRegistrar;
@@ -27,6 +28,8 @@ struct Gameplay {
     std::shared_ptr<const SystemScheduler> systems;
     // The game's input actions and default bindings; null means none.
     std::shared_ptr<const InputActionMap> inputActions;
+    // The game's behaviour types; null means none.
+    std::shared_ptr<const BehaviourRegistry> behaviours;
 
     explicit operator bool() const {
         return componentTypes != nullptr && systems != nullptr;

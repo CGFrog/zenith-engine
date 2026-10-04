@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+class BehaviourRegistry;
 class ComponentTypeRegistry;
 class InputActionMap;
 
@@ -91,6 +92,8 @@ class GameModule {
     // The input actions the module declared (possibly none); never null.
     // Plain data, so it may outlive the module.
     std::shared_ptr<const InputActionMap> inputActions() const;
+    // The behaviour types the module registered (possibly none); never null.
+    std::shared_ptr<const BehaviourRegistry> behaviours() const;
 
     // Whether anything outside this object still shares the registries.
     bool registriesShared() const;
@@ -115,6 +118,7 @@ class GameModule {
     std::vector<std::string> m_moduleComponentKeys;
     std::shared_ptr<const ComponentTypeRegistry> m_componentTypes;
     std::shared_ptr<const SystemRegistry> m_systems;
+    std::shared_ptr<const BehaviourRegistry> m_behaviours;
     std::shared_ptr<const InputActionMap> m_inputActions;
     LogChannel m_log;
 };

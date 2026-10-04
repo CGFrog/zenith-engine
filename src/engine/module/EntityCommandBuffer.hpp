@@ -50,9 +50,14 @@ class EntityCommandBuffer {
     bool empty() const;
     size_t size() const;
 
+    // Called with each entity a destroy command is about to destroy (its
+    // descendants go with it), while it still exists.
+    using DestroyingCallback = std::function<void(Scene& scene, Entity entity)>;
+
     // Applies and forgets every command, including commands recorded by the
     // callbacks it runs. Publishes EntitySpawned and EntityDestroyed to events.
-    void flush(Scene& scene, PrefabSystem& prefabs, EventQueue& events, const LogChannel& log);
+    void flush(Scene& scene, PrefabSystem& prefabs, EventQueue& events, const LogChannel& log,
+               const DestroyingCallback& destroying = {});
     void clear();
 
   private:

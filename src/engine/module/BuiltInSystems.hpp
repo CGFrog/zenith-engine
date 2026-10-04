@@ -15,6 +15,11 @@ inline constexpr std::string_view CharacterInput = "zenith.character_input";
 // LateUpdate, Play: turns first-person cameras by their look actions
 // (updateFirstPersonCameras), after physics has placed their characters.
 inline constexpr std::string_view FirstPersonCamera = "zenith.first_person_camera";
+// Update, FixedUpdate, and LateUpdate, in Edit and Play: run the gameplay's
+// behaviours (runBehaviours); each behaviour type's RunIn chooses its modes.
+inline constexpr std::string_view Behaviours = "zenith.behaviours";
+inline constexpr std::string_view FixedBehaviours = "zenith.fixed_behaviours";
+inline constexpr std::string_view LateBehaviours = "zenith.late_behaviours";
 } // namespace EngineSystems
 
 // Adds the engine's systems to systems; fails if a name is taken.
