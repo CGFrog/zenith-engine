@@ -204,6 +204,26 @@ the volume unbaked (environment lighting) until it is baked again. The inspector
 one volume; `zenith_editor <project> --bake-irradiance-volumes` bakes every
 volume in a project's startup scene without opening a window.
 
+`MeshPass` is one class whose member definitions are split by responsibility:
+
+| File | Contents |
+| --- | --- |
+| `MeshPass.cpp` | `init`, `shutdown`, deferred uploads, unused-asset pruning, `uiTexture` |
+| `MeshPassViews.cpp` | per-view create/resize/destroy and camera sets |
+| `MeshPassDescriptors.cpp` | descriptor layouts, pools, and per-view descriptor writes; decal preparation |
+| `MeshPassPipelines.cpp` | graphics pipelines and shading-variant pipeline sets |
+| `MeshPassResources.cpp` | geometry pages, `ensureMesh`/`ensureTexture`/`ensureMaterial`, texture slots, material records, bindless updates |
+| `MeshPassTextureStreaming.cpp` | texture uploads and mip streaming |
+| `MeshPassRenderItems.cpp` | render-item building, incremental updates, and LOD selection |
+| `MeshPassShadows.cpp` | directional and local shadow maps, per-view shadow state |
+| `MeshPassRecord.cpp` | `FrameState` use, `prepareViewFrame`, `record`, `recordFrameStage` |
+| `MeshPassRecordView.cpp` | `recordView` |
+| `MeshPassSceneDraws.cpp` | render-pass begin helpers, depth prepass, CPU-submitted and shaded item draws |
+| `MeshPassGpuDriven.cpp` | GPU-driven frame preparation and indirect group draws |
+| `MeshPassEffects.cpp` | SSR, transmission background, volumetric fog, particles, ambient occlusion |
+| `MeshPassEditorOverlays.cpp` | picks, selection mask, outlines, wireframe overlay |
+| `MeshPassInternal.hpp` | private constants, GPU record layouts, helpers shared by those files, and `MeshPass::FrameState` |
+
 ## `src/engine/graphics/MaterialRecord.*`
 
 The GPU form of `MaterialAsset` in the camera set's material buffer (binding 4):

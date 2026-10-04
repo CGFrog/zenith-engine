@@ -61,6 +61,19 @@ add_library(zenith_engine SHARED
     graphics/MaterialRecord.cpp
     graphics/graph/RenderGraph.cpp
     graphics/passes/MeshPass.cpp
+    graphics/passes/MeshPassViews.cpp
+    graphics/passes/MeshPassDescriptors.cpp
+    graphics/passes/MeshPassPipelines.cpp
+    graphics/passes/MeshPassResources.cpp
+    graphics/passes/MeshPassTextureStreaming.cpp
+    graphics/passes/MeshPassRenderItems.cpp
+    graphics/passes/MeshPassShadows.cpp
+    graphics/passes/MeshPassRecord.cpp
+    graphics/passes/MeshPassRecordView.cpp
+    graphics/passes/MeshPassSceneDraws.cpp
+    graphics/passes/MeshPassGpuDriven.cpp
+    graphics/passes/MeshPassEffects.cpp
+    graphics/passes/MeshPassEditorOverlays.cpp
     graphics/passes/GpuDrivenPass.cpp
     graphics/passes/IdBufferPass.cpp
     graphics/passes/DepthPyramid.cpp
