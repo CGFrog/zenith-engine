@@ -6,6 +6,7 @@
 #include <iostream>
 #include <memory>
 #include <string_view>
+#include <vector>
 
 namespace {
 int failures = 0;
@@ -142,6 +143,40 @@ void testBuiltIns() {
            "assigning a copied value should restore it");
     spot->remove(scene, entity);
     expect(!spot->has(scene, entity), "a component should be removable");
+}
+
+void testBuiltInRegistrationOrder() {
+    // Registration order is the order documents are read in and the order the
+    // editor lists types, so splitting the registration across files must not
+    // change it.
+    const std::vector<std::string_view> expected{"model",
+                                                 "model_node",
+                                                 "animation",
+                                                 "morph_weights",
+                                                 "skin",
+                                                 "mesh_renderer",
+                                                 "camera",
+                                                 "directional_light",
+                                                 "environment_light",
+                                                 "volumetric_fog",
+                                                 "particle_emitter",
+                                                 "point_light",
+                                                 "spot_light",
+                                                 "reflection_probe",
+                                                 "decal",
+                                                 "irradiance_volume",
+                                                 "collider",
+                                                 "rigid_body",
+                                                 "collection_membership",
+                                                 "collection_instance",
+                                                 "visibility",
+                                                 "prefab_instance",
+                                                 "prefab_entity"};
+    std::vector<std::string_view> actual;
+    for (const ComponentType& type : builtInComponentTypes()->types()) {
+        actual.push_back(type.key());
+    }
+    expect(actual == expected, "built-in component types should register in their established order");
 }
 
 void testGameComponentRoundTrip() {
@@ -283,6 +318,7 @@ void testRegistryRejectsInvalidTypes() {
 int main() {
     expect(labelFromKey("shadow_resolution") == "Shadow resolution", "labels should be derived from keys");
     testBuiltIns();
+    testBuiltInRegistrationOrder();
     testGameComponentRoundTrip();
     testMigrationsAndRejections();
     testUnknownComponentsArePreserved();
