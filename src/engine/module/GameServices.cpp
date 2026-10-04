@@ -69,6 +69,14 @@ SimulationClock GameServices::simulationClock(SimulationClock host) const {
     return host;
 }
 
+RandomStream& GameServices::random(std::string_view name) {
+    return m_random.stream(name);
+}
+
+RandomStreams& GameServices::randomStreams() {
+    return m_random;
+}
+
 NavigationWorld& GameServices::navigation(const Scene& scene) {
     if (!m_navigationBaked) {
         m_navigationBaked = true;

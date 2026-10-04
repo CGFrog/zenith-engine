@@ -123,6 +123,7 @@ add_library(zenith_engine SHARED
     behaviour/BehaviourRegistry.cpp
     behaviour/BehaviourScheduler.cpp
     gameplay/FirstPerson.cpp
+    gameplay/Random.cpp
     module/BuiltInSystems.cpp
     module/Effects.cpp
     module/EntityCommandBuffer.cpp

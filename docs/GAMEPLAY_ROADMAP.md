@@ -193,13 +193,13 @@ and is open.
 | D5 | Shared versioned-settings helper | — | done 89d1a71 |
 | D6 | Measure prefab compare/refresh cost | — | done d518873 |
 | D7 | Docs hygiene | — | done c5b111b |
-| E1 | Seeded gameplay random streams | — | open |
+| E1 | Seeded gameplay random streams | — | done |
 | E2 | Run and profile save data | E1 | open |
 | E3 | Definition tables | — | open |
 | E4 | Building and replacing a floor at runtime | — | open |
 | E5 | Partial paths and crowd avoidance | E4 | open |
 | E6 | Audio for gameplay | — | open |
-| E7 | Pause, teardown and one game clock | — | done |
+| E7 | Pause, teardown and one game clock | — | done b26c8ab |
 
 Suggested batches:
 
@@ -982,20 +982,42 @@ Read first: Phase A and B docs plus [Navigation](engine/navigation.md),
 
 ### E1. Seeded gameplay random streams
 
-- [ ] Add a small, fast, portable generator (for example PCG32 or
+- [x] Add a small, fast, portable generator (for example PCG32 or
       xoshiro128**) with explicit state, and helpers for ranges, floats,
       weighted picks and shuffles. Its results must not depend on the
       standard library's distributions, which differ between implementations.
-- [ ] `GameServices::random(name)` returns a named stream (`layout`, `loot`,
+- [x] `GameServices::random(name)` returns a named stream (`layout`, `loot`,
       `combat`, ...) derived from the session seed and the name. Drawing from
       one stream never changes another.
-- [ ] The seed and every stream's state can be read and restored, for E2.
+- [x] The seed and every stream's state can be read and restored, for E2.
 
 Today the only randomness is `std::random_device` (editor play targets, asset
 GUIDs); there is nothing seeded for gameplay.
 
 Exit: the same seed gives the same sequences on every run and build type,
 and stream independence is tested.
+
+Result:
+- `engine/gameplay/Random.*`:
+  - `RandomStream` is PCG32 with its own `below`, `range`, `unit`, `chance`,
+    `weightedIndex` and `shuffle`;
+  - `RandomStreams` holds named streams (SplitMix64 over the seed and the
+    name's FNV-1a hash), with `states()` and `restore(seed, states)`;
+  - `entropySeed()` gives a seed for a new run.
+- `GameServices::random(name)` and `randomStreams()`. The session seed
+  starts at 0, and a game reseeds it when a run begins.
+- Coverage: `tests/engine/RandomTests.cpp` (`zenith_random`).
+  - PCG32's published reference sequence, cross-checked with an independent
+    Python port.
+  - Golden values for the named-stream derivation.
+  - Helper ranges and distributions, stream independence, and restore.
+- Every build type: integer results are exact by construction. Float helpers
+  also need IEEE single precision without FMA contraction, which is MSVC's
+  default; a GCC or Clang build would need `-ffp-contract=off`.
+
+Follow-ups:
+- The CMake toolchains do not set `-ffp-contract=off` yet. Add it when a
+  GCC or Clang build ships.
 
 ### E2. Run and profile save data
 

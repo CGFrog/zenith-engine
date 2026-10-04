@@ -7,6 +7,7 @@
 #include "Timers.hpp"
 #include "engine/application/SimulationClock.hpp"
 #include "engine/diagnostics/Logger.hpp"
+#include "engine/gameplay/Random.hpp"
 #include "engine/navigation/NavigationWorld.hpp"
 #include "engine/physics/PhysicsWorld.hpp"
 #include "engine/scene/Prefab.hpp"
@@ -93,6 +94,13 @@ class GameServices {
     // step. Hosts hand the result to the engine (ApplicationScene::
     // simulationClock) and run systems and timers on its simulatedSeconds.
     SimulationClock simulationClock(SimulationClock host = {}) const;
+    // The session's random stream for name ("layout", "loot", ...): drawing
+    // from one stream never changes another. Every stream derives from the
+    // session seed, which starts at 0; a game sets it for a new run
+    // (randomStreams().reseed, with entropySeed() or a seed the player chose)
+    // and saves randomStreams().states() to resume one.
+    RandomStream& random(std::string_view name);
+    RandomStreams& randomStreams();
     // Lines and shapes drawn this frame in every view; cleared after the
     // frame renders.
     DebugDraw& debugDraw();
@@ -135,6 +143,7 @@ class GameServices {
     bool m_navigationBaked{false};
     bool m_paused{false};
     float m_timeScale{1.0f};
+    RandomStreams m_random;
 };
 
 // Runs one phase of systems and then, when context.services is set, flushes
