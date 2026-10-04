@@ -21,10 +21,11 @@ if(WIN32)
 else()
     set(game "${package_root}/zenith")
 endif()
-# The packaged project: ZENITH_PACKAGE_PROJECT_NAME, or the one
-# .zenith-project at the archive root.
+# The packaged project: ZENITH_PACKAGE_PROJECT_NAME, passed with --project,
+# or the one .zenith-project at the archive root, which the game finds itself
+# (as when the packaged game is started without arguments).
 if(DEFINED ZENITH_PACKAGE_PROJECT_NAME AND NOT ZENITH_PACKAGE_PROJECT_NAME STREQUAL "")
-    set(project_file "${package_root}/${ZENITH_PACKAGE_PROJECT_NAME}")
+    set(project_arguments --project "${package_root}/${ZENITH_PACKAGE_PROJECT_NAME}")
 else()
     file(GLOB project_files "${package_root}/*.zenith-project")
     list(LENGTH project_files project_count)
@@ -32,10 +33,11 @@ else()
         message(FATAL_ERROR "Expected one .zenith-project at the package root, found ${project_count}; "
             "pass ZENITH_PACKAGE_PROJECT_NAME")
     endif()
-    set(project_file "${project_files}")
+    set(project_arguments "")
 endif()
+# Loads the project's game module and every packaged scene without a GPU.
 execute_process(
-    COMMAND "${game}" --verify-package --project "${project_file}"
+    COMMAND "${game}" --verify-package ${project_arguments}
     WORKING_DIRECTORY "${ZENITH_VERIFY_ROOT}"
     RESULT_VARIABLE result
     OUTPUT_VARIABLE output
@@ -43,5 +45,8 @@ execute_process(
 )
 if(NOT result EQUAL 0)
     message(FATAL_ERROR "Extracted package verification failed (${result}):\n${output}\n${error}")
+endif()
+if(NOT output MATCHES "Verified scene ")
+    message(FATAL_ERROR "Extracted package verification checked no project scene:\n${output}")
 endif()
 message(STATUS "${output}")

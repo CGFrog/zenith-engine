@@ -22,21 +22,32 @@ struct GameModuleResult {
     }
 };
 
+// How a game module's library is loaded.
+enum class GameModuleLoading {
+    // From a uniquely named copy, so the library can be rebuilt while it is
+    // loaded and reloaded afterwards (the editor's hot reload).
+    ShadowCopy,
+    // From the library itself, which stays locked while loaded: for a game
+    // whose module does not change while it runs, such as a packaged game.
+    InPlace,
+};
+
 struct GameModuleOptions {
     // The component types the module extends; a copy is made, so the
     // original is never modified. Null means the engine's built-in types.
     std::shared_ptr<const ComponentTypeRegistry> baseComponentTypes;
     // Where the shadow copy is written. Empty means
-    // <temporary directory>/zenith_game_modules.
+    // <temporary directory>/zenith_game_modules. Unused when loading in place.
     std::filesystem::path shadowDirectory;
     // Receives the module's lifecycle warnings and must outlive it; null
     // writes them to stderr.
     Logger* logger{nullptr};
+    GameModuleLoading loading{GameModuleLoading::ShadowCopy};
 };
 
-// A game module loaded from a shadow copy, and what it registered: a component
-// type registry holding the base types plus the module's own, and the
-// module's systems.
+// A game module loaded from a shadow copy (or in place), and what it
+// registered: a component type registry holding the base types plus the
+// module's own, and the module's systems.
 //
 // Lifetime: the registries hold functions whose code lives in the module, and
 // EnTT storage for a component type is instantiated by whichever binary first
@@ -55,16 +66,18 @@ class GameModule {
     GameModule(const GameModule&) = delete;
     GameModule& operator=(const GameModule&) = delete;
 
-    // Copies the library at path to a shadow file, loads the copy, checks its
-    // API version and build hash, and runs its registration. On failure
-    // nothing stays loaded and loaded is left unchanged.
+    // Copies the library at path to a shadow file (unless options load it in
+    // place), loads it, checks its API version and build hash, and runs its
+    // registration. On failure nothing stays loaded and loaded is left
+    // unchanged.
     static GameModuleResult load(const std::filesystem::path& path, const GameModuleOptions& options,
                                  std::unique_ptr<GameModule>& loaded);
 
     // As reported by the module, for diagnostics.
     const std::string& name() const;
     const std::string& version() const;
-    // The library that was requested and the shadow copy actually loaded.
+    // The library that was requested and the file actually loaded: the
+    // shadow copy, or the library itself when loaded in place.
     const std::filesystem::path& sourcePath() const;
     const std::filesystem::path& loadedPath() const;
 
@@ -92,6 +105,7 @@ class GameModule {
     ModuleShadowCopy m_shadowCopy;
     SharedLibrary m_library;
     std::filesystem::path m_sourcePath;
+    std::filesystem::path m_loadedPath;
     std::string m_name;
     std::string m_version;
     std::vector<std::string> m_moduleComponentKeys;

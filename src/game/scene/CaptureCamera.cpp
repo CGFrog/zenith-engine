@@ -1,5 +1,7 @@
 #include "CaptureCamera.hpp"
 
+#include "engine/audio/AudioSystem.hpp"
+
 #include <SDL3/SDL_stdinc.h>
 #include <algorithm>
 #include <array>
@@ -80,4 +82,17 @@ CaptureCameraResult parseCaptureCamera(const char* pose, const char* motion) {
 
 CaptureCameraResult captureCameraFromEnvironment() {
     return parseCaptureCamera(SDL_getenv("ZENITH_CAPTURE_CAMERA"), SDL_getenv("ZENITH_CAPTURE_CAMERA_MOTION"));
+}
+
+Entity spawnCaptureCamera(Scene& scene, const CaptureCameraPath& path) {
+    const Entity camera = scene.createEntity("Capture Camera");
+    scene.registry().get<TransformComponent>(camera).local = path.transformAt(0.0f);
+    scene.registry().emplace<CameraComponent>(camera);
+    scene.registry().emplace<AudioListenerComponent>(camera);
+    return camera;
+}
+
+void moveCaptureCamera(Scene& scene, Entity camera, const CaptureCameraPath& path, float elapsedSeconds) {
+    scene.registry().get<TransformComponent>(camera).local = path.transformAt(elapsedSeconds);
+    scene.markTransformDirty(camera);
 }

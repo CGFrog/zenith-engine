@@ -44,7 +44,8 @@ src/
 |- editor/                 authoring application
 |  |- application/ document/ interaction/ modules/ operators/ panels/ project/ settings/ theme/
 |- game/                   current demo client
-|  |- application/ scene/  game executable composition
+|  |- application/ scene/  game executable composition (command line, runtime
+|  |                       gameplay, ProjectApplication, the demo's application)
 |  |- gameplay/ input/ player/  gameplay registered by the demo game module
 |  |- module/              zenith_game_demo entry points
 `- main.cpp                game executable composition root
@@ -53,7 +54,8 @@ tests/
 |  `- modules/             game module libraries loaded by the module tests
 |- editor/                 authoring behavior
 |  `- modules/             game modules with editor extensions for the module host tests
-`- game/                   demo integration
+|- game/                   demo integration and the game's project runtime
+`- packaging/              CMake script tests of the packaging configure checks
 ```
 
 Long-form project tutorials live under `docs/tutorials/`. The
@@ -71,9 +73,9 @@ explicit, so a file move must update `CMakeLists.txt` as well as include sites.
 | --- | --- | --- |
 | `zenith_engine` | Shared library | Reusable application lifecycle, scene, asset, audio, input, physics, graphics, window, and game module systems. Exports every function (`WINDOWS_EXPORT_ALL_SYMBOLS`) and Dear ImGui plus ImGuizmo (`IMGUI_API`); links volk, Jolt, shaderc, meshoptimizer, and bc7enc privately. |
 | `zenith_demo_gameplay` | Static library (PIC) | Demo gameplay registered by `registerDemoGameplay`: `CharacterControllerComponent`, the first-person systems, and the demo input bindings. |
-| `zenith_game_demo` | Module | The demo game module (`ZENITH_GAME_MODULE("demo", ...)`) the editor loads. Each build copies it to the git-ignored `projects/modules/zenith_game_demo.zmodule`, the path `projects/demo.zenith-project` names; `install` places it at `modules/` beside the packaged project. |
-| `zenith_demo` | Static library | Game executable composition: application, menus, settings, audio, scene factory, and the statically linked gameplay. |
-| `zenith` | Executable | Thin composition root that initializes `Engine` and runs `DemoApplication`. |
+| `zenith_game_demo` | Module | The demo game module (`ZENITH_GAME_MODULE("demo", ...)`) the editor and the game load for the demo project. Each build copies it to the git-ignored `projects/modules/zenith_game_demo.zmodule`, the path `projects/demo.zenith-project` names; `install` places it at `modules/` beside the packaged project. |
+| `zenith_demo` | Static library | Game executable composition: command line (`GameLaunch`), package verification, the gameplay to play (`RuntimeGameplay`: a project's module, or the demo gameplay linked in for runs without one), the project-agnostic `ProjectApplication`, and the demo's application, menus, settings, audio, and scenes. |
+| `zenith` | Executable | Thin composition root: parses `[--verify-package] [--project <file>] [--scene <file>]`, loads the project's game module, initializes `Engine`, and runs `DemoApplication` or `ProjectApplication`. |
 | `zenith_editor_app` | Static library | Editor lifecycle, documents, history, interaction, and settings. |
 | `zenith_editor` | Executable | Thin editor composition root. Knows the source `templates/`, its build directory, and its configuration, for the Project Hub. |
 | `zenith_editor_templates` | Custom target | Copies `templates/` to `build/templates/` for the Project Hub. |
@@ -89,6 +91,8 @@ explicit, so a file move must update `CMakeLists.txt` as well as include sites.
 | `zenith_asset_database_tests` | Test executable | Content hashing, asset GUIDs, `.meta` sidecars, and asset database scans, moves, external changes, and dependencies on real temporary directories. |
 | `zenith_physics_tests` | Test executable | Rigid bodies, contacts, impulses, raycasts, mesh collision, and cleanup. |
 | `zenith_application_tests` | Test executable | Lifecycle ordering, deferred switching, failed-load cleanup, demo composition, controls, and reload behavior. |
+| `zenith_project_runtime_tests` | Test executable | The game's command line, packaged-project discovery, gameplay selection and in-place module loading, `ProjectApplication` running `zenith_test_game_module`'s Play systems (and a `--scene` file outside the scene root), and verification of every project scene. |
+| `zenith_package_asset_collisions` | CMake script test | `tests/packaging/PackageAssetCollisionTests.cmake`: a project asset at an engine runtime asset's path fails the configure unless overridden. |
 
 Every executable, test, and shared library (the engine, SDL, and test modules)
 is written to one runtime directory, `build/<config>/` with multi-config
@@ -122,8 +126,15 @@ Third-party libraries are pinned with CMake `FetchContent`:
 
 ### `src/main.cpp`
 
-The composition root. It constructs `Engine` and `DemoApplication`, initializes
-the engine, runs the application, and shuts down in reverse dependency order.
+The composition root. It parses the command line (`GameLaunch`), loads the
+project (`--project`, else the one a release package holds at its root) and
+its gameplay (`loadRuntimeGameplay`), answers `--verify-package` without a GPU
+(`verifyPackage`: content manifest, shaders, the module, and every project
+scene), or constructs `Engine` and the presenting application
+(`DemoApplication` or `ProjectApplication`), initializes the engine, runs the
+application, and shuts down in reverse dependency order. The
+`RuntimeGameplay` is declared first, so the game module outlives the engine's
+scene.
 
 ### `src/engine/Engine.hpp` and `Engine.cpp`
 
@@ -374,7 +385,8 @@ Game modules: shared libraries that add component types and systems to a host.
 module defines `zenith_module_register(ModuleRegistrar&)`), and
 `checkModuleCompatibility` refuses another API version or toolchain/runtime
 build hash. `GameModule::load` copies the library (and its PDB, patching the
-copy to name it) to a unique shadow file, loads that with
+copy to name it) to a unique shadow file, or with
+`GameModuleLoading::InPlace` (a packaged game) uses the library itself, loads that with
 `SharedLibrary` (`LoadLibrary`/`dlopen`), and registers into a copy of the
 built-in (or host-supplied) `ComponentTypeRegistry` plus its own
 `SystemRegistry`, recording which component keys the module added.
@@ -385,8 +397,12 @@ enables (default: FixedUpdate on, Update off). An optional `SystemProfile`
 passed to `run` records per-system CPU time (frame, rolling average, maximum). Everything a
 module registered must be released, and every scene its components touched
 destroyed, before the `GameModule` is destroyed; otherwise the library is
-deliberately left loaded. `EngineExport.hpp` defines `ZENITH_ENGINE_API` for
-data that must cross the engine library boundary.
+deliberately left loaded. `Gameplay.hpp` is what a game plays: a component
+type registry and a `SystemScheduler`, from a module (`gameplayFromModule`),
+from registration linked into the executable (`linkGameplay`), or the built-in
+types alone; `Gameplay::play` runs its Play systems for a phase with the
+application's services and the frame's input. `EngineExport.hpp` defines
+`ZENITH_ENGINE_API` for data that must cross the engine library boundary.
 
 ### `src/engine/jobs/JobSystem.*` and `scene/AdditiveSceneManager.*`
 
@@ -412,18 +428,31 @@ immutable `InputActionMap` in their closures and evaluate it against
 them as a `FirstPersonViewPreferences` value in the scene registry's context,
 which `GameplayScene` refreshes every frame from `GameSettings`.
 `module/DemoGameModule.cpp` is the only module-specific file: it exports the
-entry points and calls `registerDemoGameplay`. The `zenith` executable instead
-calls `linkDemoGameplay` (`application/LinkedGameplay.*`), which runs the same
-registration through its own `ModuleRegistrar` into a copy of the built-in
-component types and a `SystemScheduler`, so the game and the editor run
-identical registration.
+entry points and calls `registerDemoGameplay`. For runs without a game module
+the `zenith` executable calls `linkDemoGameplay` (`application/LinkedGameplay.*`),
+which runs the same registration through `linkGameplay`, so the game and the
+editor run identical registration.
+
+The executable's composition lives in `application/`: `GameLaunch` parses the
+command line and finds a release package's project; `RuntimeGameplay` chooses
+what plays (`loadRuntimeGameplay`: a project's game module, loaded in place when
+it ships inside the resource root and from a shadow copy otherwise, or the
+linked demo gameplay when there is no module) and which application presents
+it (the demo's for the demo module, named `demo`, and for runs without a module;
+`ProjectApplication` for any other module); `PackageVerification` checks a
+package for `--verify-package`. `ProjectApplication` is project-agnostic: it
+applies the project's render settings, loads the startup scene (or the
+`--scene` file) with the module's component types, and runs the module's Play
+systems every frame with the player's input; a capture camera
+(`ZENITH_CAPTURE_CAMERA`) poses the view instead.
 
 `DemoApplication` maps its typed scene enum to engine `SceneKey` values.
 `GameplayScene` loads the room, creates props and the player, and requests a
 fresh gameplay scene through the Reload action. It loads project scenes with
-the linked component types, spawns a player only when the scene has no
+the gameplay's component types (the demo module's, or the linked ones), spawns
+a player only when the scene has no
 authored character controller (otherwise it adds the player's collider, body,
-and audio listener an authored one lacks), and runs the linked systems while the game is
+and audio listener an authored one lacks), and runs the gameplay's systems while the game is
 not paused. It also composes the title screen, HUD, pause menu, and persisted
 audio, rendering, and input settings with the engine game-UI API.
 `FirstPersonController` interprets semantic movement and view input and
@@ -440,7 +469,9 @@ per-pass budget settings, and an optional project-relative `gameModule`
 library path. Versions 1 to 3 remain readable and are upgraded on save. Scene references are validated against the scene root before
 `SceneDocument` loads them. `loadProjectScene` and `loadProjectStartupScene`
 take an optional component type registry (null means the built-in types) so a
-game can load scenes holding its own components.
+game can load scenes holding its own components; `loadProjectSceneFile` loads
+any scene file (such as an editor's `--scene` copy) with the project's asset
+root.
 
 `projects/demo.zenith-project` names its game module as
 `modules/zenith_game_demo.zmodule`. The build copies the module there on every
@@ -451,9 +482,10 @@ module at the same relative path. The copy is whichever configuration was
 built last; an editor of another configuration refuses it by build hash, so
 rebuild the module in the editor's configuration.
 
-The `zenith` executable accepts `--project <project-file>`. The demo application
-loads authored scene content through this engine contract, then adds its
-game-specific player and behavior in `src/game/`.
+The `zenith` executable accepts `--project <project-file>` and
+`--scene <scene-file>`, and plays the demo project through its module. The
+demo application loads authored scene content through this engine contract,
+then adds its game-specific player and behavior in `src/game/`.
 
 `projects/showcase.zenith-project` is the renderer test scene: alpha-tested and
 blended materials, metals across a roughness ladder, emissive surfaces, a dense
@@ -1844,7 +1876,8 @@ The source directory is copied as a whole to `build/assets/` for runtime use.
 | --- | --- |
 | `tests/engine/` | Audio, asset importing, scene documents/hierarchy, and physics contracts. |
 | `tests/editor/` | Settings, build output parsing, build runner and IDE launching, render-settings persistence and graphics-panel helpers, document state, command history, undoable scene editing and entity commands, operators and keymaps, prefab authoring and operators, areas and workspaces (registry, type switching, layout switching, per-area state, `workspaces.json` and its version, and legacy layout migration), the built-in area types (each drawn headless, multi-instance Asset Browser areas and primary promotion, and the default workspaces' layouts and round trip), asset browser, selection, camera behavior, and component editing helpers. |
-| `tests/game/` | Application callback order, scene changes, cleanup, demo composition, controls, and reload behavior; the `zenith_game_demo` module loaded with `GameModule::load`, parity with the linked gameplay, and authored character controllers playing in the game. |
+| `tests/game/` | Application callback order, scene changes, cleanup, demo composition, controls, and reload behavior; the `zenith_game_demo` module loaded with `GameModule::load`, parity with the linked gameplay, authored character controllers playing in the game, the demo project playing through its module, and the game's project runtime (command line, packaged-project discovery, module loading, `ProjectApplication`, scene verification). |
+| `tests/packaging/` | CMake script tests of packaging configure checks (`cmake -P`), such as project assets colliding with engine runtime assets. |
 | `tests/capture/`, `tests/references/` | Reference capture driver, the showcase, irradiance-room and debug-draw capture manifests, and reference PNGs (`docs/RENDERER_VALIDATION.md`). |
 
 The executables return a nonzero status on failed expectations so CTest can

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/scene/Scene.hpp"
+
 #include <glm/glm.hpp>
 #include <optional>
 #include <string>
@@ -37,3 +39,10 @@ CaptureCameraResult parseCaptureCamera(const char* pose, const char* motion);
 
 // Reads ZENITH_CAPTURE_CAMERA and ZENITH_CAPTURE_CAMERA_MOTION.
 CaptureCameraResult captureCameraFromEnvironment();
+
+// Creates the capture camera entity, a camera and the audio listener, posed at
+// the start of path.
+Entity spawnCaptureCamera(Scene& scene, const CaptureCameraPath& path);
+
+// Poses camera where path is after elapsedSeconds of simulated time.
+void moveCaptureCamera(Scene& scene, Entity camera, const CaptureCameraPath& path, float elapsedSeconds);

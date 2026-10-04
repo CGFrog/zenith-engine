@@ -6,7 +6,8 @@ Tests mirror the production dependency boundary:
 | --- | --- |
 | `engine/` | Reusable subsystem contracts and scene/asset integration. |
 | `editor/` | Authoring documents, history, settings, camera, and widgets. |
-| `game/` | Demo application lifecycle and gameplay control integration. |
+| `game/` | Demo application lifecycle, gameplay control integration, and the game's project runtime. |
+| `packaging/` | CMake script tests (`cmake -P`) of the packaging configure checks in `cmake/`. |
 | `capture/` | Reference capture driver that renders manifest views and compares them with checked-in images. |
 | `references/` | Capture manifests and reference PNGs; regenerate them as `docs/RENDERER_VALIDATION.md` describes. |
 

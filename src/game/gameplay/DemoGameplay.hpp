@@ -9,8 +9,9 @@ class ModuleRegistrar;
 // The demo's gameplay as a game module registers it: component types the
 // editor can author and the systems that simulate them. The zenith_game_demo
 // module calls registerDemoGameplay from zenith_module_register, and the
-// zenith executable calls it through its own ModuleRegistrar, so the editor
-// and the game run identical registration.
+// zenith executable calls it through its own ModuleRegistrar when it runs
+// without a game module, so the editor and the game run identical
+// registration.
 namespace DemoGameplay {
 inline constexpr std::string_view CharacterControllerKey = "character_controller";
 inline constexpr std::string_view CollectibleItemKey = "collectible_item";

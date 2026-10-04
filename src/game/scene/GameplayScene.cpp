@@ -63,7 +63,7 @@ Entity firstCameraChild(const Scene& scene, Entity entity) {
 }
 } // namespace
 
-GameplayScene::GameplayScene(LinkedGameplay gameplay, AudioClipHandle interactionSound,
+GameplayScene::GameplayScene(Gameplay gameplay, AudioClipHandle interactionSound,
                              std::shared_ptr<InputActionMap> inputActions, std::shared_ptr<GameSettings> settings,
                              std::filesystem::path settingsPath, std::optional<ProjectConfig> project,
                              std::optional<CaptureCameraPath> captureCamera)
@@ -76,13 +76,13 @@ GameplayScene::GameplayScene(LinkedGameplay gameplay, AudioClipHandle interactio
     , m_captureCamera(captureCamera) {}
 
 SceneResult GameplayScene::load(ApplicationContext& context) {
-    if (!m_gameplay.componentTypes || !m_gameplay.systems) {
-        return {.error = "Gameplay scene was created without linked gameplay"};
+    if (!m_gameplay) {
+        return {.error = "Gameplay scene was created without gameplay"};
     }
     Scene& scene = context.scene;
     if (m_project) {
         const ProjectConfigResult result =
-            loadProjectStartupScene(*m_project, context.assets, scene, m_gameplay.componentTypes);
+            loadProjectSceneFile(*m_project, m_project->startupScene, context.assets, scene, m_gameplay.componentTypes);
         if (!result) {
             return {.error = result.error};
         }
@@ -96,7 +96,9 @@ SceneResult GameplayScene::load(ApplicationContext& context) {
     }
 
     if (m_captureCamera) {
-        spawnCaptureCamera(scene);
+        m_captureCameraEntity = spawnCaptureCamera(scene, *m_captureCamera);
+        m_captureElapsedSeconds = 0.0f;
+        m_screen = Screen::Playing;
     } else if (scene.registry().view<CharacterControllerComponent>().empty()) {
         spawnPlayer(scene);
     } else {
@@ -104,15 +106,6 @@ SceneResult GameplayScene::load(ApplicationContext& context) {
         completeAuthoredPlayers(scene);
     }
     return {.success = true};
-}
-
-void GameplayScene::spawnCaptureCamera(Scene& scene) {
-    m_captureCameraEntity = scene.createEntity("Capture Camera");
-    m_captureElapsedSeconds = 0.0f;
-    scene.registry().get<TransformComponent>(m_captureCameraEntity).local = m_captureCamera->transformAt(0.0f);
-    scene.registry().emplace<CameraComponent>(m_captureCameraEntity);
-    scene.registry().emplace<AudioListenerComponent>(m_captureCameraEntity);
-    m_screen = Screen::Playing;
 }
 
 void GameplayScene::spawnPlayer(Scene& scene) {
@@ -163,9 +156,7 @@ void GameplayScene::update(ApplicationContext& context, const InputState& input,
         // The path is sampled at the end of each frame's step, so frame N
         // shows N * deltaSeconds of motion.
         m_captureElapsedSeconds += deltaSeconds;
-        context.scene.registry().get<TransformComponent>(m_captureCameraEntity).local =
-            m_captureCamera->transformAt(m_captureElapsedSeconds);
-        context.scene.markTransformDirty(m_captureCameraEntity);
+        moveCaptureCamera(context.scene, m_captureCameraEntity, *m_captureCamera, m_captureElapsedSeconds);
         return;
     }
     m_actions = m_inputActions->evaluate(input);
@@ -191,14 +182,14 @@ void GameplayScene::update(ApplicationContext& context, const InputState& input,
         context.audio.playAt(m_interactionSound, options);
     }
     applyViewPreferences(context.scene);
-    runSystems(context, SystemPhase::Update, input, deltaSeconds);
+    m_gameplay.play(SystemPhase::Update, context, input, deltaSeconds);
 }
 
 void GameplayScene::fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) {
     if (m_captureCamera) {
         return;
     }
-    runSystems(context, SystemPhase::FixedUpdate, input, deltaSeconds);
+    m_gameplay.play(SystemPhase::FixedUpdate, context, input, deltaSeconds);
 }
 
 void GameplayScene::applyViewPreferences(Scene& scene) const {
@@ -206,15 +197,6 @@ void GameplayScene::applyViewPreferences(Scene& scene) const {
         .lookScale = m_settings->lookSensitivity,
         .invertLookY = m_settings->invertLookY,
     });
-}
-
-void GameplayScene::runSystems(ApplicationContext& context, SystemPhase phase, const InputState& input,
-                               float deltaSeconds) const {
-    m_gameplay.systems->run(phase, {.scene = context.scene,
-                                    .application = &context,
-                                    .mode = SimulationMode::Play,
-                                    .deltaSeconds = deltaSeconds,
-                                    .input = &input});
 }
 
 bool GameplayScene::fixedUpdatesEnabled() const {

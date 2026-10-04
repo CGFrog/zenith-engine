@@ -7,7 +7,7 @@ on `src/engine/`; the engine must never depend on it.
 
 | Path | Responsibility |
 | --- | --- |
-| `application/` | Selects game scenes, owns demo-wide lifecycle state, and links the gameplay statically (`LinkedGameplay`). |
+| `application/` | The executable's composition: command line (`GameLaunch`), what plays (`RuntimeGameplay`: a project's game module, or the demo gameplay linked in by `LinkedGameplay` for runs without one), package verification, the project-agnostic `ProjectApplication`, and the demo's application, which selects its scenes and owns demo-wide lifecycle state. |
 | `scene/` | Composes current assets, entities, lighting, physics, and gameplay scenes. |
 | `gameplay/` | `registerDemoGameplay`: the component types and systems the demo game module registers. |
 | `input/` | The demo's input action bindings. |
@@ -19,6 +19,10 @@ is registered in `gameplay/` and reaches the game only through the registered
 systems, so the editor's play mode and the game behave the same. Menus,
 settings, audio, and scene switching stay in `application/` and `scene/`, which
 the module does not link.
+
+`ProjectApplication`, `GameLaunch`, `RuntimeGameplay`, and
+`PackageVerification` play any project; keep demo knowledge out of them (the
+demo module's name in `RuntimeGameplay` is the one place the demo is chosen).
 
 Keep asset names, key mappings, demo constants, and level composition here. If
 behavior is genuinely project-agnostic, first define a narrow engine contract
