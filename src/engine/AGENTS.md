@@ -32,9 +32,14 @@ This subtree is the reusable `zenith_engine` library. It must not include from
   the public API.
 - Put a new file in the narrowest existing subsystem and add it to
   `zenith_engine` in `src/engine/CMakeLists.txt`.
-- A serialized component is registered in `scene/BuiltInComponentTypes.cpp`
-  (collection and visibility components in `CollectionComponentTypes.cpp`,
-  prefab link components in `PrefabComponentTypes.cpp`);
+- A serialized engine component's type is built in the `scene/` family file
+  for its domain (`RenderComponentTypes.cpp`, `AnimationComponentTypes.cpp`,
+  `LightComponentTypes.cpp`, `PhysicsComponentTypes.cpp`; collection and
+  visibility components in `CollectionComponentTypes.cpp`, prefab link
+  components in `PrefabComponentTypes.cpp`) and listed in
+  `scene/BuiltInComponentTypes.cpp`, which fixes the registration order; append
+  new types rather than reordering. Codec helpers shared by the families live
+  in the internal `ComponentTypeHelpers.hpp`.
   `SceneDocument` and the editor inspector discover it from the registry.
   Changing a field key or meaning needs a schema version and a migration.
 - `zenith_engine` is a shared library. Functions are exported automatically;
