@@ -515,6 +515,10 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
         changed |= committedMixedEdit(mixed.any);
         break;
     }
+    case FieldKind::UInt64:
+        changed = ImGui::InputScalar(label, ImGuiDataType_U64, &field.value<uint64_t>(object));
+        changed |= committedMixedEdit(mixed.any);
+        break;
     case FieldKind::Float:
         changed = drawFloat(label, field.value<float>(object), presentation, mixed.any);
         changed |= committedMixedEdit(mixed.any);

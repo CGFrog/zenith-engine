@@ -115,6 +115,28 @@ through `GameServices::saveGames` and `saveGame`; `ProjectApplication` puts
 it under `userDataDirectory("Zenith", <project name>)/saves`, and the editor's
 Play under the project's `.zenith/saves`.
 
+A slot can hold a game's own data instead of a scene. This suits games that
+rebuild their scene, such as a roguelike that regenerates its floor from a
+seed.
+
+- `saveData(slot, data, Fields<Data>, SaveDataFormat, title)` writes a
+  reflected struct under a `kind` (for example `run`) and the format's own
+  `version`. `RandomStreamsSnapshot` (see [Gameplay](gameplay.md)) embeds a
+  session's random streams in it.
+- `loadData` reads it into a default-constructed `Data`. If the saved
+  version is older, it first runs the format's `migrate`; a newer version is
+  refused. On failure the target is unchanged.
+- Every slot records its kind (`SaveGameInfo::kind`, `scene` for scene
+  saves and for saves made before kinds existed). A data slot does not load
+  as a scene, nor a scene as data, nor one kind as another.
+
+`saveProfile` and `loadProfile` keep data across runs (unlocks, statistics)
+in `<name>.zprofile`. It is a versioned JSON file (`VersionedJson`) beside
+the slots, written atomically with a backup. `list` does not show it and
+`remove` never touches it, so a game that deletes its run slot on death
+keeps the profile. A missing profile loads as success and keeps the
+caller's defaults.
+
 ## `src/engine/scene/Collections.*`, `SceneVisibility.*`, `CollectionComponentTypes.cpp`
 
 Blender-style collections: named, nested groups of entities kept in

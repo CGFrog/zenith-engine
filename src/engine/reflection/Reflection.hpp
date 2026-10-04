@@ -20,6 +20,9 @@ enum class FieldKind : uint8_t {
     Bool,
     Int32,
     UInt32,
+    // A 64-bit unsigned integer (a seed, a large count), written as a JSON
+    // number, which keeps every bit.
+    UInt64,
     Float,
     Vec3,
     Vec4,
@@ -142,6 +145,8 @@ template <typename Value> constexpr FieldKind kindOf() {
         return FieldKind::Int32;
     } else if constexpr (std::is_same_v<Value, uint32_t>) {
         return FieldKind::UInt32;
+    } else if constexpr (std::is_same_v<Value, uint64_t>) {
+        return FieldKind::UInt64;
     } else if constexpr (std::is_same_v<Value, float>) {
         return FieldKind::Float;
     } else if constexpr (std::is_same_v<Value, glm::vec3>) {

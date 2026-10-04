@@ -110,7 +110,7 @@ class GameServices {
     // from one stream never changes another. Every stream derives from the
     // session seed, which starts at 0; a game sets it for a new run
     // (randomStreams().reseed, with entropySeed() or a seed the player chose)
-    // and saves randomStreams().states() to resume one.
+    // and saves randomStreams().snapshot() to resume one.
     RandomStream& random(std::string_view name);
     RandomStreams& randomStreams();
     // Lines and shapes drawn this frame in every view; cleared after the

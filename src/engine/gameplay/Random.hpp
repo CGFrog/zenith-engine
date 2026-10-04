@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/reflection/Reflection.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -74,6 +76,25 @@ class RandomStream {
     State m_state;
 };
 
+// One named stream's place in its sequence, for saving.
+struct RandomStreamSnapshot {
+    std::string name;
+    uint64_t state{0};
+    uint64_t increment{1};
+};
+
+// Every stream a session used and the seed they derive from: what a save
+// keeps to resume a run's randomness exactly (RandomStreams::snapshot).
+struct RandomStreamsSnapshot {
+    uint64_t seed{0};
+    // Sorted by name.
+    std::vector<RandomStreamSnapshot> streams;
+};
+
+// The snapshot's reflected fields, so a game's saved run can hold it:
+// Fields<Run>().structure("random", &Run::random, randomStreamsSnapshotFields()).
+Fields<RandomStreamsSnapshot> randomStreamsSnapshotFields();
+
 // Named random streams for one gameplay session, all derived from one seed.
 // Each name ("layout", "loot", "combat", ...) gets its own stream, so drawing
 // from one never changes another: a floor generates the same layout however
@@ -89,10 +110,11 @@ class RandomStreams {
     // The stream for name; valid until reseed or restore.
     RandomStream& stream(std::string_view name);
 
-    // The streams used so far with their states, sorted by name, for saving.
-    std::vector<std::pair<std::string, RandomStream::State>> states() const;
-    // Reseeds, then continues each listed stream from its saved state.
-    void restore(uint64_t seed, std::span<const std::pair<std::string, RandomStream::State>> states);
+    // The seed and the streams used so far, sorted by name, for saving.
+    RandomStreamsSnapshot snapshot() const;
+    // Reseeds from the snapshot, then continues each stream it lists from its
+    // saved state; streams it does not list start fresh from the seed.
+    void restore(const RandomStreamsSnapshot& snapshot);
 
   private:
     uint64_t m_seed{0};

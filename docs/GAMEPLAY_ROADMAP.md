@@ -204,11 +204,11 @@ and is open.
 | D6 | Measure prefab compare/refresh cost | — | done d518873 |
 | D7 | Docs hygiene | — | done c5b111b |
 | E1 | Seeded gameplay random streams | — | done ba6064d |
-| E2 | Run and profile save data | E1 | open |
+| E2 | Run and profile save data | E1 | done |
 | E3 | Definition tables | — | done 4174590 |
 | E4 | Building and replacing a floor at runtime | — | open |
 | E5 | Partial paths and crowd avoidance | E4 | open |
-| E6 | Audio for gameplay | — | done |
+| E6 | Audio for gameplay | — | done 4bb4465 |
 | E7 | Pause, teardown and one game clock | — | done b26c8ab |
 
 Suggested batches:
@@ -1031,17 +1031,45 @@ Follow-ups:
 
 ### E2. Run and profile save data
 
-- [ ] `SaveGameStore` can save and load a typed payload that is not a scene:
+- [x] `SaveGameStore` can save and load a typed payload that is not a scene:
       a reflected struct serialized through `Fields<T>`, with a version and
       migration, written through `atomicWriteUserData` like the scene slots.
-- [ ] A run slot holds the seed, the E1 stream states and the game's own run
+- [x] A run slot holds the seed, the E1 stream states and the game's own run
       struct (floor index, the player's stats and inventory). A game
       regenerates the floor from them.
-- [ ] A separate profile file for meta-progression that a game never
+- [x] A separate profile file for meta-progression that a game never
       deletes on death, using the D5 `VersionedJson` helper.
 
 Scene-diff saves (B5) stay as they are for hand-built levels. Deleting the run
 slot on death is game policy.
+
+Result:
+- `SaveGameStore::saveData`/`loadData` take a reflected struct, a
+  `SaveDataFormat` (`kind`, `version`, `migrate`) and a title.
+  - Slots record their kind (`SaveGameInfo::kind`; scene saves write
+    `scene`, and older saves read as `scene`). Neither kind loads as the
+    other.
+  - Loading reads into a default-constructed struct, upgrades older versions
+    through `migrate`, refuses newer ones, and leaves the target unchanged on
+    failure.
+- `saveProfile`/`loadProfile` keep `<name>.zprofile` through
+  `VersionedJson`, with a backup. `list` and `remove` ignore it, and a
+  missing profile keeps the caller's defaults.
+- Reflection gains `FieldKind::UInt64` (JSON keeps every bit; the inspector
+  edits it as an unsigned 64-bit number) for seeds and stream states.
+- E1's `RandomStreams::states()`/`restore(seed, states)` became
+  `snapshot()`/`restore(snapshot)`, returning a reflected
+  `RandomStreamsSnapshot` (`randomStreamsSnapshotFields()`). A run struct
+  embeds it as an ordinary field.
+- Coverage:
+  - `testRunData`, `testDataVersions` and `testProfiles` in
+    `SaveGameTests`;
+  - the snapshot round trip in `RandomTests`.
+
+Follow-ups:
+- `GameServices` has no run-save shorthand. A game calls
+  `saveGames()->saveData` with `randomStreams().snapshot()` itself; add a
+  helper if every game repeats it.
 
 ### E3. Definition tables
 
@@ -1259,6 +1287,15 @@ needed:
   `check.ps1 -Full` run and passed alone four times. It is a GPU reference
   capture that Phase D's CPU-side changes do not reach, so it is likely a
   flake under parallel Vulkan load.
+
+- Phase E batch 1's `check.ps1 -Full`, run after the "8-bit Blender"
+  retheme merged (a430726), had two failures in 206 tests, neither from
+  Phase E:
+  - `zenith_scene_gizmos_capture_overlays` mismatches its reference
+    (1.3% of pixels): gizmo colours come from `EditorPalette`, which the
+    retheme changed, so the reference needs regenerating.
+  - `zenith_production_milestones` failed under the parallel suite and
+    passed alone.
 
 - Hot reload during Play is out of scope for now. Reloads stay queued until
   Stop.

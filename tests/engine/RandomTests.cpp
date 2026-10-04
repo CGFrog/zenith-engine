@@ -6,6 +6,7 @@
 #include "engine/gameplay/Random.hpp"
 #include "engine/graphics/DebugDraw.hpp"
 #include "engine/module/GameServices.hpp"
+#include "engine/reflection/FieldJson.hpp"
 
 #include <algorithm>
 #include <array>
@@ -13,6 +14,7 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <nlohmann/json.hpp>
 #include <numeric>
 #include <vector>
 
@@ -126,20 +128,31 @@ void testNamedStreams() {
     RandomStreams session(1234U);
     draw(session.stream("loot"), 7);
     draw(session.stream("combat"), 3);
-    const auto states = session.states();
-    expect(states.size() == 2 && states[0].first == "combat" && states[1].first == "loot",
-           "states lists the used streams by name");
+    const RandomStreamsSnapshot snapshot = session.snapshot();
+    expect(snapshot.seed == 1234U && snapshot.streams.size() == 2 && snapshot.streams[0].name == "combat" &&
+               snapshot.streams[1].name == "loot",
+           "a snapshot lists the seed and the used streams by name");
     const std::vector<uint32_t> nextLoot = draw(session.stream("loot"), 5);
     const std::vector<uint32_t> firstLayout = draw(session.stream("layout"), 5);
 
+    // Through the snapshot's reflected fields, as a saved run keeps it.
+    const std::vector<FieldDescriptor> fields = randomStreamsSnapshotFields().build();
+    nlohmann::json document;
+    writeReflectedFields(&snapshot, fields, document);
+    RandomStreamsSnapshot loaded;
+    expect(readReflectedFields(document, &loaded, fields).empty() && loaded.seed == 1234U &&
+               loaded.streams.size() == 2 && loaded.streams[1].state == snapshot.streams[1].state &&
+               loaded.streams[1].increment == snapshot.streams[1].increment,
+           "a snapshot round-trips through its reflected fields with every bit");
+
     RandomStreams resumed;
-    resumed.restore(1234U, states);
+    resumed.restore(loaded);
     expect(resumed.seed() == 1234U && draw(resumed.stream("loot"), 5) == nextLoot,
            "a restored stream continues where it was saved");
     expect(draw(resumed.stream("layout"), 5) == firstLayout, "a stream not saved starts fresh from the seed");
 
     session.reseed(1234U);
-    expect(session.states().empty(), "reseeding restarts every stream");
+    expect(session.snapshot().streams.empty(), "reseeding restarts every stream");
 }
 
 void testGameServices() {

@@ -53,8 +53,10 @@ and build type, so a seed replays the same run.
 - `RandomStreams` holds named streams derived from one seed. A stream starts
   the first time its name is asked for, from the seed and the name alone
   (SplitMix64 over the seed and the name's FNV-1a hash), so drawing from
-  `loot` never changes `layout`. `states()` lists the used streams for a
-  save, and `restore(seed, states)` resumes them.
+  `loot` never changes `layout`. `snapshot()` returns a reflected
+  `RandomStreamsSnapshot` (the seed and each used stream's state, with
+  `randomStreamsSnapshotFields()`), which a game's saved run embeds, and
+  `restore(snapshot)` resumes them.
 - `entropySeed()` is a seed from `std::random_device`, for a run whose seed
   the player did not choose.
 

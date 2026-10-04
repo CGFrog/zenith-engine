@@ -38,6 +38,8 @@ Json writeField(const void* object, const FieldDescriptor& field, RuntimeStateFi
         return field.value<int32_t>(object);
     case FieldKind::UInt32:
         return field.value<uint32_t>(object);
+    case FieldKind::UInt64:
+        return field.value<uint64_t>(object);
     case FieldKind::Float:
         return field.value<float>(object);
     case FieldKind::Vec3:
@@ -109,6 +111,12 @@ std::string readField(const Json& input, void* object, const FieldDescriptor& fi
             return mismatch("a non-negative 32-bit whole number");
         }
         field.value<uint32_t>(object) = input.get<uint32_t>();
+        return {};
+    case FieldKind::UInt64:
+        if (!input.is_number_unsigned()) {
+            return mismatch("a non-negative whole number");
+        }
+        field.value<uint64_t>(object) = input.get<uint64_t>();
         return {};
     case FieldKind::Float:
         if (!input.is_number()) {

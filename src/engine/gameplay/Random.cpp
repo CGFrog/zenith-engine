@@ -141,20 +141,31 @@ RandomStream& RandomStreams::stream(std::string_view name) {
     return m_streams.emplace(std::string(name), streamFor(m_seed, name)).first->second;
 }
 
-std::vector<std::pair<std::string, RandomStream::State>> RandomStreams::states() const {
-    std::vector<std::pair<std::string, RandomStream::State>> states;
-    states.reserve(m_streams.size());
+RandomStreamsSnapshot RandomStreams::snapshot() const {
+    RandomStreamsSnapshot snapshot{.seed = m_seed};
+    snapshot.streams.reserve(m_streams.size());
     for (const auto& [name, stream] : m_streams) {
-        states.emplace_back(name, stream.state());
+        const RandomStream::State state = stream.state();
+        snapshot.streams.push_back({.name = name, .state = state.state, .increment = state.increment});
     }
-    return states;
+    return snapshot;
 }
 
-void RandomStreams::restore(uint64_t seed, std::span<const std::pair<std::string, RandomStream::State>> states) {
-    reseed(seed);
-    for (const auto& [name, state] : states) {
-        stream(name).setState(state);
+void RandomStreams::restore(const RandomStreamsSnapshot& snapshot) {
+    reseed(snapshot.seed);
+    for (const RandomStreamSnapshot& saved : snapshot.streams) {
+        stream(saved.name).setState({.state = saved.state, .increment = saved.increment});
     }
+}
+
+Fields<RandomStreamsSnapshot> randomStreamsSnapshotFields() {
+    return Fields<RandomStreamsSnapshot>()
+        .add("seed", &RandomStreamsSnapshot::seed)
+        .list("streams", &RandomStreamsSnapshot::streams,
+              Fields<RandomStreamSnapshot>()
+                  .add("name", &RandomStreamSnapshot::name)
+                  .add("state", &RandomStreamSnapshot::state)
+                  .add("increment", &RandomStreamSnapshot::increment));
 }
 
 uint64_t entropySeed() {
