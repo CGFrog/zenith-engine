@@ -19,6 +19,7 @@ depend on this subtree.
 | `project/` | Project tooling: asset service and catalog, build and package runners, Project Hub. [Asset Browser](../../docs/editor/asset-browser.md), [Build](../../docs/editor/build-ide.md) |
 | `settings/` | Persistent editor preferences and per-user editor state files. [Settings](../../docs/editor/theme-settings.md) |
 | `theme/` | The "Pixel Aero Night" look: palette, metrics, fonts, glass, and themed widgets. [Theme](../../docs/editor/theme-settings.md) |
+| `smoke/` | The editor smoke: sequential steps, ordered in `EditorSmokeScenario.cpp`. [Smoke](../../docs/editor/smoke.md) |
 | `viewport/` | 3D viewport tools: scene overlays, selection tools, snapping, and the 3D cursor. [Viewports](../../docs/editor/viewport.md) |
 
 ## Local rules

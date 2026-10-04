@@ -46,6 +46,12 @@ zenith_add_test(zenith_editor_play_mode
         ${PROJECT_SOURCE_DIR}/src/editor/application/EditorPlayMode.cpp
     INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src"
     LIBS zenith_engine)
+# The smoke runner alone, with a step context of the test's own.
+zenith_add_test(zenith_smoke_runner
+    SOURCES
+        SmokeRunnerTests.cpp
+        ${PROJECT_SOURCE_DIR}/src/editor/smoke/SmokeRunner.cpp
+    INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src")
 
 zenith_add_test(zenith_component_editor SOURCES ComponentEditorTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_editor_camera SOURCES EditorCameraTests.cpp LIBS zenith_editor_app NEEDS_ASSETS)
@@ -141,10 +147,13 @@ zenith_add_test(zenith_editor_test_settings_reset EXECUTABLE "${CMAKE_COMMAND}"
     COMMAND_ARGS -E rm -rf "${ZENITH_EDITOR_TEST_SETTINGS_DIR}"
     FIXTURES_SETUP zenith_editor_test_settings)
 
-# About 25 s alone and 35 s in a full ctest -j 8; the 180 s timeout covers
-# a machine also running other build trees' suites.
+# The scenario quits when its last step finishes (editor/smoke/,
+# docs/editor/smoke.md); ZENITH_SMOKE_FRAMES is only a safety cap above the
+# sum of the step budgets (about 1,700 frames). About 5 s alone in Debug
+# (8 s before the steps ran back to back); the 180 s timeout covers a full
+# ctest -j 8 on a machine also running other build trees' suites.
 zenith_add_test(zenith_editor_vulkan_smoke EXECUTABLE zenith_editor
-    ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=900
+    ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=3000
         ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/vulkan_smoke
     LABELS vulkan smoke TIMEOUT 180 PROCESSORS 2
     FIXTURES_REQUIRED zenith_editor_test_settings)
@@ -165,12 +174,12 @@ file(GENERATE OUTPUT "${PROJECT_BINARY_DIR}/editor-module-smoke-$<CONFIG>.zenith
   \"renderSettings\": ${ZENITH_DEMO_RENDER_SETTINGS}
 }
 ")
-# About 35 s alone and 45 s in a full ctest -j 8 at 900 frames (it once
-# timed out at 60 s under load); the 180 s timeout covers other suites on
-# the same machine.
+# The same frame cap as above. About 9 s alone in Debug (12 s before the
+# steps ran back to back; it once timed out at 60 s under load); the 180 s
+# timeout covers other suites on the same machine.
 zenith_add_test(zenith_editor_module_smoke EXECUTABLE zenith_editor
     COMMAND_ARGS "${PROJECT_BINARY_DIR}/editor-module-smoke-$<CONFIG>.zenith-project"
-    ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=900
+    ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=3000
         ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/module_smoke
     LABELS vulkan smoke TIMEOUT 180 PROCESSORS 2
     FIXTURES_REQUIRED zenith_editor_test_settings)

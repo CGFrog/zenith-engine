@@ -1,8 +1,7 @@
 // EditorSession's play workflows: the play operators and their targets (the
 // active viewport, a floating viewport, or a standalone game process), game
 // views and the input they route to module systems, the mouse capture
-// policy, the playback toolbar in the main menu bar, and the play target
-// smoke.
+// policy, and the playback toolbar in the main menu bar.
 
 #include "EditorSession.hpp"
 
@@ -12,9 +11,6 @@
 
 #include <imgui.h>
 #include <nlohmann/json.hpp>
-
-#include <iostream>
-#include <limits>
 
 namespace {
 constexpr const char* playDiagnosticSource = "Play";
@@ -308,134 +304,4 @@ void EditorSession::drawSimulateOptions(ApplicationContext& context) {
     ImGui::Separator();
     EditorContext editor = editorContext(context);
     drawSimulateSystemPicker(editor, m_moduleHost);
-}
-
-bool EditorSession::updateSmokePlayTargets(ApplicationContext& context) {
-    // Frames 350-420: Play in the active viewport (it switches to the game
-    // camera, holds game input with Persistent mouse capture, shows its
-    // banner, pauses and steps one frame, and Stop restores the scene and
-    // the editor camera); then, when the game executable is built, play
-    // standalone: launch it on a temporary scene, stream its output for a
-    // while, and stop it.
-    constexpr uint32_t firstFrame = 350;
-    constexpr uint32_t standaloneFrame = firstFrame + 6;
-    constexpr uint32_t standaloneStopFrame = firstFrame + 50;
-    constexpr uint32_t lastFrame = firstFrame + 70;
-    const auto fail = [&](const std::string& message) {
-        const std::string error = "Play target smoke: " + message;
-        std::cerr << error << '\n';
-        context.logger.log(LogLevel::Error, "editor", error);
-        m_diagnostics.reportError(error);
-        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    };
-    const auto snapshot = [&] {
-        std::string text;
-        if (const SceneDocumentResult result =
-                SceneDocument::serialize(context.scene, context.assets, m_document.options(), text);
-            !result) {
-            fail("the scene could not be serialized: " + result.error);
-        }
-        return text;
-    };
-    if (m_smokePlayTargetsDone || m_smokeFrame < firstFrame) {
-        return m_smokePlayTargetsDone;
-    }
-    const auto finish = [&] {
-        m_smokePlayTargetsDone = true;
-        return true;
-    };
-    ViewportPanel* viewport = gameViewport();
-    if (m_smokeFrame == firstFrame) {
-        if (m_viewports.active() == nullptr) {
-            context.logger.log(LogLevel::Info, "editor", "Play target smoke: viewport phase skipped, no viewport");
-            return false;
-        }
-        m_smokePlaySnapshot = snapshot();
-        if (!invokeOperator(context, "play.start", R"({"target":"viewport"})", KeymapRegion::Global) ||
-            m_playMode.mode() != EditorMode::Play || gameViewport() == nullptr) {
-            fail("play.start did not play in the active viewport");
-        } else if (const InputState frameInput;
-                   !gameViewport()->gameInputFocus() || &gameInput(frameInput) != &frameInput) {
-            fail("the game view should start with input focus, routing input to the game");
-        }
-    } else if (m_smokeFrame == firstFrame + 2 && viewport != nullptr) {
-        // The view has been drawn in game view since.
-        const Entity camera = gameCamera(context.scene);
-        const std::optional<RenderView> cameraLens = sceneCameraLens(context.scene, camera);
-        if (cameraLens && glm::length(viewport->lens(context.scene).position - cameraLens->position) > 1e-3f) {
-            fail("the game view does not look through the game camera");
-        }
-        for (const ViewportPanel* other : m_viewports.openViewports()) {
-            if (other != viewport && other->gameView()) {
-                fail("only the playing viewport should show the game");
-            }
-        }
-        const GameViewBanner banner = viewport->gameViewBanner();
-        if (banner == GameViewBanner::None) {
-            fail("the game view shows no input banner");
-        }
-        context.logger.log(LogLevel::Info, "editor",
-                           std::string("Play target smoke: game camera ") + (cameraLens ? "found" : "absent") +
-                               ", banner '" + std::string(gameViewBannerText(banner)) + "'");
-        invokeOperator(context, "play.release_game_input", {}, KeymapRegion::Global);
-        const InputState frameInput;
-        if (mouseCapturePolicy() != MouseCapturePolicy::WhileRightMouseDown ||
-            &gameInput(frameInput) != &m_idleGameInput) {
-            fail("releasing game input should restore editor mouse capture and stop routing input");
-        }
-        invokeOperator(context, "play.toggle_pause", {}, KeymapRegion::Global);
-    } else if (m_smokeFrame == firstFrame + 3 && viewport != nullptr) {
-        if (!invokeOperator(context, "play.step", {}, KeymapRegion::Global) || !m_playMode.steppingFrame()) {
-            fail("play.step did not request a frame step while paused");
-        }
-    } else if (m_smokeFrame == firstFrame + 4 && viewport != nullptr) {
-        if (m_playMode.mode() != EditorMode::Paused || m_playMode.steppingFrame()) {
-            fail("a frame step should last one frame and stay paused");
-        }
-        invokeOperator(context, "play.stop", {}, KeymapRegion::Global);
-        if (m_playMode.mode() != EditorMode::Edit || viewport->gameView() || snapshot() != m_smokePlaySnapshot) {
-            fail("Stop did not end the game view and restore the scene");
-        }
-    } else if (m_smokeFrame == standaloneFrame) {
-        std::error_code error;
-        if (!std::filesystem::is_regular_file(m_playServices.gameExecutable, error)) {
-            context.logger.log(LogLevel::Info, "editor",
-                               "Play target smoke: standalone phase skipped, the game executable '" +
-                                   m_playServices.gameExecutable.string() + "' is not built");
-            return finish();
-        }
-        m_smokeGameLogSequence = context.logger.snapshotAfter(std::numeric_limits<uint64_t>::max()).latestSequence;
-        m_smokeStandaloneFrame = m_smokeFrame;
-        if (!invokeOperator(context, "play.start", R"({"target":"standalone"})", KeymapRegion::Global) ||
-            !m_standalone.running() || !std::filesystem::is_regular_file(m_standalone.sceneFile(), error)) {
-            fail("play.start did not launch the standalone game on a temporary scene");
-            return finish();
-        }
-    } else if (m_smokeFrame > standaloneFrame && m_smokeStandaloneFrame != 0) {
-        if (!m_standalone.running()) {
-            // Ended by itself or after Stop: the session left Play.
-            size_t loggedLines = 0;
-            for (const LogEntry& entry : context.logger.entriesAfter(m_smokeGameLogSequence)) {
-                loggedLines += entry.category == StandalonePlayer::logCategory ? 1 : 0;
-            }
-            context.logger.log(LogLevel::Info, "editor",
-                               "Play target smoke: the standalone game ran for " +
-                                   std::to_string(m_smokeFrame - m_smokeStandaloneFrame) + " editor frames; " +
-                                   std::to_string(m_standalone.outputLines()) + " output line(s) reached the log");
-            if (playActive() || m_activePlayTarget || loggedLines < m_standalone.outputLines()) {
-                fail("the standalone game's end should leave Play with its output in the log");
-            }
-            return finish();
-        }
-        // Stop once the game has run a while and printed something, or at
-        // the end of the window.
-        const bool ranAWhile = m_standalone.outputLines() > 0 && m_smokeFrame >= m_smokeStandaloneFrame + 30;
-        if (!m_standalone.stopRequested() && (ranAWhile || m_smokeFrame >= standaloneStopFrame)) {
-            invokeOperator(context, "play.stop", {}, KeymapRegion::Global);
-        } else if (m_smokeFrame >= lastFrame) {
-            fail("the standalone game did not end after Stop");
-            return finish();
-        }
-    }
-    return false;
 }

@@ -133,8 +133,8 @@ it is not part of undo. New objects spawn at the cursor: the add operators and
 an explicit location wins), and dropped models go to it
 (`EntityCommands::placeModel`). `tests/editor/SnappingCursorTests.cpp` covers
 the pivot and snap math, the queries against real cube meshes, the operators,
-spawning, drawing, area state, and the sidecar headless; the editor smoke
-(frame 310) places the cursor, adds an Empty at it, and undoes.
+spawning, drawing, area state, and the sidecar headless; the editor smoke's
+`3D cursor` step places the cursor, adds an Empty at it, and undoes.
 
 ## `src/editor/interaction/PickQueries.*`
 
