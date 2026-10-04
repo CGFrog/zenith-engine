@@ -206,7 +206,7 @@ builds and loads its module; pass a folder to keep the result:
 | Add physics behavior | `src/engine/physics/` | Hide Jolt behind Zenith types except deliberate native access. |
 | Add a render pass | `src/engine/graphics/` and `shaders/` | Consume scene/assets without gameplay rules. |
 | Add runtime content | `assets/` | Reference it from composition, not reusable subsystem code. |
-| Change build wiring | `CMakeLists.txt` | Preserve generated shader/asset paths and dependencies. |
+| Change build wiring | `CMakeLists.txt`, the nearest folder `CMakeLists.txt`, `cmake/` | Preserve generated shader/asset paths and dependencies. |
 
 ## Common tasks
 
@@ -288,7 +288,7 @@ missing-decoder error.
 
 Prefer a focused class that iterates only its required components. Pass
 dependencies explicitly and invoke the system from composition/orchestration.
-Add it to `zenith_engine` in `CMakeLists.txt` and test observable public behavior.
+Add it to `zenith_engine` in `src/engine/CMakeLists.txt` and test observable public behavior.
 
 ## Current limitations
 

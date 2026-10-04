@@ -12,7 +12,7 @@ editor is in [Editor extensions](EDITOR_EXTENSIONS.md).
 
 | Path | Purpose |
 | --- | --- |
-| `CMakeLists.txt` | Declares the C++20 project, pins third-party dependencies, builds the engine, executable, shaders, assets, and tests, and supplies runtime directory definitions. |
+| `CMakeLists.txt` | Declares the C++20 project, includes `cmake/Dependencies.cmake` (pinned third-party dependencies), adds `src/` and `tests/`, compiles shaders, copies and cooks assets, and installs and packages releases. Each source folder's own `CMakeLists.txt` lists its sources. |
 | `README.md` | Quick-start overview, controls, current feature summary, and links into these detailed guides. |
 | `AGENTS.md` | Root contributor policy and navigation. Scoped guides under `src/engine/`, `src/editor/`, `src/game/`, and `tests/` add local ownership rules. |
 | `.clang-format` | Formatting rules for C++ headers and sources. |
@@ -27,7 +27,7 @@ editor is in [Editor extensions](EDITOR_EXTENSIONS.md).
 | `tools/color_grading/` | Standard-library Python script that regenerates the example `.cube` colour grade. |
 | `projects/` | Project manifests and scene documents (`demo`, the renderer `showcase`, and the `irradiance_room` interior). |
 | `templates/` | Project templates the editor's Project Hub generates projects from; `cpp_game/` is a C++ game project (CMake game module, example component and system). `{{UPPER_CASE}}` tokens are substituted. The build copies it to `build/templates/`. |
-| `cmake/` | Packaging scripts and the inputs of the files configuration writes for out-of-tree game modules (`ZenithEngineConfig.cmake`, `ZenithEngineTargets-<config>.cmake`, `zenith-engine.json`). |
+| `cmake/` | `Dependencies.cmake` (FetchContent pins and wrapper targets), `CompilerSettings.cmake` (`zenith_target_warnings`), `ZenithTesting.cmake` (`zenith_add_test`), packaging scripts, and the inputs of the files configuration writes for out-of-tree game modules (`ZenithEngineConfig.cmake`, `ZenithEngineTargets-<config>.cmake`, `zenith-engine.json`). |
 | `build/` | Generated configuration, dependencies, binaries, copied assets, and compiled shaders. Do not edit generated contents. |
 
 ## Workspace layout
@@ -56,7 +56,9 @@ tests/
 |- editor/                 authoring behavior
 |  `- modules/             game modules with editor extensions for the module host tests
 |- game/                   demo integration and the game's project runtime
-`- packaging/              CMake script tests of the packaging configure checks
+|- capture/                reference capture driver
+|- packaging/              CMake script tests of the packaging configure checks
+`- validation/             strict Vulkan validation smoke matrix (CMake only)
 ```
 
 Long-form project tutorials live under `docs/tutorials/`. The
@@ -64,11 +66,13 @@ Long-form project tutorials live under `docs/tutorials/`. The
 compose the public engine APIs without moving game rules into reusable systems.
 
 Folder-crossing includes use paths rooted at `src/`. CMake source lists are
-explicit, so a file move must update `CMakeLists.txt` as well as include sites.
+explicit, so a file move must update the nearest `CMakeLists.txt` as well as
+include sites.
 
 ## Build description
 
-`CMakeLists.txt` creates these targets:
+The root `CMakeLists.txt`, `src/CMakeLists.txt`, and `src/{engine,game,editor}/CMakeLists.txt`
+create these targets (`tests/*/CMakeLists.txt` add the test executables):
 
 | Target | Kind | Responsibility |
 | --- | --- | --- |
@@ -1426,7 +1430,7 @@ holds a move-only `JoltRuntimeLease`; worlds coexist and shut down in any order.
 
 Private adapter from Jolt's `DebugRendererSimple` to `DebugDraw`: lines and
 triangle edges become debug lines, 3D text becomes labels. It needs Jolt's
-`JPH_DEBUG_RENDERER`, which the root `CMakeLists.txt` enables in every
+`JPH_DEBUG_RENDERER`, which `cmake/Dependencies.cmake` enables in every
 configuration.
 
 ## Graphics
@@ -2053,4 +2057,4 @@ The source directory is copied as a whole to `build/assets/` for runtime use.
 
 The executables return a nonzero status on failed expectations so CTest can
 report failures without another test framework. Test sources and registrations
-are explicit in `CMakeLists.txt`.
+are explicit in the `tests/*/CMakeLists.txt` files.
