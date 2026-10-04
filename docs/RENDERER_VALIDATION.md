@@ -122,7 +122,12 @@ presented) and ends the run with that frame unless `ZENITH_SMOKE_FRAMES` asks fo
 more. The swapchain is then created with `TRANSFER_SRC` usage; the copy waits for
 that one frame before presenting it. A capture also fixes the frame time (see
 `ZENITH_FIXED_FRAME_TIME`) and fails, rather than writing a misleading image, if
-assets were still uploading on the captured frame.
+assets were still uploading on the captured frame. A capture window is fixed
+size and never takes focus, so another program cannot maximize, snap, or send
+keys to it (a maximized window once produced a 2560x1377 capture under a busy
+desktop); if its drawable size still changes during the run, the run fails
+naming both sizes, and the reference driver prints the capture and reference
+sizes on any dimension mismatch.
 
 The demo game layer adds a scripted camera for repeatable views:
 `ZENITH_CAPTURE_CAMERA=x,y,z,yaw,pitch` replaces the player with a camera at that

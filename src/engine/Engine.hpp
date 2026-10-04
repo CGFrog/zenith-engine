@@ -36,6 +36,9 @@ class Engine {
     static uint64_t readFrameLimit();
     // Takes the requested capture from the frame just drawn and writes it.
     bool writeFrameCapture(const FrameCaptureRequest& request);
+    // A capture run renders every frame at one drawable size; records the
+    // first frame's size in firstSize and reports a later change.
+    bool captureWindowSizeUnchanged(std::optional<WindowSizeOverride>& firstSize);
 
     // Declared first: subsystems log through it until they are destroyed.
     Logger m_logger;
