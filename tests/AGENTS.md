@@ -14,6 +14,13 @@ Tests mirror the production dependency boundary:
 Prefer public behavior, deterministic inputs, and CPU-only execution when GPU
 access is not intrinsic. Tests run in parallel (`ctest -j 8`), so each test
 owns its temporary paths, and tests that launch the engine set `PROCESSORS 2`.
+CTest points `TMP`/`TEMP`/`TMPDIR` at the build tree's `test-temp/`
+(the `zenith_test_temp` fixture, which every test requires), so suites in other
+build trees never share temporary paths with this one; a test registered after
+that block in `CMakeLists.txt` would miss it. Never wait for a worker thread with
+a fixed sleep: poll the observable result against a generous deadline (see the
+streaming check in `engine/AudioSystemTests.cpp`). Give engine-launching tests
+timeouts several times their loaded run time.
 Reference captures register one CTest per view from `captures.json`. Every test executable is listed explicitly in the root
 `CMakeLists.txt`; moving or adding a test requires updating that list and its
 CTest registration. Use temporary paths for files created by tests and clean up

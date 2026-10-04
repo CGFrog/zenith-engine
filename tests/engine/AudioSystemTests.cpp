@@ -10,6 +10,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <limits>
+#include <random>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -57,7 +59,10 @@ bool near(float lhs, float rhs, float tolerance = 0.001f) {
 } // namespace
 
 int main() {
-    const auto directory = std::filesystem::temp_directory_path() / "zenith_audio_tests";
+    // Unique per process, so concurrent direct runs of this executable (a
+    // stress loop) do not delete each other's files.
+    const auto directory =
+        std::filesystem::temp_directory_path() / ("zenith_audio_tests_" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(directory);
     const auto monoPath = directory / "mono.wav";
     const auto stereoPath = directory / "stereo.wav";
@@ -168,11 +173,24 @@ int main() {
         stream.handle,
         {.bus = AudioBus::Music, .scope = AudioScope::Persistent, .gain = 1.0f, .pitch = 1.0f, .loop = true});
     expect(static_cast<bool>(music), "streamed music starts on a decoder worker");
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    // The decoder worker opens and decodes the file on its own schedule, so a
+    // fixed sleep is not enough on a loaded machine (it failed ~15% of runs
+    // with 16 instances on busy cores). Mix as the device callback would: an
+    // underrun mixes silence without consuming anything, and the voice must
+    // produce samples once the worker has refilled the ring. The deadline only
+    // bounds a decoder that never delivers.
     std::vector<float> streamed(1024);
-    audio.mix(streamed.data(), streamed.size() / 2);
-    expect(std::any_of(streamed.begin(), streamed.end(), [](float sample) { return std::abs(sample) > 0.0001f; }),
-           "streaming refill recovers from initial underrun and produces samples");
+    const auto streamingDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    bool streamedSamples = false;
+    while (!streamedSamples && std::chrono::steady_clock::now() < streamingDeadline) {
+        audio.mix(streamed.data(), streamed.size() / 2);
+        streamedSamples =
+            std::any_of(streamed.begin(), streamed.end(), [](float sample) { return std::abs(sample) > 0.0001f; });
+        if (!streamedSamples) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    expect(streamedSamples, "streaming refill recovers from initial underrun and produces samples");
     expect(static_cast<bool>(audio.stop(music.handle)), "streamed music stops explicitly");
     audio.shutdown();
 

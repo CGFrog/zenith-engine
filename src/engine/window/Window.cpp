@@ -5,7 +5,14 @@ bool Window::init() {
         return false;
     }
 
-    m_window = SDL_CreateWindow("Zenith", width, height, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+    SDL_WindowFlags flags = SDL_WINDOW_VULKAN;
+    if (resizable) {
+        flags |= SDL_WINDOW_RESIZABLE;
+    }
+    if (!focusable) {
+        flags |= SDL_WINDOW_NOT_FOCUSABLE;
+    }
+    m_window = SDL_CreateWindow("Zenith", width, height, flags);
 
     if (!m_window) {
         return false;

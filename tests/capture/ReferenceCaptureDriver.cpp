@@ -282,6 +282,10 @@ bool compareWithReference(const CaptureView& view, const std::filesystem::path& 
     const ImageComparison comparison = compareImages(actual, reference, view.tolerance);
     std::cout << "[" << view.name << "] " << (comparison.withinTolerance ? "match" : "MISMATCH") << ": "
               << comparison.summary() << '\n';
+    if (!comparison.dimensionsMatch) {
+        std::cout << "[" << view.name << "] capture is " << actual.width << 'x' << actual.height << ", reference is "
+                  << reference.width << 'x' << reference.height << '\n';
+    }
     if (!comparison.withinTolerance && comparison.dimensionsMatch) {
         std::filesystem::path diffPath = capturePath;
         diffPath.replace_extension(".diff.png");

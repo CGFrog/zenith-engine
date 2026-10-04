@@ -2200,7 +2200,9 @@ if(BUILD_TESTING)
         ENVIRONMENT
             "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=900;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/vulkan_smoke"
         LABELS "vulkan;smoke"
-        TIMEOUT 45
+        # About 25 s alone and 35 s in a full ctest -j 8; the margin covers a
+        # machine also running other build trees' suites.
+        TIMEOUT 180
         FIXTURES_REQUIRED zenith_editor_test_settings
     )
 
@@ -2229,7 +2231,10 @@ if(BUILD_TESTING)
         ENVIRONMENT
             "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=900;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/module_smoke"
         LABELS "vulkan;smoke"
-        TIMEOUT 60
+        # About 35 s alone and 45 s in a full ctest -j 8 at 900 frames (it once
+        # timed out at 60 s under load); the margin covers other suites on the
+        # same machine.
+        TIMEOUT 180
         FIXTURES_REQUIRED zenith_editor_test_settings
     )
 
@@ -2386,4 +2391,25 @@ if(BUILD_TESTING)
             target_compile_options(${test_target} PRIVATE -Wall -Wextra -Wpedantic)
         endif()
     endforeach()
+endif()
+
+# Every test gets a temporary directory inside its own build tree. Tests name
+# their temporary paths uniquely within one suite, but another build tree of
+# this repository (a worktree, a second checkout) runs the same tests with the
+# same names: two zenith_prefabs runs sharing %TEMP% corrupted each other's
+# prefab files and hit entt assertions, and editors in two trees deleted each
+# other's game module shadow copies. TMP and TEMP feed
+# std::filesystem::temp_directory_path on Windows, TMPDIR elsewhere.
+if(BUILD_TESTING)
+    set(ZENITH_TEST_TEMP_DIR "${CMAKE_CURRENT_BINARY_DIR}/test-temp")
+    file(TO_NATIVE_PATH "${ZENITH_TEST_TEMP_DIR}" ZENITH_TEST_TEMP_DIR_NATIVE)
+    add_test(NAME zenith_test_temp_directory
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${ZENITH_TEST_TEMP_DIR}")
+    set_tests_properties(zenith_test_temp_directory PROPERTIES FIXTURES_SETUP zenith_test_temp)
+    get_property(zenith_all_tests DIRECTORY PROPERTY TESTS)
+    list(REMOVE_ITEM zenith_all_tests zenith_test_temp_directory)
+    set_property(TEST ${zenith_all_tests} APPEND PROPERTY FIXTURES_REQUIRED zenith_test_temp)
+    set_property(TEST ${zenith_all_tests} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+        "TMP=set:${ZENITH_TEST_TEMP_DIR_NATIVE}" "TEMP=set:${ZENITH_TEST_TEMP_DIR_NATIVE}"
+        "TMPDIR=set:${ZENITH_TEST_TEMP_DIR}")
 endif()

@@ -1,6 +1,7 @@
 #include "engine/assets/Assets.hpp"
 #include "engine/module/GameModule.hpp"
 #include "engine/module/ModuleApi.hpp"
+#include "engine/module/ModuleShadowCopy.hpp"
 #include "engine/module/SystemScheduler.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/Scene.hpp"
@@ -132,12 +133,23 @@ void testLoadRegisterAndUnload(const TestPaths& paths) {
     std::ofstream(staleSymbols) << "stale";
 #endif
 
+    // Another owner's copy, written but not loaded yet (another process
+    // creating its shadow copy at the same moment).
+    ModuleShadowCopy pending;
+    expect(static_cast<bool>(ModuleShadowCopy::create(paths.module, paths.shadow, pending)),
+           "a shadow copy is created without loading it");
+
     std::unique_ptr<GameModule> module;
     const GameModuleResult loaded = GameModule::load(paths.module, optionsFor(paths), module);
 #if defined(_WIN32)
     expect(!std::filesystem::exists(staleLibrary) && !std::filesystem::exists(staleSymbols),
            "loading a module removes stale shadow copies of it");
 #endif
+    expect(std::filesystem::exists(pending.library()),
+           "stale-copy cleanup never deletes a copy its owner has written but not loaded yet");
+    const std::filesystem::path pendingLibrary = pending.library();
+    pending = ModuleShadowCopy();
+    expect(!std::filesystem::exists(pendingLibrary), "a shadow copy deletes its files when released");
     expect(loaded.success && module != nullptr, "the test game module loads");
     if (!loaded) {
         std::cerr << loaded.error << '\n';

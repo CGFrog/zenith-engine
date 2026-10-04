@@ -12,6 +12,36 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+// A read handle on the shadow library that shares reading and writing but not
+// deletion: the loader can still open the file, while another process's
+// removeStaleCopies cannot delete it. Empty on other platforms, which never
+// delete other processes' copies.
+struct ModuleShadowFileLock {
+#if defined(_WIN32)
+    HANDLE handle{INVALID_HANDLE_VALUE};
+
+    ModuleShadowFileLock() = default;
+    ModuleShadowFileLock(const ModuleShadowFileLock&) = delete;
+    ModuleShadowFileLock& operator=(const ModuleShadowFileLock&) = delete;
+
+    ~ModuleShadowFileLock() {
+        if (handle != INVALID_HANDLE_VALUE) {
+            CloseHandle(handle);
+        }
+    }
+#endif
+};
+
 namespace {
 // The CodeView record of a Portable Executable image: where the null-terminated
 // program database path is stored in the file, and how many bytes it may use.
@@ -161,8 +191,9 @@ bool isShadowStemOf(const std::string& name, const std::string& stem) {
 
 // Best effort: deletes copies of source left by processes that exited without
 // unloading (or modules intentionally left loaded). Windows only: there a
-// library still loaded by any process is locked against deletion, which tells
-// stale copies from live ones. A program database is deleted only with its
+// library still loaded by any process, or still held by its owner's
+// ModuleShadowFileLock, is locked against deletion, which tells stale copies
+// from live ones. A program database is deleted only with its
 // library.
 void removeStaleCopies(const std::filesystem::path& source, const std::filesystem::path& directory) {
 #if defined(_WIN32)
@@ -188,12 +219,45 @@ void removeStaleCopies(const std::filesystem::path& source, const std::filesyste
 #endif
 }
 
-bool writeBytes(const std::filesystem::path& path, const std::vector<char>& bytes) {
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-    return static_cast<bool>(output);
+// Writes a new file at path and returns a lock that has held it since before
+// the writer closed, so no other process can delete it in between. Fails if
+// path already exists.
+std::unique_ptr<ModuleShadowFileLock> writeLockedLibrary(const std::filesystem::path& path,
+                                                         const std::vector<char>& bytes) {
+    auto lock = std::make_unique<ModuleShadowFileLock>();
+#if defined(_WIN32)
+    const HANDLE writer =
+        CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (writer == INVALID_HANDLE_VALUE) {
+        return nullptr;
+    }
+    // Shares writing only because the writer is still open.
+    lock->handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                               FILE_ATTRIBUTE_NORMAL, nullptr);
+    bool written = lock->handle != INVALID_HANDLE_VALUE;
+    size_t offset = 0;
+    while (written && offset < bytes.size()) {
+        const DWORD chunk = static_cast<DWORD>(std::min<size_t>(bytes.size() - offset, 1u << 30));
+        DWORD count = 0;
+        written = WriteFile(writer, bytes.data() + offset, chunk, &count, nullptr) && count == chunk;
+        offset += count;
+    }
+    written = CloseHandle(writer) && written;
+    return written ? std::move(lock) : nullptr;
+#else
+    {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        if (!output) {
+            return nullptr;
+        }
+    }
+    return lock;
+#endif
 }
 } // namespace
+
+ModuleShadowCopy::ModuleShadowCopy() = default;
 
 ModuleShadowCopy::~ModuleShadowCopy() {
     remove();
@@ -201,13 +265,15 @@ ModuleShadowCopy::~ModuleShadowCopy() {
 
 ModuleShadowCopy::ModuleShadowCopy(ModuleShadowCopy&& other) noexcept
     : m_library(std::exchange(other.m_library, {}))
-    , m_debugSymbols(std::exchange(other.m_debugSymbols, {})) {}
+    , m_debugSymbols(std::exchange(other.m_debugSymbols, {}))
+    , m_libraryLock(std::move(other.m_libraryLock)) {}
 
 ModuleShadowCopy& ModuleShadowCopy::operator=(ModuleShadowCopy&& other) noexcept {
     if (this != &other) {
         remove();
         m_library = std::exchange(other.m_library, {});
         m_debugSymbols = std::exchange(other.m_debugSymbols, {});
+        m_libraryLock = std::move(other.m_libraryLock);
     }
     return *this;
 }
@@ -266,7 +332,8 @@ ModuleShadowCopyResult ModuleShadowCopy::create(const std::filesystem::path& sou
     }
 
     created.m_library = library;
-    if (!writeBytes(library, bytes)) {
+    created.m_libraryLock = writeLockedLibrary(library, bytes);
+    if (!created.m_libraryLock) {
         return {.error = "Could not write module shadow copy '" + library.string() + "'"};
     }
     copy = std::move(created);
@@ -282,11 +349,15 @@ const std::filesystem::path& ModuleShadowCopy::debugSymbols() const {
 }
 
 void ModuleShadowCopy::keep() {
+    // The loaded library keeps itself from deletion; once it is unloaded at
+    // exit, a later process's stale-copy cleanup removes the files.
+    m_libraryLock.reset();
     m_library.clear();
     m_debugSymbols.clear();
 }
 
 void ModuleShadowCopy::remove() {
+    m_libraryLock.reset();
     std::error_code error;
     if (!m_library.empty()) {
         std::filesystem::remove(m_library, error);

@@ -87,6 +87,12 @@ bool Engine::init(const PhysicsWorldConfig& physicsConfig, const AudioConfig& au
         m_window.width = m_captureConfig.windowSize->width;
         m_window.height = m_captureConfig.windowSize->height;
     }
+    if (m_captureConfig.capture) {
+        // Another program maximizing or snapping the window mid-run once
+        // produced a full-screen capture; a capture window keeps its size.
+        m_window.resizable = false;
+        m_window.focusable = false;
+    }
     if (!m_window.init()) {
         return false;
     }
@@ -150,6 +156,7 @@ bool Engine::run(Application& application) {
     uint64_t fpsFrames = 0;
     uint64_t taskGeneration = 0;
     double maxFps = 0.0;
+    std::optional<WindowSizeOverride> captureDrawableSize;
     while (running) {
         const auto frameBegin = std::chrono::steady_clock::now();
         const bool measuring = benchmarkEnabled && renderedFrames >= benchmark.warmupFrames;
@@ -244,6 +251,11 @@ bool Engine::run(Application& application) {
         const auto transformsBegin = std::chrono::steady_clock::now();
         m_scene.updateWorldTransforms();
         const double transformsMilliseconds = elapsedMilliseconds(transformsBegin);
+        if (capture && !captureWindowSizeUnchanged(captureDrawableSize)) {
+            runSucceeded = false;
+            running = false;
+            break;
+        }
         const auto uiBegin = std::chrono::steady_clock::now();
         m_renderer.beginUiFrame(m_assets);
         int uiWidth = 1;
@@ -439,6 +451,27 @@ bool Engine::writeFrameCapture(const FrameCaptureRequest& request) {
     std::cout << "Captured frame " << request.frame << " (" << result.image->width << 'x' << result.image->height
               << ") to " << request.outputPath.string() << '\n';
     return true;
+}
+
+bool Engine::captureWindowSizeUnchanged(std::optional<WindowSizeOverride>& firstSize) {
+    int width = 0;
+    int height = 0;
+    SDL_GetWindowSizeInPixels(m_window.handle(), &width, &height);
+    const WindowSizeOverride size{static_cast<uint32_t>(std::max(width, 0)),
+                                  static_cast<uint32_t>(std::max(height, 0))};
+    if (!firstSize) {
+        firstSize = size;
+        return true;
+    }
+    if (size.width == firstSize->width && size.height == firstSize->height) {
+        return true;
+    }
+    // History (TAA, exposure, streaming) from frames at another size would
+    // make the capture unrepeatable even if the size came back.
+    m_log.error("The window changed from " + std::to_string(firstSize->width) + 'x' +
+                std::to_string(firstSize->height) + " to " + std::to_string(size.width) + 'x' +
+                std::to_string(size.height) + " pixels during a capture run; another program resized it");
+    return false;
 }
 
 uint64_t Engine::readFrameLimit() {

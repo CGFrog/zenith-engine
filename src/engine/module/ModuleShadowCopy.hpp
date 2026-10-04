@@ -1,7 +1,12 @@
 #pragma once
 
 #include <filesystem>
+#include <memory>
 #include <string>
+
+// Keeps a written shadow library from being deleted by another process; see
+// ModuleShadowCopy::create.
+struct ModuleShadowFileLock;
 
 struct ModuleShadowCopyResult {
     bool success{false};
@@ -24,7 +29,7 @@ struct ModuleShadowCopyResult {
 // it only after the library has been unloaded.
 class ModuleShadowCopy {
   public:
-    ModuleShadowCopy() = default;
+    ModuleShadowCopy();
     ~ModuleShadowCopy();
 
     ModuleShadowCopy(ModuleShadowCopy&& other) noexcept;
@@ -34,7 +39,11 @@ class ModuleShadowCopy {
 
     // Copies source into directory, creating directory when needed. On
     // Windows, copies of source left in directory by earlier processes are
-    // deleted first unless a process still has them loaded.
+    // deleted first unless a process still has them loaded or, like this
+    // copy, still owns them: the copy is held open without delete sharing
+    // from the moment it is written until it is removed, so another process
+    // creating a copy of the same library (two editors, or parallel test runs
+    // sharing the default shadow directory) cannot delete it before it loads.
     static ModuleShadowCopyResult create(const std::filesystem::path& source, const std::filesystem::path& directory,
                                          ModuleShadowCopy& copy);
 
@@ -50,6 +59,8 @@ class ModuleShadowCopy {
   private:
     std::filesystem::path m_library;
     std::filesystem::path m_debugSymbols;
+    // Released before the files are removed, and by keep().
+    std::unique_ptr<ModuleShadowFileLock> m_libraryLock;
 
     void remove();
 };
