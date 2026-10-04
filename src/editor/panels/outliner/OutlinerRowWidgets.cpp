@@ -26,7 +26,7 @@ void decorateOutlinerRow(EditorIcon icon, bool selected, bool leaf, bool ghost) 
         if (leaf) {
             const float cursor = artPixel * 6.0f;
             pixel::triangle(drawList, {min.x + (labelOffset - cursor) / 2.0f, (min.y + max.y - cursor) / 2.0f}, cursor,
-                            ImGuiDir_Right, widgets::color(pixelGlow));
+                            ImGuiDir_Right, widgets::color(editorAccent()));
         }
     }
     widgets::ItemIcon(icon, labelOffset, {.disabled = ghost});

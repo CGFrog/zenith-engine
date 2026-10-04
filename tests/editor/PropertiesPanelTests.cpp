@@ -4,6 +4,7 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
+#include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/EntityPropertiesView.hpp"
 #include "editor/interaction/ReflectedFieldEditor.hpp"
 #include "editor/menus/EditorMenus.hpp"
@@ -24,6 +25,7 @@
 #include "engine/ui/GameUi.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <iostream>
@@ -626,6 +628,153 @@ void testCollapseState() {
     expect(fixture.drawLogged(another).find("Amount") == std::string::npos,
            "the collapse state should be shared by every inspector");
 }
+
+// An entity at position, rotated 45 degrees about Y when turned.
+SceneEntityId addPlaced(PanelFixture& fixture, const char* name, glm::vec3 position, bool turned) {
+    const Entity entity = fixture.scene.createEntity(name);
+    EditableTransform transform{.translation = position};
+    transform.rotationDegrees.y = turned ? 45.0f : 0.0f;
+    fixture.scene.registry().get<TransformComponent>(entity).local = ComponentEditors::composeTransform(transform);
+    return fixture.scene.id(entity);
+}
+
+EditableTransform transformOf(PanelFixture& fixture, SceneEntityId id) {
+    EditableTransform transform;
+    ComponentEditors::decomposeTransform(
+        fixture.scene.registry().get<TransformComponent>(fixture.scene.findEntity(id)).local, transform);
+    return transform;
+}
+
+bool near(glm::vec3 actual, glm::vec3 expected) {
+    return glm::all(glm::lessThan(glm::abs(actual - expected), glm::vec3(0.001f)));
+}
+
+std::string nameOf(PanelFixture& fixture, SceneEntityId id) {
+    return fixture.scene.registry().get<NameComponent>(fixture.scene.findEntity(id)).name;
+}
+
+// The id of element index of a reflected vector field drawn in window, as
+// drawReflectedFields lays its elements out.
+ImGuiID elementId(const char* windowName, const char* fieldKey, const char* label, int index) {
+    const ImGuiWindow* window = HeadlessImGuiContext::findWindow(windowName);
+    expect(window != nullptr, "the panel window should exist");
+    if (window == nullptr) {
+        return 0;
+    }
+    const ImGuiID field = HeadlessImGuiContext::itemId(*window, fieldKey, label);
+    return ImHashStr("", 0, ImHashData(&index, sizeof(index), field));
+}
+
+// Presses and releases Enter, which commits a field being typed into.
+template <typename Panel> void pressEnter(PanelFixture& fixture, Panel& panel) {
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddKeyEvent(ImGuiKey_Enter, true);
+    fixture.draw(panel);
+    io.AddKeyEvent(ImGuiKey_Enter, false);
+    fixture.draw(panel);
+    fixture.draw(panel);
+}
+
+void testMultiSelectionNameAndTransform() {
+    PanelFixture fixture;
+    const SceneEntityId first = addPlaced(fixture, "First", {1.0f, 2.0f, 3.0f}, false);
+    const SceneEntityId second = addPlaced(fixture, "Second", {4.0f, 2.0f, 6.0f}, true);
+    fixture.selection.assign({first, second});
+    InspectorPanel inspector(fixture.componentLayout);
+    HeadlessImGuiContext imgui;
+    fixture.draw(inspector);
+    const std::string text = fixture.drawLogged(inspector);
+    expect(lineContaining(text, "Name").find(mixedValueText) != std::string::npos &&
+               text.find("First") == std::string::npos,
+           "names that differ should show the mixed mark");
+    const std::string position = lineContaining(text, "Position");
+    expect(position.find(mixedValueText) != std::string::npos && position.find("2.000") != std::string::npos &&
+               position.find("1.000") == std::string::npos,
+           "an axis that differs should show the mixed mark and an equal axis its value");
+    expect(lineContaining(text, "Scale").find(mixedValueText) == std::string::npos,
+           "equal scales should show their values");
+
+    // Renaming names every selected entity, as one step.
+    const ImGuiWindow* window = HeadlessImGuiContext::findWindow(inspector.title());
+    if (window == nullptr) {
+        expect(false, "the Inspector window should exist");
+        return;
+    }
+    typeInto(fixture, inspector, HeadlessImGuiContext::itemId(*window, "Name"), "Crate");
+    expect(nameOf(fixture, first) == "Crate" && nameOf(fixture, second) == "Crate",
+           "typing a name should rename every selected entity");
+    expect(fixture.history.size() == 1, "renaming the selection should be one undo step");
+
+    // An edit of one axis changes only that axis, on every entity.
+    typeInto(fixture, inspector, elementId(inspector.title(), "position", "Position", 1), "5");
+    expect(near(transformOf(fixture, first).translation, {1.0f, 5.0f, 3.0f}) &&
+               near(transformOf(fixture, second).translation, {4.0f, 5.0f, 6.0f}),
+           "editing one axis should set it on every entity and keep their other axes");
+    expect(near(transformOf(fixture, second).rotationDegrees, {0.0f, 45.0f, 0.0f}),
+           "a position edit should keep each entity's rotation");
+
+    // Typing the shown entity's own value into a mixed axis still applies it.
+    typeInto(fixture, inspector, elementId(inspector.title(), "position", "Position", 0), "1");
+    pressEnter(fixture, inspector);
+    expect(transformOf(fixture, first).translation.x == 1.0f && transformOf(fixture, second).translation.x == 1.0f,
+           "committing the shown value of a mixed axis should apply it to every entity");
+    expect(fixture.history.size() == 2, "the transform edits should merge into one undo step after the rename");
+    fixture.editing().undo();
+    expect(near(transformOf(fixture, first).translation, {1.0f, 2.0f, 3.0f}) &&
+               near(transformOf(fixture, second).translation, {4.0f, 2.0f, 6.0f}) && nameOf(fixture, first) == "Crate",
+           "undo should restore every entity's own transform and keep the rename");
+
+    // Alt applies to the whole selection here too (every entity has a
+    // transform), without slowing the drag.
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddKeyEvent(ImGuiMod_Alt, true);
+    fixture.draw(inspector);
+    typeInto(fixture, inspector, elementId(inspector.title(), "scale", "Scale", 2), "2");
+    io.AddKeyEvent(ImGuiMod_Alt, false);
+    fixture.draw(inspector);
+    expect(near(transformOf(fixture, first).scale, {1.0f, 1.0f, 2.0f}) &&
+               near(transformOf(fixture, second).scale, {1.0f, 1.0f, 2.0f}),
+           "an Alt edit of the transform should apply to every selected entity");
+
+    // The Properties Object tab offers the same fields.
+    PropertiesPanel panel(fixture.renderSettings, fixture.componentLayout);
+    panel.selectTab({.kind = PropertiesTabKind::Object});
+    fixture.draw(panel);
+    const std::string objectTab = fixture.drawLogged(panel);
+    expect(objectTab.find("Crate") != std::string::npos && objectTab.find("Position") != std::string::npos,
+           "the Object tab should show the selection's name and transform");
+}
+
+void testMixedFieldCommitsTheShownValue() {
+    PanelFixture fixture;
+    const SceneEntityId first = addHealthy(fixture, "First", 10.0f, std::nullopt);
+    const SceneEntityId second = addHealthy(fixture, "Second", 20.0f, std::nullopt);
+    fixture.selection.assign({first, second});
+    InspectorPanel inspector(fixture.componentLayout);
+    HeadlessImGuiContext imgui;
+    fixture.draw(inspector);
+    typeInto(fixture, inspector, healthAmountId(inspector.title()), "10");
+    pressEnter(fixture, inspector);
+    expect(healthOf(fixture, first) == 10.0f && healthOf(fixture, second) == 10.0f,
+           "committing the active entity's own value in a mixed field should apply it to every entity");
+    expect(fixture.history.size() == 1, "the committed value should be one undo step");
+}
+
+void testTransformEditKeepsUntouchedAxes() {
+    PanelFixture fixture;
+    const SceneEntityId first = addPlaced(fixture, "First", {0.0f, 0.1f, 0.0f}, false);
+    const SceneEntityId second = addPlaced(fixture, "Second", {1.0f, 0.10008f, 0.0f}, false);
+    fixture.selection.assign({first, second});
+    InspectorPanel inspector(fixture.componentLayout);
+    HeadlessImGuiContext imgui;
+    fixture.draw(inspector);
+    const float before = transformOf(fixture, second).translation.y;
+    typeInto(fixture, inspector, elementId(inspector.title(), "position", "Position", 0), "7");
+    expect(transformOf(fixture, first).translation.x == 7.0f && transformOf(fixture, second).translation.x == 7.0f,
+           "the edited axis should change on every entity");
+    expect(std::abs(transformOf(fixture, second).translation.y - before) < 1.0e-6f,
+           "an axis within display tolerance of the shown entity's should keep its own value when another is edited");
+}
 } // namespace
 
 int main() {
@@ -640,6 +789,9 @@ int main() {
     testAltAppliesToSelected();
     testComponentMenu();
     testCollapseState();
+    testMultiSelectionNameAndTransform();
+    testMixedFieldCommitsTheShownValue();
+    testTransformEditKeepsUntouchedAxes();
     if (failures != 0) {
         std::cerr << failures << " properties panel test(s) failed\n";
         return 1;

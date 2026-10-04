@@ -3,7 +3,7 @@
 #include "EditorSession.hpp"
 #include "editor/document/DefaultScene.hpp"
 #include "editor/project/ProjectTemplate.hpp"
-#include "editor/theme/EditorTheme.hpp"
+#include "editor/settings/EditorSettings.hpp"
 #include "editor/theme/ThemeChrome.hpp"
 
 #include <imgui.h>
@@ -18,36 +18,35 @@ constexpr SceneKey editorSessionKey{0};
 constexpr SceneKey projectHubKey{1};
 constexpr const char* logCategory = "Editor";
 
-// The pixel theme on the application's ImGui context: metrics and colours for
-// the display's scale, the fonts, popup bevels, and no imgui.ini (each
-// workspace keeps its own layout in workspaces.json). Fonts must be added
-// before the first frame builds the atlas, so this runs once, before the hub
-// or the first session draws. Returns the fonts it added, which sessions reuse.
-std::vector<EditorFonts> installEditorTheme(const std::filesystem::path& fontPath, Logger& logger) {
-    ImGuiIO& io = ImGui::GetIO();
-    // Size the UI for the display's scale factor so text stays crisp on
-    // high-DPI monitors instead of being stretched. The pixel theme rounds it
-    // to a whole number of screen pixels per art pixel.
-    float contentScale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
-    if (contentScale <= 0.0f) {
-        contentScale = 1.0f;
+void logAppearanceResult(const EditorAppearanceResult& result, Logger& logger) {
+    if (!result) {
+        logger.log(LogLevel::Error, logCategory, result.error);
     }
-    const float artPixel = artPixelForScale(contentScale);
-    applyEditorMetrics(ImGui::GetStyle(), artPixel);
-    applyEditorColors(ImGui::GetStyle());
-    const EditorFontResult fonts = loadEditorFonts(io, fontPath.parent_path(), fontPath, artPixel);
-    if (!fonts) {
-        logger.log(LogLevel::Error, logCategory, fonts.error);
-    }
-    for (const std::string& warning : fonts.warnings) {
+    for (const std::string& warning : result.warnings) {
         logger.log(LogLevel::Warning, logCategory, warning);
     }
-    ThemeChrome::installPopupBevels(*ImGui::GetCurrentContext());
-    io.IniFilename = nullptr;
-    if (!fonts) {
-        return {};
+}
+
+// The pixel theme on the application's ImGui context, in the look settings.ini
+// chooses (its UI scale and theme tuning; the defaults when the file is
+// missing or invalid), plus popup bevels and no imgui.ini (each workspace
+// keeps its own layout in workspaces.json). Fonts must be added before the
+// first frame builds the atlas, so this runs once, before the hub or the
+// first session draws.
+std::unique_ptr<EditorAppearance> installEditorTheme(const std::filesystem::path& fontPath,
+                                                     const std::filesystem::path& settingsFile, Logger& logger) {
+    // The automatic UI scale follows the display's scale factor so text stays
+    // crisp on high-DPI monitors; the pixel theme rounds it to a whole number
+    // of screen pixels per art pixel.
+    auto appearance = std::make_unique<EditorAppearance>(fontPath, SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay()));
+    EditorSettings settings(settingsFile);
+    if (const EditorSettingsResult loaded = settings.load(); !loaded) {
+        logger.log(LogLevel::Warning, logCategory, loaded.error);
     }
-    return {fonts.fonts};
+    logAppearanceResult(appearance->apply(settings.appearance()), logger);
+    ThemeChrome::installPopupBevels(*ImGui::GetCurrentContext());
+    ImGui::GetIO().IniFilename = nullptr;
+    return appearance;
 }
 
 // Loads the project's startup scene with the editor's document options, which
@@ -87,12 +86,14 @@ EditorSceneLoader startupSceneLoader(const ProjectConfig& project, bool recoverW
     };
 }
 
-// The hub as an application scene: no world, only the hub over the wallpaper.
+// The hub as an application scene: no world, only the hub over the wallpaper,
+// in the look of the application's appearance (the last session's).
 class ProjectHubScene final : public ApplicationScene {
   public:
-    ProjectHubScene(EditorApplication& application, RecentProjects& recentProjects, ProjectHubConfig config,
-                    ProjectHubEntry entry)
+    ProjectHubScene(EditorApplication& application, const EditorAppearance& appearance, RecentProjects& recentProjects,
+                    ProjectHubConfig config, ProjectHubEntry entry)
         : m_application(application)
+        , m_appearance(appearance)
         , m_hub(recentProjects, std::move(config))
         , m_entry(entry) {}
 
@@ -112,6 +113,7 @@ class ProjectHubScene final : public ApplicationScene {
     }
 
     void drawUi(ApplicationContext& context) override {
+        m_chrome.setParameters(m_appearance.theme());
         m_chrome.beginFrame(context.rendering);
         const std::optional<std::filesystem::path> chosen = m_hub.draw(context.assets, &m_chrome);
         if (!chosen) {
@@ -128,6 +130,7 @@ class ProjectHubScene final : public ApplicationScene {
 
   private:
     EditorApplication& m_application;
+    const EditorAppearance& m_appearance;
     ProjectHub m_hub;
     ProjectHubEntry m_entry;
     ThemeChrome m_chrome;
@@ -143,7 +146,7 @@ EditorApplication::EditorApplication(std::filesystem::path settingsDirectory, st
     , m_recentProjects(m_settingsDirectory / "recent-projects.json") {}
 
 SceneResult EditorApplication::onStart(ApplicationContext& context) {
-    m_loadedFonts = installEditorTheme(m_fontPath, context.logger);
+    m_appearance = installEditorTheme(m_fontPath, m_settingsDirectory / "settings.ini", context.logger);
     if (const RecentProjectsResult loaded = m_recentProjects.load(); !loaded) {
         context.logger.log(LogLevel::Warning, logCategory, loaded.error);
     }
@@ -213,15 +216,14 @@ std::unique_ptr<ApplicationScene> EditorApplication::createSession() {
     // Without a project file, render settings persist beside the editor's
     // own settings.
     EditorRenderSettings renderSettings(m_project, m_settingsDirectory / "render-settings.json");
-    EditorProjectServices services{
-        .build = projectBuildRequest(m_project.projectFile), .fontPath = m_fontPath, .loadedFonts = m_loadedFonts};
+    EditorProjectServices services{.build = projectBuildRequest(m_project.projectFile)};
     if (m_projectHub) {
         services.leaveForProjectHub = [this](ApplicationContext& context, ProjectHubEntry entry) {
             showProjectHub(context, entry);
         };
     }
     return std::make_unique<EditorSession>(
-        m_settingsDirectory, m_project.assetRoot, m_project.sceneRoot, std::move(renderSettings),
+        m_settingsDirectory, m_project.assetRoot, m_project.sceneRoot, std::move(renderSettings), *m_appearance,
         startupSceneLoader(m_project, m_projectHub.has_value()), m_project.gameModule, std::move(services));
 }
 
@@ -229,5 +231,5 @@ std::unique_ptr<ApplicationScene> EditorApplication::createProjectHub() {
     ProjectHubConfig config = m_projectHub->hub;
     config.editorSettingsFile = m_settingsDirectory / "settings.ini";
     const ProjectHubEntry entry = std::exchange(m_hubEntry, ProjectHubEntry::Hub);
-    return std::make_unique<ProjectHubScene>(*this, m_recentProjects, std::move(config), entry);
+    return std::make_unique<ProjectHubScene>(*this, *m_appearance, m_recentProjects, std::move(config), entry);
 }

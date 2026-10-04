@@ -11,7 +11,7 @@
 
 // The pixel decoration of the row just drawn (call it right after the tree
 // node): its icon in the label's reserved space (dithered when ghost), and
-// for a selected row lit edges and, where no expand arrow is drawn, a cursor.
+// for a selected row lit edges and, where no expand arrow is drawn, a cursor in the theme's accent.
 void decorateOutlinerRow(EditorIcon icon, bool selected, bool leaf, bool ghost = false);
 
 // One restriction column of a row: its id (pushed under the row's id) and

@@ -8,7 +8,7 @@ depend on this subtree.
 | Path | Responsibility |
 | --- | --- |
 | `main.cpp` | Editor executable composition root. |
-| `application/` | Editor application lifecycle and the UI/session coordinator. |
+| `application/` | Editor application lifecycle (including `EditorAppearance`, the preferred look shared by the Project Hub and sessions) and the UI/session coordinator. |
 | `areas/` | Blender-style areas and workspaces: the area type registry, per-workspace areas and their ImGui dock layouts, the default workspaces, legacy layout migration, and `workspaces.json`. |
 | `document/` | Scene document state, persistence workflow, undo/redo history, and prefab authoring (`PrefabAuthoring`). |
 | `modules/` | Game module hosting: loading the project's module, running its systems, hot reload, and the header-only editor extension API modules implement. |
@@ -83,6 +83,9 @@ depend on this subtree.
 - State that must survive a project switch (the ImGui theme and fonts, the
   recent projects) belongs to `EditorApplication`; everything per project
   belongs to `EditorSession`, which is destroyed when the user switches.
+  Apply look changes through the application's `EditorAppearance` (the one
+  owner of the font cache), never to the ImGui style directly, so the
+  Project Hub keeps the look.
 - Viewports are multiple-instance areas registered with the session's
   `ViewportRegistry`. Code acting on "the viewport" (view3d operators, modal
   transforms, the status bar) uses `ViewportRegistry::active()` and must

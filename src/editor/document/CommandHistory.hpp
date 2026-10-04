@@ -100,6 +100,12 @@ enum class CommandHistoryBoundary {
     LeavePlayMode,
 };
 
+// A point on a history's timeline (CommandHistory::marker), for undoing
+// exactly the steps recorded after it.
+struct CommandHistoryMarker {
+    uint64_t revision{0};
+};
+
 class CommandHistory {
   public:
     explicit CommandHistory(size_t limit = 256);
@@ -121,12 +127,23 @@ class CommandHistory {
     // undo, redo, and clear) and never repeats, unlike size(), which stops
     // growing at the limit. Callers compare it to detect any later edit.
     uint64_t revision() const;
+    // The current point of the timeline.
+    CommandHistoryMarker marker() const;
+    // How many undo steps take the timeline back to marker: the undoable
+    // steps recorded after it. Unlike a difference of size(), this stays
+    // right when the new steps discarded redo steps or the limit dropped old
+    // ones. A step that merged edits from before the marker with later ones
+    // started before it, so it is not counted.
+    size_t stepsSince(CommandHistoryMarker marker) const;
 
   private:
     void enforceLimit();
 
     size_t m_limit;
     std::vector<std::unique_ptr<EditorCommand>> m_commands;
+    // The revision at which each command was recorded, parallel to
+    // m_commands (and so increasing).
+    std::vector<uint64_t> m_recordedAt;
     size_t m_position{0};
     std::optional<size_t> m_savedPosition{0};
     uint64_t m_revision{0};

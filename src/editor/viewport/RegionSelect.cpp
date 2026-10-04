@@ -95,7 +95,7 @@ void drawRegionOutline(ImDrawList& drawList, glm::vec2 origin, RegionShape shape
         const glm::vec2 last = points.back();
         const ImVec2 minimum = screen(glm::min(first, last));
         const ImVec2 maximum = screen(glm::max(first, last));
-        drawList.AddRectFilled(minimum, maximum, toImU32(palette::pixelGlow.withAlpha(0.12f)));
+        drawList.AddRectFilled(minimum, maximum, toImU32(editorAccent().withAlpha(0.12f)));
         drawList.AddRect(minimum, maximum, outline, 0.0f, ImDrawFlags_None, thickness);
         return;
     }

@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <cmath>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace ComponentEditors {
 bool decomposeTransform(const glm::mat4& matrix, EditableTransform& transform) {
@@ -30,6 +32,18 @@ glm::mat4 composeTransform(const EditableTransform& transform) {
     return glm::translate(glm::mat4(1.0f), transform.translation) *
            glm::mat4_cast(glm::quat(glm::radians(transform.rotationDegrees))) *
            glm::scale(glm::mat4(1.0f), transform.scale);
+}
+
+std::span<const FieldDescriptor> editableTransformFields() {
+    // The speeds and scale range drawTransform uses.
+    static const std::vector<FieldDescriptor> fields = [] {
+        Fields<EditableTransform> transform;
+        transform.add("position", &EditableTransform::translation).label("Position").drag(0.05f);
+        transform.add("rotation", &EditableTransform::rotationDegrees).label("Rotation").drag(0.25f);
+        transform.add("scale", &EditableTransform::scale).label("Scale").drag(0.02f, 0.001, 1000.0);
+        return std::move(transform).build();
+    }();
+    return fields;
 }
 
 bool drawTransform(TransformComponent& component) {

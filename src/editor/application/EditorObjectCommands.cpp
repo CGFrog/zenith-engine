@@ -392,6 +392,7 @@ bool EditorSession::updateSmokeMenus(ApplicationContext& context) {
     };
     if (m_smokeFrame == firstFrame) {
         m_smokeEntityCount = entityCount();
+        m_smokeMenuMarker = m_history.marker();
         invokeOperator(context, "wm.call_menu", nlohmann::json{{"menu", addMenuId}}.dump(), KeymapRegion::Viewport);
     } else if (m_smokeFrame == firstFrame + 1) {
         const std::optional<ResolvedMenu> menu =
@@ -412,7 +413,7 @@ bool EditorSession::updateSmokeMenus(ApplicationContext& context) {
         if (m_menus.isOpen()) {
             fail("the Add menu did not close");
         }
-        undo(context);
+        undoSince(context, m_smokeMenuMarker);
         if (entityCount() != m_smokeEntityCount) {
             fail("undo did not remove the added entity");
         }

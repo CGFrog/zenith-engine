@@ -1,14 +1,14 @@
 #pragma once
 
+#include "editor/application/EditorAppearance.hpp"
 #include "editor/project/ProjectHub.hpp"
 #include "editor/project/RecentProjects.hpp"
-#include "editor/theme/EditorTheme.hpp"
 #include "engine/application/Application.hpp"
 #include "engine/project/ProjectConfig.hpp"
 
 #include <filesystem>
+#include <memory>
 #include <optional>
-#include <vector>
 
 // The Project Hub's configuration, for an editor that offers it.
 struct EditorProjectHubOptions {
@@ -20,7 +20,9 @@ struct EditorProjectHubOptions {
 };
 
 // The editor executable's application. It owns what outlives one project:
-// the ImGui theme and fonts (installed once in onStart), the recent projects
+// the ImGui theme and fonts (an EditorAppearance created in onStart in the
+// look settings.ini chooses; the hub draws in it and sessions apply the
+// preferences' live changes through it), the recent projects
 // list (recent-projects.json in the settings directory, updated whenever a
 // project file is opened), and the current project. It shows either the
 // Project Hub or one EditorSession for the current project.
@@ -59,8 +61,10 @@ class EditorApplication final : public Application {
 
     std::filesystem::path m_settingsDirectory;
     std::filesystem::path m_fontPath;
-    // The fonts onStart added to the atlas, handed to every session.
-    std::vector<EditorFonts> m_loadedFonts;
+    // The look on the ImGui context and its font cache, created by onStart
+    // from settings.ini and shared with the hub and every session, which
+    // apply their preference changes through it.
+    std::unique_ptr<EditorAppearance> m_appearance;
     ProjectConfig m_project;
     std::optional<EditorProjectHubOptions> m_projectHub;
     RecentProjects m_recentProjects;
