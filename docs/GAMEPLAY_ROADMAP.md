@@ -168,7 +168,7 @@ Approved 2026-10-04. Phases A, B, and C are done; Phase D remains.
 | C5 | Project settings editors | A3, A4 | done 8975b5d |
 | C6 | FPS template and tutorial | B1–B6, C2, C3 | done 6a257db |
 | D1 | Split `PrefabSystem.cpp` | — | todo |
-| D2 | Split `EditorSession.cpp` | — | todo |
+| D2 | Split `EditorSession.cpp` | — | done 122b2bb |
 | D3 | Split `FileWatcher.cpp` per backend | — | done fe541bd |
 | D4 | Targeted diffs in `SceneEditing` | — | todo |
 | D5 | Shared versioned-settings helper | — | todo |
@@ -799,8 +799,18 @@ Follow-ups:
 
 These items are independent and can go into any batch.
 
-- [ ] **D1.** Split `src/engine/scene/PrefabSystem.cpp` (about 1775 lines) into
+- [x] **D1.** Split `src/engine/scene/PrefabSystem.cpp` (about 1775 lines) into
       id remapping, overrides, nested instances and instance queries.
+
+  Result: `PrefabIdRemap.cpp`, `PrefabOverrides.cpp` (staging comparison,
+  applying, and recording structural edits), `PrefabNesting.cpp` and
+  `PrefabQueries.cpp`, with the shared helpers in the internal
+  `PrefabSystemInternal.hpp` (namespace `prefab_detail`). `PrefabSystem.cpp`
+  keeps instantiate, refresh, build and capture (about 550 lines).
+
+  Follow-ups:
+  - `sortOverrides` is duplicated in `editor/document/PrefabAuthoring.cpp`.
+  - `matrixJson` is duplicated as `matrix` in `Prefab.cpp`.
 - [x] **D2.** Split `src/editor/application/EditorSession.cpp` (about 1100
       lines): move file dialogs, autosave and recovery, and the main menu and
       status bar into their own units.

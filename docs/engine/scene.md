@@ -143,6 +143,17 @@ source collection can be hidden while its instances show.
 
 ## `src/engine/scene/Prefab.*`, `PrefabSystem.cpp`, `PrefabComponentTypes.cpp`
 
+`Prefab.hpp` declares the whole prefab API. `Prefab.cpp` reads and writes the
+documents. `PrefabSystem` is split by domain:
+- `PrefabSystem.cpp`: instantiate, refresh and capture;
+- `PrefabOverrides.cpp`: comparison and applying overrides, and recording
+  removals and moves;
+- `PrefabNesting.cpp`: nested instances;
+- `PrefabIdRemap.cpp`: id remapping;
+- `PrefabQueries.cpp`: instance queries.
+
+They share helpers through the internal `PrefabSystemInternal.hpp`.
+
 Prefab documents (version 2, `.prefab` files under the asset root) list one
 root entity and its descendants in the scene document entity form (`id`,
 `name`, `parent`, `local_transform`, and `components` keyed by registered

@@ -177,6 +177,10 @@ add_library(zenith_engine SHARED
     scene/AdditiveSceneManager.cpp
     scene/Prefab.cpp
     scene/PrefabComponentTypes.cpp
+    scene/PrefabIdRemap.cpp
+    scene/PrefabNesting.cpp
+    scene/PrefabOverrides.cpp
+    scene/PrefabQueries.cpp
     scene/PrefabSystem.cpp
     ui/GameMenus.cpp
     ui/GameUi.cpp
