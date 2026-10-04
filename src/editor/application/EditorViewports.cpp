@@ -1,24 +1,11 @@
-// EditorSession's viewports: the view3d operators acting on the active
-// viewport, the per-frame bookkeeping that keeps the active viewport, modal
-// transforms, and the renderer's active view consistent.
+// EditorSession's viewports: the per-frame bookkeeping that keeps the active
+// viewport, modal transforms, and the renderer's active view consistent. The
+// view3d operators acting on the active viewport are the viewport and 3D
+// cursor operator families (editorOperatorFamilies).
 
 #include "EditorSession.hpp"
 
-#include "editor/panels/ViewportOperators.hpp"
-#include "editor/viewport/Cursor3D.hpp"
-
 #include <imgui.h>
-
-#include <utility>
-
-void EditorSession::registerViewportOperators() {
-    for (Operator& op : viewportOperators(m_viewports)) {
-        registerOperator(std::move(op));
-    }
-    for (Operator& op : cursorOperators(m_viewports, m_document)) {
-        registerOperator(std::move(op));
-    }
-}
 
 void EditorSession::beginViewportFrame(ApplicationContext& context) {
     m_viewports.beginFrame();

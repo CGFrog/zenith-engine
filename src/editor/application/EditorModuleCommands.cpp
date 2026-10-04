@@ -4,6 +4,7 @@
 
 #include "EditorSession.hpp"
 
+#include "editor/application/EditorSessionOperators.hpp"
 #include "editor/panels/GameModulePanel.hpp"
 
 #include <imgui.h>
@@ -20,16 +21,24 @@ std::string moduleLabel(const GameModule& module) {
 }
 } // namespace
 
-void EditorSession::registerModuleOperators() {
-    registerOperator(applicationOperator(
+OperatorRegistrationResult registerModuleOperatorFamily(OperatorRegistry& registry,
+                                                        const EditorOperatorServices& services) {
+    const GameModuleHost& modules = services.modules;
+    EditorObjectModeCommands& objectMode = services.objectModeCommands;
+    EditorWindowCommands& windows = services.windowCommands;
+    return registry.add(applicationOperator(
         "module.reload", "Reload Game Module",
         "Rebuild-friendly hot reload: unload the game module and load the library again, keeping the scene",
-        [this](const OperatorContext& context) {
-            return !m_moduleHost.sourcePath().empty() && context.editMode() && !m_activeTransform;
+        [&modules, &objectMode](const OperatorContext& context) {
+            return !modules.sourcePath().empty() && context.editMode() && !objectMode.modalTransformRunning();
         },
         // Deferred to the next update, so a module panel or operator that
         // requests it is not unloaded while it runs.
-        [this](ApplicationContext&) { m_moduleReloadPending = true; }));
+        [&windows](ApplicationContext&) { windows.requestModuleReload(); }));
+}
+
+void EditorSession::requestModuleReload() {
+    m_moduleReloadPending = true;
 }
 
 void EditorSession::loadGameModule() {

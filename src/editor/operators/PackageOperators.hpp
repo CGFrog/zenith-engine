@@ -36,3 +36,8 @@ PackageRequest packageRequestFor(const EditorToolSettings& tools, const std::fil
 // when the release tree needs it) and starts them on the runner. It needs no
 // window, so it runs headless; the services must outlive the registry.
 OperatorRegistrationResult registerPackageOperators(OperatorRegistry& registry, PackageOperatorServices services);
+
+struct EditorOperatorServices;
+// This family's entry in editorOperatorFamilies() (EditorOperatorFamilies.hpp).
+OperatorRegistrationResult registerPackageOperatorFamily(OperatorRegistry& registry,
+                                                         const EditorOperatorServices& services);

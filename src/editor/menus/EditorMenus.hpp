@@ -108,3 +108,8 @@ inline constexpr const char* pivotPieMenuId = "VIEW3D_MT_pivot_pie";
 // keymaps naming it keep working). All run headless; menus holds the request
 // until the session draws it.
 OperatorRegistrationResult registerMenuOperators(OperatorRegistry& registry, EditorMenus& menus);
+
+struct EditorOperatorServices;
+// This family's entry in editorOperatorFamilies() (EditorOperatorFamilies.hpp).
+OperatorRegistrationResult registerMenuOperatorFamily(OperatorRegistry& registry,
+                                                      const EditorOperatorServices& services);

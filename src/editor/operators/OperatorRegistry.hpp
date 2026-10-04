@@ -35,3 +35,6 @@ class OperatorRegistry {
   private:
     std::vector<std::unique_ptr<const Operator>> m_operators;
 };
+
+// Adds the operators in order, stopping at the first one add rejects.
+OperatorRegistrationResult addOperators(OperatorRegistry& registry, std::vector<Operator> operators);

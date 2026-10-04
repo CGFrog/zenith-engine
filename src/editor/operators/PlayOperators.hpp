@@ -54,3 +54,8 @@ struct PlayOperatorServices {
 
 // The services must outlive the registered operators.
 OperatorRegistrationResult registerPlayOperators(OperatorRegistry& registry, PlayOperatorServices services);
+
+struct EditorOperatorServices;
+// This family's entry in editorOperatorFamilies() (EditorOperatorFamilies.hpp).
+OperatorRegistrationResult registerPlayOperatorFamily(OperatorRegistry& registry,
+                                                      const EditorOperatorServices& services);

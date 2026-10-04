@@ -32,3 +32,8 @@ struct EyedropperPickProperties {
 //                         step, leaving the selection alone, and disarms;
 //   ui.eyedropper_cancel  disarms without changing anything.
 OperatorRegistrationResult registerEyedropperOperators(OperatorRegistry& registry, EntityEyedropper& eyedropper);
+
+struct EditorOperatorServices;
+// This family's entry in editorOperatorFamilies() (EditorOperatorFamilies.hpp).
+OperatorRegistrationResult registerEyedropperOperatorFamily(OperatorRegistry& registry,
+                                                            const EditorOperatorServices& services);

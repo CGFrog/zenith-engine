@@ -5,6 +5,7 @@
 #include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/ModalTransform.hpp"
 #include "editor/operators/CollectionOperators.hpp"
+#include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/operators/OutlinerOperators.hpp"
 #include "editor/operators/VisibilityOperators.hpp"
 #include "editor/project/IrradianceVolumeBaker.hpp"
@@ -432,4 +433,8 @@ OperatorRegistrationResult registerObjectOperators(OperatorRegistry& registry) {
         return result;
     }
     return registerOutlinerOperators(registry);
+}
+
+OperatorRegistrationResult registerObjectOperatorFamily(OperatorRegistry& registry, const EditorOperatorServices&) {
+    return registerObjectOperators(registry);
 }

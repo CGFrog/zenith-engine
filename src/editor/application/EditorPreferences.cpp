@@ -4,7 +4,6 @@
 #include "EditorSession.hpp"
 
 #include "editor/operators/PackageOperators.hpp"
-#include "editor/operators/PreferencesOperators.hpp"
 #include "editor/project/ProjectFileOperations.hpp"
 #include "editor/theme/EditorTheme.hpp"
 
@@ -30,19 +29,6 @@ std::string_view platformKey(PackagePlatform platform) {
     return "windows";
 }
 } // namespace
-
-void EditorSession::registerPreferenceOperators() {
-    if (const OperatorRegistrationResult result = registerPreferencesOperators(m_operators, m_preferences); !result) {
-        m_diagnostics.reportError(result.error);
-    }
-    if (const OperatorRegistrationResult result =
-            registerPackageOperators(m_operators, {.runner = m_packageRunner,
-                                                   .tools = m_settings.tools(),
-                                                   .projectFile = m_renderSettings.settings().projectFile()});
-        !result) {
-        m_diagnostics.reportError(result.error);
-    }
-}
 
 void EditorSession::applyAppearance() {
     m_menus.setPieMenusEnabled(m_settings.appearance().pieMenus);

@@ -1,5 +1,6 @@
 #include "EditorMenus.hpp"
 
+#include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/panels/EditorContext.hpp"
 
 #include <algorithm>
@@ -157,4 +158,9 @@ OperatorRegistrationResult registerMenuOperators(OperatorRegistry& registry, Edi
         }
     }
     return {.success = true};
+}
+
+OperatorRegistrationResult registerMenuOperatorFamily(OperatorRegistry& registry,
+                                                      const EditorOperatorServices& services) {
+    return registerMenuOperators(registry, services.menus);
 }

@@ -1,5 +1,6 @@
 #include "PreferencesOperators.hpp"
 
+#include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/panels/PreferencesWindow.hpp"
 
 OperatorRegistrationResult registerPreferencesOperators(OperatorRegistry& registry, PreferencesWindow& preferences) {
@@ -10,4 +11,9 @@ OperatorRegistrationResult registerPreferencesOperators(OperatorRegistry& regist
                              preferences.open();
                              return OperatorResult::finished();
                          }});
+}
+
+OperatorRegistrationResult registerPreferencesOperatorFamily(OperatorRegistry& registry,
+                                                             const EditorOperatorServices& services) {
+    return registerPreferencesOperators(registry, services.preferences);
 }

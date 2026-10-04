@@ -6,6 +6,7 @@
 
 #include "EditorSession.hpp"
 
+#include "editor/application/EditorSessionOperators.hpp"
 #include "editor/application/EntityCommands.hpp"
 #include "editor/operators/ObjectOperators.hpp"
 #include "editor/theme/EditorTheme.hpp"
@@ -75,64 +76,81 @@ void EditorSession::handleObjectKeys(ApplicationContext& context, KeymapRegion r
     dispatchKeymap(context, region);
 }
 
-void EditorSession::registerObjectModeOperators() {
-    const auto canTransform = [this](const OperatorContext& context) {
+OperatorRegistrationResult registerObjectModeOperatorFamily(OperatorRegistry& registry,
+                                                            const EditorOperatorServices& services) {
+    EditorObjectModeCommands& objectMode = services.objectModeCommands;
+    ViewportRegistry& viewports = services.viewports;
+    const auto canTransform = [&objectMode, &viewports](const OperatorContext& context) {
         // A modal transform follows the mouse over the active viewport.
-        return context.app != nullptr && context.editMode() && !context.selection.empty() && !m_activeTransform &&
-               m_viewports.active() != nullptr;
+        return context.app != nullptr && context.editMode() && !context.selection.empty() &&
+               !objectMode.modalTransformRunning() && viewports.active() != nullptr;
     };
-    const auto modalTransform = [this, canTransform](std::string id, std::string label, std::string description,
-                                                     TransformOperation operation, std::string commandName) {
-        return Operator{.id = std::move(id),
-                        .label = std::move(label),
-                        .description = std::move(description),
-                        .poll = canTransform,
-                        .execute = [this, operation, commandName](OperatorContext& context, OperatorProperties&) {
-                            return beginModalTransform(*context.app, operation, commandName, {}, false)
-                                       ? OperatorResult::finished()
-                                       : OperatorResult::cancelled("Nothing to transform in an open viewport");
-                        }};
+    const auto modalTransform = [&objectMode, canTransform](std::string id, std::string label, std::string description,
+                                                            TransformOperation operation, std::string commandName) {
+        return Operator{
+            .id = std::move(id),
+            .label = std::move(label),
+            .description = std::move(description),
+            .poll = canTransform,
+            .execute = [&objectMode, operation, commandName](OperatorContext& context, OperatorProperties&) {
+                return objectMode.beginModalTransform(*context.app, operation, commandName, {}, false)
+                           ? OperatorResult::finished()
+                           : OperatorResult::cancelled("Nothing to transform in an open viewport");
+            }};
     };
-    registerOperator(modalTransform("transform.translate", "Move", "Move the selection with the mouse",
-                                    TransformOperation::Translate, "Move"));
-    registerOperator(modalTransform("transform.rotate", "Rotate", "Rotate the selection with the mouse",
-                                    TransformOperation::Rotate, "Rotate"));
-    registerOperator(modalTransform("transform.resize", "Scale", "Scale the selection with the mouse",
-                                    TransformOperation::Scale, "Resize"));
+    std::vector<Operator> operators;
+    operators.push_back(modalTransform("transform.translate", "Move", "Move the selection with the mouse",
+                                       TransformOperation::Translate, "Move"));
+    operators.push_back(modalTransform("transform.rotate", "Rotate", "Rotate the selection with the mouse",
+                                       TransformOperation::Rotate, "Rotate"));
+    operators.push_back(modalTransform("transform.resize", "Scale", "Scale the selection with the mouse",
+                                       TransformOperation::Scale, "Resize"));
     // The copy follows the mouse; the copy and its move form one undo step,
     // and cancelling the move keeps the copy.
-    registerOperator(
+    operators.push_back(
         {.id = "object.duplicate_move",
          .label = "Duplicate and Move",
          .description = "Duplicate the selection and move the copies with the mouse",
          .poll = canTransform,
-         .execute = [this](OperatorContext& context, OperatorProperties&) {
+         .execute = [&objectMode](OperatorContext& context, OperatorProperties&) {
              std::string before;
-             if (!EntityCommands::duplicateSelectionUncommitted(context.editing, m_selection, before)) {
+             if (!EntityCommands::duplicateSelectionUncommitted(context.editing, context.selection, before)) {
                  return OperatorResult::cancelled("Nothing was duplicated");
              }
-             if (!beginModalTransform(*context.app, TransformOperation::Translate, "Duplicate Objects", before, true)) {
+             if (!objectMode.beginModalTransform(*context.app, TransformOperation::Translate, "Duplicate Objects",
+                                                 before, true)) {
                  context.editing.commit("Duplicate Objects", {}, std::move(before));
              }
              return OperatorResult::finished();
          }});
 
-    registerOperator(applicationOperator(
+    operators.push_back(applicationOperator(
         "object.delete_menu", "Delete...", "Ask before deleting the selected objects",
         [](const OperatorContext& context) { return context.editMode() && !context.selection.empty(); },
-        [this](ApplicationContext&) { m_openDeleteMenu = true; }));
-    registerOperator(applicationOperator(
+        [&objectMode](ApplicationContext&) { objectMode.openDeleteMenu(); }));
+    operators.push_back(applicationOperator(
         "object.rename_popup", "Rename...", "Type a new name for the active object",
         [](const OperatorContext& context) {
             return context.editMode() && !context.selection.empty() &&
                    context.editing.scene().findEntity(*context.selection.active()) != entt::null;
         },
-        [this](ApplicationContext& app) {
-            const Entity active = app.scene.findEntity(*m_selection.active());
-            m_renameBuffer = app.scene.registry().get<NameComponent>(active).name;
-            m_openRenamePopup = true;
-            m_focusRenameField = true;
-        }));
+        [&objectMode](ApplicationContext& app) { objectMode.openRenamePopup(app); }));
+    return addOperators(registry, std::move(operators));
+}
+
+bool EditorSession::modalTransformRunning() const {
+    return m_activeTransform.has_value();
+}
+
+void EditorSession::openDeleteMenu() {
+    m_openDeleteMenu = true;
+}
+
+void EditorSession::openRenamePopup(ApplicationContext& context) {
+    const Entity active = context.scene.findEntity(*m_selection.active());
+    m_renameBuffer = context.scene.registry().get<NameComponent>(active).name;
+    m_openRenamePopup = true;
+    m_focusRenameField = true;
 }
 
 void EditorSession::drawObjectPopups(ApplicationContext& context) {

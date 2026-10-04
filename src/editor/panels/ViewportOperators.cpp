@@ -1,6 +1,7 @@
 #include "ViewportOperators.hpp"
 
 #include "editor/interaction/Selection.hpp"
+#include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/viewport/ViewFraming.hpp"
 #include "editor/viewport/ViewportSelectOperators.hpp"
@@ -238,4 +239,9 @@ std::vector<Operator> viewportOperators(ViewportRegistry& viewports) {
         operators.push_back(std::move(op));
     }
     return operators;
+}
+
+OperatorRegistrationResult registerViewportOperatorFamily(OperatorRegistry& registry,
+                                                          const EditorOperatorServices& services) {
+    return addOperators(registry, viewportOperators(services.viewports));
 }

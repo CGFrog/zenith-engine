@@ -57,6 +57,47 @@ Prefab section lists the asset catalog's `.prefab` files
 (`EditorAssetKind::Prefab`), and the Asset Browser drags them with the
 `ZENITH_PREFAB_ASSET` payload (`panels/AssetDragPayloads.hpp`).
 
+## Operator families
+
+The editor's own operators are registered family by family from one table,
+`editorOperatorFamilies()` in `operators/EditorOperatorFamilies.cpp`. The
+session builds one `EditorOperatorServices` (references to the document,
+history, menus, viewports, workspaces, play mode, module host, preferences,
+package runner, and the like, plus the session's workflows) and runs every
+family in table order, reporting a failure as `"<family>: <error>"`. A family
+stops at its first rejected operator. Table order is registration order, which
+is the F3 search order among equal matches; menus and keymaps name operators
+by id only when they run, so nothing else depends on it.
+`tests/editor/OperatorFamilyTests.cpp` runs the whole table headless and
+checks that every family registers and no id is registered twice.
+
+Operators that start a session workflow (file commands, undo, Play, modal
+transforms, the F3 search, workspaces, module reload) reach the session only
+through the narrow interfaces in `application/EditorSessionCommands.hpp`
+(`EditorDocumentCommands`, `EditorPlayCommands`, `EditorObjectModeCommands`,
+`EditorWindowCommands`), which `EditorSession` implements. Those families are
+declared in `application/EditorSessionOperators.hpp` and defined beside the
+session code they drive. Non-operator registrations (`registerAreaTypes`,
+`registerDefaultMenus`) stay explicit calls in the session.
+
+### Adding an operator family
+
+1. Write the family's register function next to its operators, taking only
+   the services it needs (its own small services struct, as
+   `PlayOperatorServices` or `PackageOperatorServices` do).
+2. In the same `.cpp`, add the adapter
+   `OperatorRegistrationResult registerXOperatorFamily(OperatorRegistry&, const EditorOperatorServices&)`
+   that builds those services from `EditorOperatorServices`, and declare it in
+   the family's header.
+3. Add one line to the table in `EditorOperatorFamilies.cpp`:
+   `OperatorFamily{"x", registerXOperatorFamily},`.
+
+If the family needs something the session owns that `EditorOperatorServices`
+does not hold yet, add a reference to it there and in
+`EditorSession::operatorServices()` (and the test's services); if it needs a
+session workflow, add a method to the fitting `EditorSessionCommands`
+interface rather than passing the session.
+
 ## Folder contents
 
 `src/editor/operators/`: Operator registry and runner (poll, execute, undo,

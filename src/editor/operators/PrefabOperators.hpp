@@ -68,3 +68,8 @@ struct PrefabOperatorServices {
 };
 
 OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, PrefabOperatorServices services = {});
+
+struct EditorOperatorServices;
+// This family's entry in editorOperatorFamilies() (EditorOperatorFamilies.hpp).
+OperatorRegistrationResult registerPrefabOperatorFamily(OperatorRegistry& registry,
+                                                        const EditorOperatorServices& services);

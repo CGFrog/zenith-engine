@@ -45,7 +45,9 @@ depend on this subtree.
   (`object.duplicate`, `file.save`). Menus, buttons, and keys invoke it by id
   (`EditorContext::invoke`); add default keys in `operators/DefaultKeymap.cpp`.
   Operators that only edit the document belong in `operators/` and must run
-  headless; ones needing the window are registered by `EditorSession`. An
+  headless; ones needing the session reach it through the narrow
+  `application/EditorSessionCommands` interfaces. Every family is one line in
+  `operators/EditorOperatorFamilies.cpp`, never a call in `EditorSession`. An
   `Undo` operator must not commit history itself; the runner records it.
   An operator that creates objects takes a `location` property filled from
   the 3D cursor by `Operator::invokeDefaults`, so new objects spawn at the
