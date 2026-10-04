@@ -2,8 +2,12 @@
 
 ## Start here
 
-- Read `docs/REPOSITORY_GUIDE.md` for the current workspace map and
-  `docs/ARCHITECTURE.md` before changing subsystem boundaries.
+- Read `docs/REPOSITORY_GUIDE.md`, the index of the workspace map, and
+  `docs/ARCHITECTURE.md` before changing subsystem boundaries. Per-subsystem
+  docs live under `docs/engine/`, `docs/editor/`, and `docs/game/`; read the
+  one for the subsystem you change.
+- Feature details belong in the subsystem doc. Change a directory-map row only
+  when a folder is added, removed or changes purpose.
 - Read the nearest nested `AGENTS.md` before editing `src/engine/`,
   `src/editor/`, `src/game/`, or `tests/`; those files add local guidance to
   this root policy.

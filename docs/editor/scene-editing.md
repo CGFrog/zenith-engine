@@ -1,0 +1,42 @@
+# Scene editing, history, and live inspection
+
+Part of the [repository guide](../REPOSITORY_GUIDE.md).
+
+`SceneEditing` captures transient whole-scene snapshots around an edit but
+records only the entities it added, removed, or changed as an
+`EntityDiffCommand`, so history memory and undo/redo time scale with the edit
+rather than the scene. `CommandHistory::storedBytes` reports what the history
+keeps. Opening or creating a document still replaces the whole scene and
+clears the history. `CommandHistory::marker` and `stepsSince` count the undo
+steps recorded after a point of the timeline (a difference of `size()` is no
+count once new steps discard redo steps); the smoke steps undo exactly their
+own edits with `EditorSession::undoSince`.
+
+Live inspection: in Play and Simulate the session builds `SceneEditing` over
+the runtime scene with `EditorPlayMode::editScene()` (the parked edit scene)
+attached, so `SceneEditing::runtime()` is true and every panel, the gizmo, the
+Item tab, and operators edit the running scene through the same calls (modal
+G/R/S still start only in Edit mode, but commit through the same editing)
+while `commit`, `perform`, `undo`, and `redo` record nothing (no
+runtime undo; Stop discards it). The Inspector and Hierarchy stay enabled
+(no panel overrides `EditorPanel::editModeOnly` now), show a runtime-only
+notice, and draw running values every frame. `OperatorRunner` runs operators
+on the runtime scene without an undo step or Adjust Last Operation and notes
+an `Undo` operator's change in Info as lost on Stop; object and component
+operators allow it, while document-only ones (save, prefabs, collections,
+visibility, bakes) keep polling Edit mode, and the runner's refusal then says
+they work only in Edit mode. `play.apply_to_edit {entity, component}`
+(`operators/PlayOperators`) diffs the runtime entity against the edit scene
+(`document/RuntimeApply`: one component, or the whole entity's name,
+transform, and components, creating a runtime-only entity) and records the
+difference with `SceneEditing::applyToEditScene` as an `EntityDiffCommand` on
+the edit history that patches the parked edit scene immediately: Stop restores
+the patched scene, so undo and redo after Stop act on it like any edit, and the
+runtime scene is never changed. Equal values record nothing.
+
+## Folder contents
+
+`src/editor/document/`: Scene document state, persistence workflow, undo/redo
+history, prefab authoring (`PrefabAuthoring`), per-scene editor data such as
+the 3D cursor (`SceneEditorData`, a sidecar beside the scene file), and the
+runtime-to-edit diff behind Apply to Edit Scene (`RuntimeApply`).
