@@ -9,6 +9,7 @@ add_library(zenith_editor_app STATIC
     application/EditorDiagnostics.cpp
     application/EditorModuleCommands.cpp
     application/EditorObjectCommands.cpp
+    application/NewCodeDialog.cpp
     application/EditorViewports.cpp
     application/EditorPlayMode.cpp
     application/EditorPlayback.cpp
@@ -54,6 +55,7 @@ add_library(zenith_editor_app STATIC
     modules/GameModuleHost.cpp
     operators/ComponentOperators.cpp
     operators/BuildOperators.cpp
+    operators/CodeOperators.cpp
     operators/CollectionOperators.cpp
     operators/DefaultKeymap.cpp
     operators/EditorOperatorFamilies.cpp
@@ -101,6 +103,8 @@ add_library(zenith_editor_app STATIC
     project/AssetRelocation.cpp
     project/BuildRunner.cpp
     project/ProjectBuild.cpp
+    project/TemplateText.cpp
+    project/CodeGenerator.cpp
     project/CompilerOutputParser.cpp
     project/DerivedAssetInspector.cpp
     project/ExternalEditor.cpp

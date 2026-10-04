@@ -44,10 +44,17 @@ preset.
    command (`ide.command` in the Build panel's settings). Build errors in the
    Build panel open at their line in the IDE.
 
-Add a component by declaring its struct, describing its fields with
-`Fields<T>` in a `ComponentTypeBuilder`, and registering it in
-`zenith_module_register`; add a system with `registrar.addSystem`. New source
-files go in `src/CMakeLists.txt`.
+**Module > New Behaviour**, **New Component**, and **New System** write a
+new type into `src/` from the editor's snippets, add it to
+`src/CMakeLists.txt` (above `# zenith:sources`) and to `src/GameModule.cpp`
+(above `// zenith:includes` and `// zenith:register`), open it in the IDE, and
+build. Keep those three marker lines.
+
+By hand: declare a component's struct, describe its fields with `Fields<T>` in
+a `ComponentTypeBuilder`, and register it in `zenith_module_register`; add a
+system with `registrar.addSystem`, and a behaviour (a `Behaviour` subclass
+with per-entity hooks) with `registrar.addBehaviour`. New source files go in
+`src/CMakeLists.txt`. **Ctrl B** builds from anywhere in the editor.
 
 ## Extend the editor
 

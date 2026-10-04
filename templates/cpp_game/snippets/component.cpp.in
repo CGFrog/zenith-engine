@@ -1,0 +1,13 @@
+#include "{{CLASS_NAME}}.hpp"
+
+#include "engine/module/ModuleRegistrar.hpp"
+#include "engine/scene/ComponentTypes.hpp"
+
+#include <string>
+
+void register{{CLASS_NAME}}(ModuleRegistrar& registrar) {
+    registrar.addComponentType(ComponentTypeBuilder<{{CLASS_NAME}}>(std::string({{CLASS_NAME}}Key), "{{DISPLAY_NAME}}")
+        .category("{{CATEGORY}}")
+        .fields({{FIELD_SETUP}})
+        .build());
+}

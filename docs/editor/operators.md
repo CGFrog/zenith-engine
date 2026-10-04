@@ -82,7 +82,10 @@ session code they drive. Non-operator registrations (`registerAreaTypes`,
 
 The `navigation` family (`NavigationOperators.*`) bakes and clears the
 preview navigation mesh the session owns (see
-[Navigation](../engine/navigation.md)).
+[Navigation](../engine/navigation.md)). The `build` family
+(`BuildOperators.*`) starts and cancels the session's build, and the `code`
+family (`CodeOperators.*`) runs the code generators (see
+[Build and IDE workflow](build-ide.md)).
 
 ### Adding an operator family
 

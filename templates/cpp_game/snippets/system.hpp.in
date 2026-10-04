@@ -1,0 +1,12 @@
+#pragma once
+
+#include <string_view>
+
+class ModuleRegistrar;
+
+// The {{DISPLAY_NAME}} system's name, shown in the System Profiler and the
+// Simulate system choices.
+inline constexpr std::string_view {{CLASS_NAME}}Name = "{{SYSTEM_NAME}}";
+
+// Registers the system, which runs in the {{PHASE}} phase while the game runs.
+void register{{CLASS_NAME}}(ModuleRegistrar& registrar);

@@ -7,11 +7,13 @@
 
 #include "HeadlessImGui.hpp"
 
+#include "editor/project/CodeGenerator.hpp"
 #include "editor/project/ExternalEditor.hpp"
 #include "editor/project/ProjectHub.hpp"
 #include "editor/project/ProjectTemplate.hpp"
 #include "editor/project/RecentProjects.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/behaviour/BehaviourRegistry.hpp"
 #include "engine/module/GameModule.hpp"
 #include "engine/project/ProjectConfig.hpp"
 #include "engine/scene/ComponentTypes.hpp"
@@ -19,6 +21,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -175,6 +178,10 @@ void testGenerateProject(const fs::path& root) {
                contains(moduleCmake, "modules/space_race.zmodule"),
            "template: the module target builds and copies modules/<identifier>.zmodule");
     expect(contains(moduleSource, "ZENITH_GAME_MODULE(\"space_race\""), "template: the module is named");
+    expect(contains(moduleCmake, "# zenith:sources") && contains(moduleSource, "// zenith:includes") &&
+               contains(moduleSource, "// zenith:register"),
+           "template: the code generators' markers are in place");
+    expect(!fs::exists(directory / templateSnippetDirectoryName), "template: the snippets are not copied");
     expect(contains(gameplay, "Fields<SpinnerComponent>") && contains(gameplay, "addSystem"),
            "template: the example component is reflected and its system registered");
     expect(contains(readme, "# Space Race"), "template: the README names the project");
@@ -301,6 +308,29 @@ int buildGeneratedModule(const fs::path& root) {
         std::cerr << "FAILED: generate: " << created.error << '\n';
         return 1;
     }
+    // The code generators' output must compile with the template's warnings.
+    const fs::path snippets = fs::path(ZENITH_TEMPLATE_DIR) / cppGameTemplateName / templateSnippetDirectoryName;
+    const std::array<CodeGenerationRequest, 3> generatedTypes{
+        CodeGenerationRequest{.kind = GeneratedCodeKind::Behaviour,
+                              .name = "DoorOpener",
+                              .fields = {{"openSpeed", GeneratedFieldType::Float},
+                                         {"locked", GeneratedFieldType::Bool},
+                                         {"uses", GeneratedFieldType::Int},
+                                         {"openOffset", GeneratedFieldType::Vec3},
+                                         {"sound", GeneratedFieldType::String},
+                                         {"target", GeneratedFieldType::Entity}}},
+        CodeGenerationRequest{.kind = GeneratedCodeKind::Component,
+                              .name = "Health",
+                              .fields = {{"maxHealth", GeneratedFieldType::Float}}},
+        CodeGenerationRequest{.kind = GeneratedCodeKind::System, .name = "Regenerate"},
+    };
+    for (const CodeGenerationRequest& request : generatedTypes) {
+        if (const CodeGenerationResult generated = generateModuleCode(created.projectFile, snippets, request);
+            !generated) {
+            std::cerr << "FAILED: generating " << request.name << ": " << generated.error << '\n';
+            return 1;
+        }
+    }
     const std::optional<BuildRequest> build = projectBuildRequest(created.projectFile);
     if (!build) {
         std::cerr << "FAILED: the generated project has no build\n";
@@ -343,6 +373,14 @@ int buildGeneratedModule(const fs::path& root) {
                             module->systems()->find("built_game.spin") != nullptr;
     if (!registered) {
         std::cerr << "FAILED: the generated module did not register its component and system\n";
+        return 1;
+    }
+    const bool generatedRegistered = module->behaviours()->find("door_opener") != nullptr &&
+                                     module->componentTypes()->find("door_opener") != nullptr &&
+                                     module->componentTypes()->find("health") != nullptr &&
+                                     module->systems()->find("built_game.regenerate") != nullptr;
+    if (!generatedRegistered) {
+        std::cerr << "FAILED: the generated behaviour, component, and system did not register\n";
         return 1;
     }
     std::cout << "Generated module built and loaded\n";

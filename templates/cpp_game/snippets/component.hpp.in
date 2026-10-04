@@ -1,0 +1,19 @@
+#pragma once
+
+{{FIELD_INCLUDES}}
+
+#include <string_view>
+
+class ModuleRegistrar;
+
+// {{DISPLAY_NAME}}: data that systems read and write. Add it to an entity with
+// Add Component > {{CATEGORY}}.
+struct {{CLASS_NAME}} {
+{{FIELDS}}};
+
+// The key scenes store the component under.
+inline constexpr std::string_view {{CLASS_NAME}}Key = "{{KEY}}";
+
+// Registers the component type; its fields are reflected, so the inspector
+// edits them and scenes save them.
+void register{{CLASS_NAME}}(ModuleRegistrar& registrar);

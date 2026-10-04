@@ -114,6 +114,8 @@ class NoSessionCommands final : public EditorDocumentCommands,
     void resetActiveWorkspace() override {}
 
     void requestModuleReload() override {}
+
+    void openNewCodeDialog(GeneratedCodeKind) override {}
 };
 
 // What the session owns for its operator families, beyond the shared
@@ -186,10 +188,11 @@ void testEveryFamilyRegisters() {
         expect(ids.insert(op->id).second, "operator '" + op->id + "' is registered once");
     }
     // A sample from each kind of family, as menus and keymaps name them.
-    for (const char* id : {"file.save", "play.start", "wm.search_menu", "transform.translate", "view3d.view_axis",
-                           "view3d.cursor3d_place", "module.reload", "wm.toggle_panel", "file.build_package",
-                           "object.duplicate", "ui.eyedropper_cancel", "object.component_copy", "wm.call_menu",
-                           "prefab.apply", "play.set_time_scale", "build.run", "build.cancel"}) {
+    for (const char* id :
+         {"file.save", "play.start", "wm.search_menu", "transform.translate", "view3d.view_axis",
+          "view3d.cursor3d_place", "module.reload", "wm.toggle_panel", "file.build_package", "object.duplicate",
+          "ui.eyedropper_cancel", "object.component_copy", "wm.call_menu", "prefab.apply", "play.set_time_scale",
+          "build.run", "build.cancel", "module.new_behaviour", "module.generate_code"}) {
         expect(fixture.operators.find(id) != nullptr, std::string("operator '") + id + "' is registered");
     }
 }

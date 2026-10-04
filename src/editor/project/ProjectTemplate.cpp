@@ -1,6 +1,7 @@
 #include "ProjectTemplate.hpp"
 
 #include "editor/document/DefaultScene.hpp"
+#include "editor/project/TemplateText.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/project/ProjectConfig.hpp"
 #include "engine/scene/SceneDocument.hpp"
@@ -22,11 +23,6 @@ using Json = nlohmann::json;
 constexpr size_t maximumDisplayNameLength = 64;
 constexpr const char* projectExtension = ".zenith-project";
 constexpr const char* startupSceneName = "main.zenith-scene";
-
-struct TemplateToken {
-    std::string_view name;
-    std::string value;
-};
 
 bool isAsciiLetter(char character) {
     return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z');
@@ -56,45 +52,6 @@ std::string validateDisplayName(std::string_view name) {
     return {};
 }
 
-bool isTokenCharacter(char character) {
-    return (character >= 'A' && character <= 'Z') || character == '_';
-}
-
-// Replaces each {{NAME}} with its token's value; an unknown {{NAME}} is an
-// error. Braces not around an upper-case name (C++ initializers) are kept.
-bool substituteTokens(std::string_view text, std::span<const TemplateToken> tokens, std::string& output,
-                      std::string& error) {
-    output.clear();
-    output.reserve(text.size());
-    size_t position = 0;
-    while (position < text.size()) {
-        const size_t open = text.find("{{", position);
-        if (open == std::string_view::npos) {
-            output.append(text.substr(position));
-            break;
-        }
-        size_t nameEnd = open + 2;
-        while (nameEnd < text.size() && isTokenCharacter(text[nameEnd])) {
-            ++nameEnd;
-        }
-        if (nameEnd == open + 2 || text.substr(nameEnd, 2) != "}}") {
-            output.append(text.substr(position, open + 2 - position));
-            position = open + 2;
-            continue;
-        }
-        const std::string_view name = text.substr(open + 2, nameEnd - open - 2);
-        const auto token = std::ranges::find(tokens, name, &TemplateToken::name);
-        if (token == tokens.end()) {
-            error = "Unknown template token {{" + std::string(name) + "}}";
-            return false;
-        }
-        output.append(text.substr(position, open - position));
-        output.append(token->value);
-        position = nameEnd + 2;
-    }
-    return true;
-}
-
 std::string utf8(const std::filesystem::path& path) {
     const std::u8string text = path.generic_u8string();
     return {text.begin(), text.end()};
@@ -102,31 +59,6 @@ std::string utf8(const std::filesystem::path& path) {
 
 std::filesystem::path fromUtf8(std::string_view text) {
     return std::filesystem::path(std::u8string(text.begin(), text.end()));
-}
-
-bool readFile(const std::filesystem::path& path, std::string& contents) {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        return false;
-    }
-    contents.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
-    return !input.bad();
-}
-
-bool writeFile(const std::filesystem::path& path, std::string_view contents, std::string& error) {
-    std::error_code directoryError;
-    std::filesystem::create_directories(path.parent_path(), directoryError);
-    if (directoryError) {
-        error = "Could not create " + path.parent_path().string() + ": " + directoryError.message();
-        return false;
-    }
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
-    if (!output) {
-        error = "Could not write " + path.string();
-        return false;
-    }
-    return true;
 }
 
 bool copyTemplateFiles(const std::filesystem::path& templateDirectory, const std::filesystem::path& projectDirectory,
@@ -137,27 +69,37 @@ bool copyTemplateFiles(const std::filesystem::path& templateDirectory, const std
         error = "Could not read the project template " + templateDirectory.string() + ": " + iterationError.message();
         return false;
     }
-    for (const std::filesystem::directory_entry& entry : files) {
+    for (; files != std::filesystem::recursive_directory_iterator(); files.increment(iterationError)) {
+        if (iterationError) {
+            error =
+                "Could not read the project template " + templateDirectory.string() + ": " + iterationError.message();
+            return false;
+        }
+        const std::filesystem::directory_entry& entry = *files;
+        const std::filesystem::path relative = entry.path().lexically_relative(templateDirectory);
+        if (entry.is_directory() && relative == std::filesystem::path(templateSnippetDirectoryName)) {
+            files.disable_recursion_pending();
+            continue;
+        }
         if (!entry.is_regular_file()) {
             continue;
         }
-        const std::filesystem::path relative = entry.path().lexically_relative(templateDirectory);
         std::string relativePath;
-        if (!substituteTokens(utf8(relative), tokens, relativePath, error)) {
+        if (!substituteTemplateTokens(utf8(relative), tokens, relativePath, error)) {
             error += " in the template path " + relative.generic_string();
             return false;
         }
         std::string contents;
-        if (!readFile(entry.path(), contents)) {
+        if (!readTextFile(entry.path(), contents)) {
             error = "Could not read the template file " + entry.path().string();
             return false;
         }
         std::string substituted;
-        if (!substituteTokens(contents, tokens, substituted, error)) {
+        if (!substituteTemplateTokens(contents, tokens, substituted, error)) {
             error += " in the template file " + relative.generic_string();
             return false;
         }
-        if (!writeFile(projectDirectory / fromUtf8(relativePath), substituted, error)) {
+        if (!writeTextFile(projectDirectory / fromUtf8(relativePath), substituted, error)) {
             return false;
         }
     }
@@ -168,7 +110,7 @@ bool copyTemplateFiles(const std::filesystem::path& templateDirectory, const std
 // (and with it the module build hash) matches the engine's.
 Json engineDescription(const std::filesystem::path& engineRoot) {
     std::string contents;
-    if (!readFile(engineRoot / engineDescriptionFileName, contents)) {
+    if (!readTextFile(engineRoot / engineDescriptionFileName, contents)) {
         return Json::object();
     }
     Json description = Json::parse(contents, nullptr, false);
@@ -262,7 +204,7 @@ ProjectTemplateResult writeProject(const ProjectTemplateRequest& request, const 
     if (!copyTemplateFiles(request.templateDirectory, projectDirectory, tokens, error)) {
         return {.error = std::move(error)};
     }
-    if (!writeFile(projectDirectory / "CMakePresets.json", projectPresets(request, identifier), error)) {
+    if (!writeTextFile(projectDirectory / "CMakePresets.json", projectPresets(request, identifier), error)) {
         return {.error = std::move(error)};
     }
 
@@ -398,7 +340,7 @@ std::optional<BuildRequest> projectBuildRequest(const std::filesystem::path& pro
     }
     const std::filesystem::path directory = projectFile.parent_path();
     std::string contents;
-    if (!readFile(directory / "CMakePresets.json", contents)) {
+    if (!readTextFile(directory / "CMakePresets.json", contents)) {
         return std::nullopt;
     }
     const Json presets = Json::parse(contents, nullptr, false);

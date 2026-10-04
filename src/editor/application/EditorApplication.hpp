@@ -39,9 +39,11 @@ class EditorApplication final : public Application {
     // Without projectHub the editor opens project directly and File > Project
     // Hub is unavailable (automated runs and tests).
     // play is what the Standalone play target launches (the game executable
-    // and, in tests, a fake process).
+    // and, in tests, a fake process). codeSnippetDirectory holds the C++ game
+    // template's snippets the code generators use (empty: none).
     EditorApplication(std::filesystem::path settingsDirectory, std::filesystem::path fontPath, ProjectConfig project,
-                      std::optional<EditorProjectHubOptions> projectHub = std::nullopt, EditorPlayServices play = {});
+                      std::optional<EditorProjectHubOptions> projectHub = std::nullopt, EditorPlayServices play = {},
+                      std::filesystem::path codeSnippetDirectory = {});
 
     SceneResult onStart(ApplicationContext& context) override;
     // The session's policy (EditorSession::mouseCapturePolicy), which it
@@ -73,6 +75,7 @@ class EditorApplication final : public Application {
     ProjectConfig m_project;
     std::optional<EditorProjectHubOptions> m_projectHub;
     EditorPlayServices m_play;
+    std::filesystem::path m_codeSnippetDirectory;
     // Written by the current session (EditorProjectServices::
     // mouseCaptureChanged).
     MouseCapturePolicy m_mouseCapturePolicy{MouseCapturePolicy::WhileRightMouseDown};

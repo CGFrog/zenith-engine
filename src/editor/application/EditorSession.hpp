@@ -5,6 +5,7 @@
 #include "editor/application/EditorPlayMode.hpp"
 #include "editor/application/EditorSessionCommands.hpp"
 #include "editor/application/NativeFileDialog.hpp"
+#include "editor/application/NewCodeDialog.hpp"
 #include "editor/application/PlayTargets.hpp"
 #include "editor/application/SceneEditing.hpp"
 #include "editor/application/SystemClipboard.hpp"
@@ -74,6 +75,9 @@ struct EditorProjectServices {
     // The open project's file, which the Standalone play target passes to
     // the game; empty for an editor running without one.
     std::filesystem::path projectFile;
+    // The C++ game template's code snippets, which the module.new_* operators
+    // generate from; empty when the editor found no template.
+    std::filesystem::path codeSnippetDirectory;
     // The project's collision layers, which the session gives the physics
     // world when it loads.
     PhysicsLayerTable physicsLayers{PhysicsLayerTable::defaults()};
@@ -182,6 +186,7 @@ class EditorSession final : public ApplicationScene,
     void workspacesChanged() override;
     void resetActiveWorkspace() override;
     void requestModuleReload() override;
+    void openNewCodeDialog(GeneratedCodeKind kind) override;
 
     SceneEditing editing(ApplicationContext& context);
     EditorContext editorContext(ApplicationContext& context);
@@ -296,6 +301,8 @@ class EditorSession final : public ApplicationScene,
 
     // Blender object-mode workflows (EditorObjectCommands.cpp).
     void drawObjectPopups(ApplicationContext& context);
+    // The New Behaviour, Component, and System dialog (EditorModuleCommands.cpp).
+    void drawNewCodeDialog(ApplicationContext& context);
     void finishModalTransform(ApplicationContext& context, bool confirm);
     void drawModalTransformOverlay(const ViewportPanel& viewport, const ModalTransformResult& result) const;
 
@@ -347,6 +354,7 @@ class EditorSession final : public ApplicationScene,
     // What the module's Ui systems draw over the game view, sized to it.
     GameUiContext m_gameViewUi;
     std::filesystem::path m_projectFile;
+    std::filesystem::path m_codeSnippetDirectory;
     PhysicsLayerTable m_physicsLayers;
     EditorPlayServices m_playServices;
     StandalonePlayer m_standalone;
@@ -474,6 +482,7 @@ class EditorSession final : public ApplicationScene,
     bool m_modalTransformFinishedThisFrame{false};
     bool m_openDeleteMenu{false};
     bool m_openRenamePopup{false};
+    NewCodeDialog m_newCodeDialog;
     bool m_focusRenameField{false};
     std::string m_renameBuffer;
 };

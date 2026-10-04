@@ -18,6 +18,9 @@ inline constexpr std::string_view engineConfigFileName = "ZenithEngineConfig.cma
 inline constexpr std::string_view engineDescriptionFileName = "zenith-engine.json";
 // The template under templates/ that New from Template uses.
 inline constexpr std::string_view cppGameTemplateName = "cpp_game";
+// The folder of a template holding the code generators' snippets
+// (CodeGenerator.hpp). It is not copied into new projects.
+inline constexpr std::string_view templateSnippetDirectoryName = "snippets";
 // The configure and build preset a generated project's CMakePresets.json
 // defines, which the editor's Build command runs.
 inline constexpr std::string_view projectBuildPresetName = "zenith";
@@ -67,7 +70,7 @@ struct ProjectTemplateResult {
 
 // Generates a C++ game project from the template:
 //
-//   <identifier>.zenith-project  ProjectConfig v4 (display name, assets/,
+//   <identifier>.zenith-project  ProjectConfig (display name, assets/,
 //                                scenes/, scenes/main.zenith-scene, and
 //                                modules/<identifier>.zmodule)
 //   CMakeLists.txt, src/         the game module (one example component and
@@ -77,7 +80,8 @@ struct ProjectTemplateResult {
 //                                sun, environment, camera)
 //   README.md, .gitignore
 //
-// Every template file is copied with {{PROJECT_NAME}}, {{PROJECT_IDENTIFIER}},
+// Every template file except the snippets folder is copied with
+// {{PROJECT_NAME}}, {{PROJECT_IDENTIFIER}},
 // {{ZENITH_ROOT}}, and {{BUILD_CONFIG}} substituted in its contents and path;
 // any other {{UPPER_CASE}} token is an error. On failure a directory the
 // generator created is removed again. assets loads the starter model while

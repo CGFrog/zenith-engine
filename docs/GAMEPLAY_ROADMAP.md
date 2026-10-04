@@ -104,6 +104,14 @@ Approved 2026-10-04. Nothing is implemented yet.
   - The editor preview is editor state (`navigation.bake`), not part of the
     document, and every viewport draws it while it exists; there is no
     overlay toggle, because viewport overlays are persisted settings.
+- **2026-10-04: code generator snippets (C2).**
+  - The snippets live in `templates/cpp_game/snippets/` as `*.in` files, and
+    the Project Hub skips that folder when it copies a template, so their
+    tokens never reach a project. The editor reads them from the template it
+    found at startup, so every project generates from the editor's version.
+  - Generated components and systems get a `Component` or `System` suffix;
+    behaviours keep their name.
+  - Generating builds through `build.run`'s queue, so a reload follows.
 - **2026-10-04: engine owns mechanisms, games own rules.** The character
   controller, physics queries, events, timers, effects, save slots and UI
   widgets are reusable engine mechanisms. Weapons, damage, HUD contents and
@@ -126,7 +134,7 @@ Approved 2026-10-04. Nothing is implemented yet.
 | B7 | Navigation | A3 | done 106f547 |
 | B8 | Audio polish | A3 | done 41ac78d |
 | C1 | Build as an operator | — | done |
-| C2 | Code generators | B2, C1 | todo |
+| C2 | Code generators | B2, C1 | done |
 | C3 | Inspector integration for Behaviours | B2 | todo |
 | C4 | Debugging tools | A2 | todo |
 | C5 | Project settings editors | A3, A4 | todo |
@@ -609,16 +617,32 @@ Result:
 
 ### C2. Code generators
 
-- [ ] Add operators `module.new_behaviour`, `module.new_component` and
+- [x] Add operators `module.new_behaviour`, `module.new_component` and
       `module.new_system`. Each opens a dialog for the name, category and
       fields.
-- [ ] Snippets live in `templates/cpp_game/snippets/`. The generator inserts at
+- [x] Snippets live in `templates/cpp_game/snippets/`. The generator inserts at
       the `# zenith:sources` marker in `src/CMakeLists.txt` and the
       `// zenith:register` marker in the registration file.
-- [ ] After generating, open the new file in the IDE through `ExternalEditor`
+- [x] After generating, open the new file in the IDE through `ExternalEditor`
       and start a build.
-- [ ] Add the markers to the template. If a project lacks them, report a clear
+- [x] Add the markers to the template. If a project lacks them, report a clear
       error.
+
+Result:
+- `src/editor/project/CodeGenerator.*` (`generateModuleCode`) and
+  `TemplateText.*` (the `{{TOKEN}}` substitution, shared with the Project
+  Hub). A third marker, `// zenith:includes`, places the new header's
+  include.
+- `operators/CodeOperators.*` is the `code` family: the three dialog
+  operators and the headless `module.generate_code`. The dialog is
+  `application/NewCodeDialog`.
+- Coverage: `CodeGeneratorTests` (`zenith_code_generator`), and
+  `zenith_project_template_module_build` builds one generated type of each
+  kind.
+
+Follow-ups:
+- The registration file is always `src/GameModule.cpp`, and new files always
+  go in `src/`; there is no setting for a project laid out differently.
 
 ### C3. Inspector integration for Behaviours
 

@@ -12,10 +12,12 @@
 #include "editor/operators/Operator.hpp"
 #include "editor/project/ProjectHub.hpp"
 
+#include <cstdint>
 #include <string>
 
 struct ApplicationContext;
 class ViewportPanel;
+enum class GeneratedCodeKind : uint8_t;
 
 // File, history, clipboard, and project workflows (file.*, edit.*,
 // wm.open_project, wm.project_hub).
@@ -93,6 +95,9 @@ class EditorWindowCommands {
     // Reloads the game module at the next update, so module code that asks
     // for it is not unloaded while it runs.
     virtual void requestModuleReload() = 0;
+    // Opens the New Behaviour, Component, or System dialog
+    // (module.new_behaviour and the others).
+    virtual void openNewCodeDialog(GeneratedCodeKind kind) = 0;
 
   protected:
     ~EditorWindowCommands() = default;

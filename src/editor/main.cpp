@@ -29,8 +29,18 @@ std::filesystem::path fromUtf8(std::string_view text) {
 // templates/. Generated projects build against the resource root when it is
 // a Zenith build tree (it holds ZenithEngineConfig.cmake), else against the
 // build this editor was compiled in.
+std::array<std::filesystem::path, 2> templateRoots() {
+    return {resourceRoot() / "templates", fromUtf8(ZENITH_SOURCE_TEMPLATE_DIR)};
+}
+
+// The C++ game template's snippets, which the module.new_* code generators
+// write new types from; empty when no template is found.
+std::filesystem::path codeSnippetDirectory() {
+    const std::filesystem::path cppGame = findProjectTemplate(templateRoots(), cppGameTemplateName);
+    return cppGame.empty() ? cppGame : cppGame / templateSnippetDirectoryName;
+}
+
 EditorProjectHubOptions projectHubOptions(bool startInHub) {
-    const std::array templateRoots{resourceRoot() / "templates", fromUtf8(ZENITH_SOURCE_TEMPLATE_DIR)};
     const std::array engineRoots{resourceRoot(), fromUtf8(ZENITH_ENGINE_BUILD_DIR)};
     std::filesystem::path engineRoot = findEngineBuildRoot(engineRoots);
     if (engineRoot.empty()) {
@@ -40,7 +50,7 @@ EditorProjectHubOptions projectHubOptions(bool startInHub) {
     const char* documents = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
     std::filesystem::path projectsFolder =
         (documents != nullptr ? fromUtf8(documents) : std::filesystem::current_path()) / "Zenith Projects";
-    return {.hub = {.templateDirectory = findProjectTemplate(templateRoots, cppGameTemplateName),
+    return {.hub = {.templateDirectory = findProjectTemplate(templateRoots(), cppGameTemplateName),
                     .engineRoot = std::move(engineRoot),
                     .engineAssetRoot = assetRoot(),
                     .buildConfiguration = ZENITH_EDITOR_CONFIGURATION,
@@ -127,7 +137,7 @@ int main(int argc, char** argv) {
     EditorApplication application(resolveEditorSettingsDirectory(settingsOverride != nullptr ? settingsOverride : "",
                                                                  userDataDirectory("Zenith", "Editor")),
                                   resourceRoot() / "editor" / "fonts" / "Inter-Regular.ttf", std::move(project),
-                                  std::move(projectHub), std::move(play));
+                                  std::move(projectHub), std::move(play), codeSnippetDirectory());
     const bool success = engine.run(application);
     engine.shutdown();
     return validationExitCode(engine.graphicsValidation(), success ? EXIT_SUCCESS : EXIT_FAILURE);

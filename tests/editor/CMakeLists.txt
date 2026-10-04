@@ -103,6 +103,11 @@ zenith_add_test(zenith_project_hub SOURCES ProjectHubTests.cpp LIBS zenith_edito
 zenith_add_test(zenith_project_template_module_build EXECUTABLE zenith_project_hub_tests
     COMMAND_ARGS --build-generated-module LABELS slow TIMEOUT 600)
 
+zenith_add_test(zenith_code_generator SOURCES CodeGeneratorTests.cpp LIBS zenith_editor_app
+    DEFINITIONS
+        ZENITH_TEMPLATE_DIR="${PROJECT_SOURCE_DIR}/templates"
+        ZENITH_TEST_CMAKE="${CMAKE_COMMAND}")
+
 zenith_add_test(zenith_package_workflow SOURCES PackageWorkflowTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_preferences SOURCES PreferencesTests.cpp LIBS zenith_editor_app
     DEFINITIONS ZENITH_TEST_CMAKE="${CMAKE_COMMAND}")

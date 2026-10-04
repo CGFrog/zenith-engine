@@ -1,0 +1,20 @@
+#include "{{CLASS_NAME}}.hpp"
+
+#include "engine/module/ModuleRegistrar.hpp"
+
+#include <string>
+
+void {{CLASS_NAME}}::onStart([[maybe_unused]] BehaviourContext& context) {
+    // Runs once, before the first update of an enabled behaviour.
+}
+
+void {{CLASS_NAME}}::onUpdate([[maybe_unused]] BehaviourContext& context) {
+    // Runs every frame. context.entity is this behaviour's entity in
+    // context.scene; spawn and destroy through context.services->commands().
+}
+
+void register{{CLASS_NAME}}(ModuleRegistrar& registrar) {
+    registrar.addBehaviour<{{CLASS_NAME}}>(std::string({{CLASS_NAME}}Key), "{{DISPLAY_NAME}}",
+        {{FIELD_SETUP}},
+        {.category = "{{CATEGORY}}"});
+}

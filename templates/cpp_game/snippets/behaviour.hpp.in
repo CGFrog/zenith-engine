@@ -1,0 +1,25 @@
+#pragma once
+
+#include "engine/behaviour/Behaviour.hpp"
+{{FIELD_INCLUDES}}
+
+#include <string_view>
+
+class ModuleRegistrar;
+
+// {{DISPLAY_NAME}}: per-entity logic. Add it to an entity with Add Component >
+// {{CATEGORY}}; while the game runs the engine calls its hooks. Override
+// any other hook of Behaviour (engine/behaviour/Behaviour.hpp) the same way.
+class {{CLASS_NAME}} final : public Behaviour {
+  public:
+{{FIELDS}}
+    void onStart(BehaviourContext& context) override;
+    void onUpdate(BehaviourContext& context) override;
+};
+
+// The key scenes store the behaviour under.
+inline constexpr std::string_view {{CLASS_NAME}}Key = "{{KEY}}";
+
+// Registers the behaviour; its fields are reflected, so the inspector edits
+// them and scenes save them.
+void register{{CLASS_NAME}}(ModuleRegistrar& registrar);

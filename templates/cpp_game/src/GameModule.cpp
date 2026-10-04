@@ -4,6 +4,7 @@
 // game's component types and systems.
 
 #include "SpinnerGameplay.hpp"
+// zenith:includes (the editor's code generators add their headers above)
 
 #include "engine/module/ModuleApi.hpp"
 #include "engine/module/ModuleRegistrar.hpp"
@@ -12,6 +13,7 @@ ZENITH_GAME_MODULE("{{PROJECT_IDENTIFIER}}", "0.1.0");
 
 void zenith_module_register(ModuleRegistrar& registrar) {
     registerSpinnerGameplay(registrar);
+    // zenith:register (the editor's code generators add their types above)
 }
 
 // Editor tools for the game (docs/EDITOR_EXTENSIONS.md in the Zenith source

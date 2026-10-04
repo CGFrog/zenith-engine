@@ -1,8 +1,10 @@
 # The {{PROJECT_NAME}} game module: component types and systems registered
-# through ZENITH_GAME_MODULE. Add new source files to this list.
+# through ZENITH_GAME_MODULE. Add new source files to this list; the editor's
+# Module > New Behaviour, Component, and System add theirs above the marker.
 add_library({{PROJECT_IDENTIFIER}} MODULE
     GameModule.cpp
     SpinnerGameplay.cpp
+    # zenith:sources
 )
 target_include_directories({{PROJECT_IDENTIFIER}} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 # Only the engine: a module shares the editor's (or game's) engine library.

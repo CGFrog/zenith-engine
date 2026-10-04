@@ -41,6 +41,23 @@ void EditorSession::requestModuleReload() {
     m_moduleReloadPending = true;
 }
 
+void EditorSession::openNewCodeDialog(GeneratedCodeKind kind) {
+    m_newCodeDialog.open(kind);
+}
+
+void EditorSession::drawNewCodeDialog(ApplicationContext& context) {
+    const std::optional<GenerateCodeProperties> create = m_newCodeDialog.draw();
+    const Operator* generate = create ? m_operators.find("module.generate_code") : nullptr;
+    if (generate == nullptr) {
+        return;
+    }
+    OperatorProperties properties = generate->properties;
+    if (GenerateCodeProperties* values = properties.get<GenerateCodeProperties>()) {
+        *values = *create;
+    }
+    m_newCodeDialog.finish(invokeOperator(context, "module.generate_code", properties));
+}
+
 void EditorSession::loadGameModule() {
     if (m_gameModulePath.empty()) {
         return;
@@ -149,7 +166,12 @@ void EditorSession::drawModuleMenu(ApplicationContext& context) {
     if (m_moduleHost.status() == GameModuleStatus::Failed) {
         ImGui::SetItemTooltip("%s", m_moduleHost.error().c_str());
     }
+    operatorMenuItem(context, "build.run", "Build");
     operatorMenuItem(context, "module.reload", "Reload Game Module");
+    ImGui::Separator();
+    operatorMenuItem(context, "module.new_behaviour", "New Behaviour...");
+    operatorMenuItem(context, "module.new_component", "New Component...");
+    operatorMenuItem(context, "module.new_system", "New System...");
     // Module panels are area types (see syncAreaTypes), toggled like any
     // other in the active workspace.
     std::span<GameModuleHost::Panel> panels = m_moduleHost.panels();

@@ -57,6 +57,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_document(assetRoot)
     , m_recovery(settingsDirectory / (std::string("recovery") + sceneExtension))
     , m_projectFile(projectServices.projectFile)
+    , m_codeSnippetDirectory(projectServices.codeSnippetDirectory)
     , m_physicsLayers(projectServices.physicsLayers)
     , m_playServices(projectServices.play)
     , m_standalone(m_playServices.makeGameProcess ? m_playServices.makeGameProcess() : makeGameProcess())
@@ -154,6 +155,7 @@ EditorOperatorServices EditorSession::operatorServices() {
             .navigationPreview = m_navigationPreview,
             .tools = m_settings.tools(),
             .projectFile = m_renderSettings.settings().projectFile(),
+            .codeSnippetDirectory = m_codeSnippetDirectory,
             .revealAsset = [this](const std::filesystem::path& asset) { m_projectAssets.requestReveal(asset); },
             .simulateMaskChanged = [this] { saveSimulateSystems(); },
             .documentCommands = *this,
@@ -495,6 +497,7 @@ void EditorSession::drawUi(ApplicationContext& context) {
     drawAreas(context);
     syncActiveRenderView(context);
     drawObjectPopups(context);
+    drawNewCodeDialog(context);
     drawOperatorWindows(context);
     drawStatusBar(context.rendering.stats());
     publishMouseCapture();

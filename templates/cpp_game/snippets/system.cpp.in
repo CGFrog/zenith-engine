@@ -1,0 +1,19 @@
+#include "{{CLASS_NAME}}.hpp"
+
+#include "engine/module/ModuleRegistrar.hpp"
+#include "engine/scene/Scene.hpp"
+
+#include <string>
+
+namespace {
+// Runs once per {{PHASE}} for the whole scene: query the components it works
+// on through context.scene.registry().
+void run{{CLASS_NAME}}([[maybe_unused]] const SystemContext& context) {}
+} // namespace
+
+void register{{CLASS_NAME}}(ModuleRegistrar& registrar) {
+    registrar.addSystem({.name = std::string({{CLASS_NAME}}Name),
+                         .phase = SystemPhase::{{PHASE}},
+                         .runIn = RunIn::Play,
+                         .run = run{{CLASS_NAME}}});
+}

@@ -31,6 +31,37 @@ into arguments (never a shell); the default is
 `code -g "{file}:{line}:{column}"`. These settings live in the editor's
 `settings.ini` and are editable in the Build panel and **Edit > Preferences**.
 
+## Code generators
+
+**Module > New Behaviour**, **New Component**, and **New System**
+(`module.new_behaviour`, `module.new_component`, `module.new_system`, in the
+`code` family of `operators/CodeOperators`) open `application/NewCodeDialog`,
+which asks for a PascalCase name, a category (or a system's phase), and
+reflected fields (`bool`, `int`, `float`, `vec3`, `string`, `entity`), and
+checks them as they are typed. Create runs `module.generate_code {kind, name,
+category, phase, fields}`, which runs headless:
+
+- `project/CodeGenerator` (`generateModuleCode`, pure and CPU-tested) fills the
+  snippets in `templates/cpp_game/snippets/<kind>.{hpp,cpp}.in` with
+  `TemplateText`'s `{{TOKEN}}` substitution and writes `src/<Type>.hpp` and
+  `.cpp`. A component's type gets a `Component` and a system's a `System`
+  suffix; scene keys are the snake_case name, and a system is named
+  `<module>.<snake_case>`.
+- It adds the source above `# zenith:sources` in `src/CMakeLists.txt`, and the
+  include and register call above `// zenith:includes` and
+  `// zenith:register` in `src/GameModule.cpp`, indented as the marker is.
+  A missing marker, an existing type, or a bad field fails before anything is
+  written, with the file and marker named.
+- It opens the new source at its register function with `ide.command` and
+  requests a build, which hot reloads the module when it finishes.
+
+The editor reads the snippets from the C++ game template it found at startup
+(`codeSnippetDirectory`); the Project Hub never copies `snippets/` into a new
+project. `zenith_project_template_module_build` generates one type of each
+kind into a new project and builds it with the template's warnings.
+
+## Packaging
+
 **File > Build and Package** runs `file.build_package {platform,
 configuration}` (`operators/PackageOperators`): it plans the release
 packaging of `docs/RELEASING.md` for the open project with

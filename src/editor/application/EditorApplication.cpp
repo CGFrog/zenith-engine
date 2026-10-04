@@ -139,12 +139,13 @@ class ProjectHubScene final : public ApplicationScene {
 
 EditorApplication::EditorApplication(std::filesystem::path settingsDirectory, std::filesystem::path fontPath,
                                      ProjectConfig project, std::optional<EditorProjectHubOptions> projectHub,
-                                     EditorPlayServices play)
+                                     EditorPlayServices play, std::filesystem::path codeSnippetDirectory)
     : m_settingsDirectory(std::move(settingsDirectory))
     , m_fontPath(std::move(fontPath))
     , m_project(std::move(project))
     , m_projectHub(std::move(projectHub))
     , m_play(std::move(play))
+    , m_codeSnippetDirectory(std::move(codeSnippetDirectory))
     , m_recentProjects(m_settingsDirectory / "recent-projects.json") {}
 
 SceneResult EditorApplication::onStart(ApplicationContext& context) {
@@ -221,6 +222,7 @@ std::unique_ptr<ApplicationScene> EditorApplication::createSession() {
     EditorProjectServices services{
         .build = projectBuildRequest(m_project.projectFile),
         .projectFile = m_project.projectFile,
+        .codeSnippetDirectory = m_codeSnippetDirectory,
         .physicsLayers = m_project.physicsLayerTable(),
         .play = m_play,
         // The session publishes its policy every frame and resets it

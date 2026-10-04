@@ -58,6 +58,9 @@ struct EditorOperatorServices {
     const EditorToolSettings& tools;
     // The open .zenith-project; empty when the editor runs without one.
     std::filesystem::path projectFile;
+    // The C++ game template's code snippets (module.new_*); empty when the
+    // editor found no template.
+    std::filesystem::path codeSnippetDirectory;
     // Shows a project file in the primary Asset Browser; may be empty.
     std::function<void(const std::filesystem::path&)> revealAsset;
     // The Simulate system choices changed (to save them); may be empty.
