@@ -6,6 +6,7 @@
 #include "SystemScheduler.hpp"
 #include "Timers.hpp"
 #include "engine/diagnostics/Logger.hpp"
+#include "engine/navigation/NavigationWorld.hpp"
 #include "engine/physics/PhysicsWorld.hpp"
 #include "engine/scene/Prefab.hpp"
 #include "engine/scene/SaveGame.hpp"
@@ -71,6 +72,10 @@ class GameServices {
     // Saves scene into slot of the session's save games. Loading belongs to
     // the game's flow (it replaces the scene): SaveGameStore::load.
     SaveGameResult saveGame(const Scene& scene, std::string_view slot, std::string title = {});
+    // The session's navigation mesh, baked from scene's static colliders the
+    // first time it is asked for (a failed bake is logged once and leaves it
+    // empty). Bake it again after the static geometry changes.
+    NavigationWorld& navigation(const Scene& scene);
     // Lines and shapes drawn this frame in every view; cleared after the
     // frame renders.
     DebugDraw& debugDraw();
@@ -106,6 +111,8 @@ class GameServices {
     SceneDocumentOptions m_documents;
     std::optional<SaveGameStore> m_saveGames;
     std::filesystem::path m_savedScene;
+    NavigationWorld m_navigation;
+    bool m_navigationBaked{false};
 };
 
 // Runs one phase of systems and then, when context.services is set, flushes

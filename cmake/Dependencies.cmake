@@ -7,7 +7,7 @@ include_guard(GLOBAL)
 # Every FetchContent dependency, by its FetchContent_Declare name.
 set(ZENITH_FETCHED_DEPENDENCIES
     VulkanHeaders glslang SPIRV-Headers SPIRV-Tools shaderc volk glm SDL imgui imguizmo inter cgltf stb EnTT
-    nlohmann_json JoltPhysics VulkanMemoryAllocator meshoptimizer bc7enc_rdo)
+    nlohmann_json JoltPhysics VulkanMemoryAllocator meshoptimizer bc7enc_rdo recastnavigation)
 
 # A configured build tree's _deps directory whose dependency sources this
 # build reuses read-only (FETCHCONTENT_SOURCE_DIR_<NAME> = <dir>/<name>-src),
@@ -346,4 +346,27 @@ if(MSVC)
     target_compile_options(zenith_bc7enc PRIVATE /W0)
 else()
     target_compile_options(zenith_bc7enc PRIVATE -w)
+endif()
+
+# Recast builds navigation meshes and Detour queries them (NavigationWorld).
+# Only the two libraries' sources are built; the repository's own CMake
+# project (demo, tests, install rules) is skipped.
+FetchContent_Declare(
+    recastnavigation
+    GIT_REPOSITORY https://github.com/recastnavigation/recastnavigation.git
+    GIT_TAG v1.6.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR zenith-sources-only
+)
+FetchContent_MakeAvailable(recastnavigation)
+file(GLOB zenith_recast_sources CONFIGURE_DEPENDS "${recastnavigation_SOURCE_DIR}/Recast/Source/*.cpp"
+     "${recastnavigation_SOURCE_DIR}/Detour/Source/*.cpp")
+add_library(zenith_recast STATIC ${zenith_recast_sources})
+target_include_directories(zenith_recast SYSTEM PUBLIC "${recastnavigation_SOURCE_DIR}/Recast/Include"
+                                                        "${recastnavigation_SOURCE_DIR}/Detour/Include")
+set_target_properties(zenith_recast PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(zenith_recast PRIVATE /W0)
+else()
+    target_compile_options(zenith_recast PRIVATE -w)
 endif()

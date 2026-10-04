@@ -205,8 +205,9 @@ void testLoadRegisterAndUnload(const TestPaths& paths) {
         const SystemScheduler scheduler(module->systems());
         expect(module->registriesShared(), "a scheduler shares the module's systems");
         expect(scheduler.schedule(SystemPhase::Update, SimulationMode::Play) ==
-                   std::vector<std::string>{"add_one", std::string(EngineSystems::Behaviours), "double",
-                                            "context_probe", "fire", std::string(EngineSystems::Animator)},
+                   std::vector<std::string>{"add_one", std::string(EngineSystems::Behaviours),
+                                            std::string(EngineSystems::NavAgents), "double", "context_probe", "fire",
+                                            std::string(EngineSystems::Animator)},
                "module systems are ordered by their order, not registration");
         expect(scheduler.schedule(SystemPhase::Update, SimulationMode::Edit) ==
                    std::vector<std::string>{std::string(EngineSystems::Behaviours), "edit_tick", "context_probe"},

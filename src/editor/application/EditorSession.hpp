@@ -43,6 +43,7 @@
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/ThemeChrome.hpp"
 #include "engine/application/Application.hpp"
+#include "engine/navigation/NavigationWorld.hpp"
 
 #include <array>
 #include <cstdint>
@@ -407,6 +408,8 @@ class EditorSession final : public ApplicationScene,
     // created by their types (EditorAreaTypes.hpp, EditorAreas.cpp).
     // Build and Package; declared before the Build panel, which shows it.
     PackageRunner m_packageRunner{makeProcessPackageStepRunner()};
+    // The preview navigation mesh navigation.bake builds and the viewports draw.
+    NavigationWorld m_navigationPreview;
     BuildPanel m_buildPanel{m_settings.tools(), &m_packageRunner};
     // Shows the engine log, diagnostics, and operator history.
     InfoPanel m_infoPanel{m_operatorRunner.history()};

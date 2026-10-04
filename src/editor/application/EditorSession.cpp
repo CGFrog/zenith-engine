@@ -124,7 +124,8 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .eyedropper = &m_eyedropper,
             .menus = m_menus,
             .simulating = m_playMode.simulating(),
-            .componentEditors = &m_componentEditors};
+            .componentEditors = &m_componentEditors,
+            .navigationPreview = &m_navigationPreview};
 }
 
 OperatorContext EditorSession::operatorContext(ApplicationContext& context, KeymapRegion region) {
@@ -149,6 +150,7 @@ EditorOperatorServices EditorSession::operatorServices() {
             .modules = m_moduleHost,
             .preferences = m_preferences,
             .packageRunner = m_packageRunner,
+            .navigationPreview = m_navigationPreview,
             .tools = m_settings.tools(),
             .projectFile = m_renderSettings.settings().projectFile(),
             .revealAsset = [this](const std::filesystem::path& asset) { m_projectAssets.requestReveal(asset); },

@@ -20,6 +20,9 @@ inline constexpr std::string_view FirstPersonCamera = "zenith.first_person_camer
 inline constexpr std::string_view Behaviours = "zenith.behaviours";
 inline constexpr std::string_view FixedBehaviours = "zenith.fixed_behaviours";
 inline constexpr std::string_view LateBehaviours = "zenith.late_behaviours";
+// Update, Play: plans and follows the navigation agents' paths on the
+// session's navigation mesh (GameServices::navigation, baked on first use).
+inline constexpr std::string_view NavAgents = "zenith.nav_agents";
 // Update, Play, after the game's Update systems (order animatorOrder): runs
 // the animators (updateAnimators) before the animations advance.
 inline constexpr std::string_view Animator = "zenith.animator";

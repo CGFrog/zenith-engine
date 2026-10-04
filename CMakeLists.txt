@@ -204,7 +204,8 @@ target_link_libraries(zenith_engine PUBLIC
     nlohmann_json::nlohmann_json
     GPUOpen::VulkanMemoryAllocator
 )
-target_link_libraries(zenith_engine PRIVATE volk imgui zenith_imguizmo Jolt shaderc zenith_bc7enc meshoptimizer ${CMAKE_DL_LIBS})
+target_link_libraries(zenith_engine PRIVATE volk imgui zenith_imguizmo Jolt shaderc zenith_bc7enc meshoptimizer
+    zenith_recast ${CMAKE_DL_LIBS})
 foreach(header_dependency IN ITEMS volk imgui zenith_imguizmo)
     target_include_directories(zenith_engine PUBLIC
         $<TARGET_PROPERTY:${header_dependency},INTERFACE_INCLUDE_DIRECTORIES>)
@@ -311,6 +312,7 @@ install(FILES "${nlohmann_json_SOURCE_DIR}/LICENSE.MIT" DESTINATION licenses REN
 install(FILES "${imguizmo_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME ImGuizmo.txt)
 install(FILES "${bc7enc_rdo_SOURCE_DIR}/LICENSE" DESTINATION licenses RENAME bc7enc_rdo.txt)
 install(FILES "${meshoptimizer_SOURCE_DIR}/LICENSE.md" DESTINATION licenses RENAME meshoptimizer.md)
+install(FILES "${recastnavigation_SOURCE_DIR}/License.txt" DESTINATION licenses RENAME recastnavigation.txt)
 install(CODE "
     set(ZENITH_PACKAGE_ROOT \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}\")
     set(ZENITH_PACKAGE_VERSION \"${PROJECT_VERSION}\")

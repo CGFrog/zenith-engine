@@ -44,6 +44,16 @@ SaveGameStore* GameServices::saveGames() {
     return m_saveGames ? &*m_saveGames : nullptr;
 }
 
+NavigationWorld& GameServices::navigation(const Scene& scene) {
+    if (!m_navigationBaked) {
+        m_navigationBaked = true;
+        if (const NavigationResult result = m_navigation.bake(scene, m_assets); !result) {
+            m_log.warning("No navigation mesh: " + result.error);
+        }
+    }
+    return m_navigation;
+}
+
 SaveGameResult GameServices::saveGame(const Scene& scene, std::string_view slot, std::string title) {
     if (!m_saveGames) {
         return {.error = "This session has no save games"};

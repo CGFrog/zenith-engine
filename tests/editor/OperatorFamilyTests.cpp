@@ -11,6 +11,7 @@
 #include "editor/panels/PreferencesWindow.hpp"
 #include "editor/project/PackageRunner.hpp"
 #include "editor/settings/EditorSettings.hpp"
+#include "engine/navigation/NavigationWorld.hpp"
 
 #include <iostream>
 #include <set>
@@ -125,6 +126,7 @@ struct OperatorFamilyFixture : EditorTestFixture {
                             .componentEditors = componentEditors}};
     PreferencesWindow preferences;
     PackageRunner packageRunner{makeProcessPackageStepRunner()};
+    NavigationWorld navigationPreview;
     EditorToolSettings tools;
     WorkspaceSet workspaces;
     AreaRegistry areaTypes;
@@ -144,6 +146,7 @@ struct OperatorFamilyFixture : EditorTestFixture {
                 .modules = modules,
                 .preferences = preferences,
                 .packageRunner = packageRunner,
+                .navigationPreview = navigationPreview,
                 .tools = tools,
                 .projectFile = {},
                 .revealAsset = {},

@@ -82,7 +82,7 @@ create these targets (`tests/*/CMakeLists.txt` add the test executables):
 
 | Target | Kind | Responsibility |
 | --- | --- | --- |
-| `zenith_engine` | Shared library | Reusable application lifecycle, scene, asset, audio, input, physics, graphics, window, and game module systems. Exports every function (`WINDOWS_EXPORT_ALL_SYMBOLS`) and Dear ImGui plus ImGuizmo (`IMGUI_API`); links volk, Jolt, shaderc, meshoptimizer, and bc7enc privately. |
+| `zenith_engine` | Shared library | Reusable application lifecycle, scene, asset, audio, input, physics, graphics, window, and game module systems. Exports every function (`WINDOWS_EXPORT_ALL_SYMBOLS`) and Dear ImGui plus ImGuizmo (`IMGUI_API`); links volk, Jolt, shaderc, meshoptimizer, bc7enc, and Recast/Detour privately. |
 | `zenith_demo_gameplay` | Static library (PIC) | Demo gameplay registered by `registerDemoGameplay`: item collection components and system, and the demo input bindings. |
 | `zenith_game_demo` | Module | The demo game module (`ZENITH_GAME_MODULE("demo", ...)`) the editor and the game load for the demo project. Each build copies it to the git-ignored `projects/modules/zenith_game_demo.zmodule`, the path `projects/demo.zenith-project` names; `install` places it at `modules/` beside the packaged project. |
 | `zenith_demo` | Static library | Game executable composition: command line (`GameLaunch`), package verification, the gameplay to play (`RuntimeGameplay`: a project's module, or the demo gameplay linked in for runs without one), the project-agnostic `ProjectApplication`, and the demo's application, menus, settings, audio, and scenes. |
@@ -94,6 +94,7 @@ create these targets (`tests/*/CMakeLists.txt` add the test executables):
 | `zenith_assets` | Custom target | Copies `assets/` to `build/assets/` so runtime paths do not depend on the process working directory. |
 | `zenith_cooked_textures` | Custom target | Runs `zenith_asset_build cook-model-textures` on every `assets/*.gltf`, writing BC7/BC5 KTX2 entries to `build/derived/`. |
 | `zenith_bc7enc` | Static library | The bc7enc_rdo BC7/BC5 block encoders and decoders, linked privately into the engine for texture cooking. |
+| `zenith_recast` | Static library | The Recast and Detour sources, linked privately into the engine for navigation. |
 | `zenith_asset_tests` | Test executable | Asset importing and scene hierarchy behavior. |
 | `zenith_game_module_tests` | Test executable | Loads, reloads, and unloads the `zenith_test_*_module` libraries: registration, system order and modes, shadow copies, and refused modules. |
 | `zenith_game_module_host_tests` | Test executable | Hosts `zenith_editor_test_module` in the editor's `GameModuleHost` without a window: module components through the document, edit/play systems, editor operators, panels, sidebar tabs, inspector overrides (multi-entity edit and undo), and menus, and their release on unload, hot reload over the `_v2` build, and a failed reload that keeps module data as JSON. |
@@ -129,6 +130,7 @@ Third-party libraries are pinned with CMake `FetchContent`:
 | Jolt Physics | Collision detection and rigid-body simulation behind Zenith's physics API. |
 | cgltf | `.gltf`/`.glb` parsing. |
 | meshoptimizer | Import-time vertex/index ordering and LOD simplification. |
+| Recast & Detour (recastnavigation) | Navigation mesh building and path queries behind `NavigationWorld`. |
 | stb_image | Image decoding to RGBA pixels. |
 | bc7enc_rdo | Offline BC7 (bc7enc) and BC5 (rgbcx) block compression for cooked textures. |
 | glslang | Build-time GLSL-to-SPIR-V compiler. |
@@ -152,6 +154,7 @@ Engine (`src/engine/`, `shaders/`):
 - [Platform services](engine/platform.md): writable locations, file reads, the file watcher, and child processes.
 - [Physics](engine/physics.md): physics components, the character controller, `PhysicsWorld`, and the private Jolt runtime and debug draw.
 - [Animation](engine/animation.md): clip playback, cross-fades, and the animator state machine.
+- [Navigation](engine/navigation.md): navigation meshes from static colliders, paths, and agents.
 - [Gameplay](engine/gameplay.md): reusable gameplay mechanisms such as the first-person player.
 - [Graphics](engine/graphics.md): the renderer structure, Vulkan context, swapchain, frame resources, render graph, and pipelines.
 - [Graphics scene passes](engine/graphics-passes.md): GPU-driven culling, AO, clustered and local-light shadows, fog, decals, particles, environment lighting, and `MeshPass`.

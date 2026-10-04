@@ -94,6 +94,16 @@ Approved 2026-10-04. Nothing is implemented yet.
     (see the A1 decision on signals and `Scene::swap`).
   - A copied behaviour starts uncreated; assignment keeps lifecycle state.
   - `ZENITH_MODULE_API_VERSION` is 6.
+- **2026-10-04: navigation (B7).**
+  - Recast/Detour (recastnavigation v1.6.0) is fetched like bc7enc_rdo: only
+    its sources, as the private `zenith_recast` library. A worktree needs the
+    main build configured once after this change, so `recastnavigation-src`
+    exists in the shared `_deps`.
+  - One solo tile per scene. A game bakes at runtime on first use
+    (`GameServices::navigation`); baked meshes are not saved yet.
+  - The editor preview is editor state (`navigation.bake`), not part of the
+    document, and every viewport draws it while it exists; there is no
+    overlay toggle, because viewport overlays are persisted settings.
 - **2026-10-04: engine owns mechanisms, games own rules.** The character
   controller, physics queries, events, timers, effects, save slots and UI
   widgets are reusable engine mechanisms. Weapons, damage, HUD contents and
@@ -524,9 +534,26 @@ Follow-ups:
 
 ### B7. Navigation
 
-- [ ] Add Recast/Detour behind a `NavigationWorld`, with navmesh baking from
+- [x] Add Recast/Detour behind a `NavigationWorld`, with navmesh baking from
       static colliders and a `NavAgentComponent` that follows paths.
-- [ ] Add an editor bake operator, with the navmesh shown through `DebugDraw`.
+- [x] Add an editor bake operator, with the navmesh shown through `DebugDraw`.
+
+Result:
+- `src/engine/navigation/`: `NavigationWorld` (bake, `findPath`,
+  `nearestPoint`, `drawDebug`), `gatherNavigationGeometry`, and
+  `NavAgentComponent` with `updateNavAgents`; the `nav_agent` type is in
+  `scene/NavigationComponentTypes.cpp`, and `zenith.nav_agents` runs agents
+  on the session's mesh.
+- Editor: the `navigation` operator family (`navigation.bake`,
+  `navigation.clear`) and the viewport drawing in `ViewportPanel`.
+- Coverage: `tests/engine/NavigationTests.cpp` (`zenith_navigation`) and
+  `OperatorFamilyTests`. Docs in `docs/engine/navigation.md`.
+
+Follow-ups:
+- Save baked meshes (with the scene or as an asset) instead of baking at
+  runtime, and use tiles for large worlds.
+- Agents do not avoid each other (DetourCrowd is not built).
+- The bake operators are reachable through F3 only; no menu lists them.
 
 ### B8. Audio polish
 

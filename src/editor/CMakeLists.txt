@@ -68,6 +68,7 @@ add_library(zenith_editor_app STATIC
     operators/OperatorRegistry.cpp
     operators/OperatorRunner.cpp
     operators/OperatorSearch.cpp
+    operators/NavigationOperators.cpp
     operators/PlayOperators.cpp
     operators/OutlinerOperators.cpp
     operators/PackageOperators.cpp

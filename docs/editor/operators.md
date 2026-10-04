@@ -80,6 +80,10 @@ declared in `application/EditorSessionOperators.hpp` and defined beside the
 session code they drive. Non-operator registrations (`registerAreaTypes`,
 `registerDefaultMenus`) stay explicit calls in the session.
 
+The `navigation` family (`NavigationOperators.*`) bakes and clears the
+preview navigation mesh the session owns (see
+[Navigation](../engine/navigation.md)).
+
 ### Adding an operator family
 
 1. Write the family's register function next to its operators, taking only

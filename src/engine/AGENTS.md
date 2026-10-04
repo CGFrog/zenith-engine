@@ -19,6 +19,7 @@ This subtree is the reusable `zenith_engine` library. It must not include from
 | `input/` | Device-state translation; gameplay meaning belongs in `src/game/`. [Window and input](../../docs/engine/window-input.md) |
 | `jobs/` | Bounded prioritized background work. [Scene](../../docs/engine/scene.md) |
 | `module/` | Game module ABI, loading, system registry and scheduler, and `Gameplay`. [Modules](../../docs/engine/modules.md) |
+| `navigation/` | Recast/Detour navigation meshes behind `NavigationWorld`, and agents that follow paths. [Navigation](../../docs/engine/navigation.md) |
 | `physics/` | Jolt-backed simulation exposed through Zenith domain types. [Physics](../../docs/engine/physics.md) |
 | `platform/` | OS services: user-data locations, atomic writes, diagnostics bundles, and child processes. [Platform](../../docs/engine/platform.md) |
 | `project/` | The shared versioned project manifest and project scene loading. [Projects](../../docs/engine/projects.md) |

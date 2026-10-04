@@ -135,6 +135,8 @@ add_library(zenith_engine SHARED
     module/SharedLibrary.cpp
     module/SystemScheduler.cpp
     module/Timers.cpp
+    navigation/NavAgent.cpp
+    navigation/NavigationWorld.cpp
     physics/PhysicsLayers.cpp
     physics/PhysicsWorld.cpp
     physics/JoltDebugDraw.cpp
@@ -156,6 +158,7 @@ add_library(zenith_engine SHARED
     scene/LightComponentTypes.cpp
     scene/PhysicsComponentTypes.cpp
     scene/GameplayComponentTypes.cpp
+    scene/NavigationComponentTypes.cpp
     scene/ComponentTypeHelpers.cpp
     scene/CollectionComponentTypes.cpp
     scene/Collections.cpp
@@ -218,7 +221,8 @@ target_link_libraries(zenith_engine PUBLIC
     nlohmann_json::nlohmann_json
     GPUOpen::VulkanMemoryAllocator
 )
-target_link_libraries(zenith_engine PRIVATE volk imgui zenith_imguizmo Jolt shaderc zenith_bc7enc meshoptimizer ${CMAKE_DL_LIBS})
+target_link_libraries(zenith_engine PRIVATE volk imgui zenith_imguizmo Jolt shaderc zenith_bc7enc meshoptimizer
+    zenith_recast ${CMAKE_DL_LIBS})
 foreach(header_dependency IN ITEMS volk imgui zenith_imguizmo)
     target_include_directories(zenith_engine PUBLIC
         $<TARGET_PROPERTY:${header_dependency},INTERFACE_INCLUDE_DIRECTORIES>)

@@ -206,7 +206,8 @@ void testRegistration() {
 
     const SystemScheduler& systems = *fixture.gameplay.systems;
     expect(systems.schedule(SystemPhase::Update, SimulationMode::Play) ==
-               std::vector<std::string>{std::string(EngineSystems::Behaviours), std::string(EngineSystems::Animator)},
+               std::vector<std::string>{std::string(EngineSystems::Behaviours), std::string(EngineSystems::NavAgents),
+                                        std::string(EngineSystems::Animator)},
            "the engine's behaviour system runs Update behaviours");
 }
 

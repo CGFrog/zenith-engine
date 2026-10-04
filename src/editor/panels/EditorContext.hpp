@@ -19,6 +19,7 @@ class ComponentEditorOverrides;
 class EditorDiagnostics;
 class EntityEyedropper;
 class EditorMenus;
+class NavigationWorld;
 
 // Session-level workflows a panel can trigger but does not own: running
 // operators, the region keymaps, document replacement, and modal transforms.
@@ -94,6 +95,9 @@ struct EditorContext {
     // Custom component editors added by the game module, used by the
     // Inspector and Properties editors; null where there are none (tests).
     const ComponentEditorOverrides* componentEditors{nullptr};
+    // The preview navigation mesh the viewports draw; null where there is
+    // none (tests).
+    const NavigationWorld* navigationPreview{nullptr};
 
     bool editMode() const {
         return mode == EditorMode::Edit;

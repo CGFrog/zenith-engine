@@ -24,6 +24,7 @@ class EditorPlayMode;
 class EditorWindowCommands;
 class EntityEyedropper;
 class GameModuleHost;
+class NavigationWorld;
 class PackageRunner;
 class PreferencesWindow;
 class TextClipboard;
@@ -49,6 +50,8 @@ struct EditorOperatorServices {
     GameModuleHost& modules;
     PreferencesWindow& preferences;
     PackageRunner& packageRunner;
+    // The preview navigation mesh the viewports draw.
+    NavigationWorld& navigationPreview;
     const EditorToolSettings& tools;
     // The open .zenith-project; empty when the editor runs without one.
     std::filesystem::path projectFile;

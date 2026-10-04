@@ -8,6 +8,7 @@
 #include "ComponentTypes.hpp"
 #include "GameplayComponentTypes.hpp"
 #include "LightComponentTypes.hpp"
+#include "NavigationComponentTypes.hpp"
 #include "PhysicsComponentTypes.hpp"
 #include "Prefab.hpp"
 #include "RenderComponentTypes.hpp"
@@ -34,8 +35,8 @@ SceneDocumentResult registerBuiltInComponentTypes(ComponentTypeRegistry& registr
     if (SceneDocumentResult result = registerPrefabComponentTypes(registry); !result) {
         return result;
     }
-    for (ComponentType type :
-         {characterControllerComponentType(), firstPersonCameraComponentType(), animatorComponentType()}) {
+    for (ComponentType type : {characterControllerComponentType(), firstPersonCameraComponentType(),
+                               animatorComponentType(), navAgentComponentType()}) {
         if (SceneDocumentResult result = registry.add(std::move(type)); !result) {
             return result;
         }

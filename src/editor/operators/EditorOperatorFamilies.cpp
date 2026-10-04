@@ -4,6 +4,7 @@
 #include "editor/menus/EditorMenus.hpp"
 #include "editor/operators/ComponentOperators.hpp"
 #include "editor/operators/EyedropperOperators.hpp"
+#include "editor/operators/NavigationOperators.hpp"
 #include "editor/operators/ObjectOperators.hpp"
 #include "editor/operators/PackageOperators.hpp"
 #include "editor/operators/PlayOperators.hpp"
@@ -34,6 +35,7 @@ constexpr std::array operatorFamilies{
     OperatorFamily{"menu", registerMenuOperatorFamily},
     OperatorFamily{"prefab", registerPrefabOperatorFamily},
     OperatorFamily{"play", registerPlayOperatorFamily},
+    OperatorFamily{"navigation", registerNavigationOperatorFamily},
 };
 } // namespace
 

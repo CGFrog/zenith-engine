@@ -15,7 +15,8 @@ built-in (or host-supplied) `ComponentTypeRegistry` plus its own
 `SystemRegistry`, recording which component keys the module added. Every
 registry starts with the engine's own systems (`BuiltInSystems.*`:
 `zenith.character_input` and `zenith.first_person_camera`, see
-[Gameplay](gameplay.md), the three behaviour systems, and `zenith.animator`,
+[Gameplay](gameplay.md), the three behaviour systems, `zenith.nav_agents`
+(see [Navigation](navigation.md)), and `zenith.animator`,
 see [Animation](animation.md)), so they run before a game's systems of the
 same phase and order (the animator is ordered after them).
 `SystemScheduler` runs a registry's systems per `SystemPhase` (`Update`,
@@ -156,6 +157,8 @@ It holds:
 - Save games, when the host provides them (`setSaveGames`): `saveGames()`
   and `saveGame(scene, slot, title)` against the scene document the session
   plays (see [Scene](scene.md)).
+- `navigation(scene)`: the session's navigation mesh, baked from the scene's
+  static colliders on first use.
 - `Timers`: one-shot or repeating callbacks on simulated time. They follow the
   clock's time scale and stop while paused. A timer may have an owner entity;
   the timer is dropped when its owner is gone.

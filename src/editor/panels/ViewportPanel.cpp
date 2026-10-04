@@ -15,6 +15,7 @@
 #include "editor/viewport/SceneGizmoDraw.hpp"
 #include "editor/viewport/ViewFraming.hpp"
 #include "engine/graphics/ViewShading.hpp"
+#include "engine/navigation/NavigationWorld.hpp"
 
 #include <imgui.h>
 #include <nlohmann/json.hpp>
@@ -448,6 +449,9 @@ void ViewportPanel::recordSceneGizmos(EditorContext& context) {
                      .viewCamera = viewCamera,
                      .isolatedObjects = m_localViewObjects ? &*m_localViewObjects : nullptr},
                     m_chrome.overlays.scene, *output);
+    if (context.navigationPreview != nullptr) {
+        context.navigationPreview->drawDebug(*output);
+    }
     if (m_chrome.overlays.cursor) {
         recordCursor3D(context.editing.document().editorData().cursorLocation, lens(scene), m_size, *output);
     }
