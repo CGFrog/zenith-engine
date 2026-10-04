@@ -324,6 +324,14 @@ void InputManager::update(const Window& window, const EventObserver& eventObserv
     m_resizeRequested = false;
     const InputState previous = m_state;
     m_state = {};
+    // A cursor held under Persistent is given back when the policy becomes
+    // WhileRightMouseDown (an editor leaving its game view), which only
+    // captures for a right-button drag that starts later.
+    if (m_mouseCaptured && m_mouseCapturePolicy == MouseCapturePolicy::Persistent &&
+        mouseCapturePolicy == MouseCapturePolicy::WhileRightMouseDown) {
+        setMouseCaptured(window, false);
+    }
+    m_mouseCapturePolicy = mouseCapturePolicy;
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {

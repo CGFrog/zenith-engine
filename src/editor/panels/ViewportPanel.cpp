@@ -179,7 +179,52 @@ std::optional<SceneEntityId> ViewportPanel::cameraView() const {
     return m_cameraView;
 }
 
+void ViewportPanel::beginGameView() {
+    exitLocalView();
+    exitCameraView();
+    cancelSelectTool();
+    m_gameView = true;
+    m_gameInputFocus = true;
+}
+
+void ViewportPanel::endGameView() {
+    m_gameView = false;
+    m_gameInputFocus = false;
+    m_gameImageHovered = false;
+    m_gameViewBanner = GameViewBanner::None;
+}
+
+bool ViewportPanel::gameView() const {
+    return m_gameView;
+}
+
+void ViewportPanel::setGameInputFocus(bool focused) {
+    m_gameInputFocus = m_gameView && focused;
+}
+
+bool ViewportPanel::gameInputFocus() const {
+    return m_gameInputFocus;
+}
+
+bool ViewportPanel::gameViewHoldsCursor() const {
+    return m_gameInputFocus && (m_gameImageHovered || m_cursorCaptured);
+}
+
+GameViewBanner ViewportPanel::gameViewBanner() const {
+    return m_gameViewBanner;
+}
+
+bool ViewportPanel::showsSceneCamera() const {
+    return m_gameView || m_cameraView.has_value();
+}
+
 RenderView ViewportPanel::lens(const Scene& scene) const {
+    if (m_gameView) {
+        if (const std::optional<RenderView> gameLens = sceneCameraLens(scene, gameCamera(scene))) {
+            return *gameLens;
+        }
+        return m_camera.renderView();
+    }
     if (m_cameraView) {
         if (const std::optional<RenderView> sceneLens = sceneCameraLens(scene, scene.findEntity(*m_cameraView))) {
             return *sceneLens;
@@ -321,6 +366,7 @@ void ViewportPanel::update(EditorContext& context, const InputState& input, floa
     if (m_suppressCameraUntilRelease && !input.mouseButtonDown(MouseButton::Right)) {
         m_suppressCameraUntilRelease = false;
     }
+    m_cursorCaptured = input.mouseCaptured;
     // Looking through a scene camera is read-only: the editor camera waits.
     // So does it during a box or lasso, and from a right or middle press the
     // keymap binds with the modifiers held (Ctrl+RMB lassos and Shift+RMB
@@ -331,7 +377,8 @@ void ViewportPanel::update(EditorContext& context, const InputState& input, floa
                           (input.mouseButtonDown(MouseButton::Middle) &&
                            context.actions.mouseButtonBound(KeymapRegion::Viewport, ImGuiMouseButton_Middle)));
     const bool cameraInputActive = m_inputActive && !context.actions.modalTransformActive() &&
-                                   !m_suppressCameraUntilRelease && !m_cameraView && !selectToolActive() && !boundPress;
+                                   !m_suppressCameraUntilRelease && !showsSceneCamera() && !selectToolActive() &&
+                                   !boundPress;
     m_navigating =
         cameraInputActive && (input.mouseButtonDown(MouseButton::Middle) || input.mouseButtonDown(MouseButton::Right));
     m_camera.update(input, deltaSeconds, cameraInputActive);
@@ -346,10 +393,22 @@ void ViewportPanel::syncRenderView(EditorContext& context) {
         m_cameraView.reset();
     }
     const RenderView currentLens = lens(scene);
-    rendering.setViewOverride(m_view, currentLens);
+    if (m_gameView && gameCamera(scene) != entt::null) {
+        // The renderer's primary-camera fallback reads the camera's
+        // transform as the game left it this frame.
+        rendering.clearViewOverride(m_view);
+    } else {
+        rendering.setViewOverride(m_view, currentLens);
+    }
     m_appliedViewSettings = viewportViewSettings(rendering.settings(), rendering.capabilities(), m_chrome.shading,
                                                  viewportShadingSource(context.mode, context.simulating));
     rendering.setViewSettings(m_view, m_appliedViewSettings);
+    if (m_gameView) {
+        // The game's own image: no grid, outline, or scene gizmos.
+        rendering.setViewGridOverlay(m_view, std::nullopt);
+        rendering.setViewOutlinedObjects(m_view, {});
+        return;
+    }
     if (m_chrome.overlays.grid) {
         const float distance = std::max(m_cameraView ? std::abs(currentLens.position.y) : m_camera.distance(), 0.1f);
         const float spacing = std::pow(10.0f, std::floor(std::log10(distance / 5.0f)));
@@ -389,7 +448,7 @@ void ViewportPanel::recordSceneGizmos(EditorContext& context) {
 }
 
 void ViewportPanel::drawSceneLabels(EditorContext& context) const {
-    if (!m_view || !viewportDrawsSceneGizmos(context.mode, m_cameraView.has_value(), m_chrome.overlays)) {
+    if (!m_view || !viewportDrawsSceneGizmos(context.mode, showsSceneCamera(), m_chrome.overlays)) {
         return;
     }
     const RenderRuntime& rendering = context.app.rendering;
@@ -504,6 +563,11 @@ void ViewportPanel::draw(EditorContext& context) {
     // The chrome is drawn in child windows, so the image reports no hover or
     // click while the mouse is over the header, tool shelf, or sidebar.
     const bool imageHovered = ImGui::IsItemHovered();
+    const bool imageClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+    if (m_gameView) {
+        drawGameView(context, imageHovered, imageClicked);
+        return;
+    }
     m_inputActive = texture && (imageHovered || m_navigating);
     rendering.setViewInputActive(m_view, m_inputActive && !modal && !m_suppressCameraUntilRelease && !m_cameraView);
 
@@ -598,7 +662,9 @@ bool ViewportPanel::drawHeader(EditorContext& context) {
                 ImGui::EndMenu();
             }
             ImGui::TextDisabled("%s", viewportShadingLabel(m_chrome.shading));
-            if (m_cameraView) {
+            if (m_gameView) {
+                ImGui::TextDisabled("| Game camera");
+            } else if (m_cameraView) {
                 const Entity camera = context.app.scene.findEntity(*m_cameraView);
                 if (camera != entt::null) {
                     ImGui::TextDisabled("| Camera: %s", entityName(context.app.scene, camera));
@@ -918,6 +984,51 @@ void ViewportPanel::drawActiveName(EditorContext& context) const {
         drawList, {labelPosition.x - 4.0f * artPixel, labelPosition.y - 2.0f * artPixel},
         {labelPosition.x + labelSize.x + 4.0f * artPixel, labelPosition.y + labelSize.y + 2.0f * artPixel});
     drawList->AddText(labelPosition, toImU32(palette::activeObjectLabel), name.c_str());
+}
+
+void ViewportPanel::drawGameView(EditorContext& context, bool imageHovered, bool imageClicked) {
+    RenderRuntime& rendering = context.app.rendering;
+    // The editor camera rests; the engine's input reaches the game (UI
+    // capture lets it through) while the view has focus and the mouse is
+    // over it or captured by it.
+    m_inputActive = false;
+    m_navigating = false;
+    m_gameImageHovered = imageHovered;
+    rendering.setViewInputActive(m_view, gameViewHoldsCursor());
+    drawChrome(context);
+    if (m_view) {
+        syncRenderView(context);
+    }
+    syncLocalView(context);
+    const bool anyClick = ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
+                          ImGui::IsMouseClicked(ImGuiMouseButton_Right) ||
+                          ImGui::IsMouseClicked(ImGuiMouseButton_Middle);
+    if (m_gameInputFocus) {
+        // A captured cursor stays over the image, so only Esc releases it.
+        const bool clickedElsewhere = anyClick && !imageHovered && !m_cursorCaptured;
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || clickedElsewhere) {
+            context.invoke("play.release_game_input");
+        }
+    } else if (imageClicked) {
+        context.invoke("play.focus_game_view");
+    }
+
+    m_gameViewBanner = ::gameViewBanner(m_gameView, m_gameInputFocus, m_cursorCaptured);
+    const std::string_view text = gameViewBannerText(m_gameViewBanner);
+    if (text.empty()) {
+        return;
+    }
+    const float artPixel = editorArtPixel();
+    const ImVec2 textSize = ImGui::CalcTextSize(text.data(), text.data() + text.size());
+    const ImVec2 padding{6.0f * artPixel, 3.0f * artPixel};
+    const ImVec2 min{std::floor(m_position.x + (m_size.x - textSize.x) * 0.5f - padding.x),
+                     std::floor(m_position.y + ImGui::GetFrameHeight() + 4.0f * artPixel)};
+    const ImVec2 max{min.x + textSize.x + padding.x * 2.0f, min.y + textSize.y + padding.y * 2.0f};
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    pixel::notchedRect(drawList, min, max, toImU32(palette::playBanner), artPixel);
+    pixel::notchedOutline(drawList, min, max, toImU32(palette::playTint.withAlpha(1.0f)), artPixel);
+    drawList->AddText({min.x + padding.x, min.y + padding.y}, toImU32(palette::playBannerInk), text.data(),
+                      text.data() + text.size());
 }
 
 bool ViewportPanel::drawGizmo(EditorContext& context) {

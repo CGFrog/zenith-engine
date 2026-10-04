@@ -478,14 +478,18 @@ Zenith adds to Jolt's own.
 ## Simulation clock and frame timings
 
 `ApplicationScene::simulationClock()` (`application/SimulationClock.hpp`) gives
-a time scale (clamped to [0, 10]) and a paused flag, read each frame after
-`update` (where editor operators change it).
+a time scale (clamped to [0, 10]), a paused flag, and a frame step, read each
+frame after `update` (where editor operators change it).
 `Engine::run` applies it to fixed-step accumulation (so physics and
 FixedUpdate systems), skeletal animation, and audio (`AudioSystem`'s playback
 rate, which holds every voice at 0). `ApplicationScene::update` still receives
 wall-clock time for tools and cameras; a scene scales its own simulation work
-(the editor scales its Update systems). A paused clock accumulates only for a
-requested single step, at wall-clock rate. The engine measures its CPU phases
+(the editor scales its Update systems). A paused clock advances nothing except
+for a frame step (`frameStepSeconds`): that one frame advances animation and
+the fixed-step accumulator by the step, whatever the time scale, and plays
+audio at real-time rate, so a step of one fixed time step runs exactly one
+fixed update (the scene enables fixed updates for that frame). The engine
+loop needs no special case for it. The engine measures its CPU phases
 (input, update, animation, fixed updates and physics, transforms, UI, renderer,
 audio) every frame into `EngineFrameTimings` and shares the last frame through
 `ApplicationContext::frameTimings`; benchmark mode samples the same values.
@@ -937,6 +941,20 @@ path is a bounded CPU ray test against transformed mesh bounding spheres and
 triangles (`pickThroughLens`); a deterministic test exercises it with 2,000
 additional renderables and reports its elapsed time without a
 machine-dependent timing assertion. GPU picking (below) is the windowed path.
+
+Play in a viewport needs no renderer support beyond that contract: the
+playing viewport clears its view's camera override, so the view renders
+through the scene's primary `CameraComponent` (the renderer's fallback, which
+the game's camera systems move), and turns its view input on only while the
+game view has focus. The editor application answers
+`Application::mouseCapturePolicy()` from the session each frame: `Persistent`
+while a game view holds game input (the engine's input releases the cursor on
+Esc), `WhileRightMouseDown` otherwise. The standalone target crosses a process
+boundary instead of a library one: the editor writes the scene to a temporary
+`.zenith-scene` and runs the `zenith` executable as a child process
+(`engine/platform/ChildProcess`) with `--project <file> --scene <scene>`; the
+game's `src/main.cpp` owns that argument contract, and the editor only reads
+the process's output.
 
 ### Picking
 

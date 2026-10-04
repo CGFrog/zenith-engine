@@ -85,14 +85,32 @@ default project.
 8. Choose **File > Save As** and save beneath the project's scene root. Saves
    are atomic. A separate recovery file is written periodically while the
    document is dirty and is offered after an interrupted session.
-9. Press `F5` to enter Play, `F6` to pause, `F7` to step, and `Shift+F5` to
-   stop. Play uses a runtime clone; stopping restores the authored scene.
-   `Alt+F5` (**Play > Simulate**) runs physics and the fixed-update systems on
-   a clone instead, keeping the editor camera and ignoring your input; choose
-   which systems Simulate runs with **Play > Simulate Systems**, the
-   **Simulate Systems** button, or the checkboxes in the **System Profiler**
-   (Debug workspace), where the time-scale field also slows down or speeds up
-   Play and Simulate.
+9. Press `F5` to enter Play, `F6` to pause, `F7` to step one frame while
+   paused, and `Shift+F5` to stop. Play uses a runtime clone; stopping restores
+   the authored scene. The playback toolbar in the main menu bar has the same
+   Play, Simulate, Pause, Step, and Stop buttons and a time-scale field; the
+   arrow beside Play (or **Play > Play in ...**) chooses where the game runs,
+   and `F5` reuses the last choice:
+   - **Active Viewport** (the default): the viewport you were using switches
+     to the scene's game camera (its primary camera, as the game renders it);
+     the other viewports keep editing. While the game view has focus your
+     input goes to the game and a click captures the cursor; the banner at
+     the top of the view says **Esc releases the cursor**. Esc or a click
+     elsewhere gives input back to the editor; click the view to play again.
+   - **Floating Viewport**: a new viewport floats over the editor locked to
+     the game camera, and closes when you stop.
+   - **Standalone Game**: the scene, with unsaved changes, runs in a separate
+     `zenith` game process (built beside the editor) as
+     `zenith --project <project> --scene <temporary scene>`. Its output
+     appears in the Info log under `game`; Stop ends the process, and the
+     editor leaves Play when the game exits on its own.
+   While Play runs the editor's glass and panes are tinted warm; Simulate
+   tints them violet. `Alt+F5` (**Play > Simulate**) runs physics and the
+   fixed-update systems on a clone instead, keeping the editor camera and
+   ignoring your input; choose which systems Simulate runs with **Play >
+   Simulate Systems**, the arrow beside Simulate on the toolbar, or the
+   checkboxes in the **System Profiler** (Debug workspace), where the
+   time-scale field also slows down or speeds up Play and Simulate.
 10. While Play or Simulate runs (or is paused) you can still select objects in
    the viewport and the Hierarchy and inspect and edit them live: the
    Inspector, Properties, and the viewport's Item tab and gizmo show the

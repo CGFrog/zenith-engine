@@ -43,8 +43,10 @@ void testSimulate(Scene& scene, AssetManager& assets, const SceneDocumentOptions
     expect(playMode.mode() == EditorMode::Paused && playMode.simulating() && !playMode.running() &&
                playMode.simulationMode() == SimulationMode::Simulate && !playMode.fixedUpdatesEnabled(),
            "pausing Simulate keeps it a paused Simulate");
-    playMode.requestSingleStep();
-    expect(playMode.beginFixedUpdate() && !playMode.beginFixedUpdate(), "a paused Simulate single steps once");
+    playMode.requestFrameStep(1.0f / 60.0f);
+    expect(playMode.steppingFrame() && playMode.beginFixedUpdate(), "a paused Simulate steps a frame");
+    playMode.finishFrame();
+    expect(!playMode.steppingFrame() && !playMode.beginFixedUpdate(), "the frame step ends with its frame");
     playMode.resume();
     expect(playMode.mode() == EditorMode::Simulate, "resuming a paused Simulate returns to Simulate");
 
@@ -85,6 +87,63 @@ void testTimeScale() {
     playMode.stop(scene, selection);
     expect(playMode.timeScale() == 0.5f, "the time scale is kept across runs");
 }
+
+// play.step advances exactly one rendered frame: run the engine's frame loop
+// (Engine::run) by hand and count what advanced.
+void testFrameStep() {
+    Scene scene;
+    AssetManager assets;
+    const SceneDocumentOptions options{.assetRoot = std::filesystem::temp_directory_path()};
+    EditorPlayMode playMode;
+    std::vector<SceneEntityId> selection;
+    constexpr float fixedStep = 1.0f / 60.0f;
+    playMode.setTimeScale(0.25f);
+    expect(playMode.enter(scene, assets, options, selection).success, "Play starts for the frame step test");
+    playMode.requestFrameStep(fixedStep);
+    expect(!playMode.steppingFrame(), "a frame step needs a paused runtime scene");
+    playMode.pause();
+
+    struct FrameAdvance {
+        float simulated{0.0f};
+        int fixedSteps{0};
+        float audioRate{0.0f};
+    };
+
+    float accumulator = 0.0f;
+    const auto frame = [&](float wallSeconds) {
+        FrameAdvance advance;
+        const SimulationClock clock = playMode.simulationClock();
+        advance.simulated = simulatedSeconds(clock, wallSeconds);
+        advance.audioRate = audioPlaybackRate(clock);
+        if (playMode.fixedUpdatesEnabled()) {
+            accumulator += fixedStepAccumulation(clock, wallSeconds);
+        } else {
+            accumulator = 0.0f;
+        }
+        while (accumulator >= fixedStep && playMode.beginFixedUpdate()) {
+            accumulator -= fixedStep;
+            ++advance.fixedSteps;
+        }
+        playMode.finishFrame();
+        return advance;
+    };
+
+    const FrameAdvance idle = frame(0.1f);
+    expect(idle.simulated == 0.0f && idle.fixedSteps == 0 && idle.audioRate == 0.0f, "a paused frame advances nothing");
+    playMode.requestFrameStep(fixedStep);
+    expect(playMode.steppingFrame() && playMode.advancesThisFrame(), "the step is pending for the next frame");
+    const FrameAdvance stepped = frame(0.1f);
+    expect(stepped.simulated == fixedStep && stepped.fixedSteps == 1 && stepped.audioRate == 1.0f,
+           "a frame step advances one fixed time step, ignoring the time scale and the wall-clock frame time");
+    const FrameAdvance after = frame(0.1f);
+    expect(after.simulated == 0.0f && after.fixedSteps == 0 && !playMode.steppingFrame(),
+           "the frame after a step is paused again");
+    playMode.requestFrameStep(fixedStep);
+    playMode.resume();
+    expect(!playMode.steppingFrame() && playMode.simulationClock().frameStepSeconds == 0.0f,
+           "resuming drops a pending frame step");
+    playMode.stop(scene, selection);
+}
 } // namespace
 
 int main() {
@@ -109,9 +168,11 @@ int main() {
         playMode.pause();
         expect(playMode.mode() == EditorMode::Paused && !playMode.fixedUpdatesEnabled(),
                "Paused mode should suspend fixed simulation updates");
-        playMode.requestSingleStep();
-        expect(playMode.fixedUpdatesEnabled() && playMode.beginFixedUpdate() && !playMode.beginFixedUpdate(),
-               "single-step should permit exactly one paused fixed update");
+        playMode.requestFrameStep(1.0f / 60.0f);
+        expect(playMode.fixedUpdatesEnabled() && playMode.beginFixedUpdate(),
+               "a frame step should permit the paused frame's fixed updates");
+        playMode.finishFrame();
+        expect(!playMode.fixedUpdatesEnabled(), "the frame step should end with its frame");
 
         selection.clear();
         playMode.stop(scene, selection);
@@ -124,5 +185,6 @@ int main() {
 
     testSimulate(scene, assets, options, editSnapshot);
     testTimeScale();
+    testFrameStep();
     return failures == 0 ? 0 : 1;
 }

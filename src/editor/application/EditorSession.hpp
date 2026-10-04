@@ -3,6 +3,7 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/EditorPlayMode.hpp"
 #include "editor/application/NativeFileDialog.hpp"
+#include "editor/application/PlayTargets.hpp"
 #include "editor/application/SceneEditing.hpp"
 #include "editor/application/SystemClipboard.hpp"
 #include "editor/areas/AreaRegistry.hpp"
@@ -70,6 +71,16 @@ struct EditorProjectServices {
     // that are missing.
     std::filesystem::path fontPath;
     std::vector<EditorFonts> loadedFonts;
+    // The open project's file, which the Standalone play target passes to
+    // the game; empty for an editor running without one.
+    std::filesystem::path projectFile;
+    // The game executable and process factory for the Standalone target.
+    EditorPlayServices play;
+    // Told the session's mouse capture policy every frame, and
+    // WhileRightMouseDown when the session unloads, so the application can
+    // answer Application::mouseCapturePolicy (EditorSession::
+    // mouseCapturePolicy). May be empty.
+    std::function<void(MouseCapturePolicy)> mouseCaptureChanged;
 };
 
 // Composes the editor: owns the document, history, selection, camera, the
@@ -99,6 +110,12 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void requestQuit(ApplicationContext& context) override;
     void drawUi(ApplicationContext& context) override;
     void unload(ApplicationContext& context) override;
+
+    // Persistent while a game view (the play target's viewport) has game
+    // input focus and the mouse over it (or the cursor captured), so a click
+    // into it captures the cursor until Esc; otherwise WhileRightMouseDown
+    // for editor camera flight.
+    MouseCapturePolicy mouseCapturePolicy() const;
 
   private:
     // EditorSessionActions
@@ -220,9 +237,38 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void onDocumentPathCommitted();
     void undo(ApplicationContext& context);
     void redo(ApplicationContext& context);
-    // Runs the document on a throwaway copy as Play or Simulate.
-    void enterPlayMode(ApplicationContext& context, EditorRuntime runtime = EditorRuntime::Play);
+    // Runs the document on a throwaway copy as Play or Simulate; false (after
+    // reporting why) when it could not.
+    bool enterPlayMode(ApplicationContext& context, EditorRuntime runtime = EditorRuntime::Play);
     void stopPlayMode(ApplicationContext& context);
+
+    // Play targets, game views, the standalone game, and the playback
+    // toolbar (EditorPlayback.cpp).
+    void registerPlayOperatorsOfSession();
+    // Whether Play, Simulate, or a standalone game is running (or paused).
+    bool playActive() const;
+    OperatorResult startPlay(ApplicationContext& context, PlayTarget target);
+    OperatorResult startStandalone(ApplicationContext& context);
+    // Leaves Play or Simulate, or stops the standalone game, and ends the
+    // target's game view (closing a floating one).
+    void stopPlay(ApplicationContext& context);
+    void endGameView();
+    // The viewport playing the game, or null.
+    ViewportPanel* gameViewport() const;
+    // The input module systems get: the frame's input while a game view has
+    // focus (or Play runs without one), otherwise none.
+    const InputState& gameInput(const InputState& input) const;
+    // Streams the standalone game's output and leaves Play when it exits.
+    void updateStandalone(ApplicationContext& context);
+    // Tells the application the mouse capture policy, once per frame.
+    void publishMouseCapture();
+    void drawPlaybackToolbar(ApplicationContext& context);
+    // Slot in the toolbar's Simulate dropdown for the Simulate system picker
+    // (Unit 18); shows a pointer to the System Profiler until then.
+    void drawSimulateOptions(ApplicationContext& context);
+    // Frames 350-420: Play in the active viewport (game camera, input, the
+    // banner, frame step), then the standalone game when it is built.
+    bool updateSmokePlayTargets(ApplicationContext& context);
     void requestNew(ApplicationContext& context);
     void requestOpen(ApplicationContext& context);
     void requestClose(ApplicationContext& context);
@@ -283,6 +329,23 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     EditorDiagnostics m_diagnostics;
     CommandHistory m_history;
     EditorPlayMode m_playMode;
+    // The target F5 (play.start without a target) runs: the last one used.
+    PlayTarget m_lastPlayTarget{PlayTarget::ActiveViewport};
+    // The running target, while Play or Simulate runs or the standalone game
+    // does; Simulate always uses its editor cameras (ActiveViewport, with no
+    // game view).
+    std::optional<PlayTarget> m_activePlayTarget;
+    // The viewport showing the game; empty without a game view.
+    ViewportId m_gameViewport;
+    // The floating target's area and the workspace it was opened in.
+    std::string m_floatingPlayArea;
+    std::string m_floatingPlayWorkspace;
+    // What module systems get while the game view lacks focus.
+    InputState m_idleGameInput;
+    std::filesystem::path m_projectFile;
+    EditorPlayServices m_playServices;
+    StandalonePlayer m_standalone;
+    std::function<void(MouseCapturePolicy)> m_mouseCaptureChanged;
     NativeFileDialog m_fileDialog;
     Selection m_selection;
     // Declared before the operator registry, whose eyedropper operators
@@ -416,6 +479,13 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // fixed-update system runs it has seen.
     std::string m_smokeSimulateSnapshot;
     uint32_t m_smokeSimulateFixedRuns{0};
+    // The play target smoke: the scene from before Play, the frame its
+    // standalone phase launched the game, the log sequence before that, and
+    // whether the step is done.
+    std::string m_smokePlaySnapshot;
+    uint32_t m_smokeStandaloneFrame{0};
+    uint64_t m_smokeGameLogSequence{0};
+    bool m_smokePlayTargetsDone{false};
     // The outliner smoke: the Hierarchy area whose display mode it switched
     // (and that area's previous state), and the undo steps it recorded.
     std::string m_smokeOutlinerArea;

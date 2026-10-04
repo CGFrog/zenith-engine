@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/application/PlayTargets.hpp"
 #include "editor/project/ProjectHub.hpp"
 #include "editor/project/RecentProjects.hpp"
 #include "editor/theme/EditorTheme.hpp"
@@ -35,10 +36,14 @@ class EditorApplication final : public Application {
   public:
     // Without projectHub the editor opens project directly and File > Project
     // Hub is unavailable (automated runs and tests).
+    // play is what the Standalone play target launches (the game executable
+    // and, in tests, a fake process).
     EditorApplication(std::filesystem::path settingsDirectory, std::filesystem::path fontPath, ProjectConfig project,
-                      std::optional<EditorProjectHubOptions> projectHub = std::nullopt);
+                      std::optional<EditorProjectHubOptions> projectHub = std::nullopt, EditorPlayServices play = {});
 
     SceneResult onStart(ApplicationContext& context) override;
+    // The session's policy (EditorSession::mouseCapturePolicy), which it
+    // publishes each frame: Persistent while a game view holds game input.
     MouseCapturePolicy mouseCapturePolicy() const override;
     SceneKey initialScene() const override;
     std::unique_ptr<ApplicationScene> createScene(SceneKey scene) override;
@@ -63,6 +68,10 @@ class EditorApplication final : public Application {
     std::vector<EditorFonts> m_loadedFonts;
     ProjectConfig m_project;
     std::optional<EditorProjectHubOptions> m_projectHub;
+    EditorPlayServices m_play;
+    // Written by the current session (EditorProjectServices::
+    // mouseCaptureChanged).
+    MouseCapturePolicy m_mouseCapturePolicy{MouseCapturePolicy::WhileRightMouseDown};
     RecentProjects m_recentProjects;
     ProjectHubEntry m_hubEntry{ProjectHubEntry::Hub};
 };

@@ -160,6 +160,10 @@ class InputManager {
     void shutdown();
     using EventObserver = std::function<void(const SDL_Event&)>;
 
+    // Persistent captures the mouse on any click (outside UI capture) until
+    // Escape; WhileRightMouseDown only while the right button is held. A
+    // change from Persistent to WhileRightMouseDown releases a held capture.
+
     void update(const Window& window, const EventObserver& eventObserver = {}, InputCapture capture = {},
                 MouseCapturePolicy mouseCapturePolicy = MouseCapturePolicy::Persistent);
 
@@ -184,6 +188,8 @@ class InputManager {
     uint32_t m_gamepadId{0};
     InputDevice m_activeDevice{InputDevice::KeyboardMouse};
     bool m_mouseCaptured{false};
+    // The policy of the previous update; see update.
+    MouseCapturePolicy m_mouseCapturePolicy{MouseCapturePolicy::Persistent};
     bool m_quitRequested{false};
     bool m_resizeRequested{false};
 };

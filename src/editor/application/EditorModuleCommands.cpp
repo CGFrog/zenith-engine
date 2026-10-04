@@ -61,13 +61,14 @@ void EditorSession::updateGameModule(ApplicationContext& context, const InputSta
 
     if (m_playMode.mode() == EditorMode::Edit) {
         m_moduleHost.runEditFrame(context.scene, deltaSeconds, context.physics.config().fixedTimeStep);
-    } else if (m_playMode.running()) {
-        // Update systems run on simulated time; the engine scales the fixed
-        // steps, animation, and audio by the same clock.
+    } else if (m_playMode.advancesThisFrame()) {
+        // Update systems run on simulated time (a paused frame step's own
+        // length); the engine scales the fixed steps, animation, and audio by
+        // the same clock.
         const SimulationMode mode = m_playMode.simulationMode();
         m_moduleHost.runSystems(SystemPhase::Update, context.scene, &context, mode,
                                 simulatedSeconds(m_playMode.simulationClock(), deltaSeconds),
-                                mode == SimulationMode::Simulate ? nullptr : &input);
+                                mode == SimulationMode::Simulate ? nullptr : &gameInput(input));
     }
 }
 

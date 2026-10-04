@@ -564,8 +564,10 @@ add_library(zenith_editor_app STATIC
     src/editor/application/EditorPickingSmoke.cpp
     src/editor/application/EditorViewports.cpp
     src/editor/application/EditorPlayMode.cpp
+    src/editor/application/EditorPlayback.cpp
     src/editor/application/EditorPreferences.cpp
     src/editor/application/NativeFileDialog.cpp
+    src/editor/application/PlayTargets.cpp
     src/editor/application/EditorSession.cpp
     src/editor/application/EntityCommands.cpp
     src/editor/application/SceneEditing.cpp
@@ -1821,6 +1823,19 @@ if(BUILD_TESTING)
         target_compile_options(zenith_editor_play_mode_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     add_test(NAME zenith_editor_play_mode COMMAND zenith_editor_play_mode_tests)
+
+    # Play targets: game views, input routing, mouse capture, the mode tint,
+    # and the standalone game with a fake process.
+    add_executable(zenith_play_targets_tests tests/editor/PlayTargetsTests.cpp)
+    target_link_libraries(zenith_play_targets_tests PRIVATE zenith_editor_app)
+    target_compile_definitions(zenith_play_targets_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_play_targets_tests zenith_assets)
+    if(MSVC)
+        target_compile_options(zenith_play_targets_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_play_targets_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_play_targets COMMAND zenith_play_targets_tests)
 
     add_executable(zenith_editor_hardening_tests tests/editor/EditorHardeningTests.cpp)
     target_link_libraries(zenith_editor_hardening_tests PRIVATE zenith_editor_app)

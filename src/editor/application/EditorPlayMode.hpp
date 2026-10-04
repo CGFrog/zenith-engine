@@ -39,7 +39,16 @@ class EditorPlayMode {
                               std::span<const SceneEntityId> selection, EditorRuntime runtime = EditorRuntime::Play);
     void pause();
     void resume();
-    void requestSingleStep();
+    // While paused, advances the next frame (the current one when asked
+    // before the engine reads the clock) by stepSeconds of simulated time:
+    // Update systems, animation, and audio for one frame, plus the fixed
+    // steps that frame accumulates (one when stepSeconds is the fixed time
+    // step). The step lasts until finishFrame. Ignored unless paused or for
+    // a step that is not positive.
+    void requestFrameStep(float stepSeconds);
+    // Ends the frame a step was requested for; call once per frame after the
+    // engine's fixed steps (EditorSession::drawUi).
+    void finishFrame();
     void stop(Scene& activeScene, std::vector<SceneEntityId>& selection);
 
     EditorMode mode() const;
@@ -47,6 +56,10 @@ class EditorPlayMode {
     bool simulating() const;
     // Play or Simulate running, not paused.
     bool running() const;
+    // Paused with a frame step requested for this frame.
+    bool steppingFrame() const;
+    // Whether this frame advances the runtime scene: running or stepping.
+    bool advancesThisFrame() const;
     // The SimulationMode systems run in: Edit, Play, or Simulate.
     SimulationMode simulationMode() const;
     bool fixedUpdatesEnabled() const;
@@ -57,8 +70,8 @@ class EditorPlayMode {
     float setTimeScale(float scale);
     float timeScale() const;
     // Edit mode runs at wall-clock rate (animation previews and audio keep
-    // playing); a runtime scene runs at the time scale, or not at all while
-    // paused.
+    // playing); a runtime scene runs at the time scale, or while paused only
+    // for a requested frame step.
     SimulationClock simulationClock() const;
 
     // The edit scene parked while Play or Simulate runs, which stop() swaps
@@ -71,6 +84,7 @@ class EditorPlayMode {
     std::vector<SceneEntityId> m_editSelection;
     EditorMode m_mode{EditorMode::Edit};
     bool m_simulating{false};
-    bool m_singleStepRequested{false};
+    // The requested frame step's length; zero for none.
+    float m_frameStepSeconds{0.0f};
     float m_timeScale{1.0f};
 };

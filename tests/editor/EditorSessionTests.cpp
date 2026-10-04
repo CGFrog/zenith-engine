@@ -8,18 +8,25 @@
 #include "HeadlessImGui.hpp"
 
 #include "editor/application/EditorApplication.hpp"
+#include "editor/operators/Keymap.hpp"
 #include "editor/project/ProjectTemplate.hpp"
 #include "editor/project/RecentProjects.hpp"
 #include "engine/application/Application.hpp"
 #include "engine/scene/Scene.hpp"
 
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -60,9 +67,11 @@ ProjectConfig testProject(const fs::path& root) {
 // editor's unload, which still uses ImGui) ends before the ImGui context.
 class EditorHarness {
   public:
-    explicit EditorHarness(const fs::path& root, std::optional<EditorProjectHubOptions> projectHub = std::nullopt)
-        : m_application(root / "settings", ZENITH_EDITOR_FONT, testProject(root), std::move(projectHub))
-        , m_session(m_application, scene, assets, m_physics, m_audio) {}
+    explicit EditorHarness(const fs::path& root, std::optional<EditorProjectHubOptions> projectHub = std::nullopt,
+                           EditorPlayServices play = {})
+        : m_application(root / "settings", ZENITH_EDITOR_FONT, testProject(root), std::move(projectHub),
+                        std::move(play))
+        , m_session(m_application, scene, assets, m_physics, m_audio, m_rendering, m_gameUi, logger) {}
 
     SceneResult start() {
         return m_session.start();
@@ -115,10 +124,13 @@ class EditorHarness {
   public:
     Scene scene;
     AssetManager assets;
+    Logger logger{LoggerConfig{.echoToStderr = false}};
 
   private:
     PhysicsWorld m_physics;
     AudioSystem m_audio;
+    RenderRuntime m_rendering;
+    GameUiContext m_gameUi;
     EditorApplication m_application;
     ApplicationSession m_session;
 };
@@ -162,8 +174,12 @@ void testPlayModeRestoresTheScene(const fs::path& root) {
 
     editor.press(ImGuiKey_F6);
     expect(!session.beginFixedUpdate(), "play: F6 pauses fixed updates");
+    // The press's release frame runs the step and ends it (EditorPlayModeTests
+    // counts what a step advances).
     editor.press(ImGuiKey_F7);
-    expect(session.beginFixedUpdate() && !session.beginFixedUpdate(), "play: F7 allows exactly one fixed update");
+    expect(!session.fixedUpdatesEnabled() && session.simulationClock().paused &&
+               session.simulationClock().frameStepSeconds == 0.0f,
+           "play: F7 steps one frame and stays paused");
     editor.press(ImGuiKey_F6);
     expect(session.beginFixedUpdate(), "play: F6 again resumes");
 
@@ -205,6 +221,162 @@ void testHostQuitRequest(const fs::path& root) {
     expect(!editor.session().fixedUpdatesEnabled(), "quit: a host quit request leaves Play mode");
     const ApplicationFrameResult result = editor.frame();
     expect(result.success && !result.keepRunning, "quit: a host quit request on a clean document quits");
+}
+
+// What the fake game process saw and does; shared with the test.
+struct FakeGame {
+    std::vector<std::string> arguments;
+    bool running{false};
+    bool cancelled{false};
+    std::optional<int> exitCode;
+    std::vector<std::string> pendingLines;
+};
+
+class FakeGameProcess final : public GameProcess {
+  public:
+    explicit FakeGameProcess(std::shared_ptr<FakeGame> game)
+        : m_game(std::move(game)) {}
+
+    ChildProcessResult start(const ChildProcessOptions& options) override {
+        m_game->arguments = options.command.arguments;
+        m_game->running = true;
+        m_game->cancelled = false;
+        m_game->exitCode.reset();
+        return {.success = true};
+    }
+
+    bool running() const override {
+        return m_game->running;
+    }
+
+    std::optional<int> exitCode() const override {
+        return m_game->exitCode;
+    }
+
+    std::vector<std::string> takeLines() override {
+        return std::exchange(m_game->pendingLines, {});
+    }
+
+    void cancel() override {
+        m_game->cancelled = true;
+        m_game->running = false;
+    }
+
+  private:
+    std::shared_ptr<FakeGame> m_game;
+};
+
+// The play targets through the real keymap: F5 plays in the active viewport
+// (whose game view holds game input, so the editor captures the mouse
+// persistently), F9 and F10 (bound in keymap.json) play in a floating
+// viewport and standalone with a fake game process.
+void testPlayTargets(const fs::path& root) {
+    fs::create_directories(root / "settings");
+    const fs::path executable = root / "zenith-fake.exe";
+    std::ofstream(executable) << "fake";
+    {
+        const auto binding = [](ImGuiKeyChord chord, const char* target) {
+            return nlohmann::json{{"operator", "play.start"},
+                                  {"region", keymapRegionName(KeymapRegion::Global)},
+                                  {"chord", formatKeyChord(chord)},
+                                  {"properties", {{"target", target}}}};
+        };
+        std::ofstream(root / "settings" / "keymap.json")
+            << nlohmann::json{{"version", 1},
+                              {"removed", nlohmann::json::array()},
+                              {"added", {binding(ImGuiKey_F9, "floating"), binding(ImGuiKey_F10, "standalone")}}}
+                   .dump();
+    }
+    const auto game = std::make_shared<FakeGame>();
+    EditorHarness editor(root, std::nullopt,
+                         EditorPlayServices{.gameExecutable = executable,
+                                            .makeGameProcess = [game]() -> std::unique_ptr<GameProcess> {
+                                                return std::make_unique<FakeGameProcess>(game);
+                                            },
+                                            .temporaryDirectory = root / "play"});
+    if (!editor.start()) {
+        expect(false, "targets: the editor session starts");
+        return;
+    }
+    ApplicationSession& session = editor.session();
+    editor.frame();
+    editor.frame();
+    const size_t authored = entityCount(editor.scene);
+    expect(editor.application().mouseCapturePolicy() == MouseCapturePolicy::WhileRightMouseDown,
+           "targets: editing flies the camera with the right mouse button only");
+
+    editor.press(ImGuiKey_F5);
+    expect(session.fixedUpdatesEnabled(), "targets: F5 plays in the active viewport");
+    expect(editor.application().mouseCapturePolicy() == MouseCapturePolicy::WhileRightMouseDown,
+           "targets: away from the game view a click stays the editor's");
+    if (const ImGuiWindow* viewport = HeadlessImGuiContext::findWindow("##viewport.1")) {
+        ImGui::GetIO().AddMousePosEvent(viewport->Pos.x + viewport->Size.x * 0.5f,
+                                        viewport->Pos.y + viewport->Size.y * 0.5f);
+    }
+    editor.frame();
+    expect(editor.application().mouseCapturePolicy() == MouseCapturePolicy::Persistent,
+           "targets: over the focused game view a click captures the mouse until Esc");
+    editor.press(ImGuiKey_Escape);
+    expect(editor.application().mouseCapturePolicy() == MouseCapturePolicy::WhileRightMouseDown,
+           "targets: Esc gives game input back to the editor");
+    editor.press(ImGuiMod_Shift | ImGuiKey_F5);
+    expect(!session.fixedUpdatesEnabled() && entityCount(editor.scene) == authored,
+           "targets: Stop leaves the active viewport target");
+
+    const auto floatingWindow = [] {
+        const ImGuiWindow* window = HeadlessImGuiContext::findWindow("##viewport.2");
+        return window != nullptr && window->WasActive ? window : nullptr;
+    };
+    editor.press(ImGuiKey_F9);
+    editor.frame();
+    const ImGuiWindow* floating = floatingWindow();
+    expect(session.fixedUpdatesEnabled() && floating != nullptr && floating->DockNode == nullptr,
+           "targets: F9 plays in a new floating viewport");
+    if (floating != nullptr) {
+        ImGui::GetIO().AddMousePosEvent(floating->Pos.x + floating->Size.x * 0.5f,
+                                        floating->Pos.y + floating->Size.y * 0.5f);
+    }
+    editor.frame();
+    expect(editor.application().mouseCapturePolicy() == MouseCapturePolicy::Persistent,
+           "targets: the floating viewport holds game input");
+    editor.press(ImGuiMod_Shift | ImGuiKey_F5);
+    editor.frame();
+    expect(!session.fixedUpdatesEnabled() && floatingWindow() == nullptr, "targets: Stop closes the floating viewport");
+
+    editor.press(ImGuiKey_F10);
+    expect(game->running && !session.fixedUpdatesEnabled(),
+           "targets: F10 launches the standalone game and leaves the editor's scene alone");
+    const auto sceneArgument = std::ranges::find(game->arguments, "--scene");
+    const bool hasScene = sceneArgument != game->arguments.end() && sceneArgument + 1 != game->arguments.end();
+    const fs::path sceneFile = hasScene ? fs::path(*(sceneArgument + 1)) : fs::path();
+    expect(!game->arguments.empty() && game->arguments.front() == executable.string() && hasScene &&
+               fs::is_regular_file(sceneFile),
+           "targets: the game gets its executable and a temporary copy of the scene");
+    game->pendingLines = {"hello from the game"};
+    editor.frame();
+    bool streamed = false;
+    for (const LogEntry& entry : editor.logger.entries()) {
+        streamed = streamed || (entry.category == "game" && entry.message == "hello from the game");
+    }
+    expect(streamed, "targets: the game's output reaches the log");
+    editor.press(ImGuiKey_F5);
+    expect(!session.fixedUpdatesEnabled(), "targets: Play waits while the standalone game runs");
+    editor.press(ImGuiMod_Shift | ImGuiKey_F5);
+    editor.frame();
+    expect(game->cancelled && !fs::exists(sceneFile), "targets: Stop kills the game and removes its scene");
+
+    editor.press(ImGuiKey_F10);
+    expect(game->running, "targets: the standalone game starts again");
+    game->running = false;
+    game->exitCode = 0;
+    editor.frame();
+    game->arguments.clear();
+    // F5 reuses the last target, which only starts once the old game left Play.
+    editor.press(ImGuiKey_F5);
+    expect(game->running && !game->arguments.empty(),
+           "targets: the game exiting leaves Play, so F5 starts the standalone game again");
+    editor.press(ImGuiMod_Shift | ImGuiKey_F5);
+    editor.frame();
 }
 
 // The id of an item in the Project Hub's window, reached through path's ids.
@@ -286,6 +458,7 @@ int main() {
     testPlayModeRestoresTheScene(root / "play");
     testNewDocumentAndQuit(root / "file");
     testHostQuitRequest(root / "quit");
+    testPlayTargets(root / "targets");
     testProjectHubSwitchesProjects(root / "hub");
 
     fs::remove_all(root, error);

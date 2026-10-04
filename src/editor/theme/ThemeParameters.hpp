@@ -62,6 +62,19 @@ struct ThemeParameters {
     bool operator==(const ThemeParameters&) const = default;
 };
 
+// A wash over the editor's chrome that shows a game is running. It is the
+// session's runtime state, handed to ThemeChrome::setModeTint each frame and
+// never saved with the parameters.
+enum class ThemeModeTint : uint8_t {
+    None,
+    Play,
+    Simulate,
+};
+
+// The tint's colour (palette::playTint or palette::simulateTint), or nullopt
+// for None.
+std::optional<ThemeColor> themeModeTintColor(ThemeModeTint tint);
+
 // The parameters with every value moved into its supported range.
 ThemeParameters clampedThemeParameters(ThemeParameters parameters);
 // The pane colour as painted with the parameters' opacity.

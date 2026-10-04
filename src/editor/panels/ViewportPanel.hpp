@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/application/EditorPlayMode.hpp"
+#include "editor/application/PlayTargets.hpp"
 #include "editor/interaction/EditorCamera.hpp"
 #include "editor/panels/EditorPanel.hpp"
 #include "editor/panels/ViewportChrome.hpp"
@@ -120,6 +121,28 @@ class ViewportPanel final : public EditorPanel {
     // The settings override sent to the render view in the latest draw.
     const std::optional<RenderSettings>& appliedViewSettings() const;
 
+    // Play in this viewport (PlayTargets.hpp): the view shows the game camera
+    // (gameCamera) through the renderer's own fallback, so it sees whatever
+    // the game's camera systems write, and falls back to the editor camera
+    // when the scene has none. Editor navigation, picking, the gizmo, object
+    // keys, the grid, and the outline are off, local view is left, and a
+    // banner reports game input. beginGameView grants game input focus.
+    void beginGameView();
+    void endGameView();
+    bool gameView() const;
+    // Game input focus: the session hands player input to module systems,
+    // and captures the mouse until Esc, only while the game view has it. A
+    // click on the image takes it (play.focus_game_view); Esc or a click
+    // elsewhere gives it up (play.release_game_input).
+    void setGameInputFocus(bool focused);
+    bool gameInputFocus() const;
+    // Whether the game may hold the cursor: the view has game input focus and
+    // the mouse was over its image in the latest draw (or is captured). Only
+    // then does a click capture it, so clicks elsewhere stay the editor's.
+    bool gameViewHoldsCursor() const;
+    // The banner the latest draw showed.
+    GameViewBanner gameViewBanner() const;
+
     // Screen-space rectangle of the viewport image from the latest draw.
     glm::vec2 position() const;
     glm::vec2 size() const;
@@ -223,6 +246,11 @@ class ViewportPanel final : public EditorPanel {
     void syncLocalView(EditorContext& context);
     void drawActiveName(EditorContext& context) const;
     void setInputActive(EditorContext& context, bool active);
+    // A game view's input routing, focus changes, and banner, after its image
+    // and chrome are drawn.
+    void drawGameView(EditorContext& context, bool imageHovered, bool imageClicked);
+    // A game view or a camera view: the image is the scene's own.
+    bool showsSceneCamera() const;
 
     ViewportRegistry& m_registry;
     ViewportId m_id;
@@ -235,6 +263,12 @@ class ViewportPanel final : public EditorPanel {
     TransformToolSettings m_tools;
     ViewportChromeState m_chrome;
     bool m_inputActive{false};
+    bool m_gameView{false};
+    bool m_gameInputFocus{false};
+    // Whether the engine's input held the mouse at the latest update.
+    bool m_cursorCaptured{false};
+    bool m_gameImageHovered{false};
+    GameViewBanner m_gameViewBanner{GameViewBanner::None};
     bool m_navigating{false};
     bool m_suppressCameraUntilRelease{false};
     // Where the mouse press a binding claimed started, in view pixels, while

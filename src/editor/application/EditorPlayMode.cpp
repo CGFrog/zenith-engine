@@ -32,14 +32,18 @@ void EditorPlayMode::pause() {
 void EditorPlayMode::resume() {
     if (m_mode == EditorMode::Paused) {
         m_mode = m_simulating ? EditorMode::Simulate : EditorMode::Play;
-        m_singleStepRequested = false;
+        m_frameStepSeconds = 0.0f;
     }
 }
 
-void EditorPlayMode::requestSingleStep() {
-    if (m_mode == EditorMode::Paused) {
-        m_singleStepRequested = true;
+void EditorPlayMode::requestFrameStep(float stepSeconds) {
+    if (m_mode == EditorMode::Paused && stepSeconds > 0.0f) {
+        m_frameStepSeconds = stepSeconds;
     }
+}
+
+void EditorPlayMode::finishFrame() {
+    m_frameStepSeconds = 0.0f;
 }
 
 void EditorPlayMode::stop(Scene& activeScene, std::vector<SceneEntityId>& selection) {
@@ -55,7 +59,7 @@ void EditorPlayMode::stop(Scene& activeScene, std::vector<SceneEntityId>& select
     m_editSelection.clear();
     m_mode = EditorMode::Edit;
     m_simulating = false;
-    m_singleStepRequested = false;
+    m_frameStepSeconds = 0.0f;
 }
 
 EditorMode EditorPlayMode::mode() const {
@@ -77,19 +81,21 @@ SimulationMode EditorPlayMode::simulationMode() const {
     return m_simulating ? SimulationMode::Simulate : SimulationMode::Play;
 }
 
+bool EditorPlayMode::steppingFrame() const {
+    return m_mode == EditorMode::Paused && m_frameStepSeconds > 0.0f;
+}
+
+bool EditorPlayMode::advancesThisFrame() const {
+    return running() || steppingFrame();
+}
+
 bool EditorPlayMode::fixedUpdatesEnabled() const {
-    return running() || m_singleStepRequested;
+    return advancesThisFrame();
 }
 
 bool EditorPlayMode::beginFixedUpdate() {
-    if (running()) {
-        return true;
-    }
-    if (m_mode == EditorMode::Paused && m_singleStepRequested) {
-        m_singleStepRequested = false;
-        return true;
-    }
-    return false;
+    // A frame step's fixed steps are bounded by what its clock accumulates.
+    return advancesThisFrame();
 }
 
 float EditorPlayMode::setTimeScale(float scale) {
@@ -105,7 +111,7 @@ SimulationClock EditorPlayMode::simulationClock() const {
     if (m_mode == EditorMode::Edit) {
         return {};
     }
-    return {.timeScale = m_timeScale, .paused = m_mode == EditorMode::Paused};
+    return {.timeScale = m_timeScale, .paused = m_mode == EditorMode::Paused, .frameStepSeconds = m_frameStepSeconds};
 }
 
 Scene* EditorPlayMode::editScene() {

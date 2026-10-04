@@ -15,9 +15,14 @@ ImU32 u32(ThemeColor color) {
 // A solid content pane: notched, outlined, with a shadow along its top and
 // left edges so it reads as set into the glass.
 // Below full opacity the frosted glass behind shows through the pane.
-void paintPane(ImDrawList* drawList, ImVec2 min, ImVec2 max, float artPixel, const ThemeParameters& parameters) {
+// A mode tint is composited into the pane colour, keeping its opacity.
+void paintPane(ImDrawList* drawList, ImVec2 min, ImVec2 max, float artPixel, const ThemeParameters& parameters,
+               ThemeModeTint tint) {
     using namespace palette;
-    const ThemeColor fill = paneColor(parameters);
+    ThemeColor fill = paneColor(parameters);
+    if (const std::optional<ThemeColor> tintColor = themeModeTintColor(tint)) {
+        fill = composite(*tintColor, fill.withAlpha(1.0f)).withAlpha(fill.a);
+    }
     pixel::notchedRect(drawList, min, max, u32(fill), artPixel);
     pixel::bevel(drawList, {min.x + artPixel, min.y + artPixel}, {max.x - artPixel, max.y - artPixel},
                  u32(paneShadow.withAlpha(fill.a)), u32(fill), artPixel);
@@ -47,10 +52,30 @@ void ThemeChrome::setParameters(const ThemeParameters& parameters) {
     m_parameters = clampedThemeParameters(parameters);
 }
 
+void ThemeChrome::setModeTint(ThemeModeTint tint) {
+    m_modeTint = tint;
+}
+
 void ThemeChrome::beginFrame(RenderRuntime& rendering) {
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
     m_backdrop.update(rendering, viewport->Pos, viewport->Size, editorArtPixel(), m_parameters);
-    m_backdrop.drawWallpaper(ImGui::GetBackgroundDrawList(ImGui::GetMainViewport()));
+    ImDrawList* background = ImGui::GetBackgroundDrawList(viewport);
+    m_backdrop.drawWallpaper(background);
+    const std::optional<ThemeColor> tint = themeModeTintColor(m_modeTint);
+    if (!tint) {
+        return;
+    }
+    const ImVec2 max{viewport->Pos.x + viewport->Size.x, viewport->Pos.y + viewport->Size.y};
+    background->AddRectFilled(viewport->Pos, max, u32(*tint));
+    // A solid edge in the tint's hue around the whole window, over every
+    // window, so the mode reads even where panes cover the wallpaper.
+    const float edge = editorArtPixel() * 2.0f;
+    ImDrawList* foreground = ImGui::GetForegroundDrawList(viewport);
+    const ImU32 edgeColor = u32(tint->withAlpha(1.0f));
+    foreground->AddRectFilled(viewport->Pos, {max.x, viewport->Pos.y + edge}, edgeColor);
+    foreground->AddRectFilled({viewport->Pos.x, max.y - edge}, max, edgeColor);
+    foreground->AddRectFilled(viewport->Pos, {viewport->Pos.x + edge, max.y}, edgeColor);
+    foreground->AddRectFilled({max.x - edge, viewport->Pos.y}, max, edgeColor);
 }
 
 void ThemeChrome::release(RenderRuntime& rendering) {
@@ -71,7 +96,7 @@ void ThemeChrome::paintAreaWindow() const {
         ImDrawList* background = ImGui::GetBackgroundDrawList(window->Viewport);
         const ImRect node = window->DockNode->Rect();
         paintGlassPanel(background, node.Min, node.Max);
-        paintPane(background, paneMin, paneMax, artPixel, m_parameters);
+        paintPane(background, paneMin, paneMax, artPixel, m_parameters, m_modeTint);
         return;
     }
     // A floating area keeps ImGui's title bar; its body becomes the pane and
@@ -81,7 +106,7 @@ void ThemeChrome::paintAreaWindow() const {
     if (window->InnerRect.Min.y > bodyTop) {
         paintGlassPanel(drawList, {windowMin.x, bodyTop}, {windowMax.x, window->InnerRect.Min.y});
     }
-    paintPane(drawList, {windowMin.x, window->InnerRect.Min.y}, windowMax, artPixel, m_parameters);
+    paintPane(drawList, {windowMin.x, window->InnerRect.Min.y}, windowMax, artPixel, m_parameters, m_modeTint);
 }
 
 void ThemeChrome::paintBarWindow() const {
@@ -117,6 +142,9 @@ void ThemeChrome::paintGlassPanel(ImDrawList* drawList, ImVec2 min, ImVec2 max) 
     using namespace palette;
     const float artPixel = editorArtPixel();
     m_backdrop.drawFrosted(drawList, min, max, artPixel);
+    if (const std::optional<ThemeColor> tint = themeModeTintColor(m_modeTint)) {
+        pixel::notchedRect(drawList, min, max, u32(*tint), artPixel);
+    }
     pixel::glintStripes(drawList, {min.x + artPixel, min.y + artPixel}, {max.x - artPixel, max.y - artPixel},
                         u32(glassGlint), u32(glassGlintFaint), artPixel);
     pixel::bevel(drawList, {min.x + artPixel, min.y + artPixel}, {max.x - artPixel, max.y - artPixel},

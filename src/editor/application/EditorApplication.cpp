@@ -135,11 +135,13 @@ class ProjectHubScene final : public ApplicationScene {
 } // namespace
 
 EditorApplication::EditorApplication(std::filesystem::path settingsDirectory, std::filesystem::path fontPath,
-                                     ProjectConfig project, std::optional<EditorProjectHubOptions> projectHub)
+                                     ProjectConfig project, std::optional<EditorProjectHubOptions> projectHub,
+                                     EditorPlayServices play)
     : m_settingsDirectory(std::move(settingsDirectory))
     , m_fontPath(std::move(fontPath))
     , m_project(std::move(project))
     , m_projectHub(std::move(projectHub))
+    , m_play(std::move(play))
     , m_recentProjects(m_settingsDirectory / "recent-projects.json") {}
 
 SceneResult EditorApplication::onStart(ApplicationContext& context) {
@@ -154,7 +156,7 @@ SceneResult EditorApplication::onStart(ApplicationContext& context) {
 }
 
 MouseCapturePolicy EditorApplication::mouseCapturePolicy() const {
-    return MouseCapturePolicy::WhileRightMouseDown;
+    return m_mouseCapturePolicy;
 }
 
 SceneKey EditorApplication::initialScene() const {
@@ -214,7 +216,15 @@ std::unique_ptr<ApplicationScene> EditorApplication::createSession() {
     // own settings.
     EditorRenderSettings renderSettings(m_project, m_settingsDirectory / "render-settings.json");
     EditorProjectServices services{
-        .build = projectBuildRequest(m_project.projectFile), .fontPath = m_fontPath, .loadedFonts = m_loadedFonts};
+        .build = projectBuildRequest(m_project.projectFile),
+        .fontPath = m_fontPath,
+        .loadedFonts = m_loadedFonts,
+        .projectFile = m_project.projectFile,
+        .play = m_play,
+        // The session publishes its policy every frame and resets it
+        // when it unloads, so a session that failed to load or was
+        // replaced never leaves the cursor captured.
+        .mouseCaptureChanged = [this](MouseCapturePolicy policy) { m_mouseCapturePolicy = policy; }};
     if (m_projectHub) {
         services.leaveForProjectHub = [this](ApplicationContext& context, ProjectHubEntry entry) {
             showProjectHub(context, entry);
