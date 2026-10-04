@@ -113,6 +113,9 @@ class ViewportPanel final : public EditorPanel {
     // A right-click that cancels a modal transform must not also start fly
     // navigation, so camera input waits until the button is released.
     void suppressCameraUntilRightRelease();
+    // Whether camera input waits for the right button to be let go (a
+    // cancelling right-click, or a right press a mouse binding claimed).
+    bool cameraWaitsForRightRelease() const;
 
     // Queues a click selection at a view-pixel position (continuous, origin
     // at the image's top-left corner). The next draw starts its pick and
@@ -125,6 +128,8 @@ class ViewportPanel final : public EditorPanel {
     // Modal box and lasso tools; at most one runs at a time, and starting
     // one cancels the other.
     void beginBoxSelect(SelectionSetMode mode);
+    // A right-drag lasso starts its outline where the claimed right press
+    // began (see dispatchMouseChords), or at the mouse.
     void beginLassoSelect(SelectionSetMode mode, bool rightDrag);
     void cancelSelectTool();
     bool selectToolActive() const;
@@ -189,12 +194,10 @@ class ViewportPanel final : public EditorPanel {
     void drawItemTab(EditorContext& context);
     // Returns whether the gizmo is in use or under the mouse.
     bool drawGizmo(EditorContext& context);
-    // Runs view3d.select or view3d.select_cycle for a click on the image.
-    void selectAtMouse(EditorContext& context);
-    // Starts the Ctrl+RMB lasso through view3d.select_lasso.
-    void startLassoGesture(EditorContext& context);
-    // The Shift+RMB gesture: view3d.cursor3d_place at the mouse.
-    void placeCursorAtMouse(EditorContext& context);
+    // Runs the keymap's mouse bindings (click select, Alt+click cycle, the
+    // Ctrl+RMB lasso, the Shift+RMB 3D cursor...); presses count only when
+    // pressesAllowed.
+    void dispatchMouseChords(EditorContext& context, bool pressesAllowed);
     // Snaps the gizmo's dragged position (absolute grid, surface, or vertex)
     // along the components of its frame that moved since the drag started.
     glm::vec3 snapGizmoTranslation(EditorContext& context, const TransformSnapping& snapping, const glm::vec3& position,
@@ -221,6 +224,10 @@ class ViewportPanel final : public EditorPanel {
     bool m_inputActive{false};
     bool m_navigating{false};
     bool m_suppressCameraUntilRelease{false};
+    // Where the mouse press a binding claimed started, in view pixels, while
+    // a button is down: a right-drag lasso begun by a Drag binding starts
+    // its outline there.
+    std::optional<glm::vec2> m_mouseGestureStart;
     glm::vec2 m_position{0.0f};
     glm::vec2 m_size{1.0f};
     // Where the chrome leaves the image uncovered, for the name label.

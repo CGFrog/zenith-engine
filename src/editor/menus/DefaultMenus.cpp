@@ -86,5 +86,69 @@ MenuResult registerDefaultMenus(MenuRegistry& registry, DefaultMenuSources sourc
     if (MenuResult result = registry.addSection(editorMenuOwner, addMenuId, addEmptyWithComponentEntries); !result) {
         return result;
     }
-    return registry.addSection(editorMenuOwner, addComponentMenuId, addComponentEntries);
+    if (MenuResult result = registry.addSection(editorMenuOwner, addComponentMenuId, addComponentEntries); !result) {
+        return result;
+    }
+    return registerPieMenus(registry);
+}
+
+MenuResult registerPieMenus(MenuRegistry& registry) {
+    // Entries fill the pie in Blender's order: left, right, bottom, top, then
+    // top-left, top-right, bottom-left, bottom-right.
+    struct PieEntry {
+        const char* label;
+        const char* operatorId;
+        const char* properties;
+    };
+
+    struct Pie {
+        const char* id;
+        const char* title;
+        std::vector<PieEntry> entries;
+    };
+
+    // transform.pivot_set comes with the pivot point tools; until it is
+    // registered its entries show disabled.
+    const std::vector<Pie> pies{
+        {shadingPieMenuId,
+         "Shading",
+         {{"Wireframe", "view3d.shading_set", R"({"type":"wireframe"})"},
+          {"Solid", "view3d.shading_set", R"({"type":"solid"})"},
+          {"Material Preview", "view3d.shading_set", R"({"type":"material_preview"})"},
+          {"Rendered", "view3d.shading_set", R"({"type":"rendered"})"}}},
+        {viewPieMenuId,
+         "View",
+         {{"Left", "view3d.view_axis", R"({"type":"left"})"},
+          {"Right", "view3d.view_axis", R"({"type":"right"})"},
+          {"Bottom", "view3d.view_axis", R"({"type":"bottom"})"},
+          {"Top", "view3d.view_axis", R"({"type":"top"})"},
+          {"Front", "view3d.view_axis", R"({"type":"front"})"},
+          {"Back", "view3d.view_axis", R"({"type":"back"})"},
+          {"Camera", "view3d.view_camera", ""},
+          {"Frame Selected", "view3d.frame_selected", ""}}},
+        {pivotPieMenuId,
+         "Pivot Point",
+         {{"3D Cursor", "transform.pivot_set", R"({"pivot":"cursor"})"},
+          {"Individual Origins", "transform.pivot_set", R"({"pivot":"individual_origins"})"},
+          {"Median Point", "transform.pivot_set", R"({"pivot":"median_point"})"},
+          {"Active Element", "transform.pivot_set", R"({"pivot":"active_element"})"}}},
+    };
+    for (const Pie& pie : pies) {
+        if (MenuResult result = registry.addMenu(editorMenuOwner, {.id = pie.id, .title = pie.title}); !result) {
+            return result;
+        }
+        for (const PieEntry& entry : pie.entries) {
+            if (MenuResult result = registry.addEntry(editorMenuOwner, pie.id,
+                                                      {.label = entry.label,
+                                                       .operatorId = entry.operatorId,
+                                                       .properties = entry.properties,
+                                                       .submenu = {},
+                                                       .icon = std::nullopt,
+                                                       .category = {}});
+                !result) {
+                return result;
+            }
+        }
+    }
+    return {.success = true};
 }

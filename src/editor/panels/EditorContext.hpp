@@ -9,6 +9,7 @@
 #include "editor/project/AssetRelocation.hpp"
 #include "engine/application/Application.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <span>
 #include <string>
@@ -49,6 +50,23 @@ class EditorSessionActions {
     // viewport the transform started in advances it and draws its overlay in
     // the current window.
     virtual void updateModalTransform(ApplicationContext& context, ViewportId viewport) = 0;
+
+    // Runs the region's mouse bindings (operators/KeymapDispatch): presses
+    // this frame of the buttons whose bit (1 << ImGuiMouseButton) is set in
+    // allowedButtons, and the Hold, Drag, Release, and Click bindings of a
+    // press followed from earlier frames. Call every frame, with no buttons
+    // allowed when presses must not count. Returns the bits of the pressed
+    // buttons a binding claimed. Without a keymap (the default) nothing is
+    // bound.
+    virtual uint32_t dispatchMouseChords(ApplicationContext&, KeymapRegion, uint32_t) {
+        return 0;
+    }
+
+    // Whether a binding in region uses mouse button (an ImGuiMouseButton) with
+    // the modifiers held now, so pressing it is not camera navigation.
+    virtual bool mouseButtonBound(KeymapRegion, int) const {
+        return false;
+    }
 
   protected:
     ~EditorSessionActions() = default;

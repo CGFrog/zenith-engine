@@ -10,6 +10,8 @@
 #include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/EntityEyedropper.hpp"
 #include "editor/menus/EditorMenus.hpp"
+#include "editor/operators/DefaultKeymap.hpp"
+#include "editor/operators/KeymapDispatch.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/operators/OperatorRunner.hpp"
 #include "editor/panels/EditorContext.hpp"
@@ -88,6 +90,20 @@ class OperatorActions final : public EditorSessionActions {
     }
 
     void updateModalTransform(ApplicationContext&, ViewportId) override {}
+
+    // Mouse chords run through the default keymap, as in the session.
+    uint32_t dispatchMouseChords(ApplicationContext& context, KeymapRegion region, uint32_t allowedButtons) override {
+        return dispatcher.dispatchMouse(keymap, region, allowedButtons, [&](const KeymapInvocation& invocation) {
+            invokeOperator(context, invocation.operatorId, invocation.properties, invocation.region);
+        });
+    }
+
+    bool mouseButtonBound(KeymapRegion region, int button) const override {
+        return dispatcher.mouseButtonBound(keymap, region, button);
+    }
+
+    Keymap keymap{defaultEditorKeymap()};
+    KeymapDispatcher dispatcher;
 
   private:
     SceneEditing m_editing;
@@ -549,7 +565,8 @@ void testLassoSelect() {
     expect(fixture.selection.ids() == std::vector<SceneEntityId>{fixture.id(fixture.right)},
            "a lasso should select the objects inside its outline");
 
-    // The Ctrl+RMB gesture draws with the right button; Ctrl+Shift extends.
+    // A Ctrl+RMB drag draws with the right button, from where the press
+    // started; Ctrl+Shift extends.
     const glm::vec2 front = fixture.viewPixel({0.0f, 0.0f, 0.0f});
     const std::vector<ImVec2> aroundFront{fixture.screen(front + glm::vec2(0.0f, -40.0f)),
                                           fixture.screen(front + glm::vec2(40.0f, 30.0f)),
@@ -558,7 +575,9 @@ void testLassoSelect() {
     ImGuiIO& io = ImGui::GetIO();
     io.AddMouseButtonEvent(ImGuiMouseButton_Right, true);
     frames.frame(fixture, aroundFront[0]);
-    expect(fixture.panel->lassoSelect().drawsWithRightButton(), "Ctrl+RMB should start a right-button lasso");
+    expect(!fixture.panel->lassoSelect().active(), "a Ctrl+RMB press alone should not start a lasso");
+    frames.frame(fixture, aroundFront[1]);
+    expect(fixture.panel->lassoSelect().drawsWithRightButton(), "a Ctrl+RMB drag should start a right-button lasso");
     frames.frame(fixture, aroundFront[1]);
     frames.frame(fixture, aroundFront[2]);
     io.AddMouseButtonEvent(ImGuiMouseButton_Right, false);
@@ -599,6 +618,59 @@ void testCycle() {
     frames.click(fixture, front, ImGuiMod_Alt);
     expect(fixture.selection.ids() == std::vector<SceneEntityId>{fixture.id(fixture.behind)},
            "CPU cycling should reach the occluded object");
+}
+
+// Mouse gestures are keymap bindings: unbound presses stay camera
+// navigation, and rebinding the lasso moves the gesture to the new chord.
+void testMouseChordBindings() {
+    Fixture fixture;
+    Frames frames;
+    frames.settle(fixture, corner(fixture));
+    fixture.paintVisibleCubes();
+    ImGuiIO& io = ImGui::GetIO();
+    const glm::vec2 front = fixture.viewPixel({0.0f, 0.0f, 0.0f});
+    const ImVec2 start = fixture.screen(front + glm::vec2(0.0f, -40.0f));
+    const ImVec2 moved = fixture.screen(front + glm::vec2(40.0f, 30.0f));
+    // Returns whether the press frame held the camera back (the test's input
+    // state has no buttons down, so the hold ends the next frame).
+    const auto rightPress = [&](ImGuiKeyChord modifiers, ImVec2 to) {
+        Frames::setModifiers(modifiers);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Right, true);
+        frames.frame(fixture, start);
+        const bool held = fixture.panel->cameraWaitsForRightRelease();
+        frames.frame(fixture, to);
+        return held;
+    };
+    const auto rightRelease = [&] {
+        io.AddMouseButtonEvent(ImGuiMouseButton_Right, false);
+        Frames::setModifiers(0);
+        frames.frame(fixture, start);
+        frames.frame(fixture, start);
+    };
+
+    expect(!fixture.actions.mouseButtonBound(KeymapRegion::Viewport, ImGuiMouseButton_Right),
+           "a plain RMB press should not be bound");
+    expect(!rightPress(0, start) && !fixture.panel->selectToolActive(),
+           "an unbound RMB press should keep fly navigation");
+    rightRelease();
+
+    expect(rightPress(ImGuiMod_Ctrl, start) && !fixture.panel->selectToolActive(),
+           "a bound Ctrl+RMB press should hold the camera without lassoing until it drags");
+    rightRelease();
+
+    const auto lasso = std::ranges::find_if(fixture.actions.keymap.bindings(), [](const KeymapBinding& binding) {
+        return binding.operatorId == "view3d.select_lasso" && binding.chord == (ImGuiMod_Ctrl | ImGuiKey_MouseRight);
+    });
+    expect(lasso != fixture.actions.keymap.bindings().end(), "Ctrl+RMB drag should be the default lasso");
+    const auto lassoIndex = static_cast<size_t>(lasso - fixture.actions.keymap.bindings().begin());
+    expect(fixture.actions.keymap.rebind(lassoIndex, ImGuiMod_Alt | ImGuiKey_MouseRight).success,
+           "the lasso should rebind to Alt+RMB");
+    expect(!rightPress(ImGuiMod_Ctrl, moved) && !fixture.panel->selectToolActive(),
+           "the old chord should navigate once the lasso moved away");
+    rightRelease();
+    rightPress(ImGuiMod_Alt, moved);
+    expect(fixture.panel->lassoSelect().drawsWithRightButton(), "an Alt+RMB drag should start the rebound lasso");
+    rightRelease();
 }
 
 void testEyedropperTakesTheClick() {
@@ -709,6 +781,7 @@ int main() {
     testBoxSelect();
     testLassoSelect();
     testCycle();
+    testMouseChordBindings();
     testEyedropperTakesTheClick();
     testLocalView();
     if (failures == 0) {

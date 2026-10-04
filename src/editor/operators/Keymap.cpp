@@ -21,9 +21,33 @@ struct ModifierName {
 constexpr std::array modifierNames{ModifierName{ImGuiMod_Ctrl, "Ctrl+"}, ModifierName{ImGuiMod_Shift, "Shift+"},
                                    ModifierName{ImGuiMod_Alt, "Alt+"}, ModifierName{ImGuiMod_Super, "Super+"}};
 
-// Keyboard keys a binding may use: named keys before the gamepad range,
-// without the modifier keys themselves.
+struct MouseButtonName {
+    ImGuiKey key;
+    std::string_view name;
+};
+
+constexpr std::array mouseButtonNames{MouseButtonName{ImGuiKey_MouseLeft, "LMB"},
+                                      MouseButtonName{ImGuiKey_MouseRight, "RMB"},
+                                      MouseButtonName{ImGuiKey_MouseMiddle, "MMB"},
+                                      MouseButtonName{ImGuiKey_MouseX1, "X1"}, MouseButtonName{ImGuiKey_MouseX2, "X2"}};
+
+constexpr std::array<std::pair<KeyTrigger, const char*>, 6> triggerNames{{{KeyTrigger::Press, "press"},
+                                                                          {KeyTrigger::DoubleTap, "double_tap"},
+                                                                          {KeyTrigger::Hold, "hold"},
+                                                                          {KeyTrigger::Release, "release"},
+                                                                          {KeyTrigger::Click, "click"},
+                                                                          {KeyTrigger::Drag, "drag"}}};
+
+bool mouseKey(ImGuiKey key) {
+    return key >= ImGuiKey_MouseLeft && key <= ImGuiKey_MouseX2;
+}
+
+// Keys a binding may use: named keyboard keys before the gamepad range,
+// without the modifier keys themselves, and the mouse buttons.
 bool bindableKey(ImGuiKey key) {
+    if (mouseKey(key)) {
+        return true;
+    }
     if (key < ImGuiKey_NamedKey_BEGIN || key >= ImGuiKey_GamepadStart) {
         return false;
     }
@@ -31,6 +55,11 @@ bool bindableKey(ImGuiKey key) {
 }
 
 std::string keyName(ImGuiKey key) {
+    for (const MouseButtonName& button : mouseButtonNames) {
+        if (button.key == key) {
+            return std::string(button.name);
+        }
+    }
     const std::string_view name = ImGui::GetKeyName(key);
     constexpr std::string_view keypad = "Keypad";
     if (!name.starts_with(keypad)) {
@@ -48,6 +77,11 @@ std::string keyName(ImGuiKey key) {
 }
 
 std::optional<ImGuiKey> parseKeyName(std::string_view text) {
+    for (const MouseButtonName& button : mouseButtonNames) {
+        if (button.name == text) {
+            return button.key;
+        }
+    }
     for (int key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_GamepadStart; ++key) {
         if (bindableKey(static_cast<ImGuiKey>(key)) && keyName(static_cast<ImGuiKey>(key)) == text) {
             return static_cast<ImGuiKey>(key);
@@ -78,7 +112,10 @@ std::string validate(KeymapBinding& binding) {
     }
     const ImGuiKey key = static_cast<ImGuiKey>(binding.chord & ~ImGuiMod_Mask_);
     if (!bindableKey(key)) {
-        return "Key binding for '" + binding.operatorId + "' needs a keyboard key";
+        return "Key binding for '" + binding.operatorId + "' needs a keyboard key or mouse button";
+    }
+    if (mouseKey(key) && binding.region != KeymapRegion::Viewport) {
+        return "Mouse binding for '" + binding.operatorId + "' must be in the viewport region";
     }
     const std::optional<std::string> properties = normalizeProperties(binding.properties);
     if (!properties) {
@@ -89,15 +126,19 @@ std::string validate(KeymapBinding& binding) {
 }
 
 std::string describe(const KeymapBinding& binding) {
-    return formatKeyChord(binding.chord) + " (" + keymapRegionName(binding.region) + ")";
+    std::string text = formatKeyChord(binding.chord);
+    if (binding.trigger != KeyTrigger::Press) {
+        text += std::string(" ") + keyTriggerName(binding.trigger);
+    }
+    return text + " (" + keymapRegionName(binding.region) + ")";
 }
 
 Json bindingToJson(const KeymapBinding& binding) {
     Json entry{{"operator", binding.operatorId},
                {"region", keymapRegionName(binding.region)},
                {"chord", formatKeyChord(binding.chord)}};
-    if (binding.trigger == KeyTrigger::DoubleTap) {
-        entry["trigger"] = "double_tap";
+    if (binding.trigger != KeyTrigger::Press) {
+        entry["trigger"] = keyTriggerName(binding.trigger);
     }
     if (!binding.properties.empty()) {
         entry["properties"] = Json::parse(binding.properties);
@@ -128,12 +169,13 @@ std::optional<KeymapBinding> bindingFromJson(const Json& entry, std::string& err
         binding.region = *parsed;
     }
     if (const auto trigger = entry.find("trigger"); trigger != entry.end()) {
-        if (*trigger == "double_tap") {
-            binding.trigger = KeyTrigger::DoubleTap;
-        } else if (*trigger != "press") {
+        const std::optional<KeyTrigger> parsed =
+            trigger->is_string() ? parseKeyTrigger(trigger->get<std::string>()) : std::nullopt;
+        if (!parsed) {
             error = "Unknown key trigger for " + binding.operatorId;
             return std::nullopt;
         }
+        binding.trigger = *parsed;
     }
     if (const auto properties = entry.find("properties"); properties != entry.end()) {
         if (!properties->is_object()) {
@@ -182,6 +224,35 @@ std::optional<ImGuiKeyChord> parseKeyChord(std::string_view text) {
         return std::nullopt;
     }
     return modifiers | *key;
+}
+
+bool isMouseChord(ImGuiKeyChord chord) {
+    return mouseKey(static_cast<ImGuiKey>(chord & ~ImGuiMod_Mask_));
+}
+
+ImGuiKey mouseButtonKey(int button) {
+    if (button < ImGuiMouseButton_Left || button > ImGuiKey_MouseX2 - ImGuiKey_MouseLeft) {
+        return ImGuiKey_None;
+    }
+    return static_cast<ImGuiKey>(ImGuiKey_MouseLeft + button);
+}
+
+const char* keyTriggerName(KeyTrigger trigger) {
+    for (const auto& [value, name] : triggerNames) {
+        if (value == trigger) {
+            return name;
+        }
+    }
+    return "press";
+}
+
+std::optional<KeyTrigger> parseKeyTrigger(std::string_view name) {
+    for (const auto& [value, triggerName] : triggerNames) {
+        if (name == triggerName) {
+            return value;
+        }
+    }
+    return std::nullopt;
 }
 
 const char* keymapRegionName(KeymapRegion region) {
@@ -271,6 +342,19 @@ KeymapResult Keymap::rebind(size_t index, ImGuiKeyChord chord) {
     return {.success = true};
 }
 
+KeymapResult Keymap::setTrigger(size_t index, KeyTrigger trigger) {
+    if (index >= m_bindings.size()) {
+        return {.error = "No such key binding"};
+    }
+    KeymapBinding changed = m_bindings[index];
+    changed.trigger = trigger;
+    if (const std::optional<size_t> conflict = findConflict(changed, index)) {
+        return {.error = describe(changed) + " is already assigned to " + m_bindings[*conflict].operatorId};
+    }
+    m_bindings[index] = std::move(changed);
+    return {.success = true};
+}
+
 void Keymap::remove(size_t index) {
     if (index < m_bindings.size()) {
         m_bindings.erase(m_bindings.begin() + static_cast<std::ptrdiff_t>(index));
@@ -314,22 +398,48 @@ std::string Keymap::shortcutLabel(std::string_view operatorId, std::string_view 
 std::vector<ImGuiKeyChord> Keymap::chords(KeymapRegion region) const {
     std::vector<ImGuiKeyChord> result;
     for (const KeymapBinding& binding : m_bindings) {
-        if (binding.region == region && std::ranges::find(result, binding.chord) == result.end()) {
+        if (binding.region == region && !isMouseChord(binding.chord) &&
+            std::ranges::find(result, binding.chord) == result.end()) {
             result.push_back(binding.chord);
         }
     }
     return result;
 }
 
-const KeymapBinding* Keymap::resolve(KeymapRegion region, ImGuiKeyChord chord, double timeSeconds,
-                                     double doubleTapSeconds) {
-    const KeymapBinding* press = nullptr;
-    const KeymapBinding* doubleTap = nullptr;
+std::vector<ImGuiKeyChord> Keymap::mouseChords(KeymapRegion region) const {
+    std::vector<ImGuiKeyChord> result;
     for (const KeymapBinding& binding : m_bindings) {
-        if (binding.region == region && binding.chord == chord) {
-            (binding.trigger == KeyTrigger::Press ? press : doubleTap) = &binding;
+        if (binding.region == region && isMouseChord(binding.chord) &&
+            std::ranges::find(result, binding.chord) == result.end()) {
+            result.push_back(binding.chord);
         }
     }
+    return result;
+}
+
+const KeymapBinding* Keymap::find(KeymapRegion region, ImGuiKeyChord chord, KeyTrigger trigger) const {
+    const auto found = std::ranges::find_if(m_bindings, [&](const KeymapBinding& binding) {
+        return binding.region == region && binding.chord == chord && binding.trigger == trigger;
+    });
+    return found == m_bindings.end() ? nullptr : &*found;
+}
+
+bool Keymap::bindsChord(KeymapRegion region, ImGuiKeyChord chord) const {
+    return std::ranges::any_of(
+        m_bindings, [&](const KeymapBinding& binding) { return binding.region == region && binding.chord == chord; });
+}
+
+bool Keymap::tracksChord(KeymapRegion region, ImGuiKeyChord chord) const {
+    return std::ranges::any_of(m_bindings, [&](const KeymapBinding& binding) {
+        return binding.region == region && binding.chord == chord && binding.trigger != KeyTrigger::Press &&
+               binding.trigger != KeyTrigger::DoubleTap;
+    });
+}
+
+const KeymapBinding* Keymap::resolve(KeymapRegion region, ImGuiKeyChord chord, double timeSeconds,
+                                     double doubleTapSeconds) {
+    const KeymapBinding* press = find(region, chord, KeyTrigger::Press);
+    const KeymapBinding* doubleTap = find(region, chord, KeyTrigger::DoubleTap);
     const bool repeated = m_lastTap && m_lastTap->region == region && m_lastTap->chord == chord &&
                           timeSeconds - m_lastTap->time <= doubleTapSeconds;
     if (doubleTap != nullptr && repeated) {

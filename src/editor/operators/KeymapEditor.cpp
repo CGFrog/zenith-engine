@@ -54,10 +54,28 @@ bool customized(const Keymap& keymap, std::string_view operatorId) {
     return false;
 }
 
+const char* triggerLabel(KeyTrigger trigger) {
+    switch (trigger) {
+    case KeyTrigger::Press:
+        return "Press";
+    case KeyTrigger::DoubleTap:
+        return "Twice";
+    case KeyTrigger::Hold:
+        return "Hold";
+    case KeyTrigger::Release:
+        return "Release";
+    case KeyTrigger::Click:
+        return "Click";
+    case KeyTrigger::Drag:
+        return "Drag";
+    }
+    return "Press";
+}
+
 std::string bindingLabel(const KeymapBinding& binding) {
     std::string label = formatKeyChord(binding.chord);
-    if (binding.trigger == KeyTrigger::DoubleTap) {
-        label += " twice";
+    if (binding.trigger != KeyTrigger::Press) {
+        label += std::string(" ") + triggerLabel(binding.trigger);
     }
     if (binding.region != KeymapRegion::Global) {
         label += std::string(" (") + keymapRegionName(binding.region) + ")";
@@ -71,12 +89,12 @@ bool KeymapEditor::capturing() const {
 }
 
 void KeymapEditor::captureRebind(size_t index) {
-    m_capture = Capture{.bindingIndex = index};
+    m_capture = Capture{.bindingIndex = index, .startFrame = ImGui::GetFrameCount()};
     m_message.clear();
 }
 
 void KeymapEditor::captureNewBinding(std::string operatorId, KeymapRegion region) {
-    m_capture = Capture{.operatorId = std::move(operatorId), .region = region};
+    m_capture = Capture{.operatorId = std::move(operatorId), .region = region, .startFrame = ImGui::GetFrameCount()};
     m_message.clear();
 }
 
@@ -84,13 +102,33 @@ const std::string& KeymapEditor::message() const {
     return m_message;
 }
 
-bool KeymapEditor::updateCapture(Keymap& keymap) {
-    const ImGuiIO& io = ImGui::GetIO();
+std::optional<ImGuiKey> KeymapEditor::capturedKey(const Keymap& keymap) const {
     for (int value = ImGuiKey_NamedKey_BEGIN; value < ImGuiKey_GamepadStart; ++value) {
         const ImGuiKey key = static_cast<ImGuiKey>(value);
-        if (modifierKey(key) || !ImGui::IsKeyPressed(key, false)) {
-            continue;
+        if (!modifierKey(key) && ImGui::IsKeyPressed(key, false)) {
+            return key;
         }
+    }
+    // Mouse buttons bind only in the viewport, and the click that started
+    // capturing is not one of them.
+    const KeymapRegion region = m_capture->bindingIndex && *m_capture->bindingIndex < keymap.bindings().size()
+                                    ? keymap.bindings()[*m_capture->bindingIndex].region
+                                    : m_capture->region;
+    if (region != KeymapRegion::Viewport || ImGui::GetFrameCount() == m_capture->startFrame) {
+        return std::nullopt;
+    }
+    for (int button = 0; button < ImGuiMouseButton_COUNT; ++button) {
+        if (ImGui::IsMouseClicked(button)) {
+            return mouseButtonKey(button);
+        }
+    }
+    return std::nullopt;
+}
+
+bool KeymapEditor::updateCapture(Keymap& keymap) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (const std::optional<ImGuiKey> captured = capturedKey(keymap)) {
+        const ImGuiKey key = *captured;
         const Capture capture = std::move(*m_capture);
         m_capture.reset();
         if (key == ImGuiKey_Escape && io.KeyMods == ImGuiMod_None) {
@@ -132,6 +170,24 @@ bool KeymapEditor::drawOperator(Keymap& keymap, const std::string& operatorId, c
         }
         if (!binding.properties.empty()) {
             ImGui::SetItemTooltip("Properties: %s", binding.properties.c_str());
+        }
+        ImGui::SameLine(0.0f, 2.0f);
+        std::optional<KeyTrigger> chosenTrigger;
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.5f);
+        if (ImGui::BeginCombo("##trigger", triggerLabel(binding.trigger), ImGuiComboFlags_NoArrowButton)) {
+            for (const KeyTrigger trigger : allKeyTriggers) {
+                if (ImGui::Selectable(triggerLabel(trigger), trigger == binding.trigger)) {
+                    chosenTrigger = trigger;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SetItemTooltip("When the shortcut runs: on press, a second quick press, holding, letting go, a click "
+                              "without dragging, or dragging the mouse");
+        if (chosenTrigger && *chosenTrigger != binding.trigger) {
+            const KeymapResult result = keymap.setTrigger(index, *chosenTrigger);
+            m_message = result ? std::string{} : result.error;
+            changed |= result.success;
         }
         ImGui::SameLine(0.0f, 2.0f);
         if (ImGui::SmallButton("x")) {

@@ -78,6 +78,10 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     for (const std::string& problem : m_keymap.defaultProblems()) {
         m_diagnostics.reportError(problem);
     }
+    // A gesture bound to an operator no one registered (a module's, or one
+    // still to come) leaves the press to camera navigation.
+    m_keymapDispatcher.setOperatorFilter(
+        [this](std::string_view operatorId) { return m_operators.find(operatorId) != nullptr; });
     registerSessionOperators();
     registerObjectModeOperators();
     registerViewportOperators();
@@ -290,25 +294,31 @@ std::string EditorSession::operatorShortcut(std::string_view operatorId, std::st
 }
 
 void EditorSession::dispatchKeymap(ApplicationContext& context, KeymapRegion region) {
-    for (const ImGuiKeyChord chord : m_keymap.chords(region)) {
-        // Global keys work while any panel has focus, so they route globally;
-        // global routes rank below focused widgets, so text fields keep their
-        // own Ctrl+Z. Region keys already require the mouse over the region.
-        const bool pressed = region == KeymapRegion::Global ? ImGui::Shortcut(chord, ImGuiInputFlags_RouteGlobal)
-                                                            : ImGui::IsKeyChordPressed(chord);
-        if (!pressed) {
-            continue;
-        }
-        const KeymapBinding* binding =
-            m_keymap.resolve(region, chord, ImGui::GetTime(), ImGui::GetIO().MouseDoubleClickTime);
-        if (binding != nullptr) {
-            // Copied: an operator may change the keymap.
-            const std::string operatorId = binding->operatorId;
-            const std::string properties = binding->properties;
-            invokeOperator(context, operatorId, properties, region);
-        }
-        return;
+    // Global keys work while any panel has focus; region keys already require
+    // the mouse over the region.
+    if (const std::optional<KeymapInvocation> invocation = m_keymapDispatcher.pressKeys(m_keymap, region)) {
+        invokeOperator(context, invocation->operatorId, invocation->properties, invocation->region);
     }
+}
+
+void EditorSession::updateKeymapGesture(ApplicationContext& context) {
+    for (const KeymapInvocation& invocation : m_keymapDispatcher.update(m_keymap)) {
+        invokeOperator(context, invocation.operatorId, invocation.properties, invocation.region);
+    }
+}
+
+uint32_t EditorSession::dispatchMouseChords(ApplicationContext& context, KeymapRegion region, uint32_t allowedButtons) {
+    if (m_activeTransform || m_fileDialog.pending() || m_keymapEditor.capturing()) {
+        allowedButtons = 0;
+    }
+    return m_keymapDispatcher.dispatchMouse(
+        m_keymap, region, allowedButtons, [this, &context](const KeymapInvocation& invocation) {
+            invokeOperator(context, invocation.operatorId, invocation.properties, invocation.region);
+        });
+}
+
+bool EditorSession::mouseButtonBound(KeymapRegion region, int button) const {
+    return m_keymapDispatcher.mouseButtonBound(m_keymap, region, button);
 }
 
 void EditorSession::operatorMenuItem(ApplicationContext& context, std::string_view operatorId, const char* label,
@@ -561,6 +571,7 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     const bool viewportsDone = updateSmokeViewports(context);
     const bool componentsDone = updateSmokeComponents(context);
     const bool menusDone = updateSmokeMenus(context);
+    const bool piesDone = updateSmokePies(context);
     const bool simulateDone = updateSmokeSimulate(context);
     // Starts after the Simulate step's last frame, back in Edit mode.
     const bool outlinerDone = updateSmokeOutliner(context);
@@ -570,7 +581,7 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     if (m_smokeFrame == 500 && !m_smokeStreamCompleted) {
         m_diagnostics.reportError("Streaming smoke did not commit while frames were being presented");
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    } else if (areasDone && viewportsDone && componentsDone && menusDone && simulateDone && outlinerDone &&
+    } else if (areasDone && viewportsDone && componentsDone && menusDone && piesDone && simulateDone && outlinerDone &&
                pickingDone && cursorDone && m_smokeStreamCompleted) {
         updateSmokeModuleReload(context);
     }
@@ -967,8 +978,12 @@ void EditorSession::unload(ApplicationContext& context) {
 void EditorSession::handleGlobalShortcuts(ApplicationContext& context) {
     // Operator polls decide which shortcuts apply in the current mode.
     if (ImGui::GetIO().WantTextInput || m_keymapEditor.capturing()) {
+        m_keymapDispatcher.cancel();
         return;
     }
+    // Before any panel, so a press followed from a region finishes even
+    // when the mouse has left it.
+    updateKeymapGesture(context);
     dispatchKeymap(context, KeymapRegion::Global);
 }
 

@@ -433,3 +433,55 @@ bool EditorSession::updateSmokeMenus(ApplicationContext& context) {
     }
     return m_smokeFrame > firstFrame + 2;
 }
+
+bool EditorSession::updateSmokePies(ApplicationContext& context) {
+    // Frames 335-337: open the Shading pie with wm.call_pie (pies turned on
+    // for the step), choose Wireframe from it as a release over that item
+    // would, check the active viewport's shading, then restore it.
+    constexpr uint32_t firstFrame = 335;
+    const auto fail = [&](const std::string& message) {
+        const std::string error = "Pie menu smoke failed: " + message;
+        std::cerr << error << '\n';
+        m_diagnostics.reportError(error);
+        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+    };
+    ViewportPanel* viewport = m_viewports.active();
+    if (m_smokeFrame == firstFrame) {
+        if (viewport == nullptr) {
+            // Nothing to shade: the step is skipped.
+            return true;
+        }
+        m_smokePieShading = viewport->chrome().shading;
+        // applyAppearance restores the preference on the next update.
+        m_menus.setPieMenusEnabled(true);
+        invokeOperator(context, "wm.call_pie", nlohmann::json{{"menu", shadingPieMenuId}}.dump(),
+                       KeymapRegion::Viewport);
+        if (!m_menus.pieOpen()) {
+            fail("wm.call_pie did not open the Shading pie");
+        }
+    } else if (m_smokeFrame == firstFrame + 1 && m_smokePieShading) {
+        const std::optional<ResolvedMenu> pie =
+            m_menus.resolve(m_menus.pieRequest(), operatorContext(context, KeymapRegion::Viewport));
+        const std::vector<MenuItem> items = pie ? pieItems(*pie) : std::vector<MenuItem>{};
+        const auto wireframe =
+            std::ranges::find_if(items, [](const MenuItem& item) { return item.label == "Wireframe"; });
+        if (!m_menus.pieOpen() || wireframe == items.end()) {
+            fail("the Shading pie did not offer Wireframe");
+            return true;
+        }
+        invokeOperator(context, wireframe->operatorId, wireframe->properties, KeymapRegion::Viewport);
+        m_menus.closePie();
+        if (viewport == nullptr || viewport->chrome().shading != ViewportShading::Wireframe) {
+            fail("choosing Wireframe did not change the viewport's shading");
+        }
+    } else if (m_smokeFrame == firstFrame + 2 && m_smokePieShading) {
+        if (m_menus.pieOpen()) {
+            fail("the Shading pie did not close");
+        }
+        if (viewport != nullptr) {
+            viewport->chrome().shading = *m_smokePieShading;
+        }
+        m_smokePieShading.reset();
+    }
+    return m_smokeFrame > firstFrame + 2 || (m_smokeFrame >= firstFrame && !m_smokePieShading);
+}

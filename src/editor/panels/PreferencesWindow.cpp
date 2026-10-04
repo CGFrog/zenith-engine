@@ -304,6 +304,8 @@ bool PreferencesWindow::drawInterface(const PreferencesContext& context) {
         }
     }
     ImGui::TextDisabled("Whole multipliers keep the pixel grid crisp.");
+    edited = ImGui::Checkbox("Pie menus", &appearance.pieMenus) || edited;
+    ImGui::SetItemTooltip("Z, ` and . open shading, view, and pivot pies around the mouse instead of menus.");
     edited = drawSectionFooter(PreferenceSection::Interface) || edited;
     ImGui::PopID();
     return edited;

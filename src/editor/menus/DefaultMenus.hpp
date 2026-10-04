@@ -20,8 +20,16 @@ struct DefaultMenuSources {
 // (VIEW3D_MT_add: the add-object entries, then Prefab > one entry per project
 // prefab running prefab.instantiate, then Component > category > type
 // creating an empty with that component) and the Add Component menu
-// (OBJECT_MT_add_component, grouped by category).
+// (OBJECT_MT_add_component, grouped by category), plus the pies
+// (registerPieMenus).
 MenuResult registerDefaultMenus(MenuRegistry& registry, DefaultMenuSources sources = {});
+
+// Registers the viewport pies with editorMenuOwner, for wm.call_pie: Shading
+// (VIEW3D_MT_shading_pie: view3d.shading_set {type}), View
+// (VIEW3D_MT_view_pie: view3d.view_axis {type}, view3d.view_camera,
+// view3d.frame_selected), and Pivot Point (VIEW3D_MT_pivot_pie:
+// transform.pivot_set {pivot}).
+MenuResult registerPieMenus(MenuRegistry& registry);
 
 // Appends one prefab.instantiate entry per prefab under the "Prefab" category,
 // sorted by project-relative path and labelled with the path's folder and the

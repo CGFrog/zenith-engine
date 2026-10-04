@@ -7,6 +7,7 @@
 
 namespace {
 constexpr const char* popupId = "EditorMenuPopup";
+constexpr const char* piePopupId = "EditorPieMenu";
 
 OperatorContext operatorContextFor(EditorContext& context) {
     return {.editing = context.editing,
@@ -56,18 +57,53 @@ bool EditorMenus::isOpen() const {
     return m_popup.isOpen();
 }
 
+MenuResult EditorMenus::openPie(MenuRequest request) {
+    if (!m_pieMenusEnabled) {
+        return open(std::move(request));
+    }
+    if (m_registry.find(request.menu) == nullptr) {
+        return {.error = "No menu with id '" + request.menu + "' is registered"};
+    }
+    m_popup.close();
+    m_pieRequest = std::move(request);
+    m_pie.open();
+    return {.success = true};
+}
+
+void EditorMenus::closePie() {
+    m_pie.close();
+}
+
+bool EditorMenus::pieOpen() const {
+    return m_pie.isOpen();
+}
+
+void EditorMenus::setPieMenusEnabled(bool enabled) {
+    m_pieMenusEnabled = enabled;
+}
+
+bool EditorMenus::pieMenusEnabled() const {
+    return m_pieMenusEnabled;
+}
+
 void EditorMenus::draw(EditorContext& context) {
-    if (!m_popup.isOpen()) {
-        return;
+    if (m_popup.isOpen()) {
+        const std::optional<ResolvedMenu> menu = resolve(m_request, operatorContextFor(context));
+        if (!menu) {
+            m_popup.close();
+            m_popup.draw(popupId, context, ResolvedMenu{});
+        } else if (const std::optional<MenuChoice> chosen = m_popup.draw(popupId, context, *menu)) {
+            context.invoke(chosen->operatorId, chosen->properties);
+        }
     }
-    const std::optional<ResolvedMenu> menu = resolve(m_request, operatorContextFor(context));
-    if (!menu) {
-        m_popup.close();
-        m_popup.draw(popupId, context, ResolvedMenu{});
-        return;
-    }
-    if (const std::optional<MenuChoice> chosen = m_popup.draw(popupId, context, *menu)) {
-        context.invoke(chosen->operatorId, chosen->properties);
+    if (m_pie.isOpen()) {
+        const std::optional<ResolvedMenu> menu = resolve(m_pieRequest, operatorContextFor(context));
+        if (!menu) {
+            m_pie.close();
+            m_pie.draw(piePopupId, context, ResolvedMenu{});
+        } else if (const std::optional<MenuChoice> chosen = m_pie.draw(piePopupId, context, *menu)) {
+            context.invoke(chosen->operatorId, chosen->properties);
+        }
     }
 }
 
@@ -97,7 +133,25 @@ OperatorRegistrationResult registerMenuOperators(OperatorRegistry& registry, Edi
         .poll = [](const OperatorContext& context) { return context.editMode(); },
         .execute = [&menus](OperatorContext&,
                             OperatorProperties&) { return openMenu(menus, {.menu = addMenuId, .category = {}}); }};
-    for (Operator* op : {&callMenu, &addMenu}) {
+    Operator callPie{
+        .id = "wm.call_pie",
+        .label = "Call Pie Menu",
+        .description = "Open a menu as a pie around the mouse: hold the key and let go to pick, or tap it and click",
+        .flags = OperatorFlags::Internal,
+        .properties = OperatorProperties::make(
+            CallPieProperties{}, std::move(Fields<CallPieProperties>().add("menu", &CallPieProperties::menu))),
+        .poll = {},
+        .execute = [&menus](OperatorContext&, OperatorProperties& properties) {
+            const CallPieProperties* values = properties.get<CallPieProperties>();
+            if (values == nullptr) {
+                return OperatorResult::failed("Operator properties have the wrong type");
+            }
+            if (const MenuResult result = menus.openPie({.menu = values->menu, .category = {}}); !result) {
+                return OperatorResult::failed(result.error);
+            }
+            return OperatorResult::finished();
+        }};
+    for (Operator* op : {&callMenu, &callPie, &addMenu}) {
         if (OperatorRegistrationResult result = registry.add(std::move(*op)); !result) {
             return result;
         }

@@ -3,6 +3,7 @@
 #include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/PickQueries.hpp"
+#include "editor/operators/KeymapDispatch.hpp"
 #include "editor/panels/AssetDragPayloads.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/theme/EditorTheme.hpp"
@@ -38,20 +39,6 @@ void paintChildGlass() {
 const char* entityName(const Scene& scene, Entity entity) {
     const auto* name = scene.registry().try_get<NameComponent>(entity);
     return name != nullptr ? name->name.c_str() : "Camera";
-}
-
-const char* selectionSetModeName(SelectionSetMode mode) {
-    switch (mode) {
-    case SelectionSetMode::Auto:
-        return "auto";
-    case SelectionSetMode::Set:
-        return "set";
-    case SelectionSetMode::Extend:
-        return "extend";
-    case SelectionSetMode::Subtract:
-        return "subtract";
-    }
-    return "auto";
 }
 
 glm::mat3 normalizedAxes(const glm::mat4& world) {
@@ -212,6 +199,10 @@ glm::vec2 ViewportPanel::size() const {
     return m_size;
 }
 
+bool ViewportPanel::cameraWaitsForRightRelease() const {
+    return m_suppressCameraUntilRelease;
+}
+
 void ViewportPanel::suppressCameraUntilRightRelease() {
     m_suppressCameraUntilRelease = true;
 }
@@ -233,7 +224,7 @@ void ViewportPanel::beginBoxSelect(SelectionSetMode mode) {
 void ViewportPanel::beginLassoSelect(SelectionSetMode mode, bool rightDrag) {
     m_boxSelect.cancel();
     // The gesture's press is the outline's first point.
-    m_lassoSelect.begin(mode, rightDrag, m_mouseInView);
+    m_lassoSelect.begin(mode, rightDrag, rightDrag ? m_mouseGestureStart.value_or(m_mouseInView) : m_mouseInView);
     if (rightDrag) {
         suppressCameraUntilRightRelease();
     }
@@ -324,15 +315,16 @@ void ViewportPanel::update(EditorContext& context, const InputState& input, floa
         m_suppressCameraUntilRelease = false;
     }
     // Looking through a scene camera is read-only: the editor camera waits.
-    // So does it during a box or lasso, and from a Ctrl+RMB press, which
-    // starts a lasso rather than fly navigation.
-    // Shift+RMB places the 3D cursor; it starts no navigation either.
-    const bool ctrlDown = input.keyDown(Key::LeftControl) || input.keyDown(Key::RightControl);
-    const bool shiftDown = input.keyDown(Key::LeftShift) || input.keyDown(Key::RightShift);
-    const bool rightGesture = (ctrlDown || shiftDown) && input.mouseButtonDown(MouseButton::Right) && !m_navigating;
+    // So does it during a box or lasso, and from a right or middle press the
+    // keymap binds with the modifiers held (Ctrl+RMB lassos and Shift+RMB
+    // places the 3D cursor rather than flying); unbound presses navigate.
+    const bool boundPress =
+        !m_navigating && ((input.mouseButtonDown(MouseButton::Right) &&
+                           context.actions.mouseButtonBound(KeymapRegion::Viewport, ImGuiMouseButton_Right)) ||
+                          (input.mouseButtonDown(MouseButton::Middle) &&
+                           context.actions.mouseButtonBound(KeymapRegion::Viewport, ImGuiMouseButton_Middle)));
     const bool cameraInputActive = m_inputActive && !context.actions.modalTransformActive() &&
-                                   !m_suppressCameraUntilRelease && !m_cameraView && !selectToolActive() &&
-                                   !rightGesture;
+                                   !m_suppressCameraUntilRelease && !m_cameraView && !selectToolActive() && !boundPress;
     m_navigating =
         cameraInputActive && (input.mouseButtonDown(MouseButton::Middle) || input.mouseButtonDown(MouseButton::Right));
     m_camera.update(input, deltaSeconds, cameraInputActive);
@@ -505,7 +497,6 @@ void ViewportPanel::draw(EditorContext& context) {
     // The chrome is drawn in child windows, so the image reports no hover or
     // click while the mouse is over the header, tool shelf, or sidebar.
     const bool imageHovered = ImGui::IsItemHovered();
-    const bool imageClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
     m_inputActive = texture && (imageHovered || m_navigating);
     rendering.setViewInputActive(m_view, m_inputActive && !modal && !m_suppressCameraUntilRelease && !m_cameraView);
 
@@ -525,6 +516,7 @@ void ViewportPanel::draw(EditorContext& context) {
         return;
     }
 
+    bool mousePressesAllowed = false;
     if (selectToolActive()) {
         // A box or lasso owns the mouse and keys until it ends.
         updateSelectTools(imageHovered);
@@ -533,16 +525,9 @@ void ViewportPanel::draw(EditorContext& context) {
         if (imageHovered || chromeHovered) {
             context.actions.handleObjectKeys(context.app, KeymapRegion::Viewport);
         }
-        if (imageClicked && !gizmoBlocksPicking && !context.actions.modalTransformActive()) {
-            selectAtMouse(context);
-        } else if (imageHovered && ImGui::GetIO().KeyCtrl && ImGui::IsMouseClicked(ImGuiMouseButton_Right) &&
-                   !gizmoBlocksPicking && !context.eyedropperArmed()) {
-            startLassoGesture(context);
-        } else if (imageHovered && ImGui::GetIO().KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right) &&
-                   !gizmoBlocksPicking && !context.eyedropperArmed()) {
-            placeCursorAtMouse(context);
-        }
+        mousePressesAllowed = imageHovered && !gizmoBlocksPicking && !context.actions.modalTransformActive();
     }
+    dispatchMouseChords(context, mousePressesAllowed);
     processPicks(context);
     if (m_chrome.overlays.activeName) {
         drawActiveName(context);
@@ -766,27 +751,28 @@ void ViewportPanel::drawItemTab(EditorContext& context) {
     ImGui::EndDisabled();
 }
 
-void ViewportPanel::selectAtMouse(EditorContext& context) {
-    const ImGuiIO& io = ImGui::GetIO();
-    const nlohmann::json properties{{"x", m_mouseInView.x}, {"y", m_mouseInView.y}, {"extend", io.KeyShift}};
-    context.actions.invokeOperator(context.app, io.KeyAlt ? "view3d.select_cycle" : "view3d.select", properties.dump(),
-                                   KeymapRegion::Viewport);
-}
-
-void ViewportPanel::startLassoGesture(EditorContext& context) {
-    // Ctrl is the gesture itself, so Shift extends and Alt subtracts.
-    const ImGuiIO& io = ImGui::GetIO();
-    const SelectionSetMode mode =
-        io.KeyShift ? SelectionSetMode::Extend : (io.KeyAlt ? SelectionSetMode::Subtract : SelectionSetMode::Set);
-    const nlohmann::json properties{{"mode", selectionSetModeName(mode)}, {"right_drag", true}};
-    context.actions.invokeOperator(context.app, "view3d.select_lasso", properties.dump(), KeymapRegion::Viewport);
-}
-
-void ViewportPanel::placeCursorAtMouse(EditorContext& context) {
-    // The press must not also start fly navigation.
-    suppressCameraUntilRightRelease();
-    const nlohmann::json properties{{"x", m_mouseInView.x}, {"y", m_mouseInView.y}};
-    context.actions.invokeOperator(context.app, "view3d.cursor3d_place", properties.dump(), KeymapRegion::Viewport);
+void ViewportPanel::dispatchMouseChords(EditorContext& context, bool pressesAllowed) {
+    // Presses count over the image when no gizmo is under the mouse; while
+    // the eyedropper is armed, a right press is left to cancel it.
+    uint32_t allowedButtons = 0;
+    if (pressesAllowed) {
+        allowedButtons = allMouseButtons;
+        if (context.eyedropperArmed()) {
+            allowedButtons &= ~(1u << ImGuiMouseButton_Right);
+        }
+    }
+    if (!ImGui::IsAnyMouseDown()) {
+        m_mouseGestureStart.reset();
+    }
+    const uint32_t claimed = context.actions.dispatchMouseChords(context.app, KeymapRegion::Viewport, allowedButtons);
+    if (claimed != 0) {
+        m_mouseGestureStart = m_mouseInView;
+    }
+    if ((claimed & (1u << ImGuiMouseButton_Right)) != 0) {
+        // A bound right press is not fly navigation, even if its modifiers
+        // are let go before the button.
+        suppressCameraUntilRightRelease();
+    }
 }
 
 void ViewportPanel::updateSelectTools(bool imageHovered) {

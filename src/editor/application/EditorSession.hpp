@@ -16,6 +16,7 @@
 #include "editor/menus/EditorMenus.hpp"
 #include "editor/modules/GameModuleHost.hpp"
 #include "editor/operators/Keymap.hpp"
+#include "editor/operators/KeymapDispatch.hpp"
 #include "editor/operators/KeymapEditor.hpp"
 #include "editor/operators/LastOperatorPanel.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
@@ -111,6 +112,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void handleObjectKeys(ApplicationContext& context, KeymapRegion region) override;
     bool modalTransformActive() const override;
     void updateModalTransform(ApplicationContext& context, ViewportId viewport) override;
+    uint32_t dispatchMouseChords(ApplicationContext& context, KeymapRegion region, uint32_t allowedButtons) override;
+    bool mouseButtonBound(KeymapRegion region, int button) const override;
 
     SceneEditing editing(ApplicationContext& context);
     EditorContext editorContext(ApplicationContext& context);
@@ -132,6 +135,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
                                   const OperatorProperties& properties);
     // Runs the binding of the first pressed chord bound in region.
     void dispatchKeymap(ApplicationContext& context, KeymapRegion region);
+    // Runs the Hold, Drag, Release, and Click bindings of the followed press
+    // (once per frame).
+    void updateKeymapGesture(ApplicationContext& context);
     // A menu item showing the operator's shortcut, disabled when its poll fails.
     void operatorMenuItem(ApplicationContext& context, std::string_view operatorId, const char* label,
                           std::string_view properties = {}, bool selected = false);
@@ -237,6 +243,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void finishModalTransform(ApplicationContext& context, bool confirm);
     void drawModalTransformOverlay(const ViewportPanel& viewport, const ModalTransformResult& result) const;
     bool updateSmokeMenus(ApplicationContext& context);
+    // Frames 335-345: the Shading pie through wm.call_pie.
+    bool updateSmokePies(ApplicationContext& context);
 
     // Viewports (EditorViewports.cpp).
     void registerViewportOperators();
@@ -293,6 +301,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     BuildState m_lastBuildState{BuildState::Idle};
     Keymap m_keymap;
     std::filesystem::path m_keymapPath;
+    // Turns key and mouse input into bindings to run, following a press for
+    // its Hold, Release, Click, and Drag bindings.
+    KeymapDispatcher m_keymapDispatcher;
     OperatorSearch m_operatorSearch;
     KeymapEditor m_keymapEditor;
     LastOperatorPanel m_lastOperatorPanel;
@@ -396,6 +407,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     std::string m_smokeOverlayState;
     // Entities in the scene before the menu smoke added one.
     size_t m_smokeEntityCount{0};
+    // The active viewport's shading before the pie smoke chose Wireframe.
+    std::optional<ViewportShading> m_smokePieShading;
     // The Simulate smoke: the scene before it entered Simulate, and how many
     // fixed-update system runs it has seen.
     std::string m_smokeSimulateSnapshot;

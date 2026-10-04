@@ -588,11 +588,13 @@ add_library(zenith_editor_app STATIC
     src/editor/menus/EditorMenus.cpp
     src/editor/menus/MenuPopup.cpp
     src/editor/menus/MenuRegistry.cpp
+    src/editor/menus/PieMenu.cpp
     src/editor/modules/GameModuleHost.cpp
     src/editor/operators/ComponentOperators.cpp
     src/editor/operators/CollectionOperators.cpp
     src/editor/operators/DefaultKeymap.cpp
     src/editor/operators/Keymap.cpp
+    src/editor/operators/KeymapDispatch.cpp
     src/editor/operators/KeymapEditor.cpp
     src/editor/operators/LastOperatorPanel.cpp
     src/editor/operators/EyedropperOperators.cpp

@@ -46,6 +46,7 @@ void EditorSession::registerPreferenceOperators() {
 
 void EditorSession::applyAppearance() {
     const EditorAppearanceSettings& appearance = m_settings.appearance();
+    m_menus.setPieMenusEnabled(appearance.pieMenus);
     if (m_appliedAppearance == appearance) {
         return;
     }

@@ -61,6 +61,9 @@ struct EditorAppearanceSettings {
     // Screen pixels per art pixel: 0 follows the display's content scale,
     // 1 to maximumUiScale overrides it.
     uint32_t uiScale{0};
+    // Whether pie keys (Z, `, .) open pie menus or the ordinary searchable
+    // menus (ui.pie_menus).
+    bool pieMenus{false};
 
     bool operator==(const EditorAppearanceSettings&) const = default;
 };
