@@ -57,6 +57,12 @@ class InputActionState {
 class InputActionMap {
   public:
     bool addAction(std::string name, InputActionValueType type, bool clampValue = true);
+    // Adds every action of other with its bindings. Fails, adding nothing,
+    // when an action of other already exists here; error names it.
+    bool merge(const InputActionMap& other, std::string& error);
+    bool contains(std::string_view action) const;
+    // Every action, in name order.
+    std::vector<std::string> actionNames() const;
     bool addBinding(std::string_view action, InputBinding binding);
     bool replaceBinding(std::string_view action, size_t index, InputBinding binding);
     bool clearBindings(std::string_view action);

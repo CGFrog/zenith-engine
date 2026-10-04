@@ -72,8 +72,8 @@ Approved 2026-10-04. Nothing is implemented yet.
 | --- | --- | --- | --- |
 | A1 | Scene costs that grow with entity count | — | done d1519ef |
 | A2 | System phases and `GameServices` | — | done 7f4f340 |
-| A3 | Physics queries, layers, triggers | A2 (trigger events) | done |
-| A4 | Shared input actions | A2 | todo |
+| A3 | Physics queries, layers, triggers | A2 (trigger events) | done 71dfd12 |
+| A4 | Shared input actions | A2 | done |
 | B1 | Engine character controller | A3, A2 | todo |
 | B2 | Behaviours | A2, A3 | todo |
 | B3 | Animation state machine | A2 | todo |
@@ -279,12 +279,28 @@ Follow-ups:
 
 Files: `src/engine/input/*`, `src/engine/module/ModuleRegistrar.hpp`.
 
-- [ ] Modules declare their action map with `registrar.addInputActions(...)`.
-- [ ] The host evaluates the map once per frame and exposes a
+- [x] Modules declare their action map with `registrar.addInputActions(...)`.
+- [x] The host evaluates the map once per frame and exposes a
       `const InputActionState*` in `SystemContext`. Systems no longer evaluate
       bindings themselves (as `src/game/gameplay/DemoGameplay.cpp` does today).
-- [ ] `InputProfileSet` rebinding and save/load keep working.
-- [ ] Port the demo gameplay to the shared state.
+- [x] `InputProfileSet` rebinding and save/load keep working.
+- [x] Port the demo gameplay to the shared state.
+
+Result:
+- `ModuleRegistrar::addInputActions` merges a module's actions into one
+  `InputActionMap`, which `GameModule`, `Gameplay`, and the editor's
+  `GameModuleHost` carry.
+- `GameplayRunner` evaluates the map once per frame and once per fixed step,
+  and hands systems `SystemContext::actions`.
+- `applyInputProfile` overlays a saved `InputProfile` on the runner's
+  `actionMap()`. `InputProfileSet` and its save and load are unchanged.
+- The demo registers `createDemoInputMap()`. Its systems and
+  `GameplayScene`'s menus read the same map.
+
+Follow-ups:
+- Nothing persists a player's profile per game yet. The settings screen (B6)
+  and C5 should save one beside the game settings and apply it at start.
+- `ButtonBehavior::Toggle` is still not evaluated.
 
 ## Phase B: reusable gameplay framework
 

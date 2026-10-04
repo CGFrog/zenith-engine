@@ -64,12 +64,10 @@ Entity firstCameraChild(const Scene& scene, Entity entity) {
 } // namespace
 
 GameplayScene::GameplayScene(Gameplay gameplay, AudioClipHandle interactionSound,
-                             std::shared_ptr<InputActionMap> inputActions, std::shared_ptr<GameSettings> settings,
-                             std::filesystem::path settingsPath, std::optional<ProjectConfig> project,
-                             std::optional<CaptureCameraPath> captureCamera)
+                             std::shared_ptr<GameSettings> settings, std::filesystem::path settingsPath,
+                             std::optional<ProjectConfig> project, std::optional<CaptureCameraPath> captureCamera)
     : m_gameplay(std::move(gameplay))
     , m_interactionSound(interactionSound)
-    , m_inputActions(std::move(inputActions))
     , m_settings(std::move(settings))
     , m_settingsPath(std::move(settingsPath))
     , m_project(std::move(project))
@@ -163,7 +161,9 @@ void GameplayScene::update(ApplicationContext& context, const InputState& input,
         moveCaptureCamera(context.scene, m_captureCameraEntity, *m_captureCamera, m_captureElapsedSeconds);
         return;
     }
-    m_actions = m_inputActions->evaluate(input);
+    // The menus read the actions directly; Play systems get them from the
+    // runner, which evaluates the same map.
+    m_actions = m_gameplay.actionMap().evaluate(input);
     if (m_actions.pressed(DemoAction::Pause)) {
         if (m_screen == Screen::Playing) {
             m_screen = Screen::Paused;

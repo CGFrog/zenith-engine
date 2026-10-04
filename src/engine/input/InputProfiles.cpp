@@ -99,6 +99,23 @@ std::span<const InputProfile> InputProfileSet::profiles() const {
     return m_profiles;
 }
 
+InputProfileResult applyInputProfile(const InputProfile& profile, InputActionMap& map) {
+    for (const ProfileBinding& binding : profile.bindings) {
+        if (!map.contains(binding.action)) {
+            return {.error = "Input profile '" + profile.name + "' binds unknown action '" + binding.action + "'"};
+        }
+    }
+    std::vector<std::string_view> cleared;
+    for (const ProfileBinding& binding : profile.bindings) {
+        if (std::ranges::find(cleared, binding.action) == cleared.end()) {
+            map.clearBindings(binding.action);
+            cleared.push_back(binding.action);
+        }
+        map.addBinding(binding.action, binding.binding);
+    }
+    return {.success = true};
+}
+
 InputProfileResult saveInputProfiles(const std::filesystem::path& path, const InputProfileSet& profiles) {
     nlohmann::json encodedProfiles = nlohmann::json::array();
     for (const InputProfile& profile : profiles.profiles()) {

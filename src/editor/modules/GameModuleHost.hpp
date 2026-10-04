@@ -3,6 +3,7 @@
 #include "editor/menus/MenuRegistry.hpp"
 #include "editor/modules/EditorModuleApi.hpp"
 #include "engine/diagnostics/Logger.hpp"
+#include "engine/input/InputActions.hpp"
 #include "engine/module/GameModule.hpp"
 #include "engine/module/GameServices.hpp"
 #include "engine/module/SystemScheduler.hpp"
@@ -249,6 +250,8 @@ class GameModuleHost {
     std::chrono::steady_clock::time_point m_pendingSince{};
     std::chrono::steady_clock::time_point m_lastCheck{};
 
+    // A copy of the module's input actions, evaluated for systems that get input.
+    InputActionMap m_inputActions;
     Logger m_fallbackLogger;
     Logger* m_logger{&m_fallbackLogger};
     // Holds module code (commands, timers, events): released with the module.

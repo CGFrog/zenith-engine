@@ -1,7 +1,10 @@
 #include "engine/input/InputActions.hpp"
+#include "engine/input/InputProfiles.hpp"
 
 #include <cmath>
 #include <iostream>
+#include <string>
+#include <vector>
 
 namespace {
 int failures = 0;
@@ -11,6 +14,44 @@ void expect(bool condition, const char* message) {
         std::cerr << "FAILED: " << message << '\n';
         ++failures;
     }
+}
+
+// What modules declare through ModuleRegistrar::addInputActions: maps merge
+// into the host's, and a saved profile rebinds the merged defaults.
+void testMergeAndProfiles() {
+    InputActionMap host;
+    InputActionMap first;
+    first.addAction("Jump", InputActionValueType::Button);
+    first.addBinding("Jump", {.source = Key::Space});
+    InputActionMap second;
+    second.addAction("Fire", InputActionValueType::Button);
+    second.addBinding("Fire", {.source = MouseButton::Left});
+    std::string error;
+    expect(host.merge(first, error) && host.merge(second, error) &&
+               host.actionNames() == std::vector<std::string>{"Fire", "Jump"} && host.bindingCount("Jump") == 1,
+           "action maps merge with their bindings");
+    InputActionMap clash;
+    clash.addAction("Jump", InputActionValueType::Axis1D);
+    clash.addAction("Crouch", InputActionValueType::Button);
+    expect(!host.merge(clash, error) && error.find("Jump") != std::string::npos && !host.contains("Crouch"),
+           "merging an action twice fails, names it, and adds nothing");
+
+    InputProfile profile{.name = "Lefty",
+                         .bindings = {{.action = "Jump", .binding = {.source = Key::RightControl}},
+                                      {.action = "Jump", .binding = {.source = GamepadButton::South}}}};
+    expect(applyInputProfile(profile, host).success && host.bindingCount("Jump") == 2 && host.bindingCount("Fire") == 1,
+           "a profile replaces the bindings of the actions it names and keeps the others");
+    InputState pressed;
+    pressed.setKeyDown(Key::RightControl);
+    pressed.setKeyPressed(Key::RightControl);
+    InputState oldKey;
+    oldKey.setKeyDown(Key::Space);
+    oldKey.setKeyPressed(Key::Space);
+    expect(host.evaluate(pressed).pressed("Jump") && !host.evaluate(oldKey).pressed("Jump"),
+           "the profile's binding drives the action and the default no longer does");
+    const InputProfile unknown{.name = "Broken", .bindings = {{.action = "Dance", .binding = {.source = Key::D}}}};
+    expect(!applyInputProfile(unknown, host) && host.bindingCount("Jump") == 2,
+           "a profile naming an unknown action fails and changes nothing");
 }
 } // namespace
 
@@ -92,5 +133,6 @@ int main() {
     expect(!fixedEdges.apply({}).gamepadButtonPressed(GamepadButton::South),
            "fixed-update edge consumption prevents duplicate action presses");
 
+    testMergeAndProfiles();
     return failures == 0 ? 0 : 1;
 }

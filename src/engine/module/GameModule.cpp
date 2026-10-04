@@ -92,11 +92,13 @@ GameModuleResult GameModule::load(const std::filesystem::path& path, const GameM
     auto componentTypes = std::make_shared<ComponentTypeRegistry>(
         options.baseComponentTypes ? *options.baseComponentTypes : *builtInComponentTypes());
     auto systems = std::make_shared<SystemRegistry>();
+    auto inputActions = std::make_shared<InputActionMap>();
     // Owned by the module before registration runs, so a failure releases the
     // module's functions before the library unloads.
     module->m_componentTypes = componentTypes;
     module->m_systems = systems;
-    ModuleRegistrar registrar(*componentTypes, *systems);
+    module->m_inputActions = inputActions;
+    ModuleRegistrar registrar(*componentTypes, *systems, *inputActions);
     registerModule(registrar);
     componentTypes.reset();
     systems.reset();
@@ -135,6 +137,10 @@ std::span<const std::string> GameModule::moduleComponentKeys() const {
 
 std::shared_ptr<const SystemRegistry> GameModule::systems() const {
     return m_systems;
+}
+
+std::shared_ptr<const InputActionMap> GameModule::inputActions() const {
+    return m_inputActions;
 }
 
 bool GameModule::registriesShared() const {

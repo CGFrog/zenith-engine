@@ -32,16 +32,17 @@ FirstPersonViewPreferences viewPreferences(const Scene& scene) {
     return preferences ? *preferences : FirstPersonViewPreferences{};
 }
 
-// The systems share one immutable binding map; evaluating it is stateless.
-SystemDescriptor firstPersonViewSystem(std::shared_ptr<const InputActionMap> bindings) {
+// Both read the actions the host evaluated from the module's action map
+// (registered below); they are null while no player input reaches the scene.
+SystemDescriptor firstPersonViewSystem() {
     return {.name = std::string(DemoGameplay::FirstPersonViewSystem),
             .phase = SystemPhase::Update,
             .runIn = RunIn::Play,
-            .run = [bindings = std::move(bindings)](const SystemContext& context) {
-                if (context.input == nullptr) {
+            .run = [](const SystemContext& context) {
+                if (context.actions == nullptr) {
                     return;
                 }
-                const InputActionState actions = bindings->evaluate(*context.input);
+                const InputActionState& actions = *context.actions;
                 const FirstPersonViewPreferences preferences = viewPreferences(context.scene);
                 glm::vec2 look = actions.axis2D(DemoAction::Look) * preferences.lookScale;
                 look.y *= preferences.invertLookY ? -1.0f : 1.0f;
@@ -51,15 +52,15 @@ SystemDescriptor firstPersonViewSystem(std::shared_ptr<const InputActionMap> bin
             }};
 }
 
-SystemDescriptor firstPersonMovementSystem(std::shared_ptr<const InputActionMap> bindings) {
+SystemDescriptor firstPersonMovementSystem() {
     return {.name = std::string(DemoGameplay::FirstPersonMovementSystem),
             .phase = SystemPhase::FixedUpdate,
             .runIn = RunIn::Play,
-            .run = [bindings = std::move(bindings)](const SystemContext& context) {
-                if (context.input == nullptr || context.application == nullptr) {
+            .run = [](const SystemContext& context) {
+                if (context.actions == nullptr || context.application == nullptr) {
                     return;
                 }
-                const InputActionState actions = bindings->evaluate(*context.input);
+                const InputActionState& actions = *context.actions;
                 FirstPersonControllerSystem{}.fixedUpdate(context.scene, context.application->physics,
                                                           {.move = actions.axis2D(DemoAction::Move),
                                                            .jumpPressed = actions.pressed(DemoAction::Jump),
@@ -149,8 +150,8 @@ void registerDemoGameplay(ModuleRegistrar& registrar) {
     registrar.addComponentType(collectibleItemComponentType());
     registrar.addComponentType(itemCollectorComponentType());
 
-    const std::shared_ptr<const InputActionMap> bindings = createDemoInputMap();
-    registrar.addSystem(firstPersonViewSystem(bindings));
-    registrar.addSystem(firstPersonMovementSystem(bindings));
+    registrar.addInputActions(*createDemoInputMap());
+    registrar.addSystem(firstPersonViewSystem());
+    registrar.addSystem(firstPersonMovementSystem());
     registrar.addSystem(itemCollectionSystem());
 }

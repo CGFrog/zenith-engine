@@ -52,5 +52,12 @@ class InputProfileSet {
     size_t m_selected{0};
 };
 
+// Replaces the bindings of every action profile names with the profile's, so
+// a player's saved profile overrides a game's default bindings (from its game
+// module's action map). Actions the profile does not name keep theirs. Fails,
+// changing nothing, when the profile names an action map lacks. Hold and
+// Toggle behaviours are not evaluated; every binding acts as Hold.
+InputProfileResult applyInputProfile(const InputProfile& profile, InputActionMap& map);
+
 InputProfileResult saveInputProfiles(const std::filesystem::path& path, const InputProfileSet& profiles);
 InputProfileResult loadInputProfiles(const std::filesystem::path& path, InputProfileSet& profiles);

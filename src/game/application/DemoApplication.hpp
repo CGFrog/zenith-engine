@@ -39,7 +39,6 @@ class DemoApplication final : public Application {
     Gameplay m_gameplay;
     AudioClipHandle m_interactionSound;
     AudioVoiceHandle m_backgroundMusic;
-    std::shared_ptr<InputActionMap> m_inputActions;
     std::shared_ptr<GameSettings> m_settings;
     std::filesystem::path m_settingsPath;
     std::optional<ProjectConfig> m_project;

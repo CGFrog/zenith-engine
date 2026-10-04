@@ -12,6 +12,7 @@
 #include <vector>
 
 class ComponentTypeRegistry;
+class InputActionMap;
 
 struct GameModuleResult {
     bool success{false};
@@ -87,6 +88,9 @@ class GameModule {
     std::span<const std::string> moduleComponentKeys() const;
     // The module's systems; never null.
     std::shared_ptr<const SystemRegistry> systems() const;
+    // The input actions the module declared (possibly none); never null.
+    // Plain data, so it may outlive the module.
+    std::shared_ptr<const InputActionMap> inputActions() const;
 
     // Whether anything outside this object still shares the registries.
     bool registriesShared() const;
@@ -111,5 +115,6 @@ class GameModule {
     std::vector<std::string> m_moduleComponentKeys;
     std::shared_ptr<const ComponentTypeRegistry> m_componentTypes;
     std::shared_ptr<const SystemRegistry> m_systems;
+    std::shared_ptr<const InputActionMap> m_inputActions;
     LogChannel m_log;
 };

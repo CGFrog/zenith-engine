@@ -2,6 +2,7 @@
 
 #include "GameServices.hpp"
 #include "SystemScheduler.hpp"
+#include "engine/input/InputActions.hpp"
 #include "engine/input/InputManager.hpp"
 
 #include <filesystem>
@@ -24,6 +25,8 @@ class ModuleRegistrar;
 struct Gameplay {
     std::shared_ptr<const ComponentTypeRegistry> componentTypes;
     std::shared_ptr<const SystemScheduler> systems;
+    // The game's input actions and default bindings; null means none.
+    std::shared_ptr<const InputActionMap> inputActions;
 
     explicit operator bool() const {
         return componentTypes != nullptr && systems != nullptr;
@@ -42,6 +45,12 @@ struct Gameplay {
 //
 // Entity commands flush after every phase. Without start, systems run with
 // null services.
+//
+// The runner owns a copy of the gameplay's input actions (actionMap), which
+// the game may rebind (for example with applyInputProfile). It evaluates
+// them once per frame and once per fixed step and hands systems the result
+// as SystemContext::actions: each fixed step sees the presses buffered since
+// the previous step, so a press reaches exactly one fixed step.
 class GameplayRunner {
   public:
     GameplayRunner() = default;
@@ -60,6 +69,8 @@ class GameplayRunner {
     void stop();
     // Null unless started.
     GameServices* services();
+    // The input actions systems receive; the game may change the bindings.
+    InputActionMap& actionMap();
 
     // simulatedSeconds is deltaSeconds on the scene's simulation clock; timers
     // advance by it.
@@ -71,13 +82,15 @@ class GameplayRunner {
     void drawUi(ApplicationContext& context);
 
   private:
-    void run(SystemPhase phase, ApplicationContext& context, const InputState* input, float deltaSeconds,
-             GameUiContext* ui = nullptr);
+    void run(SystemPhase phase, ApplicationContext& context, const InputState* input, const InputActionState* actions,
+             float deltaSeconds, GameUiContext* ui = nullptr);
 
     Gameplay m_gameplay;
+    InputActionMap m_actionMap;
     std::unique_ptr<GameServices> m_services;
-    // The last update's input and duration.
+    // The last update's input, its actions, and its duration.
     InputState m_frameInput;
+    InputActionState m_frameActions;
     float m_frameSeconds{0.0f};
 };
 

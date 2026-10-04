@@ -97,6 +97,33 @@ bool InputActionMap::addAction(std::string name, InputActionValueType type, bool
     return m_actions.emplace(std::move(name), ActionDefinition{.type = type, .clampValue = clampValue}).second;
 }
 
+bool InputActionMap::merge(const InputActionMap& other, std::string& error) {
+    for (const auto& [name, definition] : other.m_actions) {
+        if (m_actions.contains(name)) {
+            error = "Input action '" + name + "' is declared twice";
+            return false;
+        }
+    }
+    for (const auto& [name, definition] : other.m_actions) {
+        m_actions.emplace(name, definition);
+    }
+    return true;
+}
+
+bool InputActionMap::contains(std::string_view action) const {
+    return m_actions.contains(std::string(action));
+}
+
+std::vector<std::string> InputActionMap::actionNames() const {
+    std::vector<std::string> names;
+    names.reserve(m_actions.size());
+    for (const auto& [name, definition] : m_actions) {
+        names.push_back(name);
+    }
+    std::ranges::sort(names);
+    return names;
+}
+
 bool InputActionMap::addBinding(std::string_view action, InputBinding binding) {
     const auto found = m_actions.find(std::string(action));
     if (found == m_actions.end()) {

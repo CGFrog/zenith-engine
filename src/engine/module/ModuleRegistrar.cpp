@@ -2,9 +2,11 @@
 
 #include <utility>
 
-ModuleRegistrar::ModuleRegistrar(ComponentTypeRegistry& componentTypes, SystemRegistry& systems)
+ModuleRegistrar::ModuleRegistrar(ComponentTypeRegistry& componentTypes, SystemRegistry& systems,
+                                 InputActionMap& inputActions)
     : m_componentTypes(componentTypes)
-    , m_systems(systems) {}
+    , m_systems(systems)
+    , m_inputActions(inputActions) {}
 
 SceneDocumentResult ModuleRegistrar::addComponentType(ComponentType type) {
     std::string key = type.key();
@@ -26,6 +28,15 @@ SystemRegistryResult ModuleRegistrar::addSystem(SystemDescriptor system) {
         recordFailure(result.error);
     }
     return result;
+}
+
+bool ModuleRegistrar::addInputActions(const InputActionMap& actions) {
+    std::string error;
+    if (!m_inputActions.merge(actions, error)) {
+        recordFailure(error);
+        return false;
+    }
+    return true;
 }
 
 const std::vector<std::string>& ModuleRegistrar::componentKeys() const {

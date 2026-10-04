@@ -291,6 +291,14 @@ void testModuleProjectPlays(const fs::path& directory) {
         expect(spawned() == 1, "a module system read SceneLoaded and its deferred spawn applied after Update");
         session.update(InputState{}, 1.0f / 60.0f);
         expect(spawned() == 1, "SceneLoaded is read in the first frame only");
+        InputState fire;
+        fire.setKeyDown(Key::F);
+        fire.setKeyPressed(Key::F);
+        session.update(fire, 1.0f / 60.0f);
+        session.fixedUpdate(fire, 1.0f / 60.0f);
+        expect(counterField(*counter, scene, entity, "fire_presses") == 1 &&
+                   counterField(*counter, scene, entity, "fixed_fire_presses") == 1,
+               "systems read the module's input actions, evaluated by the host each frame and fixed step");
         session.lateUpdate(InputState{}, 1.0f / 60.0f);
         expect(counterField(*counter, scene, entity, "late_ticks") == 1, "LateUpdate systems run once per frame");
         // The exit criterion of GAMEPLAY_ROADMAP A2 for zenith --project.

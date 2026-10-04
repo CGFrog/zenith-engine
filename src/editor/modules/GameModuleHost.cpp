@@ -260,6 +260,7 @@ GameModuleHostResult GameModuleHost::loadSource(EditorDocument& document) {
     ++m_loadCount;
     m_scheduler = SystemScheduler(m_module->systems());
     m_scheduler.setSimulateMask(m_simulateMask);
+    m_inputActions = *m_module->inputActions();
     m_profile.clear();
     document.setComponentTypes(m_module->componentTypes());
 
@@ -340,6 +341,7 @@ void GameModuleHost::releaseModule(Scene& scene, EditorDocument& document, std::
     releaseEditorExtensions();
     m_services.runner.forgetLast();
     m_scheduler = SystemScheduler{};
+    m_inputActions = {};
     m_profile.clear();
     document.setComponentTypes(nullptr);
     // Replacing the registry destroys the storage module code created while
@@ -390,6 +392,10 @@ void GameModuleHost::runSystems(SystemPhase phase, Scene& scene, ApplicationCont
     if (mode != SimulationMode::Play) {
         input = nullptr;
     }
+    std::optional<InputActionState> actions;
+    if (input != nullptr) {
+        actions = m_inputActions.evaluate(*input);
+    }
     runGameplayPhase(m_scheduler, phase,
                      {.scene = scene,
                       .application = application,
@@ -398,6 +404,7 @@ void GameModuleHost::runSystems(SystemPhase phase, Scene& scene, ApplicationCont
                       .input = input,
                       .logger = m_logger,
                       .services = mode == SimulationMode::Edit ? nullptr : m_gameServices.get(),
+                      .actions = actions ? &*actions : nullptr,
                       .ui = phase == SystemPhase::Ui ? ui : nullptr},
                      &m_profile);
 }

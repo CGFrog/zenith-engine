@@ -9,9 +9,10 @@ type (`CharacterControllerComponent` with reflected tuning fields; `grounded`
 and `camera` stay runtime-only, and a controller without a camera adopts its
 first camera child) and two play-mode systems, `demo.first_person_view`
 (Update) and `demo.first_person_movement` (FixedUpdate; it needs
-`SystemContext::application` for physics). The systems keep the demo's
-immutable `InputActionMap` in their closures and evaluate it against
-`SystemContext::input`; without input they do nothing. Look preferences reach
+`SystemContext::application` for physics). The registration declares the demo's
+actions (`createDemoInputMap`) with `addInputActions`. The systems read the
+host-evaluated `SystemContext::actions`, and do nothing without them.
+`GameplayScene`'s menus read the same map through its `GameplayRunner`. Look preferences reach
 them as a `FirstPersonViewPreferences` value in the scene registry's context,
 which `GameplayScene` refreshes every frame from `GameSettings`.
 `module/DemoGameModule.cpp` is the only module-specific file: it exports the

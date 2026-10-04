@@ -25,6 +25,9 @@ struct TestCounterComponent {
     // Update runs (in any mode) that had a logger, and that had services.
     int32_t loggerSeen{0};
     int32_t servicesSeen{0};
+    // Presses of the module's Fire action seen by Update and by FixedUpdate.
+    int32_t firePresses{0};
+    int32_t fixedFirePresses{0};
 };
 
 template <typename Function> void forEachCounter(const SystemContext& context, Function function) {
@@ -49,6 +52,10 @@ void zenith_module_register(ModuleRegistrar& registrar) {
                                                .add("logger_seen", &TestCounterComponent::loggerSeen)
                                                .optional()
                                                .add("services_seen", &TestCounterComponent::servicesSeen)
+                                               .optional()
+                                               .add("fire_presses", &TestCounterComponent::firePresses)
+                                               .optional()
+                                               .add("fixed_fire_presses", &TestCounterComponent::fixedFirePresses)
                                                .optional())
                                    .build());
 
@@ -76,6 +83,29 @@ void zenith_module_register(ModuleRegistrar& registrar) {
                          .order = 5,
                          .run = [](const SystemContext& context) {
                              forEachCounter(context, [](TestCounterComponent& counter) { ++counter.editTicks; });
+                         }});
+    InputActionMap actions;
+    actions.addAction("Fire", InputActionValueType::Button);
+    actions.addBinding("Fire", {.source = Key::F});
+    registrar.addInputActions(actions);
+    registrar.addSystem(
+        {.name = "fire",
+         .phase = SystemPhase::Update,
+         .runIn = RunIn::Play,
+         .order = 20,
+         .run = [](const SystemContext& context) {
+             const bool fired = context.actions != nullptr && context.actions->pressed("Fire");
+             forEachCounter(context, [fired](TestCounterComponent& counter) { counter.firePresses += fired ? 1 : 0; });
+         }});
+    registrar.addSystem({.name = "fixed_fire",
+                         .phase = SystemPhase::FixedUpdate,
+                         .runIn = RunIn::Play,
+                         .order = 20,
+                         .run = [](const SystemContext& context) {
+                             const bool fired = context.actions != nullptr && context.actions->pressed("Fire");
+                             forEachCounter(context, [fired](TestCounterComponent& counter) {
+                                 counter.fixedFirePresses += fired ? 1 : 0;
+                             });
                          }});
     registrar.addSystem({.name = "late_tick",
                          .phase = SystemPhase::LateUpdate,

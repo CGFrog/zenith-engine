@@ -15,9 +15,9 @@ class GameplayScene final : public ApplicationScene {
     // the scene runs while playing. With a project the scene plays its
     // startupScene, which need not lie under its scene root (see
     // loadProjectSceneFile); without one it builds the demo room.
-    GameplayScene(Gameplay gameplay, AudioClipHandle interactionSound, std::shared_ptr<InputActionMap> inputActions,
-                  std::shared_ptr<GameSettings> settings, std::filesystem::path settingsPath,
-                  std::optional<ProjectConfig> project = std::nullopt,
+    // The scene's menus and its systems share gameplay's input actions.
+    GameplayScene(Gameplay gameplay, AudioClipHandle interactionSound, std::shared_ptr<GameSettings> settings,
+                  std::filesystem::path settingsPath, std::optional<ProjectConfig> project = std::nullopt,
                   std::optional<CaptureCameraPath> captureCamera = std::nullopt);
     SceneResult load(ApplicationContext& context) override;
     void update(ApplicationContext& context, const InputState& input, float deltaSeconds) override;
@@ -51,7 +51,6 @@ class GameplayScene final : public ApplicationScene {
 
     GameplayRunner m_gameplay;
     AudioClipHandle m_interactionSound;
-    std::shared_ptr<InputActionMap> m_inputActions;
     std::shared_ptr<GameSettings> m_settings;
     std::filesystem::path m_settingsPath;
     std::optional<ProjectConfig> m_project;

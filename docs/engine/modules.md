@@ -57,11 +57,12 @@ Besides the scene, mode, and delta, a system gets:
 - `input`: null when no player input reaches the scene (Edit, Simulate).
 - `services`: the session's `GameServices`, null in Edit.
 - `ui`: set only in the `Ui` phase.
-- `actions`: the game's evaluated input actions, or null when the host
-  evaluates none.
+- `actions`: the module's input actions (`ModuleRegistrar::addInputActions`)
+  evaluated by the host from `input`, and null whenever `input` is. See
+  [Window and input](window-input.md).
 
 Changing `SystemContext`, `ModuleRegistrar`, or a registered descriptor bumps
-`ZENITH_MODULE_API_VERSION` (now 3; A3 changed `RigidBodyComponent::layer`).
+`ZENITH_MODULE_API_VERSION` (now 4: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`).
 
 ## `GameServices`
 

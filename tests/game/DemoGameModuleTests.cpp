@@ -161,16 +161,28 @@ void testModule(const std::filesystem::path& modulePath, const std::filesystem::
         scheduler.run(SystemPhase::Update, {.scene = reloaded, .mode = SimulationMode::Play, .deltaSeconds = 0.1f});
         expect(floatField(*controllerType, controllerType->find(reloaded, reloadedPlayer), "yaw") == 0.0f,
                "the view system ignores frames without input");
+        // The module declares its actions; hosts evaluate them for systems.
+        const std::shared_ptr<const InputActionMap> actionMap = module->inputActions();
+        expect(actionMap->contains(DemoAction::Look) && actionMap->contains(DemoAction::Move) &&
+                   actionMap->contains(DemoAction::Pause),
+               "the demo module declares the demo's input actions");
         InputState look;
         look.mouseDelta = {100.0f, 0.0f};
-        scheduler.run(SystemPhase::Update,
-                      {.scene = reloaded, .mode = SimulationMode::Play, .deltaSeconds = 0.1f, .input = &look});
+        const InputActionState lookActions = actionMap->evaluate(look);
+        scheduler.run(SystemPhase::Update, {.scene = reloaded,
+                                            .mode = SimulationMode::Play,
+                                            .deltaSeconds = 0.1f,
+                                            .input = &look,
+                                            .actions = &lookActions});
         expect(floatField(*controllerType, controllerType->find(reloaded, reloadedPlayer), "yaw") < 0.0f,
-               "the module's view system turns look input into yaw");
+               "the module's view system turns the look action into yaw");
         // Without application services there is no physics to move; the
         // movement system must leave the scene alone rather than fail.
-        scheduler.run(SystemPhase::FixedUpdate,
-                      {.scene = reloaded, .mode = SimulationMode::Play, .deltaSeconds = 0.1f, .input = &look});
+        scheduler.run(SystemPhase::FixedUpdate, {.scene = reloaded,
+                                                 .mode = SimulationMode::Play,
+                                                 .deltaSeconds = 0.1f,
+                                                 .input = &look,
+                                                 .actions = &lookActions});
         expect(floatField(*controllerType, controllerType->find(reloaded, reloadedPlayer), "move_speed") == 6.5f,
                "the movement system tolerates a host without application services");
     }
