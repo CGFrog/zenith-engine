@@ -14,8 +14,10 @@ At the start of this project the plan was that I would write every line of code 
 
 ## Documentation
 
-- [`docs/REPOSITORY_GUIDE.md`](docs/REPOSITORY_GUIDE.md) explains every
-  top-level directory, source module, runtime asset, shader, and test target.
+- [`docs/REPOSITORY_GUIDE.md`](docs/REPOSITORY_GUIDE.md) is the index: it
+  explains every top-level directory, build target, runtime asset, and test
+  area, and links the per-subsystem docs under `docs/engine/`, `docs/editor/`,
+  and `docs/game/`.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) describes subsystem ownership,
   the ECS component model, startup, the frame loop, rendering, physics, and
   asset data flow.

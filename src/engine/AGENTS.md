@@ -7,18 +7,22 @@ This subtree is the reusable `zenith_engine` library. It must not include from
 
 | Path | Responsibility |
 | --- | --- |
-| `Engine.*` | Top-level ownership and runtime loop orchestration. |
-| `application/` | Application/scene lifecycle contracts, deferred control requests, and the simulation clock (time scale and pause). |
-| `assets/` | Renderer-independent import, decoding, caching, and typed asset handles. |
-| `audio/` | SDL audio device, decoding, mixing, streaming, and audio handles. |
-| `graphics/` | Renderer and Vulkan implementation; nested folders separate passes, resources, pipelines, surfaces, swapchains, shaders, and Vulkan setup. |
-| `input/` | Device-state translation; gameplay meaning belongs in `src/game/`. |
-| `module/` | Game module ABI, shadow-copied or in-place loading and unloading, module registration, the system registry and scheduler (Simulate mask, per-system CPU profile), and `Gameplay` (the component types and systems a game plays). |
-| `physics/` | Jolt-backed simulation exposed through Zenith domain types; `JoltRuntime` shares Jolt's process-wide state between worlds. |
-| `platform/` | OS services: user-data locations, atomic writes, diagnostics bundles, and child processes. |
-| `reflection/` | Plain-data field descriptors and their JSON codec; no scene or asset knowledge (types such as `SceneEntityId` opt into a kind through `ReflectedFieldKind`). |
-| `scene/` | ECS components, hierarchy, transforms, collections and visibility (`Collections`, `SceneVisibility`), the component type registry, and scene serialization. |
-| `window/` | SDL window ownership and platform surface access. |
+| `Engine.*` | Top-level ownership and runtime loop orchestration. [Application](../../docs/engine/application.md) |
+| `application/` | Application/scene lifecycle contracts, deferred requests, and the simulation clock. [Application](../../docs/engine/application.md) |
+| `assets/` | Renderer-independent import, decoding, caching, and typed asset handles. [Assets](../../docs/engine/assets.md) |
+| `audio/` | SDL audio device, decoding, mixing, streaming, and audio handles. [Audio](../../docs/engine/audio.md) |
+| `diagnostics/` | The engine `Logger`. [Application](../../docs/engine/application.md) |
+| `graphics/` | Renderer and Vulkan implementation. [Graphics](../../docs/engine/graphics.md), [passes](../../docs/engine/graphics-passes.md), [post](../../docs/engine/graphics-post.md) |
+| `input/` | Device-state translation; gameplay meaning belongs in `src/game/`. [Window and input](../../docs/engine/window-input.md) |
+| `jobs/` | Bounded prioritized background work. [Scene](../../docs/engine/scene.md) |
+| `module/` | Game module ABI, loading, system registry and scheduler, and `Gameplay`. [Modules](../../docs/engine/modules.md) |
+| `physics/` | Jolt-backed simulation exposed through Zenith domain types. [Physics](../../docs/engine/physics.md) |
+| `platform/` | OS services: user-data locations, atomic writes, diagnostics bundles, and child processes. [Platform](../../docs/engine/platform.md) |
+| `project/` | The shared versioned project manifest and project scene loading. [Projects](../../docs/engine/projects.md) |
+| `reflection/` | Plain-data field descriptors and their JSON codec; no scene or asset knowledge. [Scene](../../docs/engine/scene.md) |
+| `scene/` | ECS components, hierarchy, collections, prefabs, component registry, serialization. [Scene](../../docs/engine/scene.md) |
+| `ui/` | Resolution-independent runtime menus and HUDs (`GameUi`). [UI](../../docs/engine/ui.md) |
+| `window/` | SDL window ownership and platform surface access. [Window and input](../../docs/engine/window-input.md) |
 
 ## Local rules
 
