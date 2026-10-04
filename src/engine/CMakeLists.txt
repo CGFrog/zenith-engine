@@ -122,6 +122,7 @@ add_library(zenith_engine SHARED
     jobs/FrameTaskGraph.cpp
     behaviour/BehaviourRegistry.cpp
     behaviour/BehaviourScheduler.cpp
+    gameplay/DefinitionTable.cpp
     gameplay/FirstPerson.cpp
     gameplay/Random.cpp
     module/BuiltInSystems.cpp
@@ -166,6 +167,7 @@ add_library(zenith_engine SHARED
     scene/PhysicsComponentTypes.cpp
     scene/GameplayComponentTypes.cpp
     scene/NavigationComponentTypes.cpp
+    scene/AudioComponentTypes.cpp
     scene/ComponentTypeHelpers.cpp
     scene/CollectionComponentTypes.cpp
     scene/Collections.cpp

@@ -2,6 +2,7 @@
 
 #include "editor/interaction/EntityReferenceField.hpp"
 #include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/EditorWidgets.hpp"
 #include "engine/reflection/FieldJson.hpp"
 
 #include <imgui.h>
@@ -14,6 +15,7 @@
 #include <cctype>
 #include <cfloat>
 #include <climits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -305,7 +307,7 @@ Json fieldValue(const void* object, const FieldDescriptor& field) {
 
 MixedValue mixedValue(std::span<void* const> objects, const FieldDescriptor& field) {
     MixedValue mixed;
-    if (objects.size() < 2 || field.kind == FieldKind::Struct) {
+    if (objects.size() < 2 || field.kind == FieldKind::Struct || field.kind == FieldKind::List) {
         return mixed;
     }
     const Json shown = fieldValue(objects.front(), field);
@@ -394,12 +396,13 @@ void decorateField(const FieldDescriptor& field, const std::string& pointer,
                    const ReflectedFieldEditorOptions& options) {
     const bool overridden = options.overridden && options.overridden(pointer);
     if (overridden) {
-        const bool labelAtRight =
-            field.kind != FieldKind::Struct && !(field.kind == FieldKind::String && field.presentation.readOnly);
+        const bool labelAtRight = field.kind != FieldKind::Struct && field.kind != FieldKind::List &&
+                                  !(field.kind == FieldKind::String && field.presentation.readOnly);
         markPrefabOverride(labelAtRight ? std::string_view(field.presentation.label) : std::string_view{});
     }
     const bool canRevert = overridden && options.revertOverride;
-    const bool canWatch = static_cast<bool>(options.watch) && field.kind != FieldKind::Struct;
+    const bool canWatch =
+        static_cast<bool>(options.watch) && field.kind != FieldKind::Struct && field.kind != FieldKind::List;
     if ((!canRevert && !canWatch) || !ImGui::BeginPopupContextItem("##FieldMenu")) {
         return;
     }
@@ -410,6 +413,57 @@ void decorateField(const FieldDescriptor& field, const std::string& pointer,
         options.watch(pointer, field.presentation.label);
     }
     ImGui::EndPopup();
+}
+
+// A list: a tree node with one node per element, a button to remove each, and
+// one to add an element at the end. Several objects show only their counts,
+// since their lists may differ in length.
+bool drawList(std::span<void* const> objects, const FieldDescriptor& field, const std::string& pointer,
+              const ReflectedFieldEditorOptions& options) {
+    void* object = objects.front();
+    const size_t size = field.listSize(object);
+    const std::string& label = field.presentation.label;
+    if (objects.size() > 1) {
+        ImGui::TextDisabled("%s: %zu entries (select one object to edit)", label.c_str(), size);
+        decorateField(field, pointer, options);
+        return false;
+    }
+    const std::string title = label + " (" + std::to_string(size) + ")###" + field.key;
+    const bool open = ImGui::TreeNode(title.c_str());
+    decorateField(field, pointer, options);
+    if (!open) {
+        return false;
+    }
+    bool changed = false;
+    std::optional<size_t> removed;
+    for (size_t index = 0; index < size; ++index) {
+        ImGui::PushID(static_cast<int>(index));
+        const bool elementOpen = ImGui::TreeNode("##element", "#%zu", index);
+        ImGui::SameLine();
+        if (widgets::Button("Remove")) {
+            removed = index;
+        }
+        if (elementOpen) {
+            ReflectedFieldEditorOptions elementOptions = options;
+            elementOptions.pointerPrefix = pointer + "/" + std::to_string(index);
+            changed |= drawReflectedFields(field.listElement(object, index), field.children, elementOptions);
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+    if (widgets::Button("Add")) {
+        field.resizeList(object, size + 1);
+        changed = true;
+    }
+    if (removed) {
+        // The descriptor has no erase: rewrite the list without the element.
+        Json document = Json::object();
+        writeReflectedFields(object, std::span(&field, 1), document);
+        document[field.key].erase(*removed);
+        changed |= readReflectedFields(document, object, std::span(&field, 1)).empty();
+    }
+    ImGui::TreePop();
+    return changed;
 }
 
 bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
@@ -523,15 +577,18 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
         }
         break;
     }
+    case FieldKind::List:
+        changed = drawList(objects, field, pointer, options);
+        break;
     }
     ImGui::EndDisabled();
     if (!presentation.tooltip.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::SetTooltip("%s", presentation.tooltip.c_str());
     }
-    if (field.kind != FieldKind::Struct) {
+    if (field.kind != FieldKind::Struct && field.kind != FieldKind::List) {
         decorateField(field, pointer, options);
     }
-    if (changed && objects.size() > 1 && field.kind != FieldKind::Struct) {
+    if (changed && objects.size() > 1 && field.kind != FieldKind::Struct && field.kind != FieldKind::List) {
         applyToOthers(objects, field, before, fieldValue(object, field), committed);
     }
     return changed;

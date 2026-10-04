@@ -63,6 +63,10 @@ void remapFields(Json& object, std::span<const FieldDescriptor> fields, std::str
             remapValue(*value, {.component = component, .field = path}, mapping);
         } else if (field.kind == FieldKind::Struct) {
             remapFields(*value, field.children, component, path, mapping);
+        } else if (field.kind == FieldKind::List && value->is_array()) {
+            for (size_t index = 0; index < value->size(); ++index) {
+                remapFields((*value)[index], field.children, component, path + "/" + std::to_string(index), mapping);
+            }
         }
     }
 }

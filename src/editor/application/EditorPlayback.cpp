@@ -357,6 +357,7 @@ bool EditorSession::enterPlayMode(ApplicationContext& context, EditorRuntime run
     }
     m_moduleHost.startGameplay(context.assets, m_document.options(), context.rendering.debugDraw());
     if (GameServices* services = m_moduleHost.gameServices()) {
+        services->setAudio(&context.audio);
         // Play saves into the project, apart from the shipped game's saves.
         if (!m_projectFile.empty() && m_document.path()) {
             const std::filesystem::path project = m_projectFile.parent_path();

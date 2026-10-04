@@ -16,8 +16,8 @@ enum class RuntimeStateFields {
 
 // Writes the fields of object into output, which becomes a JSON object.
 // Floats keep float precision, enums use their declared encoding, ranges and
-// vectors become arrays, structs become nested objects, and entity references
-// become their id, or null for none.
+// vectors become arrays, structs become nested objects, lists become arrays
+// of objects, and entity references become their id, or null for none.
 void writeReflectedFields(const void* object, std::span<const FieldDescriptor> fields, nlohmann::json& output,
                           RuntimeStateFields runtimeState = RuntimeStateFields::Include);
 

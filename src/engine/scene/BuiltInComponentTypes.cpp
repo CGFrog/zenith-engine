@@ -1,9 +1,10 @@
 // Registers the engine's components. The type builders live in one file per
-// domain (Render, Animation, Light, Physics, Collection, Prefab, and Gameplay
-// ComponentTypes.cpp); add a new built-in type to the family file for its
+// domain (Render, Animation, Light, Physics, Collection, Prefab, Gameplay,
+// Navigation, and Audio ComponentTypes.cpp); add a new built-in type to the family file for its
 // domain and list it here.
 
 #include "AnimationComponentTypes.hpp"
+#include "AudioComponentTypes.hpp"
 #include "CollectionComponentTypes.hpp"
 #include "ComponentTypes.hpp"
 #include "GameplayComponentTypes.hpp"
@@ -35,8 +36,9 @@ SceneDocumentResult registerBuiltInComponentTypes(ComponentTypeRegistry& registr
     if (SceneDocumentResult result = registerPrefabComponentTypes(registry); !result) {
         return result;
     }
-    for (ComponentType type : {characterControllerComponentType(), firstPersonCameraComponentType(),
-                               animatorComponentType(), navAgentComponentType(), tagsComponentType()}) {
+    for (ComponentType type :
+         {characterControllerComponentType(), firstPersonCameraComponentType(), animatorComponentType(),
+          navAgentComponentType(), tagsComponentType(), audioListenerComponentType(), audioEmitterComponentType()}) {
         if (SceneDocumentResult result = registry.add(std::move(type)); !result) {
             return result;
         }

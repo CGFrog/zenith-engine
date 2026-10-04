@@ -69,6 +69,25 @@ SimulationClock GameServices::simulationClock(SimulationClock host) const {
     return host;
 }
 
+void GameServices::setAudio(AudioSystem* audio) {
+    m_audio = audio;
+}
+
+AudioSystem* GameServices::audio() {
+    return m_audio;
+}
+
+AudioLoadResult<AudioClipHandle> GameServices::loadClip(std::string_view assetPath, bool spatial) {
+    if (m_audio == nullptr) {
+        return {.error = "This session has no audio"};
+    }
+    const std::filesystem::path relative(std::u8string(assetPath.begin(), assetPath.end()));
+    if (relative.empty() || relative.is_absolute() || *relative.begin() == "..") {
+        return {.error = "'" + std::string(assetPath) + "' is not a path inside the project's assets"};
+    }
+    return m_audio->loadClip(m_documents.assetRoot / relative, spatial);
+}
+
 RandomStream& GameServices::random(std::string_view name) {
     return m_random.stream(name);
 }
