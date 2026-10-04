@@ -12,12 +12,9 @@ const char* InspectorPanel::title() const {
     return "Inspector";
 }
 
-bool InspectorPanel::editModeOnly() const {
-    return true;
-}
-
 void InspectorPanel::draw(EditorContext& context) {
     context.selection.removeMissing(context.app.scene);
+    m_view.drawRuntimeNotice(context);
     if (context.selection.empty()) {
         ImGui::TextDisabled("Select an entity to inspect it.");
         return;

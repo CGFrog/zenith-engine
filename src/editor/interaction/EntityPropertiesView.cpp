@@ -184,8 +184,31 @@ void EntityPropertiesView::drawName(EditorContext& context, SceneEntityId entity
     }
 }
 
+void EntityPropertiesView::drawRuntimeNotice(EditorContext& context) const {
+    if (context.editMode()) {
+        return;
+    }
+    ImGui::PushID("##RuntimeNotice");
+    widgets::CaptionText("Live: editing the running scene", palette::warning);
+    ImGui::TextWrapped("Edits apply at once, have no undo, and are lost on Stop. Apply to Edit Scene (here or on "
+                       "a component's menu) keeps them as one undoable edit.");
+    ImGui::BeginDisabled(!context.canInvoke("play.apply_to_edit") || context.selection.empty());
+    if (widgets::Button("Apply Selection to Edit Scene")) {
+        context.invoke("play.apply_to_edit");
+    }
+    ImGui::EndDisabled();
+    ImGui::Separator();
+    ImGui::PopID();
+}
+
 const PrefabEntityOverrides& EntityPropertiesView::prefabOverrides(const EditorContext& context,
                                                                    SceneEntityId entityId) const {
+    if (!context.editMode()) {
+        // Prefab overrides describe the document; the running scene has none
+        // to show or revert.
+        static const PrefabEntityOverrides none;
+        return none;
+    }
     const PrefabAuthoring authoring(context.editing.assets(), context.editing.document().options());
     return m_prefabOverrides.get(authoring, context.app.scene, entityId, context.editing.revision());
 }
@@ -357,7 +380,7 @@ void EntityPropertiesView::drawComponent(EditorContext& context, const Component
     }
     std::optional<HeaderAction> action;
     if (options.actions != HeaderActions::None) {
-        action = drawComponentMenu(context, type, options, overriddenEntity);
+        action = drawComponentMenu(context, type, options, shownId, overriddenEntity);
     } else if (overriddenEntity && prefabOverrideMenu("##PrefabOverride")) {
         action = HeaderAction{.operatorId = "prefab.revert_field",
                               .properties = revertFieldProperties(*overriddenEntity, type.key(), "")};
@@ -373,7 +396,7 @@ void EntityPropertiesView::drawComponent(EditorContext& context, const Component
 
 std::optional<EntityPropertiesView::HeaderAction>
 EntityPropertiesView::drawComponentMenu(EditorContext& context, const ComponentType& type,
-                                        const ComponentDrawOptions& options,
+                                        const ComponentDrawOptions& options, SceneEntityId shownEntity,
                                         std::optional<SceneEntityId> overriddenEntity) const {
     const std::string properties = componentProperties(type.key());
     const auto run = [&properties](const char* operatorId) {
@@ -389,6 +412,20 @@ EntityPropertiesView::drawComponentMenu(EditorContext& context, const ComponentT
     // Right-clicking the header or pressing "..." opens the same menu.
     std::optional<HeaderAction> action;
     if (ImGui::BeginPopupContextItem("##ComponentMenu")) {
+        if (!context.editMode()) {
+            // The whole selection shares a Selection component; a component
+            // only the active entity has is applied for that entity alone.
+            Json applyProperties{{"entity", ""}, {"component", type.key()}};
+            if (!wholeSelection) {
+                applyProperties["entity"] = std::to_string(shownEntity.value);
+            }
+            if (ImGui::MenuItem("Apply to Edit Scene", nullptr, false, context.canInvoke("play.apply_to_edit"))) {
+                action = HeaderAction{.operatorId = "play.apply_to_edit", .properties = applyProperties.dump()};
+            }
+            ImGui::SetItemTooltip("Keep this component's running values after Stop, as one undoable edit");
+            ImGui::TextDisabled("Other actions change the running scene only");
+            ImGui::Separator();
+        }
         if (overriddenEntity) {
             if (ImGui::MenuItem("Revert to Prefab")) {
                 action = HeaderAction{.operatorId = "prefab.revert_field",

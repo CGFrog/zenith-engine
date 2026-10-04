@@ -10,11 +10,11 @@ depend on this subtree.
 | `main.cpp` | Editor executable composition root. |
 | `application/` | Editor application lifecycle and the UI/session coordinator. |
 | `areas/` | Blender-style areas and workspaces: the area type registry, per-workspace areas and their ImGui dock layouts, the default workspaces, legacy layout migration, and `workspaces.json`. |
-| `document/` | Scene document state, persistence workflow, undo/redo history, prefab authoring (`PrefabAuthoring`), and per-scene editor data such as the 3D cursor (`SceneEditorData`, a sidecar beside the scene file). |
+| `document/` | Scene document state, persistence workflow, undo/redo history, prefab authoring (`PrefabAuthoring`), per-scene editor data such as the 3D cursor (`SceneEditorData`, a sidecar beside the scene file), and the runtime-to-edit diff behind Apply to Edit Scene (`RuntimeApply`). |
 | `modules/` | Game module hosting: loading the project's module, running its systems, hot reload, and the header-only editor extension API modules implement. |
 | `menus/` | Menus as data: the `MenuRegistry` of named menus, entries, and dynamic sections (owner tokens for module cleanup), the searchable popup and menu-item drawing, pie menus (`PieMenu`, `wm.call_pie`), `wm.call_menu`, and the default Add, Add Component, and viewport pie menus. |
 | `interaction/` | Editor camera, picking, selection, gizmos, component editing widgets (including entity reference fields), and the entity eyedropper. |
-| `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation), headless object, component, collection, visibility (hide), outliner, and prefab operators, the headless play operators (time scale, Simulate systems, profiler reset), the preferences and Build and Package operators, the per-region keymap (key and viewport mouse chords, Press/DoubleTap/Hold/Release/Click/Drag triggers) with `keymap.json` overrides and its input dispatch (`KeymapDispatch`), F3 search, and the keymap editor. |
+| `operators/` | Operator registry and runner (poll, execute, undo, Adjust Last Operation; operators run on the runtime scene without undo in Play and Simulate), headless object, component, collection, visibility (hide), outliner, and prefab operators, the headless play operators (time scale, Simulate systems, profiler reset, Apply to Edit Scene), the preferences and Build and Package operators, the per-region keymap (key and viewport mouse chords, Press/DoubleTap/Hold/Release/Click/Drag triggers) with `keymap.json` overrides and its input dispatch (`KeymapDispatch`), F3 search, and the keymap editor. |
 | `panels/` | One class per dockable window, drawn from an `EditorContext`, plus the floating Preferences window; `panels/outliner/` holds the outliner's display-mode tree model, orphan data, and row widgets. |
 | `project/` | Project tooling: the shared asset service (`ProjectAssets`: catalog, watchers, change dispatch, favourites), asset catalog, thumbnails, bakers, the build runner, Build and Package (`PackageRunner`: the planned release commands and their runner), compiler-output parsing, IDE launching, the Project Hub (`ProjectHub`), the recent projects list, and the project template generator (`ProjectTemplate`, from `templates/`). |
 | `settings/` | Persistent editor preferences (`settings.ini`: tools, theme tuning, UI scale, pie menus, autosave), including the component inspector's section order and collapse state (legacy panel flags are only read, for migration) and the systems chosen for Simulate. |
@@ -57,6 +57,14 @@ depend on this subtree.
 - A new window is an `EditorPanel` in `panels/`. Panels receive everything
   through `EditorContext`, record scene changes through `SceneEditing` so they
   are undoable, and never reach into other panels.
+- In Play and Simulate, `SceneEditing` is the runtime scene's
+  (`SceneEditing::runtime()`): the same capture/commit calls edit the running
+  scene live and record nothing, so never write to `CommandHistory` directly
+  and never gate scene edits on the mode in a panel. An operator that only
+  makes sense for the document (files, prefabs, collections, editor-only
+  state) polls `editMode()`; the runner then explains the refusal. Only
+  `SceneEditing::applyToEditScene` (`play.apply_to_edit`) carries runtime
+  state back into the edit history.
 - A panel becomes visible to users by adding an area type to
   `builtInAreaTypes` (`application/EditorAreaTypes.cpp`), which
   `EditorSession::registerAreaTypes` registers: a panel with per-window state

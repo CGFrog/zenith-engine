@@ -9,7 +9,9 @@
 // name, transform, and components, or, when several entities are selected,
 // the whole-selection actions and the components they share (edited together)
 // followed by those only the active entity has. The sections come from
-// EntityPropertiesView, which the Properties panel shares.
+// EntityPropertiesView, which the Properties panel shares. In Play and Simulate
+// it shows and edits the running scene live (see
+// EntityPropertiesView::drawRuntimeNotice).
 class InspectorPanel final : public EditorPanel {
   public:
     // The layout is shared by every Inspector and Properties area and must
@@ -17,7 +19,6 @@ class InspectorPanel final : public EditorPanel {
     explicit InspectorPanel(ComponentInspectorLayout& layout);
 
     const char* title() const override;
-    bool editModeOnly() const override;
     void draw(EditorContext& context) override;
 
   private:

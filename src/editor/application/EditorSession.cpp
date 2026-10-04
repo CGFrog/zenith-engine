@@ -13,6 +13,7 @@
 #include "editor/operators/ObjectOperators.hpp"
 #include "editor/operators/PlayOperators.hpp"
 #include "editor/operators/PrefabOperators.hpp"
+#include "editor/panels/SimulateSystemPicker.hpp"
 #include "editor/settings/SimulateSystemSettings.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
@@ -137,7 +138,8 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
 }
 
 SceneEditing EditorSession::editing(ApplicationContext& context) {
-    return {context.scene, context.assets, m_document, m_history, m_diagnostics};
+    // In Play and Simulate edits go live to the runtime scene, unrecorded.
+    return {context.scene, context.assets, m_document, m_history, m_diagnostics, m_playMode.editScene()};
 }
 
 EditorContext EditorSession::editorContext(ApplicationContext& context) {
@@ -148,7 +150,8 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .mode = m_playMode.mode(),
             .actions = *this,
             .eyedropper = &m_eyedropper,
-            .menus = m_menus};
+            .menus = m_menus,
+            .simulating = m_playMode.simulating()};
 }
 
 OperatorContext EditorSession::operatorContext(ApplicationContext& context, KeymapRegion region) {
@@ -578,11 +581,13 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     // Starts after the outliner step.
     const bool pickingDone = updateSmokePicking(context);
     const bool cursorDone = updateSmokeCursor(context);
+    // Frames 425-427.
+    const bool liveEditDone = updateSmokeLiveEdit(context);
     if (m_smokeFrame == 500 && !m_smokeStreamCompleted) {
         m_diagnostics.reportError("Streaming smoke did not commit while frames were being presented");
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
     } else if (areasDone && viewportsDone && componentsDone && menusDone && piesDone && simulateDone && outlinerDone &&
-               pickingDone && cursorDone && m_smokeStreamCompleted) {
+               pickingDone && cursorDone && liveEditDone && m_smokeStreamCompleted) {
         updateSmokeModuleReload(context);
     }
 }
@@ -722,6 +727,10 @@ bool EditorSession::updateSmokeSimulate(ApplicationContext& context) {
     };
     if (m_smokeFrame < firstFrame) {
         return false;
+    }
+    if (m_smokeFrame > lastFrame) {
+        // Stopped by lastFrame at the latest; later steps may run Play again.
+        return true;
     }
     if (m_smokeFrame == firstFrame) {
         m_smokeSimulateSnapshot = snapshot();
@@ -1080,6 +1089,14 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             operatorMenuItem(context, "play.toggle_pause", m_playMode.running() ? "Pause" : "Resume");
             operatorMenuItem(context, "play.step", "Single Step");
             operatorMenuItem(context, "play.stop", "Stop");
+            ImGui::Separator();
+            operatorMenuItem(context, "play.apply_to_edit", "Apply Selection to Edit Scene");
+        }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Simulate Systems")) {
+            EditorContext editor = editorContext(context);
+            drawSimulateSystemPicker(editor, m_moduleHost);
+            ImGui::EndMenu();
         }
         ImGui::EndMenu();
     }

@@ -15,6 +15,7 @@
 #include "editor/operators/OperatorRunner.hpp"
 #include "editor/operators/PlayOperators.hpp"
 #include "editor/panels/EditorContext.hpp"
+#include "editor/panels/SimulateSystemPicker.hpp"
 #include "editor/panels/SystemProfilerPanel.hpp"
 #include "editor/settings/SimulateSystemSettings.hpp"
 #include "engine/assets/Assets.hpp"
@@ -229,6 +230,44 @@ void testWithModule(ProfilerFixture& fixture) {
     expect(fixture.actions.invoked.empty(), "drawing the profiler runs no operator by itself");
     expect(!fixture.diagnostics.hasUnacknowledgedError(), "drawing the profiler reports no errors");
 }
+
+// The Simulate system picker (shared by the profiler, the Play menu, and the
+// playback toolbar) lists the Play systems with their mask state, and a
+// checkbox click toggles the mask through play.set_simulate_system.
+void testSimulatePicker(ProfilerFixture& fixture) {
+    const std::vector<SimulateSystemChoice> choices = simulateSystemChoices(fixture.host);
+    expect(!choices.empty(), "the test module has systems Simulate can run");
+    if (choices.empty()) {
+        return;
+    }
+    for (const SimulateSystemChoice& choice : choices) {
+        expect(choice.enabled == fixture.host.simulateMask().enabled(choice.name, choice.phase),
+               "each choice shows the mask's state");
+    }
+    const SimulateSystemChoice first = choices.front();
+    fixture.actions.invoked.clear();
+    HeadlessImGuiContext imgui;
+    const char* window = "Picker";
+    const auto draw = [&] {
+        EditorContext editor = fixture.editorContext();
+        HeadlessImGuiFrame frame(window);
+        drawSimulateSystemPicker(editor, fixture.host);
+    };
+    draw();
+    const ImGuiWindow* pickerWindow = HeadlessImGuiContext::findWindow(window);
+    expect(pickerWindow != nullptr, "the picker draws into its window");
+    if (pickerWindow == nullptr) {
+        return;
+    }
+    const std::string label = first.name + (first.phase == SystemPhase::FixedUpdate ? " (fixed)" : "") + "##simulate";
+    HeadlessImGuiContext::activateNextFrame(
+        HeadlessImGuiContext::itemId(*pickerWindow, first.name.c_str(), label.c_str()));
+    draw();
+    draw();
+    expect(fixture.actions.invoked == std::vector<std::string>{"play.set_simulate_system"} &&
+               fixture.host.simulateMask().enabled(first.name, first.phase) != first.enabled,
+           "clicking a picker checkbox toggles the system in the Simulate mask");
+}
 } // namespace
 
 int main() {
@@ -242,6 +281,7 @@ int main() {
         ProfilerFixture fixture(directory / "shadow");
         testOperatorsWithoutModule(fixture);
         testWithModule(fixture);
+        testSimulatePicker(fixture);
     }
 
     std::filesystem::remove_all(directory, error);

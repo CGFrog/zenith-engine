@@ -185,9 +185,11 @@ void PropertiesPanel::draw(EditorContext& context) {
     drawTabStrip(available, active);
     ImGui::SameLine();
     if (ImGui::BeginChild("##PropertiesContent")) {
-        // Play mode runs on a throwaway copy, so authoring tabs are read-only.
-        const bool authoring = isEntityTab(active.kind) || active.kind == PropertiesTabKind::World;
-        ImGui::BeginDisabled(authoring && !context.editMode());
+        // In Play and Simulate the entity and World tabs edit the running
+        // scene live; the notice says those edits are lost on Stop.
+        if (isEntityTab(active.kind) || active.kind == PropertiesTabKind::World) {
+            m_view.drawRuntimeNotice(context);
+        }
         switch (active.kind) {
         case PropertiesTabKind::Object:
             drawObjectTab(context);
@@ -205,7 +207,6 @@ void PropertiesPanel::draw(EditorContext& context) {
             drawSceneTab(context);
             break;
         }
-        ImGui::EndDisabled();
     }
     ImGui::EndChild();
 }

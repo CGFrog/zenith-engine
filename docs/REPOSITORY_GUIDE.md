@@ -649,7 +649,9 @@ Viewport shading never touches the project's render settings: each draw hands
 the viewport's view `viewportViewSettings` (a copy of the project settings
 with the viewport's `ViewShading`, reduced by `viewShadingFrameSettings`
 for the device) through `RenderRuntime::setViewSettings`, rebuilt every frame
-so project changes flow through, and nothing in Play mode. A viewport can look
+so project changes flow through, and nothing in Play mode
+(`viewportShadingSource`: Play, also paused, shows the project's look; Edit
+and Simulate keep the viewport's shading). A viewport can look
 through a scene `CameraComponent` (Numpad 0, or View > Look Through): the
 view is overridden with that camera's lens, navigation is disabled, and any
 navigation operator or View > Exit Camera View returns to the editor camera.
@@ -770,6 +772,28 @@ records only the entities it added, removed, or changed as an
 rather than the scene. `CommandHistory::storedBytes` reports what the history
 keeps. Opening or creating a document still replaces the whole scene and
 clears the history.
+
+Live inspection: in Play and Simulate the session builds `SceneEditing` over
+the runtime scene with `EditorPlayMode::editScene()` (the parked edit scene)
+attached, so `SceneEditing::runtime()` is true and every panel, the gizmo, the
+Item tab, and operators edit the running scene through the same calls (modal
+G/R/S still start only in Edit mode, but commit through the same editing)
+while `commit`, `perform`, `undo`, and `redo` record nothing (no
+runtime undo; Stop discards it). The Inspector and Hierarchy stay enabled
+(no panel overrides `EditorPanel::editModeOnly` now), show a runtime-only
+notice, and draw running values every frame. `OperatorRunner` runs operators
+on the runtime scene without an undo step or Adjust Last Operation and notes
+an `Undo` operator's change in Info as lost on Stop; object and component
+operators allow it, while document-only ones (save, prefabs, collections,
+visibility, bakes) keep polling Edit mode, and the runner's refusal then says
+they work only in Edit mode. `play.apply_to_edit {entity, component}`
+(`operators/PlayOperators`) diffs the runtime entity against the edit scene
+(`document/RuntimeApply`: one component, or the whole entity's name,
+transform, and components, creating a runtime-only entity) and records the
+difference with `SceneEditing::applyToEditScene` as an `EntityDiffCommand` on
+the edit history that patches the parked edit scene immediately: Stop restores
+the patched scene, so undo and redo after Stop act on it like any edit, and the
+runtime scene is never changed. Equal values record nothing.
 
 ### Build and IDE workflow
 
@@ -920,7 +944,10 @@ runs on a snapshot that Stop restores (and `Paused` covers both;
 `SimulationMode::Simulate` with no input (`GameModuleHost::runSystems` drops it)
 and only the systems the Simulate mask enables, while the editor keeps its
 camera. The mask is edited with `play.set_simulate_system {system, enabled}`
-(the System Profiler's checkboxes), kept across module reloads, and saved to
+(the System Profiler's checkboxes and the shared Simulate system picker,
+`panels/SimulateSystemPicker`, shown in the Play menu, the profiler's
+**Simulate Systems** popover, and available to the playback toolbar as
+`drawSimulateSystemPickerButton`), kept across module reloads, and saved to
 `simulate-systems.json` (`settings/SimulateSystemSettings`).
 `play.set_time_scale {scale}` sets `EditorPlayMode`'s time scale, which the
 session's `simulationClock()` reports in Play and Simulate (real time in Edit)

@@ -21,7 +21,9 @@ class ProjectAssets;
 // the last clicked row), feed an armed eyedropper, drag onto entities to
 // reparent the dragged selection and onto collections to link it, and toggle
 // visibility, selectability, and rendering in restriction columns. Every
-// edit runs an operator.
+// edit runs an operator. In Play and Simulate it lists the running scene:
+// rows still select, operators that allow it change the running scene only,
+// and an entity's menu offers Apply to Edit Scene (play.apply_to_edit).
 class HierarchyPanel final : public EditorPanel {
   public:
     // projectAssets lists the project's assets for Orphan Data; without it
@@ -29,7 +31,6 @@ class HierarchyPanel final : public EditorPanel {
     explicit HierarchyPanel(const ProjectAssets* projectAssets = nullptr);
 
     const char* title() const override;
-    bool editModeOnly() const override;
     void draw(EditorContext& context) override;
     // The display mode's key (see outlinerDisplayModeKey).
     std::string areaState() const override;

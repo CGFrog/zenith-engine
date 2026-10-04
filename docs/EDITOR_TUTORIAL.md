@@ -89,9 +89,24 @@ default project.
    stop. Play uses a runtime clone; stopping restores the authored scene.
    `Alt+F5` (**Play > Simulate**) runs physics and the fixed-update systems on
    a clone instead, keeping the editor camera and ignoring your input; choose
-   which systems Simulate runs with the checkboxes in the **System Profiler**
+   which systems Simulate runs with **Play > Simulate Systems**, the
+   **Simulate Systems** button, or the checkboxes in the **System Profiler**
    (Debug workspace), where the time-scale field also slows down or speeds up
    Play and Simulate.
+10. While Play or Simulate runs (or is paused) you can still select objects in
+   the viewport and the Hierarchy and inspect and edit them live: the
+   Inspector, Properties, and the viewport's Item tab and gizmo show the
+   running values every frame and change the running scene at once. These
+   live edits have no undo and are lost on Stop, as are objects and
+   components you add or delete meanwhile; a banner says so. To keep a
+   change, right-click a component header and choose **Apply to Edit
+   Scene**, or use **Apply Selection to Edit Scene** (Inspector banner,
+   Hierarchy right-click, or the Play menu) to copy a whole object: its name,
+   transform, and every component (an object spawned while running is
+   created). Each apply is one undo step on the authored scene, there after
+   Stop, and leaves the running scene alone. Saving, prefabs, collections,
+   and other document-only commands stay disabled until you stop, and say so
+   in the Info log.
 
 Every menu item and key runs a named operator. Press `F3` to search all
 operators that can run right now, with their shortcuts; use the arrow keys and
@@ -169,7 +184,7 @@ The viewport is laid out like Blender's 3D view. Its header holds the
 **View** menu (sidebar and toolbar toggles, camera view), **Shading**
 (Rendered, Material Preview, Solid, Wireframe; each viewport shades on its own
 and never changes the project's render settings; Play mode always shows the
-project's look), **Overlays** (grid, selection
+project's look, while Simulate keeps each viewport's shading), **Overlays** (grid, selection
 outline, active object name, transform gizmo), and **Gizmos** (Global or Local
 orientation, snapping and its increments). With the mouse over the viewport,
 `T` shows or hides the tool shelf on the left (Tweak, Move, Rotate, Scale) and
