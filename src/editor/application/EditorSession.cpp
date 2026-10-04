@@ -579,7 +579,9 @@ void EditorSession::updateSmokePrefabs(ApplicationContext& context) {
     // Prefab authoring on a staging scene, with prefabs written under a
     // temporary asset root beside the smoke scene so the project is never
     // touched: create, instantiate twice, delete an entity from one instance
-    // (a structural override), apply the other, and check both.
+    // (a structural override), apply the other, and check both; then nest one
+    // in a second prefab and check a nested instance deleted from it stays
+    // deleted.
     const auto fail = [&](const std::string& message) {
         m_diagnostics.reportError("Prefab smoke failed: " + message);
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
@@ -606,11 +608,33 @@ void EditorSession::updateSmokePrefabs(ApplicationContext& context) {
         recordPrefabEntityRemoval(staging, shade);
         staging.destroyEntity(shade);
         staging.registry().get<PointLightComponent>(second).intensity = 9.0f;
+        // Nest the first lamp in a cart prefab, delete it from a cart
+        // instance, and check a refresh keeps it deleted.
+        const auto checkNestedRemoval = [&] {
+            const Entity cart = staging.createEntity("Cart");
+            staging.setParent(staging.findEntity(firstId), cart);
+            Entity cartInstance = entt::null;
+            if (!prefabs.create(staging, cart, "smoke/cart.prefab") ||
+                !prefabs.instantiate(staging, "smoke/cart.prefab", entt::null, cartInstance)) {
+                fail("the prefab holding a nested prefab was not created");
+                return;
+            }
+            const Entity nestedLamp = staging.registry().get<RelationshipComponent>(cartInstance).children.front();
+            recordPrefabEntityRemoval(staging, nestedLamp);
+            staging.destroyEntity(nestedLamp);
+            PrefabSystem system(context.assets, options);
+            if (!system.refresh(staging, cartInstance, PrefabRefreshMode::KeepAddedObjects) ||
+                !staging.registry().get<RelationshipComponent>(cartInstance).children.empty()) {
+                fail("a deleted nested instance came back after a refresh");
+            }
+        };
         if (PrefabResult applied = prefabs.apply(staging, second); !applied) {
             fail(applied.error);
         } else if (staging.registry().get<PointLightComponent>(staging.findEntity(firstId)).intensity != 9.0f ||
                    !staging.registry().get<RelationshipComponent>(staging.findEntity(firstId)).children.empty()) {
             fail("apply did not update the other instance while keeping its deletion");
+        } else {
+            checkNestedRemoval();
         }
     }
     std::filesystem::remove_all(options.assetRoot, error);

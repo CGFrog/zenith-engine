@@ -2067,7 +2067,7 @@ if(BUILD_TESTING)
     add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
     set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES
         ENVIRONMENT
-            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/vulkan_smoke"
+            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=900;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/vulkan_smoke"
         LABELS "vulkan;smoke"
         TIMEOUT 45
         FIXTURES_REQUIRED zenith_editor_test_settings
@@ -2096,7 +2096,7 @@ if(BUILD_TESTING)
         COMMAND zenith_editor "${CMAKE_CURRENT_BINARY_DIR}/editor-module-smoke-$<CONFIG>.zenith-project")
     set_tests_properties(zenith_editor_module_smoke PROPERTIES
         ENVIRONMENT
-            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/module_smoke"
+            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=900;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/module_smoke"
         LABELS "vulkan;smoke"
         TIMEOUT 60
         FIXTURES_REQUIRED zenith_editor_test_settings
@@ -2174,7 +2174,7 @@ if(BUILD_TESTING)
     )
     zenith_add_validation_smoke(zenith_validation_editor
         COMMAND zenith_editor
-        ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=600
+        ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=900
             ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/validation_editor
     )
     set_tests_properties(zenith_validation_editor PROPERTIES FIXTURES_REQUIRED zenith_editor_test_settings)

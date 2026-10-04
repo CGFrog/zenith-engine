@@ -198,8 +198,7 @@ void EntityPropertiesView::drawPrefabHeader(EditorContext& context, SceneEntityI
     }
     ImGui::PushID("##PrefabHeader");
     ImGui::SeparatorText("Prefab");
-    const std::filesystem::path prefab(overrides.prefab);
-    widgets::CaptionText(prefab.stem().generic_string().c_str(), palette::prefabOverrideInk);
+    widgets::CaptionText(overrides.displayName.c_str(), palette::prefabOverrideInk);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", overrides.prefab.c_str());
     }

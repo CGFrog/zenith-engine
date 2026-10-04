@@ -324,14 +324,37 @@ component type) with prefab-local ids, plus nested prefab records
 load as preserved components. Version 1 documents (`localTransform`,
 `modelAsset`, `pointLight`/`camera`, whole-component overrides) migrate on
 load; a model component whose node entities a prefab does not list gets its
-node hierarchy instantiated.
+node hierarchy instantiated. An optional `metadata` object holds
+`display_name`: the name the prefab was created from (file names are reduced
+to portable ASCII), shown by Add > Prefab and the instance header and kept by
+apply.
+
+Entity references in prefab components hold prefab-local ids, or, for an
+entity of a nested instance, `prefabNestedReference(record, local id)` (bit
+62, the record id in bits 32-61, the nested prefab's local id below), so
+references into nested prefabs survive create, apply, and instantiate (one
+level deep); instantiate and refresh resolve them once the nested instances
+exist. References to anything else are cleared with a diagnostic.
 
 Overrides are `{entity, component, field, value}` with `field` an RFC 6901
 pointer into the component's document object (empty for a whole component;
 value null removes it), or, with an empty component, `/name`,
-`/local_transform`, `/parent` (a prefab-local id: moved within the instance),
+`/local_transform`, `/parent` (a prefab-local id: moved within the instance;
+or a scene id with bit 63 set: moved under an entity added to the instance in
+the scene, which falls back to the prefab parent when that entity is gone),
 or `/removed` (value true: deleted from the instance, recorded by
-`recordPrefabEntityRemoval` from the editor's delete commands). Collection
+`recordPrefabEntityRemoval` from the editor's delete commands).
+`{nested, component: "", field: "/removed", value: true}` records a nested
+instance deleted from (or moved out of) its containing instance, by nested
+record id; refresh skips the record, apply drops it from the prefab and from
+the other instances. Moving a prefab entity out of its instance (outliner
+drop, `recordPrefabEntityMove`) records its removal and unlinks the moved
+subtree, which stays in the scene as plain objects (nested instances in it
+become placed instances). In instance overrides, references to entities
+outside the instance are scene ids with bit 63 set; in a prefab file a nested
+record's overrides use bit 63 for the containing prefab's local ids instead,
+and capture drops any other scene reference, so prefab files never hold scene
+ids. Collection
 membership and collection instances are scene-local: never stored in a
 prefab, kept on instance entities through refreshes, never overrides.
 Instances persist their link: the root holds `prefab_instance`
@@ -750,7 +773,12 @@ session's `interaction/EntityEyedropper`.
 `prefab.select_asset` (reveals the prefab in the primary Asset Browser through
 `ProjectAssets::requestReveal`), built on `document/PrefabAuthoring` (which
 also answers `PrefabAuthoring::overrides(entity)` for override highlighting,
-cached per document revision and prefab write time by `PrefabOverrideCache`,
+cached by `PrefabOverrideCache`: the prefab is prepared once per write time
+(`PrefabSystem::prepareComparison`), the whole instance is compared once, and
+each new document revision recompares only the shown entity
+(`PrefabSystem::entityOverrides`) until edits settle for 250 ms, so dragging a
+value in a 200-entity instance stays cheap; `PrefabDisplayNames` reads display
+names for Add > Prefab once per file write time,
 and suggests `prefabs/<name>.prefab` when create gets no path); they run
 headless in `tests/editor/PrefabTests.cpp`, and the UI flows (field override
 marks and Revert to Prefab, the instance header, Add > Prefab, asset drops) in

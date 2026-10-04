@@ -1,12 +1,14 @@
 #include "DefaultMenus.hpp"
 
 #include "editor/document/EditorDocument.hpp"
+#include "editor/document/PrefabAuthoring.hpp"
 #include "editor/menus/AddComponentMenu.hpp"
 #include "editor/menus/EditorMenus.hpp"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -22,7 +24,7 @@ MenuEntry addEntry(std::string label, std::string operatorId, EditorIcon icon, s
 } // namespace
 
 void addPrefabEntries(const OperatorContext& context, const std::vector<std::filesystem::path>& prefabs,
-                      std::vector<MenuEntry>& entries) {
+                      std::vector<MenuEntry>& entries, PrefabDisplayNames* names) {
     const std::filesystem::path root =
         std::filesystem::absolute(context.editing.document().options().assetRoot).lexically_normal();
     std::vector<std::filesystem::path> references;
@@ -34,9 +36,15 @@ void addPrefabEntries(const OperatorContext& context, const std::vector<std::fil
     }
     std::ranges::sort(references);
     for (const std::filesystem::path& reference : references) {
-        std::filesystem::path label = reference;
-        label.replace_extension();
-        entries.push_back({.label = label.generic_string(),
+        std::filesystem::path path = reference;
+        path.replace_extension();
+        // Display names are UTF-8, so they are joined as text, not as paths.
+        std::string label = path.generic_string();
+        if (names != nullptr) {
+            const std::string folder = reference.parent_path().generic_string();
+            label = (folder.empty() ? std::string() : folder + "/") + names->get(root / reference);
+        }
+        entries.push_back({.label = std::move(label),
                            .operatorId = "prefab.instantiate",
                            .properties = nlohmann::json{{"asset", reference.generic_string()}}.dump(),
                            .submenu = {},
@@ -66,9 +74,10 @@ MenuResult registerDefaultMenus(MenuRegistry& registry, DefaultMenuSources sourc
         }
     }
     if (sources.projectPrefabs) {
-        MenuSectionFill prefabs = [list = std::move(sources.projectPrefabs)](const OperatorContext& context,
-                                                                             std::vector<MenuEntry>& entries) {
-            addPrefabEntries(context, list(), entries);
+        MenuSectionFill prefabs = [list = std::move(sources.projectPrefabs),
+                                   names = std::make_shared<PrefabDisplayNames>()](const OperatorContext& context,
+                                                                                   std::vector<MenuEntry>& entries) {
+            addPrefabEntries(context, list(), entries, names.get());
         };
         if (MenuResult result = registry.addSection(editorMenuOwner, addMenuId, std::move(prefabs)); !result) {
             return result;
