@@ -221,6 +221,7 @@ std::unique_ptr<ApplicationScene> EditorApplication::createSession() {
     EditorProjectServices services{
         .build = projectBuildRequest(m_project.projectFile),
         .projectFile = m_project.projectFile,
+        .physicsLayers = m_project.physicsLayerTable(),
         .play = m_play,
         // The session publishes its policy every frame and resets it
         // when it unloads, so a session that failed to load or was

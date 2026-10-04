@@ -47,7 +47,11 @@ void GameplayRunner::fixedUpdate(ApplicationContext& context, const InputState& 
     run(SystemPhase::FixedUpdate, context, &input, deltaSeconds);
 }
 
-void GameplayRunner::afterPhysicsStep(ApplicationContext&) {}
+void GameplayRunner::afterPhysicsStep(ApplicationContext& context) {
+    if (m_services) {
+        m_services->publishTriggerEvents(context.physics.triggerEvents());
+    }
+}
 
 void GameplayRunner::lateUpdate(ApplicationContext& context) {
     run(SystemPhase::LateUpdate, context, &m_frameInput, m_frameSeconds);

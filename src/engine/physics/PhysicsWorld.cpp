@@ -9,16 +9,21 @@
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
+#include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
 #include <algorithm>
@@ -37,6 +42,31 @@ constexpr JPH::BroadPhaseLayer broadPhaseMoving{1};
 
 uint32_t bodyKey(JPH::BodyID id) {
     return id.GetIndexAndSequenceNumber();
+}
+
+// Either order of two bodies.
+uint64_t pairKey(uint32_t first, uint32_t second) {
+    const auto [low, high] = std::minmax(first, second);
+    return (static_cast<uint64_t>(high) << 32u) | low;
+}
+
+// A Jolt object layer is a PhysicsLayer index with the moving flag in its low
+// bit, so one named layer holds both static and moving bodies while Jolt keeps
+// them in its static and moving broad-phase trees.
+JPH::ObjectLayer objectLayer(uint32_t layerIndex, bool moving) {
+    return static_cast<JPH::ObjectLayer>(layerIndex * 2u + (moving ? 1u : 0u));
+}
+
+PhysicsLayer layerOf(JPH::ObjectLayer layer) {
+    return {static_cast<uint32_t>(layer) / 2u};
+}
+
+bool movingLayer(JPH::ObjectLayer layer) {
+    return (layer & 1u) != 0;
+}
+
+Entity entityFromUserData(uint64_t userData) {
+    return static_cast<Entity>(static_cast<std::underlying_type_t<Entity>>(userData));
 }
 
 JPH::Vec3 toJolt(const glm::vec3& value) {
@@ -76,6 +106,8 @@ class PhysicsWorld::Impl {
   public:
     struct BodyState {
         JPH::BodyID id;
+        SceneEntityId sceneId;
+        bool sensor{false};
         glm::vec3 scale{1.0f};
         PhysicsMotionType motionType{PhysicsMotionType::Static};
         glm::vec3 previousPosition{0.0f};
@@ -87,15 +119,12 @@ class PhysicsWorld::Impl {
 
     class BroadPhaseLayers final : public JPH::BroadPhaseLayerInterface {
       public:
-        explicit BroadPhaseLayers(const Impl& owner)
-            : m_owner(owner) {}
-
         uint32_t GetNumBroadPhaseLayers() const override {
             return 2;
         }
 
         JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
-            return m_owner.layer(layer).moving ? broadPhaseMoving : broadPhaseStatic;
+            return movingLayer(layer) ? broadPhaseMoving : broadPhaseStatic;
         }
 
 #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
@@ -103,9 +132,6 @@ class PhysicsWorld::Impl {
             return layer == broadPhaseStatic ? "Static" : "Moving";
         }
 #endif
-
-      private:
-        const Impl& m_owner;
     };
 
     class ObjectPairFilter final : public JPH::ObjectLayerPairFilter {
@@ -114,9 +140,7 @@ class PhysicsWorld::Impl {
             : m_owner(owner) {}
 
         bool ShouldCollide(JPH::ObjectLayer first, JPH::ObjectLayer second) const override {
-            const auto& a = m_owner.layer(first);
-            const auto& b = m_owner.layer(second);
-            return (a.categoryBits & b.collidesWithBits) != 0 && (b.categoryBits & a.collidesWithBits) != 0;
+            return m_owner.config.layers.collides(layerOf(first), layerOf(second));
         }
 
       private:
@@ -128,16 +152,10 @@ class PhysicsWorld::Impl {
         explicit ObjectBroadPhaseFilter(const Impl& owner)
             : m_owner(owner) {}
 
-        bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer broadPhase) const override {
-            const auto& source = m_owner.layer(layer);
-            for (const PhysicsLayerDefinition& candidate : m_owner.config.layers) {
-                const JPH::BroadPhaseLayer candidateBroad = candidate.moving ? broadPhaseMoving : broadPhaseStatic;
-                if (candidateBroad == broadPhase && (source.collidesWithBits & candidate.categoryBits) != 0 &&
-                    (candidate.collidesWithBits & source.categoryBits) != 0) {
-                    return true;
-                }
-            }
-            return false;
+        // Both trees hold bodies of every layer, so a layer that collides
+        // with any layer may meet bodies in either tree.
+        bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer) const override {
+            return m_owner.config.layers.mask(layerOf(layer)) != 0;
         }
 
       private:
@@ -149,6 +167,23 @@ class PhysicsWorld::Impl {
         JPH::BodyID first;
         JPH::BodyID second;
         glm::vec3 normal;
+        // Whether either body is a sensor; unknown (false) for End.
+        bool sensor{false};
+    };
+
+    // A sensor and a body touching it, counted per touching shape pair. Jolt
+    // drops the contacts of a body that falls asleep; such a pair stays,
+    // dormant, until the body wakes (and Jolt adds its contacts again) or
+    // is removed.
+    struct SensorPair {
+        uint32_t contacts{0};
+        bool dormant{false};
+        uint32_t sensorBody{0};
+        uint32_t otherBody{0};
+        Entity sensor{entt::null};
+        Entity other{entt::null};
+        SceneEntityId sensorId;
+        SceneEntityId otherId;
     };
 
     class Contacts final : public JPH::ContactListener {
@@ -156,42 +191,143 @@ class PhysicsWorld::Impl {
         explicit Contacts(Impl& owner)
             : m_owner(owner) {}
 
+        // Called from Jolt's worker threads.
         void OnContactAdded(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold& manifold,
                             JPH::ContactSettings&) override {
-            add(ContactEventType::Begin, first.GetID(), second.GetID(), fromJolt(manifold.mWorldSpaceNormal));
+            add(ContactEventType::Begin, first.GetID(), second.GetID(), fromJolt(manifold.mWorldSpaceNormal),
+                first.IsSensor() || second.IsSensor());
         }
 
         void OnContactPersisted(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold& manifold,
                                 JPH::ContactSettings&) override {
-            add(ContactEventType::Persist, first.GetID(), second.GetID(), fromJolt(manifold.mWorldSpaceNormal));
+            add(ContactEventType::Persist, first.GetID(), second.GetID(), fromJolt(manifold.mWorldSpaceNormal),
+                first.IsSensor() || second.IsSensor());
         }
 
         void OnContactRemoved(const JPH::SubShapeIDPair& pair) override {
-            add(ContactEventType::End, pair.GetBody1ID(), pair.GetBody2ID(), {});
+            add(ContactEventType::End, pair.GetBody1ID(), pair.GetBody2ID(), {}, false);
         }
 
       private:
-        void add(ContactEventType type, JPH::BodyID first, JPH::BodyID second, const glm::vec3& normal) {
+        void add(ContactEventType type, JPH::BodyID first, JPH::BodyID second, const glm::vec3& normal, bool sensor) {
             std::scoped_lock lock(m_owner.contactMutex);
-            m_owner.pendingContacts.push_back({type, first, second, normal});
+            m_owner.pendingContacts.push_back({type, first, second, normal, sensor});
         }
 
         Impl& m_owner;
     };
 
     Impl()
-        : broadPhaseLayers(*this)
-        , pairFilter(*this)
+        : pairFilter(*this)
         , broadPhaseFilter(*this)
         , contacts(*this) {}
 
-    const PhysicsLayerDefinition& layer(JPH::ObjectLayer value) const {
-        for (const PhysicsLayerDefinition& definition : config.layers) {
-            if (static_cast<uint16_t>(definition.layer) == value) {
-                return definition;
+    // Removes the entity's body, reporting the end of every sensor overlap it
+    // was part of (Jolt reports no contact removal for a removed body).
+    void removeBody(Entity entity) {
+        const auto existing = bodies.find(entity);
+        if (existing == bodies.end()) {
+            return;
+        }
+        const uint32_t key = bodyKey(existing->second.id);
+        JPH::BodyInterface& interface = system->GetBodyInterface();
+        interface.RemoveBody(existing->second.id);
+        interface.DestroyBody(existing->second.id);
+        bodyEntities.erase(key);
+        bodies.erase(existing);
+        for (auto pair = sensorPairs.begin(); pair != sensorPairs.end();) {
+            if (pair->second.sensorBody == key || pair->second.otherBody == key) {
+                pendingTriggerEvents.push_back(exited(pair->second));
+                pair = sensorPairs.erase(pair);
+            } else {
+                ++pair;
             }
         }
-        return config.layers.front();
+    }
+
+    // Whether either body is a moving body that is asleep (static bodies are
+    // never active).
+    bool eitherAsleep(uint32_t firstKey, uint32_t secondKey) const {
+        const JPH::BodyInterface& interface = system->GetBodyInterface();
+        for (const uint32_t key : {firstKey, secondKey}) {
+            const auto entity = bodyEntities.find(key);
+            if (entity == bodyEntities.end()) {
+                return false;
+            }
+            const BodyState& state = bodies.at(entity->second);
+            if (state.motionType != PhysicsMotionType::Static && !interface.IsActive(state.id)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static TriggerEvent exited(const SensorPair& pair) {
+        return {.type = TriggerEventType::Exited,
+                .sensor = pair.sensor,
+                .other = pair.other,
+                .sensorId = pair.sensorId,
+                .otherId = pair.otherId};
+    }
+
+    // Turns the step's sensor contacts into enter and exit events, after the
+    // exits of bodies removed since the last step.
+    void updateTriggers() {
+        for (const PendingContact& pending : pendingContacts) {
+            if (pending.type == ContactEventType::Persist) {
+                continue;
+            }
+            const uint32_t firstKey = bodyKey(pending.first);
+            const uint32_t secondKey = bodyKey(pending.second);
+            const uint64_t key = pairKey(firstKey, secondKey);
+            if (pending.type == ContactEventType::End) {
+                const auto pair = sensorPairs.find(key);
+                if (pair == sensorPairs.end() || pair->second.contacts == 0 || --pair->second.contacts > 0) {
+                    continue;
+                }
+                if (eitherAsleep(firstKey, secondKey)) {
+                    pair->second.dormant = true;
+                } else {
+                    pendingTriggerEvents.push_back(exited(pair->second));
+                    sensorPairs.erase(pair);
+                }
+                continue;
+            }
+            if (!pending.sensor) {
+                continue;
+            }
+            const auto first = bodyEntities.find(firstKey);
+            const auto second = bodyEntities.find(secondKey);
+            if (first == bodyEntities.end() || second == bodyEntities.end()) {
+                continue;
+            }
+            SensorPair& pair = sensorPairs[key];
+            if (pair.dormant) {
+                // Woke up still inside.
+                pair.dormant = false;
+                ++pair.contacts;
+                continue;
+            }
+            if (pair.contacts++ > 0) {
+                continue;
+            }
+            const bool firstIsSensor = bodies.at(first->second).sensor;
+            const auto& sensor = firstIsSensor ? *first : *second;
+            const auto& other = firstIsSensor ? *second : *first;
+            pair.sensorBody = sensor.first;
+            pair.otherBody = other.first;
+            pair.sensor = sensor.second;
+            pair.other = other.second;
+            pair.sensorId = bodies.at(sensor.second).sceneId;
+            pair.otherId = bodies.at(other.second).sceneId;
+            pendingTriggerEvents.push_back({.type = TriggerEventType::Entered,
+                                            .sensor = pair.sensor,
+                                            .other = pair.other,
+                                            .sensorId = pair.sensorId,
+                                            .otherId = pair.otherId});
+        }
+        triggerEvents.swap(pendingTriggerEvents);
+        pendingTriggerEvents.clear();
     }
 
     PhysicsWorldConfig config;
@@ -210,6 +346,11 @@ class PhysicsWorld::Impl {
     std::unordered_map<uint32_t, Entity> bodyEntities;
     std::vector<PendingContact> pendingContacts;
     std::vector<ContactEvent> contactEvents;
+    std::unordered_map<uint64_t, SensorPair> sensorPairs;
+    // Exits of bodies removed since the last step; the step appends its own
+    // events and publishes them all as triggerEvents.
+    std::vector<TriggerEvent> pendingTriggerEvents;
+    std::vector<TriggerEvent> triggerEvents;
     std::mutex contactMutex;
     const Scene* observedScene{nullptr};
     uint32_t stepsUntilAudit{0};
@@ -226,8 +367,11 @@ PhysicsResult PhysicsWorld::init(const PhysicsWorldConfig& config) {
     if (m_impl->initialized) {
         return {.success = true};
     }
-    if (config.layers.empty() || config.fixedTimeStep <= 0.0f || config.maxSubSteps == 0) {
-        return {.error = "Physics configuration requires layers, a positive fixed step, and at least one substep"};
+    if (config.fixedTimeStep <= 0.0f || config.maxSubSteps == 0) {
+        return {.error = "Physics configuration requires a positive fixed step and at least one substep"};
+    }
+    if (const std::string error = config.layers.validate(); !error.empty()) {
+        return {.error = error};
     }
 
     m_impl->config = config;
@@ -270,6 +414,9 @@ void PhysicsWorld::clear() {
         return;
     }
 
+    m_impl->sensorPairs.clear();
+    m_impl->pendingTriggerEvents.clear();
+    m_impl->triggerEvents.clear();
     if (!m_impl->initialized) {
         m_impl->bodies.clear();
         m_impl->bodyEntities.clear();
@@ -384,14 +531,7 @@ PhysicsResult PhysicsWorld::refreshBodyFromWorld(Entity entity, Scene& scene, co
     if (!m_impl->initialized) {
         return {.error = "Physics world is not initialized"};
     }
-    auto existing = m_impl->bodies.find(entity);
-    if (existing != m_impl->bodies.end()) {
-        JPH::BodyInterface& bodies = m_impl->system->GetBodyInterface();
-        bodies.RemoveBody(existing->second.id);
-        bodies.DestroyBody(existing->second.id);
-        m_impl->bodyEntities.erase(bodyKey(existing->second.id));
-        m_impl->bodies.erase(existing);
-    }
+    m_impl->removeBody(entity);
     if (!scene.registry().valid(entity) ||
         !scene.registry().all_of<TransformComponent, ColliderComponent, RigidBodyComponent>(entity)) {
         return {.success = true};
@@ -423,14 +563,20 @@ PhysicsResult PhysicsWorld::refreshBodyFromWorld(Entity entity, Scene& scene, co
     } else if (rigidBody.motionType == PhysicsMotionType::Dynamic) {
         motion = JPH::EMotionType::Dynamic;
     }
+    // A layer the table lacks would collide with nothing; Dynamic is the
+    // documented stand-in.
+    const uint32_t layer =
+        m_impl->config.layers.contains(rigidBody.layer) ? rigidBody.layer.index : PhysicsLayer::Dynamic.index;
     JPH::BodyCreationSettings settings(shape, JPH::RVec3(position.x, position.y, position.z), toJolt(rotation), motion,
-                                       static_cast<JPH::ObjectLayer>(rigidBody.layer));
+                                       objectLayer(layer, motion != JPH::EMotionType::Static));
     settings.mFriction = std::max(0.0f, rigidBody.friction);
     settings.mRestitution = std::clamp(rigidBody.restitution, 0.0f, 1.0f);
     settings.mLinearDamping = std::max(0.0f, rigidBody.linearDamping);
     settings.mAngularDamping = std::max(0.0f, rigidBody.angularDamping);
     settings.mGravityFactor = rigidBody.gravityFactor;
     settings.mIsSensor = rigidBody.sensor;
+    // Lets a static or kinematic sensor also detect kinematic bodies.
+    settings.mCollideKinematicVsNonDynamic = rigidBody.sensor;
     settings.mAllowSleeping = rigidBody.allowSleeping;
     settings.mMotionQuality =
         rigidBody.continuousCollision ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
@@ -449,8 +595,15 @@ PhysicsResult PhysicsWorld::refreshBodyFromWorld(Entity entity, Scene& scene, co
     if (id.IsInvalid()) {
         return {.error = "Jolt could not create the physics body"};
     }
-    m_impl->bodies.emplace(entity,
-                           Impl::BodyState{id, scale, rigidBody.motionType, position, position, rotation, rotation});
+    m_impl->bodies.emplace(entity, Impl::BodyState{.id = id,
+                                                   .sceneId = scene.id(entity),
+                                                   .sensor = rigidBody.sensor,
+                                                   .scale = scale,
+                                                   .motionType = rigidBody.motionType,
+                                                   .previousPosition = position,
+                                                   .currentPosition = position,
+                                                   .previousRotation = rotation,
+                                                   .currentRotation = rotation});
     m_impl->bodyEntities.emplace(bodyKey(id), entity);
     return {.success = true};
 }
@@ -469,15 +622,7 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
     const auto transformsDone = std::chrono::steady_clock::now();
     m_stats.transformMilliseconds = milliseconds(start, transformsDone);
     JPH::BodyInterface& interface = m_impl->system->GetBodyInterface();
-    const auto removeBody = [&](Entity entity) {
-        const auto existing = m_impl->bodies.find(entity);
-        if (existing != m_impl->bodies.end()) {
-            interface.RemoveBody(existing->second.id);
-            interface.DestroyBody(existing->second.id);
-            m_impl->bodyEntities.erase(bodyKey(existing->second.id));
-            m_impl->bodies.erase(existing);
-        }
-    };
+    const auto removeBody = [&](Entity entity) { m_impl->removeBody(entity); };
 
     const bool newScene = m_impl->observedScene != &scene;
     if (newScene) {
@@ -601,6 +746,7 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
             m_impl->contactEvents.push_back({pending.type, first->second, second->second, pending.normal});
         }
     }
+    m_impl->updateTriggers();
     m_stats.contactEvents = static_cast<uint32_t>(m_impl->contactEvents.size());
     m_stats.synchronizeOutMilliseconds = milliseconds(simulationDone, std::chrono::steady_clock::now());
     return {.success = true};
@@ -671,15 +817,95 @@ glm::vec3 PhysicsWorld::linearVelocity(Entity entity) const {
     return fromJolt(m_impl->system->GetBodyInterface().GetLinearVelocity(body->second.id));
 }
 
-bool PhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& direction, float distance,
-                           PhysicsRayHit& hit) const {
-    if (!m_impl->initialized || distance <= 0.0f || glm::dot(direction, direction) <= 0.0f) {
+namespace {
+// The layers a query may hit; a layer index is the object layer without its
+// moving bit.
+class QueryLayerFilter final : public JPH::ObjectLayerFilter {
+  public:
+    explicit QueryLayerFilter(uint32_t layerMask)
+        : m_layerMask(layerMask) {}
+
+    bool ShouldCollide(JPH::ObjectLayer layer) const override {
+        const uint32_t index = layerOf(layer).index;
+        return index < maxPhysicsLayers && (m_layerMask & (1u << index)) != 0;
+    }
+
+  private:
+    uint32_t m_layerMask;
+};
+
+// Skips sensors (unless asked for) and the ignored entities, which bodies
+// carry in their user data.
+class QueryBodyFilter final : public JPH::BodyFilter {
+  public:
+    explicit QueryBodyFilter(const PhysicsQueryFilter& filter)
+        : m_filter(filter) {}
+
+    bool ShouldCollideLocked(const JPH::Body& body) const override {
+        if (body.IsSensor() && !m_filter.hitSensors) {
+            return false;
+        }
+        return std::ranges::find(m_filter.ignore, entityFromUserData(body.GetUserData())) == m_filter.ignore.end();
+    }
+
+  private:
+    const PhysicsQueryFilter& m_filter;
+};
+
+JPH::RefConst<JPH::Shape> createQueryShape(const PhysicsQueryShape& shape) {
+    return std::visit(
+        [](const auto& value) -> JPH::RefConst<JPH::Shape> {
+            using Value = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<Value, PhysicsQuerySphere>) {
+                return value.radius > 0.0f ? new JPH::SphereShape(value.radius) : nullptr;
+            } else if constexpr (std::is_same_v<Value, PhysicsQueryCapsule>) {
+                return value.radius > 0.0f && value.halfHeight > 0.0f
+                           ? new JPH::CapsuleShape(value.halfHeight, value.radius)
+                           : nullptr;
+            } else {
+                const float smallest = std::min({value.halfExtents.x, value.halfExtents.y, value.halfExtents.z});
+                // Jolt rounds a box's edges by a convex radius no larger than
+                // its smallest half extent.
+                return smallest > 0.0f
+                           ? new JPH::BoxShape(toJolt(value.halfExtents), std::min(JPH::cDefaultConvexRadius, smallest))
+                           : nullptr;
+            }
+        },
+        shape);
+}
+
+JPH::RMat44 queryTransform(const PhysicsQueryPose& pose) {
+    return JPH::RMat44::sRotationTranslation(toJolt(glm::normalize(pose.rotation)),
+                                             JPH::RVec3(pose.position.x, pose.position.y, pose.position.z));
+}
+
+bool usableDirection(const glm::vec3& direction, float distance) {
+    return distance > 0.0f && std::isfinite(distance) && glm::dot(direction, direction) > 0.0f;
+}
+} // namespace
+
+PhysicsResult PhysicsWorld::setLayers(const PhysicsLayerTable& layers) {
+    if (const std::string error = layers.validate(); !error.empty()) {
+        return {.error = error};
+    }
+    if (!m_impl->bodies.empty()) {
+        return {.error = "Physics layers can only change while the world has no bodies"};
+    }
+    m_impl->config.layers = layers;
+    return {.success = true};
+}
+
+bool PhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& direction, float distance, PhysicsRayHit& hit,
+                           const PhysicsQueryFilter& filter) const {
+    hit = {};
+    if (!m_impl->initialized || !usableDirection(direction, distance)) {
         return false;
     }
     const glm::vec3 rayVector = glm::normalize(direction) * distance;
     JPH::RRayCast ray(JPH::RVec3(origin.x, origin.y, origin.z), toJolt(rayVector));
     JPH::RayCastResult result;
-    if (!m_impl->system->GetNarrowPhaseQuery().CastRay(ray, result)) {
+    if (!m_impl->system->GetNarrowPhaseQuery().CastRay(ray, result, {}, QueryLayerFilter(filter.layerMask),
+                                                       QueryBodyFilter(filter))) {
         return false;
     }
     const auto entity = m_impl->bodyEntities.find(bodyKey(result.mBodyID));
@@ -696,8 +922,125 @@ bool PhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& direction, 
     return true;
 }
 
+bool PhysicsWorld::raycastAll(const glm::vec3& origin, const glm::vec3& direction, float distance,
+                              std::vector<PhysicsRayHit>& hits, const PhysicsQueryFilter& filter) const {
+    hits.clear();
+    if (!m_impl->initialized || !usableDirection(direction, distance)) {
+        return false;
+    }
+    const glm::vec3 rayVector = glm::normalize(direction) * distance;
+    JPH::RRayCast ray(JPH::RVec3(origin.x, origin.y, origin.z), toJolt(rayVector));
+    JPH::AllHitCollisionCollector<JPH::CastRayCollector> collector;
+    m_impl->system->GetNarrowPhaseQuery().CastRay(ray, JPH::RayCastSettings(), collector, {},
+                                                  QueryLayerFilter(filter.layerMask), QueryBodyFilter(filter));
+    collector.Sort();
+    for (const JPH::RayCastResult& result : collector.mHits) {
+        const auto entity = m_impl->bodyEntities.find(bodyKey(result.mBodyID));
+        // Sorted, so a body's first hit is its nearest.
+        if (entity == m_impl->bodyEntities.end() ||
+            std::ranges::any_of(hits, [&](const PhysicsRayHit& hit) { return hit.entity == entity->second; })) {
+            continue;
+        }
+        JPH::BodyLockRead lock(m_impl->system->GetBodyLockInterface(), result.mBodyID);
+        hits.push_back({.entity = entity->second,
+                        .position = origin + rayVector * result.mFraction,
+                        .normal = lock.Succeeded() ? fromJolt(lock.GetBody().GetWorldSpaceSurfaceNormal(
+                                                         result.mSubShapeID2, ray.GetPointOnRay(result.mFraction)))
+                                                   : glm::vec3(0.0f),
+                        .fraction = result.mFraction});
+    }
+    return !hits.empty();
+}
+
+bool PhysicsWorld::shapeCast(const PhysicsQueryShape& shape, const PhysicsQueryPose& start, const glm::vec3& direction,
+                             float distance, PhysicsShapeHit& hit, const PhysicsQueryFilter& filter) const {
+    hit = {};
+    const JPH::RefConst<JPH::Shape> queryShape = createQueryShape(shape);
+    if (!m_impl->initialized || queryShape == nullptr || !usableDirection(direction, distance)) {
+        return false;
+    }
+    const JPH::RShapeCast cast = JPH::RShapeCast::sFromWorldTransform(
+        queryShape, JPH::Vec3::sReplicate(1.0f), queryTransform(start), toJolt(glm::normalize(direction) * distance));
+    JPH::ShapeCastSettings settings;
+    // A shape that starts inside a body reports the deepest point, at
+    // fraction zero.
+    settings.mReturnDeepestPoint = true;
+    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+    m_impl->system->GetNarrowPhaseQuery().CastShape(cast, settings, JPH::RVec3::sZero(), collector, {},
+                                                    QueryLayerFilter(filter.layerMask), QueryBodyFilter(filter));
+    if (!collector.HadHit()) {
+        return false;
+    }
+    const JPH::ShapeCastResult& result = collector.mHit;
+    const auto entity = m_impl->bodyEntities.find(bodyKey(result.mBodyID2));
+    if (entity == m_impl->bodyEntities.end()) {
+        return false;
+    }
+    const JPH::Vec3 axis = result.mPenetrationAxis;
+    hit.entity = entity->second;
+    hit.position = fromJolt(JPH::Vec3(result.mContactPointOn2));
+    hit.normal = axis.LengthSq() > 0.0f ? fromJolt(-axis.Normalized()) : glm::vec3(0.0f);
+    hit.fraction = result.mFraction;
+    return true;
+}
+
+bool PhysicsWorld::overlap(const PhysicsQueryShape& shape, const PhysicsQueryPose& pose, std::vector<Entity>& entities,
+                           const PhysicsQueryFilter& filter) const {
+    entities.clear();
+    const JPH::RefConst<JPH::Shape> queryShape = createQueryShape(shape);
+    if (!m_impl->initialized || queryShape == nullptr) {
+        return false;
+    }
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+    m_impl->system->GetNarrowPhaseQuery().CollideShape(queryShape, JPH::Vec3::sReplicate(1.0f), queryTransform(pose),
+                                                       JPH::CollideShapeSettings(), JPH::RVec3::sZero(), collector, {},
+                                                       QueryLayerFilter(filter.layerMask), QueryBodyFilter(filter));
+    for (const JPH::CollideShapeResult& result : collector.mHits) {
+        const auto entity = m_impl->bodyEntities.find(bodyKey(result.mBodyID2));
+        if (entity != m_impl->bodyEntities.end() && std::ranges::find(entities, entity->second) == entities.end()) {
+            entities.push_back(entity->second);
+        }
+    }
+    return !entities.empty();
+}
+
+bool PhysicsWorld::closestPoint(const glm::vec3& point, float maxDistance, PhysicsClosestPoint& closest,
+                                const PhysicsQueryFilter& filter) const {
+    closest = {};
+    if (!m_impl->initialized || !(maxDistance >= 0.0f) || !std::isfinite(maxDistance)) {
+        return false;
+    }
+    // A tiny probe sphere reports every body within maxDistance of its
+    // surface, with the nearest point on each.
+    constexpr float probeRadius = 1.0e-3f;
+    const JPH::RefConst<JPH::Shape> probe = new JPH::SphereShape(probeRadius);
+    JPH::CollideShapeSettings settings;
+    settings.mMaxSeparationDistance = maxDistance;
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+    m_impl->system->GetNarrowPhaseQuery().CollideShape(
+        probe, JPH::Vec3::sReplicate(1.0f), queryTransform({.position = point}), settings, JPH::RVec3::sZero(),
+        collector, {}, QueryLayerFilter(filter.layerMask), QueryBodyFilter(filter));
+    bool found = false;
+    for (const JPH::CollideShapeResult& result : collector.mHits) {
+        const auto entity = m_impl->bodyEntities.find(bodyKey(result.mBodyID2));
+        // A negative depth is the gap between the probe's surface and the body.
+        const float distance = std::max(0.0f, probeRadius - result.mPenetrationDepth);
+        if (entity == m_impl->bodyEntities.end() || distance > maxDistance || (found && distance >= closest.distance)) {
+            continue;
+        }
+        closest = {
+            .entity = entity->second, .position = fromJolt(JPH::Vec3(result.mContactPointOn2)), .distance = distance};
+        found = true;
+    }
+    return found;
+}
+
 std::span<const ContactEvent> PhysicsWorld::contactEvents() const {
     return m_impl->contactEvents;
+}
+
+std::span<const TriggerEvent> PhysicsWorld::triggerEvents() const {
+    return m_impl->triggerEvents;
 }
 
 PhysicsResult PhysicsWorld::drawDebug(DebugDraw& output, const PhysicsDebugDrawOptions& options) const {

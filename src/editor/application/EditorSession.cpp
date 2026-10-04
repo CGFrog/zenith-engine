@@ -57,6 +57,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_document(assetRoot)
     , m_recovery(settingsDirectory / (std::string("recovery") + sceneExtension))
     , m_projectFile(projectServices.projectFile)
+    , m_physicsLayers(projectServices.physicsLayers)
     , m_playServices(projectServices.play)
     , m_standalone(m_playServices.makeGameProcess ? m_playServices.makeGameProcess() : makeGameProcess())
     , m_mouseCaptureChanged(projectServices.mouseCaptureChanged)
@@ -309,6 +310,11 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     }
     m_moduleHost.setSimulateMask(std::move(simulateMask));
     m_moduleHost.setLogger(context.logger);
+    // A previous project's bodies may still be in the world.
+    context.physics.clear();
+    if (const PhysicsResult result = context.physics.setLayers(m_physicsLayers); !result) {
+        m_diagnostics.reportError("Could not use the project's physics layers: " + result.error);
+    }
     m_projectAssets.refresh(m_diagnostics);
     m_openRecoveryDialog = m_recovery.available();
 
@@ -409,7 +415,11 @@ void EditorSession::fixedUpdate(ApplicationContext& context, const InputState& i
     }
 }
 
-void EditorSession::afterPhysicsStep(ApplicationContext&) {}
+void EditorSession::afterPhysicsStep(ApplicationContext& context) {
+    if (GameServices* services = m_moduleHost.gameServices()) {
+        services->publishTriggerEvents(context.physics.triggerEvents());
+    }
+}
 
 void EditorSession::lateUpdate(ApplicationContext& context, const InputState&, float deltaSeconds) {
     if (m_playMode.mode() == EditorMode::Edit || !m_playMode.advancesThisFrame()) {

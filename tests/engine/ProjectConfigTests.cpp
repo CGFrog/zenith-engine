@@ -166,8 +166,8 @@ int main() {
     expect(saveProjectConfig(moduleProjectPath, withModule).success, "a project with a game module should save");
     const std::string moduleProjectText = readFile(moduleProjectPath);
     expect(moduleProjectText.find(R"("gameModule": "bin/game_module.dll")") != std::string::npos &&
-               moduleProjectText.find(R"("version": 4)") != std::string::npos,
-           "the game module is written relative to the project file in a version 4 project");
+               moduleProjectText.find(R"("version": 5)") != std::string::npos,
+           "the game module is written relative to the project file");
     ProjectConfig loadedWithModule;
     expect(loadProjectConfig(moduleProjectPath, loadedWithModule).success &&
                loadedWithModule.gameModule == directory / "bin" / "game_module.dll",
@@ -198,6 +198,48 @@ int main() {
     ProjectConfig versionThree;
     expect(loadProjectConfig(versionThreePath, versionThree).success && versionThree.gameModule.empty(),
            "version 3 projects load without a game module");
+
+    // Physics layers (version 5): absent means the defaults; a saved table
+    // round-trips with its collision matrix.
+    expect(!loadedWithModule.physicsLayers && loadedWithModule.physicsLayerTable() == PhysicsLayerTable::defaults() &&
+               moduleProjectText.find("physicsLayers") == std::string::npos,
+           "a project without physics layers uses and writes none but the defaults");
+    ProjectConfig withLayers = source;
+    PhysicsLayerTable layers = PhysicsLayerTable::defaults();
+    const std::optional<PhysicsLayer> pickups = layers.add("Pickups");
+    layers.setCollides(*pickups, PhysicsLayer::Player, true);
+    withLayers.physicsLayers = layers;
+    const std::filesystem::path layersPath = directory / "layers.zenith-project";
+    ProjectConfig loadedLayers;
+    expect(saveProjectConfig(layersPath, withLayers).success && loadProjectConfig(layersPath, loadedLayers).success &&
+               loadedLayers.physicsLayers == layers,
+           "project physics layers and their collision matrix round-trip");
+    const auto writeLayers = [&](const std::filesystem::path& path, int version, nlohmann::json value) {
+        nlohmann::json document = nlohmann::json::parse(readFile(layersPath));
+        document["version"] = version;
+        document["physicsLayers"] = std::move(value);
+        writeFile(path, document.dump());
+    };
+    const std::filesystem::path oneSidedPath = directory / "one-sided.zenith-project";
+    writeLayers(oneSidedPath, 5,
+                nlohmann::json::array({{{"name", "Ground"}}, {{"name", "Bodies"}, {"collidesWith", {"Ground"}}}}));
+    ProjectConfig oneSided;
+    expect(loadProjectConfig(oneSidedPath, oneSided).success && oneSided.physicsLayers &&
+               oneSided.physicsLayers->collides({0}, {1}) && !oneSided.physicsLayers->collides({0}, {0}),
+           "a pair listed by one side collides both ways; unlisted pairs do not");
+    const std::filesystem::path unknownLayerPath = directory / "unknown-layer.zenith-project";
+    writeLayers(unknownLayerPath, 5, nlohmann::json::array({{{"name", "Ground"}, {"collidesWith", {"Water"}}}}));
+    ProjectConfig unknownLayer;
+    expect(!loadProjectConfig(unknownLayerPath, unknownLayer), "a collision with an unknown layer is rejected");
+    const std::filesystem::path duplicatePath = directory / "duplicate-layer.zenith-project";
+    writeLayers(duplicatePath, 5, nlohmann::json::array({{{"name", "Ground"}}, {{"name", "Ground"}}}));
+    ProjectConfig duplicate;
+    expect(!loadProjectConfig(duplicatePath, duplicate), "a layer name used twice is rejected");
+    const std::filesystem::path versionFourPath = directory / "version-four.zenith-project";
+    writeLayers(versionFourPath, 4, "ignored");
+    ProjectConfig versionFour;
+    expect(loadProjectConfig(versionFourPath, versionFour).success && !versionFour.physicsLayers,
+           "version 4 projects load with the default physics layers");
 
     writeFile(projectPath, "{not json");
     ProjectConfig preserved = loaded;

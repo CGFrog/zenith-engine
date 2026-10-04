@@ -5,10 +5,19 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 ## `src/engine/project/ProjectConfig.*`
 
 Defines the shared versioned project manifest used by both game and editor
-applications. Version 4 stores a display name, project-relative asset and scene
-roots, a scene-root-relative startup scene, validated renderer quality and
-per-pass budget settings, and an optional project-relative `gameModule`
-library path. Versions 1 to 3 remain readable and are upgraded on save. Scene references are validated against the scene root before
+applications. Version 5 stores:
+
+- a display name;
+- project-relative asset and scene roots;
+- a scene-root-relative startup scene;
+- validated renderer quality and per-pass budget settings;
+- an optional project-relative `gameModule` library path;
+- optional `physicsLayers`: an array of `{"name", "collidesWith": [names]}`
+  whose order gives each layer's index. A pair collides when either lists the
+  other. Without it the project uses `PhysicsLayerTable::defaults()`.
+
+The game and the editor give the table to their `PhysicsWorld`. Versions 1 to
+4 remain readable and are upgraded on save. Scene references are validated against the scene root before
 `SceneDocument` loads them. `loadProjectScene` and `loadProjectStartupScene`
 take an optional component type registry (null means the built-in types) so a
 game can load scenes holding its own components; `loadProjectSceneFile` loads

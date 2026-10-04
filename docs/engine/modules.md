@@ -61,7 +61,7 @@ Besides the scene, mode, and delta, a system gets:
   evaluates none.
 
 Changing `SystemContext`, `ModuleRegistrar`, or a registered descriptor bumps
-`ZENITH_MODULE_API_VERSION` (now 2).
+`ZENITH_MODULE_API_VERSION` (now 3; A3 changed `RigidBodyComponent::layer`).
 
 ## `GameServices`
 

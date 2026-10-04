@@ -5,6 +5,7 @@
 #include "SystemScheduler.hpp"
 #include "Timers.hpp"
 #include "engine/diagnostics/Logger.hpp"
+#include "engine/physics/PhysicsWorld.hpp"
 #include "engine/scene/Prefab.hpp"
 
 class AssetManager;
@@ -44,6 +45,9 @@ class GameServices {
     void advanceTimers(Scene& scene, float simulatedSeconds);
     // Applies the recorded entity commands.
     void flush(Scene& scene);
+    // Publishes a physics step's sensor events as TriggerEntered and
+    // TriggerExited; the host calls it after each step.
+    void publishTriggerEvents(std::span<const TriggerEvent> events);
 
   private:
     PrefabSystem m_prefabs;

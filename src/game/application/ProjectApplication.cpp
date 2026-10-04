@@ -113,6 +113,9 @@ SceneResult ProjectApplication::onStart(ApplicationContext& context) {
     // Asset paths in the render settings (the colour-grading LUT) are
     // relative to the project's asset root.
     context.rendering.setAssetRoot(m_project.assetRoot);
+    if (const PhysicsResult result = context.physics.setLayers(m_project.physicsLayerTable()); !result) {
+        return {.error = "Invalid project physics layers: " + result.error};
+    }
     return {.success = true};
 }
 

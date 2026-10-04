@@ -69,6 +69,63 @@ ProjectConfigResult containedRelativeForSave(const std::filesystem::path& root, 
     return {.success = !relative.empty()};
 }
 
+ProjectConfigResult readPhysicsLayers(const Json& document, std::optional<PhysicsLayerTable>& layers) {
+    const auto found = document.find("physicsLayers");
+    if (found == document.end()) {
+        layers.reset();
+        return {.success = true};
+    }
+    if (!found->is_array()) {
+        return {.error = "Project field 'physicsLayers' must be an array of layers"};
+    }
+    PhysicsLayerTable table;
+    for (const Json& layer : *found) {
+        const auto name = layer.is_object() ? layer.find("name") : layer.end();
+        if (!layer.is_object() || name == layer.end() || !name->is_string() || !table.add(name->get<std::string>())) {
+            return {.error = "Each project physics layer needs a unique, non-empty 'name', at most " +
+                             std::to_string(maxPhysicsLayers) + " layers"};
+        }
+    }
+    for (size_t index = 0; index < found->size(); ++index) {
+        const Json& layer = (*found)[index];
+        const auto collidesWith = layer.find("collidesWith");
+        if (collidesWith == layer.end()) {
+            continue;
+        }
+        if (!collidesWith->is_array()) {
+            return {.error = "Physics layer '" + table.names[index] + "' needs 'collidesWith' to list layer names"};
+        }
+        for (const Json& other : *collidesWith) {
+            const std::optional<PhysicsLayer> otherLayer =
+                other.is_string() ? table.find(other.get<std::string>()) : std::nullopt;
+            if (!otherLayer) {
+                return {.error = "Physics layer '" + table.names[index] + "' collides with an unknown layer " +
+                                 other.dump()};
+            }
+            table.setCollides({static_cast<uint32_t>(index)}, *otherLayer, true);
+        }
+    }
+    if (const std::string error = table.validate(); !error.empty()) {
+        return {.error = "Invalid project physics layers: " + error};
+    }
+    layers = std::move(table);
+    return {.success = true};
+}
+
+Json writePhysicsLayers(const PhysicsLayerTable& table) {
+    Json layers = Json::array();
+    for (uint32_t index = 0; index < table.size(); ++index) {
+        Json collidesWith = Json::array();
+        for (uint32_t other = 0; other < table.size(); ++other) {
+            if (table.collides({index}, {other})) {
+                collidesWith.push_back(table.names[other]);
+            }
+        }
+        layers.push_back({{"name", table.names[index]}, {"collidesWith", std::move(collidesWith)}});
+    }
+    return layers;
+}
+
 ProjectConfigResult rootRelativeForSave(const std::filesystem::path& projectDirectory,
                                         const std::filesystem::path& root, std::string_view field,
                                         std::filesystem::path& relative) {
@@ -151,14 +208,28 @@ ProjectConfigResult loadProjectConfig(const std::filesystem::path& path, Project
             return result;
         }
     }
+    if (version >= 5) {
+        if (ProjectConfigResult result = readPhysicsLayers(document, loaded.physicsLayers); !result) {
+            return result;
+        }
+    }
 
     config = std::move(loaded);
     return {.success = true};
 }
 
+PhysicsLayerTable ProjectConfig::physicsLayerTable() const {
+    return physicsLayers.value_or(PhysicsLayerTable::defaults());
+}
+
 ProjectConfigResult saveProjectConfig(const std::filesystem::path& path, const ProjectConfig& config) {
     if (config.displayName.empty()) {
         return {.error = "Project display name must not be empty"};
+    }
+    if (config.physicsLayers) {
+        if (const std::string error = config.physicsLayers->validate(); !error.empty()) {
+            return {.error = "Invalid project physics layers: " + error};
+        }
     }
 
     const std::filesystem::path projectPath = std::filesystem::absolute(path).lexically_normal();
@@ -213,6 +284,9 @@ ProjectConfigResult saveProjectConfig(const std::filesystem::path& path, const P
         {"startupScene", startupScene.generic_string()}, {"renderSettings", Json::parse(serializedRenderSettings)}};
     if (!gameModule.empty()) {
         document["gameModule"] = gameModule.generic_string();
+    }
+    if (config.physicsLayers) {
+        document["physicsLayers"] = writePhysicsLayers(*config.physicsLayers);
     }
     output << document.dump(2) << '\n';
     if (!output) {

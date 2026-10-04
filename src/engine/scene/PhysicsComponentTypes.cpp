@@ -97,11 +97,10 @@ ComponentType rigidBodyComponentType() {
                               {"kinematic", "Kinematic", static_cast<int64_t>(PhysicsMotionType::Kinematic)},
                               {"dynamic", "Dynamic", static_cast<int64_t>(PhysicsMotionType::Dynamic)}},
                              EnumEncoding::Integer)
+                    // An index into the project's layer table (0 Static, 1
+                    // Dynamic, 2 Player by default).
                     .add("layer", &C::layer)
-                    .options({{"static", "Static", static_cast<int64_t>(PhysicsLayer::Static)},
-                              {"dynamic", "Dynamic", static_cast<int64_t>(PhysicsLayer::Dynamic)},
-                              {"player", "Player", static_cast<int64_t>(PhysicsLayer::Player)}},
-                             EnumEncoding::Integer)
+                    .drag(0.1f, 0.0, static_cast<double>(maxPhysicsLayers - 1))
                     .add("mass", &C::mass)
                     .drag(0.05f, 0.001, 100000.0)
                     .add("friction", &C::friction)
@@ -118,5 +117,16 @@ ComponentType rigidBodyComponentType() {
                     .add("allow_sleeping", &C::allowSleeping)
                     .add("continuous_collision", &C::continuousCollision)
                     .add("lock_rotation", &C::lockRotation))
+        // Version 2: "layer" names any project layer by index, not only
+        // the three built-in ones. Their indices are unchanged, so version 1
+        // documents need no change.
+        .schemaVersion(2)
+        .migration(1, [](nlohmann::json&) { return SceneDocumentResult{.success = true}; })
+        .validate([](const C& body) {
+            return body.layer.index < maxPhysicsLayers
+                       ? std::string{}
+                       : "Physics layer " + std::to_string(body.layer.index) + " is beyond the last layer, " +
+                             std::to_string(maxPhysicsLayers - 1);
+        })
         .build();
 }

@@ -1,5 +1,7 @@
 #include "GameServices.hpp"
 
+#include "GameEvents.hpp"
+
 #include <utility>
 
 GameServices::GameServices(AssetManager& assets, SceneDocumentOptions documents, DebugDraw& debugDraw, Logger* logger)
@@ -42,6 +44,16 @@ void GameServices::advanceTimers(Scene& scene, float simulatedSeconds) {
 
 void GameServices::flush(Scene& scene) {
     m_commands.flush(scene, m_prefabs, m_events, m_log);
+}
+
+void GameServices::publishTriggerEvents(std::span<const TriggerEvent> events) {
+    for (const TriggerEvent& event : events) {
+        if (event.type == TriggerEventType::Entered) {
+            m_events.publish(TriggerEntered{.sensor = event.sensorId, .other = event.otherId});
+        } else {
+            m_events.publish(TriggerExited{.sensor = event.sensorId, .other = event.otherId});
+        }
+    }
 }
 
 void runGameplayPhase(const SystemScheduler& scheduler, SystemPhase phase, const SystemContext& context,

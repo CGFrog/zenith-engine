@@ -1,8 +1,12 @@
 #pragma once
 
 #include "../assets/Assets.hpp"
+#include "../reflection/Reflection.hpp"
 
+#include <compare>
+#include <cstdint>
 #include <glm/glm.hpp>
+#include <type_traits>
 #include <variant>
 
 enum class PhysicsMotionType {
@@ -11,11 +15,33 @@ enum class PhysicsMotionType {
     Dynamic,
 };
 
-enum class PhysicsLayer : uint16_t {
-    Static = 0,
-    Dynamic = 1,
-    Player = 2,
+inline constexpr uint32_t maxPhysicsLayers = 32;
+
+// A collision layer: an index into the project's layer table
+// (PhysicsLayerTable), below maxPhysicsLayers. Which layers collide is the
+// table's collision matrix. Static, Dynamic, and Player are the built-in
+// layers every table starts with.
+struct PhysicsLayer {
+    uint32_t index{0};
+
+    static const PhysicsLayer Static;
+    static const PhysicsLayer Dynamic;
+    static const PhysicsLayer Player;
+
+    auto operator<=>(const PhysicsLayer&) const = default;
 };
+
+inline constexpr PhysicsLayer PhysicsLayer::Static{0};
+inline constexpr PhysicsLayer PhysicsLayer::Dynamic{1};
+inline constexpr PhysicsLayer PhysicsLayer::Player{2};
+
+// Serialized as its index.
+template <> struct ReflectedFieldKind<PhysicsLayer> {
+    static constexpr FieldKind kind = FieldKind::UInt32;
+};
+
+static_assert(std::is_standard_layout_v<PhysicsLayer> && sizeof(PhysicsLayer) == sizeof(uint32_t),
+              "Reflection stores a PhysicsLayer as its index");
 
 struct BoxCollider {
     glm::vec3 halfExtents{0.5f};

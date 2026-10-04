@@ -42,6 +42,9 @@ SceneResult DemoApplication::onStart(ApplicationContext& context) {
         // Asset paths in the project's render settings (the colour-grading
         // LUT) are relative to its asset root.
         context.rendering.setAssetRoot(m_project->assetRoot);
+        if (const PhysicsResult result = context.physics.setLayers(m_project->physicsLayerTable()); !result) {
+            return {.error = "Invalid project physics layers: " + result.error};
+        }
     }
     context.audio.setBusMuted(AudioBus::Master, m_settings->masterMuted);
     context.gameUi.setAccessibility(m_settings->accessibility);

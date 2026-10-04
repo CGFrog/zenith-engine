@@ -3,25 +3,21 @@
 #include "../graphics/DebugDraw.hpp"
 #include "../scene/Scene.hpp"
 #include "PhysicsComponents.hpp"
+#include "PhysicsLayers.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <glm/gtc/quaternion.hpp>
 #include <memory>
 #include <span>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace JPH {
 class BodyInterface;
 class PhysicsSystem;
 } // namespace JPH
-
-struct PhysicsLayerDefinition {
-    PhysicsLayer layer{PhysicsLayer::Static};
-    uint32_t categoryBits{1};
-    uint32_t collidesWithBits{0xffffffffu};
-    bool moving{false};
-};
 
 struct PhysicsWorldConfig {
     glm::vec3 gravity{0.0f, -9.81f, 0.0f};
@@ -35,11 +31,8 @@ struct PhysicsWorldConfig {
     // Zero disables the reconciliation audit. It is intentionally frequent in
     // debug builds and may be raised for large benchmark scenes.
     uint32_t debugAuditInterval{300};
-    std::vector<PhysicsLayerDefinition> layers{
-        {PhysicsLayer::Static, 1u << 0u, (1u << 1u) | (1u << 2u), false},
-        {PhysicsLayer::Dynamic, 1u << 1u, 0xffffffffu, true},
-        {PhysicsLayer::Player, 1u << 2u, 0xffffffffu, true},
-    };
+    // A project's own table replaces it through PhysicsWorld::setLayers.
+    PhysicsLayerTable layers{PhysicsLayerTable::defaults()};
 };
 
 enum class ContactEventType {
@@ -55,11 +48,83 @@ struct ContactEvent {
     glm::vec3 normal{0.0f};
 };
 
+// A body entered or left a sensor (a rigid body with RigidBodyComponent::
+// sensor set). Exited is also reported when either body is removed, for
+// example because its entity was destroyed; the entity may then no longer
+// exist, so each side also carries its scene id. Bodies are matched on whole
+// bodies: a pair is inside while any of their shapes touch. A body that falls
+// asleep inside stays inside (Jolt drops a sleeping body's contacts; waking
+// up inside reports nothing). Two sensors never report each other.
+enum class TriggerEventType {
+    Entered,
+    Exited,
+};
+
+struct TriggerEvent {
+    TriggerEventType type{TriggerEventType::Entered};
+    Entity sensor{entt::null};
+    Entity other{entt::null};
+    SceneEntityId sensorId;
+    SceneEntityId otherId;
+};
+
+// What a query may hit: bodies on the layers in layerMask (bit i is layer i),
+// except the ignored entities (for example a ray's own shooter) and, unless
+// hitSensors is set, sensors.
+struct PhysicsQueryFilter {
+    uint32_t layerMask{~0u};
+    std::span<const Entity> ignore;
+    bool hitSensors{false};
+};
+
 struct PhysicsRayHit {
     Entity entity{entt::null};
     glm::vec3 position{0.0f};
     glm::vec3 normal{0.0f};
+    // Along the cast, from 0 at its start to 1 at its full distance.
     float fraction{0.0f};
+};
+
+// Shapes swept or tested by queries, in world units. A capsule's axis is its
+// local Y axis; halfHeight excludes the end caps.
+struct PhysicsQuerySphere {
+    float radius{0.5f};
+};
+
+struct PhysicsQueryCapsule {
+    float halfHeight{0.5f};
+    float radius{0.5f};
+};
+
+struct PhysicsQueryBox {
+    glm::vec3 halfExtents{0.5f};
+};
+
+using PhysicsQueryShape = std::variant<PhysicsQuerySphere, PhysicsQueryCapsule, PhysicsQueryBox>;
+
+// Where a query shape sits: its center and orientation.
+struct PhysicsQueryPose {
+    glm::vec3 position{0.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+};
+
+struct PhysicsShapeHit {
+    Entity entity{entt::null};
+    // The contact point on the hit body, and the hit surface's normal
+    // (pointing back toward the cast shape).
+    glm::vec3 position{0.0f};
+    glm::vec3 normal{0.0f};
+    // Along the cast; zero when the shape already overlapped the body at its
+    // start.
+    float fraction{0.0f};
+};
+
+struct PhysicsClosestPoint {
+    Entity entity{entt::null};
+    // The nearest point on the body's surface, and its distance from the
+    // query point (zero when the point is inside the body).
+    glm::vec3 position{0.0f};
+    float distance{0.0f};
 };
 
 struct PhysicsResult {
@@ -108,7 +173,14 @@ class PhysicsWorld {
     PhysicsWorld(const PhysicsWorld&) = delete;
     PhysicsWorld& operator=(const PhysicsWorld&) = delete;
 
+    // Fails on an invalid config, including an invalid layer table.
     PhysicsResult init(const PhysicsWorldConfig& config = {});
+    // Replaces the collision layers, for example with the project's. Fails
+    // while the world has bodies (clear it first) and for an invalid table.
+    // A body whose layer the table lacks is put on Dynamic.
+    PhysicsResult setLayers(const PhysicsLayerTable& layers);
+    // Removes every body. Pending trigger state is dropped without Exited
+    // events.
     void clear();
     void shutdown();
     PhysicsResult step(Scene& scene, const AssetManager& assets, float deltaSeconds);
@@ -119,9 +191,31 @@ class PhysicsWorld {
     bool applyImpulse(Entity entity, const glm::vec3& impulse);
     bool setLinearVelocity(Entity entity, const glm::vec3& velocity);
     glm::vec3 linearVelocity(Entity entity) const;
-    bool raycast(const glm::vec3& origin, const glm::vec3& direction, float distance, PhysicsRayHit& hit) const;
+
+    // Queries against the bodies as of the last step (or refresh). Each
+    // returns false (leaving its output empty) without an initialized world
+    // or a usable direction, distance, or shape.
+    //
+    // The nearest hit along direction within distance.
+    bool raycast(const glm::vec3& origin, const glm::vec3& direction, float distance, PhysicsRayHit& hit,
+                 const PhysicsQueryFilter& filter = {}) const;
+    // Every body along the ray, nearest first, each once at its nearest hit.
+    bool raycastAll(const glm::vec3& origin, const glm::vec3& direction, float distance,
+                    std::vector<PhysicsRayHit>& hits, const PhysicsQueryFilter& filter = {}) const;
+    // The first body shape meets when swept from start along direction.
+    bool shapeCast(const PhysicsQueryShape& shape, const PhysicsQueryPose& start, const glm::vec3& direction,
+                   float distance, PhysicsShapeHit& hit, const PhysicsQueryFilter& filter = {}) const;
+    // Every body shape overlaps at pose, each once, in no particular order.
+    bool overlap(const PhysicsQueryShape& shape, const PhysicsQueryPose& pose, std::vector<Entity>& entities,
+                 const PhysicsQueryFilter& filter = {}) const;
+    // The body surface nearest to point within maxDistance.
+    bool closestPoint(const glm::vec3& point, float maxDistance, PhysicsClosestPoint& closest,
+                      const PhysicsQueryFilter& filter = {}) const;
 
     std::span<const ContactEvent> contactEvents() const;
+    // The sensor entries and exits of the last step, exits of removed bodies
+    // first.
+    std::span<const TriggerEvent> triggerEvents() const;
     // Records the bodies' debug geometry into `output` (for example
     // RenderRuntime::debugDraw()). Physics depends only on the recording
     // type, never on the renderer. Fails before init or when a debug renderer

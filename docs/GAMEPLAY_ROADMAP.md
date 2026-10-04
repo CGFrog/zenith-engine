@@ -51,6 +51,16 @@ Approved 2026-10-04. Nothing is implemented yet.
     already has a global `EntityCommands` namespace.
   - Event types are keyed by a `static constexpr eventKey` string. A C++ type
     id would differ between the engine and a module DLL.
+- **2026-10-04: physics layers and triggers (A3).**
+  - `PhysicsLayer` is a one-index struct with the built-in `Static`, `Dynamic`
+    and `Player` constants, so existing code keeps compiling. Reflection
+    stores it as `UInt32`.
+  - Each Jolt object layer is the index times two plus a moving bit, so one
+    named layer holds static and moving bodies.
+  - Physics publishes nothing itself: `PhysicsWorld::triggerEvents()` lists
+    each step's events and the host forwards them to the `EventQueue`.
+  - A body that falls asleep inside a sensor stays inside. Jolt drops a
+    sleeping body's contacts, which would otherwise look like an exit.
 - **2026-10-04: engine owns mechanisms, games own rules.** The character
   controller, physics queries, events, timers, effects, save slots and UI
   widgets are reusable engine mechanisms. Weapons, damage, HUD contents and
@@ -61,8 +71,8 @@ Approved 2026-10-04. Nothing is implemented yet.
 | Item | Title | Depends on | Status |
 | --- | --- | --- | --- |
 | A1 | Scene costs that grow with entity count | — | done d1519ef |
-| A2 | System phases and `GameServices` | — | done |
-| A3 | Physics queries, layers, triggers | A2 (trigger events) | todo |
+| A2 | System phases and `GameServices` | — | done 7f4f340 |
+| A3 | Physics queries, layers, triggers | A2 (trigger events) | done |
 | A4 | Shared input actions | A2 | todo |
 | B1 | Engine character controller | A3, A2 | todo |
 | B2 | Behaviours | A2, A3 | todo |
@@ -234,18 +244,36 @@ Follow-ups:
 Files: `src/engine/physics/*`, `src/engine/scene/PhysicsComponentTypes.cpp`,
 `src/engine/project/` (manifest).
 
-- [ ] Add a `PhysicsQueryFilter` with a layer mask, ignored entities and a
+- [x] Add a `PhysicsQueryFilter` with a layer mask, ignored entities and a
       hit-sensors flag, accepted by `raycast`.
-- [ ] Add `raycastAll`, `shapeCast` (sphere, capsule, box), `overlap` and
+- [x] Add `raycastAll`, `shapeCast` (sphere, capsule, box), `overlap` and
       `closestPoint`.
-- [ ] Add named project layers: up to 32, declared in the project manifest,
+- [x] Add named project layers: up to 32, declared in the project manifest,
       with a collision matrix. `Static`, `Dynamic` and `Player` stay as the
       built-in defaults. Changing the serialized field from an enum to an
       index needs a component schema version and a migration.
-- [ ] Derive per-sensor trigger enter and exit events from `contactEvents()`
+- [x] Derive per-sensor trigger enter and exit events from `contactEvents()`
       and publish them to the A2 `EventQueue`.
-- [ ] Tests: a ray that ignores its owner, layer masks, shape casts, overlap
+- [x] Tests: a ray that ignores its owner, layer masks, shape casts, overlap
       results, and the enter/stay/exit order for triggers.
+
+Result:
+- `PhysicsWorld` has `raycast` and `raycastAll`, `shapeCast`, `overlap`, and
+  `closestPoint`, all with a `PhysicsQueryFilter`.
+- Layers come from `PhysicsLayerTable`, which project manifest version 5
+  stores as `physicsLayers`. The game and the editor apply it through
+  `setLayers`.
+- The `rigid_body` component is at schema version 2; its migration from
+  version 1 is a no-op.
+- Coverage is in `tests/engine/PhysicsQueryTests.cpp` and
+  `ProjectConfigTests`.
+
+Follow-ups:
+- The inspector edits the layer as a number until C5 adds the layer editor.
+  It needs project-supplied names in `ReflectedFieldEditorOptions`.
+- Sensor-vs-sensor overlaps are not reported.
+- The stale first-person controller sentence in `docs/engine/physics.md` was
+  rewritten with the layer change; B1 and D7 need not fix it again.
 
 ### A4. Shared input actions
 

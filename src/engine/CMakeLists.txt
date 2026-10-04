@@ -129,6 +129,7 @@ add_library(zenith_engine SHARED
     module/SharedLibrary.cpp
     module/SystemScheduler.cpp
     module/Timers.cpp
+    physics/PhysicsLayers.cpp
     physics/PhysicsWorld.cpp
     physics/JoltDebugDraw.cpp
     physics/JoltRuntime.cpp

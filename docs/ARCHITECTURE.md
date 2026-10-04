@@ -450,9 +450,12 @@ for the three required physical components. Newly discovered entities become
 Jolt shapes and bodies. Missing entities/components remove old bodies.
 Kinematic poses are submitted, Jolt advances, and dynamic poses are copied back.
 
-Collision layers are data-driven through `PhysicsWorldConfig`. Each has a
-category bit, a mask of accepted categories, and a static/moving broad-phase
-classification. Two bodies collide only when both masks accept the other.
+Collision layers are the project's `PhysicsLayerTable` (up to 32 named layers
+and a symmetric collision matrix, from the project manifest), given to the
+world with `setLayers`. Two bodies collide when the matrix says their layers
+do. Queries (rays, shape casts, overlaps, closest points) take a filter of
+layers, ignored entities, and whether to hit sensors. Sensor overlaps become
+`TriggerEvent`s each step.
 
 Jolt may report contacts from worker threads. The listener collects them under
 a mutex, then the step resolves body IDs to ECS entities and exposes a stable

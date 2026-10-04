@@ -1,9 +1,11 @@
 #pragma once
 
 #include "engine/graphics/Rendering.hpp"
+#include "engine/physics/PhysicsLayers.hpp"
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 
 class AssetManager;
@@ -11,7 +13,7 @@ class ComponentTypeRegistry;
 class Scene;
 
 struct ProjectConfig {
-    static constexpr int currentVersion = 4;
+    static constexpr int currentVersion = 5;
 
     std::filesystem::path projectFile;
     std::string displayName;
@@ -23,6 +25,14 @@ struct ProjectConfig {
     // file and resolved to an absolute path on load. Empty when the project
     // has no game module.
     std::filesystem::path gameModule;
+    // The project's collision layers and matrix (version 5); empty uses
+    // PhysicsLayerTable::defaults(). Written as "physicsLayers": an array of
+    // {"name", "collidesWith": [names]} objects whose order gives each
+    // layer's index; a pair collides when either lists the other.
+    std::optional<PhysicsLayerTable> physicsLayers;
+
+    // physicsLayers, or the defaults.
+    PhysicsLayerTable physicsLayerTable() const;
 };
 
 struct ProjectConfigResult {

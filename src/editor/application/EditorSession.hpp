@@ -72,6 +72,9 @@ struct EditorProjectServices {
     // The open project's file, which the Standalone play target passes to
     // the game; empty for an editor running without one.
     std::filesystem::path projectFile;
+    // The project's collision layers, which the session gives the physics
+    // world when it loads.
+    PhysicsLayerTable physicsLayers{PhysicsLayerTable::defaults()};
     // The game executable and process factory for the Standalone target.
     EditorPlayServices play;
     // Told the session's mouse capture policy every frame, and
@@ -338,6 +341,7 @@ class EditorSession final : public ApplicationScene,
     // What the module's Ui systems draw over the game view, sized to it.
     GameUiContext m_gameViewUi;
     std::filesystem::path m_projectFile;
+    PhysicsLayerTable m_physicsLayers;
     EditorPlayServices m_playServices;
     StandalonePlayer m_standalone;
     std::function<void(MouseCapturePolicy)> m_mouseCaptureChanged;
