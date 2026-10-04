@@ -205,10 +205,10 @@ and is open.
 | D7 | Docs hygiene | — | done c5b111b |
 | E1 | Seeded gameplay random streams | — | done ba6064d |
 | E2 | Run and profile save data | E1 | open |
-| E3 | Definition tables | — | done |
+| E3 | Definition tables | — | done 4174590 |
 | E4 | Building and replacing a floor at runtime | — | open |
 | E5 | Partial paths and crowd avoidance | E4 | open |
-| E6 | Audio for gameplay | — | open |
+| E6 | Audio for gameplay | — | done |
 | E7 | Pause, teardown and one game clock | — | done b26c8ab |
 
 Suggested batches:
@@ -1119,12 +1119,42 @@ Several agent sizes and area costs wait for the first enemy that needs them.
 
 ### E6. Audio for gameplay
 
-- [ ] `GameServices` (and so `BehaviourContext`) gives gameplay the session's
+- [x] `GameServices` (and so `BehaviourContext`) gives gameplay the session's
       audio: play, play at a position or following an entity, and stop, by
       handle. Null when the host has no audio, as in tests.
-- [ ] Reflected component types for `AudioEmitterComponent` and
+- [x] Reflected component types for `AudioEmitterComponent` and
       `AudioListenerComponent`, so scenes and prefabs can carry sounds. This
       closes B8's follow-up.
+
+Result:
+- `GameServices::setAudio`, `audio()` and `loadClip(assetPath)`. A clip path
+  resolves against the session's asset root, and paths outside it are
+  rejected. `GameplayRunner::start` and the editor's Play entry give the
+  services the application's audio.
+- `audio_listener` and `audio_emitter` component types
+  (`scene/AudioComponentTypes.cpp`).
+  - The emitter's sound is `clip_asset`, saved as an asset reference with
+    its GUID; the `clip` handle stays runtime-only.
+  - The new built-in system `zenith.audio_emitters` (LateUpdate, Play) loads
+    an emitter's clip whenever the path changes. A clip that cannot load is
+    logged once.
+  - Emitters do not sound in Edit mode.
+- E7's follow-up is closed: the playback rate now applies only to
+  `AudioScope::Scene` voices, so menu sounds and music (Persistent) play on
+  while the game is paused.
+- Coverage:
+  - `testGameplayAudio` in `AudioSystemTests`: services clips, path safety,
+    emitter loading and reporting, and the components' document round trip;
+  - the playback-rate test, which now checks that a persistent voice plays
+    on.
+  - The schedule tests list the new system.
+
+Follow-ups:
+- The inspector edits `clip_asset` as text. Dropping a clip from the Asset
+  Browser onto it would be friendlier.
+- Emitters could preview in Edit mode. They load only while gameplay runs,
+  because the clip cache lives in the application's audio, and loading
+  belongs to the session.
 
 ### E7. Pause, teardown and one game clock
 
@@ -1176,9 +1206,9 @@ Result:
     player neither walks nor looks, and that the game resumes.
 
 Follow-ups:
-- A paused clock sets the audio playback rate to zero for every voice, so
-  menu sounds and music freeze with the world. E6 should let a bus (UI,
-  music) ignore the simulation clock.
+- ~~A paused clock sets the audio playback rate to zero for every voice, so
+  menu sounds and music freeze with the world.~~ Closed in E6: the rate
+  applies to Scene-scope voices only.
 - A system (not a behaviour) that throws still propagates. Only behaviour
   hooks are guarded.
 

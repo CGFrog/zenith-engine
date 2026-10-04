@@ -27,6 +27,10 @@ inline constexpr std::string_view NavAgents = "zenith.nav_agents";
 // the animators (updateAnimators) before the animations advance.
 inline constexpr std::string_view Animator = "zenith.animator";
 inline constexpr int32_t animatorOrder = 1000;
+// LateUpdate, Play: loads each audio emitter's clipAsset into its clip
+// (GameServices::loadClip) when the path changed, so emitters spawned or
+// edited this frame play from the frame's audio sync.
+inline constexpr std::string_view AudioEmitters = "zenith.audio_emitters";
 } // namespace EngineSystems
 
 // Adds the engine's systems to systems; fails if a name is taken.

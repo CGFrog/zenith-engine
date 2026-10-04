@@ -167,6 +167,7 @@ add_library(zenith_engine SHARED
     scene/PhysicsComponentTypes.cpp
     scene/GameplayComponentTypes.cpp
     scene/NavigationComponentTypes.cpp
+    scene/AudioComponentTypes.cpp
     scene/ComponentTypeHelpers.cpp
     scene/CollectionComponentTypes.cpp
     scene/Collections.cpp

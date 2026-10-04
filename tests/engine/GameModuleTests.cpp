@@ -215,7 +215,8 @@ void testLoadRegisterAndUnload(const TestPaths& paths) {
         // The engine's own systems come first.
         expect(scheduler.schedule(SystemPhase::LateUpdate, SimulationMode::Play) ==
                        std::vector<std::string>{std::string(EngineSystems::FirstPersonCamera),
-                                                std::string(EngineSystems::LateBehaviours), "late_tick"} &&
+                                                std::string(EngineSystems::LateBehaviours),
+                                                std::string(EngineSystems::AudioEmitters), "late_tick"} &&
                    scheduler.schedule(SystemPhase::Ui, SimulationMode::Play) == std::vector<std::string>{"hud"},
                "module systems register in the LateUpdate and Ui phases");
         expect(module->inputActions() != nullptr &&

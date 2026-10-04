@@ -23,6 +23,7 @@ void GameplayRunner::start(ApplicationContext& context, std::filesystem::path as
         context.assets,
         SceneDocumentOptions{.assetRoot = std::move(assetRoot), .componentTypes = m_gameplay.componentTypes},
         context.rendering.debugDraw(), &context.logger, m_gameplay.behaviours);
+    m_services->setAudio(&context.audio);
     m_services->events().publish(SceneLoaded{});
 }
 

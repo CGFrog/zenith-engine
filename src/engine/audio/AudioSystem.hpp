@@ -114,6 +114,10 @@ struct AudioListenerComponent {
     bool primary{true};
 };
 
+// A looping or one-shot sound placed in the scene. clipAsset is the authored
+// clip, a path relative to the project's asset root; the engine's
+// zenith.audio_emitters system loads it into clip while gameplay runs. Code
+// may also set clip directly and leave clipAsset empty.
 struct AudioEmitterComponent {
     AudioClipHandle clip{};
     AudioBus bus{AudioBus::Sfx};
@@ -125,6 +129,11 @@ struct AudioEmitterComponent {
     bool play{true};
     // See AudioSpatialOptions::occlusion.
     bool occlusion{false};
+    // Last, so the members before keep their aggregate order.
+    std::string clipAsset;
+    // The clipAsset that clip was loaded from (or failed to load from), so a
+    // changed path loads again; runtime only.
+    std::string loadedClipAsset;
 };
 
 // How blocked the path from the listener to a source is, from 0 (clear) to 1
@@ -161,9 +170,11 @@ class AudioSystem {
     float busGain(AudioBus bus) const;
     void setBusMuted(AudioBus bus, bool muted);
     bool busMuted(AudioBus bus) const;
-    // Plays every voice at rate times its pitch, like a tape running faster
-    // or slower (pitch changes with speed); 0 holds every voice where it is
-    // until the rate rises again. Clamped to [0, 10]; NaN is ignored. The
+    // Plays every Scene-scope voice (emitters included) at rate times its
+    // pitch, like a tape running faster or slower (pitch changes with speed);
+    // 0 holds them where they are until the rate rises again. Persistent
+    // voices (music, menu sounds) keep playing in real time, so a paused game
+    // still has its menu sounds. Clamped to [0, 10]; NaN is ignored. The
     // engine sets it from the application's SimulationClock each frame.
     void setPlaybackRate(float rate);
     float playbackRate() const;

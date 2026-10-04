@@ -993,11 +993,13 @@ void mixImpl(AudioSystem::Impl& impl, float* output, size_t frameCount) {
         return;
     }
     const auto master = impl.buses[busIndex(AudioBus::Master)];
-    if (master.muted || impl.playbackRate <= 0.0f) {
+    if (master.muted) {
         return;
     }
     for (auto& voice : impl.voices) {
-        if (!voice.active || voice.paused) {
+        // The simulation's rate holds or speeds up the scene's voices only.
+        const float rate = voice.scope == AudioScope::Scene ? impl.playbackRate : 1.0f;
+        if (!voice.active || voice.paused || rate <= 0.0f) {
             continue;
         }
         const auto child =
@@ -1035,8 +1037,7 @@ void mixImpl(AudioSystem::Impl& impl, float* output, size_t frameCount) {
         if (voice.streaming) {
             const auto& stream = impl.streams[voice.assetIndex];
             const uint32_t channels = stream.channels;
-            const double step =
-                static_cast<double>(stream.sampleRate) / impl.config.sampleRate * voice.pitch * impl.playbackRate;
+            const double step = static_cast<double>(stream.sampleRate) / impl.config.sampleRate * voice.pitch * rate;
             uint64_t read = impl.streamRead.load(std::memory_order_relaxed);
             const uint64_t write = impl.streamWrite.load(std::memory_order_acquire);
             size_t available = static_cast<size_t>(write - read);
@@ -1077,8 +1078,7 @@ void mixImpl(AudioSystem::Impl& impl, float* output, size_t frameCount) {
         }
         const auto& clip = impl.clips[voice.assetIndex];
         const size_t sourceFrames = clip.samples.size() / clip.channels;
-        const double step =
-            static_cast<double>(clip.sampleRate) / impl.config.sampleRate * voice.pitch * impl.playbackRate;
+        const double step = static_cast<double>(clip.sampleRate) / impl.config.sampleRate * voice.pitch * rate;
         // Occlusion glides with a 50 ms time constant; fully occluded, a voice
         // keeps occludedGain of its level and a low-pass near 1 kHz.
         constexpr float occludedGain = 0.35f;

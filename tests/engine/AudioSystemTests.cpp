@@ -1,5 +1,11 @@
+#include "engine/assets/Assets.hpp"
 #include "engine/audio/AudioSystem.hpp"
+#include "engine/graphics/DebugDraw.hpp"
+#include "engine/module/BuiltInSystems.hpp"
+#include "engine/module/GameServices.hpp"
+#include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/Scene.hpp"
+#include "engine/scene/SceneDocument.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -51,6 +57,75 @@ void writeWav(const std::filesystem::path& path, uint16_t channels, const std::v
     write32(output, static_cast<uint32_t>(samples.size() * sizeof(int16_t)));
     output.write(reinterpret_cast<const char*>(samples.data()),
                  static_cast<std::streamsize>(samples.size() * sizeof(int16_t)));
+}
+
+size_t warningsMentioning(const Logger& logger, std::string_view text) {
+    return static_cast<size_t>(std::ranges::count_if(logger.entries(), [text](const LogEntry& entry) {
+        return entry.level == LogLevel::Warning && entry.message.find(text) != std::string::npos;
+    }));
+}
+
+// Gameplay's audio: clips by asset path through GameServices, emitters that
+// load their authored clip, and the emitter's document form.
+void testGameplayAudio(const std::filesystem::path& assetRoot) {
+    std::filesystem::create_directories(assetRoot / "sounds");
+    writeWav(assetRoot / "sounds" / "hit.wav", 1, {16'384, -16'384, 8'192, -8'192});
+    Logger logger;
+    AssetManager assets{&logger};
+    DebugDraw debugDraw;
+    const SceneDocumentOptions documents{.assetRoot = assetRoot, .componentTypes = builtInComponentTypes()};
+    GameServices services(assets, documents, debugDraw, &logger);
+    expect(services.audio() == nullptr && !services.loadClip("sounds/hit.wav"),
+           "a session without audio loads no clips");
+
+    AudioSystem audio;
+    expect(static_cast<bool>(audio.init(AudioConfig{.maxVoices = 4, .outputEnabled = false})),
+           "gameplay audio test initializes");
+    services.setAudio(&audio);
+    const auto loaded = services.loadClip("sounds/hit.wav");
+    expect(loaded && loaded.handle == audio.loadClip(assetRoot / "sounds" / "hit.wav", true).handle,
+           "a clip path is relative to the session's asset root and shares the audio cache");
+    expect(!services.loadClip("../hit.wav") && !services.loadClip((assetRoot / "sounds" / "hit.wav").string()),
+           "a clip path outside the project's assets is rejected");
+
+    Scene scene;
+    const Entity torch = scene.createEntity("Torch");
+    auto& torchEmitter = scene.registry().emplace<AudioEmitterComponent>(torch);
+    torchEmitter.clipAsset = "sounds/hit.wav";
+    torchEmitter.loop = true;
+    const Entity broken = scene.createEntity("Broken");
+    scene.registry().emplace<AudioEmitterComponent>(broken).clipAsset = "sounds/missing.wav";
+    const SystemScheduler systems(builtInSystems());
+    const auto lateUpdate = [&] {
+        runGameplayPhase(systems, SystemPhase::LateUpdate,
+                         {.scene = scene, .mode = SimulationMode::Play, .logger = &logger, .services = &services});
+    };
+    lateUpdate();
+    lateUpdate();
+    expect(scene.registry().get<AudioEmitterComponent>(torch).clip == loaded.handle,
+           "an emitter loads its authored clip while gameplay runs");
+    expect(!scene.registry().get<AudioEmitterComponent>(broken).clip &&
+               warningsMentioning(logger, "sounds/missing.wav") == 1,
+           "an emitter whose clip cannot load is reported once");
+    scene.registry().get<AudioEmitterComponent>(torch).clipAsset.clear();
+    lateUpdate();
+    expect(!scene.registry().get<AudioEmitterComponent>(torch).clip, "clearing the clip path stops the emitter");
+
+    scene.registry().get<AudioEmitterComponent>(torch).clipAsset = "sounds/hit.wav";
+    scene.registry().emplace<AudioListenerComponent>(scene.createEntity("Ears")).primary = false;
+    std::string text;
+    expect(SceneDocument::serialize(scene, assets, documents, text).success, "audio components serialize");
+    Scene restored;
+    expect(SceneDocument::deserialize(text, assets, documents, restored).success, "audio components deserialize");
+    const Entity restoredTorch = restored.findEntity(scene.id(torch));
+    const auto* emitter =
+        restoredTorch != entt::null ? restored.registry().try_get<AudioEmitterComponent>(restoredTorch) : nullptr;
+    expect(emitter != nullptr && emitter->clipAsset == "sounds/hit.wav" && emitter->loop && !emitter->clip,
+           "an emitter keeps its clip path and settings, and loads its clip only while gameplay runs");
+    const auto listeners = restored.registry().view<const AudioListenerComponent>();
+    expect(listeners.size() == 1 && !listeners.get<const AudioListenerComponent>(listeners.front()).primary,
+           "a listener keeps its settings");
+    audio.shutdown();
 }
 
 bool near(float lhs, float rhs, float tolerance = 0.001f) {
@@ -163,6 +238,7 @@ int main() {
     const auto directory =
         std::filesystem::temp_directory_path() / ("zenith_audio_tests_" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(directory);
+    testGameplayAudio(directory / "project");
     const auto monoPath = directory / "mono.wav";
     const auto stereoPath = directory / "stereo.wav";
     const auto malformedPath = directory / "malformed.wav";
@@ -328,17 +404,20 @@ int main() {
            "audio slots are recycled with a new generation");
     lifetime.shutdown();
 
-    // The playback rate (the simulation's time scale) holds voices at 0 and
-    // plays them faster above 1.
+    // The playback rate (the simulation's time scale) holds the scene's
+    // voices at 0 and plays them faster above 1; persistent voices (music,
+    // menu sounds) play in real time.
     AudioSystem rated;
     expect(static_cast<bool>(rated.init(AudioConfig{.maxVoices = 2, .outputEnabled = false})),
            "audio playback rate test initializes");
     const std::vector<float> tenthSecond(static_cast<size_t>(rated.config().sampleRate / 10), 0.1f);
     const auto ratedClip = rated.createClip(tenthSecond, 1, rated.config().sampleRate);
-    const auto heldVoice = rated.play(ratedClip.handle, {.scope = AudioScope::Persistent});
+    const auto heldVoice = rated.play(ratedClip.handle);
+    const auto menuVoice = rated.play(ratedClip.handle, {.scope = AudioScope::Persistent});
     rated.setPlaybackRate(0.0f);
     rated.update(1.0f);
-    expect(rated.isPlaying(heldVoice.handle), "a zero playback rate holds every voice, persistent ones included");
+    expect(rated.isPlaying(heldVoice.handle), "a zero playback rate holds the scene's voices");
+    expect(!rated.isPlaying(menuVoice.handle), "a persistent voice plays on while the scene is held");
     rated.setPlaybackRate(2.0f);
     rated.update(0.03f);
     expect(rated.isPlaying(heldVoice.handle), "a held voice resumes where it stopped");

@@ -64,7 +64,8 @@ const std::vector<std::string> fixedSystems{std::string(EngineSystems::Character
                                             std::string(EngineSystems::FixedBehaviours),
                                             std::string(DemoGameplay::ItemCollectionSystem)};
 const std::vector<std::string> lateSystems{std::string(EngineSystems::FirstPersonCamera),
-                                           std::string(EngineSystems::LateBehaviours)};
+                                           std::string(EngineSystems::LateBehaviours),
+                                           std::string(EngineSystems::AudioEmitters)};
 
 // Only the engine's behaviour systems run in Edit, for behaviours that opt in.
 bool onlyEngineSystems(const std::vector<std::string>& names) {

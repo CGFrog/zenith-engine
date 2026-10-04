@@ -68,6 +68,38 @@ SystemDescriptor animatorSystem() {
                 }
             }};
 }
+
+void loadAudioEmitterClips(Scene& scene, GameServices& services) {
+    for (auto [entity, emitter] : scene.registry().view<AudioEmitterComponent>().each()) {
+        if (emitter.clipAsset == emitter.loadedClipAsset) {
+            continue;
+        }
+        // Recorded before loading, so a failure is reported once, not every
+        // frame, until the path changes again.
+        emitter.loadedClipAsset = emitter.clipAsset;
+        emitter.clip = {};
+        if (emitter.clipAsset.empty()) {
+            continue;
+        }
+        if (const AudioLoadResult<AudioClipHandle> loaded = services.loadClip(emitter.clipAsset)) {
+            emitter.clip = loaded.handle;
+        } else {
+            services.log().warning("Audio emitter on entity " + std::to_string(scene.id(entity).value) +
+                                   " cannot play '" + emitter.clipAsset + "': " + loaded.error);
+        }
+    }
+}
+
+SystemDescriptor audioEmitterSystem() {
+    return {.name = std::string(EngineSystems::AudioEmitters),
+            .phase = SystemPhase::LateUpdate,
+            .runIn = RunIn::Play,
+            .run = [](const SystemContext& context) {
+                if (context.services != nullptr && context.services->audio() != nullptr) {
+                    loadAudioEmitterClips(context.scene, *context.services);
+                }
+            }};
+}
 } // namespace
 
 SystemRegistryResult registerBuiltInSystems(SystemRegistry& systems) {
@@ -75,7 +107,7 @@ SystemRegistryResult registerBuiltInSystems(SystemRegistry& systems) {
                                     behaviourSystem(EngineSystems::Behaviours, SystemPhase::Update),
                                     behaviourSystem(EngineSystems::FixedBehaviours, SystemPhase::FixedUpdate),
                                     behaviourSystem(EngineSystems::LateBehaviours, SystemPhase::LateUpdate),
-                                    navAgentSystem(), animatorSystem()}) {
+                                    navAgentSystem(), animatorSystem(), audioEmitterSystem()}) {
         if (SystemRegistryResult result = systems.add(std::move(system)); !result) {
             return result;
         }
