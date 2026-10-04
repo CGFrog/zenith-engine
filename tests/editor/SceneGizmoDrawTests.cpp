@@ -1,10 +1,12 @@
 // CPU tests of the viewport's scene gizmos (editor/viewport/SceneGizmoDraw):
 // the geometry each component kind records, the overlay scopes, hidden
-// entities, selection colours, labels, and the Play-mode policy.
+// entities, local-view isolation, selection colours and bounds (collection
+// instances and the cached mesh box), labels, and the Play-mode policy.
 
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/viewport/SceneGizmoDraw.hpp"
 #include "engine/resources/ResourceLocator.hpp"
+#include "engine/scene/Collections.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -58,6 +60,7 @@ struct GizmoScene {
     AssetManager assets;
     std::vector<SceneEntityId> selection;
     std::optional<SceneEntityId> viewCamera;
+    std::optional<std::vector<RenderObjectId>> isolatedObjects;
 
     Entity add(const char* name, const glm::mat4& local = glm::mat4(1.0f)) {
         const Entity entity = scene.createEntity(name);
@@ -69,9 +72,13 @@ struct GizmoScene {
     DebugDraw draw(const SceneGizmoOverlays& overlays) {
         scene.updateWorldTransforms();
         DebugDraw output;
-        drawSceneGizmos(
-            {.scene = scene, .assets = assets, .selection = selection, .aspectRatio = 2.0f, .viewCamera = viewCamera},
-            overlays, output);
+        drawSceneGizmos({.scene = scene,
+                         .assets = assets,
+                         .selection = selection,
+                         .aspectRatio = 2.0f,
+                         .viewCamera = viewCamera,
+                         .isolatedObjects = isolatedObjects ? &*isolatedObjects : nullptr},
+                        overlays, output);
         return output;
     }
 };
@@ -314,6 +321,78 @@ void testSelectionBoundsAndHidden() {
            "a hidden entity has no name label");
 }
 
+RenderObjectId objectOf(Entity entity) {
+    return static_cast<RenderObjectId>(entt::to_integral(entity));
+}
+
+void testLocalViewIsolation() {
+    GizmoScene fixture;
+    const std::optional<MeshHandle> loaded = loadCube(fixture.assets);
+    if (!loaded) {
+        return;
+    }
+    const Entity inside = fixture.add("Inside", glm::translate(glm::mat4(1.0f), {1.0f, 0.0f, 0.0f}));
+    fixture.scene.registry().emplace<PointLightComponent>(inside).range = 2.0f;
+    fixture.scene.attachMesh(inside, *loaded);
+    const Entity outside = fixture.add("Outside", glm::translate(glm::mat4(1.0f), {-20.0f, 0.0f, 0.0f}));
+    fixture.scene.registry().emplace<PointLightComponent>(outside).range = 2.0f;
+    fixture.scene.attachMesh(outside, *loaded);
+    fixture.selection = {fixture.scene.id(inside), fixture.scene.id(outside)};
+    fixture.isolatedObjects = std::vector<RenderObjectId>{objectOf(inside)};
+
+    SceneGizmoOverlays everything;
+    everything.lights = OverlayScope::All;
+    everything.names = OverlayScope::All;
+    everything.selectionBounds = true;
+    const DebugDraw output = fixture.draw(everything);
+    expect(output.lineCount() == sphereLines(sceneGizmoSegments::range) + markerLines + boxLines,
+           "local view draws the light and bounds of isolated objects only");
+    expect(lowest(output).x > -5.0f, "nothing is drawn for an object outside the local view");
+    expect(output.labels().size() == 1u && output.labels().front().text == "Inside",
+           "local view labels isolated objects only");
+
+    fixture.isolatedObjects.reset();
+    expect(fixture.draw(everything).lineCount() == 2u * output.lineCount(),
+           "leaving local view draws every object's gizmos again");
+}
+
+void testCollectionInstanceBounds() {
+    GizmoScene fixture;
+    const std::optional<MeshHandle> loaded = loadCube(fixture.assets);
+    const MeshAsset* mesh = loaded ? fixture.assets.mesh(*loaded) : nullptr;
+    if (mesh == nullptr) {
+        return;
+    }
+    const BoundingBox scanned = calculateBoundingBox(mesh->vertices);
+    expect(!mesh->localBox.empty() && mesh->localBox.minimum == scanned.minimum &&
+               mesh->localBox.maximum == scanned.maximum,
+           "a loaded mesh caches the box around its vertices");
+    expect(calculateBoundingBox({}).empty(), "no vertices make an empty box");
+
+    SceneCollections collections;
+    SceneCollectionId instanced;
+    expect(static_cast<bool>(collections.create("Instanced", {}, instanced)), "the collection is created");
+    fixture.scene.setCollections(std::move(collections));
+    const Entity member = fixture.add("Member");
+    fixture.scene.attachMesh(member, *loaded);
+    expect(static_cast<bool>(linkToCollection(fixture.scene, member, instanced)), "the member joins the collection");
+    const Entity instancer = fixture.add("Instancer", glm::translate(glm::mat4(1.0f), {10.0f, 0.0f, 0.0f}));
+    fixture.scene.registry().emplace<CollectionInstanceComponent>(instancer, instanced);
+    fixture.selection = {fixture.scene.id(instancer)};
+
+    SceneGizmoOverlays bounds = allOff();
+    bounds.selectionBounds = true;
+    DebugDraw output = fixture.draw(bounds);
+    expect(output.lineCount() == boxLines, "a selected collection instancer draws one bounds box");
+    expect(near(lowest(output).x, 10.0f + mesh->localBox.minimum.x) &&
+               near(highest(output).x, 10.0f + mesh->localBox.maximum.x) &&
+               near(highest(output).y, mesh->localBox.maximum.y),
+           "an instancer's bounds cover the members its instance draws");
+
+    fixture.isolatedObjects = std::vector<RenderObjectId>{objectOf(member)};
+    expect(fixture.draw(bounds).lineCount() == 0, "an instancer outside the local view draws no bounds");
+}
+
 void testNames() {
     const SceneGizmoColors colors = sceneGizmoColors();
     GizmoScene fixture;
@@ -369,6 +448,8 @@ int main(int, char** argv) {
     testCollidersAndVolumes();
     testVolumes();
     testSelectionBoundsAndHidden();
+    testLocalViewIsolation();
+    testCollectionInstanceBounds();
     testNames();
     testPlayModePolicy();
     if (failures != 0) {

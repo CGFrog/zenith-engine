@@ -109,7 +109,9 @@ struct MeshPassViewCamera {
 // reflections, particles, post-processing). Per-view GPU state (ViewState)
 // owns its camera sets, clusters, temporal and exposure history, depth
 // pyramid, and post-process targets, so views of different sizes and cameras
-// never disturb each other's history.
+// never disturb each other's history. The shared shadows cast from the
+// isolation of the view drawing through the frame's camera sets; a view
+// isolated differently draws its own shadow maps (ViewShadows).
 class MeshPass {
   public:
     // Creates the shared resources and the default view (slot 0).
@@ -327,6 +329,59 @@ class MeshPass {
         uint32_t skinPaletteOffset{0};
     };
 
+    // A directional shadow map, one depth layer per cascade, and what its
+    // cached cascades were drawn with besides the scene revisions' content.
+    struct DirectionalShadowMap {
+        GpuTexture texture;
+        std::array<VkImageView, 3> layerViews{};
+        // False while the layers are UNDEFINED (never drawn nor prepared).
+        bool initialized{false};
+        SceneRevisions revisions{};
+        SceneVisibilityMode visibilityMode{SceneVisibilityMode::Runtime};
+        // Sorted objects the cascades were limited to; nullopt for every object.
+        std::optional<std::vector<RenderObjectId>> casterObjects;
+        std::array<glm::mat4, 3> lightViewProjections{};
+        uint32_t cascadeCount{0};
+    };
+
+    // Where shadow draws of one frame slot read set 0 (the light matrices in
+    // binding 0, objects, skin palettes, materials, local-shadow tiles) and
+    // write their object records: cascade c from c * maximumObjectsPerFrame,
+    // local-light tiles from localObjectBase.
+    struct ShadowDrawTarget {
+        VkDescriptorSet cameraSet{VK_NULL_HANDLE};
+        void* objectsMapped{nullptr};
+        VmaAllocation objectsAllocation{VK_NULL_HANDLE};
+        uint32_t localObjectBase{0};
+    };
+
+    // A view's own shadow set for one frame slot: its object records and the
+    // camera set its shadow draws bind (binding 0 is the frame's camera
+    // buffer, whose light matrices every view shares).
+    struct ViewShadowFrame {
+        GpuBuffer objects;
+        void* objectsMapped{nullptr};
+        VkDescriptorSet cameraSet{VK_NULL_HANDLE};
+    };
+
+    // Shadow maps of a view isolated differently from the frame's shadow
+    // casters (see MeshPass::record): sun cascades placed like the frame's
+    // and a local-light atlas for the view's own lights, both drawn from the
+    // view's casters only. Created when first needed and retired through the
+    // release queue once the view samples the frame's maps again.
+    struct ViewShadows {
+        DirectionalShadowMap directional;
+        LocalShadowPass localShadows;
+        // What the atlas tiles were drawn with; local caster changes are
+        // collected per frame, so a skipped frame redraws every tile.
+        SceneRevisions localRevisions{};
+        uint64_t localAssetRevision{0};
+        std::optional<std::vector<RenderObjectId>> localCasterObjects;
+        uint64_t recordedSerial{0};
+        VkDescriptorPool descriptorPool{VK_NULL_HANDLE};
+        std::vector<ViewShadowFrame> frames;
+    };
+
     // Camera set of a created view for one frame slot. The default view uses
     // the frame's sets (m_cameras) instead, whose object buffer also holds the
     // shadow regions; a created view's object buffer holds only its own
@@ -375,6 +430,10 @@ class MeshPass {
         bool cameraHistoryValid{false};
         TemporalQualityController temporalQuality;
         std::optional<MeshPassViewCamera> recordedCamera;
+        // Set while the view draws its own shadow maps (never for a view
+        // that shares the frame's camera sets, whose isolation the frame's
+        // maps follow).
+        std::unique_ptr<ViewShadows> shadows;
     };
 
     // The camera and sampling of one view for the frame being recorded.
@@ -425,7 +484,8 @@ class MeshPass {
     VkDescriptorSet viewCameraSet(const ViewState& view, uint32_t frameIndex) const;
     std::array<VkDescriptorSet, 2> viewCameraSets(const ViewState& view, uint32_t frameIndex) const;
     // Copies the bindings every view shares from the frame's set of the slot
-    // into a created view's set. The slot's previous submission retired.
+    // into a created view's set, and points the shadow bindings at the view's
+    // own maps when it has them. The slot's previous submission retired.
     void copySharedCameraBindings(const ViewState& view, uint32_t frameIndex);
     // Stages every region in one upload submission.
     bool uploadBufferRegions(std::span<const BufferUploadRegion> regions);
@@ -574,9 +634,10 @@ class MeshPass {
         Gpu,
     };
 
-    // Updates the local-light shadow atlas and returns each light's first
-    // shadow tile (negative when unshadowed), for clustered lighting. Runs
-    // before anything binds the frame's camera sets (it may rebind the atlas).
+    // Updates the frame's local-light shadow atlas, cast by m_frameShadowCasters,
+    // and returns each light's first shadow tile (negative when unshadowed),
+    // for clustered lighting. Runs before anything binds the frame's camera
+    // sets (it may rebind the atlas).
     std::vector<int32_t> recordLocalShadows(VkCommandBuffer commandBuffer, uint32_t frameIndex, const Scene& scene,
                                             const AssetManager& assets, const RenderSettings& settings,
                                             std::span<const LocalLight> lights, const glm::vec3& cameraPosition,
@@ -584,18 +645,51 @@ class MeshPass {
     // Bounds of casters that moved or animated since the last local-shadow
     // update, before and after the change.
     void collectShadowCasterChanges(const Scene& scene);
-    // Draws one atlas tile's casters from the local-shadow object region.
-    // Returns false when that region is full.
-    bool drawLocalShadowCasters(VkCommandBuffer commandBuffer, uint32_t frameIndex, const glm::mat4& viewProjection,
+    // Whether item casts shadows for casterObjects (sorted; null for every
+    // object): opaque, and its render object listed.
+    static bool castsShadowFor(const RenderItem& item, const std::vector<RenderObjectId>* casterObjects);
+    // Draws one atlas tile's casters into target's local-shadow region after
+    // the objectCount records already there. Returns false when it is full.
+    bool drawLocalShadowCasters(VkCommandBuffer commandBuffer, const ShadowDrawTarget& target, uint32_t& objectCount,
+                                const std::vector<RenderObjectId>* casterObjects, const glm::mat4& viewProjection,
                                 RenderStats& stats);
-    // Clears and redraws the dirty cascades; cached cascades keep their depth.
-    // casterObjects, when not null, limits CPU-culled casters to those sorted
-    // objects (every view of the frame isolated); GPU culling never runs then.
-    bool recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, const std::vector<RenderItem>& items,
-                      const DirectionalLightComponent& light, const std::array<glm::mat4, 3>& lightViewProjections,
-                      uint32_t cascadeCount, const std::array<bool, 3>& dirtyCascades, ShadowCulling culling,
+    // Which cascades of map need redrawing for these inputs, and recording
+    // that they were drawn with them.
+    std::array<bool, 3> dirtyShadowCascades(const DirectionalShadowMap& map, const SceneRevisions& revisions,
+                                            const std::vector<RenderObjectId>* casterObjects,
+                                            const std::array<glm::mat4, 3>& lightViewProjections,
+                                            uint32_t cascadeCount) const;
+    void rememberShadowCascades(DirectionalShadowMap& map, const SceneRevisions& revisions,
+                                const std::vector<RenderObjectId>* casterObjects,
+                                const std::array<glm::mat4, 3>& lightViewProjections, uint32_t cascadeCount) const;
+    // Clears and redraws map's dirty cascades; cached cascades keep their
+    // depth. casterObjects, when not null, limits CPU-culled casters to those
+    // sorted objects; GPU culling (the frame's map only) never runs then.
+    bool recordShadow(VkCommandBuffer commandBuffer, DirectionalShadowMap& map, const ShadowDrawTarget& target,
+                      uint32_t frameIndex, const std::vector<RenderItem>& items, const DirectionalLightComponent& light,
+                      const std::array<glm::mat4, 3>& lightViewProjections, uint32_t cascadeCount,
+                      const std::array<bool, 3>& dirtyCascades, ShadowCulling culling,
                       const std::vector<RenderObjectId>* casterObjects, const MeshLodView& lodView,
                       OptionalPassTimestamps& passTimestamps, RenderStats& stats);
+    bool createDirectionalShadowMap(DirectionalShadowMap& map);
+    void destroyDirectionalShadowMap(DirectionalShadowMap& map);
+    ShadowDrawTarget frameShadowTarget(uint32_t frameIndex) const;
+    // A view's shadow maps, with its per-slot object buffers and shadow sets;
+    // null (with nothing left behind) on failure.
+    std::unique_ptr<ViewShadows> createViewShadows();
+    void destroyViewShadows(ViewShadows& shadows);
+    // Hands the view's shadow maps to the release queue; frames in flight
+    // may still sample them, and their atlas retirements run first.
+    void retireViewShadows(ViewState& view);
+    // Draws, when the view's isolation differs from the frame's shadow
+    // casters, the view's own sun cascades and local-light tiles for `lights`
+    // (filling shadowTiles like recordLocalShadows); otherwise retires any
+    // it had. Runs before anything binds the view's camera sets.
+    bool updateViewShadows(VkCommandBuffer commandBuffer, uint32_t frameIndex, ViewState& view,
+                           const MeshPassViewRequest& request, const FrameState& frame,
+                           std::span<const LocalLight> lights, const glm::vec3& cameraPosition,
+                           const MeshLodView& lodView, const Scene& scene, const AssetManager& assets,
+                           std::vector<int32_t>& shadowTiles, RenderStats& stats);
     // Draws a GPU-culled cascade's indirect commands; called inside the
     // cascade's rendering scope with the shadow pipeline bound.
     void recordGpuShadowCascade(VkCommandBuffer commandBuffer, uint32_t frameIndex, uint32_t cascade,
@@ -631,9 +725,11 @@ class MeshPass {
     // Records this frame's fog (or clears it) between light clustering and the
     // depth prepass, with its timestamp scope.
     void recordVolumetricFog(const DrawContext& draw, const VolumetricFogFrame* frame);
-    // Moves the directional shadow map to DEPTH_READ_ONLY_OPTIMAL before any
-    // cascade was rendered, so compute passes may bind it.
-    void prepareShadowMapForSampling(VkCommandBuffer commandBuffer);
+    // Moves a directional shadow map to DEPTH_READ_ONLY_OPTIMAL before any
+    // cascade was rendered, so passes may bind it.
+    void prepareShadowMapForSampling(VkCommandBuffer commandBuffer, DirectionalShadowMap& map);
+    // The directional shadow map the view samples: its own or the frame's.
+    VkImageView viewShadowMap(const ViewState& view) const;
     // Records the frame's particle emission, simulation, and sorting with its
     // timestamp scope; the emitters' sprites are resolved into
     // m_particleSpriteViews for the draw.
@@ -760,24 +856,21 @@ class MeshPass {
     std::vector<const RenderItem*> m_shadowVisibleItems;
     GpuTexture m_whiteTexture;
     GpuTexture m_normalTexture;
-    GpuTexture m_shadowTexture;
-    std::array<VkImageView, 3> m_shadowLayerViews{};
+    // The frame's sun cascades, in the frame's camera sets.
+    DirectionalShadowMap m_shadowMap;
     VkSampler m_shadowSampler{VK_NULL_HANDLE};
     VkFormat m_shadowFormat{VK_FORMAT_UNDEFINED};
-    bool m_shadowInitialized{false};
-    SceneRevisions m_shadowRevisions{};
-    // This frame's directional shadow casters: nullopt for every object, or
-    // the union of the views' isolation sets when every view is isolated.
+    // This frame's shadow casters for the frame's maps: the isolation of the
+    // view whose camera sets are the frame's (the default view, else the
+    // leading one); nullopt for every object.
     std::optional<std::vector<RenderObjectId>> m_frameShadowCasters;
-    // What the cached cascades were drawn for besides the scene revisions: the
-    // visibility mode and the caster limit.
-    SceneVisibilityMode m_shadowVisibilityMode{SceneVisibilityMode::Runtime};
-    std::optional<std::vector<RenderObjectId>> m_shadowCasterObjects;
-    std::array<glm::mat4, 3> m_cachedLightViewProjections{};
-    uint32_t m_cachedCascadeCount{0};
     LocalShadowPass m_localShadows;
     SceneRevisions m_localShadowRevisions{};
     uint64_t m_localShadowAssetRevision{0};
+    // The caster limit the frame's atlas tiles were drawn with.
+    std::optional<std::vector<RenderObjectId>> m_localShadowCasterObjects;
+    // Outlives the pass (the Renderer owns both); creates views' shadow passes.
+    const VulkanContext* m_context{nullptr};
     std::vector<ShadowCasterBounds> m_changedShadowCasters;
     // Objects written to the local-shadow region of this frame's object buffer.
     uint32_t m_localShadowObjectCount{0};

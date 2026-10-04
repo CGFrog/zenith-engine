@@ -605,7 +605,9 @@ its render view, projections, and picking share; `lensViewMatrix`,
 `lensProjectionMatrix`, `pickThroughLens`, and `sceneCameraLens` do the same
 math for any `RenderView`. `RenderRuntime::setViewVisibleEntities` isolates a
 render view to a set of objects for local view (a default view falls back to
-CPU submission while isolated). `tests/editor/ViewportChromeTests.cpp` and
+CPU submission while isolated); its sun, point, and spot shadows then cast
+from that set only, through its own shadow maps when another view needs the
+whole scene's (	ests/engine/IsolatedShadowSmokeTests.cpp). `tests/editor/ViewportChromeTests.cpp` and
 `tests/editor/MultiViewportTests.cpp` cover this headless.
 
 `viewport/SceneGizmoDraw` records a viewport's scene overlays into its own
@@ -621,7 +623,10 @@ scale baked in), reflection probe, decal (oriented, scaled, with a -Y
 projection arrow) and irradiance volume (axis-aligned) bounds, world-space
 selection bounds, and name labels. It has no ImGui, takes `SceneGizmoOverlays`
 (each category `Off`, `Selected`, or `All`; colliders and names default to the
-selection), skips entities `SceneVisibility` hides in the editor, and colours
+selection), skips entities `SceneVisibility` hides in the editor and, in local
+view, those outside the viewport's isolation (`SceneGizmoView::isolatedObjects`),
+bounds a selected collection instancer by the members it draws, reads each
+mesh's cached `MeshAsset::localBox` instead of scanning vertices, and colours
 with the palette's `overlay*` tokens. `ViewportPanel::syncRenderView` records
 it every frame (always in Edit; in Play only with **Show in Play Mode** and
 never through a scene camera, `viewportDrawsSceneGizmos`) and draws the labels

@@ -15,6 +15,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -303,12 +304,29 @@ struct BoundingSphere {
     float radius{0.0f};
 };
 
+// An object-space axis-aligned box. Empty (minimum above maximum) when it
+// encloses nothing.
+struct BoundingBox {
+    glm::vec3 minimum{std::numeric_limits<float>::max()};
+    glm::vec3 maximum{std::numeric_limits<float>::lowest()};
+
+    bool empty() const {
+        return minimum.x > maximum.x || minimum.y > maximum.y || minimum.z > maximum.z;
+    }
+};
+
+// The box around every vertex position; empty without vertices.
+BoundingBox calculateBoundingBox(std::span<const Vertex> vertices);
+
 struct MeshAsset {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     std::vector<MeshPrimitive> primitives;
     std::vector<MorphTarget> morphTargets;
     BoundingSphere bounds;
+    // Box around every vertex, so tools need not scan the vertices each frame.
+    // AssetManager computes it when the mesh is added; it is not serialized.
+    BoundingBox localBox;
 };
 
 struct ModelNode {

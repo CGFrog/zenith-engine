@@ -6,6 +6,7 @@
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <limits>
+#include <utility>
 
 namespace {
 bool intersectSphere(glm::vec3 origin, glm::vec3 direction, glm::vec3 center, float radius, float& distance) {
@@ -20,6 +21,37 @@ bool intersectSphere(glm::vec3 origin, glm::vec3 direction, glm::vec3 center, fl
     const float farDistance = -halfB + root;
     distance = nearDistance >= 0.0f ? nearDistance : farDistance;
     return distance >= 0.0f;
+}
+
+// Slab test of the ray origin + t * direction (t >= 0) against box; entry is
+// the first t inside it (zero when the origin is inside).
+bool intersectBox(glm::vec3 origin, glm::vec3 direction, const BoundingBox& box, float& entry) {
+    if (box.empty()) {
+        return false;
+    }
+    float nearest = 0.0f;
+    float farthest = std::numeric_limits<float>::max();
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::abs(direction[axis]) < 1e-12f) {
+            if (origin[axis] < box.minimum[axis] || origin[axis] > box.maximum[axis]) {
+                return false;
+            }
+            continue;
+        }
+        const float inverse = 1.0f / direction[axis];
+        float enter = (box.minimum[axis] - origin[axis]) * inverse;
+        float leave = (box.maximum[axis] - origin[axis]) * inverse;
+        if (enter > leave) {
+            std::swap(enter, leave);
+        }
+        nearest = std::max(nearest, enter);
+        farthest = std::min(farthest, leave);
+        if (nearest > farthest) {
+            return false;
+        }
+    }
+    entry = nearest;
+    return true;
 }
 
 bool intersectTriangle(glm::vec3 origin, glm::vec3 direction, glm::vec3 a, glm::vec3 b, glm::vec3 c, float& distance) {
@@ -64,6 +96,12 @@ bool intersectMesh(const MeshAsset& mesh, const glm::mat4& world, glm::vec3 orig
     const glm::mat4 inverseWorld = glm::inverse(world);
     const glm::vec3 localOrigin = glm::vec3(inverseWorld * glm::vec4(origin, 1.0f));
     const glm::vec3 localDirection = glm::vec3(inverseWorld * glm::vec4(direction, 0.0f));
+    // The asset's cached box is tighter than the sphere; its entry distance
+    // is along the same local ray as the triangle distances.
+    float boxEntry = 0.0f;
+    if (!intersectBox(localOrigin, localDirection, mesh.localBox, boxEntry) || boxEntry > maximumDistance) {
+        return false;
+    }
     bool hit = false;
     distance = maximumDistance;
     // Pick against full-detail ranges only; simplified LOD ranges follow

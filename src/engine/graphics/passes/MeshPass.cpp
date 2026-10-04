@@ -361,6 +361,7 @@ std::vector<VkDescriptorSetLayoutBinding> cameraLayoutBindings() {
 bool MeshPass::init(const VulkanContext& context, VkFormat colorFormat, VkFormat depthFormat, uint32_t frameCount,
                     VkExtent2D extent, VkImageView depthView) {
     m_log = context.log();
+    m_context = &context;
     m_device = context.device();
     m_pipelineCache = context.pipelineCache();
     m_allocator = context.vmaAllocator();
@@ -575,6 +576,8 @@ bool MeshPass::createViewCameraSets(ViewState& view) {
 }
 
 void MeshPass::destroyViewState(const VulkanContext& context, ViewState& view) {
+    // Through the release queue, after any atlas its local shadows retired.
+    retireViewShadows(view);
     view.clusteredLighting.shutdown();
     view.reflectionProbeClusters.shutdown();
     view.decalClusters.shutdown();
@@ -624,17 +627,20 @@ void MeshPass::copySharedCameraBindings(const ViewState& view, uint32_t frameInd
         uint32_t count;
     };
 
-    const SharedBinding shared[]{{1, 1},
-                                 {3, 1},
+    // The shadow bindings (1, the local-shadow atlas and tiles) come last, so
+    // a view with its own shadow maps copies only the bindings before them.
+    const SharedBinding shared[]{{3, 1},
                                  {4, 1},
                                  {EnvironmentPass::specularBinding, EnvironmentPass::environmentSlots},
                                  {EnvironmentPass::irradianceBinding, EnvironmentPass::environmentSlots},
                                  {EnvironmentPass::brdfBinding, 1},
                                  {IrradianceVolumePass::binding, 1},
                                  {previousSkinPaletteBinding, 1},
+                                 {EnvironmentPass::probeSpecularBinding, 1},
+                                 {1, 1},
                                  {LocalShadowPass::atlasBinding, 1},
-                                 {LocalShadowPass::tileBinding, 1},
-                                 {EnvironmentPass::probeSpecularBinding, 1}};
+                                 {LocalShadowPass::tileBinding, 1}};
+    constexpr size_t shadowBindingCount = 3;
     std::array<VkCopyDescriptorSet, std::size(shared)> copies{};
     for (size_t index = 0; index < copies.size(); ++index) {
         copies[index] = {.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET,
@@ -644,7 +650,24 @@ void MeshPass::copySharedCameraBindings(const ViewState& view, uint32_t frameInd
                          .dstBinding = shared[index].binding,
                          .descriptorCount = shared[index].count};
     }
-    vkUpdateDescriptorSets(m_device, 0, nullptr, static_cast<uint32_t>(copies.size()), copies.data());
+    const size_t copyCount = view.shadows ? copies.size() - shadowBindingCount : copies.size();
+    vkUpdateDescriptorSets(m_device, 0, nullptr, static_cast<uint32_t>(copyCount), copies.data());
+    if (!view.shadows) {
+        return;
+    }
+    // The view's own maps; rewritten every frame, since frames that shared
+    // the frame's maps copied those bindings over them.
+    const VkDescriptorImageInfo shadowMap{.sampler = m_shadowSampler,
+                                          .imageView = view.shadows->directional.texture.view,
+                                          .imageLayout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
+    const VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                     .dstSet = view.cameras[frameIndex].descriptor,
+                                     .dstBinding = 1,
+                                     .descriptorCount = 1,
+                                     .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                     .pImageInfo = &shadowMap};
+    vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+    view.shadows->localShadows.writeDescriptors(frameIndex, {&view.cameras[frameIndex].descriptor, 1});
 }
 
 bool MeshPass::createGpuDrivenDescriptors() {
@@ -1227,42 +1250,8 @@ void MeshPass::MeshPipelineSet::shutdown(VkDevice device) {
 
 bool MeshPass::createShadowResources(VkFormat depthFormat) {
     m_shadowFormat = depthFormat;
-    VkImageCreateInfo image{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                            .imageType = VK_IMAGE_TYPE_2D,
-                            .format = depthFormat,
-                            .extent = {.width = shadowResolution, .height = shadowResolution, .depth = 1},
-                            .mipLevels = 1,
-                            .arrayLayers = maximumShadowCascades,
-                            .samples = VK_SAMPLE_COUNT_1_BIT,
-                            .tiling = VK_IMAGE_TILING_OPTIMAL,
-                            .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
-    VmaAllocationCreateInfo allocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
-    if (!checkVulkan(vmaCreateImage(m_allocator, &image, &allocation, &m_shadowTexture.image,
-                                    &m_shadowTexture.allocation, nullptr),
-                     "Create shadow map")) {
+    if (!createDirectionalShadowMap(m_shadowMap)) {
         return false;
-    }
-    VkImageViewCreateInfo view{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                               .image = m_shadowTexture.image,
-                               .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
-                               .format = depthFormat,
-                               .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
-                                                    .baseMipLevel = 0,
-                                                    .levelCount = 1,
-                                                    .baseArrayLayer = 0,
-                                                    .layerCount = maximumShadowCascades}};
-    if (!checkVulkan(vkCreateImageView(m_device, &view, nullptr, &m_shadowTexture.view), "Create shadow map view")) {
-        return false;
-    }
-    for (uint32_t cascade = 0; cascade < maximumShadowCascades; ++cascade) {
-        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view.subresourceRange.baseArrayLayer = cascade;
-        view.subresourceRange.layerCount = 1;
-        if (!checkVulkan(vkCreateImageView(m_device, &view, nullptr, &m_shadowLayerViews[cascade]),
-                         "Create shadow cascade view")) {
-            return false;
-        }
     }
     VkSamplerCreateInfo sampler{.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
                                 .magFilter = VK_FILTER_LINEAR,
@@ -1279,7 +1268,7 @@ bool MeshPass::createShadowResources(VkFormat depthFormat) {
         return false;
     }
     VkDescriptorImageInfo imageInfo{.sampler = m_shadowSampler,
-                                    .imageView = m_shadowTexture.view,
+                                    .imageView = m_shadowMap.texture.view,
                                     .imageLayout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
     for (const CameraBuffer& camera : m_cameras) {
         VkWriteDescriptorSet write{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -1291,6 +1280,63 @@ bool MeshPass::createShadowResources(VkFormat depthFormat) {
         vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
     }
     return true;
+}
+
+bool MeshPass::createDirectionalShadowMap(DirectionalShadowMap& map) {
+    const VkFormat depthFormat = m_shadowFormat;
+    VkImageCreateInfo image{.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                            .imageType = VK_IMAGE_TYPE_2D,
+                            .format = depthFormat,
+                            .extent = {.width = shadowResolution, .height = shadowResolution, .depth = 1},
+                            .mipLevels = 1,
+                            .arrayLayers = maximumShadowCascades,
+                            .samples = VK_SAMPLE_COUNT_1_BIT,
+                            .tiling = VK_IMAGE_TILING_OPTIMAL,
+                            .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+    VmaAllocationCreateInfo allocation{.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    if (!checkVulkan(
+            vmaCreateImage(m_allocator, &image, &allocation, &map.texture.image, &map.texture.allocation, nullptr),
+            "Create shadow map")) {
+        return false;
+    }
+    VkImageViewCreateInfo view{.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                               .image = map.texture.image,
+                               .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+                               .format = depthFormat,
+                               .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+                                                    .baseMipLevel = 0,
+                                                    .levelCount = 1,
+                                                    .baseArrayLayer = 0,
+                                                    .layerCount = maximumShadowCascades}};
+    if (!checkVulkan(vkCreateImageView(m_device, &view, nullptr, &map.texture.view), "Create shadow map view")) {
+        return false;
+    }
+    for (uint32_t cascade = 0; cascade < maximumShadowCascades; ++cascade) {
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.subresourceRange.baseArrayLayer = cascade;
+        view.subresourceRange.layerCount = 1;
+        if (!checkVulkan(vkCreateImageView(m_device, &view, nullptr, &map.layerViews[cascade]),
+                         "Create shadow cascade view")) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void MeshPass::destroyDirectionalShadowMap(DirectionalShadowMap& map) {
+    for (VkImageView& view : map.layerViews) {
+        if (view) {
+            vkDestroyImageView(m_device, view, nullptr);
+        }
+    }
+    if (map.texture.view) {
+        vkDestroyImageView(m_device, map.texture.view, nullptr);
+    }
+    if (map.texture.image) {
+        vmaDestroyImage(m_allocator, map.texture.image, map.texture.allocation);
+    }
+    map = {};
 }
 
 bool MeshPass::uploadBufferRegions(std::span<const BufferUploadRegion> regions) {
@@ -2429,6 +2475,7 @@ std::vector<int32_t> MeshPass::recordLocalShadows(VkCommandBuffer commandBuffer,
     const SceneRevisions& revisions = scene.revisions();
     collectShadowCasterChanges(scene);
     const bool enabled = settings.localLights != LocalLightingQuality::Disabled;
+    const std::vector<RenderObjectId>* casterObjects = m_frameShadowCasters ? &*m_frameShadowCasters : nullptr;
     const LocalShadowFrameInput input{
         .quality = enabled ? settings.localShadows : LocalShadowQuality::Off,
         .lights = lights,
@@ -2437,20 +2484,24 @@ std::vector<int32_t> MeshPass::recordLocalShadows(VkCommandBuffer commandBuffer,
         .invalidateAll = revisions.renderable != m_localShadowRevisions.renderable ||
                          revisions.material != m_localShadowRevisions.material ||
                          (m_hasCollectionInstances && revisions.transform != m_localShadowRevisions.transform) ||
-                         assets.revision() != m_localShadowAssetRevision};
+                         assets.revision() != m_localShadowAssetRevision ||
+                         m_localShadowCasterObjects != m_frameShadowCasters};
     const CameraBuffer& camera = m_cameras[frameIndex];
     const std::array<VkDescriptorSet, 2> cameraSets{camera.descriptor, camera.gpuDrivenDescriptor};
+    const ShadowDrawTarget target = frameShadowTarget(frameIndex);
     m_localShadowObjectCount = 0;
     const std::vector<int32_t> firstTiles = m_localShadows.record(
         commandBuffer, frameIndex, m_frameSerial, input,
         std::span<const VkDescriptorSet>(cameraSets.data(), camera.gpuDrivenDescriptor ? 2u : 1u),
         camera.bindlessDescriptor, m_releaseQueue, timestamps,
         [&](VkCommandBuffer tileCommands, const glm::mat4& viewProjection) {
-            return drawLocalShadowCasters(tileCommands, frameIndex, viewProjection, stats);
+            return drawLocalShadowCasters(tileCommands, target, m_localShadowObjectCount, casterObjects, viewProjection,
+                                          stats);
         },
         stats);
     m_localShadowRevisions = revisions;
     m_localShadowAssetRevision = assets.revision();
+    m_localShadowCasterObjects = m_frameShadowCasters;
     stats.cpuLocalShadowMilliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuBegin).count();
     return firstTiles;
@@ -2489,24 +2540,41 @@ void MeshPass::collectShadowCasterChanges(const Scene& scene) {
     }
 }
 
-bool MeshPass::drawLocalShadowCasters(VkCommandBuffer commandBuffer, uint32_t frameIndex,
+bool MeshPass::castsShadowFor(const RenderItem& item, const std::vector<RenderObjectId>* casterObjects) {
+    return !item.material->translucent() &&
+           (casterObjects == nullptr ||
+            std::ranges::binary_search(*casterObjects,
+                                       static_cast<RenderObjectId>(entt::to_integral(item.renderObject()))));
+}
+
+MeshPass::ShadowDrawTarget MeshPass::frameShadowTarget(uint32_t frameIndex) const {
+    const CameraBuffer& camera = m_cameras[frameIndex];
+    return {.cameraSet = camera.descriptor,
+            .objectsMapped = camera.objectsMapped,
+            .objectsAllocation = camera.objects.allocation,
+            .localObjectBase = localShadowObjectBase};
+}
+
+bool MeshPass::drawLocalShadowCasters(VkCommandBuffer commandBuffer, const ShadowDrawTarget& target,
+                                      uint32_t& objectCount, const std::vector<RenderObjectId>* casterObjects,
                                       const glm::mat4& viewProjection, RenderStats& stats) {
     const std::array<glm::vec4, 6> frustum = clipVolumePlanes(viewProjection);
     m_shadowVisibleItems.clear();
     for (const RenderItem& item : m_renderItems) {
-        if (!item.material->translucent() && sphereReachesClipVolume(frustum, item.boundsCenter, item.boundsRadius)) {
+        if (castsShadowFor(item, casterObjects) &&
+            sphereReachesClipVolume(frustum, item.boundsCenter, item.boundsRadius)) {
             m_shadowVisibleItems.push_back(&item);
         }
     }
-    if (m_localShadowObjectCount + m_shadowVisibleItems.size() > maximumObjectsPerFrame) {
+    if (objectCount + m_shadowVisibleItems.size() > maximumObjectsPerFrame) {
         return false;
     }
     // Keep each primitive's LOD range adjacent so its instances share a draw.
     std::ranges::stable_sort(m_shadowVisibleItems, {}, [](const RenderItem* item) {
         return std::tuple(item->material->doubleSided, handleKey(item->meshHandle), item->lod.firstIndex);
     });
-    const uint32_t objectBase = localShadowObjectBase + m_localShadowObjectCount;
-    auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped);
+    const uint32_t objectBase = target.localObjectBase + objectCount;
+    auto* objectData = static_cast<ObjectData*>(target.objectsMapped);
     for (size_t index = 0; index < m_shadowVisibleItems.size(); ++index) {
         const RenderItem& item = *m_shadowVisibleItems[index];
         objectData[objectBase + index] = {.model = item.world,
@@ -2516,10 +2584,10 @@ bool MeshPass::drawLocalShadowCasters(VkCommandBuffer commandBuffer, uint32_t fr
                                                    item.gpuMaterial->index, 0}};
     }
     if (!m_shadowVisibleItems.empty()) {
-        vmaFlushAllocation(m_allocator, m_cameras[frameIndex].objects.allocation, sizeof(ObjectData) * objectBase,
+        vmaFlushAllocation(m_allocator, target.objectsAllocation, sizeof(ObjectData) * objectBase,
                            sizeof(ObjectData) * m_shadowVisibleItems.size());
     }
-    m_localShadowObjectCount += static_cast<uint32_t>(m_shadowVisibleItems.size());
+    objectCount += static_cast<uint32_t>(m_shadowVisibleItems.size());
     std::optional<uint32_t> boundPage;
     std::optional<bool> boundDoubleSided;
     for (size_t itemIndex = 0; itemIndex < m_shadowVisibleItems.size();) {
@@ -2551,7 +2619,50 @@ bool MeshPass::drawLocalShadowCasters(VkCommandBuffer commandBuffer, uint32_t fr
     return true;
 }
 
-bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, const std::vector<RenderItem>& items,
+std::array<bool, maximumShadowCascades> MeshPass::dirtyShadowCascades(
+    const DirectionalShadowMap& map, const SceneRevisions& revisions, const std::vector<RenderObjectId>* casterObjects,
+    const std::array<glm::mat4, maximumShadowCascades>& lightViewProjections, uint32_t cascadeCount) const {
+    // ZENITH_DISABLE_SHADOW_CACHE redraws every cascade each frame, so shadow
+    // rendering and culling can be measured on a static scene.
+    const bool sameCasters =
+        casterObjects == nullptr ? !map.casterObjects : map.casterObjects && *map.casterObjects == *casterObjects;
+    const bool castersChanged =
+        !map.initialized || SDL_getenv("ZENITH_DISABLE_SHADOW_CACHE") != nullptr ||
+        revisions.transform != map.revisions.transform || revisions.renderable != map.revisions.renderable ||
+        revisions.light != map.revisions.light || revisions.skin != map.revisions.skin ||
+        revisions.material != map.revisions.material || m_sceneVisibilityMode != map.visibilityMode || !sameCasters;
+    std::array<bool, maximumShadowCascades> dirtyCascades{};
+    for (uint32_t cascade = 0; cascade < cascadeCount; ++cascade) {
+        float maximumDifference = 0.0f;
+        for (uint32_t column = 0; column < 4; ++column) {
+            for (uint32_t row = 0; row < 4; ++row) {
+                maximumDifference =
+                    std::max(maximumDifference, std::abs(lightViewProjections[cascade][column][row] -
+                                                         map.lightViewProjections[cascade][column][row]));
+            }
+        }
+        dirtyCascades[cascade] = castersChanged || cascade >= map.cascadeCount || maximumDifference > 0.0001f;
+    }
+    return dirtyCascades;
+}
+
+void MeshPass::rememberShadowCascades(DirectionalShadowMap& map, const SceneRevisions& revisions,
+                                      const std::vector<RenderObjectId>* casterObjects,
+                                      const std::array<glm::mat4, maximumShadowCascades>& lightViewProjections,
+                                      uint32_t cascadeCount) const {
+    map.revisions = revisions;
+    map.visibilityMode = m_sceneVisibilityMode;
+    if (casterObjects == nullptr) {
+        map.casterObjects.reset();
+    } else if (!map.casterObjects || *map.casterObjects != *casterObjects) {
+        map.casterObjects = *casterObjects;
+    }
+    map.lightViewProjections = lightViewProjections;
+    map.cascadeCount = cascadeCount;
+}
+
+bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, DirectionalShadowMap& map, const ShadowDrawTarget& target,
+                            uint32_t frameIndex, const std::vector<RenderItem>& items,
                             const DirectionalLightComponent& light,
                             const std::array<glm::mat4, maximumShadowCascades>& lightViewProjections,
                             uint32_t cascadeCount, const std::array<bool, maximumShadowCascades>& dirtyCascades,
@@ -2575,14 +2686,14 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
         }
         passTimestamps.write(FrameTimestamp::shadowCullEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     }
-    imageBarrier(commandBuffer, m_shadowTexture.image, VK_IMAGE_ASPECT_DEPTH_BIT,
-                 m_shadowInitialized ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+    imageBarrier(commandBuffer, map.texture.image, VK_IMAGE_ASPECT_DEPTH_BIT,
+                 map.initialized ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
                  // Earlier frames sampled it in shading and volumetric fog.
-                 m_shadowInitialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT
-                                     : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                 map.initialized ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT
+                                 : VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
                  VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
-                 m_shadowInitialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+                 map.initialized ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, maximumShadowCascades);
     VkRenderingAttachmentInfo depth{.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
                                     .imageView = VK_NULL_HANDLE,
@@ -2608,7 +2719,7 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
             continue;
         }
         ++stats.shadowCascadesRendered;
-        depth.imageView = m_shadowLayerViews[cascade];
+        depth.imageView = map.layerViews[cascade];
         vkCmdBeginRendering(commandBuffer, &rendering);
         vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
@@ -2625,19 +2736,14 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
             vkCmdEndRendering(commandBuffer);
             continue;
         }
-        const VkDescriptorSet shadowSets[]{m_cameras[frameIndex].descriptor, m_cameras[frameIndex].bindlessDescriptor};
+        const VkDescriptorSet shadowSets[]{target.cameraSet, m_cameras[frameIndex].bindlessDescriptor};
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline.layout(), 0,
                                 static_cast<uint32_t>(std::size(shadowSets)), shadowSets, 0, nullptr);
         const std::array<glm::vec4, 6> shadowFrustum = clipVolumePlanes(lightViewProjections[cascade]);
         m_shadowVisibleItems.clear();
         m_shadowVisibleItems.reserve(items.size());
-        const auto castsHere = [casterObjects](const RenderItem& item) {
-            return casterObjects == nullptr ||
-                   std::ranges::binary_search(*casterObjects,
-                                              static_cast<RenderObjectId>(entt::to_integral(item.renderObject())));
-        };
         for (const RenderItem& item : items) {
-            if (light.shadows.enabled && !item.material->translucent() && castsHere(item) &&
+            if (light.shadows.enabled && castsShadowFor(item, casterObjects) &&
                 sphereReachesClipVolume(shadowFrustum, item.boundsCenter, item.boundsRadius)) {
                 m_shadowVisibleItems.push_back(&item);
             }
@@ -2648,7 +2754,7 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
             return std::tuple(item->material->doubleSided, handleKey(item->meshHandle), item->lod.firstIndex);
         });
         const uint32_t objectBase = cascade * maximumObjectsPerFrame;
-        auto* objectData = static_cast<ObjectData*>(m_cameras[frameIndex].objectsMapped);
+        auto* objectData = static_cast<ObjectData*>(target.objectsMapped);
         for (size_t index = 0; index < m_shadowVisibleItems.size(); ++index) {
             objectData[objectBase + index].model = m_shadowVisibleItems[index]->world;
             objectData[objectBase + index].previousModel = m_shadowVisibleItems[index]->previousWorld;
@@ -2657,7 +2763,7 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
                 static_cast<uint32_t>(m_shadowVisibleItems[index]->jointPalette.size()),
                 m_shadowVisibleItems[index]->gpuMaterial->index, 0};
         }
-        vmaFlushAllocation(m_allocator, m_cameras[frameIndex].objects.allocation, 0, VK_WHOLE_SIZE);
+        vmaFlushAllocation(m_allocator, target.objectsAllocation, 0, VK_WHOLE_SIZE);
         std::optional<uint32_t> boundPage;
         std::optional<bool> boundDoubleSided;
         for (size_t itemIndex = 0; itemIndex < m_shadowVisibleItems.size();) {
@@ -2690,12 +2796,12 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, uint32_t frameIndex, 
         }
         vkCmdEndRendering(commandBuffer);
     }
-    imageBarrier(
-        commandBuffer, m_shadowTexture.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-        VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, maximumShadowCascades);
-    m_shadowInitialized = true;
+    imageBarrier(commandBuffer, map.texture.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                 VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 maximumShadowCascades);
+    map.initialized = true;
     return true;
 }
 
@@ -2766,8 +2872,199 @@ void addViewCounters(RenderStats& frame, const RenderStats& view) {
     frame.motionBlurBytes += view.motionBlurBytes;
     frame.decalBytes += view.decalBytes;
     frame.pickPasses += view.pickPasses;
+    // A view's own shadow maps (zero for views sampling the frame's).
+    frame.shadowCacheBytes += view.shadowCacheBytes;
+    frame.localShadowAtlasBytes += view.localShadowAtlasBytes;
 }
 } // namespace
+
+std::unique_ptr<MeshPass::ViewShadows> MeshPass::createViewShadows() {
+    auto shadows = std::make_unique<ViewShadows>();
+    const uint32_t frameCount = static_cast<uint32_t>(m_cameras.size());
+    const auto fail = [&] {
+        destroyViewShadows(*shadows);
+        return nullptr;
+    };
+    if (!createDirectionalShadowMap(shadows->directional) ||
+        !shadows->localShadows.init(*m_context, frameCount, m_shadowFormat, m_cameraLayout, m_bindlessLayout)) {
+        return fail();
+    }
+    const std::vector<VkDescriptorPoolSize> poolSizes = descriptorPoolSizes(cameraLayoutBindings(), frameCount);
+    const VkDescriptorPoolCreateInfo poolInfo{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+                                              .maxSets = frameCount,
+                                              .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+                                              .pPoolSizes = poolSizes.data()};
+    if (!checkVulkan(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &shadows->descriptorPool),
+                     "Create view shadow descriptor pool")) {
+        return fail();
+    }
+    const std::vector<VkDescriptorSetLayout> layouts(frameCount, m_cameraLayout);
+    std::vector<VkDescriptorSet> sets(frameCount);
+    const VkDescriptorSetAllocateInfo allocate{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                                               .descriptorPool = shadows->descriptorPool,
+                                               .descriptorSetCount = frameCount,
+                                               .pSetLayouts = layouts.data()};
+    if (!checkVulkan(vkAllocateDescriptorSets(m_device, &allocate, sets.data()),
+                     "Allocate view shadow descriptor sets")) {
+        return fail();
+    }
+    const VmaAllocationCreateInfo allocation{.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                                                      VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT,
+                                             .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
+    // One region per cascade, then the local-light tiles' region.
+    const VkBufferCreateInfo buffer{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                    .size = sizeof(ObjectData) * maximumObjectsPerFrame * (maximumShadowCascades + 1),
+                                    .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+    shadows->frames.resize(frameCount);
+    for (uint32_t frame = 0; frame < frameCount; ++frame) {
+        ViewShadowFrame& shadowFrame = shadows->frames[frame];
+        shadowFrame.cameraSet = sets[frame];
+        VmaAllocationInfo info{};
+        if (!checkVulkan(vmaCreateBuffer(m_allocator, &buffer, &allocation, &shadowFrame.objects.buffer,
+                                         &shadowFrame.objects.allocation, &info),
+                         "Create view shadow object buffer")) {
+            return fail();
+        }
+        shadowFrame.objectsMapped = info.pMappedData;
+        // Binding 0 is the frame's camera buffer, whose light matrices every
+        // view's cascades share; skin palettes and materials are the frame's.
+        const CameraBuffer& camera = m_cameras[frame];
+        const VkDescriptorBufferInfo uniformInfo{.buffer = camera.buffer.buffer, .range = sizeof(CameraData)};
+        const VkDescriptorBufferInfo objectInfo{.buffer = shadowFrame.objects.buffer, .range = VK_WHOLE_SIZE};
+        const std::array<VkWriteDescriptorSet, 2> writes{{{.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                                           .dstSet = shadowFrame.cameraSet,
+                                                           .dstBinding = 0,
+                                                           .descriptorCount = 1,
+                                                           .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                                           .pBufferInfo = &uniformInfo},
+                                                          {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                                                           .dstSet = shadowFrame.cameraSet,
+                                                           .dstBinding = 2,
+                                                           .descriptorCount = 1,
+                                                           .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                           .pBufferInfo = &objectInfo}}};
+        std::array<VkCopyDescriptorSet, 3> copies{};
+        const uint32_t copied[]{3, 4, previousSkinPaletteBinding};
+        for (size_t index = 0; index < copies.size(); ++index) {
+            copies[index] = {.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET,
+                             .srcSet = camera.descriptor,
+                             .srcBinding = copied[index],
+                             .dstSet = shadowFrame.cameraSet,
+                             .dstBinding = copied[index],
+                             .descriptorCount = 1};
+        }
+        vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writes.size()), writes.data(),
+                               static_cast<uint32_t>(copies.size()), copies.data());
+    }
+    return shadows;
+}
+
+void MeshPass::destroyViewShadows(ViewShadows& shadows) {
+    destroyDirectionalShadowMap(shadows.directional);
+    shadows.localShadows.shutdown();
+    for (ViewShadowFrame& frame : shadows.frames) {
+        if (frame.objects.buffer) {
+            vmaDestroyBuffer(m_allocator, frame.objects.buffer, frame.objects.allocation);
+        }
+    }
+    shadows.frames.clear();
+    if (shadows.descriptorPool) {
+        vkDestroyDescriptorPool(m_device, shadows.descriptorPool, nullptr);
+    }
+    shadows.descriptorPool = VK_NULL_HANDLE;
+}
+
+void MeshPass::retireViewShadows(ViewState& view) {
+    if (!view.shadows) {
+        return;
+    }
+    // std::function needs a copyable callable.
+    std::shared_ptr<ViewShadows> retired(std::move(view.shadows));
+    m_releaseQueue.defer(m_frameSerial, [this, retired] { destroyViewShadows(*retired); });
+}
+
+bool MeshPass::updateViewShadows(VkCommandBuffer commandBuffer, uint32_t frameIndex, ViewState& view,
+                                 const MeshPassViewRequest& request, const FrameState& frame,
+                                 std::span<const LocalLight> lights, const glm::vec3& cameraPosition,
+                                 const MeshLodView& lodView, const Scene& scene, const AssetManager& assets,
+                                 std::vector<int32_t>& shadowTiles, RenderStats& stats) {
+    const std::vector<RenderObjectId>* casterObjects = request.visibleObjects;
+    const bool sameCasters = casterObjects == nullptr ? !m_frameShadowCasters
+                                                      : m_frameShadowCasters && *m_frameShadowCasters == *casterObjects;
+    const RenderSettings& settings = *request.settings;
+    const bool localShadows = frame.localLightLimit > 0 && settings.localShadows != LocalShadowQuality::Off;
+    // A view drawing through the frame's sets defines the frame's casters.
+    if (sameCasters || view.sharesFrameSets || (!frame.shadowsEnabled && !localShadows)) {
+        retireViewShadows(view);
+        return true;
+    }
+    if (!view.shadows) {
+        view.shadows = createViewShadows();
+        if (!view.shadows) {
+            m_log.error("Cannot create the shadow maps of an isolated render view");
+            return false;
+        }
+    }
+    ViewShadows& shadows = *view.shadows;
+    const ShadowDrawTarget target{.cameraSet = shadows.frames[frameIndex].cameraSet,
+                                  .objectsMapped = shadows.frames[frameIndex].objectsMapped,
+                                  .objectsAllocation = shadows.frames[frameIndex].objects.allocation,
+                                  .localObjectBase = maximumShadowCascades * maximumObjectsPerFrame};
+    // Only the leading view writes timestamps, and those cover the frame's maps.
+    OptionalPassTimestamps noTimestamps(commandBuffer, VK_NULL_HANDLE);
+    const SceneRevisions& revisions = scene.revisions();
+
+    // Local lights: the frame stage collected this frame's caster changes,
+    // so a view that skipped a frame redraws every tile.
+    const bool localCastersChanged = casterObjects == nullptr
+                                         ? shadows.localCasterObjects.has_value()
+                                         : !shadows.localCasterObjects || *shadows.localCasterObjects != *casterObjects;
+    const LocalShadowFrameInput input{
+        .quality = localShadows ? settings.localShadows : LocalShadowQuality::Off,
+        .lights = lights,
+        .cameraPosition = cameraPosition,
+        .changedCasters = m_changedShadowCasters,
+        .invalidateAll = shadows.recordedSerial + 1 != m_frameSerial || localCastersChanged ||
+                         revisions.renderable != shadows.localRevisions.renderable ||
+                         revisions.material != shadows.localRevisions.material ||
+                         (m_hasCollectionInstances && revisions.transform != shadows.localRevisions.transform) ||
+                         assets.revision() != shadows.localAssetRevision};
+    uint32_t localObjectCount = 0;
+    shadowTiles = shadows.localShadows.record(
+        commandBuffer, frameIndex, m_frameSerial, input, std::span<const VkDescriptorSet>(&target.cameraSet, 1),
+        m_cameras[frameIndex].bindlessDescriptor, m_releaseQueue, noTimestamps,
+        [&](VkCommandBuffer tileCommands, const glm::mat4& viewProjection) {
+            return drawLocalShadowCasters(tileCommands, target, localObjectCount, casterObjects, viewProjection, stats);
+        },
+        stats);
+    shadows.localRevisions = revisions;
+    shadows.localAssetRevision = assets.revision();
+    if (casterObjects == nullptr) {
+        shadows.localCasterObjects.reset();
+    } else if (localCastersChanged) {
+        shadows.localCasterObjects = *casterObjects;
+    }
+    shadows.recordedSerial = m_frameSerial;
+
+    // Sun cascades placed like the frame's, so the camera buffer's light
+    // matrices and splits hold for both.
+    DirectionalLightComponent shadowLight = frame.light;
+    shadowLight.shadows.enabled = frame.shadowsEnabled;
+    const std::array<bool, maximumShadowCascades> dirtyCascades = dirtyShadowCascades(
+        shadows.directional, revisions, casterObjects, frame.base.lightViewProjections, frame.cascadeCount);
+    if (!recordShadow(commandBuffer, shadows.directional, target, frameIndex, m_renderItems, shadowLight,
+                      frame.base.lightViewProjections, frame.cascadeCount, dirtyCascades, ShadowCulling::Cpu,
+                      casterObjects, lodView, noTimestamps, stats)) {
+        return false;
+    }
+    rememberShadowCascades(shadows.directional, revisions, casterObjects, frame.base.lightViewProjections,
+                           frame.cascadeCount);
+    // Shading binds the map even when shadows are off and nothing was drawn.
+    prepareShadowMapForSampling(commandBuffer, shadows.directional);
+    stats.shadowCacheBytes =
+        static_cast<uint64_t>(shadowResolution) * shadowResolution * sizeof(float) * maximumShadowCascades;
+    return true;
+}
 
 MeshPass::ViewFrame MeshPass::prepareViewFrame(ViewState& view, const MeshPassViewRequest& request, const Scene& scene,
                                                double previousGpuFrameMilliseconds) const {
@@ -2884,20 +3181,16 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const 
         m_outlinedObjects.erase(duplicates.begin(), duplicates.end());
     }
 
-    // The cascades are shared by every view of the frame, so casters are
-    // limited only while every rendered view is isolated: to the union of
-    // their isolation sets (a lone local view casts only its objects).
-    m_frameShadowCasters.reset();
-    if (std::ranges::all_of(views,
-                            [](const MeshPassViewRequest& request) { return request.visibleObjects != nullptr; })) {
-        std::vector<RenderObjectId> casters;
-        for (const MeshPassViewRequest& request : views) {
-            casters.insert(casters.end(), request.visibleObjects->begin(), request.visibleObjects->end());
-        }
-        std::ranges::sort(casters);
-        const auto repeated = std::ranges::unique(casters);
-        casters.erase(repeated.begin(), repeated.end());
-        m_frameShadowCasters = std::move(casters);
+    // The frame's shadow maps live in the frame's camera sets, so they cast
+    // from the isolation of the view drawing through those sets (the default
+    // view, else the leading one); a view isolated differently draws its own
+    // (updateViewShadows).
+    const auto frameSetsView = std::ranges::find(views, 0u, &MeshPassViewRequest::view);
+    const MeshPassViewRequest& shadowOwner = frameSetsView != views.end() ? *frameSetsView : views.front();
+    if (shadowOwner.visibleObjects == nullptr) {
+        m_frameShadowCasters.reset();
+    } else if (!m_frameShadowCasters || *m_frameShadowCasters != *shadowOwner.visibleObjects) {
+        m_frameShadowCasters = *shadowOwner.visibleObjects;
     }
 
     // Fog volumes follow each view's quality. Their descriptors are written
@@ -3265,38 +3558,17 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
     // (docs/RENDERER_VALIDATION.md).
     frame.shadowCulling = gpuDrivenLead && lead.plan.gpuShadowCulling ? ShadowCulling::Gpu : ShadowCulling::Cpu;
     const auto shadowCpuBegin = std::chrono::steady_clock::now();
-    // ZENITH_DISABLE_SHADOW_CACHE redraws every cascade each frame, so shadow
-    // rendering and culling can be measured on a static scene.
-    const bool shadowCastersChanged =
-        !m_shadowInitialized || SDL_getenv("ZENITH_DISABLE_SHADOW_CACHE") != nullptr ||
-        revisions.transform != m_shadowRevisions.transform || revisions.renderable != m_shadowRevisions.renderable ||
-        revisions.light != m_shadowRevisions.light || revisions.skin != m_shadowRevisions.skin ||
-        revisions.material != m_shadowRevisions.material || m_sceneVisibilityMode != m_shadowVisibilityMode ||
-        m_frameShadowCasters != m_shadowCasterObjects;
-    std::array<bool, maximumShadowCascades> dirtyCascades{};
-    for (uint32_t cascade = 0; cascade < cascadeCount; ++cascade) {
-        float maximumDifference = 0.0f;
-        for (uint32_t column = 0; column < 4; ++column) {
-            for (uint32_t row = 0; row < 4; ++row) {
-                maximumDifference =
-                    std::max(maximumDifference, std::abs(cameraData.lightViewProjections[cascade][column][row] -
-                                                         m_cachedLightViewProjections[cascade][column][row]));
-            }
-        }
-        dirtyCascades[cascade] = shadowCastersChanged || cascade >= m_cachedCascadeCount || maximumDifference > 0.0001f;
-    }
-    // Isolated casters imply an isolated leading view, which culls on the CPU.
-    if (!recordShadow(commandBuffer, frameIndex, m_renderItems, shadowLight, cameraData.lightViewProjections,
-                      cascadeCount, dirtyCascades, frame.shadowCulling,
-                      m_frameShadowCasters ? &*m_frameShadowCasters : nullptr, leadFrame.lodView, passTimestamps,
-                      stats)) {
+    const std::vector<RenderObjectId>* frameCasters = m_frameShadowCasters ? &*m_frameShadowCasters : nullptr;
+    const std::array<bool, maximumShadowCascades> dirtyCascades =
+        dirtyShadowCascades(m_shadowMap, revisions, frameCasters, cameraData.lightViewProjections, cascadeCount);
+    // Isolated casters imply an isolated default view (CPU submission) or no
+    // default view (no GPU-driven submission), so they are culled on the CPU.
+    if (!recordShadow(commandBuffer, m_shadowMap, frameShadowTarget(frameIndex), frameIndex, m_renderItems, shadowLight,
+                      cameraData.lightViewProjections, cascadeCount, dirtyCascades, frame.shadowCulling, frameCasters,
+                      leadFrame.lodView, passTimestamps, stats)) {
         return false;
     }
-    m_shadowRevisions = revisions;
-    m_shadowVisibilityMode = m_sceneVisibilityMode;
-    m_shadowCasterObjects = m_frameShadowCasters;
-    m_cachedLightViewProjections = cameraData.lightViewProjections;
-    m_cachedCascadeCount = cascadeCount;
+    rememberShadowCascades(m_shadowMap, revisions, frameCasters, cameraData.lightViewProjections, cascadeCount);
     stats.cpuShadowMilliseconds =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - shadowCpuBegin).count();
     return true;
@@ -3388,13 +3660,30 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
         }
     }
     const std::vector<LocalLight>& lights = leading ? frame.leadLights : viewLights;
+    if (!leading) {
+        // The frame stage selected the leading view's LODs.
+        selectRenderItemLods(viewFrame.lodView);
+    }
+    // A view isolated differently from the frame's shadow casters draws its
+    // own shadow maps, with tiles for its own lights.
+    std::vector<int32_t> ownShadowTiles;
+    const std::span<const LocalLight> shadowedLights(
+        lights.data(), std::min<size_t>(lights.size(), view.clusteredLighting.lightCapacity()));
+    if (!updateViewShadows(commandBuffer, frameIndex, view, request, frame, shadowedLights, cameraPosition,
+                           viewFrame.lodView, scene, assets, ownShadowTiles, stats)) {
+        return false;
+    }
     ClusterLightStatistics clusterStatistics;
     const uint32_t localLightCount = view.clusteredLighting.beginFrame(frameIndex, lights, clusterStatistics);
-    // Only the leading view's lights had shadow tiles rendered; another view
-    // finds a light's tiles by its stable id.
-    view.clusteredLighting.assignShadowTiles(
-        frameIndex,
-        leading ? frame.leadShadowTiles : remapLocalShadowTiles(frame.leadLights, frame.leadShadowTiles, lights));
+    // Only the leading view's lights had the frame's shadow tiles rendered;
+    // another view finds a light's tiles by its stable id.
+    if (view.shadows) {
+        view.clusteredLighting.assignShadowTiles(frameIndex, ownShadowTiles);
+    } else {
+        view.clusteredLighting.assignShadowTiles(
+            frameIndex,
+            leading ? frame.leadShadowTiles : remapLocalShadowTiles(frame.leadLights, frame.leadShadowTiles, lights));
+    }
     uint32_t sceneDecalCount = 0;
     const std::vector<GpuDecal> decalRecords =
         prepareDecals(scene, assets, settings, cameraPosition, viewMatrix, sceneDecalCount);
@@ -3457,10 +3746,6 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
         static_cast<uint64_t>(extent.width) * extent.height * sizeof(uint16_t) * 4 * m_cameras.size();
     stats.ambientOcclusionBytes = view.ambientOcclusion.allocatedBytes();
     stats.volumetricFogBytes = view.volumetricFog.allocatedBytes();
-    if (!leading) {
-        // The frame stage selected the leading view's LODs.
-        selectRenderItemLods(viewFrame.lodView);
-    }
     const DrawContext draw{.commandBuffer = commandBuffer,
                            .frameIndex = frameIndex,
                            .pipelines = shadingPipelines,
@@ -3550,7 +3835,7 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
             .irradianceVolumeCounts = cameraData.irradianceVolumeCounts,
             .medium = *frame.fogMedium,
             .localLightCount = localLightCount,
-            .shadowMap = m_shadowTexture.view,
+            .shadowMap = viewShadowMap(view),
             .shadowSampler = m_shadowSampler,
             .localLights = clusterBuffers.lights,
             .clusterRanges = clusterBuffers.clusterRanges,
@@ -3583,7 +3868,7 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
             .irradianceVolumeMinimum = cameraData.irradianceVolumeMinimum,
             .irradianceVolumeCellSize = cameraData.irradianceVolumeCellSize,
             .irradianceVolumeCounts = cameraData.irradianceVolumeCounts,
-            .shadowMap = m_shadowTexture.view,
+            .shadowMap = viewShadowMap(view),
             .shadowSampler = m_shadowSampler,
             .localLights = clusterBuffers.lights,
             .clusterRanges = clusterBuffers.clusterRanges,
@@ -3612,7 +3897,7 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
     view.transmissionBackground.prepareFirstUse(commandBuffer);
     // ...and the shadow map, which a session that starts without shadows
     // (shadows Off, or a view shading mode other than Rendered) never drew.
-    prepareShadowMapForSampling(commandBuffer);
+    prepareShadowMapForSampling(commandBuffer, m_shadowMap);
     const VkImageView sceneView = view.postProcess.sceneView(frameIndex);
     const VkImageView motionView = view.postProcess.motionView(frameIndex);
     beginRendering(commandBuffer, sceneView, motionView, depthImage, depthView, renderExtent,
@@ -3736,6 +4021,8 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
         frameStats.particleCapacity = stats.particleCapacity;
     }
     if (request.stats) {
+        // The work on the maps the view sampled: its own, or the frame's.
+        const RenderStats& shadowStats = view.shadows ? stats : frameStats;
         *request.stats = {.rendered = true,
                           .width = extent.width,
                           .height = extent.height,
@@ -3747,7 +4034,12 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
                           .triangleCount = stats.triangleCount,
                           .temporalHistoryValid = temporal.historyValid,
                           .cpuMilliseconds =
-                              std::chrono::duration<double, std::milli>(viewCpuEnd - viewCpuBegin).count()};
+                              std::chrono::duration<double, std::milli>(viewCpuEnd - viewCpuBegin).count(),
+                          .ownShadowMaps = view.shadows != nullptr,
+                          .shadowCascadesRendered = shadowStats.shadowCascadesRendered,
+                          .shadowCasterCount = shadowStats.shadowCasterCount,
+                          .localShadowTilesRendered = shadowStats.localShadowTilesRendered,
+                          .localShadowCasterCount = shadowStats.localShadowCasterCount};
     }
     return true;
 }
@@ -4049,23 +4341,27 @@ void MeshPass::recordVolumetricFog(const DrawContext& draw, const VolumetricFogF
         draw.viewState->volumetricFog.recordCleared(draw.commandBuffer);
         return;
     }
-    prepareShadowMapForSampling(draw.commandBuffer);
+    prepareShadowMapForSampling(draw.commandBuffer, m_shadowMap);
     draw.passTimestamps->write(FrameTimestamp::volumetricFogBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     draw.viewState->volumetricFog.record(draw.commandBuffer, draw.frameIndex, *frame);
     draw.passTimestamps->write(FrameTimestamp::volumetricFogEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
 }
 
-void MeshPass::prepareShadowMapForSampling(VkCommandBuffer commandBuffer) {
-    if (m_shadowInitialized) {
+void MeshPass::prepareShadowMapForSampling(VkCommandBuffer commandBuffer, DirectionalShadowMap& map) {
+    if (map.initialized) {
         return;
     }
     // Fog and particles bind the shadow map even when no cascade was ever
     // rendered; they sample it only for rendered cascades.
-    imageBarrier(commandBuffer, m_shadowTexture.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+    imageBarrier(commandBuffer, map.texture.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                  VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_NONE,
                  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, maximumShadowCascades);
-    m_shadowInitialized = true;
+    map.initialized = true;
+}
+
+VkImageView MeshPass::viewShadowMap(const ViewState& view) const {
+    return view.shadows ? view.shadows->directional.texture.view : m_shadowMap.texture.view;
 }
 
 bool MeshPass::recordParticleSimulation(const DrawContext& draw, const Scene& scene, const AssetManager& assets,
@@ -4095,7 +4391,7 @@ bool MeshPass::recordParticleSimulation(const DrawContext& draw, const Scene& sc
         }
     }
     if (!emitters.empty()) {
-        prepareShadowMapForSampling(draw.commandBuffer);
+        prepareShadowMapForSampling(draw.commandBuffer, m_shadowMap);
     }
     draw.passTimestamps->write(FrameTimestamp::particleSimulationBegin, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     const bool recorded = m_particles.recordSimulation(
@@ -4602,13 +4898,9 @@ void MeshPass::shutdown(const VulkanContext& context) {
     };
     destroyOwnedTexture(m_whiteTexture);
     destroyOwnedTexture(m_normalTexture);
-    for (VkImageView& view : m_shadowLayerViews) {
-        if (view) {
-            vkDestroyImageView(context.device(), view, nullptr);
-            view = VK_NULL_HANDLE;
-        }
-    }
-    destroyOwnedTexture(m_shadowTexture);
+    destroyDirectionalShadowMap(m_shadowMap);
+    m_frameShadowCasters.reset();
+    m_localShadowCasterObjects.reset();
     m_materials.clear();
     for (auto& camera : m_cameras) {
         if (camera.buffer.buffer) {
@@ -4657,5 +4949,4 @@ void MeshPass::shutdown(const VulkanContext& context) {
     m_bindlessLayout = VK_NULL_HANDLE;
     m_sampler = VK_NULL_HANDLE;
     m_shadowSampler = VK_NULL_HANDLE;
-    m_shadowInitialized = false;
 }

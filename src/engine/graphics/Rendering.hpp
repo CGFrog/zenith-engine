@@ -697,6 +697,17 @@ struct RenderViewStats {
     bool temporalHistoryValid{false};
     // CPU time recording the view's passes.
     double cpuMilliseconds{0.0};
+    // Shadow maps the view sampled: its own when its isolation
+    // (RenderRuntime::setViewVisibleEntities) differs from the frame's shadow
+    // casters, otherwise the frame's. The counts are this frame's work on
+    // those maps: sun cascades and local-light tiles redrawn, and the casters
+    // drawn into them (cached cascades and tiles count zero; with GPU shadow
+    // culling the sun casters are those of a retired frame).
+    bool ownShadowMaps{false};
+    uint32_t shadowCascadesRendered{0};
+    uint32_t shadowCasterCount{0};
+    uint32_t localShadowTilesRendered{0};
+    uint32_t localShadowCasterCount{0};
 };
 
 // Settings a view may override (RenderRuntime::setViewSettings) keep their
@@ -841,9 +852,12 @@ class RenderRuntime {
     // Isolates a view (the editor's local view): with a set, the view draws
     // only meshes of the listed objects (collection instances count as their
     // instancing entity); nullopt draws everything. Sorted and deduplicated on
-    // assignment. Shared work (shadow maps, lights, particles) still covers
-    // the whole scene. An isolated default view uses CPU submission instead
-    // of GPU-driven submission while the set is present.
+    // assignment. Shadows follow each view's set: the frame's sun cascades and
+    // local-light atlas cast from the default view's set (else the leading
+    // view's), and a view isolated differently draws its own shadow maps from
+    // its set (see RenderViewStats::ownShadowMaps). Lights and particles still
+    // cover the whole scene. An isolated default view uses CPU submission
+    // instead of GPU-driven submission while the set is present.
     bool setViewVisibleEntities(RenderViewId view, std::optional<std::vector<RenderObjectId>> objects);
     // The view's isolation set; nullopt when it is not isolated or the handle is stale.
     std::optional<std::vector<RenderObjectId>> viewVisibleEntities(RenderViewId view) const;

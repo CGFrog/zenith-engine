@@ -359,7 +359,8 @@ void ViewportPanel::recordSceneGizmos(EditorContext& context) {
                      .assets = context.app.assets,
                      .selection = context.selection.ids(),
                      .aspectRatio = m_size.x / std::max(m_size.y, 1.0f),
-                     .viewCamera = viewCamera},
+                     .viewCamera = viewCamera,
+                     .isolatedObjects = m_localViewObjects ? &*m_localViewObjects : nullptr},
                     m_chrome.overlays.scene, *output);
 }
 
@@ -484,11 +485,12 @@ void ViewportPanel::draw(EditorContext& context) {
     rendering.setViewInputActive(m_view, m_inputActive && !modal && !m_suppressCameraUntilRelease && !m_cameraView);
 
     const bool chromeHovered = drawChrome(context);
+    // Before the render view, whose scene gizmos follow this frame's isolation.
+    syncLocalView(context);
     if (m_view) {
         // After the chrome, whose menus may change the shading or overlays.
         syncRenderView(context);
     }
-    syncLocalView(context);
     const ImVec2 mouse = ImGui::GetMousePos();
     m_mouseInView = glm::vec2(mouse.x, mouse.y) - m_position;
     if (modal) {

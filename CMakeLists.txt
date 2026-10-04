@@ -1346,6 +1346,24 @@ if(BUILD_TESTING)
         TIMEOUT 120
     )
 
+    # Per-view shadow isolation: an isolated view's sun, point and spot shadows
+    # cast from its isolated objects only, beside a view of the whole scene.
+    add_executable(zenith_isolated_shadow_smoke_tests tests/engine/IsolatedShadowSmokeTests.cpp)
+    target_link_libraries(zenith_isolated_shadow_smoke_tests PRIVATE zenith_engine)
+    if(MSVC)
+        target_compile_options(zenith_isolated_shadow_smoke_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_isolated_shadow_smoke_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_dependencies(zenith_isolated_shadow_smoke_tests zenith_assets)
+    add_test(NAME zenith_isolated_shadow_vulkan_smoke COMMAND zenith_isolated_shadow_smoke_tests)
+    set_tests_properties(zenith_isolated_shadow_vulkan_smoke PROPERTIES
+        ENVIRONMENT "ZENITH_SMOKE_FRAMES=80;ZENITH_DISABLE_SHADOW_CACHE=1;ZENITH_VALIDATION_STRICT=1"
+        LABELS "vulkan;smoke"
+        SKIP_RETURN_CODE 77
+        TIMEOUT 120
+        PROCESSORS 2
+    )
     # Debug-draw recording, tessellation and label projection (CPU only).
     add_executable(zenith_debug_draw_tests tests/engine/DebugDrawTests.cpp)
     target_link_libraries(zenith_debug_draw_tests PRIVATE zenith_engine)
@@ -2067,7 +2085,7 @@ if(BUILD_TESTING)
     add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
     set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES
         ENVIRONMENT
-            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/vulkan_smoke"
+            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=900;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/vulkan_smoke"
         LABELS "vulkan;smoke"
         TIMEOUT 45
         FIXTURES_REQUIRED zenith_editor_test_settings
@@ -2096,7 +2114,7 @@ if(BUILD_TESTING)
         COMMAND zenith_editor "${CMAKE_CURRENT_BINARY_DIR}/editor-module-smoke-$<CONFIG>.zenith-project")
     set_tests_properties(zenith_editor_module_smoke PROPERTIES
         ENVIRONMENT
-            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/module_smoke"
+            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=900;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/module_smoke"
         LABELS "vulkan;smoke"
         TIMEOUT 60
         FIXTURES_REQUIRED zenith_editor_test_settings
@@ -2174,7 +2192,7 @@ if(BUILD_TESTING)
     )
     zenith_add_validation_smoke(zenith_validation_editor
         COMMAND zenith_editor
-        ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=600
+        ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=900
             ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/validation_editor
     )
     set_tests_properties(zenith_validation_editor PROPERTIES FIXTURES_REQUIRED zenith_editor_test_settings)

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <type_traits>
 #include <unordered_set>
 #include <utility>
@@ -99,10 +100,23 @@ class GizmoRecorder {
         return m_selected.contains(id.value) ? SelectionRole::Selected : SelectionRole::None;
     }
 
-    // Whether a category of `scope` draws the entity: visible in the
-    // editor, and selected when the scope asks for that.
+    // Whether the view's local view (if any) isolates the entity.
+    bool isolated(Entity entity) const {
+        return m_view.isolatedObjects == nullptr ||
+               std::ranges::binary_search(*m_view.isolatedObjects,
+                                          static_cast<RenderObjectId>(entt::to_integral(entity)));
+    }
+
+    // Whether the editor draws the entity in this view: visible, and inside
+    // the local view's isolation.
+    bool drawnHere(Entity entity) const {
+        return m_visibility.drawn(entity) && isolated(entity);
+    }
+
+    // Whether a category of `scope` draws the entity: drawn in this view,
+    // and selected when the scope asks for that.
     bool shown(OverlayScope scope, Entity entity) const {
-        if (scope == OverlayScope::Off || !m_visibility.drawn(entity)) {
+        if (scope == OverlayScope::Off || !drawnHere(entity)) {
             return false;
         }
         return scope == OverlayScope::All || role(entity) != SelectionRole::None;
@@ -132,9 +146,13 @@ class GizmoRecorder {
 
     void collider(const ColliderComponent& collider, const glm::mat4& entityWorld, const DebugStyle& lineStyle);
     void triangleMesh(const MeshAsset& mesh, const glm::mat4& shapeWorld, const DebugStyle& lineStyle);
-    // Grows lower/upper by the world bounds of entity's mesh, if it has one
-    // the editor draws.
-    void growMeshBounds(Entity entity, glm::vec3& lower, glm::vec3& upper) const;
+    // Grows lower/upper by the world bounds of member's mesh drawn at
+    // memberWorld, if it has a loaded mesh with vertices.
+    void growMeshBounds(Entity member, const glm::mat4& memberWorld, glm::vec3& lower, glm::vec3& upper) const;
+    // Grows lower/upper by the world bounds of everything the entity draws
+    // in this view: its own mesh and, for a collection instancer, the meshes
+    // of the members its instances expand to.
+    void growDrawnBounds(Entity entity, glm::vec3& lower, glm::vec3& upper);
 
     const SceneGizmoView& m_view;
     const entt::registry& m_registry;
@@ -142,6 +160,8 @@ class GizmoRecorder {
     SceneGizmoColors m_colors;
     DebugDraw& m_output;
     std::unordered_set<uint64_t> m_selected;
+    // Collection-instance draws, expanded on first use by selection bounds.
+    std::optional<std::vector<CollectionInstanceDraw>> m_instanceDraws;
 };
 
 void GizmoRecorder::lights(OverlayScope scope) {
@@ -291,18 +311,14 @@ void GizmoRecorder::triangleMesh(const MeshAsset& mesh, const glm::mat4& shapeWo
     for (const auto& [begin, end] : ranges) {
         triangles += (end - begin) / 3;
     }
-    glm::vec3 lower(std::numeric_limits<float>::max());
-    glm::vec3 upper(std::numeric_limits<float>::lowest());
-    for (const Vertex& vertex : mesh.vertices) {
-        lower = glm::min(lower, vertex.position);
-        upper = glm::max(upper, vertex.position);
-    }
-    if (mesh.vertices.empty()) {
+    if (mesh.vertices.empty() || mesh.localBox.empty()) {
         return;
     }
     if (triangles > maximumColliderWireTriangles) {
-        m_output.box(shapeWorld * glm::translate(glm::mat4(1.0f), (lower + upper) * 0.5f), (upper - lower) * 0.5f,
-                     lineStyle);
+        // The asset's cached box: dense colliders never scan their vertices.
+        const BoundingBox& box = mesh.localBox;
+        m_output.box(shapeWorld * glm::translate(glm::mat4(1.0f), (box.minimum + box.maximum) * 0.5f),
+                     (box.maximum - box.minimum) * 0.5f, lineStyle);
         return;
     }
     const auto position = [&](size_t index) {
@@ -364,36 +380,52 @@ void GizmoRecorder::irradianceVolumes(OverlayScope scope) {
     }
 }
 
-void GizmoRecorder::growMeshBounds(Entity entity, glm::vec3& lower, glm::vec3& upper) const {
-    const auto* renderer = m_registry.try_get<MeshRendererComponent>(entity);
+void GizmoRecorder::growMeshBounds(Entity member, const glm::mat4& memberWorld, glm::vec3& lower,
+                                   glm::vec3& upper) const {
+    const auto* renderer = m_registry.try_get<MeshRendererComponent>(member);
     const MeshAsset* mesh = renderer != nullptr ? m_view.assets.mesh(renderer->mesh) : nullptr;
-    if (mesh == nullptr || mesh->vertices.empty() || !m_visibility.drawn(entity)) {
+    // The asset's cached box: selected objects never scan their vertices.
+    if (mesh == nullptr || mesh->localBox.empty()) {
         return;
     }
-    glm::vec3 localLower(std::numeric_limits<float>::max());
-    glm::vec3 localUpper(std::numeric_limits<float>::lowest());
-    for (const Vertex& vertex : mesh->vertices) {
-        localLower = glm::min(localLower, vertex.position);
-        localUpper = glm::max(localUpper, vertex.position);
-    }
-    const glm::mat4& entityWorld = world(entity);
+    const BoundingBox& box = mesh->localBox;
     for (uint32_t corner = 0; corner < 8u; ++corner) {
-        const glm::vec3 local{(corner & 1u) != 0u ? localUpper.x : localLower.x,
-                              (corner & 2u) != 0u ? localUpper.y : localLower.y,
-                              (corner & 4u) != 0u ? localUpper.z : localLower.z};
-        const glm::vec3 point(entityWorld * glm::vec4(local, 1.0f));
+        const glm::vec3 local{(corner & 1u) != 0u ? box.maximum.x : box.minimum.x,
+                              (corner & 2u) != 0u ? box.maximum.y : box.minimum.y,
+                              (corner & 4u) != 0u ? box.maximum.z : box.minimum.z};
+        const glm::vec3 point(memberWorld * glm::vec4(local, 1.0f));
         lower = glm::min(lower, point);
         upper = glm::max(upper, point);
     }
 }
 
+void GizmoRecorder::growDrawnBounds(Entity entity, glm::vec3& lower, glm::vec3& upper) {
+    if (!drawnHere(entity)) {
+        return;
+    }
+    growMeshBounds(entity, world(entity), lower, upper);
+    if (!m_registry.all_of<CollectionInstanceComponent>(entity)) {
+        return;
+    }
+    if (!m_instanceDraws) {
+        m_instanceDraws.emplace();
+        expandCollectionInstances(m_view.scene, m_visibility, *m_instanceDraws);
+    }
+    for (const CollectionInstanceDraw& draw : *m_instanceDraws) {
+        if (draw.instancer == entity) {
+            growMeshBounds(draw.member, draw.world, lower, upper);
+        }
+    }
+}
+
 void GizmoRecorder::selectionBounds() {
-    // One world-space box per selected object around its own mesh and its
-    // descendants' (a model's meshes sit on child entities).
+    // One world-space box per selected object around its own mesh, its
+    // descendants' (a model's meshes sit on child entities), and the members
+    // its collection instances draw.
     std::vector<Entity> pending;
     for (const SceneEntityId id : m_view.selection) {
         const Entity selected = m_view.scene.findEntity(id);
-        if (selected == entt::null || !m_visibility.drawn(selected)) {
+        if (selected == entt::null || !drawnHere(selected)) {
             continue;
         }
         glm::vec3 lower(std::numeric_limits<float>::max());
@@ -402,7 +434,7 @@ void GizmoRecorder::selectionBounds() {
         while (!pending.empty()) {
             const Entity entity = pending.back();
             pending.pop_back();
-            growMeshBounds(entity, lower, upper);
+            growDrawnBounds(entity, lower, upper);
             if (const auto* relationship = m_registry.try_get<RelationshipComponent>(entity)) {
                 pending.insert(pending.end(), relationship->children.begin(), relationship->children.end());
             }

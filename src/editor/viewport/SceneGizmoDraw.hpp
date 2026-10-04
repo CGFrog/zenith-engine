@@ -1,11 +1,13 @@
 #pragma once
 
 #include "engine/graphics/DebugDraw.hpp"
+#include "engine/graphics/RenderIds.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <vector>
 
 class AssetManager;
 
@@ -69,12 +71,18 @@ struct SceneGizmoView {
     float aspectRatio{1.0f};
     // The scene camera the view looks through, whose own frustum is skipped.
     std::optional<SceneEntityId> viewCamera;
+    // The sorted render objects the view's local view isolates (as
+    // RenderRuntime::setViewVisibleEntities takes them); null when the view
+    // is not isolated. Entities outside it draw no gizmos, labels, or bounds.
+    const std::vector<RenderObjectId>* isolatedObjects{nullptr};
 };
 
 // Records the enabled overlay categories of view's scene into output (a
 // viewport's RenderRuntime::viewDebugDraw list), plus a label per name. Only
-// entities drawn in the editor (SceneVisibility, Editor mode) contribute, so
-// hidden objects show no overlays. Colours are the palette's overlay tokens:
+// entities drawn in the editor (SceneVisibility, Editor mode) and inside the
+// view's local-view isolation contribute, so hidden objects show no overlays.
+// Selection bounds cover a selected object's meshes, its descendants', and
+// the members its collection instances draw, from each mesh's cached box. Colours are the palette's overlay tokens:
 // a category colour, overlayActive for the active entity, overlaySelected for
 // the rest of the selection, which also draws over scene surfaces.
 //
