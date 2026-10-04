@@ -50,7 +50,7 @@ EditorProjectHubOptions projectHubOptions(bool startInHub) {
     const char* documents = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS);
     std::filesystem::path projectsFolder =
         (documents != nullptr ? fromUtf8(documents) : std::filesystem::current_path()) / "Zenith Projects";
-    return {.hub = {.templateDirectory = findProjectTemplate(templateRoots(), cppGameTemplateName),
+    return {.hub = {.templates = listProjectTemplates(templateRoots()),
                     .engineRoot = std::move(engineRoot),
                     .engineAssetRoot = assetRoot(),
                     .buildConfiguration = ZENITH_EDITOR_CONFIGURATION,

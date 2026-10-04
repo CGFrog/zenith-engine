@@ -32,7 +32,7 @@ Behaviours, the editor script workflow) is in
 | `tools/irradiance_room/` | Standard-library Python script that regenerates the irradiance-volume test interior. |
 | `tools/color_grading/` | Standard-library Python script that regenerates the example `.cube` colour grade. |
 | `projects/` | Project manifests and scene documents (`demo`, the renderer `showcase`, and the `irradiance_room` interior). |
-| `templates/` | Project templates the editor's Project Hub generates projects from; `cpp_game/` is a C++ game project (CMake game module, example component and system). `{{UPPER_CASE}}` tokens are substituted. The build copies it to `build/templates/`. |
+| `templates/` | Project templates the editor's Project Hub generates projects from, each described by its `template.json`: `cpp_game/` is a C++ game project (CMake game module, example component and system, and the code generators' `snippets/`), and `fps_game/` a playable first-person course. `{{UPPER_CASE}}` tokens are substituted. The build copies them to `build/templates/`. |
 | `cmake/` | `Dependencies.cmake` (FetchContent pins and wrapper targets), `CompilerSettings.cmake` (`zenith_target_warnings`), `ZenithTesting.cmake` (`zenith_add_test`), packaging scripts, and the inputs of the files configuration writes for out-of-tree game modules (`ZenithEngineConfig.cmake`, `ZenithEngineTargets-<config>.cmake`, `zenith-engine.json`). |
 | `build/` | Generated configuration, dependencies, binaries, copied assets, and compiled shaders. Do not edit generated contents. |
 
@@ -68,8 +68,9 @@ tests/
 ```
 
 Long-form project tutorials live under `docs/tutorials/`. The
-[first-person game tutorial](tutorials/fps-game/README.md) demonstrates how to
-compose the public engine APIs without moving game rules into reusable systems.
+[first-person game tutorial](tutorials/fps-game/README.md) makes a game from
+the First-Person Shooter template in the editor, with game rules in the
+project's module and the engine's mechanisms beneath them.
 
 Folder-crossing includes use paths rooted at `src/`. CMake source lists are
 explicit, so a file move must update the nearest `CMakeLists.txt` as well as

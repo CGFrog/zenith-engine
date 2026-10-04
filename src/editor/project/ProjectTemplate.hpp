@@ -7,6 +7,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 class AssetManager;
 
@@ -18,9 +19,50 @@ inline constexpr std::string_view engineConfigFileName = "ZenithEngineConfig.cma
 inline constexpr std::string_view engineDescriptionFileName = "zenith-engine.json";
 // The template under templates/ that New from Template uses.
 inline constexpr std::string_view cppGameTemplateName = "cpp_game";
+// The FPS template under templates/: a player, a hitscan weapon, targets, a
+// HUD, and pause and settings menus.
+inline constexpr std::string_view fpsGameTemplateName = "fps_game";
 // The folder of a template holding the code generators' snippets
 // (CodeGenerator.hpp). It is not copied into new projects.
 inline constexpr std::string_view templateSnippetDirectoryName = "snippets";
+// The file describing a template (ProjectTemplateInfo). Not copied either.
+inline constexpr std::string_view templateInfoFileName = "template.json";
+
+// What a template's template.json declares:
+//
+//   {"name": "First-Person Shooter", "description": "...",
+//    "startupScene": "scenes/main.zenith-scene",
+//    "inputActions": "input_actions.json", "tags": ["target"]}
+//
+// Every key is optional. startupScene and inputActions are paths inside the
+// template, copied with it, that the new project names; without a
+// startupScene the generator builds the starter scene (ground, cube, sun,
+// environment, camera).
+struct ProjectTemplateInfo {
+    std::filesystem::path directory;
+    std::string name;
+    std::string description;
+    std::filesystem::path startupScene;
+    std::filesystem::path inputActions;
+    std::vector<std::string> tags;
+};
+
+struct ProjectTemplateInfoResult {
+    bool success{false};
+    std::string error;
+
+    explicit operator bool() const {
+        return success;
+    }
+};
+
+// Reads directory's template.json; a template without one is named after its
+// folder.
+ProjectTemplateInfoResult readProjectTemplateInfo(const std::filesystem::path& directory, ProjectTemplateInfo& info);
+// Every template in the roots' subfolders, a folder name found in an earlier
+// root hiding later ones, the C++ game template first and the rest by name.
+// Templates whose template.json cannot be read are skipped.
+std::vector<ProjectTemplateInfo> listProjectTemplates(std::span<const std::filesystem::path> templateRoots);
 // The configure and build preset a generated project's CMakePresets.json
 // defines, which the editor's Build command runs.
 inline constexpr std::string_view projectBuildPresetName = "zenith";

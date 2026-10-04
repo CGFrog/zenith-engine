@@ -1,6 +1,7 @@
 // The Project Hub and what it is built from: the recent projects list, the
 // C++ game template generator, and the hub's headless UI. With
-// --build-generated-module the test instead generates a project and
+// --build-generated-module [--template <name>] the test instead generates a
+// project (from the C++ game template unless named) and
 // configures and builds its game module against this Zenith build with CMake
 // (in a temporary folder, or in the folder given after the flag, which is
 // kept).
@@ -12,15 +13,24 @@
 #include "editor/project/ProjectHub.hpp"
 #include "editor/project/ProjectTemplate.hpp"
 #include "editor/project/RecentProjects.hpp"
+#include "engine/application/Application.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/audio/AudioSystem.hpp"
 #include "engine/behaviour/BehaviourRegistry.hpp"
+#include "engine/gameplay/FirstPerson.hpp"
+#include "engine/graphics/Rendering.hpp"
+#include "engine/input/InputActions.hpp"
 #include "engine/module/GameModule.hpp"
+#include "engine/module/Gameplay.hpp"
+#include "engine/physics/PhysicsWorld.hpp"
 #include "engine/project/ProjectConfig.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/Scene.hpp"
+#include "engine/ui/GameUi.hpp"
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdlib>
@@ -271,7 +281,8 @@ void testHubDraw(const fs::path& root) {
     recent.recordOpened(missing, "Gone", at(10));
     recent.recordOpened(existing, "Listed", at(20));
 
-    ProjectHub hub(recent, {.templateDirectory = fs::path(ZENITH_TEMPLATE_DIR) / cppGameTemplateName,
+    const std::array templateRoots{fs::path(ZENITH_TEMPLATE_DIR)};
+    ProjectHub hub(recent, {.templates = listProjectTemplates(templateRoots),
                             .engineRoot = ZENITH_ENGINE_BUILD_DIR,
                             .engineAssetRoot = ZENITH_ASSET_DIR,
                             .buildConfiguration = ZENITH_EDITOR_CONFIGURATION,
@@ -301,9 +312,139 @@ void testHubDraw(const fs::path& root) {
     expect(!hub.messageIsError(), "hub: creating reports success");
 }
 
-int buildGeneratedModule(const fs::path& root) {
+// Whether the HUD drew text exactly matching text this frame.
+bool hudShows(const GameUiContext& ui, std::string_view text) {
+    return std::ranges::any_of(ui.commands(), [text](const UiCommand& command) {
+        const auto* drawn = std::get_if<UiTextCommand>(&command.payload);
+        return drawn != nullptr && drawn->text == text;
+    });
+}
+
+// Plays the FPS scene as the game does (GameplayRunner over the module, with
+// the project's input actions and physics stepping), shoots the first target
+// twice, and checks the HUD counts it; then pauses (the roadmap's C6 exit
+// criterion 3, without a window).
+int playFpsScene(const GameModule& module, const ProjectConfig& project) {
+    Logger logger{{.echoToStderr = false}};
+    AssetManager assets{&logger};
+    Scene scene;
+    PhysicsWorld physics;
+    if (!physics.init() || !physics.setLayers(project.physicsLayerTable())) {
+        std::cerr << "FAILED: the physics world starts\n";
+        return 1;
+    }
+    AudioSystem audio;
+    audio.init(AudioConfig{.outputEnabled = false});
+    ApplicationControl control;
+    RenderRuntime rendering;
+    GameUiContext ui;
+    ApplicationContext context{scene, assets, physics, audio, control, rendering, ui, logger};
+    Gameplay gameplay = gameplayFromModule(module);
+    InputActionMap actions = *gameplay.inputActions;
+    if (!loadProjectInputActions(project, actions) ||
+        !loadProjectStartupScene(project, assets, scene, gameplay.componentTypes)) {
+        std::cerr << "FAILED: the FPS scene and input actions load\n";
+        return 1;
+    }
+    gameplay.inputActions = std::make_shared<const InputActionMap>(std::move(actions));
+
+    // Put the first target straight ahead of the camera, which starts
+    // looking down -Z, before physics builds its body.
+    scene.updateWorldTransforms();
+    const auto cameras = scene.registry().view<const FirstPersonCameraComponent>();
+    const Entity camera = cameras.empty() ? entt::null : cameras.front();
+    Entity target = entt::null;
+    for (const auto [entity, name] : scene.registry().view<const NameComponent>().each()) {
+        target = name.name == "Target 1" ? entity : target;
+    }
+    if (camera == entt::null || target == entt::null) {
+        std::cerr << "FAILED: the FPS scene has its camera and first target\n";
+        return 1;
+    }
+    const glm::vec3 eye(scene.registry().get<TransformComponent>(camera).world[3]);
+    glm::mat4& targetLocal = scene.registry().get<TransformComponent>(target).local;
+    targetLocal[3] = glm::vec4(eye + glm::vec3(0.0f, 0.0f, -6.0f), 1.0f);
+    scene.markTransformDirty(target);
+    const SceneEntityId targetId = scene.id(target);
+
+    GameplayRunner runner(gameplay);
+    runner.start(context, project.assetRoot);
+    constexpr float step = 1.0f / 60.0f;
+    const auto frame = [&](const InputState& input) {
+        runner.update(context, input, step, step);
+        runner.fixedUpdate(context, input, step);
+        physics.step(scene, assets, step);
+        runner.afterPhysicsStep(context);
+        runner.lateUpdate(context);
+        scene.updateWorldTransforms();
+        ui.beginFrame({1280, 720}, input);
+        runner.drawUi(context);
+    };
+    const auto frames = [&](int count) {
+        for (int index = 0; index < count; ++index) {
+            frame(InputState{});
+        }
+    };
+    InputState fire;
+    fire.setMouseButtonDown(MouseButton::Left);
+    fire.setMouseButtonPressed(MouseButton::Left);
+    frames(5);
+    const bool counted = hudShows(ui, "Targets 0 / 5");
+    frame(fire);
+    frames(30);
+    frame(fire);
+    frames(3);
+    const bool destroyed = scene.findEntity(targetId) == entt::null;
+    const bool scored = hudShows(ui, "Targets 1 / 5");
+    InputState pause;
+    pause.setKeyDown(Key::Escape);
+    pause.setKeyPressed(Key::Escape);
+    frame(pause);
+    frame(InputState{});
+    const bool paused = hudShows(ui, "Paused");
+    runner.stop();
+    if (!counted || !destroyed || !scored || !paused) {
+        std::cerr << "FAILED: playing the FPS scene: targets counted " << counted << ", target destroyed " << destroyed
+                  << ", HUD updated " << scored << ", paused " << paused << '\n';
+        return 1;
+    }
+    std::cout << "Played the FPS scene: shot a target, the HUD counted it, and the game paused\n";
+    return 0;
+}
+
+// The FPS template's module registers its behaviours and systems, and its
+// starter scene loads with them, keeping no module component as JSON.
+int checkFpsModule(const GameModule& module, const ProjectConfig& project) {
+    const bool registered =
+        module.behaviours()->find("hitscan_weapon") != nullptr && module.behaviours()->find("target") != nullptr &&
+        module.behaviours()->find("goal_zone") != nullptr && module.systems()->find("built_game.score") != nullptr &&
+        module.systems()->find("built_game.hud") != nullptr;
+    if (!registered) {
+        std::cerr << "FAILED: the FPS module did not register its behaviours and systems\n";
+        return 1;
+    }
+    // Destroyed before the module, which holds the components' code.
+    AssetManager sceneAssets;
+    Scene scene;
+    if (const ProjectConfigResult loaded =
+            loadProjectStartupScene(project, sceneAssets, scene, module.componentTypes());
+        !loaded) {
+        std::cerr << "FAILED: the FPS scene does not load with its module: " << loaded.error << '\n';
+        return 1;
+    }
+    if (!scene.registry().view<PreservedComponentsComponent>().empty()) {
+        std::cerr << "FAILED: the FPS scene keeps module components its module did not read\n";
+        return 1;
+    }
+    std::cout << "FPS module built and its scene loaded\n";
+    return playFpsScene(module, project);
+}
+
+int buildGeneratedModule(const fs::path& root, std::string_view templateName) {
     AssetManager assets;
-    const ProjectTemplateResult created = generateProjectFromTemplate(templateRequest("Built Game", root), assets);
+    ProjectTemplateRequest request = templateRequest("Built Game", root);
+    request.templateDirectory = fs::path(ZENITH_TEMPLATE_DIR) / templateName;
+    const ProjectTemplateResult created = generateProjectFromTemplate(request, assets);
     if (!created) {
         std::cerr << "FAILED: generate: " << created.error << '\n';
         return 1;
@@ -324,10 +465,10 @@ int buildGeneratedModule(const fs::path& root) {
                               .fields = {{"maxHealth", GeneratedFieldType::Float}}},
         CodeGenerationRequest{.kind = GeneratedCodeKind::System, .name = "Regenerate"},
     };
-    for (const CodeGenerationRequest& request : generatedTypes) {
-        if (const CodeGenerationResult generated = generateModuleCode(created.projectFile, snippets, request);
+    for (const CodeGenerationRequest& generation : generatedTypes) {
+        if (const CodeGenerationResult generated = generateModuleCode(created.projectFile, snippets, generation);
             !generated) {
-            std::cerr << "FAILED: generating " << request.name << ": " << generated.error << '\n';
+            std::cerr << "FAILED: generating " << generation.name << ": " << generated.error << '\n';
             return 1;
         }
     }
@@ -369,6 +510,9 @@ int buildGeneratedModule(const fs::path& root) {
         std::cerr << "FAILED: the generated module does not load: " << loaded.error << '\n';
         return 1;
     }
+    if (templateName == fpsGameTemplateName) {
+        return checkFpsModule(*module, project);
+    }
     const bool registered = module->name() == "built_game" && module->componentTypes()->find("spinner") != nullptr &&
                             module->systems()->find("built_game.spin") != nullptr;
     if (!registered) {
@@ -391,14 +535,22 @@ int buildGeneratedModule(const fs::path& root) {
 int main(int argc, char** argv) {
     std::error_code error;
     if (argc > 1 && std::string_view(argv[1]) == "--build-generated-module") {
+        // --template <name> chooses another template than the C++ game.
+        int next = 2;
+        std::string_view templateName = cppGameTemplateName;
+        if (argc > 3 && std::string_view(argv[2]) == "--template") {
+            templateName = argv[3];
+            next = 4;
+        }
         // An explicit folder keeps the project, for running the editor on it.
-        if (argc > 2) {
-            return buildGeneratedModule(fs::absolute(argv[2]));
+        if (argc > next) {
+            return buildGeneratedModule(fs::absolute(argv[next]), templateName);
         }
         // Its own folder: CTest runs this beside the other tests.
-        const fs::path buildRoot = fs::temp_directory_path() / "zenith_project_template_module_build";
+        const fs::path buildRoot =
+            fs::temp_directory_path() / ("zenith_" + std::string(templateName) + "_template_module_build");
         fs::remove_all(buildRoot, error);
-        const int result = buildGeneratedModule(buildRoot);
+        const int result = buildGeneratedModule(buildRoot, templateName);
         fs::remove_all(buildRoot, error);
         return result;
     }

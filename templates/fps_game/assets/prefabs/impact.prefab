@@ -1,0 +1,83 @@
+{
+  "entities": [
+    {
+      "components": {
+        "particle_emitter": {
+          "angular_speed": 0.0,
+          "blend_mode": "additive",
+          "burst_count": 24,
+          "burst_interval": 0.0,
+          "cone_angle": 1.2000000476837158,
+          "direction": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "drag": 0.0,
+          "emissive_intensity": 4.0,
+          "emitting": true,
+          "end_color": [
+            1.0,
+            0.30000001192092896,
+            0.10000000149011612,
+            0.0
+          ],
+          "end_size": 0.0,
+          "gravity": [
+            0.0,
+            -9.800000190734863,
+            0.0
+          ],
+          "lifetime": [
+            0.15000000596046448,
+            0.4000000059604645
+          ],
+          "lit": false,
+          "max_particles": 64,
+          "soft_distance": 0.25,
+          "space": "world",
+          "spawn_radius": 0.0,
+          "spawn_rate": 0.0,
+          "speed": [
+            2.0,
+            5.0
+          ],
+          "start_color": [
+            1.0,
+            0.800000011920929,
+            0.30000001192092896,
+            1.0
+          ],
+          "start_size": 0.05999999865889549,
+          "texture_asset": ""
+        }
+      },
+      "id": 1,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Impact",
+      "parent": null
+    }
+  ],
+  "metadata": {
+    "display_name": "Impact"
+  },
+  "nested": [],
+  "version": 2
+}

@@ -1,0 +1,7 @@
+{
+  "name": "First-Person Shooter",
+  "description": "A first-person course: a player with a hitscan weapon, targets to shoot, an exit to reach, a HUD, and pause and settings menus. Input actions are edited in Edit > Project Settings.",
+  "startupScene": "scenes/main.zenith-scene",
+  "inputActions": "input_actions.json",
+  "tags": ["target"]
+}

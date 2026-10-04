@@ -7,6 +7,7 @@
 #include "editor/theme/EditorWidgets.hpp"
 #include "editor/theme/ThemeChrome.hpp"
 
+#include <algorithm>
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
 
@@ -203,11 +204,23 @@ void ProjectHub::drawRecentProjectRow(const RecentProject& project) {
 
 void ProjectHub::drawNewProject(AssetManager& assets) {
     widgets::SectionHeader("New from Template", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Leaf);
-    if (m_config.templateDirectory.empty()) {
-        ImGui::TextColored(toImVec4(palette::warning), "The C++ game template was not found.");
+    if (m_config.templates.empty()) {
+        ImGui::TextColored(toImVec4(palette::warning), "No project templates were found.");
         return;
     }
-    ImGui::TextDisabled("C++ game: a game module with an example component and system, built with CMake.");
+    m_selectedTemplate = std::min(m_selectedTemplate, m_config.templates.size() - 1);
+    for (size_t index = 0; index < m_config.templates.size(); ++index) {
+        const ProjectTemplateInfo& info = m_config.templates[index];
+        ImGui::PushID(static_cast<int>(index));
+        if (ImGui::RadioButton(info.name.c_str(), m_selectedTemplate == index)) {
+            m_selectedTemplate = index;
+        }
+        ImGui::PopID();
+    }
+    const ProjectTemplateInfo& chosenTemplate = m_config.templates[m_selectedTemplate];
+    if (!chosenTemplate.description.empty()) {
+        ImGui::TextWrapped("%s", chosenTemplate.description.c_str());
+    }
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputTextWithHint("##name", "Project name", &m_newProjectName);
     ImGui::SetNextItemWidth(-FLT_MIN);
@@ -222,7 +235,7 @@ void ProjectHub::drawNewProject(AssetManager& assets) {
         const ProjectTemplateResult created =
             generateProjectFromTemplate({.displayName = m_newProjectName,
                                          .parentDirectory = fromUtf8(m_newProjectLocation),
-                                         .templateDirectory = m_config.templateDirectory,
+                                         .templateDirectory = chosenTemplate.directory,
                                          .engineRoot = m_config.engineRoot,
                                          .engineAssetRoot = m_config.engineAssetRoot,
                                          .buildConfiguration = m_config.buildConfiguration},

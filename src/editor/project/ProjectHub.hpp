@@ -2,6 +2,7 @@
 
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/NativeFileDialog.hpp"
+#include "editor/project/ProjectTemplate.hpp"
 #include "editor/project/RecentProjects.hpp"
 #include "engine/platform/ChildProcess.hpp"
 
@@ -9,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 class AssetManager;
 class ThemeChrome;
@@ -22,9 +24,9 @@ enum class ProjectHubEntry {
 
 // Where the hub finds what New from Template needs, and the IDE command.
 struct ProjectHubConfig {
-    // The C++ game template (templates/cpp_game); empty disables New from
-    // Template.
-    std::filesystem::path templateDirectory;
+    // The templates New from Template offers (listProjectTemplates), the
+    // first selected; empty disables New from Template.
+    std::vector<ProjectTemplateInfo> templates;
     // The Zenith build new projects compile their game module against.
     std::filesystem::path engineRoot;
     // The engine's assets, the source of the template's starter model.
@@ -85,6 +87,8 @@ class ProjectHub {
     ProjectHubConfig m_config;
     NativeFileDialog m_openDialog;
     std::string m_newProjectName{"My Game"};
+    // Index into the config's templates.
+    size_t m_selectedTemplate{0};
     std::string m_newProjectLocation;
     std::string m_message;
     bool m_messageIsError{false};

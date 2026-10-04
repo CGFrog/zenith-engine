@@ -56,8 +56,22 @@ category, phase, fields}`, which runs headless:
   requests a build, which hot reloads the module when it finishes.
 
 The editor reads the snippets from the C++ game template it found at startup
-(`codeSnippetDirectory`); the Project Hub never copies `snippets/` into a new
-project. `zenith_project_template_module_build` generates one type of each
+(`codeSnippetDirectory`); the Project Hub never copies `snippets/` (or a
+template's `template.json`) into a new project.
+
+## Project templates
+
+The Project Hub lists every folder of the template roots
+(`listProjectTemplates`: the build's `templates/`, then the source tree's),
+C++ Game first. Each template's `template.json` (`ProjectTemplateInfo`) gives
+its name and description and may name a startup scene, an input action file,
+and tags, which the generated project's manifest records; a template without
+a startup scene gets the generated starter scene. `templates/fps_game/` ships
+its scene and impact prefab, which `tests/editor/FpsTemplateTests.cpp`
+writes with the engine's serializers (`--write <folder>`) and checks.
+`zenith_fps_template_module_build` builds a generated FPS project, loads its
+scene with the module's types, and plays it headless: a shot destroys a
+target, the HUD counts it, and Escape pauses. `zenith_project_template_module_build` generates one type of each
 kind into a new project and builds it with the template's warnings.
 
 ## Packaging

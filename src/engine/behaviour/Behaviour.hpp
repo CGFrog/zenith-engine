@@ -7,10 +7,13 @@
 class GameServices;
 class InputActionState;
 class Logger;
+class PhysicsWorld;
 
 // What a Behaviour hook may touch. services is null in Edit mode (for
 // behaviours that opt into it) and actions is null whenever no player input
-// reaches the scene, as for systems (see SystemContext). deltaSeconds is the
+// reaches the scene, as for systems (see SystemContext). physics is the
+// scene's physics world, for raycasts and other queries; null where no
+// application runs the hooks (Edit mode, onDestroy). deltaSeconds is the
 // frame duration, or the fixed step in onFixedUpdate and the trigger and
 // collision hooks; zero in onDestroy.
 struct BehaviourContext {
@@ -20,6 +23,7 @@ struct BehaviourContext {
     GameServices* services{nullptr};
     const InputActionState* actions{nullptr};
     Logger* logger{nullptr};
+    PhysicsWorld* physics{nullptr};
 };
 
 // A body this behaviour's entity began touching. normal points from the

@@ -17,11 +17,13 @@ Started without a project file, the editor opens the **Project Hub**:
   whose file is gone is marked *(missing)* and **Remove** drops it from the
   list (its files are never touched). The list is `recent-projects.json` in
   the editor settings folder.
-- **New from Template** creates a C++ game project in a new folder named
-  after the project: a `.zenith-project` file, `assets/` with a starter model,
-  `scenes/main.zenith-scene` (ground, cube, sun, sky, and camera), and `src/`
-  with a CMake game module holding an example component (Spinner) and
-  system. The new project opens right away.
+- **New from Template** creates a project in a new folder named after it,
+  from the template you pick. **C++ Game** gives a `.zenith-project` file,
+  `assets/` with a starter model, `scenes/main.zenith-scene` (ground, cube,
+  sun, sky, and camera), and `src/` with a CMake game module holding an
+  example component (Spinner) and system. **First-Person Shooter** gives a
+  playable course (see the FPS tutorial below). The new project opens right
+  away.
 - **Open Project...** chooses any `.zenith-project` file.
 - **Open in IDE** opens a project's folder (which holds its `CMakeLists.txt`)
   with the IDE command from the Build panel's settings (`ide.command`).
@@ -293,6 +295,6 @@ do this automatically.
 The second command is the bounded Vulkan smoke scenario for viewport resize
 and Edit/Play resource transitions.
 
-To turn an authored scene into a standalone game with movement, weapons,
-audio, and tests, continue with
+To make a game with behaviours, input actions, a HUD, and menus, from the
+First-Person Shooter template through to `zenith --project`, continue with
 [Build a first-person game with Zenith](tutorials/fps-game/README.md).

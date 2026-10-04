@@ -29,7 +29,7 @@ class ModuleRegistrar;
 // previous engine headers: ModuleRegistrar, the registered descriptor types,
 // or the layout of anything a module reads or writes through them. A macro so
 // the build hash below can spell it.
-#define ZENITH_MODULE_API_VERSION 6
+#define ZENITH_MODULE_API_VERSION 7
 inline constexpr uint32_t moduleApiVersion = ZENITH_MODULE_API_VERSION;
 
 #define ZENITH_MODULE_STRINGIFY_VALUE(value) #value

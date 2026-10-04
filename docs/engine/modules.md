@@ -68,7 +68,7 @@ Besides the scene, mode, and delta, a system gets:
   [Window and input](window-input.md).
 
 Changing `SystemContext`, `ModuleRegistrar`, or a registered descriptor bumps
-`ZENITH_MODULE_API_VERSION` (now 6: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, B1 made `character_controller` an engine component type with engine systems, and B2 added behaviours to `ModuleRegistrar` and `SystemContext`).
+`ZENITH_MODULE_API_VERSION` (now 7: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, B1 made `character_controller` an engine component type with engine systems, B2 added behaviours to `ModuleRegistrar` and `SystemContext`, and C6 added `BehaviourContext::physics`).
 
 ## Behaviours (`src/engine/behaviour/`)
 
@@ -99,7 +99,8 @@ with `SystemContext::behaviours`. Each pass:
 
 Types run in registration order and each type's entities in creation order
 (scene id), so the order is deterministic. Hooks receive a `BehaviourContext`:
-the scene, entity, delta, `GameServices` (null in Edit), actions and logger.
+the scene, entity, delta, `GameServices` (null in Edit), actions, logger, and
+the physics world for queries (null in Edit).
 Hooks change entities through `GameServices::commands()`; when a destroy
 command applies, `GameServices` calls `onDisable` and `onDestroy` on the
 subtree's behaviours first (`destroyBehaviours`). A copied behaviour (a

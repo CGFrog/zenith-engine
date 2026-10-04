@@ -1,0 +1,697 @@
+{
+  "collections": [],
+  "entities": [
+    {
+      "components": {
+        "directional_light": {
+          "color": [
+            1.0,
+            0.9100000262260437,
+            0.7799999713897705
+          ],
+          "direction": [
+            0.4000000059604645,
+            0.800000011920929,
+            0.5
+          ],
+          "intensity": 5.0,
+          "primary": true,
+          "shadows": {
+            "constant_bias": 0.5,
+            "depth_range": 60.0,
+            "enabled": true,
+            "focus_distance": 6.0,
+            "half_extent": 14.0,
+            "normal_bias": 0.009999999776482582,
+            "slope_bias": 1.0
+          }
+        }
+      },
+      "id": 1,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Sun",
+      "parent": null
+    },
+    {
+      "components": {
+        "environment_light": {
+          "diffuse_intensity": 0.6000000238418579,
+          "environment_asset": "",
+          "ground_color": [
+            0.07999999821186066,
+            0.06499999761581421,
+            0.05000000074505806
+          ],
+          "primary": true,
+          "sky_color": [
+            0.20000000298023224,
+            0.23999999463558197,
+            0.3400000035762787
+          ],
+          "specular_intensity": 0.3499999940395355
+        }
+      },
+      "id": 2,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Environment",
+      "parent": null
+    },
+    {
+      "components": {
+        "collider": {
+          "half_extents": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "box"
+        },
+        "mesh_renderer": {
+          "mesh": 0,
+          "path": "primitives/cube.gltf"
+        },
+        "rigid_body": {
+          "$version": 2,
+          "allow_sleeping": true,
+          "angular_damping": 0.05000000074505806,
+          "continuous_collision": false,
+          "friction": 0.5,
+          "gravity_factor": 1.0,
+          "layer": 0,
+          "linear_damping": 0.05000000074505806,
+          "lock_rotation": false,
+          "mass": 1.0,
+          "motion_type": 0,
+          "restitution": 0.0,
+          "sensor": false
+        }
+      },
+      "id": 3,
+      "local_transform": [
+        8.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.10000000149011612,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        16.0,
+        0.0,
+        0.0,
+        -0.10000000149011612,
+        -10.0,
+        1.0
+      ],
+      "name": "Floor",
+      "parent": null
+    },
+    {
+      "components": {
+        "collider": {
+          "half_extents": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "box"
+        },
+        "mesh_renderer": {
+          "mesh": 0,
+          "path": "primitives/cube.gltf"
+        },
+        "rigid_body": {
+          "$version": 2,
+          "allow_sleeping": true,
+          "angular_damping": 0.05000000074505806,
+          "continuous_collision": false,
+          "friction": 0.5,
+          "gravity_factor": 1.0,
+          "layer": 0,
+          "linear_damping": 0.05000000074505806,
+          "lock_rotation": false,
+          "mass": 1.0,
+          "motion_type": 0,
+          "restitution": 0.0,
+          "sensor": false
+        }
+      },
+      "id": 4,
+      "local_transform": [
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        16.0,
+        0.0,
+        -8.5,
+        1.5,
+        -10.0,
+        1.0
+      ],
+      "name": "Left Wall",
+      "parent": null
+    },
+    {
+      "components": {
+        "collider": {
+          "half_extents": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "box"
+        },
+        "mesh_renderer": {
+          "mesh": 0,
+          "path": "primitives/cube.gltf"
+        },
+        "rigid_body": {
+          "$version": 2,
+          "allow_sleeping": true,
+          "angular_damping": 0.05000000074505806,
+          "continuous_collision": false,
+          "friction": 0.5,
+          "gravity_factor": 1.0,
+          "layer": 0,
+          "linear_damping": 0.05000000074505806,
+          "lock_rotation": false,
+          "mass": 1.0,
+          "motion_type": 0,
+          "restitution": 0.0,
+          "sensor": false
+        }
+      },
+      "id": 5,
+      "local_transform": [
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        16.0,
+        0.0,
+        8.5,
+        1.5,
+        -10.0,
+        1.0
+      ],
+      "name": "Right Wall",
+      "parent": null
+    },
+    {
+      "components": {
+        "character_controller": {
+          "$version": 2,
+          "acceleration": 30.0,
+          "air_control": 0.25,
+          "ground_probe_distance": 0.25,
+          "half_height": 0.5,
+          "jump_action": "Jump",
+          "jump_speed": 5.5,
+          "layer": 2,
+          "move_action": "Move",
+          "move_speed": 4.0,
+          "radius": 0.4000000059604645,
+          "slope_limit": 0.8726645708084106,
+          "sprint_action": "Sprint",
+          "sprint_multiplier": 1.75,
+          "step_height": 0.3499999940395355
+        }
+      },
+      "id": 6,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        4.0,
+        1.0
+      ],
+      "name": "Player",
+      "parent": null
+    },
+    {
+      "components": {
+        "camera": {
+          "far_plane": 1000.0,
+          "near_plane": 0.10000000149011612,
+          "primary": true,
+          "vertical_fov": 1.0471975803375244
+        },
+        "first_person_camera": {
+          "gamepad_look_speed": 800.0,
+          "look_action": "Look",
+          "maximum_pitch": 1.5533430576324463,
+          "minimum_pitch": -1.5533430576324463,
+          "pitch": 0.0,
+          "sensitivity": 0.0024999999441206455,
+          "yaw": 0.0
+        },
+        "hitscan_weapon": {
+          "cooldown_seconds": 0.2,
+          "damage": 25.0,
+          "enabled": true,
+          "fire_action": "Fire",
+          "impact_effect": "prefabs/impact.prefab",
+          "range": 100.0
+        }
+      },
+      "id": 7,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.8999999761581421,
+        0.0,
+        1.0
+      ],
+      "name": "Player Camera",
+      "parent": 6
+    },
+    {
+      "components": {
+        "collider": {
+          "half_extents": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "box"
+        },
+        "mesh_renderer": {
+          "mesh": 0,
+          "path": "primitives/cube.gltf"
+        },
+        "rigid_body": {
+          "$version": 2,
+          "allow_sleeping": true,
+          "angular_damping": 0.05000000074505806,
+          "continuous_collision": false,
+          "friction": 0.5,
+          "gravity_factor": 1.0,
+          "layer": 0,
+          "linear_damping": 0.05000000074505806,
+          "lock_rotation": false,
+          "mass": 1.0,
+          "motion_type": 0,
+          "restitution": 0.0,
+          "sensor": false
+        },
+        "tags": {
+          "tags": [
+            "target"
+          ]
+        },
+        "target": {
+          "enabled": true,
+          "health": 50.0
+        }
+      },
+      "id": 8,
+      "local_transform": [
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        -4.0,
+        1.0,
+        -6.0,
+        1.0
+      ],
+      "name": "Target 1",
+      "parent": null
+    },
+    {
+      "components": {
+        "collider": {
+          "half_extents": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "box"
+        },
+        "mesh_renderer": {
+          "mesh": 0,
+          "path": "primitives/cube.gltf"
+        },
+        "rigid_body": {
+          "$version": 2,
+          "allow_sleeping": true,
+          "angular_damping": 0.05000000074505806,
+          "continuous_collision": false,
+          "friction": 0.5,
+          "gravity_factor": 1.0,
+          "layer": 0,
+          "linear_damping": 0.05000000074505806,
+          "lock_rotation": false,
+          "mass": 1.0,
+          "motion_type": 0,
+          "restitution": 0.0,
+          "sensor": false
+        },
+        "tags": {
+          "tags": [
+            "target"
+          ]
+        },
+        "target": {
+          "enabled": true,
+          "health": 50.0
+        }
+      },
+      "id": 9,
+      "local_transform": [
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        3.0,
+        1.5,
+        -9.0,
+        1.0
+      ],
+      "name": "Target 2",
+      "parent": null
+    },
+    {
+      "components": {
+        "collider": {
+          "half_extents": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "box"
+        },
+        "mesh_renderer": {
+          "mesh": 0,
+          "path": "primitives/cube.gltf"
+        },
+        "rigid_body": {
+          "$version": 2,
+          "allow_sleeping": true,
+          "angular_damping": 0.05000000074505806,
+          "continuous_collision": false,
+          "friction": 0.5,
+          "gravity_factor": 1.0,
+          "layer": 0,
+          "linear_damping": 0.05000000074505806,
+          "lock_rotation": false,
+          "mass": 1.0,
+          "motion_type": 0,
+          "restitution": 0.0,
+          "sensor": false
+        },
+        "tags": {
+          "tags": [
+            "target"
+          ]
+        },
+        "target": {
+          "enabled": true,
+          "health": 50.0
+        }
+      },
+      "id": 10,
+      "local_transform": [
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        -2.0,
+        2.0,
+        -14.0,
+        1.0
+      ],
+      "name": "Target 3",
+      "parent": null
+    },
+    {
+      "components": {
+        "collider": {
+          "half_extents": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "box"
+        },
+        "mesh_renderer": {
+          "mesh": 0,
+          "path": "primitives/cube.gltf"
+        },
+        "rigid_body": {
+          "$version": 2,
+          "allow_sleeping": true,
+          "angular_damping": 0.05000000074505806,
+          "continuous_collision": false,
+          "friction": 0.5,
+          "gravity_factor": 1.0,
+          "layer": 0,
+          "linear_damping": 0.05000000074505806,
+          "lock_rotation": false,
+          "mass": 1.0,
+          "motion_type": 0,
+          "restitution": 0.0,
+          "sensor": false
+        },
+        "tags": {
+          "tags": [
+            "target"
+          ]
+        },
+        "target": {
+          "enabled": true,
+          "health": 50.0
+        }
+      },
+      "id": 11,
+      "local_transform": [
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        5.0,
+        1.0,
+        -18.0,
+        1.0
+      ],
+      "name": "Target 4",
+      "parent": null
+    },
+    {
+      "components": {
+        "collider": {
+          "half_extents": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "box"
+        },
+        "mesh_renderer": {
+          "mesh": 0,
+          "path": "primitives/cube.gltf"
+        },
+        "rigid_body": {
+          "$version": 2,
+          "allow_sleeping": true,
+          "angular_damping": 0.05000000074505806,
+          "continuous_collision": false,
+          "friction": 0.5,
+          "gravity_factor": 1.0,
+          "layer": 0,
+          "linear_damping": 0.05000000074505806,
+          "lock_rotation": false,
+          "mass": 1.0,
+          "motion_type": 0,
+          "restitution": 0.0,
+          "sensor": false
+        },
+        "tags": {
+          "tags": [
+            "target"
+          ]
+        },
+        "target": {
+          "enabled": true,
+          "health": 50.0
+        }
+      },
+      "id": 12,
+      "local_transform": [
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        0.0,
+        2.5,
+        -22.0,
+        1.0
+      ],
+      "name": "Target 5",
+      "parent": null
+    },
+    {
+      "components": {
+        "collider": {
+          "half_extents": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "box"
+        },
+        "goal_zone": {
+          "enabled": true
+        },
+        "rigid_body": {
+          "$version": 2,
+          "allow_sleeping": true,
+          "angular_damping": 0.05000000074505806,
+          "continuous_collision": false,
+          "friction": 0.5,
+          "gravity_factor": 1.0,
+          "layer": 0,
+          "linear_damping": 0.05000000074505806,
+          "lock_rotation": false,
+          "mass": 1.0,
+          "motion_type": 0,
+          "restitution": 0.0,
+          "sensor": true
+        }
+      },
+      "id": 13,
+      "local_transform": [
+        4.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        1.5,
+        -25.0,
+        1.0
+      ],
+      "name": "Exit",
+      "parent": null
+    }
+  ],
+  "version": 3
+}

@@ -1,0 +1,4 @@
+{
+  "name": "C++ Game",
+  "description": "A game module with an example component and system, built with CMake. Module > New Behaviour, Component, and System add more."
+}

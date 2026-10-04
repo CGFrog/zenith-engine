@@ -81,6 +81,9 @@ bool copyTemplateFiles(const std::filesystem::path& templateDirectory, const std
             files.disable_recursion_pending();
             continue;
         }
+        if (relative == std::filesystem::path(templateInfoFileName)) {
+            continue;
+        }
         if (!entry.is_regular_file()) {
             continue;
         }
@@ -194,6 +197,10 @@ SceneResult populateStarterScene(Scene& scene, AssetManager& assets, const std::
 
 ProjectTemplateResult writeProject(const ProjectTemplateRequest& request, const std::string& identifier,
                                    const std::filesystem::path& projectDirectory, AssetManager& assets) {
+    ProjectTemplateInfo info;
+    if (const ProjectTemplateInfoResult read = readProjectTemplateInfo(request.templateDirectory, info); !read) {
+        return {.error = read.error};
+    }
     const std::array tokens{
         TemplateToken{.name = "PROJECT_NAME", .value = request.displayName},
         TemplateToken{.name = "PROJECT_IDENTIFIER", .value = identifier},
@@ -226,16 +233,26 @@ ProjectTemplateResult writeProject(const ProjectTemplateRequest& request, const 
         .startupScene = projectDirectory / "scenes" / startupSceneName,
         .renderSettings = RenderSettings{.environment = EnvironmentQuality::ImageBasedLow},
         .gameModule = projectDirectory / "modules" / (identifier + ".zmodule"),
+        .inputActions = info.inputActions.empty() ? std::filesystem::path{} : projectDirectory / info.inputActions,
+        .tags = info.tags,
     };
-    Scene scene;
-    if (SceneResult result = populateStarterScene(scene, assets, assetRoot); !result) {
-        return {.error = "Could not create the starter scene: " + result.error};
-    }
     std::filesystem::create_directories(project.sceneRoot, copyError);
-    if (const SceneDocumentResult saved =
-            SceneDocument::save(project.startupScene, scene, assets, {.assetRoot = assetRoot});
-        !saved) {
-        return {.error = "Could not save the starter scene: " + saved.error};
+    if (!info.startupScene.empty()) {
+        // The template's own scene, copied with its files.
+        project.startupScene = projectDirectory / info.startupScene;
+        if (!std::filesystem::is_regular_file(project.startupScene, copyError)) {
+            return {.error = "The template's startup scene " + info.startupScene.generic_string() + " is missing"};
+        }
+    } else {
+        Scene scene;
+        if (SceneResult result = populateStarterScene(scene, assets, assetRoot); !result) {
+            return {.error = "Could not create the starter scene: " + result.error};
+        }
+        if (const SceneDocumentResult saved =
+                SceneDocument::save(project.startupScene, scene, assets, {.assetRoot = assetRoot});
+            !saved) {
+            return {.error = "Could not save the starter scene: " + saved.error};
+        }
     }
     const std::filesystem::path projectFile = projectDirectory / (identifier + projectExtension);
     if (const ProjectConfigResult saved = saveProjectConfig(projectFile, project); !saved) {
@@ -265,6 +282,86 @@ std::filesystem::path findProjectTemplate(std::span<const std::filesystem::path>
         }
     }
     return {};
+}
+
+ProjectTemplateInfoResult readProjectTemplateInfo(const std::filesystem::path& directory, ProjectTemplateInfo& info) {
+    ProjectTemplateInfo read{.directory = directory, .name = directory.filename().string()};
+    const std::filesystem::path file = directory / templateInfoFileName;
+    std::error_code error;
+    if (!std::filesystem::exists(file, error)) {
+        info = std::move(read);
+        return {.success = true};
+    }
+    std::string contents;
+    if (!readTextFile(file, contents)) {
+        return {.error = "Could not read " + file.string()};
+    }
+    const Json document = Json::parse(contents, nullptr, false);
+    if (!document.is_object()) {
+        return {.error = file.string() + " is not a JSON object"};
+    }
+    const auto text = [&document](std::string_view key, std::string& value) {
+        const auto found = document.find(key);
+        if (found == document.end()) {
+            return true;
+        }
+        if (!found->is_string()) {
+            return false;
+        }
+        value = found->get<std::string>();
+        return true;
+    };
+    std::string startupScene;
+    std::string inputActions;
+    if (!text("name", read.name) || !text("description", read.description) || !text("startupScene", startupScene) ||
+        !text("inputActions", inputActions)) {
+        return {.error = file.string() + ": name, description, startupScene, and inputActions are text"};
+    }
+    read.startupScene = fromUtf8(startupScene);
+    read.inputActions = fromUtf8(inputActions);
+    if (const auto tags = document.find("tags"); tags != document.end()) {
+        if (!tags->is_array() || !std::ranges::all_of(*tags, [](const Json& tag) { return tag.is_string(); })) {
+            return {.error = file.string() + ": tags must be an array of names"};
+        }
+        read.tags = tags->get<std::vector<std::string>>();
+    }
+    for (const std::filesystem::path& path : {read.startupScene, read.inputActions}) {
+        if (path.is_absolute() || path.lexically_normal().string().starts_with("..")) {
+            return {.error = file.string() + ": paths must stay inside the template"};
+        }
+    }
+    info = std::move(read);
+    return {.success = true};
+}
+
+std::vector<ProjectTemplateInfo> listProjectTemplates(std::span<const std::filesystem::path> templateRoots) {
+    std::vector<ProjectTemplateInfo> templates;
+    for (const std::filesystem::path& root : templateRoots) {
+        std::error_code error;
+        if (root.empty() || !std::filesystem::is_directory(root, error)) {
+            continue;
+        }
+        for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(root, error)) {
+            const std::string folder = entry.path().filename().string();
+            const bool known = std::ranges::any_of(templates, [&folder](const ProjectTemplateInfo& info) {
+                return info.directory.filename().string() == folder;
+            });
+            ProjectTemplateInfo info;
+            if (!entry.is_directory() || known || !readProjectTemplateInfo(entry.path().lexically_normal(), info)) {
+                continue;
+            }
+            templates.push_back(std::move(info));
+        }
+    }
+    std::ranges::sort(templates, [](const ProjectTemplateInfo& first, const ProjectTemplateInfo& second) {
+        const bool firstIsDefault = first.directory.filename().string() == cppGameTemplateName;
+        const bool secondIsDefault = second.directory.filename().string() == cppGameTemplateName;
+        if (firstIsDefault != secondIsDefault) {
+            return firstIsDefault;
+        }
+        return first.name < second.name;
+    });
+    return templates;
 }
 
 std::string projectIdentifier(std::string_view displayName) {

@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "actions": [
+    {"name": "Move", "type": "axis2d", "clamp": true, "bindings": [
+      {"source": "key:W", "scale": [0, 1]},
+      {"source": "key:S", "scale": [0, -1]},
+      {"source": "key:D", "scale": [1, 0]},
+      {"source": "key:A", "scale": [-1, 0]},
+      {"source": "gamepadAxis:LeftX", "scale": [1, 0]},
+      {"source": "gamepadAxis:LeftY", "scale": [0, -1]}
+    ]},
+    {"name": "Look", "type": "axis2d", "clamp": false, "bindings": [
+      {"source": "mouseAxis:DeltaX", "scale": [1, 0]},
+      {"source": "mouseAxis:DeltaY", "scale": [0, 1]},
+      {"source": "gamepadAxis:RightX", "scale": [1, 0], "deadZone": 0.12},
+      {"source": "gamepadAxis:RightY", "scale": [0, 1], "deadZone": 0.12}
+    ]},
+    {"name": "Jump", "type": "button", "bindings": [
+      {"source": "key:Space"},
+      {"source": "gamepadButton:South"}
+    ]},
+    {"name": "Sprint", "type": "button", "bindings": [
+      {"source": "key:LeftShift"},
+      {"source": "gamepadButton:LeftStick"}
+    ]},
+    {"name": "Fire", "type": "button", "bindings": [
+      {"source": "mouseButton:Left"},
+      {"source": "gamepadButton:RightShoulder"}
+    ]},
+    {"name": "Pause", "type": "button", "bindings": [
+      {"source": "key:Escape"},
+      {"source": "gamepadButton:Start"}
+    ]},
+    {"name": "MenuNext", "type": "button", "bindings": [
+      {"source": "key:S"},
+      {"source": "gamepadButton:DpadDown"}
+    ]},
+    {"name": "MenuPrevious", "type": "button", "bindings": [
+      {"source": "key:W"},
+      {"source": "gamepadButton:DpadUp"}
+    ]},
+    {"name": "MenuAccept", "type": "button", "bindings": [
+      {"source": "key:Space"},
+      {"source": "gamepadButton:South"}
+    ]},
+    {"name": "MenuLeft", "type": "button", "bindings": [
+      {"source": "key:A"},
+      {"source": "gamepadButton:DpadLeft"}
+    ]},
+    {"name": "MenuRight", "type": "button", "bindings": [
+      {"source": "key:D"},
+      {"source": "gamepadButton:DpadRight"}
+    ]}
+  ]
+}

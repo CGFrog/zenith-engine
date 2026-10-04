@@ -1,65 +1,45 @@
 # Build a first-person game with Zenith
 
-This tutorial builds a small first-person target range using Zenith's current
-C++20 APIs. At the end you will have:
+This tutorial makes a first-person target range the way any Zenith game is
+made: a project created in the editor, gameplay written as C++ behaviours and
+systems in the project's hot-reloaded game module, and settings edited in the
+editor. At the end you will have:
 
-- a separate game library and executable;
-- a level authored in the Zenith editor and loaded as a scene document;
-- a capsule-based player with mouse look, walking, sprinting, and jumping;
-- a hitscan weapon driven by physics raycasts;
-- gameplay state, a HUD, audio, and a reloadable scene; and
-- CPU tests plus a bounded Vulkan smoke run.
+- a project created from the First-Person Shooter template;
+- a behaviour of your own, generated, built with Ctrl B, and added in the
+  inspector;
+- input actions, physics layers, and tags edited in Project Settings;
+- a HUD, events between behaviours, and pause and settings menus;
+- the game debugged in the editor and played with `zenith --project`.
 
-The guide keeps reusable mechanics in `src/engine/` and FPS rules in a new
-`src/fps/` client. Read [Architecture](../../ARCHITECTURE.md) before changing
-those boundaries.
+The engine supplies the mechanisms: the character controller, physics
+queries, events, effects, UI widgets, and menus. The game's rules live in its
+module. [Architecture](../../ARCHITECTURE.md) explains that boundary.
 
 ## Course outline
 
-1. [Create the game target](01-create-the-game-target.md)
-2. [Author and load the level](02-author-and-load-the-level.md)
-3. [Build the first-person player](03-build-the-player.md)
-4. [Add a hitscan weapon and targets](04-add-weapons-and-targets.md)
-5. [Add HUD, audio, and game flow](05-add-hud-audio-and-game-flow.md)
-6. [Test, profile, and package](06-test-profile-and-package.md)
+1. [Create the project](01-create-the-project.md)
+2. [Play and inspect the course](02-play-and-inspect.md)
+3. [Write a behaviour](03-write-a-behaviour.md)
+4. [Input, layers, and tags](04-input-layers-and-tags.md)
+5. [Events, the HUD, and menus](05-events-hud-and-menus.md)
+6. [Debug, test, and ship](06-debug-test-and-ship.md)
 
 ## Prerequisites
 
-- Windows with Visual Studio 2022 and the Desktop C++ workload
+- Windows with Visual Studio 2022 (or 18) and the Desktop C++ workload, or
+  Linux with GCC or Clang
 - a Vulkan 1.4-capable driver
-- CMake available in PowerShell
-- a Debug build of this repository
-
-From the repository root:
+- CMake 3.24 or later
+- a Debug build of this repository, with the editor:
 
 ```powershell
-cmake -S . -B build
-cmake --build build --config Debug --parallel 4
-ctest --test-dir build -C Debug --output-on-failure
+cmake --preset default
+cmake --build --preset debug
 ```
 
-If these commands do not pass, fix the base checkout before starting the game.
+Run the editor with no arguments to see the Project Hub:
 
-## Use the demo as a live reference
-
-The checked-in `zenith` executable already demonstrates the core loop this
-tutorial develops:
-
-| File | What to study |
-| --- | --- |
-| `src/game/application/DemoApplication.*` | Application startup, scene factory, and persistent music |
-| `src/game/scene/GameplayScene.*` | Scene loading and variable/fixed updates |
-| `src/game/player/FirstPersonController.*` | Mouse look, movement, grounding, and jumping |
-| `src/game/scene/DemoScene.*` | Model instantiation, lighting, collision, and props |
-| `tests/game/ApplicationLifecycleTests.cpp` | Headless gameplay and lifecycle tests |
-
-You can first complete the tutorial by adapting `src/game/`. The chapters use
-`src/fps/` so the architectural separation remains obvious and the original
-demo stays available for comparison.
-
-## Current scope
-
-Zenith renders static and skinned glTF triangle geometry, skeletal animation,
-and opaque, masked, or blended materials. Morph targets and compressed meshes
-remain outside this tutorial's scope. The tutorial uses static environments,
-primitive physics, and code-driven gameplay so its core remains approachable.
+```powershell
+build/Debug/zenith_editor.exe
+```
