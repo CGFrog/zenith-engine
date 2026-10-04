@@ -1,14 +1,19 @@
 #pragma once
 
 #include "engine/assets/IrradianceVolumeAsset.hpp"
+#include "engine/reflection/Reflection.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <glm/glm.hpp>
+
+#include <span>
 
 struct EditableTransform {
     glm::vec3 translation{0.0f};
     glm::vec3 rotationDegrees{0.0f};
     glm::vec3 scale{1.0f};
+
+    bool operator==(const EditableTransform&) const = default;
 };
 
 // Hand-written inspectors for components whose data the generic reflected
@@ -19,6 +24,11 @@ struct EditableTransform {
 namespace ComponentEditors {
 bool decomposeTransform(const glm::mat4& matrix, EditableTransform& transform);
 glm::mat4 composeTransform(const EditableTransform& transform);
+
+// The fields the inspector draws an EditableTransform with (Position,
+// Rotation in degrees, and Scale), so several transforms can be edited
+// together through drawReflectedFields with mixed values per axis.
+std::span<const FieldDescriptor> editableTransformFields();
 
 bool drawTransform(TransformComponent& component);
 bool drawCollider(ColliderComponent& component);

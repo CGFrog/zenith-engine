@@ -56,8 +56,8 @@ std::filesystem::path dialogStartLocation(const std::optional<std::filesystem::p
 
 EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::filesystem::path assetRoot,
                              std::filesystem::path sceneRoot, EditorRenderSettings renderSettings,
-                             EditorSceneLoader initialSceneLoader, std::filesystem::path gameModule,
-                             EditorProjectServices projectServices)
+                             EditorAppearance& appearance, EditorSceneLoader initialSceneLoader,
+                             std::filesystem::path gameModule, EditorProjectServices projectServices)
     : m_settings(settingsDirectory / "settings.ini")
     , m_document(assetRoot)
     , m_recovery(settingsDirectory / (std::string("recovery") + sceneExtension))
@@ -71,6 +71,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_simulateSystemsPath(settingsDirectory / "simulate-systems.json")
     , m_keymap(defaultEditorKeymap())
     , m_keymapPath(settingsDirectory / "keymap.json")
+    , m_appearance(appearance)
     , m_projectAssets(std::move(assetRoot), sceneRoot, settingsDirectory / "asset-browser.json")
     , m_renderSettings(std::move(renderSettings))
     , m_componentLayoutPath(settingsDirectory / "component-inspector.json")
@@ -137,8 +138,6 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     // Scene references resolve through the project's asset database by GUID.
     m_document.setAssetDatabase(m_projectAssets.assetDatabase());
     m_buildPanel.setProjectBuild(std::move(projectServices.build));
-    m_fontPath = std::move(projectServices.fontPath);
-    m_editorFonts = std::move(projectServices.loadedFonts);
 }
 
 SceneEditing EditorSession::editing(ApplicationContext& context) {
@@ -388,15 +387,10 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     m_openRecoveryDialog = m_recovery.available();
     m_smokeScenario = SDL_getenv("ZENITH_EDITOR_SMOKE") != nullptr;
 
-    // The base theme, fonts, popup bevels, and the disabled imgui.ini are the
+    // The theme, fonts, popup bevels, and the disabled imgui.ini are the
     // application's (EditorApplication::onStart), so they outlive a switch
-    // between projects. The session applies the preferences on top: the UI
-    // scale (automatic follows the display's scale factor, rounded by the
-    // pixel theme to whole screen pixels per art pixel) and the theme tuning.
-    m_displayContentScale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
-    if (m_displayContentScale <= 0.0f) {
-        m_displayContentScale = 1.0f;
-    }
+    // between projects. The session applies its preferences through the
+    // application's appearance: the UI scale and the theme tuning.
     applyAppearance();
     // Asset paths in render settings (the colour-grading LUT) resolve against
     // the edited project's assets.
@@ -655,7 +649,7 @@ bool EditorSession::updateSmokeComponents(ApplicationContext& context) {
         }));
     };
     if (m_smokeFrame == firstFrame) {
-        m_smokeComponentUndoSteps = m_history.size();
+        m_smokeComponentMarker = m_history.marker();
         m_smokeComponentEntities.clear();
         for (int index = 0; index < 2; ++index) {
             invokeOperator(context, "object.add_empty", {}, KeymapRegion::Global);
@@ -670,14 +664,11 @@ bool EditorSession::updateSmokeComponents(ApplicationContext& context) {
              {"object.component_add", "object.component_copy_to_selected", "object.component_reset"}) {
             invokeOperator(context, operatorId, light, KeymapRegion::Global);
         }
-        m_smokeComponentUndoSteps = m_history.size() - m_smokeComponentUndoSteps;
         if (m_smokeComponentEntities.size() != 2 || pointLights() != 2) {
             fail("the point light was not copied to both selected entities");
         }
     } else if (m_smokeFrame == firstFrame + 1) {
-        for (size_t step = 0; step < m_smokeComponentUndoSteps && m_history.canUndo(); ++step) {
-            undo(context);
-        }
+        undoSince(context, m_smokeComponentMarker);
         if (std::ranges::any_of(m_smokeComponentEntities,
                                 [&](SceneEntityId id) { return context.scene.findEntity(id) != entt::null; })) {
             fail("undo did not remove the smoke entities");
@@ -1506,6 +1497,13 @@ bool EditorSession::saveDocument(ApplicationContext& context) {
 void EditorSession::undo(ApplicationContext& context) {
     editing(context).undo();
     m_selection.removeMissing(context.scene);
+}
+
+void EditorSession::undoSince(ApplicationContext& context, CommandHistoryMarker marker) {
+    // Counted once: a failed undo is reported and must not repeat forever.
+    for (size_t steps = m_history.stepsSince(marker); steps > 0; --steps) {
+        undo(context);
+    }
 }
 
 void EditorSession::redo(ApplicationContext& context) {

@@ -45,50 +45,22 @@ void EditorSession::registerPreferenceOperators() {
 }
 
 void EditorSession::applyAppearance() {
-    const EditorAppearanceSettings& appearance = m_settings.appearance();
-    m_menus.setPieMenusEnabled(appearance.pieMenus);
-    if (m_appliedAppearance == appearance) {
-        return;
+    m_menus.setPieMenusEnabled(m_settings.appearance().pieMenus);
+    const EditorAppearanceResult applied = m_appearance.apply(m_settings.appearance());
+    if (!applied) {
+        m_diagnostics.reportError(applied.error);
     }
-    ImGuiStyle& style = ImGui::GetStyle();
-    const float artPixel = artPixelForUiScale(appearance.uiScale, m_displayContentScale);
-    if (artPixel != m_appliedArtPixel) {
-        // Metrics reset the whole style, so the colours follow.
-        applyEditorMetrics(style, artPixel);
-        useFontsFor(artPixel);
-        m_appliedArtPixel = artPixel;
-    }
-    applyEditorColors(style, appearance.theme);
-    m_themeChrome.setParameters(appearance.theme);
-    m_appliedAppearance = appearance;
-}
-
-void EditorSession::useFontsFor(float artPixel) {
-    ImGuiIO& io = ImGui::GetIO();
-    const auto loaded = std::ranges::find_if(
-        m_editorFonts, [artPixel](const EditorFonts& fonts) { return fonts.artPixel == artPixel; });
-    if (loaded != m_editorFonts.end()) {
-        useEditorFonts(io, *loaded);
-        return;
-    }
-    // Pixel fonts are rasterised for one art pixel; the renderer uploads the
-    // grown atlas before the next frame.
-    const EditorFontResult fonts = loadEditorFonts(io, m_fontPath.parent_path(), m_fontPath, artPixel);
-    if (!fonts) {
-        m_diagnostics.reportError(fonts.error);
-        return;
-    }
-    for (const std::string& warning : fonts.warnings) {
+    for (const std::string& warning : applied.warnings) {
         m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Theme", warning);
     }
-    m_editorFonts.push_back(fonts.fonts);
+    m_themeChrome.setParameters(m_appearance.theme());
 }
 
 PreferencesContext EditorSession::preferencesContext(ApplicationContext& context) {
     std::error_code error;
     return {
         .keymapPath = m_keymapPath,
-        .displayContentScale = m_displayContentScale,
+        .displayContentScale = m_appearance.displayContentScale(),
         .openKeymapEditor = [this, &context] { invokeOperator(context, "wm.keymap_editor", {}, KeymapRegion::Global); },
         .ideTestFile = m_settings.path(),
         .workingDirectory = std::filesystem::current_path(error)};

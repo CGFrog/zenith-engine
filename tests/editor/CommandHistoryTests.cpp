@@ -78,6 +78,68 @@ void testEntityDiffCoalescing(const std::filesystem::path& directory) {
                history.size() == 3,
            "a snapshot command should not coalesce into an entity diff command");
 }
+
+// A command that only counts how often it is applied, for timeline tests.
+class CountingCommand final : public EditorCommand {
+  public:
+    explicit CountingCommand(int& applied)
+        : m_applied(applied) {}
+
+    std::string_view name() const override {
+        return "Count";
+    }
+
+    EditorCommandResult execute(EditorCommandContext&) override {
+        ++m_applied;
+        return {.success = true};
+    }
+
+    EditorCommandResult undo(EditorCommandContext&) override {
+        --m_applied;
+        return {.success = true};
+    }
+
+  private:
+    int& m_applied;
+};
+
+void testUndoToMarker(EditorCommandContext& context) {
+    int applied = 0;
+    CommandHistory history;
+    const auto record = [&](CommandHistory& target) {
+        expect(target.execute(std::make_unique<CountingCommand>(applied), context).success, "a step should record");
+    };
+    record(history);
+    record(history);
+    record(history);
+    // An earlier workflow undid two steps, leaving them to redo.
+    history.undo(context);
+    history.undo(context);
+    const CommandHistoryMarker marker = history.marker();
+    expect(history.stepsSince(marker) == 0, "no step follows a marker taken now");
+    record(history);
+    record(history);
+    expect(history.size() == 3, "new steps discard the redo steps, so the size grows by less than the steps added");
+    expect(history.stepsSince(marker) == 2, "the steps since a marker count those recorded after it");
+    for (size_t steps = history.stepsSince(marker); steps > 0; --steps) {
+        history.undo(context);
+    }
+    expect(applied == 1 && history.canUndo() && history.stepsSince(marker) == 0,
+           "undoing the steps since a marker undoes exactly those steps");
+    expect(history.redo(context).success && history.stepsSince(marker) == 1,
+           "a redone step recorded after the marker counts again");
+
+    applied = 0;
+    CommandHistory limited(2);
+    record(limited);
+    const CommandHistoryMarker early = limited.marker();
+    record(limited);
+    record(limited);
+    record(limited);
+    expect(limited.stepsSince(early) == 2, "steps the limit dropped are not counted");
+    limited.clear();
+    expect(limited.stepsSince(early) == 0, "a cleared history has no steps since any marker");
+}
 } // namespace
 
 int main() {
@@ -148,6 +210,7 @@ int main() {
     expect(history.size() == 0 && !history.canUndo() && !history.canRedo() && !history.dirty(),
            "New should start a clean history timeline");
     testEntityDiffCoalescing(directory);
+    testUndoToMarker(context);
     std::filesystem::remove_all(directory, error);
     return failures == 0 ? 0 : 1;
 }

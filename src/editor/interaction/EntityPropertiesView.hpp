@@ -51,7 +51,8 @@ std::vector<std::string> entityComponentCategories(const ComponentTypeRegistry& 
 // mixedValueText, and an edit changes that field on every entity in one undo
 // step. Holding Alt while editing also applies the edited field to every
 // other selected entity with the component, for example from a section only
-// the active entity has.
+// the active entity has. The name and transform are edited together the same
+// way.
 //
 // A component header offers Remove and, on right click or its "..." button, a
 // menu running the component operators (reset, copy and paste values, copy
@@ -90,9 +91,19 @@ class EntityPropertiesView {
     void drawMultipleSelection(EditorContext& context) const;
     // The name field (one "Rename Entity" step per entity while typing) and id.
     void drawName(EditorContext& context, SceneEntityId entityId) const;
+    // The name field of several entities: their name, or mixedValueText when
+    // the names differ. Typing gives every entity the typed name, as one
+    // undo step while typing. One entity also shows its id and prefab
+    // override, as above.
+    void drawName(EditorContext& context, std::span<const SceneEntityId> entityIds) const;
     // A full-width label filter input editing filter.
     void drawFilter(const char* id, std::string& filter) const;
     void drawTransform(EditorContext& context, SceneEntityId entityId, std::string_view filter) const;
+    // The transform section of several entities: Position, Rotation, and
+    // Scale of the first, with mixedValueText for an axis whose values
+    // differ. An edit changes only the edited axis on every entity, in one
+    // undo step. Prefab overrides are marked only for a single entity.
+    void drawTransform(EditorContext& context, std::span<const SceneEntityId> entityIds, std::string_view filter) const;
     // The visible components of entityIds (the active entity first), or only
     // those whose category label is category: first those every entity has,
     // then, under a heading, those only the first entity has.

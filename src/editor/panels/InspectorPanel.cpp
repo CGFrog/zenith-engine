@@ -21,8 +21,10 @@ void InspectorPanel::draw(EditorContext& context) {
     }
     if (context.selection.size() != 1) {
         m_view.drawMultipleSelection(context);
+        m_view.drawName(context, context.selection.ids());
         ImGui::Separator();
         m_view.drawFilter("##InspectorFilter", m_filter);
+        m_view.drawTransform(context, context.selection.ids(), m_filter);
         m_view.drawComponents(context, context.selection.ids(), m_filter);
         return;
     }

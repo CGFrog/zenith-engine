@@ -556,6 +556,7 @@ endif()
 add_library(zenith_editor_app STATIC
     src/editor/application/EditorApplication.cpp
     src/editor/application/EditorAreaTypes.cpp
+    src/editor/application/EditorAppearance.cpp
     src/editor/application/EditorAreas.cpp
     src/editor/application/EditorDiagnostics.cpp
     src/editor/application/EditorLiveEditSmoke.cpp
@@ -1748,6 +1749,8 @@ if(BUILD_TESTING)
 
     add_executable(zenith_editor_theme_tests tests/editor/EditorThemeTests.cpp)
     target_link_libraries(zenith_editor_theme_tests PRIVATE zenith_editor_app)
+    target_compile_definitions(zenith_editor_theme_tests PRIVATE
+        ZENITH_EDITOR_FONT="${inter_SOURCE_DIR}/extras/ttf/Inter-Regular.ttf")
     if(MSVC)
         target_compile_options(zenith_editor_theme_tests PRIVATE /W4 /permissive-)
     else()

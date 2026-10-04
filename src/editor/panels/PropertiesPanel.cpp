@@ -250,6 +250,10 @@ void PropertiesPanel::drawObjectTab(EditorContext& context) {
     if (!entityId) {
         // The shared components are on the Components tabs.
         m_view.drawMultipleSelection(context);
+        m_view.drawName(context, context.selection.ids());
+        ImGui::Separator();
+        m_view.drawFilter("##PropertiesFilter", m_filter);
+        m_view.drawTransform(context, context.selection.ids(), m_filter);
         return;
     }
     m_view.drawName(context, *entityId);

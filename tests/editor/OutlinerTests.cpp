@@ -12,7 +12,10 @@
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/HierarchyPanel.hpp"
 #include "editor/panels/outliner/OrphanData.hpp"
+#include "editor/panels/outliner/OutlinerRowWidgets.hpp"
 #include "editor/panels/outliner/OutlinerTree.hpp"
+#include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/EditorWidgets.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/audio/AudioSystem.hpp"
 #include "engine/diagnostics/Logger.hpp"
@@ -605,6 +608,27 @@ void testSearch() {
     expect(fixture.panel.displayedEntities() == std::vector<SceneEntityId>{fixture.bulb, fixture.lamp, fixture.bulb},
            "a search should show every matching row with its ancestors");
 }
+
+void testSelectedRowCursorFollowsTheAccent() {
+    HeadlessImGuiContext imgui;
+    applyEditorColors(ImGui::GetStyle(), {.accent = ThemeAccent::Violet});
+    bool accentDrawn = false;
+    bool defaultDrawn = false;
+    {
+        HeadlessImGuiFrame frame("Accent");
+        ImGui::TreeNodeEx("Row", ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        const int before = drawList->VtxBuffer.Size;
+        decorateOutlinerRow(EditorIcon::Empty, true, true);
+        const ImU32 accent = widgets::color(editorAccent());
+        const ImU32 designedGlow = widgets::color(palette::pixelGlow);
+        for (int index = before; index < drawList->VtxBuffer.Size; ++index) {
+            accentDrawn = accentDrawn || drawList->VtxBuffer[index].col == accent;
+            defaultDrawn = defaultDrawn || drawList->VtxBuffer[index].col == designedGlow;
+        }
+    }
+    expect(accentDrawn && !defaultDrawn, "a selected row's cursor should use the chosen accent, not the default glow");
+}
 } // namespace
 
 int main() {
@@ -619,6 +643,7 @@ int main() {
     testRestrictionToggles();
     testDrags();
     testSearch();
+    testSelectedRowCursorFollowsTheAccent();
     if (failures != 0) {
         std::cerr << failures << " outliner test(s) failed\n";
         return 1;

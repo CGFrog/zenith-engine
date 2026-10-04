@@ -14,7 +14,7 @@ namespace widgets {
 // items fade too).
 ImU32 color(ThemeColor themeColor);
 
-// A split-gloss button: bevelled, a mint ring when hovered, pressed in while
+// A split-gloss button: bevelled, an accent ring when hovered, pressed in while
 // held. An active button is drawn lit (the current tool or tab).
 bool Button(const char* label, ImVec2 size = {0.0f, 0.0f}, bool active = false);
 // A square tool button showing an icon; label is its id and tooltip-free

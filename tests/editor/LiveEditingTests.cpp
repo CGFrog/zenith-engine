@@ -12,6 +12,7 @@
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/RuntimeApply.hpp"
+#include "editor/interaction/ComponentEditorOverrides.hpp"
 #include "editor/menus/EditorMenus.hpp"
 #include "editor/modules/GameModuleHost.hpp"
 #include "editor/operators/ComponentOperators.hpp"
@@ -22,6 +23,7 @@
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/HierarchyPanel.hpp"
 #include "editor/panels/InspectorPanel.hpp"
+#include "editor/panels/ViewportRegistry.hpp"
 #include "editor/settings/ComponentInspectorLayout.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/audio/AudioSystem.hpp"
@@ -111,7 +113,13 @@ struct LiveFixture {
     ComponentInspectorLayout componentLayout;
     OperatorRegistry operators;
     OperatorRunner runner{operators, history};
-    GameModuleHost modules{operators, runner};
+    ViewportRegistry viewports;
+    ComponentEditorOverrides componentEditors;
+    GameModuleHost modules{{.operators = operators,
+                            .runner = runner,
+                            .menus = menus.registry(),
+                            .viewports = viewports,
+                            .componentEditors = componentEditors}};
     OperatorActions actions{runner, [this] { return operatorContext(); }};
 
     LiveFixture() {

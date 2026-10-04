@@ -58,7 +58,9 @@ bool drawReflectedFields(void* object, std::span<const FieldDescriptor> fields,
 // show objects.front(); a field whose values differ shows mixedValueText (a
 // checkbox shows ImGui's mixed mark). An edit is copied to every object, but
 // only the edited field, and of a vector or range only the edited elements, so
-// the objects' other differences survive. Fields without a dedicated widget
+// the objects' other differences survive. Finishing an edit of a mixed
+// number (typing and pressing Enter, or leaving the field) applies it even
+// when the value equals the shown object's own. Fields without a dedicated widget
 // path are compared and copied through their JSON form (FieldJson), so every
 // field kind supports mixed display and multi-object edits.
 bool drawReflectedFields(std::span<void* const> objects, std::span<const FieldDescriptor> fields,

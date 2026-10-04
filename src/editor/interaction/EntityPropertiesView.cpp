@@ -18,8 +18,11 @@
 
 #include <algorithm>
 #include <any>
-#include <array>
+#include <cmath>
+#include <span>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 using Json = nlohmann::json;
@@ -111,6 +114,61 @@ std::string editCoalesceKey(const Scene& scene, std::span<const Entity> targets,
     }
     return key + ':' + type.key();
 }
+
+// prefix followed by the entities' ids, "name:<id>,<id>", so typing or a drag
+// over the same entities merges into one step.
+std::string entitiesCoalesceKey(std::string_view prefix, const Scene& scene, std::span<const Entity> entities) {
+    std::string key(prefix);
+    for (size_t index = 0; index < entities.size(); ++index) {
+        key += (index == 0 ? "" : ",") + std::to_string(scene.id(entities[index]).value);
+    }
+    return key;
+}
+
+// Sets each axis of transform that is within decomposition noise of shown's
+// to shown's value.
+void alignTransformNoise(const EditableTransform& shown, EditableTransform& transform) {
+    constexpr float tolerance = 1.0e-4f;
+    const auto align = [](const glm::vec3& reference, glm::vec3& value) {
+        for (glm::length_t axis = 0; axis < 3; ++axis) {
+            if (std::abs(value[axis] - reference[axis]) <= tolerance) {
+                value[axis] = reference[axis];
+            }
+        }
+    };
+    align(shown.translation, transform.translation);
+    align(shown.rotationDegrees, transform.rotationDegrees);
+    align(shown.scale, transform.scale);
+}
+
+// exact with the axes that changed from shown to edited replaced by their
+// edited values.
+EditableTransform editedAxes(const EditableTransform& exact, const EditableTransform& shown,
+                             const EditableTransform& edited) {
+    EditableTransform result = exact;
+    const auto apply = [](const glm::vec3& before, const glm::vec3& after, glm::vec3& value) {
+        for (glm::length_t axis = 0; axis < 3; ++axis) {
+            if (after[axis] != before[axis]) {
+                value[axis] = after[axis];
+            }
+        }
+    };
+    apply(shown.translation, edited.translation, result.translation);
+    apply(shown.rotationDegrees, edited.rotationDegrees, result.rotationDegrees);
+    apply(shown.scale, edited.scale, result.scale);
+    return result;
+}
+
+// The entities of ids that exist, in order.
+std::vector<Entity> existingEntities(const Scene& scene, std::span<const SceneEntityId> ids) {
+    std::vector<Entity> entities;
+    for (const SceneEntityId id : ids) {
+        if (const Entity entity = scene.findEntity(id); entity != entt::null) {
+            entities.push_back(entity);
+        }
+    }
+    return entities;
+}
 } // namespace
 
 std::string componentCategoryLabel(const ComponentType& type) {
@@ -158,21 +216,38 @@ void EntityPropertiesView::drawMultipleSelection(EditorContext& context) const {
 }
 
 void EntityPropertiesView::drawName(EditorContext& context, SceneEntityId entityId) const {
-    const Entity entity = context.app.scene.findEntity(entityId);
-    if (entity == entt::null) {
+    drawName(context, std::span(&entityId, 1));
+}
+
+void EntityPropertiesView::drawName(EditorContext& context, std::span<const SceneEntityId> entityIds) const {
+    Scene& scene = context.app.scene;
+    const std::vector<Entity> entities = existingEntities(scene, entityIds);
+    if (entities.empty()) {
         return;
     }
-    std::string& name = context.app.scene.registry().get<NameComponent>(entity).name;
-    std::array<char, 256> nameBuffer{};
-    const size_t nameLength = std::min(name.size(), nameBuffer.size() - 1);
-    std::copy_n(name.data(), nameLength, nameBuffer.data());
-    if (ImGui::InputText("Name", nameBuffer.data(), nameBuffer.size())) {
-        std::string beforeName;
-        if (context.editing.capture(beforeName)) {
-            name = nameBuffer.data();
-            context.editing.commit("Rename Entity", "name:" + std::to_string(entityId.value), std::move(beforeName));
+    entt::registry& registry = scene.registry();
+    const std::string& shownName = registry.get<NameComponent>(entities.front()).name;
+    const bool mixed = std::ranges::any_of(std::span(entities).subspan(1), [&](Entity entity) {
+        return registry.get<NameComponent>(entity).name != shownName;
+    });
+    // Differing names show the mixed mark; typing names every entity alike.
+    std::string typed = mixed ? std::string() : shownName;
+    const bool edited =
+        mixed ? ImGui::InputTextWithHint("Name", mixedValueText, &typed) : ImGui::InputText("Name", &typed);
+    if (edited) {
+        std::string before;
+        if (context.editing.capture(before)) {
+            for (const Entity entity : entities) {
+                registry.get<NameComponent>(entity).name = typed;
+            }
+            context.editing.commit(entities.size() == 1 ? "Rename Entity" : "Rename Entities",
+                                   entitiesCoalesceKey("name:", scene, entities), std::move(before));
         }
     }
+    if (entities.size() != 1) {
+        return;
+    }
+    const SceneEntityId entityId = scene.id(entities.front());
     bool revert = false;
     if (prefabOverrides(context, entityId).overridden("", "/name")) {
         markPrefabOverride("Name");
@@ -277,11 +352,17 @@ void EntityPropertiesView::drawFilter(const char* id, std::string& filter) const
 
 void EntityPropertiesView::drawTransform(EditorContext& context, SceneEntityId entityId,
                                          std::string_view filter) const {
+    drawTransform(context, std::span(&entityId, 1), filter);
+}
+
+void EntityPropertiesView::drawTransform(EditorContext& context, std::span<const SceneEntityId> entityIds,
+                                         std::string_view filter) const {
     const bool open = widgets::SectionHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
-    if (prefabOverrides(context, entityId).overridden("", "/local_transform")) {
+    // Override highlighting and its revert are per entity.
+    if (entityIds.size() == 1 && prefabOverrides(context, entityIds.front()).overridden("", "/local_transform")) {
         markPrefabOverride({});
         if (prefabOverrideMenu("##TransformOverride")) {
-            context.invoke("prefab.revert_field", revertFieldProperties(entityId, "", "/local_transform"));
+            context.invoke("prefab.revert_field", revertFieldProperties(entityIds.front(), "", "/local_transform"));
             return;
         }
     }
@@ -289,22 +370,64 @@ void EntityPropertiesView::drawTransform(EditorContext& context, SceneEntityId e
         return;
     }
     Scene& scene = context.app.scene;
-    const Entity entity = scene.findEntity(entityId);
-    if (entity == entt::null) {
+    entt::registry& registry = scene.registry();
+    // Every entity shown is edited (each has a transform, so Alt adds none):
+    // the first one's values are shown, an axis whose values differ shows
+    // mixedValueText, and an edit changes only that axis on every entity.
+    std::vector<Entity> entities;
+    std::vector<EditableTransform> transforms;
+    size_t undecomposable = 0;
+    for (const Entity entity : existingEntities(scene, entityIds)) {
+        const auto* transform = registry.try_get<TransformComponent>(entity);
+        EditableTransform editable;
+        if (transform == nullptr) {
+            continue;
+        }
+        if (!ComponentEditors::decomposeTransform(transform->local, editable)) {
+            ++undecomposable;
+            continue;
+        }
+        entities.push_back(entity);
+        transforms.push_back(editable);
+    }
+    if (undecomposable > 0) {
+        ImGui::TextColored(problemColor, entities.empty() ? "Transform cannot be decomposed."
+                                                          : "Transforms that cannot be decomposed are not edited.");
+    }
+    if (entities.empty()) {
         return;
     }
-    TransformComponent& transform = scene.registry().get<TransformComponent>(entity);
-    const TransformComponent original = transform;
-    if (ComponentEditors::drawTransform(transform)) {
-        // The widget edits in place; the snapshot needs the unedited value.
-        const TransformComponent edited = transform;
-        transform = original;
-        std::string before;
-        if (context.editing.capture(before)) {
-            transform = edited;
-            context.editing.commit("Edit Transform", "transform:" + std::to_string(entityId.value), std::move(before));
+    // Decomposing leaves float noise far below the shown precision, which
+    // would mark equal values as mixed (a rotated entity's scale of 1 comes
+    // back as 0.99999994). Within the tolerance a value is shown as the shown
+    // entity's; only the axes an edit changes are written back, so the
+    // others keep their exact values.
+    const std::vector<EditableTransform> decomposed = transforms;
+    for (EditableTransform& transform : std::span(transforms).subspan(1)) {
+        alignTransformNoise(transforms.front(), transform);
+    }
+    const std::vector<EditableTransform> originals = transforms;
+    std::vector<void*> objects;
+    for (EditableTransform& transform : transforms) {
+        objects.push_back(&transform);
+    }
+    if (!drawReflectedFields(objects, ComponentEditors::editableTransformFields())) {
+        return;
+    }
+    // The scene is unedited so far, which is the snapshot undo needs.
+    std::string before;
+    if (!context.editing.capture(before)) {
+        return;
+    }
+    for (size_t index = 0; index < entities.size(); ++index) {
+        const EditableTransform edited = editedAxes(decomposed[index], originals[index], transforms[index]);
+        // Untouched transforms keep their exact matrix rather than a
+        // recomposed one.
+        if (edited != decomposed[index]) {
+            registry.get<TransformComponent>(entities[index]).local = ComponentEditors::composeTransform(edited);
         }
     }
+    context.editing.commit("Edit Transform", entitiesCoalesceKey("transform:", scene, entities), std::move(before));
 }
 
 void EntityPropertiesView::drawComponents(EditorContext& context, std::span<const SceneEntityId> entityIds,

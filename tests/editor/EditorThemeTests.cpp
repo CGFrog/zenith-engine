@@ -1,5 +1,6 @@
 #include "HeadlessImGui.hpp"
 
+#include "editor/application/EditorAppearance.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
 #include "editor/theme/EntityIcon.hpp"
@@ -13,6 +14,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -238,6 +240,44 @@ void testChromeOverSeveralFrames() {
     chrome.release(rendering);
     expect(ImGui::GetDrawData() != nullptr && ImGui::GetDrawData()->CmdListsCount > 0, "the chrome frames render");
 }
+
+// Fonts are added between frames, as the application and sessions do.
+void testAppearanceAppliesPreferences() {
+    ImGuiIO& io = ImGui::GetIO();
+    EditorAppearance appearance(ZENITH_EDITOR_FONT, 1.0f);
+    expect(appearance.current() == EditorAppearanceSettings{}, "before any apply the look is the default");
+    const EditorAppearanceSettings tuned{.theme = {.accent = ThemeAccent::Violet}, .uiScale = 2};
+    const EditorAppearanceResult applied = appearance.apply(tuned);
+    expect(static_cast<bool>(applied) && editorArtPixel() == 2.0f &&
+               editorAccent() == themeAccentInfo(ThemeAccent::Violet).color.withAlpha(1.0f),
+           "applying preferences sets the UI scale's metrics and the accent");
+    expect(appearance.current() == tuned && appearance.theme().accent == ThemeAccent::Violet,
+           "the applied look becomes the current one");
+    ImFont* scaledFont = io.FontDefault;
+    expect(scaledFont != nullptr, "the UI scale's fonts become the default");
+
+    expect(static_cast<bool>(appearance.apply({})) && editorArtPixel() == 1.0f &&
+               editorAccent() == palette::pixelGlow.withAlpha(1.0f),
+           "applying the defaults restores the designed look");
+    const int fontCount = io.Fonts->Fonts.Size;
+    expect(static_cast<bool>(appearance.apply(tuned)) && io.FontDefault == scaledFont &&
+               io.Fonts->Fonts.Size == fontCount,
+           "returning to a UI scale reuses its fonts instead of loading them again");
+
+    EditorAppearance missingFonts(std::filesystem::path(ZENITH_EDITOR_FONT).parent_path() / "missing.ttf", 1.0f);
+    const EditorAppearanceResult failed = missingFonts.apply({.uiScale = 3});
+    expect(!failed && !failed.error.empty() && editorArtPixel() == 3.0f,
+           "a font that cannot load is reported while the metrics still apply");
+    expect(static_cast<bool>(missingFonts.apply({.uiScale = 3})), "applying the current look again does nothing");
+
+    // Later frames need the grown atlas built, as a renderer would upload it.
+    unsigned char* pixels = nullptr;
+    int width = 0;
+    int height = 0;
+    io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+    applyEditorMetrics(ImGui::GetStyle(), 1.0f);
+    applyEditorColors(ImGui::GetStyle());
+}
 } // namespace
 
 int main() {
@@ -253,6 +293,7 @@ int main() {
     testEntityIcons();
     testBackdropWithoutRenderer();
     testChromeOverSeveralFrames();
+    testAppearanceAppliesPreferences();
     if (failures != 0) {
         std::cerr << failures << " editor theme test(s) failed\n";
         return 1;

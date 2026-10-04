@@ -462,6 +462,7 @@ bool EditorSession::updateSmokeOutliner(ApplicationContext& context) {
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
     };
     if (m_smokeFrame == firstFrame) {
+        m_smokeOutlinerMarker = m_history.marker();
         m_smokeOutlinerArea.clear();
         for (const AreaInstance& area : m_workspaces.active().areas()) {
             if (area.typeId == "hierarchy" && area.visible && area.panel) {
@@ -499,15 +500,10 @@ bool EditorSession::updateSmokeOutliner(ApplicationContext& context) {
         if (membership == nullptr || !membership->contains(collection)) {
             fail("collection.link did not link the new empty: " + linked.message);
         }
-        // One undo step per operator. (The history's size is no count: a new
-        // step drops any steps an earlier smoke undid.)
-        m_smokeOutlinerUndoSteps = 3;
         m_smokeOutlinerEntity = *added;
     } else if (m_smokeFrame == firstFrame + 1) {
         const size_t collectionsBefore = context.scene.collections().all().size();
-        for (size_t step = 0; step < m_smokeOutlinerUndoSteps && m_history.canUndo(); ++step) {
-            undo(context);
-        }
+        undoSince(context, m_smokeOutlinerMarker);
         if (context.scene.collections().all().size() + 1 != collectionsBefore ||
             context.scene.findEntity(m_smokeOutlinerEntity) != entt::null) {
             fail("undo did not remove the smoke collection and empty");

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/application/EditorAppearance.hpp"
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/EditorPlayMode.hpp"
 #include "editor/application/NativeFileDialog.hpp"
@@ -67,11 +68,6 @@ struct EditorProjectServices {
     // Ends the session and shows the Project Hub; the session asks about
     // unsaved changes first. Empty when the editor runs without a hub.
     std::function<void(ApplicationContext&, ProjectHubEntry)> leaveForProjectHub;
-    // The editor font file, and the fonts the application already added to
-    // the atlas, so a UI scale preference reuses them and only loads sizes
-    // that are missing.
-    std::filesystem::path fontPath;
-    std::vector<EditorFonts> loadedFonts;
     // The open project's file, which the Standalone play target passes to
     // the game; empty for an editor running without one.
     std::filesystem::path projectFile;
@@ -94,8 +90,9 @@ struct EditorProjectServices {
 class EditorSession final : public ApplicationScene, private EditorSessionActions {
   public:
     // gameModule is the project's module library, or empty for none.
+    // appearance is the application's and must outlive the session.
     EditorSession(std::filesystem::path settingsDirectory, std::filesystem::path assetRoot,
-                  std::filesystem::path sceneRoot, EditorRenderSettings renderSettings,
+                  std::filesystem::path sceneRoot, EditorRenderSettings renderSettings, EditorAppearance& appearance,
                   EditorSceneLoader initialSceneLoader = {}, std::filesystem::path gameModule = {},
                   EditorProjectServices projectServices = {});
     // Area types and operators refer to the session's members by address.
@@ -165,11 +162,11 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
 
     // Preferences and packaging (EditorPreferences.cpp).
     void registerPreferenceOperators();
-    // Applies the appearance settings when they changed since the last call:
-    // art-pixel metrics, fonts for that size, colours, and the glass. Runs
-    // between frames, where fonts may be added to the atlas.
+    // Applies the appearance settings through the application's appearance
+    // when they changed (art-pixel metrics, fonts for that size, colours) and
+    // the theme tuning to the glass. Runs between frames, where fonts may be
+    // added to the atlas.
     void applyAppearance();
-    void useFontsFor(float artPixel);
     PreferencesContext preferencesContext(ApplicationContext& context);
     // Polls Build and Package; publishes its outcome and opens the output
     // folder when it succeeds.
@@ -238,6 +235,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void onDocumentPathCommitted();
     void undo(ApplicationContext& context);
     void redo(ApplicationContext& context);
+    // Undoes the steps recorded since marker, so a smoke step that took a
+    // marker before editing undoes exactly its own steps.
+    void undoSince(ApplicationContext& context, CommandHistoryMarker marker);
     // Runs the document on a throwaway copy as Play or Simulate; false (after
     // reporting why) when it could not.
     bool enterPlayMode(ApplicationContext& context, EditorRuntime runtime = EditorRuntime::Play);
@@ -387,13 +387,10 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     LastOperatorPanel m_lastOperatorPanel;
     bool m_showKeymapEditor{false};
     PreferencesWindow m_preferences;
-    // The appearance applied to ImGui and the chrome, the art pixel it used,
-    // and the fonts loaded per art pixel (an atlas only grows).
-    std::optional<EditorAppearanceSettings> m_appliedAppearance;
-    float m_appliedArtPixel{0.0f};
-    std::filesystem::path m_fontPath;
-    std::vector<EditorFonts> m_editorFonts;
-    float m_displayContentScale{1.0f};
+    // The application's look on ImGui, which outlives the session; the
+    // session's preference changes go through it, so the Project Hub shows
+    // them after the session ends.
+    EditorAppearance& m_appearance;
     // The project's asset service, shared by every Asset Browser area;
     // declared before the areas that reference it.
     ProjectAssets m_projectAssets;
@@ -464,9 +461,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     std::string m_smokeWorkspace;
     std::string m_smokeArea;
     bool m_smokeShowedHierarchy{false};
-    // The entities the component smoke added and the undo steps it recorded.
+    // The entities the component smoke added, and the history before it.
     std::vector<SceneEntityId> m_smokeComponentEntities;
-    size_t m_smokeComponentUndoSteps{0};
+    CommandHistoryMarker m_smokeComponentMarker;
     // The multi-viewport smoke: the second Viewport area it opened, the two
     // viewports it compares, and their render views.
     std::string m_smokeViewportArea;
@@ -482,10 +479,12 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // The first viewport's area state before the smoke set every scene
     // overlay to All, restored afterwards.
     std::string m_smokeOverlayState;
-    // Entities in the scene before the menu smoke added one.
+    // Entities in the scene before the menu smoke added one, and the history
+    // before it.
     size_t m_smokeEntityCount{0};
     // The active viewport's shading before the pie smoke chose Wireframe.
     std::optional<ViewportShading> m_smokePieShading;
+    CommandHistoryMarker m_smokeMenuMarker;
     // The Simulate smoke: the scene before it entered Simulate, and how many
     // fixed-update system runs it has seen.
     std::string m_smokeSimulateSnapshot;
@@ -498,10 +497,10 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     uint64_t m_smokeGameLogSequence{0};
     bool m_smokePlayTargetsDone{false};
     // The outliner smoke: the Hierarchy area whose display mode it switched
-    // (and that area's previous state), and the undo steps it recorded.
+    // (and that area's previous state), and the history before its edits.
     std::string m_smokeOutlinerArea;
     std::string m_smokeOutlinerState;
-    size_t m_smokeOutlinerUndoSteps{0};
+    CommandHistoryMarker m_smokeOutlinerMarker;
     SceneEntityId m_smokeOutlinerEntity;
     // The picking smoke's step, the whole-view pick it waits for, and the
     // object it clicked.

@@ -10,6 +10,8 @@
 #include "editor/document/DefaultScene.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/menus/EditorMenus.hpp"
+#include "editor/operators/DefaultKeymap.hpp"
+#include "editor/operators/KeymapDispatch.hpp"
 #include "editor/operators/ObjectOperators.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/operators/OperatorRunner.hpp"
@@ -265,6 +267,21 @@ class OperatorActions final : public EditorSessionActions {
     }
 
     void updateModalTransform(ApplicationContext&, ViewportId) override {}
+
+    // Mouse chords run through the default keymap, as in the session, so
+    // Shift+RMB reaches view3d.cursor3d_place.
+    uint32_t dispatchMouseChords(ApplicationContext& context, KeymapRegion region, uint32_t allowedButtons) override {
+        return dispatcher.dispatchMouse(keymap, region, allowedButtons, [&](const KeymapInvocation& invocation) {
+            invokeOperator(context, invocation.operatorId, invocation.properties, invocation.region);
+        });
+    }
+
+    bool mouseButtonBound(KeymapRegion region, int button) const override {
+        return dispatcher.mouseButtonBound(keymap, region, button);
+    }
+
+    Keymap keymap{defaultEditorKeymap()};
+    KeymapDispatcher dispatcher;
 
   private:
     SceneEditing m_editing;

@@ -540,8 +540,8 @@ rebakes the volume and saves the scene.
 
 `src/editor/main.cpp` is the editor composition root: it opens the project
 argument, or starts `EditorApplication` in the Project Hub. `EditorApplication`
-owns what outlives one project (the ImGui theme and fonts, the recent
-projects list, the current `ProjectConfig`) and shows either the hub
+owns what outlives one project (the ImGui theme and fonts in an
+`EditorAppearance`, the recent projects list, the current `ProjectConfig`) and shows either the hub
 (`project/ProjectHub`, drawn as an application scene) or one `EditorSession`.
 Switching projects replaces the session: **File > Project Hub** asks about
 unsaved changes, the hub scene unloads the session, and choosing a project
@@ -774,7 +774,10 @@ records only the entities it added, removed, or changed as an
 `EntityDiffCommand`, so history memory and undo/redo time scale with the edit
 rather than the scene. `CommandHistory::storedBytes` reports what the history
 keeps. Opening or creating a document still replaces the whole scene and
-clears the history.
+clears the history. `CommandHistory::marker` and `stepsSince` count the undo
+steps recorded after a point of the timeline (a difference of `size()` is no
+count once new steps discard redo steps); the smoke steps undo exactly their
+own edits with `EditorSession::undoSince`.
 
 Live inspection: in Play and Simulate the session builds `SceneEditing` over
 the runtime scene with `EditorPlayMode::editScene()` (the parked edit scene)
@@ -837,10 +840,17 @@ the theme tuning, UI scale, keymap link, IDE command (with a Test button),
 autosave interval, and build settings. Edits are validated as they are made
 (`validatePreferences`); every section without a problem is stored at once and
 `settings.ini` is saved, while a section with a problem keeps its last valid
-values. Each section has Reset to Defaults. The session applies the look
-between frames (`EditorSession::applyAppearance`): art-pixel metrics, the
-pixel fonts for a new art pixel (added to the atlas, which the UI pass uploads
-again when it grows), the palette with the chosen accent, and the glass.
+values. Each section has Reset to Defaults. The look is applied between
+frames through the application's `application/EditorAppearance` (the one
+owner of the font cache): art-pixel metrics, the pixel fonts for a new art
+pixel (added to the atlas once, which the UI pass uploads again when it
+grows), and the palette with the chosen accent; the session gives the glass
+the theme tuning (`EditorSession::applyAppearance`). `EditorApplication`
+creates the appearance at startup from `settings.ini`, so the Project Hub
+draws in the preferred look, and since sessions apply their changes through
+it, returning to the hub keeps the last session's look. Hard-coded accent
+uses read `editorAccent()` (the outliner's selected-row cursor, the box
+select fill).
 
 ### `src/editor/operators/`
 
@@ -1082,7 +1092,14 @@ components they share; `interaction/ReflectedFieldEditor` compares and copies
 each field through its JSON form (`FieldJson`), so a differing field shows
 `mixedValueText` (ImGui's mixed state for checkboxes) and an edit changes only
 that field, or only the edited vector elements, on every entity in one undo
-step. Custom editors copy only the top-level document keys they changed.
+step. Typing a value into a mixed number and pressing Enter (or leaving the
+field) applies it even when it equals the active entity's own value. Custom
+editors copy only the top-level document keys they changed. The name and the
+transform are edited the same way (the Inspector and the Properties Object
+tab show them for a multi-selection): differing names show the mixed mark and
+typing renames every selected entity, and Position, Rotation, and Scale are
+drawn through `ComponentEditors::editableTransformFields` with the mixed
+mark per axis, so an edit changes only that axis on every entity.
 Components only the active entity has follow under "Active Entity Only";
 holding Alt while editing applies the change to every selected entity with the
 component.

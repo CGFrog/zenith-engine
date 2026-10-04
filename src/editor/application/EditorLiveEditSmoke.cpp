@@ -39,7 +39,10 @@ bool EditorSession::updateSmokeLiveEdit(ApplicationContext& context) {
         m_smokeLiveEntity = *m_selection.active();
         m_smokeLiveHistorySize = m_history.size();
         m_smokeLiveStartLocation = localLocation(context.scene, context.scene.findEntity(m_smokeLiveEntity));
-        if (!invokeOperator(context, "play.start", {}, KeymapRegion::Global) || m_playMode.mode() != EditorMode::Play) {
+        // An explicit target: without one play.start reuses the last target,
+        // which the play target smoke left as Standalone.
+        if (!invokeOperator(context, "play.start", R"({"target":"viewport"})", KeymapRegion::Global) ||
+            m_playMode.mode() != EditorMode::Play) {
             fail("play.start did not enter Play");
             return true;
         }

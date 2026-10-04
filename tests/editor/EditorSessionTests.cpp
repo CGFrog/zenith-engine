@@ -11,6 +11,7 @@
 #include "editor/operators/Keymap.hpp"
 #include "editor/project/ProjectTemplate.hpp"
 #include "editor/project/RecentProjects.hpp"
+#include "editor/theme/EditorTheme.hpp"
 #include "engine/application/Application.hpp"
 #include "engine/scene/Scene.hpp"
 
@@ -446,6 +447,25 @@ void testProjectHubSwitchesProjects(const fs::path& root) {
            "hub: leaving the project unloads its session, which saves the workspaces");
     expect(editor.frame().keepRunning, "hub: the hub keeps running after a project closed");
 }
+
+void testProjectHubUsesThePreferredLook(const fs::path& root) {
+    fs::create_directories(root / "settings");
+    {
+        std::ofstream settings(root / "settings" / "settings.ini");
+        settings << "theme.accent=violet\nui.scale=2\n";
+    }
+    EditorHarness editor(
+        root, EditorProjectHubOptions{.hub = {.defaultProjectLocation = root / "projects"}, .startInHub = true});
+    if (!editor.start()) {
+        expect(false, "hub look: the editor starts in the Project Hub");
+        return;
+    }
+    const ApplicationFrameResult frame = editor.frame();
+    expect(frame.success && frame.keepRunning, "hub look: the hub draws");
+    expect(editorArtPixel() == 2.0f, "hub look: the hub uses the UI scale from settings.ini");
+    expect(editorAccent() == themeAccentInfo(ThemeAccent::Violet).color.withAlpha(1.0f),
+           "hub look: the hub uses the accent from settings.ini");
+}
 } // namespace
 
 int main() {
@@ -460,6 +480,7 @@ int main() {
     testHostQuitRequest(root / "quit");
     testPlayTargets(root / "targets");
     testProjectHubSwitchesProjects(root / "hub");
+    testProjectHubUsesThePreferredLook(root / "hub_look");
 
     fs::remove_all(root, error);
     if (failures != 0) {

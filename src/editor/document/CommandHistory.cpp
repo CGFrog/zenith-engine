@@ -152,6 +152,7 @@ EditorCommandResult CommandHistory::execute(std::unique_ptr<EditorCommand> comma
             m_savedPosition.reset();
         }
         m_commands.erase(m_commands.begin() + static_cast<std::ptrdiff_t>(m_position), m_commands.end());
+        m_recordedAt.erase(m_recordedAt.begin() + static_cast<std::ptrdiff_t>(m_position), m_recordedAt.end());
     }
     ++m_revision;
     if (m_position > 0 && m_commands[m_position - 1]->mergeWith(*command)) {
@@ -161,6 +162,7 @@ EditorCommandResult CommandHistory::execute(std::unique_ptr<EditorCommand> comma
         return {.success = true};
     }
     m_commands.push_back(std::move(command));
+    m_recordedAt.push_back(m_revision);
     ++m_position;
     enforceLimit();
     return {.success = true};
@@ -192,6 +194,7 @@ EditorCommandResult CommandHistory::redo(EditorCommandContext& context) {
 
 void CommandHistory::clear() {
     m_commands.clear();
+    m_recordedAt.clear();
     m_position = 0;
     m_savedPosition = 0;
     ++m_revision;
@@ -199,6 +202,18 @@ void CommandHistory::clear() {
 
 uint64_t CommandHistory::revision() const {
     return m_revision;
+}
+
+CommandHistoryMarker CommandHistory::marker() const {
+    return {.revision = m_revision};
+}
+
+size_t CommandHistory::stepsSince(CommandHistoryMarker marker) const {
+    size_t steps = 0;
+    while (steps < m_position && m_recordedAt[m_position - 1 - steps] > marker.revision) {
+        ++steps;
+    }
+    return steps;
 }
 
 void CommandHistory::markSaved() {
@@ -252,6 +267,7 @@ void CommandHistory::enforceLimit() {
     }
     const size_t removeCount = m_commands.size() - m_limit;
     m_commands.erase(m_commands.begin(), m_commands.begin() + static_cast<std::ptrdiff_t>(removeCount));
+    m_recordedAt.erase(m_recordedAt.begin(), m_recordedAt.begin() + static_cast<std::ptrdiff_t>(removeCount));
     m_position -= std::min(m_position, removeCount);
     if (m_savedPosition) {
         if (*m_savedPosition < removeCount) {

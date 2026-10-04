@@ -35,6 +35,39 @@ struct MixedValue {
     std::array<bool, 4> elements{};
 };
 
+// Elements of a mixed field whose edit the user committed without changing
+// the shown value, for example by typing the first object's own value: ImGui
+// reports no change then, but the value must still apply to every object.
+using CommittedElements = std::array<bool, 4>;
+
+// Whether the user just finished typing into the item drawn last (with Enter
+// or by leaving it, not with Escape) while it shows a mixed value. ImGui
+// reports no change, and no edit, when the typed number equals the shown
+// object's own, so typing is tracked in the window's state storage as the
+// last frame the item was being typed into.
+bool committedMixedEdit(bool mixed) {
+    const ImGuiID id = ImGui::GetItemID();
+    ImGuiStorage* storage = ImGui::GetStateStorage();
+    const ImGuiID key = ImHashStr("##TypedIntoMixedValue", 0, id);
+    constexpr int notTyping = INT_MIN;
+    const int frame = ImGui::GetFrameCount();
+    const int typedFrame = storage->GetInt(key, notTyping);
+    // A frame older than the previous one is stale: the item was not drawn
+    // when it was left.
+    const bool typing = typedFrame != notTyping && typedFrame >= frame - 1;
+    if (ImGui::IsItemActive()) {
+        const ImGuiInputTextState* text = ImGui::TempInputIsActive(id) ? ImGui::GetInputTextState(id) : nullptr;
+        if (text != nullptr && (typing || (mixed && text->Edited))) {
+            storage->SetInt(key, frame);
+        }
+        return false;
+    }
+    if (typedFrame != notTyping) {
+        storage->SetInt(key, notTyping);
+    }
+    return typing && mixed && !ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+}
+
 // ImGui treats equal drag bounds as unbounded; one-sided ranges are filled
 // with the type's extreme so the given side still clamps.
 struct FloatBounds {
@@ -120,7 +153,8 @@ struct ElementWidget {
     ImGuiSliderFlags flags{ImGuiSliderFlags_None};
 };
 
-bool drawElements(const char* label, void* values, int count, const ElementWidget& widget, const MixedValue& mixed) {
+bool drawElements(const char* label, void* values, int count, const ElementWidget& widget, const MixedValue& mixed,
+                  CommittedElements& committed) {
     if (ImGui::GetCurrentWindow()->SkipItems) {
         return false;
     }
@@ -141,6 +175,10 @@ bool drawElements(const char* label, void* values, int count, const ElementWidge
                                                        widget.flags)
                                  : ImGui::DragScalar("", widget.type, element, widget.speed, widget.minimum,
                                                      widget.maximum, format, widget.flags);
+        if (committedMixedEdit(mixed.elements[static_cast<size_t>(index)])) {
+            committed[static_cast<size_t>(index)] = true;
+            changed = true;
+        }
         ImGui::PopID();
         ImGui::PopItemWidth();
     }
@@ -154,7 +192,7 @@ bool drawElements(const char* label, void* values, int count, const ElementWidge
 }
 
 bool drawFloats(const char* label, float* values, int count, const FieldPresentation& presentation,
-                const MixedValue& mixed) {
+                const MixedValue& mixed, CommittedElements& committed) {
     if (presentation.color) {
         constexpr ImGuiColorEditFlags flags = ImGuiColorEditFlags_Float;
         const bool changed =
@@ -176,7 +214,7 @@ bool drawFloats(const char* label, float* values, int count, const FieldPresenta
                          .maximum = slider || bounds.bounded ? &bounds.maximum : nullptr,
                          .format = numberFormat(presentation, "%.3f", false),
                          .flags = bounds.flags},
-                        mixed);
+                        mixed, committed);
 }
 
 bool drawInt(const char* label, int& value, const FieldPresentation& presentation, int lowest, bool mixed) {
@@ -214,7 +252,7 @@ bool drawEnum(const char* label, void* object, const FieldDescriptor& field, boo
 
 // Edits a [minimum, maximum] pair, keeping the maximum at least the minimum.
 bool drawRange(const char* label, float& minimum, float& maximum, const FieldPresentation& presentation,
-               const MixedValue& mixed) {
+               const MixedValue& mixed, CommittedElements& committed) {
     float range[2]{minimum, maximum};
     const FloatBounds bounds = floatBounds(presentation);
     if (!drawElements(label, range, 2,
@@ -224,7 +262,7 @@ bool drawRange(const char* label, float& minimum, float& maximum, const FieldPre
                        .maximum = &bounds.maximum,
                        .format = numberFormat(presentation, "%.3f", false),
                        .flags = bounds.flags},
-                      mixed)) {
+                      mixed, committed)) {
         return false;
     }
     minimum = range[0];
@@ -286,15 +324,16 @@ MixedValue mixedValue(std::span<void* const> objects, const FieldDescriptor& fie
 }
 
 // Copies the edit the first object received (from before to after) to the
-// others: the whole value, or only the changed elements of an array.
-void applyToOthers(std::span<void* const> objects, const FieldDescriptor& field, const Json& before,
-                   const Json& after) {
+// others: the whole value, or only the changed and committed elements of an
+// array.
+void applyToOthers(std::span<void* const> objects, const FieldDescriptor& field, const Json& before, const Json& after,
+                   const CommittedElements& committed) {
     const bool elementwise = before.is_array() && after.is_array() && before.size() == after.size();
     for (void* object : objects.subspan(1)) {
         Json value = fieldValue(object, field);
         if (elementwise && value.is_array() && value.size() == after.size()) {
             for (size_t index = 0; index < after.size(); ++index) {
-                if (before[index] != after[index]) {
+                if (before[index] != after[index] || (index < committed.size() && committed[index])) {
                     value[index] = after[index];
                 }
             }
@@ -357,6 +396,7 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
     }
     const Json before = objects.size() > 1 ? fieldValue(object, field) : Json{};
     bool changed = false;
+    CommittedElements committed{};
     ImGui::BeginDisabled(presentation.readOnly);
     switch (field.kind) {
     case FieldKind::Bool: {
@@ -372,6 +412,7 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
     }
     case FieldKind::Int32:
         changed = drawInt(label, field.value<int32_t>(object), presentation, INT_MIN, mixed.any);
+        changed |= committedMixedEdit(mixed.any);
         break;
     case FieldKind::UInt32: {
         uint32_t& stored = field.value<uint32_t>(object);
@@ -380,16 +421,18 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
             stored = static_cast<uint32_t>(std::max(value, 0));
             changed = true;
         }
+        changed |= committedMixedEdit(mixed.any);
         break;
     }
     case FieldKind::Float:
         changed = drawFloat(label, field.value<float>(object), presentation, mixed.any);
+        changed |= committedMixedEdit(mixed.any);
         break;
     case FieldKind::Vec3:
-        changed = drawFloats(label, &field.value<glm::vec3>(object).x, 3, presentation, mixed);
+        changed = drawFloats(label, &field.value<glm::vec3>(object).x, 3, presentation, mixed, committed);
         break;
     case FieldKind::Vec4:
-        changed = drawFloats(label, &field.value<glm::vec4>(object).x, 4, presentation, mixed);
+        changed = drawFloats(label, &field.value<glm::vec4>(object).x, 4, presentation, mixed, committed);
         break;
     case FieldKind::UVec3: {
         glm::uvec3& stored = field.value<glm::uvec3>(object);
@@ -402,7 +445,7 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
                           .maximum = &bounds.maximum,
                           .format = numberFormat(presentation, "%d", false),
                           .flags = bounds.flags},
-                         mixed)) {
+                         mixed, committed)) {
             stored = glm::uvec3(glm::max(value, glm::ivec3(0)));
             changed = true;
         }
@@ -416,7 +459,7 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
         break;
     case FieldKind::FloatRange:
         changed = drawRange(label, *static_cast<float*>(field.address(object)),
-                            *static_cast<float*>(field.secondAddress(object)), presentation, mixed);
+                            *static_cast<float*>(field.secondAddress(object)), presentation, mixed, committed);
         break;
     case FieldKind::EntityReference:
         changed = drawEntityReferenceField(label, field.value<SceneEntityId>(object), field, options.entityReferences);
@@ -452,7 +495,7 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
         decoratePrefabOverride(field, pointer, options);
     }
     if (changed && objects.size() > 1 && field.kind != FieldKind::Struct) {
-        applyToOthers(objects, field, before, fieldValue(object, field));
+        applyToOthers(objects, field, before, fieldValue(object, field), committed);
     }
     return changed;
 }
