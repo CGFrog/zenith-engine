@@ -9,7 +9,10 @@ and subsystem contracts, see [Architecture](ARCHITECTURE.md). For commands and
 common changes, see [Development](DEVELOPMENT.md). The remaining optimization
 objectives and their measurement gates are in
 [Performance roadmap](PERFORMANCE_ROADMAP.md). How a game module extends the
-editor is in [Editor extensions](EDITOR_EXTENSIONS.md).
+editor is in [Editor extensions](EDITOR_EXTENSIONS.md). The phased plan and
+status for end-to-end gameplay programming (engine gameplay services,
+Behaviours, the editor script workflow) is in
+[Gameplay roadmap](GAMEPLAY_ROADMAP.md).
 
 ## Top level
 
