@@ -8,3 +8,8 @@ class PreferencesWindow;
 // Preferences). It needs no window to run, so it works headless; preferences
 // must outlive the registry.
 OperatorRegistrationResult registerPreferencesOperators(OperatorRegistry& registry, PreferencesWindow& preferences);
+
+struct EditorOperatorServices;
+// This family's entry in editorOperatorFamilies() (EditorOperatorFamilies.hpp).
+OperatorRegistrationResult registerPreferencesOperatorFamily(OperatorRegistry& registry,
+                                                             const EditorOperatorServices& services);

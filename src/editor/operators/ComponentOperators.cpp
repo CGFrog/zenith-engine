@@ -2,6 +2,7 @@
 
 #include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/EntityPropertiesView.hpp"
+#include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/operators/ObjectOperators.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
@@ -278,4 +279,10 @@ OperatorRegistrationResult registerComponentOperators(OperatorRegistry& registry
         }
     }
     return {.success = true};
+}
+
+OperatorRegistrationResult registerComponentOperatorFamily(OperatorRegistry& registry,
+                                                           const EditorOperatorServices& services) {
+    return registerComponentOperators(registry,
+                                      {.clipboard = services.componentClipboard, .layout = services.componentLayout});
 }

@@ -2,6 +2,7 @@
 
 #include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/EntityEyedropper.hpp"
+#include "editor/operators/EditorOperatorFamilies.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
 #include <utility>
@@ -97,4 +98,9 @@ OperatorRegistrationResult registerEyedropperOperators(OperatorRegistry& registr
         }
     }
     return {.success = true};
+}
+
+OperatorRegistrationResult registerEyedropperOperatorFamily(OperatorRegistry& registry,
+                                                            const EditorOperatorServices& services) {
+    return registerEyedropperOperators(registry, services.eyedropper);
 }

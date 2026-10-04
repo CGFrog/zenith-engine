@@ -2,6 +2,7 @@
 
 #include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/EditorCamera.hpp"
+#include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/panels/ViewportRegistry.hpp"
 #include "editor/theme/EditorPalette.hpp"
@@ -210,4 +211,9 @@ std::vector<Operator> cursorOperators(ViewportRegistry& viewports, EditorDocumen
                              }});
     operators.push_back(snapSelectedToCursorOperator(document));
     return operators;
+}
+
+OperatorRegistrationResult registerCursorOperatorFamily(OperatorRegistry& registry,
+                                                        const EditorOperatorServices& services) {
+    return addOperators(registry, cursorOperators(services.viewports, services.document));
 }

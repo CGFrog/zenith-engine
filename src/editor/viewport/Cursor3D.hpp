@@ -1,6 +1,6 @@
 #pragma once
 
-#include "editor/operators/Operator.hpp"
+#include "editor/operators/OperatorRegistry.hpp"
 #include "editor/viewport/SnapQueries.hpp"
 
 #include <glm/glm.hpp>
@@ -43,3 +43,8 @@ void recordCursor3D(const glm::vec3& location, const RenderView& lens, glm::vec2
 // They need no window, so they run headless; viewports and document must
 // outlive them.
 std::vector<Operator> cursorOperators(ViewportRegistry& viewports, EditorDocument& document);
+
+struct EditorOperatorServices;
+// This family's entry in editorOperatorFamilies() (EditorOperatorFamilies.hpp).
+OperatorRegistrationResult registerCursorOperatorFamily(OperatorRegistry& registry,
+                                                        const EditorOperatorServices& services);

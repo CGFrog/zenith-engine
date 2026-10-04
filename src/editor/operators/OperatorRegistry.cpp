@@ -50,3 +50,12 @@ std::vector<const Operator*> OperatorRegistry::operators() const {
 size_t OperatorRegistry::size() const {
     return m_operators.size();
 }
+
+OperatorRegistrationResult addOperators(OperatorRegistry& registry, std::vector<Operator> operators) {
+    for (Operator& op : operators) {
+        if (OperatorRegistrationResult result = registry.add(std::move(op)); !result) {
+            return result;
+        }
+    }
+    return {.success = true};
+}

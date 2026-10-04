@@ -6,12 +6,8 @@
 #include "editor/document/DefaultScene.hpp"
 #include "editor/document/SceneFragment.hpp"
 #include "editor/menus/DefaultMenus.hpp"
-#include "editor/operators/ComponentOperators.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
-#include "editor/operators/EyedropperOperators.hpp"
-#include "editor/operators/ObjectOperators.hpp"
-#include "editor/operators/PlayOperators.hpp"
-#include "editor/operators/PrefabOperators.hpp"
+#include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/panels/SimulateSystemPicker.hpp"
 #include "editor/settings/SimulateSystemSettings.hpp"
 #include "editor/theme/EditorTheme.hpp"
@@ -86,27 +82,13 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     // still to come) leaves the press to camera navigation.
     m_keymapDispatcher.setOperatorFilter(
         [this](std::string_view operatorId) { return m_operators.find(operatorId) != nullptr; });
-    registerSessionOperators();
-    registerObjectModeOperators();
-    registerViewportOperators();
-    registerModuleOperators();
-    registerAreaOperators();
-    registerPreferenceOperators();
+    const EditorOperatorServices services = operatorServices();
+    for (const OperatorFamily& family : editorOperatorFamilies()) {
+        if (const OperatorRegistrationResult result = family.registerOperators(m_operators, services); !result) {
+            m_diagnostics.reportError(std::string(family.name) + ": " + result.error);
+        }
+    }
     registerAreaTypes();
-    if (const OperatorRegistrationResult result = registerObjectOperators(m_operators); !result) {
-        m_diagnostics.reportError(result.error);
-    }
-    if (const OperatorRegistrationResult result = registerEyedropperOperators(m_operators, m_eyedropper); !result) {
-        m_diagnostics.reportError(result.error);
-    }
-    if (const OperatorRegistrationResult result =
-            registerComponentOperators(m_operators, {.clipboard = m_componentClipboard, .layout = m_componentLayout});
-        !result) {
-        m_diagnostics.reportError(result.error);
-    }
-    if (const OperatorRegistrationResult result = registerMenuOperators(m_operators, m_menus); !result) {
-        m_diagnostics.reportError(result.error);
-    }
     const auto projectPrefabs = [this] {
         std::vector<std::filesystem::path> prefabs;
         for (const EditorAssetRecord& asset : m_projectAssets.catalog().assets()) {
@@ -117,19 +99,6 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
         return prefabs;
     };
     if (const MenuResult result = registerDefaultMenus(m_menus.registry(), {.projectPrefabs = projectPrefabs});
-        !result) {
-        m_diagnostics.reportError(result.error);
-    }
-    if (const OperatorRegistrationResult result = registerPrefabOperators(
-            m_operators,
-            {.revealAsset = [this](const std::filesystem::path& asset) { m_projectAssets.requestReveal(asset); }});
-        !result) {
-        m_diagnostics.reportError(result.error);
-    }
-    if (const OperatorRegistrationResult result =
-            registerPlayOperators(m_operators, {.playMode = m_playMode,
-                                                .modules = m_moduleHost,
-                                                .simulateMaskChanged = [this] { saveSimulateSystems(); }});
         !result) {
         m_diagnostics.reportError(result.error);
     }
@@ -164,91 +133,48 @@ OperatorContext EditorSession::operatorContext(ApplicationContext& context, Keym
             .app = &context};
 }
 
-Operator EditorSession::applicationOperator(std::string id, std::string label, std::string description,
-                                            std::function<bool(const OperatorContext&)> poll,
-                                            std::function<void(ApplicationContext&)> run) {
-    return {.id = std::move(id),
-            .label = std::move(label),
-            .description = std::move(description),
-            .poll = [poll = std::move(poll)](
-                        const OperatorContext& context) { return context.app != nullptr && (!poll || poll(context)); },
-            .execute =
-                [run = std::move(run)](OperatorContext& context, OperatorProperties&) {
-                    run(*context.app);
-                    return OperatorResult::finished();
-                }};
-}
-
-void EditorSession::registerOperator(Operator op) {
-    if (const OperatorRegistrationResult result = m_operators.add(std::move(op)); !result) {
-        m_diagnostics.reportError(result.error);
-    }
+EditorOperatorServices EditorSession::operatorServices() {
+    return {.document = m_document,
+            .history = m_history,
+            .eyedropper = m_eyedropper,
+            .componentClipboard = m_componentClipboard,
+            .componentLayout = m_componentLayout,
+            .menus = m_menus,
+            .viewports = m_viewports,
+            .workspaces = m_workspaces,
+            .areaTypes = m_areaTypes,
+            .playMode = m_playMode,
+            .modules = m_moduleHost,
+            .preferences = m_preferences,
+            .packageRunner = m_packageRunner,
+            .tools = m_settings.tools(),
+            .projectFile = m_renderSettings.settings().projectFile(),
+            .revealAsset = [this](const std::filesystem::path& asset) { m_projectAssets.requestReveal(asset); },
+            .simulateMaskChanged = [this] { saveSimulateSystems(); },
+            .documentCommands = *this,
+            .playCommands = *this,
+            .objectModeCommands = *this,
+            .windowCommands = *this};
 }
 
 bool EditorSession::documentCommandsAvailable(const OperatorContext& context) const {
     return context.editMode() && !m_fileDialog.pending() && !m_activeTransform;
 }
 
-void EditorSession::registerSessionOperators() {
-    const auto documentCommands = [this](const OperatorContext& context) { return documentCommandsAvailable(context); };
-    registerOperator(applicationOperator("file.new", "New", "Start a new scene with the default content",
-                                         documentCommands, [this](ApplicationContext& app) { requestNew(app); }));
-    registerOperator(applicationOperator("file.open", "Open", "Open a scene file", documentCommands,
-                                         [this](ApplicationContext& app) { requestOpen(app); }));
-    registerOperator(applicationOperator("file.save", "Save", "Save the scene to its file", documentCommands,
-                                         [this](ApplicationContext& app) { saveDocument(app); }));
-    registerOperator(applicationOperator("file.save_as", "Save As", "Save the scene to a new file", documentCommands,
-                                         [this](ApplicationContext&) { requestFileDialog(FileDialogKind::Save); }));
-    const auto projectHubAvailable = [this](const OperatorContext&) {
-        return m_leaveForProjectHub && !m_activeTransform && !m_fileDialog.pending();
-    };
-    registerOperator(applicationOperator(
-        "wm.open_project", "Open Project", "Close this project and choose another .zenith-project file to open",
-        projectHubAvailable,
-        [this](ApplicationContext& app) { requestProjectHub(app, ProjectHubEntry::OpenProjectDialog); }));
-    registerOperator(applicationOperator(
-        "wm.project_hub", "Project Hub",
-        "Close this project and return to the Project Hub's recent projects and templates", projectHubAvailable,
-        [this](ApplicationContext& app) { requestProjectHub(app, ProjectHubEntry::Hub); }));
-    registerOperator(applicationOperator(
-        "file.quit", "Quit", "Close the editor, asking about unsaved changes first",
-        [this](const OperatorContext&) { return !m_activeTransform; },
-        [this](ApplicationContext& app) { requestClose(app); }));
+void EditorSession::requestSaveAs() {
+    requestFileDialog(FileDialogKind::Save);
+}
 
-    registerOperator(applicationOperator(
-        "edit.undo", "Undo", "Undo the last scene change",
-        [this](const OperatorContext& context) { return documentCommandsAvailable(context) && m_history.canUndo(); },
-        [this](ApplicationContext& app) { undo(app); }));
-    registerOperator(applicationOperator(
-        "edit.redo", "Redo", "Redo the last undone scene change",
-        [this](const OperatorContext& context) { return documentCommandsAvailable(context) && m_history.canRedo(); },
-        [this](ApplicationContext& app) { redo(app); }));
-    registerOperator(
-        {.id = "edit.copy",
-         .label = "Copy",
-         .description = "Copy the selected objects to the clipboard",
-         .poll =
-             [](const OperatorContext& context) {
-                 return context.app != nullptr && context.editMode() && !context.selection.empty();
-             },
-         .execute = [this](OperatorContext& context, OperatorProperties&) { return copySelection(*context.app); }});
-    registerOperator(
-        {.id = "edit.paste",
-         .label = "Paste Entities",
-         .description = "Paste objects from the clipboard and select them",
-         .flags = OperatorFlags::Undo,
-         .poll = [](const OperatorContext& context) { return context.app != nullptr && context.editMode(); },
-         .execute = [this](OperatorContext& context, OperatorProperties&) { return pasteClipboard(*context.app); }});
+bool EditorSession::projectHubAvailable() const {
+    return m_leaveForProjectHub && !m_activeTransform && !m_fileDialog.pending();
+}
 
-    // play.start, play.simulate, play.toggle_pause, play.step, play.stop.
-    registerPlayOperatorsOfSession();
+void EditorSession::openOperatorSearch() {
+    m_operatorSearch.open();
+}
 
-    registerOperator(applicationOperator("wm.search_menu", "Search Operators",
-                                         "Find and run any available operator by name", {},
-                                         [this](ApplicationContext&) { m_operatorSearch.open(); }));
-    registerOperator(applicationOperator("wm.keymap_editor", "Keymap Editor",
-                                         "Change, add, or reset keyboard shortcuts", {},
-                                         [this](ApplicationContext&) { m_showKeymapEditor = true; }));
+void EditorSession::openKeymapEditor() {
+    m_showKeymapEditor = true;
 }
 
 OperatorResult EditorSession::invokeOperator(ApplicationContext& context, std::string_view operatorId,

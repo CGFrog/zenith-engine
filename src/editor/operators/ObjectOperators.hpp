@@ -76,3 +76,8 @@ struct AddEmptyWithProperties {
 // Also registers the collection and visibility operators
 // (CollectionOperators.hpp, VisibilityOperators.hpp).
 OperatorRegistrationResult registerObjectOperators(OperatorRegistry& registry);
+
+struct EditorOperatorServices;
+// This family's entry in editorOperatorFamilies() (EditorOperatorFamilies.hpp).
+OperatorRegistrationResult registerObjectOperatorFamily(OperatorRegistry& registry,
+                                                        const EditorOperatorServices& services);

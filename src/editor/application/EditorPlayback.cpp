@@ -5,6 +5,7 @@
 
 #include "EditorSession.hpp"
 
+#include "editor/application/EditorSessionOperators.hpp"
 #include "editor/panels/SimulateSystemPicker.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
@@ -30,13 +31,17 @@ std::filesystem::path playTemporaryDirectory(const EditorPlayServices& services)
 }
 } // namespace
 
-void EditorSession::registerPlayOperatorsOfSession() {
+OperatorRegistrationResult registerPlayControlOperatorFamily(OperatorRegistry& registry,
+                                                             const EditorOperatorServices& services) {
+    EditorPlayCommands& play = services.playCommands;
+    EditorPlayMode& playMode = services.playMode;
     std::string targetKeys;
     for (const PlayTargetInfo& target : playTargets()) {
         targetKeys += targetKeys.empty() ? "" : ", ";
         targetKeys += "\"" + std::string(target.key) + "\" (" + std::string(target.label) + ")";
     }
-    registerOperator(
+    std::vector<Operator> operators;
+    operators.push_back(
         {.id = "play.start",
          .label = "Play",
          .description = "Run the scene on a copy of the document in a play target: " + targetKeys +
@@ -44,16 +49,16 @@ void EditorSession::registerPlayOperatorsOfSession() {
          .properties = OperatorProperties::make(PlayStartProperties{}, std::move(Fields<PlayStartProperties>().add(
                                                                            "target", &PlayStartProperties::target))),
          .poll =
-             [this](const OperatorContext& context) {
-                 return context.app != nullptr && context.mode == EditorMode::Edit && !m_standalone.running();
+             [&play](const OperatorContext& context) {
+                 return context.app != nullptr && context.mode == EditorMode::Edit && !play.standaloneRunning();
              },
          .execute =
-             [this, targetKeys](OperatorContext& context, OperatorProperties& properties) {
+             [&play, targetKeys](OperatorContext& context, OperatorProperties& properties) {
                  const PlayStartProperties* values = properties.get<PlayStartProperties>();
                  if (values == nullptr) {
                      return OperatorResult::failed("Operator properties have the wrong type");
                  }
-                 PlayTarget target = m_lastPlayTarget;
+                 PlayTarget target = play.lastPlayTarget();
                  if (!values->target.empty()) {
                      const std::optional<PlayTarget> parsed = parsePlayTarget(values->target);
                      if (!parsed) {
@@ -62,57 +67,73 @@ void EditorSession::registerPlayOperatorsOfSession() {
                      }
                      target = *parsed;
                  }
-                 return startPlay(*context.app, target);
+                 return play.startPlay(*context.app, target);
              }});
-    registerOperator(applicationOperator(
+    operators.push_back(applicationOperator(
         "play.simulate", "Simulate",
         "Run physics and the systems chosen in the System Profiler on a copy of the document, keeping the editor "
         "camera and tools",
-        [this](const OperatorContext& context) { return context.mode == EditorMode::Edit && !m_standalone.running(); },
-        [this](ApplicationContext& app) { enterPlayMode(app, EditorRuntime::Simulate); }));
-    registerOperator(applicationOperator(
+        [&play](const OperatorContext& context) {
+            return context.mode == EditorMode::Edit && !play.standaloneRunning();
+        },
+        [&play](ApplicationContext& app) { play.startSimulate(app); }));
+    operators.push_back(applicationOperator(
         "play.toggle_pause", "Pause / Resume", "Pause or resume Play or Simulate",
         [](const OperatorContext& context) { return context.mode != EditorMode::Edit; },
-        [this](ApplicationContext&) {
-            if (m_playMode.running()) {
-                m_playMode.pause();
+        [&playMode](ApplicationContext&) {
+            if (playMode.running()) {
+                playMode.pause();
             } else {
-                m_playMode.resume();
+                playMode.resume();
             }
         }));
-    registerOperator(applicationOperator(
+    operators.push_back(applicationOperator(
         "play.step", "Step Frame",
         "Advance paused Play or Simulate by one frame of the fixed time step: Update systems, animation, and "
         "audio, plus the fixed update that frame runs",
         [](const OperatorContext& context) { return context.mode == EditorMode::Paused; },
-        [this](ApplicationContext& app) { m_playMode.requestFrameStep(app.physics.config().fixedTimeStep); }));
-    registerOperator(applicationOperator(
+        [&playMode](ApplicationContext& app) { playMode.requestFrameStep(app.physics.config().fixedTimeStep); }));
+    operators.push_back(applicationOperator(
         "play.stop", "Stop", "Leave Play or Simulate and restore the authored scene, or stop the standalone game",
-        [this](const OperatorContext&) { return playActive(); }, [this](ApplicationContext& app) { stopPlay(app); }));
-    registerOperator({.id = "play.focus_game_view",
-                      .label = "Focus Game View",
-                      .description = "Give the game view player input; a click in it then captures the cursor",
-                      .flags = OperatorFlags::Internal,
-                      .poll = [this](const OperatorContext&) { return gameViewport() != nullptr; },
-                      .execute =
-                          [this](OperatorContext&, OperatorProperties&) {
-                              gameViewport()->setGameInputFocus(true);
-                              return OperatorResult::finished();
-                          }});
-    registerOperator({.id = "play.release_game_input",
-                      .label = "Release Game Input",
-                      .description = "Take player input and the cursor back from the game view",
-                      .flags = OperatorFlags::Internal,
-                      .poll =
-                          [this](const OperatorContext&) {
-                              const ViewportPanel* viewport = gameViewport();
-                              return viewport != nullptr && viewport->gameInputFocus();
-                          },
-                      .execute =
-                          [this](OperatorContext&, OperatorProperties&) {
-                              gameViewport()->setGameInputFocus(false);
-                              return OperatorResult::finished();
-                          }});
+        [&play](const OperatorContext&) { return play.playActive(); },
+        [&play](ApplicationContext& app) { play.stopPlay(app); }));
+    operators.push_back({.id = "play.focus_game_view",
+                         .label = "Focus Game View",
+                         .description = "Give the game view player input; a click in it then captures the cursor",
+                         .flags = OperatorFlags::Internal,
+                         .poll = [&play](const OperatorContext&) { return play.gameViewport() != nullptr; },
+                         .execute =
+                             [&play](OperatorContext&, OperatorProperties&) {
+                                 play.gameViewport()->setGameInputFocus(true);
+                                 return OperatorResult::finished();
+                             }});
+    operators.push_back({.id = "play.release_game_input",
+                         .label = "Release Game Input",
+                         .description = "Take player input and the cursor back from the game view",
+                         .flags = OperatorFlags::Internal,
+                         .poll =
+                             [&play](const OperatorContext&) {
+                                 const ViewportPanel* viewport = play.gameViewport();
+                                 return viewport != nullptr && viewport->gameInputFocus();
+                             },
+                         .execute =
+                             [&play](OperatorContext&, OperatorProperties&) {
+                                 play.gameViewport()->setGameInputFocus(false);
+                                 return OperatorResult::finished();
+                             }});
+    return addOperators(registry, std::move(operators));
+}
+
+bool EditorSession::standaloneRunning() const {
+    return m_standalone.running();
+}
+
+PlayTarget EditorSession::lastPlayTarget() const {
+    return m_lastPlayTarget;
+}
+
+void EditorSession::startSimulate(ApplicationContext& context) {
+    enterPlayMode(context, EditorRuntime::Simulate);
 }
 
 bool EditorSession::playActive() const {

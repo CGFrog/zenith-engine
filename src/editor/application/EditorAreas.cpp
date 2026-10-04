@@ -5,6 +5,7 @@
 #include "EditorSession.hpp"
 
 #include "editor/application/EditorAreaTypes.hpp"
+#include "editor/application/EditorSessionOperators.hpp"
 #include "editor/areas/AreaWindows.hpp"
 #include "editor/areas/DefaultWorkspaces.hpp"
 #include "editor/areas/WorkspaceFile.hpp"
@@ -112,30 +113,36 @@ void EditorSession::registerAreaTypes() {
     }
 }
 
-void EditorSession::registerAreaOperators() {
-    registerOperator({.id = "wm.toggle_panel",
-                      .label = "Toggle Panel",
-                      .description = "Show or hide an editor type in the active workspace",
-                      .flags = OperatorFlags::Internal,
-                      .properties = OperatorProperties::make(
-                          TogglePanelProperties{},
-                          std::move(Fields<TogglePanelProperties>().add("panel", &TogglePanelProperties::panel))),
-                      .execute = typedExecute<TogglePanelProperties>([this](TogglePanelProperties& values) {
-                          m_workspacesDirty = true;
-                          return areaOperatorResult(m_workspaces.active().toggle(m_areaTypes, values.panel));
-                      })});
-    registerOperator(
+OperatorRegistrationResult registerAreaOperatorFamily(OperatorRegistry& registry,
+                                                      const EditorOperatorServices& services) {
+    WorkspaceSet& workspaces = services.workspaces;
+    const AreaRegistry& areaTypes = services.areaTypes;
+    EditorWindowCommands& windows = services.windowCommands;
+    std::vector<Operator> operators;
+    operators.push_back(
+        {.id = "wm.toggle_panel",
+         .label = "Toggle Panel",
+         .description = "Show or hide an editor type in the active workspace",
+         .flags = OperatorFlags::Internal,
+         .properties = OperatorProperties::make(TogglePanelProperties{}, std::move(Fields<TogglePanelProperties>().add(
+                                                                             "panel", &TogglePanelProperties::panel))),
+         .execute =
+             typedExecute<TogglePanelProperties>([&workspaces, &areaTypes, &windows](TogglePanelProperties& values) {
+                 windows.workspacesChanged();
+                 return areaOperatorResult(workspaces.active().toggle(areaTypes, values.panel));
+             })});
+    operators.push_back(
         {.id = "wm.area_new",
          .label = "New Area",
          .description = "Open another area of an editor type beside the existing one",
          .flags = OperatorFlags::Internal,
          .properties = OperatorProperties::make(
              NewAreaProperties{}, std::move(Fields<NewAreaProperties>().add("type", &NewAreaProperties::type))),
-         .execute = typedExecute<NewAreaProperties>([this](NewAreaProperties& values) {
-             m_workspacesDirty = true;
-             return areaOperatorResult(m_workspaces.active().openNew(m_areaTypes, values.type));
+         .execute = typedExecute<NewAreaProperties>([&workspaces, &areaTypes, &windows](NewAreaProperties& values) {
+             windows.workspacesChanged();
+             return areaOperatorResult(workspaces.active().openNew(areaTypes, values.type));
          })});
-    registerOperator(
+    operators.push_back(
         {.id = "wm.area_change_type",
          .label = "Change Editor Type",
          .description = "Show another editor type in an area's place",
@@ -144,41 +151,49 @@ void EditorSession::registerAreaOperators() {
                                                 std::move(Fields<ChangeAreaTypeProperties>()
                                                               .add("area", &ChangeAreaTypeProperties::area)
                                                               .add("type", &ChangeAreaTypeProperties::type))),
-         .execute = typedExecute<ChangeAreaTypeProperties>([this](ChangeAreaTypeProperties& values) {
-             m_workspacesDirty = true;
-             return areaOperatorResult(m_workspaces.active().changeType(m_areaTypes, values.area, values.type));
-         })});
-    registerOperator(
+         .execute = typedExecute<ChangeAreaTypeProperties>(
+             [&workspaces, &areaTypes, &windows](ChangeAreaTypeProperties& values) {
+                 windows.workspacesChanged();
+                 return areaOperatorResult(workspaces.active().changeType(areaTypes, values.area, values.type));
+             })});
+    operators.push_back(
         {.id = "wm.area_close",
          .label = "Close Area",
          .description = "Close an area of the active workspace",
          .flags = OperatorFlags::Internal,
          .properties = OperatorProperties::make(
              CloseAreaProperties{}, std::move(Fields<CloseAreaProperties>().add("area", &CloseAreaProperties::area))),
-         .execute = typedExecute<CloseAreaProperties>([this](CloseAreaProperties& values) {
-             m_workspacesDirty = true;
-             return areaOperatorResult(m_workspaces.active().close(values.area));
+         .execute = typedExecute<CloseAreaProperties>([&workspaces, &windows](CloseAreaProperties& values) {
+             windows.workspacesChanged();
+             return areaOperatorResult(workspaces.active().close(values.area));
          })});
-    registerOperator({.id = "wm.workspace_activate",
-                      .label = "Switch Workspace",
-                      .description = "Show another workspace's areas and layout",
-                      .flags = OperatorFlags::Internal,
-                      .properties = OperatorProperties::make(
-                          WorkspaceProperties{},
-                          std::move(Fields<WorkspaceProperties>().add("workspace", &WorkspaceProperties::workspace))),
-                      .execute = typedExecute<WorkspaceProperties>([this](WorkspaceProperties& values) {
-                          // Applied between frames by updateWorkspaces.
-                          return areaOperatorResult(m_workspaces.requestActivation(values.workspace));
-                      })});
-    registerOperator(applicationOperator("wm.workspace_reset", "Reset Workspace",
-                                         "Restore the active workspace's default areas and layout", {},
-                                         [this](ApplicationContext&) {
-                                             Workspace& active = m_workspaces.active();
-                                             active = defaultWorkspace(active.name());
-                                             active.sync(m_areaTypes);
-                                             m_buildDefaultLayout = true;
-                                             m_workspacesDirty = true;
-                                         }));
+    operators.push_back({.id = "wm.workspace_activate",
+                         .label = "Switch Workspace",
+                         .description = "Show another workspace's areas and layout",
+                         .flags = OperatorFlags::Internal,
+                         .properties = OperatorProperties::make(WorkspaceProperties{},
+                                                                std::move(Fields<WorkspaceProperties>().add(
+                                                                    "workspace", &WorkspaceProperties::workspace))),
+                         .execute = typedExecute<WorkspaceProperties>([&workspaces](WorkspaceProperties& values) {
+                             // Applied between frames by updateWorkspaces.
+                             return areaOperatorResult(workspaces.requestActivation(values.workspace));
+                         })});
+    operators.push_back(applicationOperator("wm.workspace_reset", "Reset Workspace",
+                                            "Restore the active workspace's default areas and layout", {},
+                                            [&windows](ApplicationContext&) { windows.resetActiveWorkspace(); }));
+    return addOperators(registry, std::move(operators));
+}
+
+void EditorSession::workspacesChanged() {
+    m_workspacesDirty = true;
+}
+
+void EditorSession::resetActiveWorkspace() {
+    Workspace& active = m_workspaces.active();
+    active = defaultWorkspace(active.name());
+    active.sync(m_areaTypes);
+    m_buildDefaultLayout = true;
+    m_workspacesDirty = true;
 }
 
 void EditorSession::syncAreaTypes() {

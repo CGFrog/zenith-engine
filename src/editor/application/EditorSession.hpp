@@ -3,6 +3,7 @@
 #include "editor/application/EditorAppearance.hpp"
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/EditorPlayMode.hpp"
+#include "editor/application/EditorSessionCommands.hpp"
 #include "editor/application/NativeFileDialog.hpp"
 #include "editor/application/PlayTargets.hpp"
 #include "editor/application/SceneEditing.hpp"
@@ -18,6 +19,7 @@
 #include "editor/interaction/Selection.hpp"
 #include "editor/menus/EditorMenus.hpp"
 #include "editor/modules/GameModuleHost.hpp"
+#include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/operators/Keymap.hpp"
 #include "editor/operators/KeymapDispatch.hpp"
 #include "editor/operators/KeymapEditor.hpp"
@@ -86,7 +88,12 @@ struct EditorProjectServices {
 // commands, Play mode, module reloads, and modal transforms). Every menu item,
 // button, and key runs a registered operator. The runtime Scene stays owned by
 // Engine and is changed only through SceneEditing.
-class EditorSession final : public ApplicationScene, private EditorSessionActions {
+class EditorSession final : public ApplicationScene,
+                            private EditorSessionActions,
+                            private EditorDocumentCommands,
+                            private EditorPlayCommands,
+                            private EditorObjectModeCommands,
+                            private EditorWindowCommands {
   public:
     // gameModule is the project's module library, or empty for none.
     // appearance is the application's and must outlive the session.
@@ -129,22 +136,52 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     uint32_t dispatchMouseChords(ApplicationContext& context, KeymapRegion region, uint32_t allowedButtons) override;
     bool mouseButtonBound(KeymapRegion region, int button) const override;
 
+    // EditorDocumentCommands
+    bool documentCommandsAvailable(const OperatorContext& context) const override;
+    void requestNew(ApplicationContext& context) override;
+    void requestOpen(ApplicationContext& context) override;
+    bool saveDocument(ApplicationContext& context) override;
+    void requestSaveAs() override;
+    void undo(ApplicationContext& context) override;
+    void redo(ApplicationContext& context) override;
+    OperatorResult copySelection(ApplicationContext& context) override;
+    OperatorResult pasteClipboard(ApplicationContext& context) override;
+    bool projectHubAvailable() const override;
+    // Leaves the project for the Project Hub, asking about unsaved changes.
+    void requestProjectHub(ApplicationContext& context, ProjectHubEntry entry) override;
+    void requestClose(ApplicationContext& context) override;
+
+    // EditorPlayCommands (EditorPlayback.cpp)
+    bool standaloneRunning() const override;
+    PlayTarget lastPlayTarget() const override;
+    OperatorResult startPlay(ApplicationContext& context, PlayTarget target) override;
+    void startSimulate(ApplicationContext& context) override;
+    bool playActive() const override;
+    // Leaves Play or Simulate, or stops the standalone game, and ends the
+    // target's game view (closing a floating one).
+    void stopPlay(ApplicationContext& context) override;
+    ViewportPanel* gameViewport() const override;
+
+    // EditorObjectModeCommands (EditorObjectCommands.cpp)
+    bool modalTransformRunning() const override;
+    bool beginModalTransform(ApplicationContext& context, TransformOperation operation, std::string commandName,
+                             std::string before, bool commitOnCancel) override;
+    void openDeleteMenu() override;
+    void openRenamePopup(ApplicationContext& context) override;
+
+    // EditorWindowCommands
+    void openOperatorSearch() override;
+    void openKeymapEditor() override;
+    void workspacesChanged() override;
+    void resetActiveWorkspace() override;
+    void requestModuleReload() override;
+
     SceneEditing editing(ApplicationContext& context);
     EditorContext editorContext(ApplicationContext& context);
     OperatorContext operatorContext(ApplicationContext& context, KeymapRegion region);
 
-    // Operators (session operators in EditorSession.cpp, object-mode ones in
-    // EditorObjectCommands.cpp).
-    // An operator that runs a session workflow. It needs the running
-    // application, so it polls false in headless contexts.
-    static Operator applicationOperator(std::string id, std::string label, std::string description,
-                                        std::function<bool(const OperatorContext&)> poll,
-                                        std::function<void(ApplicationContext&)> run);
-    void registerOperator(Operator op);
-    void registerSessionOperators();
-    void registerObjectModeOperators();
-    void registerModuleOperators();
-    bool documentCommandsAvailable(const OperatorContext& context) const;
+    // What the operator families (editorOperatorFamilies) refer to.
+    EditorOperatorServices operatorServices();
     OperatorResult invokeOperator(ApplicationContext& context, std::string_view operatorId,
                                   const OperatorProperties& properties);
     // Runs the binding of the first pressed chord bound in region.
@@ -160,7 +197,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void saveSettings();
 
     // Preferences and packaging (EditorPreferences.cpp).
-    void registerPreferenceOperators();
     // Applies the appearance settings through the application's appearance
     // when they changed (art-pixel metrics, fonts for that size, colours) and
     // the theme tuning to the glass. Runs between frames, where fonts may be
@@ -185,7 +221,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // Areas and workspaces (EditorAreas.cpp).
     void addAreaType(AreaType type);
     void registerAreaTypes();
-    void registerAreaOperators();
     // Registers an area type per game module panel and drops the types of
     // panels the module no longer has, then syncs the workspaces.
     void syncAreaTypes();
@@ -225,8 +260,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     bool completeOpen(ApplicationContext& context, const std::filesystem::path& path);
     bool completeSaveAs(ApplicationContext& context, const std::filesystem::path& path);
     void onDocumentPathCommitted();
-    void undo(ApplicationContext& context);
-    void redo(ApplicationContext& context);
     // Undoes the steps recorded since marker, so a smoke step that took a
     // marker before editing undoes exactly its own steps.
     void undoSince(ApplicationContext& context, CommandHistoryMarker marker);
@@ -237,17 +270,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
 
     // Play targets, game views, the standalone game, and the playback
     // toolbar (EditorPlayback.cpp).
-    void registerPlayOperatorsOfSession();
-    // Whether Play, Simulate, or a standalone game is running (or paused).
-    bool playActive() const;
-    OperatorResult startPlay(ApplicationContext& context, PlayTarget target);
     OperatorResult startStandalone(ApplicationContext& context);
-    // Leaves Play or Simulate, or stops the standalone game, and ends the
-    // target's game view (closing a floating one).
-    void stopPlay(ApplicationContext& context);
     void endGameView();
-    // The viewport playing the game, or null.
-    ViewportPanel* gameViewport() const;
     // The input module systems get: the frame's input while a game view has
     // focus (or Play runs without one), otherwise none.
     const InputState& gameInput(const InputState& input) const;
@@ -259,28 +283,14 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // Slot in the toolbar's Simulate dropdown for the Simulate system picker
     // (Unit 18); shows a pointer to the System Profiler until then.
     void drawSimulateOptions(ApplicationContext& context);
-    void requestNew(ApplicationContext& context);
-    void requestOpen(ApplicationContext& context);
-    void requestClose(ApplicationContext& context);
-    // Leaves the project for the Project Hub, asking about unsaved changes.
-    void requestProjectHub(ApplicationContext& context, ProjectHubEntry entry);
     void finishPendingAction(ApplicationContext& context);
-    bool saveDocument(ApplicationContext& context);
-    OperatorResult copySelection(ApplicationContext& context);
-    // Pastes without recording undo; edit.paste is an Undo operator.
-    OperatorResult pasteClipboard(ApplicationContext& context);
 
     // Blender object-mode workflows (EditorObjectCommands.cpp).
     void drawObjectPopups(ApplicationContext& context);
-    // Starts a modal transform in the active viewport; false when there is
-    // none, nothing to transform, or the scene cannot be captured.
-    bool beginModalTransform(ApplicationContext& context, TransformOperation operation, std::string commandName,
-                             std::string before, bool commitOnCancel);
     void finishModalTransform(ApplicationContext& context, bool confirm);
     void drawModalTransformOverlay(const ViewportPanel& viewport, const ModalTransformResult& result) const;
 
     // Viewports (EditorViewports.cpp).
-    void registerViewportOperators();
     // Start of a frame: settles which viewports are open and cancels a modal
     // transform whose viewport closed.
     void beginViewportFrame(ApplicationContext& context);

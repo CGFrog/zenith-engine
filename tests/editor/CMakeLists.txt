@@ -110,6 +110,7 @@ zenith_add_test(zenith_asset_browser SOURCES AssetBrowserTests.cpp LIBS zenith_e
 zenith_add_test(zenith_asset_reference_workflow SOURCES AssetReferenceWorkflowTests.cpp LIBS zenith_editor_app
     NEEDS_ASSETS DEFINITIONS ZENITH_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 zenith_add_test(zenith_operators EXECUTABLE zenith_operator_tests SOURCES OperatorTests.cpp LIBS zenith_editor_app)
+zenith_add_test(zenith_operator_families SOURCES OperatorFamilyTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_menus EXECUTABLE zenith_menu_tests SOURCES MenuTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_prefabs EXECUTABLE zenith_prefab_tests
     SOURCES PrefabTests.cpp LIBS zenith_editor_app NEEDS_ASSETS)

@@ -1,5 +1,6 @@
 #include "PackageOperators.hpp"
 
+#include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/project/ProjectFileOperations.hpp"
 #include "editor/settings/EditorSettings.hpp"
 
@@ -81,4 +82,10 @@ OperatorRegistrationResult registerPackageOperators(OperatorRegistry& registry, 
                                  }
                                  return buildPackage(services, *values);
                              }});
+}
+
+OperatorRegistrationResult registerPackageOperatorFamily(OperatorRegistry& registry,
+                                                         const EditorOperatorServices& services) {
+    return registerPackageOperators(
+        registry, {.runner = services.packageRunner, .tools = services.tools, .projectFile = services.projectFile});
 }

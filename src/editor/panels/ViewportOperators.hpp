@@ -1,6 +1,6 @@
 #pragma once
 
-#include "editor/operators/Operator.hpp"
+#include "editor/operators/OperatorRegistry.hpp"
 
 #include <vector>
 
@@ -16,3 +16,8 @@ class ViewportRegistry;
 // in Blender. They need no window, so they also run headless; the registry
 // must outlive them.
 std::vector<Operator> viewportOperators(ViewportRegistry& viewports);
+
+struct EditorOperatorServices;
+// This family's entry in editorOperatorFamilies() (EditorOperatorFamilies.hpp).
+OperatorRegistrationResult registerViewportOperatorFamily(OperatorRegistry& registry,
+                                                          const EditorOperatorServices& services);

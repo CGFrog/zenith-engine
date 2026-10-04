@@ -3,6 +3,7 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/PrefabAuthoring.hpp"
+#include "editor/operators/EditorOperatorFamilies.hpp"
 
 #include <charconv>
 #include <optional>
@@ -239,4 +240,9 @@ OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, P
         }
     }
     return {.success = true};
+}
+
+OperatorRegistrationResult registerPrefabOperatorFamily(OperatorRegistry& registry,
+                                                        const EditorOperatorServices& services) {
+    return registerPrefabOperators(registry, {.revealAsset = services.revealAsset});
 }

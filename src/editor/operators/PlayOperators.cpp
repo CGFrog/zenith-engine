@@ -5,6 +5,7 @@
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/RuntimeApply.hpp"
 #include "editor/modules/GameModuleHost.hpp"
+#include "editor/operators/EditorOperatorFamilies.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -156,4 +157,11 @@ OperatorRegistrationResult registerPlayOperators(OperatorRegistry& registry, Pla
         }
     }
     return {.success = true};
+}
+
+OperatorRegistrationResult registerPlayOperatorFamily(OperatorRegistry& registry,
+                                                      const EditorOperatorServices& services) {
+    return registerPlayOperators(registry, {.playMode = services.playMode,
+                                            .modules = services.modules,
+                                            .simulateMaskChanged = services.simulateMaskChanged});
 }

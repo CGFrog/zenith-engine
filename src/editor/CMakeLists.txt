@@ -16,6 +16,7 @@ add_library(zenith_editor_app STATIC
     application/NativeFileDialog.cpp
     application/PlayTargets.cpp
     application/EditorSession.cpp
+    application/EditorSessionOperators.cpp
     application/EditorSessionSmoke.cpp
     application/EntityCommands.cpp
     application/SceneEditing.cpp
@@ -54,6 +55,7 @@ add_library(zenith_editor_app STATIC
     operators/ComponentOperators.cpp
     operators/CollectionOperators.cpp
     operators/DefaultKeymap.cpp
+    operators/EditorOperatorFamilies.cpp
     operators/Keymap.cpp
     operators/KeymapDispatch.cpp
     operators/KeymapEditor.cpp

@@ -83,3 +83,8 @@ std::vector<std::string> displayedComponentKeys(const ComponentTypeRegistry& typ
                                                 SceneEntityId entity, std::string_view category = {});
 
 OperatorRegistrationResult registerComponentOperators(OperatorRegistry& registry, ComponentOperatorServices services);
+
+struct EditorOperatorServices;
+// This family's entry in editorOperatorFamilies() (EditorOperatorFamilies.hpp).
+OperatorRegistrationResult registerComponentOperatorFamily(OperatorRegistry& registry,
+                                                           const EditorOperatorServices& services);
