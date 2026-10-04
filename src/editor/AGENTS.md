@@ -27,8 +27,9 @@ depend on this subtree.
   workflows stay here.
 - Keep document operations usable without a window or GPU so they remain easy
   to test.
-- Add editor tests under `tests/editor/` and update the explicit target source
-  lists in the root `CMakeLists.txt`.
+- Add editor tests under `tests/editor/` and register them in
+  `tests/editor/CMakeLists.txt`; editor sources are listed in
+  `src/editor/CMakeLists.txt`.
 - `EditorSession` is integration code. Move reusable document or interaction
   behavior into its focused folder rather than growing the coordinator.
 - Component inspectors come from the engine's component registry. Prefer

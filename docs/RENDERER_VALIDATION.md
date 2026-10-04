@@ -189,7 +189,7 @@ launches its executable without `--project`. The checked-in PNGs
 beside it are the references.
 
 `zenith_reference_capture` renders every view with `zenith` (or the set's
-own executable, chosen in `CMakeLists.txt`), a clean
+own executable, chosen in `tests/capture/CMakeLists.txt`), a clean
 environment (benchmark, smoke, and every `ZENITH_FORCE_*`, `ZENITH_DISABLE_*`
 `ZENITH_DEPTH_PYRAMID_PER_LEVEL` and device-fallback switch removed before the view's own
 `environment` entries are applied), the

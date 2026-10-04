@@ -31,7 +31,7 @@ This subtree is the reusable `zenith_engine` library. It must not include from
 - Keep third-party types private unless native access is an intentional part of
   the public API.
 - Put a new file in the narrowest existing subsystem and add it to
-  `zenith_engine` in the root `CMakeLists.txt`.
+  `zenith_engine` in `src/engine/CMakeLists.txt`.
 - A serialized component is registered in `scene/BuiltInComponentTypes.cpp`
   (collection and visibility components in `CollectionComponentTypes.cpp`,
   prefab link components in `PrefabComponentTypes.cpp`);

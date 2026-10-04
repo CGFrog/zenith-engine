@@ -34,5 +34,5 @@ holds a move-only `JoltRuntimeLease`; worlds coexist and shut down in any order.
 
 Private adapter from Jolt's `DebugRendererSimple` to `DebugDraw`: lines and
 triangle edges become debug lines, 3D text becomes labels. It needs Jolt's
-`JPH_DEBUG_RENDERER`, which the root `CMakeLists.txt` enables in every
+`JPH_DEBUG_RENDERER`, which `cmake/Dependencies.cmake` enables in every
 configuration.
