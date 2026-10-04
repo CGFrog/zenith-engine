@@ -10,3 +10,4 @@ CMakeUserPresets.json
 /.zenith/
 # Game modules copied beside the checked-in projects by the build
 /projects/modules/
+.VsCodeCounter/

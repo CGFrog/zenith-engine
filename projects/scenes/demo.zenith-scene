@@ -17,13 +17,13 @@
           "intensity": 5.0,
           "primary": true,
           "shadows": {
-            "constant_bias": 0.5,
-            "depth_range": 60.0,
+            "constant_bias": 1.7899999618530273,
+            "depth_range": 65.0,
             "enabled": true,
-            "focus_distance": 6.0,
-            "half_extent": 14.0,
-            "normal_bias": 0.009999999776482582,
-            "slope_bias": 1.0
+            "focus_distance": 13.899999618530273,
+            "half_extent": 40.099998474121094,
+            "normal_bias": 0.125,
+            "slope_bias": 4.409999847412109
           }
         }
       },
@@ -847,6 +847,45 @@
         1.0
       ],
       "name": "Pickup 5",
+      "parent": null
+    },
+    {
+      "components": {
+        "volumetric_fog": {
+          "albedo": [
+            0.8999999761581421,
+            0.8999999761581421,
+            0.8999999761581421
+          ],
+          "anisotropy": 0.5799999833106995,
+          "base_height": 0.0,
+          "density": 10.0,
+          "height_falloff": 1.2400000095367432,
+          "noise_amount": 0.0,
+          "noise_scale": 4.0,
+          "primary": true
+        }
+      },
+      "id": 18,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Volumetric Fog",
       "parent": null
     }
   ],
