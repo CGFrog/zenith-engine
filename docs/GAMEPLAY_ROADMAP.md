@@ -6,7 +6,9 @@ roadmap (reflection, module hot reload, operators, workspaces, prefabs, play
 targets). Each item is sized so that one session, or one `/batch` unit, can
 finish it.
 
-Approved 2026-10-04. Every phase (A to D) is done.
+Approved 2026-10-04. Phases A to D are done. Phase E, the foundations for a
+first-person roguelike built as a separate project, was approved the same day
+and is open.
 
 ## How to use this document
 
@@ -140,6 +142,23 @@ Approved 2026-10-04. Every phase (A to D) is done.
   - D6 also measures the runtime spawn path (`PrefabSystem::instantiate`
     from `EntityCommandBuffer` and effects), not only the editor's compare
     and refresh.
+- **2026-10-04: Phase E scope (roguelike foundations).**
+  - The next game is a first-person roguelike. It is built first as a
+    generic roguelike: generated floors, combat against path-finding enemies,
+    loot, stats, and permadeath with some meta-progression.
+  - Its perception model (sight, sound and disturbance signals feeding enemy
+    beliefs) and its mutable world are deferred. So is the engine work they
+    need: climb, swim, fly and wall-walk movement modes, stimulus events, a
+    CPU light-level query, through-walls overlays, water and buoyancy,
+    breakable constraints, and tiled navmesh rebuilds.
+  - A run is saved as its seed, floor and run state, and the floor is
+    regenerated on load. A scene diff (B5) of a fully spawned floor would be
+    nearly the whole scene, and would tie saves to the generator's output.
+  - Floors are spawned into the main scene, not as additive scenes: physics
+    and navigation each work on one `Scene`.
+  - The game is a project created from `templates/fps_game`, not code in
+    `src/game/`. Phase E adds only reusable mechanisms; the generator, AI
+    states, stats, items and loot are the game's.
 - **2026-10-04: engine owns mechanisms, games own rules.** The character
   controller, physics queries, events, timers, effects, save slots and UI
   widgets are reusable engine mechanisms. Weapons, damage, HUD contents and
@@ -174,6 +193,13 @@ Approved 2026-10-04. Every phase (A to D) is done.
 | D5 | Shared versioned-settings helper | — | done 89d1a71 |
 | D6 | Measure prefab compare/refresh cost | — | done d518873 |
 | D7 | Docs hygiene | — | done c5b111b |
+| E1 | Seeded gameplay random streams | — | open |
+| E2 | Run and profile save data | E1 | open |
+| E3 | Definition tables | — | open |
+| E4 | Building and replacing a floor at runtime | — | open |
+| E5 | Partial paths and crowd avoidance | E4 | open |
+| E6 | Audio for gameplay | — | open |
+| E7 | Pause, teardown and one game clock | — | open |
 
 Suggested batches:
 
@@ -182,6 +208,14 @@ Suggested batches:
 3. **B3–B6, C4–C6.** They deliver the FPS template.
 
 B7, B8 and D1–D6 fit in anywhere. Measure D4 and D6 before changing code.
+
+Phase E batches:
+
+1. **E7, E1, E3, E6.** Small and independent. Do E7 first: it changes
+   behaviour the FPS template relies on, while that template is the only
+   game to update.
+2. **E2, E4, E5.** E4 measures before it changes anything; E5 builds on its
+   rebake.
 
 ```text
 A1 ─┐
@@ -931,6 +965,127 @@ These items are independent and can go into any batch.
   it by mistake; `README.md` links it too. The physics line was already
   fixed in A3. `REPOSITORY_GUIDE.md` no longer lists the removed
   `src/game/player/`.
+
+## Phase E: roguelike foundations
+
+Target: a project created from the FPS template can do all of the following
+without engine changes:
+- generate a floor of room prefabs from a seed;
+- fill it with enemies that path to the player without piling up;
+- play hit and pickup sounds;
+- pause for an inventory screen;
+- save the run and resume it on the same floor;
+- replace the floor with the next one.
+
+Read first: Phase A and B docs plus [Navigation](engine/navigation.md),
+[Audio](engine/audio.md) and [Gameplay](engine/gameplay.md).
+
+### E1. Seeded gameplay random streams
+
+- [ ] Add a small, fast, portable generator (for example PCG32 or
+      xoshiro128**) with explicit state, and helpers for ranges, floats,
+      weighted picks and shuffles. Its results must not depend on the
+      standard library's distributions, which differ between implementations.
+- [ ] `GameServices::random(name)` returns a named stream (`layout`, `loot`,
+      `combat`, ...) derived from the session seed and the name. Drawing from
+      one stream never changes another.
+- [ ] The seed and every stream's state can be read and restored, for E2.
+
+Today the only randomness is `std::random_device` (editor play targets, asset
+GUIDs); there is nothing seeded for gameplay.
+
+Exit: the same seed gives the same sequences on every run and build type,
+and stream independence is tested.
+
+### E2. Run and profile save data
+
+- [ ] `SaveGameStore` can save and load a typed payload that is not a scene:
+      a reflected struct serialized through `Fields<T>`, with a version and
+      migration, written through `atomicWriteUserData` like the scene slots.
+- [ ] A run slot holds the seed, the E1 stream states and the game's own run
+      struct (floor index, the player's stats and inventory). A game
+      regenerates the floor from them.
+- [ ] A separate profile file for meta-progression that a game never
+      deletes on death, using the D5 `VersionedJson` helper.
+
+Scene-diff saves (B5) stay as they are for hand-built levels. Deleting the run
+slot on death is game policy.
+
+### E3. Definition tables
+
+- [ ] Load a JSON array of a reflected struct into a table keyed by a
+      string id: `DefinitionTable<T>`, with lookups by id and iteration in
+      file order.
+- [ ] Report a duplicate id, an unknown field, a wrong type and a missing
+      required field with the file, the entry's index and the field name.
+- [ ] Reload a changed table in the editor through the file watcher, when it
+      validates.
+
+The game defines the schemas (items, enemies, loot tables, floor themes).
+Today content can come only from prefabs and components.
+
+### E4. Building and replacing a floor at runtime
+
+- [ ] Measure first. Spawn about 40 room prefabs with static triangle-mesh
+      colliders through `EntityCommandBuffer`, then time the spawn, the
+      physics bodies' creation and a navmesh bake. Record the numbers here
+      and optimize only what shows up.
+- [ ] Let a game rebake navigation on demand after it builds a floor.
+      `GameServices::navigation` bakes once, lazily, today.
+- [ ] Replace a floor cleanly: destroying a floor's entities releases their
+      bodies, navigation and voices, and leaves the player and the game's
+      persistent entities alone. Test that repeated build and replace cycles
+      leave no bodies or voices behind.
+
+The layout generator, room connectors and spawn tables are the game's.
+
+### E5. Partial paths and crowd avoidance
+
+- [ ] `findPath` returns the path to the closest reachable point when the
+      goal is unreachable, and says so. It fails on `DT_PARTIAL_RESULT`
+      today.
+- [ ] Build DetourCrowd into `zenith_recast` and let `NavAgentComponent`
+      agents avoid each other: radius, separation and a maximum agent count
+      in the navigation settings.
+- [ ] Rebuild the crowd when E4 rebakes the mesh.
+
+Several agent sizes and area costs wait for the first enemy that needs them.
+
+### E6. Audio for gameplay
+
+- [ ] `GameServices` (and so `BehaviourContext`) gives gameplay the session's
+      audio: play, play at a position or following an entity, and stop, by
+      handle. Null when the host has no audio, as in tests.
+- [ ] Reflected component types for `AudioEmitterComponent` and
+      `AudioListenerComponent`, so scenes and prefabs can carry sounds. This
+      closes B8's follow-up.
+
+### E7. Pause, teardown and one game clock
+
+- [ ] A pause request in `GameServices` stops the simulated clock, physics,
+      timers and FixedUpdate. Ui systems keep running so menus work. The FPS
+      template uses it instead of clearing the player's actions (C6
+      follow-up).
+- [ ] Stopping a session or unloading a scene runs `onDisable` and
+      `onDestroy` for every live behaviour (B2 follow-up).
+- [ ] Update systems, behaviours, timers, animation and the animator all
+      advance on simulated time, with the unscaled frame time available
+      separately (B2 and B3 follow-ups).
+- [ ] A hook that throws is caught. The entity and behaviour are logged, and
+      the behaviour is disabled (B2 follow-up).
+
+### Not in Phase E
+
+Each of these waits until the roguelike's first playable slice shows it is
+needed:
+- inventory slot grids, drag and drop, tooltips;
+- world-space UI (damage numbers, health bars, prompts);
+- the game font in the editor's game view;
+- `ButtonBehavior::Toggle`, an any-key query and full rebinding;
+- animation blend trees and layers;
+- particle flipbooks and trails;
+- hinge constraints and an angular velocity API;
+- a deterministic replay harness.
 
 ## Conventions for every item
 
