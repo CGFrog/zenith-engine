@@ -106,7 +106,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     }
     // Scene references resolve through the project's asset database by GUID.
     m_document.setAssetDatabase(m_projectAssets.assetDatabase());
-    m_buildPanel.setProjectBuild(std::move(projectServices.build));
+    m_projectBuild.setProjectBuild(std::move(projectServices.build));
 }
 
 SceneEditing EditorSession::editing(ApplicationContext& context) {
@@ -150,6 +150,7 @@ EditorOperatorServices EditorSession::operatorServices() {
             .modules = m_moduleHost,
             .preferences = m_preferences,
             .packageRunner = m_packageRunner,
+            .build = m_projectBuild,
             .navigationPreview = m_navigationPreview,
             .tools = m_settings.tools(),
             .projectFile = m_renderSettings.settings().projectFile(),
@@ -359,6 +360,7 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
     }
     updateAutosave(context, deltaSeconds);
     updatePackaging();
+    m_projectBuild.poll();
     updateStandalone(context);
     // Once per frame, however many asset browsers are open.
     m_projectAssets.pollChanges(m_diagnostics, projectAssetActions(context), deltaSeconds);
@@ -727,6 +729,12 @@ void EditorSession::drawStatusBar(const RenderStats& stats) {
         segment(text.data(), palette::captionInk);
         ImGui::SameLine();
         drawPlayModePill();
+        if (m_moduleReloadPending && m_playMode.mode() != EditorMode::Edit) {
+            // The rebuilt module waits for Stop (EditorSession::updateGameModule).
+            ImGui::SameLine();
+            widgets::StatusPill(EditorIcon::Warning, "Reload pending - stop to apply", palette::buttonHoverTop,
+                                palette::buttonHoverBottom, palette::warning);
+        }
         if (m_moduleHost.status() != GameModuleStatus::None) {
             segment(gameModuleStatusText().c_str(), palette::captionInk);
         }

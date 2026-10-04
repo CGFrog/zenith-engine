@@ -52,7 +52,7 @@ void EditorSession::updateGameModule(ApplicationContext& context, const InputSta
     if (!m_moduleHost.sourcePath().empty()) {
         // A successful build reloads a module it rebuilt; the file check
         // also catches builds started outside the editor.
-        const BuildState buildState = m_buildPanel.runner().state();
+        const BuildState buildState = m_projectBuild.runner().state();
         if (buildState == BuildState::Succeeded && m_lastBuildState == BuildState::Running &&
             m_moduleHost.sourceChanged()) {
             m_moduleReloadPending = true;

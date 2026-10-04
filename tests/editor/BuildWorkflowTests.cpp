@@ -1,9 +1,12 @@
+#include "EditorTestFixture.hpp"
 #include "editor/application/EditorDiagnostics.hpp"
+#include "editor/operators/BuildOperators.hpp"
 #include "editor/panels/BuildPanel.hpp"
 #include "editor/panels/DiagnosticsPanel.hpp"
 #include "editor/project/BuildRunner.hpp"
 #include "editor/project/CompilerOutputParser.hpp"
 #include "editor/project/ExternalEditor.hpp"
+#include "editor/project/ProjectBuild.hpp"
 #include "editor/settings/EditorSettings.hpp"
 
 #include <imgui.h>
@@ -11,7 +14,9 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <vector>
@@ -234,38 +239,58 @@ void testBuildRunner(const std::filesystem::path& directory) {
            "output lines should keep their text with highlighting and locations");
 }
 
+#ifdef _WIN32
+constexpr const char* succeedingCommand = "echo all good&& exit /b 0";
+constexpr const char* slowCommand = "ping -n 30 127.0.0.1 >nul";
+#else
+constexpr const char* succeedingCommand = "echo all good; exit 0";
+constexpr const char* slowCommand = "sleep 30";
+#endif
+
+void waitForBuild(ProjectBuild& build, std::chrono::steady_clock::time_point deadline) {
+    while ((build.running() || build.queued()) && std::chrono::steady_clock::now() < deadline) {
+        build.poll();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
+std::vector<EditorDiagnostic> buildEntries(const EditorDiagnostics& diagnostics) {
+    std::vector<EditorDiagnostic> entries;
+    std::copy_if(diagnostics.entries().begin(), diagnostics.entries().end(), std::back_inserter(entries),
+                 [](const EditorDiagnostic& entry) { return entry.source == "Build"; });
+    return entries;
+}
+
 void testBuildPanel(const std::filesystem::path& directory) {
+    EditorTestFixture fixture;
     EditorToolSettings tools;
     tools.buildCommand = failingBuildCommand();
     tools.buildDirectory = directory.string();
     // The opener is cmake itself, so the click path launches something real
     // without depending on an installed IDE.
     tools.ideCommand = std::string("\"") + ZENITH_TEST_CMAKE + "\" -E echo {file}:{line}";
-    BuildPanel panel(tools);
+    EditorDiagnostics& diagnostics = fixture.diagnostics;
+    ProjectBuild build(tools, diagnostics);
+    expect(static_cast<bool>(registerBuildOperators(fixture.operators, {.build = build})),
+           "the build operators should register");
+    BuildPanel panel(tools, build);
     DiagnosticsPanel diagnosticsPanel(tools);
-    EditorDiagnostics diagnostics;
     diagnostics.add(EditorDiagnosticSeverity::Info, "Editor", "unrelated");
 
-    panel.startBuild(diagnostics);
+    expect(!fixture.operators.find("build.cancel")->canRun(fixture.operatorContext()),
+           "build.cancel should not run without a build");
+    expect(static_cast<bool>(fixture.invoke("build.run")), "build.run should start the build headless");
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-    while (panel.runner().running() && std::chrono::steady_clock::now() < deadline) {
-        panel.poll(diagnostics);
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-    const auto buildEntries = [&] {
-        std::vector<EditorDiagnostic> entries;
-        std::copy_if(diagnostics.entries().begin(), diagnostics.entries().end(), std::back_inserter(entries),
-                     [](const EditorDiagnostic& entry) { return entry.source == "Build"; });
-        return entries;
-    };
-    const std::vector<EditorDiagnostic> failed = buildEntries();
+    waitForBuild(build, deadline);
+    const std::vector<EditorDiagnostic> failed = buildEntries(diagnostics);
     expect(failed.size() == 2 && failed[0].severity == EditorDiagnosticSeverity::Error && failed[0].location &&
                failed[0].location->line == 12 && failed[1].severity == EditorDiagnosticSeverity::Warning,
            "a finished build should publish its located diagnostics");
 
     {
         HeadlessFrame frame;
-        panel.drawContents(diagnostics);
+        EditorContext context = fixture.context();
+        panel.drawContents(context);
         diagnosticsPanel.drawDiagnostics(diagnostics);
     }
 
@@ -276,29 +301,84 @@ void testBuildPanel(const std::filesystem::path& directory) {
     expect(diagnostics.entries().size() == before + 1 && diagnostics.entries().back().source == "IDE",
            "an invalid IDE command should be reported as a diagnostic");
 
-#ifdef _WIN32
-    tools.buildCommand = "echo all good&& exit /b 0";
-#else
-    tools.buildCommand = "echo all good; exit 0";
-#endif
-    panel.startBuild(diagnostics);
-    while (panel.runner().running() && std::chrono::steady_clock::now() < deadline) {
-        panel.poll(diagnostics);
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
-    expect(panel.runner().state() == BuildState::Succeeded, "the second build should succeed");
-    expect(buildEntries().empty(), "a clean build should replace the previous build's diagnostics");
+    tools.buildCommand = succeedingCommand;
+    expect(static_cast<bool>(fixture.invoke("build.run")), "the second build should start");
+    waitForBuild(build, deadline);
+    expect(build.runner().state() == BuildState::Succeeded, "the second build should succeed");
+    expect(buildEntries(diagnostics).empty(), "a clean build should replace the previous build's diagnostics");
     expect(diagnostics.entries().front().message == "unrelated", "other diagnostics should be untouched");
 
+    // A build requested while one runs is queued once, and cancelling drops
+    // both.
+    tools.buildCommand = slowCommand;
+    const uint64_t startsBefore = build.startCount();
+    fixture.invoke("build.run");
+    fixture.invoke("build.run");
+    fixture.invoke("build.run");
+    expect(build.running() && build.queued() && build.startCount() == startsBefore + 1,
+           "build.run during a build should queue one more build");
+    expect(static_cast<bool>(fixture.invoke("build.cancel")), "build.cancel should stop the build");
+    waitForBuild(build, std::chrono::steady_clock::now() + std::chrono::seconds(10));
+    expect(!build.running() && !build.queued() && build.runner().state() == BuildState::Cancelled &&
+               build.startCount() == startsBefore + 1,
+           "a cancelled build should not start the queued one");
+    const std::vector<EditorDiagnostic> cancelled = buildEntries(diagnostics);
+    expect(cancelled.size() == 1 && cancelled[0].message == "Build cancelled", "a cancelled build is reported");
+
     tools.buildCommand = "";
-    panel.startBuild(diagnostics);
-    const std::vector<EditorDiagnostic> startFailure = buildEntries();
+    expect(!fixture.invoke("build.run"), "a build that cannot start should fail the operator");
+    const std::vector<EditorDiagnostic> startFailure = buildEntries(diagnostics);
     expect(startFailure.size() == 1 && startFailure[0].severity == EditorDiagnosticSeverity::Error,
            "a build that cannot start should report one error");
     {
         HeadlessFrame frame;
-        panel.drawContents(diagnostics);
+        EditorContext context = fixture.context();
+        panel.drawContents(context);
     }
+}
+
+void testBuildOnSave(const std::filesystem::path& directory) {
+    expect(buildOnSaveWatches("Player.cpp") && buildOnSaveWatches("nested/Player.HPP") &&
+               buildOnSaveWatches("CMakeLists.txt") && buildOnSaveWatches("a.inl"),
+           "build on save should watch sources, headers, and CMake lists");
+    expect(!buildOnSaveWatches("notes.md") && !buildOnSaveWatches("Player.cpp.tmp") &&
+               !buildOnSaveWatches("build.ninja"),
+           "build on save should ignore other files");
+
+    const std::filesystem::path project = directory / "on save project";
+    std::filesystem::create_directories(project / "src");
+    EditorToolSettings tools;
+    EditorDiagnostics diagnostics;
+    ProjectBuild build(tools, diagnostics);
+    build.setProjectBuild(BuildRequest{.command = succeedingCommand, .workingDirectory = project});
+    expect(build.watchedSourceDirectory() == project / "src", "the project's src folder should be watched");
+
+    // Off by default: a saved source starts nothing.
+    build.poll();
+    std::ofstream(project / "src" / "First.cpp") << "// first\n";
+    const auto quiet = std::chrono::steady_clock::now() + std::chrono::milliseconds(800);
+    while (std::chrono::steady_clock::now() < quiet) {
+        build.poll();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    expect(build.startCount() == 0, "a save should not build while build on save is off");
+
+    tools.buildOnSave = true;
+    build.poll();
+    std::ofstream(project / "src" / "Second.cpp") << "// second\n";
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    while (build.startCount() == 0 && std::chrono::steady_clock::now() < deadline) {
+        build.poll();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    expect(build.startCount() == 1, "saving a source file should start a build");
+    waitForBuild(build, deadline);
+    expect(build.runner().state() == BuildState::Succeeded, "the build on save should succeed");
+
+    // Editing the build command stops using the project's build, and with it
+    // the watcher.
+    tools.buildCommand = succeedingCommand;
+    expect(build.watchedSourceDirectory().empty(), "a custom build command should not be watched");
 }
 } // namespace
 
@@ -315,6 +395,7 @@ int main() {
     std::filesystem::create_directories(directory);
     testBuildRunner(directory);
     testBuildPanel(directory);
+    testBuildOnSave(directory);
     std::filesystem::remove_all(directory, error);
 
     if (failures != 0) {

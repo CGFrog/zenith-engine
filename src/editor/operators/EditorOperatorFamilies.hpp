@@ -27,6 +27,7 @@ class GameModuleHost;
 class NavigationWorld;
 class PackageRunner;
 class PreferencesWindow;
+class ProjectBuild;
 class TextClipboard;
 class ViewportRegistry;
 class WorkspaceSet;
@@ -50,6 +51,8 @@ struct EditorOperatorServices {
     GameModuleHost& modules;
     PreferencesWindow& preferences;
     PackageRunner& packageRunner;
+    // The session's build, which the Build panel shows.
+    ProjectBuild& build;
     // The preview navigation mesh the viewports draw.
     NavigationWorld& navigationPreview;
     const EditorToolSettings& tools;

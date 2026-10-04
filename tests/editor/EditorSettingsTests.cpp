@@ -34,6 +34,8 @@ int main() {
     settings.tools().buildCommand = R"(cmake --build build --config Release -- /p:Flag=1 "x=y")";
     settings.tools().buildDirectory = "C:/My Projects/game";
     settings.tools().ideCommand = R"(clion --line {line} "{file}")";
+    expect(!settings.tools().buildOnSave, "build on save should be off by default");
+    settings.tools().buildOnSave = true;
     expect(settings.save().success, "settings should save");
 
     EditorSettings restored(settingsPath);
@@ -42,7 +44,8 @@ int main() {
     // are read from old files for migration but no longer saved.
     expect(restored.panels() == EditorPanelVisibility{} && restored.layoutVersion() == 0,
            "panel visibility and layout version should not be saved");
-    expect(restored.tools() == settings.tools(), "build and IDE commands containing '=' should round trip");
+    expect(restored.tools() == settings.tools(),
+           "build and IDE commands containing '=', and build on save, should round trip");
 
     {
         std::ofstream legacy(directory / "legacy.ini", std::ios::trunc);

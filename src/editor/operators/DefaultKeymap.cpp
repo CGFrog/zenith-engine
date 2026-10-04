@@ -38,6 +38,7 @@ std::vector<KeymapBinding> defaultEditorKeymap() {
         // Blender redoes with Ctrl Shift Z; Ctrl Y is kept as the Windows alias.
         binding("edit.redo", global, ImGuiMod_Ctrl | ImGuiKey_Y),
         binding("wm.search_menu", global, ImGuiKey_F3),
+        binding("build.run", global, ImGuiMod_Ctrl | ImGuiKey_B),
         binding("play.start", global, ImGuiKey_F5),
         binding("play.simulate", global, ImGuiMod_Alt | ImGuiKey_F5),
         binding("play.toggle_pause", global, ImGuiKey_F6),

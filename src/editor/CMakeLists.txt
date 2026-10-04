@@ -53,6 +53,7 @@ add_library(zenith_editor_app STATIC
     menus/PieMenu.cpp
     modules/GameModuleHost.cpp
     operators/ComponentOperators.cpp
+    operators/BuildOperators.cpp
     operators/CollectionOperators.cpp
     operators/DefaultKeymap.cpp
     operators/EditorOperatorFamilies.cpp
@@ -99,6 +100,7 @@ add_library(zenith_editor_app STATIC
     project/AssetCatalog.cpp
     project/AssetRelocation.cpp
     project/BuildRunner.cpp
+    project/ProjectBuild.cpp
     project/CompilerOutputParser.cpp
     project/DerivedAssetInspector.cpp
     project/ExternalEditor.cpp

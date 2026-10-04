@@ -178,6 +178,9 @@ std::optional<std::string> readPreference(std::string_view key, std::string_view
         loaded.appearance.uiScale = *scale;
         return "";
     }
+    if (key == "build.on_save") {
+        return parseBoolean(value, loaded.tools.buildOnSave) ? "" : lineError(key, lineNumber, "true or false");
+    }
     if (key == "ui.pie_menus") {
         return parseBoolean(value, loaded.appearance.pieMenus) ? "" : lineError(key, lineNumber, "true or false");
     }
@@ -308,6 +311,7 @@ EditorSettingsResult EditorSettings::save() const {
            << "build.directory=" << m_tools.buildDirectory << '\n'
            << "ide.command=" << m_tools.ideCommand << '\n'
            << "package.directory=" << m_tools.packageDirectory << '\n'
+           << "build.on_save=" << (m_tools.buildOnSave ? "true" : "false") << '\n'
            << "theme.wallpaper=" << (theme.wallpaper ? "true" : "false") << '\n'
            << "theme.frost=" << theme.frostRadius << '\n'
            << "theme.glass_opacity=" << formatNumber(theme.glassOpacity) << '\n'

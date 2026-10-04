@@ -125,7 +125,7 @@ Approved 2026-10-04. Nothing is implemented yet.
 | B6 | Game UI widgets and settings screen | A2 | done c8ed439 |
 | B7 | Navigation | A3 | done 106f547 |
 | B8 | Audio polish | A3 | done 41ac78d |
-| C1 | Build as an operator | — | todo |
+| C1 | Build as an operator | — | done |
 | C2 | Code generators | B2, C1 | todo |
 | C3 | Inspector integration for Behaviours | B2 | todo |
 | C4 | Debugging tools | A2 | todo |
@@ -589,12 +589,23 @@ Read first: [Game module hosting](editor/modules.md),
 
 ### C1. Build as an operator
 
-- [ ] Add `build.run` (Ctrl+B) and `build.cancel` operators. The Build panel
+- [x] Add `build.run` (Ctrl+B) and `build.cancel` operators. The Build panel
       button (`src/editor/panels/BuildPanel.cpp`) calls them.
-- [ ] Add an optional build-on-save preference. It uses `FileWatcher` on the
+- [x] Add an optional build-on-save preference. It uses `FileWatcher` on the
       module's source directory, debounced like `GameModuleHost`.
-- [ ] When a build finishes during Play, show "Reload pending" in the status
+- [x] When a build finishes during Play, show "Reload pending" in the status
       bar. The reload already waits for Stop.
+
+Result:
+- `src/editor/project/ProjectBuild.*` owns the build the Build panel used to
+  own: the request, the runner, and the `Build` diagnostics. The session polls
+  it every frame, so Ctrl+B builds with no Build area open.
+- `operators/BuildOperators.*` is the `build` family. `build.run` during a
+  build queues one more build; `build.cancel` drops it.
+- `build.on_save` (Preferences > Build) watches the project's `src` folder,
+  only while the project's own build is used.
+- Coverage: `BuildWorkflowTests` (operators, queueing, cancel, build on save),
+  `OperatorTests` (the binding), `EditorSettingsTests`.
 
 ### C2. Code generators
 

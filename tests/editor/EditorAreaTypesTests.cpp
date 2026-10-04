@@ -13,6 +13,7 @@
 #include "editor/panels/InfoPanel.hpp"
 #include "editor/panels/PropertiesPanel.hpp"
 #include "editor/project/ProjectAssets.hpp"
+#include "editor/project/ProjectBuild.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "editor/settings/RenderSettingsController.hpp"
 #include "editor/theme/ThemeChrome.hpp"
@@ -74,7 +75,8 @@ struct SessionFixture : EditorTestFixture {
     RenderSettingsController renderSettings;
     // Without watchers, so rescans happen exactly when a test advances time.
     ProjectAssets projectAssets;
-    BuildPanel build{tools};
+    ProjectBuild projectBuild{tools, diagnostics};
+    BuildPanel build{tools, projectBuild};
     InfoPanel info{runner.history()};
     ViewportStandIn viewport;
     AreaRegistry registry;

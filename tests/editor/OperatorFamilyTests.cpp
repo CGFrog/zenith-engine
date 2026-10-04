@@ -10,6 +10,7 @@
 #include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/panels/PreferencesWindow.hpp"
 #include "editor/project/PackageRunner.hpp"
+#include "editor/project/ProjectBuild.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "engine/navigation/NavigationWorld.hpp"
 
@@ -128,6 +129,7 @@ struct OperatorFamilyFixture : EditorTestFixture {
     PackageRunner packageRunner{makeProcessPackageStepRunner()};
     NavigationWorld navigationPreview;
     EditorToolSettings tools;
+    ProjectBuild build{tools, diagnostics};
     WorkspaceSet workspaces;
     AreaRegistry areaTypes;
     NoSessionCommands session;
@@ -146,6 +148,7 @@ struct OperatorFamilyFixture : EditorTestFixture {
                 .modules = modules,
                 .preferences = preferences,
                 .packageRunner = packageRunner,
+                .build = build,
                 .navigationPreview = navigationPreview,
                 .tools = tools,
                 .projectFile = {},
@@ -183,10 +186,10 @@ void testEveryFamilyRegisters() {
         expect(ids.insert(op->id).second, "operator '" + op->id + "' is registered once");
     }
     // A sample from each kind of family, as menus and keymaps name them.
-    for (const char* id :
-         {"file.save", "play.start", "wm.search_menu", "transform.translate", "view3d.view_axis",
-          "view3d.cursor3d_place", "module.reload", "wm.toggle_panel", "file.build_package", "object.duplicate",
-          "ui.eyedropper_cancel", "object.component_copy", "wm.call_menu", "prefab.apply", "play.set_time_scale"}) {
+    for (const char* id : {"file.save", "play.start", "wm.search_menu", "transform.translate", "view3d.view_axis",
+                           "view3d.cursor3d_place", "module.reload", "wm.toggle_panel", "file.build_package",
+                           "object.duplicate", "ui.eyedropper_cancel", "object.component_copy", "wm.call_menu",
+                           "prefab.apply", "play.set_time_scale", "build.run", "build.cancel"}) {
         expect(fixture.operators.find(id) != nullptr, std::string("operator '") + id + "' is registered");
     }
 }

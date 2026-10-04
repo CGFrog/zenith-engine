@@ -45,7 +45,8 @@ module links the engine but never the editor; the host refuses the editor
 extensions of a module reporting another editor API version, and removes
 everything a module registered before unloading it. `docs/EDITOR_EXTENSIONS.md`
 is the module author's guide. The status bar and Module menu show the loaded
-module, its version, and pending or failed reloads.
+module, its version, and pending or failed reloads; a reload that waits for
+Play or Simulate to stop also gets its own status-bar pill.
 `zenith_editor_module_smoke` runs the editor smoke on a generated project
 naming `zenith_editor_test_module`, hot reloads it once, and checks its
 editor extensions are registered before and after the reload.

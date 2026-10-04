@@ -1,5 +1,6 @@
 #include "HeadlessImGui.hpp"
 
+#include "EditorTestFixture.hpp"
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
@@ -9,6 +10,7 @@
 #include "editor/operators/PackageOperators.hpp"
 #include "editor/panels/BuildPanel.hpp"
 #include "editor/project/PackageRunner.hpp"
+#include "editor/project/ProjectBuild.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/scene/Scene.hpp"
@@ -305,17 +307,21 @@ void testBuildPackageOperator() {
     expect(!fixture.invoke("file.build_package"), "a second package does not start while one runs");
 
     // The Build panel follows the package and draws its output.
-    BuildPanel panel(tools, &scripted.runner);
+    EditorTestFixture panelFixture;
+    ProjectBuild build(tools, panelFixture.diagnostics);
+    BuildPanel panel(tools, build, &scripted.runner);
     {
         HeadlessImGuiContext imgui;
         {
             HeadlessImGuiFrame frame("Build");
-            panel.drawContents(fixture.diagnostics);
+            EditorContext context = panelFixture.context();
+            panel.drawContents(context);
         }
         expect(panel.view() == BuildPanel::View::Package, "the Build panel shows a package when it starts");
         pollToEnd(scripted.runner);
         HeadlessImGuiFrame frame("Build");
-        panel.drawContents(fixture.diagnostics);
+        EditorContext context = panelFixture.context();
+        panel.drawContents(context);
     }
     expect(scripted.runner.state() == PackageState::Succeeded, "the scripted package finishes");
 

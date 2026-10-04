@@ -430,6 +430,7 @@ void testDefaultKeymap() {
     expect(keymap.shortcutLabel("object.hide") == "H" && keymap.shortcutLabel("object.unhide") == "Alt+H" &&
                keymap.shortcutLabel("object.isolate") == "Shift+H",
            "hide, reveal, and hide unselected should use Blender's keys");
+    expect(keymap.shortcutLabel("build.run") == "Ctrl+B", "Ctrl B should build from anywhere");
 
     // A second A within the double-click time deselects.
     const KeymapBinding* first = keymap.resolve(KeymapRegion::Viewport, ImGuiKey_A, 10.0, 0.3);

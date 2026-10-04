@@ -51,6 +51,9 @@ struct EditorToolSettings {
     // relative to the build directory. Kept apart from the tree the Build
     // panel uses so packaging never replaces the editor's own build.
     std::string packageDirectory{"build-release"};
+    // Whether saving a source file in the project's src folder starts a
+    // build (build.on_save); only the project's own build is watched.
+    bool buildOnSave{false};
 
     auto operator<=>(const EditorToolSettings&) const = default;
 };

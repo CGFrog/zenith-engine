@@ -54,6 +54,7 @@ void copySection(EditorPreferenceValues& target, const EditorPreferenceValues& s
         target.tools.buildCommand = source.tools.buildCommand;
         target.tools.buildDirectory = source.tools.buildDirectory;
         target.tools.packageDirectory = source.tools.packageDirectory;
+        target.tools.buildOnSave = source.tools.buildOnSave;
         break;
     }
 }
@@ -376,6 +377,8 @@ bool PreferencesWindow::drawBuild() {
     ImGui::SetItemTooltip("Where the build command runs. Build and Package also configures CMake from here.");
     edited = ImGui::InputTextWithHint("Package directory", "build-release", &m_draft.tools.packageDirectory) || edited;
     ImGui::SetItemTooltip("The release tree Build and Package uses, inside the build directory.");
+    edited = ImGui::Checkbox("Build on save", &m_draft.tools.buildOnSave) || edited;
+    ImGui::SetItemTooltip("Saving a source file in the project's src folder builds the project, as Ctrl B does.");
     edited = drawSectionFooter(PreferenceSection::Build) || edited;
     ImGui::PopID();
     return edited;

@@ -34,6 +34,7 @@
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/project/PackageRunner.hpp"
 #include "editor/project/ProjectAssets.hpp"
+#include "editor/project/ProjectBuild.hpp"
 #include "editor/project/ProjectHub.hpp"
 #include "editor/settings/ComponentInspectorLayout.hpp"
 #include "editor/settings/EditorRenderSettings.hpp"
@@ -321,6 +322,10 @@ class EditorSession final : public ApplicationScene,
     EditorDocument m_document;
     EditorRecovery m_recovery;
     EditorDiagnostics m_diagnostics;
+    // The game module's build: started by build.run (Ctrl B), the Build
+    // panel, or build on save, and polled every frame. Declared before the
+    // operators that refer to it.
+    ProjectBuild m_projectBuild{m_settings.tools(), m_diagnostics};
     CommandHistory m_history;
     EditorPlayMode m_playMode;
     // The target F5 (play.start without a target) runs: the last one used.
@@ -410,7 +415,7 @@ class EditorSession final : public ApplicationScene,
     PackageRunner m_packageRunner{makeProcessPackageStepRunner()};
     // The preview navigation mesh navigation.bake builds and the viewports draw.
     NavigationWorld m_navigationPreview;
-    BuildPanel m_buildPanel{m_settings.tools(), &m_packageRunner};
+    BuildPanel m_buildPanel{m_settings.tools(), m_projectBuild, &m_packageRunner};
     // Shows the engine log, diagnostics, and operator history.
     InfoPanel m_infoPanel{m_operatorRunner.history()};
 

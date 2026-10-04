@@ -4,6 +4,7 @@
 #include "editor/panels/EditorContext.hpp"
 #include "editor/project/ExternalEditor.hpp"
 #include "editor/project/PackageRunner.hpp"
+#include "editor/project/ProjectBuild.hpp"
 #include "editor/project/ProjectFileOperations.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "editor/theme/EditorTheme.hpp"
@@ -17,20 +18,6 @@
 #include <vector>
 
 namespace {
-constexpr const char* buildSource = "Build";
-
-EditorDiagnosticSeverity editorSeverity(CompilerDiagnosticSeverity severity) {
-    switch (severity) {
-    case CompilerDiagnosticSeverity::Error:
-        return EditorDiagnosticSeverity::Error;
-    case CompilerDiagnosticSeverity::Warning:
-        return EditorDiagnosticSeverity::Warning;
-    case CompilerDiagnosticSeverity::Note:
-        return EditorDiagnosticSeverity::Info;
-    }
-    return EditorDiagnosticSeverity::Info;
-}
-
 ImVec4 severityColor(CompilerDiagnosticSeverity severity) {
     switch (severity) {
     case CompilerDiagnosticSeverity::Error:
@@ -43,92 +30,28 @@ ImVec4 severityColor(CompilerDiagnosticSeverity severity) {
     return ImGui::GetStyleColorVec4(ImGuiCol_Text);
 }
 
-std::string describe(const CompilerDiagnostic& diagnostic) {
-    return diagnostic.code.empty() ? diagnostic.message : diagnostic.code + ": " + diagnostic.message;
-}
 } // namespace
 
-BuildPanel::BuildPanel(EditorToolSettings& tools, PackageRunner* package)
+BuildPanel::BuildPanel(EditorToolSettings& tools, const ProjectBuild& build, PackageRunner* package)
     : m_tools(tools)
-    , m_package(package) {}
+    , m_build(build)
+    , m_package(package)
+    , m_seenBuildStarts(build.startCount()) {}
 
 const char* BuildPanel::title() const {
     return "Build";
 }
 
-void BuildPanel::update(EditorContext& context, const InputState&, float) {
-    // Builds keep streaming while the panel is closed.
-    poll(context.diagnostics);
-}
-
 void BuildPanel::draw(EditorContext& context) {
-    drawContents(context.diagnostics);
+    drawContents(context);
 }
 
-void BuildPanel::startBuild(EditorDiagnostics& diagnostics) {
-    const ChildProcessResult started = m_runner.start(buildRequest());
-    std::vector<EditorDiagnostic> replacements;
-    if (!started) {
-        replacements.push_back({.severity = EditorDiagnosticSeverity::Error,
-                                .message = "Could not start the build: " + started.error,
-                                .action = "Check build.command and build.directory in the Build panel."});
+void BuildPanel::followRuns() {
+    if (m_build.startCount() != m_seenBuildStarts) {
+        m_seenBuildStarts = m_build.startCount();
+        m_view = View::Build;
+        m_scrollToEnd = true;
     }
-    diagnostics.replaceSource(buildSource, std::move(replacements));
-    m_view = View::Build;
-    m_scrollToEnd = true;
-}
-
-void BuildPanel::poll(EditorDiagnostics& diagnostics) {
-    if (m_runner.poll().finished) {
-        publishDiagnostics(diagnostics);
-    }
-}
-
-const BuildRunner& BuildPanel::runner() const {
-    return m_runner;
-}
-
-void BuildPanel::setProjectBuild(std::optional<BuildRequest> projectBuild) {
-    m_projectBuild = std::move(projectBuild);
-}
-
-bool BuildPanel::usesProjectBuild() const {
-    const EditorToolSettings defaults;
-    return m_projectBuild && m_tools.buildCommand == defaults.buildCommand &&
-           m_tools.buildDirectory == defaults.buildDirectory;
-}
-
-BuildRequest BuildPanel::buildRequest() const {
-    if (usesProjectBuild()) {
-        return *m_projectBuild;
-    }
-    // Settings text is UTF-8; a narrow path would use the ANSI code page.
-    return {.command = m_tools.buildCommand,
-            .workingDirectory =
-                std::filesystem::path(std::u8string(m_tools.buildDirectory.begin(), m_tools.buildDirectory.end()))};
-}
-
-void BuildPanel::publishDiagnostics(EditorDiagnostics& diagnostics) const {
-    std::vector<EditorDiagnostic> replacements;
-    bool reportedError = false;
-    for (const CompilerDiagnostic& diagnostic : m_runner.diagnostics()) {
-        reportedError = reportedError || diagnostic.severity == CompilerDiagnosticSeverity::Error;
-        replacements.push_back({.severity = editorSeverity(diagnostic.severity),
-                                .message = describe(diagnostic),
-                                .location = diagnostic.location});
-    }
-    if (m_runner.state() == BuildState::Failed && !reportedError) {
-        const int code = m_runner.exitCode().value_or(-1);
-        replacements.push_back({.severity = EditorDiagnosticSeverity::Error,
-                                .message = "Build failed with exit code " + std::to_string(code),
-                                .action = "Review the Build panel output."});
-    } else if (m_runner.state() == BuildState::Cancelled) {
-        replacements.push_back({.severity = EditorDiagnosticSeverity::Info, .message = "Build cancelled"});
-    }
-    diagnostics.replaceSource(buildSource, std::move(replacements));
-}
-
-void BuildPanel::followPackage() {
     const bool packageRunning = m_package != nullptr && m_package->running();
     if (packageRunning && !m_packageWasRunning) {
         m_view = View::Package;
@@ -137,9 +60,9 @@ void BuildPanel::followPackage() {
     m_packageWasRunning = packageRunning;
 }
 
-void BuildPanel::drawContents(EditorDiagnostics& diagnostics) {
-    followPackage();
-    drawToolbar(diagnostics);
+void BuildPanel::drawContents(EditorContext& context) {
+    followRuns();
+    drawToolbar(context);
     const bool showPackage = m_view == View::Package && m_package != nullptr;
     if (showPackage) {
         drawPackageStatus();
@@ -147,17 +70,20 @@ void BuildPanel::drawContents(EditorDiagnostics& diagnostics) {
         drawStatus();
     }
     ImGui::Separator();
-    drawOutput(showPackage ? m_package->output() : m_runner.output(), diagnostics);
+    drawOutput(showPackage ? m_package->output() : m_build.runner().output(), context.diagnostics);
 }
 
-void BuildPanel::drawToolbar(EditorDiagnostics& diagnostics) {
-    const bool running = m_runner.running();
+void BuildPanel::drawToolbar(EditorContext& context) {
+    const bool running = m_build.running();
     if (running) {
         if (widgets::Button("Cancel")) {
-            m_runner.cancel();
+            context.invoke("build.cancel");
         }
     } else if (widgets::Button("Build")) {
-        startBuild(diagnostics);
+        context.invoke("build.run");
+    }
+    if (const std::string shortcut = context.shortcut(running ? "build.cancel" : "build.run"); !shortcut.empty()) {
+        ImGui::SetItemTooltip("%s", shortcut.c_str());
     }
     if (m_package != nullptr && m_package->state() != PackageState::Idle) {
         ImGui::SameLine();
@@ -182,10 +108,10 @@ void BuildPanel::drawToolbar(EditorDiagnostics& diagnostics) {
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputTextWithHint("##command", "Build command, run by the shell", &m_tools.buildCommand);
     ImGui::EndDisabled();
-    if (usesProjectBuild()) {
-        const std::u8string directory = m_projectBuild->workingDirectory.u8string();
+    if (m_build.usesProjectBuild()) {
+        const BuildRequest request = m_build.buildRequest();
         ImGui::TextDisabled("Builds the project: %s (in %s). Change the command or directory to run them instead.",
-                            m_projectBuild->command.c_str(), std::string(directory.begin(), directory.end()).c_str());
+                            request.command.c_str(), utf8PathText(request.workingDirectory).c_str());
     }
     if (widgets::SectionHeader("Settings")) {
         ImGui::BeginDisabled(running);
@@ -193,17 +119,20 @@ void BuildPanel::drawToolbar(EditorDiagnostics& diagnostics) {
         ImGui::EndDisabled();
         ImGui::InputTextWithHint("IDE command", R"(code -g "{file}:{line}:{column}")", &m_tools.ideCommand);
         ImGui::TextDisabled("Placeholders: {file} {line} {column}");
+        ImGui::Checkbox("Build on save", &m_tools.buildOnSave);
+        ImGui::SetItemTooltip("Saving a source file in the project's src folder starts a build.");
     }
 }
 
 void BuildPanel::drawStatus() const {
+    const BuildRunner& runner = m_build.runner();
     size_t errors = 0;
     size_t warnings = 0;
-    for (const BuildOutputLine& line : m_runner.output()) {
+    for (const BuildOutputLine& line : runner.output()) {
         errors += line.severity == CompilerDiagnosticSeverity::Error ? 1 : 0;
         warnings += line.severity == CompilerDiagnosticSeverity::Warning ? 1 : 0;
     }
-    switch (m_runner.state()) {
+    switch (runner.state()) {
     case BuildState::Idle:
         ImGui::TextDisabled("No build has run.");
         return;
@@ -216,7 +145,7 @@ void BuildPanel::drawStatus() const {
         break;
     case BuildState::Failed:
         ImGui::TextColored(severityColor(CompilerDiagnosticSeverity::Error), "%sBuild failed (exit code %d)",
-                           widgets::IconLabelPadding(), m_runner.exitCode().value_or(-1));
+                           widgets::IconLabelPadding(), runner.exitCode().value_or(-1));
         widgets::ItemIcon(EditorIcon::Error, 0.0f);
         break;
     case BuildState::Cancelled:
@@ -225,6 +154,10 @@ void BuildPanel::drawStatus() const {
     }
     ImGui::SameLine();
     ImGui::TextDisabled("%zu error lines, %zu warning lines", errors, warnings);
+    if (m_build.queued()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("Another build is queued.");
+    }
 }
 
 void BuildPanel::drawPackageStatus() const {
