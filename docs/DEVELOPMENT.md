@@ -21,6 +21,13 @@ cmake -S . -B build
 cmake --build build --config Debug --parallel 4
 ```
 
+`cmake --preset default` is the same configuration. In a git worktree,
+`cmake --preset worktree` with `$env:ZENITH_SHARED_DEPS_DIR` set to a configured
+checkout's `build/_deps` reuses that checkout's dependency sources
+(`ZENITH_SHARED_DEPS_DIR` in `cmake/Dependencies.cmake`) without network access,
+and `tools/check.ps1` builds, runs the CPU-only tests, and formats the changed
+C++ files.
+
 The first configuration downloads pinned dependencies into `build/_deps` and
 needs network access. A successful build also:
 
@@ -62,8 +69,8 @@ ctest --test-dir build -C Debug --output-on-failure -j 8
 ```
 
 `CMakePresets.json` carries the same settings: `ctest --preset debug` runs
-everything in parallel and `ctest --preset debug-cpu` skips the Vulkan and
-benchmark tests for a fast CPU-only loop. GPU tests set `PROCESSORS 2`, so
+everything in parallel and `ctest --preset debug-cpu` skips the Vulkan,
+benchmark, and slow tests for a fast CPU-only loop. GPU tests set `PROCESSORS 2`, so
 `-j 8` runs at most four engine instances on the GPU at once.
 
 Run one test by name:

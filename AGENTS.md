@@ -8,7 +8,8 @@
   `src/editor/`, `src/game/`, or `tests/`; those files add local guidance to
   this root policy.
 - Treat `build/` as generated output. Search checked-in code with
-  `rg --files src tests` and update the explicit source lists in
+  `rg --files src tests` (or `git ls-files src tests` and `git grep` when `rg`
+  is not installed) and update the explicit source lists in the nearest
   `CMakeLists.txt` whenever files move.
 - Use include paths rooted at the published `src/` include directory when a
   dependency crosses folders, for example `engine/scene/Scene.hpp`.
@@ -97,31 +98,31 @@ Maintain backward compatibility for reusable public APIs when practical. When an
 
 ## Build and verification
 
-Configure and build from the repository root:
+Configure from the repository root. In a git worktree, reuse an already
+configured checkout's dependency sources instead of fetching them:
 
 ```powershell
-cmake -S . -B build
-cmake --build build --config Debug --parallel 4
+$env:ZENITH_SHARED_DEPS_DIR = 'F:/zenith/build/_deps'
+cmake --preset worktree
 ```
 
-Run the automated tests (in parallel; GPU tests count double against `-j`, so
-at most half the slots launch the engine at once):
+(`cmake --preset default` configures a standalone checkout and downloads the
+dependencies.) Both presets use `build/`.
+
+Then build, run the CPU-only tests, and format the C++ files changed on the
+branch in one step (PowerShell 7):
 
 ```powershell
-ctest --test-dir build -C Debug --output-on-failure -j 8
+tools/check.ps1                  # configures with -Preset (default 'default') if build/ is empty
+tools/check.ps1 -Full            # every test, Vulkan, benchmark, and slow ones included
+tools/check.ps1 -NoFormat
 ```
 
-For a quick CPU-only loop while iterating, skip the Vulkan and benchmark tests:
-
-```powershell
-ctest --test-dir build -C Debug --output-on-failure -j 8 -LE "vulkan|benchmark"
-```
-
-Format C++ sources after editing them:
-
-```powershell
-clang-format -i --style=file (rg --files src tests -g '*.cpp' -g '*.hpp')
-```
+The steps it runs are `cmake --build --preset debug`, `ctest --preset debug-cpu`
+(or `ctest --preset debug` for every test), and `clang-format -i --style=file`
+on changed `src/` and `tests/` sources; clang-format comes from `PATH` or Visual
+Studio's bundled LLVM. GPU tests count double against `-j`, so at most half the
+test slots launch the engine at once.
 
 For graphics or windowing changes, also run an appropriate smoke test when the environment supports Vulkan. Use `ZENITH_SMOKE_FRAMES` for bounded automated runs. If a verification step cannot be run, state that clearly when handing off the change.
 

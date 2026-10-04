@@ -5,12 +5,28 @@
       "name": "default",
       "displayName": "Default (build/)",
       "binaryDir": "${sourceDir}/build"
+    },
+    {
+      "name": "worktree",
+      "displayName": "Worktree (build/, dependency sources from $env{ZENITH_SHARED_DEPS_DIR})",
+      "inherits": "default",
+      "cacheVariables": {
+        "ZENITH_SHARED_DEPS_DIR": "$env{ZENITH_SHARED_DEPS_DIR}",
+        "FETCHCONTENT_FULLY_DISCONNECTED": "ON"
+      }
     }
   ],
   "buildPresets": [
     {
       "name": "debug",
       "configurePreset": "default",
+      "configuration": "Debug",
+      "jobs": 4
+    },
+    {
+      "name": "worktree",
+      "displayName": "Debug (worktree configure preset)",
+      "configurePreset": "worktree",
       "configuration": "Debug",
       "jobs": 4
     }
@@ -34,7 +50,7 @@
       "inherits": "debug",
       "filter": {
         "exclude": {
-          "label": "vulkan|benchmark"
+          "label": "vulkan|benchmark|slow"
         }
       }
     }

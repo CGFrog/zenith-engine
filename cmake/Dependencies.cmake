@@ -4,6 +4,42 @@
 # (<name>_SOURCE_DIR, ZENITH_PIXEL_FONT_DIR) is visible to the whole project.
 include_guard(GLOBAL)
 
+# Every FetchContent dependency, by its FetchContent_Declare name.
+set(ZENITH_FETCHED_DEPENDENCIES
+    VulkanHeaders glslang SPIRV-Headers SPIRV-Tools shaderc volk glm SDL imgui imguizmo inter cgltf stb EnTT
+    nlohmann_json JoltPhysics VulkanMemoryAllocator meshoptimizer bc7enc_rdo)
+
+# A configured build tree's _deps directory whose dependency sources this
+# build reuses read-only (FETCHCONTENT_SOURCE_DIR_<NAME> = <dir>/<name>-src),
+# so worktrees need neither a network fetch nor another copy. Each build keeps
+# its own -build and -subbuild directories, so several trees can configure
+# at once. The worktree preset sets it from $env{ZENITH_SHARED_DEPS_DIR}.
+set(ZENITH_SHARED_DEPS_DIR "" CACHE PATH
+    "A configured Zenith build's _deps directory whose dependency sources to reuse (empty: fetch them)")
+if(ZENITH_SHARED_DEPS_DIR)
+    foreach(dependency IN LISTS ZENITH_FETCHED_DEPENDENCIES)
+        string(TOLOWER "${dependency}" dependency_lower)
+        string(TOUPPER "${dependency}" dependency_upper)
+        set(shared_source_dir "${ZENITH_SHARED_DEPS_DIR}/${dependency_lower}-src")
+        if(FETCHCONTENT_SOURCE_DIR_${dependency_upper})
+            continue()
+        elseif(IS_DIRECTORY "${shared_source_dir}")
+            set(FETCHCONTENT_SOURCE_DIR_${dependency_upper} "${shared_source_dir}")
+        else()
+            message(STATUS "Zenith: ${dependency} is not in ZENITH_SHARED_DEPS_DIR (no ${shared_source_dir})")
+        endif()
+    endforeach()
+endif()
+
+# Copies the pixel fonts from ZENITH_SHARED_DEPS_DIR, when it has them, so the
+# downloads below find matching files and skip the network.
+function(zenith_seed_pixel_fonts_from_shared_dir)
+    set(shared_font_dir "${ZENITH_SHARED_DEPS_DIR}/pixel-fonts")
+    if(ZENITH_SHARED_DEPS_DIR AND IS_DIRECTORY "${shared_font_dir}" AND NOT IS_DIRECTORY "${ZENITH_PIXEL_FONT_DIR}")
+        file(COPY "${shared_font_dir}/" DESTINATION "${ZENITH_PIXEL_FONT_DIR}")
+    endif()
+endfunction()
+
 include(FetchContent)
 
 # Fetch Vulkan's headers but do not link the platform Vulkan loader. Volk will
@@ -123,6 +159,7 @@ FetchContent_Declare(
 # (SIL Open Font License), pinned to one google/fonts revision.
 set(ZENITH_PIXEL_FONT_REVISION 9710da1eacb3be272583c3224dcb70f9da6eadbb)
 set(ZENITH_PIXEL_FONT_DIR "${PROJECT_BINARY_DIR}/_deps/pixel-fonts")
+zenith_seed_pixel_fonts_from_shared_dir()
 function(zenith_download_pixel_font source name hash)
     file(DOWNLOAD
         "https://raw.githubusercontent.com/google/fonts/${ZENITH_PIXEL_FONT_REVISION}/ofl/${source}"

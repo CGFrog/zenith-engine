@@ -99,10 +99,10 @@ endfunction()
 #
 # Adds the CTest <name>, running EXECUTABLE (default <name>_tests) with
 # COMMAND_ARGS from WORKING_DIRECTORY (default: the top of the build tree,
-# wherever the test is declared). With SOURCES the executable is created here as by
-# zenith_add_test_executable; without them EXECUTABLE must name an existing
-# target or a program, and the target options are rejected. The remaining
-# options set the test properties of the same names.
+# wherever the test is declared). With SOURCES the executable is created here
+# as by zenith_add_test_executable; without them EXECUTABLE must name an
+# existing target or a program, and the target options are rejected. The
+# remaining options set the test properties of the same names.
 function(zenith_add_test name)
     cmake_parse_arguments(PARSE_ARGV 1 TEST "NEEDS_ASSETS" "EXECUTABLE;WORKING_DIRECTORY;TIMEOUT;SKIP_RETURN_CODE;PROCESSORS"
         "${_ZENITH_TEST_TARGET_KEYWORDS};COMMAND_ARGS;LABELS;ENVIRONMENT;FIXTURES_SETUP;FIXTURES_REQUIRED")
