@@ -151,12 +151,12 @@ Approved 2026-10-04. Phases A, B, and C are done; Phase D remains.
 | B6 | Game UI widgets and settings screen | A2 | done c8ed439 |
 | B7 | Navigation | A3 | done 106f547 |
 | B8 | Audio polish | A3 | done 41ac78d |
-| C1 | Build as an operator | — | done |
-| C2 | Code generators | B2, C1 | done |
-| C3 | Inspector integration for Behaviours | B2 | done |
-| C4 | Debugging tools | A2 | done |
-| C5 | Project settings editors | A3, A4 | done |
-| C6 | FPS template and tutorial | B1–B6, C2, C3 | done |
+| C1 | Build as an operator | — | done 84c11ae |
+| C2 | Code generators | B2, C1 | done a1aa3f7 |
+| C3 | Inspector integration for Behaviours | B2 | done 100cc6d |
+| C4 | Debugging tools | A2 | done e68d709 |
+| C5 | Project settings editors | A3, A4 | done 8975b5d |
+| C6 | FPS template and tutorial | B1–B6, C2, C3 | done 6a257db |
 | D1 | Split `PrefabSystem.cpp` | — | todo |
 | D2 | Split `EditorSession.cpp` | — | todo |
 | D3 | Split `FileWatcher.cpp` per backend | — | todo |
