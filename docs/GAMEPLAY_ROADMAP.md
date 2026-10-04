@@ -557,8 +557,23 @@ Follow-ups:
 
 ### B8. Audio polish
 
-- [ ] One-shot sounds that follow an entity.
-- [ ] Optional occlusion using an A3 filtered raycast.
+- [x] One-shot sounds that follow an entity.
+- [x] Optional occlusion using an A3 filtered raycast.
+
+Result:
+- `AudioSpatialOptions::follow` (with `position` as an offset) and
+  `occlusion`, `AudioEmitterComponent::occlusion`, and
+  `AudioSystem::setOcclusionQuery`. `syncScene` is split into following,
+  emitters, and occlusion; occlusion queries run outside the mixer's lock.
+- `Engine` answers occlusion with a raycast against the Static layer.
+- Coverage: `testFollowingVoices` and `testOcclusion` in
+  `AudioSystemTests.cpp`.
+
+Follow-ups:
+- The audio components still have no serializable component types, so
+  scenes cannot author emitters, listeners, or their occlusion yet.
+- Occlusion is all or nothing per ray and ignores project layers other than
+  Static; partial occlusion (several rays, materials) is later work.
 
 ## Phase C: the script workflow in the editor
 

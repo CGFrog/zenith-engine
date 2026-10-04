@@ -115,6 +115,17 @@ bool Engine::init(const PhysicsWorldConfig& physicsConfig, const AudioConfig& au
         m_log.error("Audio initialization failed: " + result.error);
         return false;
     }
+    // A source is occluded while a static body (the Static layer) lies on the
+    // line to the listener.
+    m_audio.setOcclusionQuery([this](const glm::vec3& listener, const glm::vec3& source) {
+        const glm::vec3 offset = source - listener;
+        const float distance = glm::length(offset);
+        PhysicsRayHit hit;
+        return distance > 0.01f && m_physics.raycast(listener, offset / distance, distance, hit,
+                                                     {.layerMask = physicsLayerMask({PhysicsLayer::Static})})
+                   ? 1.0f
+                   : 0.0f;
+    });
     return true;
 }
 

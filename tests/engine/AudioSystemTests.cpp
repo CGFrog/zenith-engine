@@ -56,9 +56,108 @@ void writeWav(const std::filesystem::path& path, uint16_t channels, const std::v
 bool near(float lhs, float rhs, float tolerance = 0.001f) {
     return std::abs(lhs - rhs) <= tolerance;
 }
+
+// The sum of squares of each channel over a mix of frameCount frames.
+glm::vec2 energy(AudioSystem& audio, size_t frameCount) {
+    std::vector<float> mixed(frameCount * 2);
+    audio.mix(mixed.data(), frameCount);
+    glm::vec2 total(0.0f);
+    for (size_t frame = 0; frame < frameCount; ++frame) {
+        total += glm::vec2(mixed[frame * 2] * mixed[frame * 2], mixed[frame * 2 + 1] * mixed[frame * 2 + 1]);
+    }
+    return total;
+}
+
+// A listener at the origin facing -Z (right is +X).
+Entity addListener(Scene& scene) {
+    const Entity listener = scene.createEntity("Listener");
+    scene.registry().emplace<AudioListenerComponent>(listener);
+    return listener;
+}
+
+void moveTo(Scene& scene, Entity entity, const glm::vec3& position) {
+    scene.registry().get<TransformComponent>(entity).local = glm::translate(glm::mat4(1.0f), position);
+    scene.markTransformDirty(entity);
+    scene.updateWorldTransforms();
+}
+
+void testFollowingVoices() {
+    AudioSystem audio;
+    audio.init(AudioConfig{.outputEnabled = false});
+    const std::vector<float> tone(48'000, 0.5f);
+    const AudioClipHandle clip = audio.createClip(tone, 1, 48'000).handle;
+    Scene scene;
+    addListener(scene);
+    const Entity car = scene.createEntity("Car");
+    moveTo(scene, car, {5.0f, 0.0f, 0.0f});
+
+    const auto voice = audio.playAt(clip, {.follow = scene.id(car)});
+    expect(voice.success, "a voice that follows an entity plays");
+    audio.syncScene(scene);
+    const glm::vec2 right = energy(audio, 64);
+    expect(right.y > right.x * 4.0f, "a following voice starts at its entity");
+
+    moveTo(scene, car, {-5.0f, 0.0f, 0.0f});
+    audio.syncScene(scene);
+    const glm::vec2 left = energy(audio, 64);
+    expect(left.x > left.y * 4.0f, "a following voice moves with its entity");
+
+    scene.destroyEntity(car);
+    audio.syncScene(scene);
+    expect(!audio.isPlaying(voice.handle), "a following voice stops when its entity is destroyed");
+
+    const Entity drone = scene.createEntity("Drone");
+    moveTo(scene, drone, {0.0f, 0.0f, 0.0f});
+    const auto offset = audio.playAt(clip, {.position = {3.0f, 0.0f, 0.0f}, .follow = scene.id(drone)});
+    audio.syncScene(scene);
+    const glm::vec2 offsetEnergy = energy(audio, 64);
+    expect(offset.success && offsetEnergy.y > offsetEnergy.x * 4.0f,
+           "a following voice keeps its position as an offset from the entity");
+}
+
+void testOcclusion() {
+    // Alternating samples are all high frequency, which a low-pass removes.
+    std::vector<float> buzz(48'000);
+    for (size_t index = 0; index < buzz.size(); ++index) {
+        buzz[index] = index % 2 == 0 ? 0.5f : -0.5f;
+    }
+    const auto play = [&](bool occluded, float blocked) {
+        AudioSystem audio;
+        audio.init(AudioConfig{.outputEnabled = false});
+        const AudioClipHandle clip = audio.createClip(buzz, 1, 48'000).handle;
+        audio.setOcclusionQuery([blocked](const glm::vec3&, const glm::vec3&) { return blocked; });
+        Scene scene;
+        addListener(scene);
+        audio.playAt(clip, {.position = {0.0f, 0.0f, -2.0f}, .occlusion = occluded});
+        audio.syncScene(scene);
+        energy(audio, 9'600);
+        return energy(audio, 4'800).x;
+    };
+    const float clear = play(false, 1.0f);
+    const float unblocked = play(true, 0.0f);
+    const float blocked = play(true, 1.0f);
+    expect(clear > 0.0f && std::abs(unblocked - clear) < clear * 0.01f,
+           "an occludable voice with a clear path sounds unchanged");
+    expect(blocked < clear * 0.05f, "a blocked voice is quieter and muffled");
+
+    // The occlusion glides in rather than switching at once.
+    AudioSystem audio;
+    audio.init(AudioConfig{.outputEnabled = false});
+    const AudioClipHandle clip = audio.createClip(buzz, 1, 48'000).handle;
+    audio.setOcclusionQuery([](const glm::vec3&, const glm::vec3&) { return 1.0f; });
+    Scene scene;
+    addListener(scene);
+    audio.playAt(clip, {.position = {0.0f, 0.0f, -2.0f}, .occlusion = true});
+    audio.syncScene(scene);
+    const float first = energy(audio, 480).x;
+    const float later = energy(audio, 480).x;
+    expect(first > later * 1.5f, "occlusion glides in over tens of milliseconds");
+}
 } // namespace
 
 int main() {
+    testFollowingVoices();
+    testOcclusion();
     // Unique per process, so concurrent direct runs of this executable (a
     // stress loop) do not delete each other's files.
     const auto directory =

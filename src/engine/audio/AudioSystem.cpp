@@ -187,6 +187,17 @@ struct AudioSystem::Impl {
         glm::vec3 position{0.0f};
         float minimumDistance{1.0f};
         float maximumDistance{100.0f};
+        // The followed entity and the offset from it (AudioSpatialOptions).
+        SceneEntityId follow;
+        glm::vec3 followOffset{0.0f};
+        bool occlusion{false};
+        // How blocked the voice is (0..1): the target syncScene sets, and the
+        // value the mixer glides toward it per frame, so changes do not click.
+        float occlusionTarget{0.0f};
+        float occlusionCurrent{0.0f};
+        // One-pole low-pass state per channel.
+        float lowPassLeft{0.0f};
+        float lowPassRight{0.0f};
     };
 
     struct BusState {
@@ -226,6 +237,8 @@ struct AudioSystem::Impl {
     // Multiplies every voice's step; 0 pauses all playback. Guarded by mutex.
     float playbackRate{1.0f};
     ListenerState listener;
+    // Called on syncScene's thread, outside the mutex.
+    AudioOcclusionQuery occlusionQuery;
     mutable std::mutex mutex;
     std::thread decoderThread;
     std::atomic<bool> decoderStop{false};
@@ -475,6 +488,9 @@ AudioLoadResult<AudioVoiceHandle> AudioSystem::playAt(AudioClipHandle clip, cons
     voice.position = options.position;
     voice.minimumDistance = options.minimumDistance;
     voice.maximumDistance = options.maximumDistance;
+    voice.follow = options.follow;
+    voice.followOffset = options.position;
+    voice.occlusion = options.occlusion;
     return result;
 }
 
@@ -687,6 +703,68 @@ void AudioSystem::syncScene(const Scene& scene) {
         m_impl->listener.valid.store(false, std::memory_order_release);
     }
 
+    followEntities(scene);
+    syncEmitters(scene);
+    updateOcclusion();
+}
+
+void AudioSystem::setOcclusionQuery(AudioOcclusionQuery query) {
+    m_impl->occlusionQuery = std::move(query);
+}
+
+void AudioSystem::followEntities(const Scene& scene) {
+    std::scoped_lock lock(m_impl->mutex);
+    for (auto& voice : m_impl->voices) {
+        if (!voice.active || !voice.follow) {
+            continue;
+        }
+        const Entity entity = scene.findEntity(voice.follow);
+        if (entity == entt::null || !scene.registry().all_of<TransformComponent>(entity)) {
+            voice.active = false;
+            ++voice.generation;
+            continue;
+        }
+        voice.position = glm::vec3(scene.registry().get<TransformComponent>(entity).world[3]) + voice.followOffset;
+    }
+}
+
+void AudioSystem::updateOcclusion() {
+    if (!m_impl->occlusionQuery || !m_impl->listener.valid.load(std::memory_order_acquire)) {
+        return;
+    }
+    const glm::vec3 listener{m_impl->listener.positionX.load(std::memory_order_relaxed),
+                             m_impl->listener.positionY.load(std::memory_order_relaxed),
+                             m_impl->listener.positionZ.load(std::memory_order_relaxed)};
+
+    // The queries run outside the mutex, so the mixer never waits on them.
+    struct Pending {
+        AudioVoiceHandle voice;
+        glm::vec3 position;
+        float occlusion{0.0f};
+    };
+
+    std::vector<Pending> pending;
+    {
+        std::scoped_lock lock(m_impl->mutex);
+        for (uint32_t index = 0; index < m_impl->voices.size(); ++index) {
+            const auto& voice = m_impl->voices[index];
+            if (voice.active && voice.spatial && voice.occlusion) {
+                pending.push_back({{index, voice.generation}, voice.position});
+            }
+        }
+    }
+    for (Pending& query : pending) {
+        query.occlusion = std::clamp(m_impl->occlusionQuery(listener, query.position), 0.0f, 1.0f);
+    }
+    std::scoped_lock lock(m_impl->mutex);
+    for (const Pending& query : pending) {
+        if (m_impl->valid(query.voice)) {
+            m_impl->voices[query.voice.index].occlusionTarget = query.occlusion;
+        }
+    }
+}
+
+void AudioSystem::syncEmitters(const Scene& scene) {
     auto emitters = scene.registry().view<const AudioEmitterComponent, const TransformComponent>();
     if (emitters.begin() == emitters.end() && m_impl->emitters.empty()) {
         return;
@@ -742,6 +820,7 @@ void AudioSystem::syncScene(const Scene& scene) {
         voice.minimumDistance = component.minimumDistance;
         voice.maximumDistance = component.maximumDistance;
         voice.loop = component.loop;
+        voice.occlusion = component.occlusion;
     }
     for (auto it = m_impl->emitters.begin(); it != m_impl->emitters.end();) {
         if (it->second.lastSeenSync != sync) {
@@ -1000,6 +1079,12 @@ void mixImpl(AudioSystem::Impl& impl, float* output, size_t frameCount) {
         const size_t sourceFrames = clip.samples.size() / clip.channels;
         const double step =
             static_cast<double>(clip.sampleRate) / impl.config.sampleRate * voice.pitch * impl.playbackRate;
+        // Occlusion glides with a 50 ms time constant; fully occluded, a voice
+        // keeps occludedGain of its level and a low-pass near 1 kHz.
+        constexpr float occludedGain = 0.35f;
+        constexpr float occludedLowPass = 0.12f;
+        const bool occludable = voice.spatial && (voice.occlusion || voice.occlusionCurrent > 0.0f);
+        const float glide = 1.0f - std::exp(-1.0f / (0.05f * static_cast<float>(impl.config.sampleRate)));
         for (size_t frame = 0; frame < frameCount; ++frame) {
             size_t sourceFrame = static_cast<size_t>(voice.cursor);
             if (sourceFrame >= sourceFrames) {
@@ -1011,8 +1096,18 @@ void mixImpl(AudioSystem::Impl& impl, float* output, size_t frameCount) {
                 voice.cursor = std::fmod(voice.cursor, static_cast<double>(sourceFrames));
                 sourceFrame = static_cast<size_t>(voice.cursor);
             }
-            const float left = clip.samples[sourceFrame * clip.channels];
-            const float right = clip.channels == 2 ? clip.samples[sourceFrame * 2 + 1] : left;
+            float left = clip.samples[sourceFrame * clip.channels];
+            float right = clip.channels == 2 ? clip.samples[sourceFrame * 2 + 1] : left;
+            if (occludable) {
+                const float target = voice.occlusion ? voice.occlusionTarget : 0.0f;
+                voice.occlusionCurrent += (target - voice.occlusionCurrent) * glide;
+                const float smoothing = 1.0f + (occludedLowPass - 1.0f) * voice.occlusionCurrent;
+                voice.lowPassLeft += (left - voice.lowPassLeft) * smoothing;
+                voice.lowPassRight += (right - voice.lowPassRight) * smoothing;
+                const float gain = 1.0f + (occludedGain - 1.0f) * voice.occlusionCurrent;
+                left = voice.lowPassLeft * gain;
+                right = voice.lowPassRight * gain;
+            }
             output[frame * 2] += left * leftGain;
             output[frame * 2 + 1] += right * rightGain;
             voice.cursor += step;

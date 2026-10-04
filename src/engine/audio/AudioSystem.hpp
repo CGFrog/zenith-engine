@@ -1,11 +1,13 @@
 #pragma once
 
 #include "engine/diagnostics/Logger.hpp"
+#include "engine/scene/SceneEntityId.hpp"
 
 #include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <glm/glm.hpp>
 #include <limits>
 #include <memory>
@@ -95,9 +97,17 @@ struct AudioPlaybackOptions {
 };
 
 struct AudioSpatialOptions : AudioPlaybackOptions {
+    // World position, or, with follow, the offset from the followed entity.
     glm::vec3 position{0.0f};
     float minimumDistance{1.0f};
     float maximumDistance{100.0f};
+    // An entity the voice moves with: every syncScene places it at the
+    // entity's world position plus position, and stops it once the entity is
+    // gone. Zero plays at position.
+    SceneEntityId follow;
+    // Muffles and lowers the voice while geometry blocks it from the
+    // listener, as the occlusion query reports (setOcclusionQuery).
+    bool occlusion{false};
 };
 
 struct AudioListenerComponent {
@@ -113,7 +123,14 @@ struct AudioEmitterComponent {
     float maximumDistance{100.0f};
     bool loop{false};
     bool play{true};
+    // See AudioSpatialOptions::occlusion.
+    bool occlusion{false};
 };
+
+// How blocked the path from the listener to a source is, from 0 (clear) to 1
+// (fully blocked). The engine answers it with a physics raycast; audio itself
+// knows nothing of physics.
+using AudioOcclusionQuery = std::function<float(const glm::vec3& listener, const glm::vec3& source)>;
 
 class AudioSystem {
   public:
@@ -151,8 +168,13 @@ class AudioSystem {
     void setPlaybackRate(float rate);
     float playbackRate() const;
     // Copies declarative audio state after another frame subsystem has updated
-    // Scene world transforms. This function never recomputes the hierarchy.
+    // Scene world transforms: the listener, the emitters, the positions of
+    // voices that follow entities, and the occlusion of voices that want it.
+    // This function never recomputes the hierarchy.
     void syncScene(const Scene& scene);
+    // Answers occlusion for voices and emitters that ask for it; empty turns
+    // occlusion off. Called from syncScene on the calling thread.
+    void setOcclusionQuery(AudioOcclusionQuery query);
     // Advances playback state in null-output mode; device-backed playback is
     // advanced exclusively by the audio callback.
     void update(float deltaSeconds);
@@ -166,6 +188,12 @@ class AudioSystem {
     struct Impl;
 
   private:
+    // The parts of syncScene: voices that follow entities, the scene's
+    // emitters, then occlusion.
+    void followEntities(const Scene& scene);
+    void syncEmitters(const Scene& scene);
+    void updateOcclusion();
+
     std::unique_ptr<Impl> m_impl;
     LogChannel m_log;
 };
