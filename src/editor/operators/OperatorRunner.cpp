@@ -16,6 +16,14 @@ OperatorResult OperatorRunner::reportFailure(OperatorContext& context, OperatorR
     return result;
 }
 
+OperatorProperties OperatorRunner::invocationDefaults(const Operator& op, const OperatorContext& context) {
+    OperatorProperties values = op.properties;
+    if (op.invokeDefaults && op.canRun(context)) {
+        op.invokeDefaults(context, values);
+    }
+    return values;
+}
+
 OperatorHistoryEntry OperatorRunner::pendingInvocation(std::string_view id, const Operator* op,
                                                        std::string propertiesJson) {
     return {.id = std::string(id),
@@ -32,6 +40,10 @@ void OperatorRunner::recordInvocation(OperatorHistoryEntry entry, const Operator
 OperatorResult OperatorRunner::invoke(std::string_view id, OperatorContext& context,
                                       const OperatorProperties* properties) {
     const Operator* op = m_registry.find(id);
+    if (properties == nullptr && op != nullptr && op->invokeDefaults) {
+        const OperatorProperties prepared = invocationDefaults(*op, context);
+        return invoke(id, context, &prepared);
+    }
     // Copied before running: an operator may unregister operators (a module
     // reload) or change what id and properties refer to.
     OperatorHistoryEntry entry = pendingInvocation(id, op,
@@ -103,7 +115,7 @@ OperatorResult OperatorRunner::invokeWithJson(std::string_view id, OperatorConte
     if (op == nullptr || propertiesJson.empty()) {
         return invoke(id, context);
     }
-    OperatorProperties values = op->properties;
+    OperatorProperties values = invocationDefaults(*op, context);
     if (const std::string error = values.applyJson(propertiesJson); !error.empty()) {
         OperatorResult result = reportFailure(context, OperatorResult::failed(op->label + ": " + error));
         recordInvocation(pendingInvocation(id, op, std::string(propertiesJson)), result);

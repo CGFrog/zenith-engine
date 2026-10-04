@@ -10,7 +10,7 @@ depend on this subtree.
 | `main.cpp` | Editor executable composition root. |
 | `application/` | Editor application lifecycle and the UI/session coordinator. |
 | `areas/` | Blender-style areas and workspaces: the area type registry, per-workspace areas and their ImGui dock layouts, the default workspaces, legacy layout migration, and `workspaces.json`. |
-| `document/` | Scene document state, persistence workflow, undo/redo history, and prefab authoring (`PrefabAuthoring`). |
+| `document/` | Scene document state, persistence workflow, undo/redo history, prefab authoring (`PrefabAuthoring`), and per-scene editor data such as the 3D cursor (`SceneEditorData`, a sidecar beside the scene file). |
 | `modules/` | Game module hosting: loading the project's module, running its systems, hot reload, and the header-only editor extension API modules implement. |
 | `menus/` | Menus as data: the `MenuRegistry` of named menus, entries, and dynamic sections (owner tokens for module cleanup), the searchable popup and menu-item drawing, `wm.call_menu`, and the default Add and Add Component menus. |
 | `interaction/` | Editor camera, picking, selection, gizmos, component editing widgets (including entity reference fields), and the entity eyedropper. |
@@ -19,7 +19,7 @@ depend on this subtree.
 | `project/` | Project tooling: the shared asset service (`ProjectAssets`: catalog, watchers, change dispatch, favourites), asset catalog, thumbnails, bakers, the build runner, Build and Package (`PackageRunner`: the planned release commands and their runner), compiler-output parsing, IDE launching, the Project Hub (`ProjectHub`), the recent projects list, and the project template generator (`ProjectTemplate`, from `templates/`). |
 | `settings/` | Persistent editor preferences (`settings.ini`: tools, theme tuning, UI scale, autosave), including the component inspector's section order and collapse state (legacy panel flags are only read, for migration) and the systems chosen for Simulate. |
 | `theme/` | The "Pixel Aero Night" look: palette, its tuning (`ThemeParameters`, passed explicitly; one look only), art-pixel metrics, pixel fonts, the procedural wallpaper and frosted glass, window chrome, themed widget wrappers, and pixel-art icons. |
-| `viewport/` | 3D viewport tools: scene overlays (`SceneGizmoDraw`: light, camera, collider, volume, and selection gizmos and name labels recorded into a view's debug list, free of ImGui so they also run in engine-hosted tests) and selection (GPU-first picking with CPU fallback through `ViewportPicker`/`ViewportPickProvider`, the modal box and lasso tools, view framing, and the select and local view operators). |
+| `viewport/` | 3D viewport tools: scene overlays (`SceneGizmoDraw`: light, camera, collider, volume, and selection gizmos and name labels recorded into a view's debug list, free of ImGui so they also run in engine-hosted tests) and selection (GPU-first picking with CPU fallback through `ViewportPicker`/`ViewportPickProvider`, the modal box and lasso tools, view framing, and the select and local view operators), snap target queries (`SnapQueries`), and the 3D cursor (`Cursor3D`: placement, drawing, and its operators). |
 
 ## Local rules
 
@@ -44,6 +44,9 @@ depend on this subtree.
   Operators that only edit the document belong in `operators/` and must run
   headless; ones needing the window are registered by `EditorSession`. An
   `Undo` operator must not commit history itself; the runner records it.
+  An operator that creates objects takes a `location` property filled from
+  the 3D cursor by `Operator::invokeDefaults`, so new objects spawn at the
+  cursor and Adjust Last Operation can still change where.
 - A menu is registered data in the session's `MenuRegistry`
   (`menus/DefaultMenus.cpp` for the editor's own), never hard-coded ImGui
   items: entries name operators, and content that changes (component types)

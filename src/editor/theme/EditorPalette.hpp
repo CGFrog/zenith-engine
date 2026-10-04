@@ -136,6 +136,13 @@ inline constexpr ThemeColor overlayIrradianceVolume = ThemeColor::hex(0x4F9BFF);
 inline constexpr ThemeColor overlaySelected = ThemeColor::hex(0xFF9A3C);
 inline constexpr ThemeColor overlayActive = ThemeColor::hex(0xFFE0A8);
 inline constexpr ThemeColor overlayLabel = ThemeColor::hex(0xE6FFF7);
+// The 3D cursor (editor/viewport/Cursor3D): a ring of alternating dashes with
+// dark crosshair ticks, as in Blender, so it reads over light and dark scenes.
+inline constexpr ThemeColor cursorRing = ThemeColor::hex(0xFF5A5A);
+inline constexpr ThemeColor cursorRingAlternate = ThemeColor::hex(0xF4FFFB);
+inline constexpr ThemeColor cursorCrosshair = ThemeColor::hex(0x020C14);
+// The point a modal move snapped to (surface or vertex snapping).
+inline constexpr ThemeColor snapIndicator = ThemeColor::hex(0xFFE27A);
 
 // Prefab instances: the bar beside an overridden value and its bold ink.
 inline constexpr ThemeColor prefabOverride = ThemeColor::hex(0x4FA8FF);

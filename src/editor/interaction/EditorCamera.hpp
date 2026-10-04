@@ -20,6 +20,23 @@ glm::mat4 lensViewMatrix(const RenderView& lens);
 glm::mat4 lensProjectionMatrix(const RenderView& lens, float aspectRatio);
 // The OpenGL-style projection ImGuizmo expects.
 glm::mat4 lensGizmoProjectionMatrix(const RenderView& lens, float aspectRatio);
+
+// A world-space ray from a lens; direction is normalized.
+struct LensRay {
+    glm::vec3 origin{0.0f};
+    glm::vec3 direction{0.0f, 0.0f, -1.0f};
+};
+
+// The ray from the lens position through normalizedViewportPosition (0..1,
+// top-left origin), as picking casts it.
+LensRay lensRay(const RenderView& lens, glm::vec2 normalizedViewportPosition, float aspectRatio);
+// Calls visit(meshEntity, world, picked) for every mesh draw the picking
+// functions below consider: entities the editor may select
+// (SceneVisibility::selectable) inside isolatedObjects (when not null), with
+// a collection instance's member draws reporting their instancing entity as
+// picked. World transforms must be current.
+void forEachPickableMesh(const Scene& scene, const std::vector<RenderObjectId>* isolatedObjects,
+                         const std::function<void(Entity meshEntity, const glm::mat4& world, Entity picked)>& visit);
 // The closest mesh hit by the ray through normalizedViewportPosition (0..1,
 // top-left origin), or entt::null. Only entities the editor may select
 // (SceneVisibility::selectable) are hit; a collection instance's draw picks

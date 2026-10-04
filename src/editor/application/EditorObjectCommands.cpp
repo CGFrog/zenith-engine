@@ -10,6 +10,7 @@
 #include "editor/operators/ObjectOperators.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/ThemeChrome.hpp"
+#include "editor/viewport/SnapQueries.hpp"
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
@@ -199,8 +200,11 @@ bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOp
         startLocal.push_back(transform.local);
     }
     glm::mat3 localAxes(1.0f);
+    ModalTransformPivot pivot{.mode = viewport->tools().pivot, .cursor = m_document.editorData().cursorLocation};
     if (const Entity active = context.scene.findEntity(*m_selection.active()); active != entt::null) {
-        localAxes = normalizedAxes(context.scene.registry().get<TransformComponent>(active).world);
+        const glm::mat4& activeWorld = context.scene.registry().get<TransformComponent>(active).world;
+        localAxes = normalizedAxes(activeWorld);
+        pivot.activeOrigin = glm::vec3(activeWorld[3]);
     }
     // Projected through whatever the viewport shows, its editor camera or a
     // scene camera it looks through.
@@ -213,7 +217,7 @@ bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOp
                                   .viewportSize = viewportSize};
     const ImVec2 mouse = ImGui::GetMousePos();
     m_activeTransform.emplace(ActiveTransform{
-        .transform = ModalTransform(operation, std::move(startWorld), localAxes, {mouse.x, mouse.y}, view),
+        .transform = ModalTransform(operation, std::move(startWorld), localAxes, {mouse.x, mouse.y}, view, pivot),
         .viewport = viewport->id(),
         .entities = std::move(roots),
         .startLocal = std::move(startLocal),
@@ -283,11 +287,15 @@ void EditorSession::updateModalTransform(ApplicationContext& context, ViewportId
 
     transform.moveMouse({io.MousePos.x, io.MousePos.y}, io.KeyShift);
     // Ctrl inverts the snapping toggle while it is held, as in Blender.
-    const TransformToolSettings& tools = viewport->tools();
-    const TransformSnapping snapping{.enabled = tools.snapping != io.KeyCtrl,
-                                     .translation = tools.translationSnap,
-                                     .rotationDegrees = tools.rotationSnapDegrees,
-                                     .scale = tools.scaleSnap};
+    TransformSnapping snapping = transformSnapping(viewport->tools(), io.KeyCtrl);
+    if (snapping.enabled && snapping.target != SnapTarget::Increment &&
+        transform.operation() == TransformOperation::Translate) {
+        // The moved objects are where the mouse is, so they never snap to themselves.
+        const std::vector<Entity> excluded = snapExclusions(context.scene, m_activeTransform->entities);
+        snapping.targetPoint =
+            snapTargetPoint(snapping.target, context.scene, context.assets, viewport->snapView(context.scene),
+                            glm::vec2(io.MousePos.x, io.MousePos.y) - viewport->position(), excluded);
+    }
     const ModalTransformResult result = transform.evaluate(snapping);
     const std::vector<SceneEntityId>& entities = m_activeTransform->entities;
     for (size_t index = 0; index < entities.size() && index < result.world.size(); ++index) {
@@ -344,6 +352,12 @@ void EditorSession::drawModalTransformOverlay(const ViewportPanel& viewport, con
         const glm::vec2 direction = glm::normalize(along) * extent;
         drawList->AddLine({pivot.x - direction.x, pivot.y - direction.y},
                           {pivot.x + direction.x, pivot.y + direction.y}, axisColor(guide.axis), 1.5f);
+    }
+
+    // A ring marks the surface or vertex the move snapped to.
+    if (result.snappedTo) {
+        const glm::vec2 snapped = transform.toScreen(*result.snappedTo);
+        drawList->AddCircle({snapped.x, snapped.y}, 6.0f, toImU32(palette::snapIndicator), 12, 2.0f);
     }
 
     // Rotate and scale show a dashed line from the pivot to the cursor.

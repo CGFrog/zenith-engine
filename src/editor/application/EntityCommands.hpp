@@ -3,6 +3,8 @@
 #include "editor/application/SceneEditing.hpp"
 #include "editor/interaction/Selection.hpp"
 
+#include <glm/vec3.hpp>
+
 #include <filesystem>
 #include <span>
 #include <string>
@@ -24,6 +26,8 @@ void deleteSelection(const SceneEditing& editing, Selection& selection);
 bool duplicateSelectionUncommitted(const SceneEditing& editing, Selection& selection, std::string& before);
 void duplicateSelection(const SceneEditing& editing, Selection& selection);
 // Loads the model and instantiates it under a new entity named after the
-// file, parented when parent is valid, then selects it.
-void placeModel(const SceneEditing& editing, Selection& selection, const std::filesystem::path& path, Entity parent);
+// file, parented when parent is valid, with its origin at the world-space
+// location (meters; the editor passes the 3D cursor), then selects it.
+void placeModel(const SceneEditing& editing, Selection& selection, const std::filesystem::path& path, Entity parent,
+                const glm::vec3& location);
 } // namespace EntityCommands

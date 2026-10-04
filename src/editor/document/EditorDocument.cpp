@@ -11,6 +11,9 @@ void EditorDocument::createNew(Scene& scene) {
     scene.clear();
     m_path.reset();
     m_dirty = false;
+    m_editorData = {};
+    m_savedEditorData = {};
+    m_editorDataWarning.clear();
 }
 
 SceneDocumentResult EditorDocument::open(const std::filesystem::path& path, Scene& scene, AssetManager& assets) {
@@ -19,6 +22,10 @@ SceneDocumentResult EditorDocument::open(const std::filesystem::path& path, Scen
     }
     m_path = path;
     m_dirty = false;
+    // A sidecar that cannot be read must not keep the scene from opening.
+    const SceneEditorDataResult editorData = readSceneEditorData(path, m_editorData);
+    m_editorDataWarning = editorData ? std::string() : editorData.error + "; the 3D cursor was reset";
+    m_savedEditorData = m_editorData;
     return {.success = true};
 }
 
@@ -29,7 +36,13 @@ SceneDocumentResult EditorDocument::save(const Scene& scene, const AssetManager&
     if (SceneDocumentResult result = SceneDocument::save(*m_path, scene, assets, m_options); !result) {
         return result;
     }
+    if (const SceneEditorDataResult result = writeSceneEditorData(*m_path, m_editorData); !result) {
+        // The scene itself was saved; the document stays dirty so saving
+        // again retries the sidecar.
+        return {.error = "The scene was saved, but not its editor data: " + result.error};
+    }
     m_dirty = false;
+    m_savedEditorData = m_editorData;
     return {.success = true};
 }
 
@@ -41,8 +54,13 @@ SceneDocumentResult EditorDocument::saveAs(const std::filesystem::path& path, co
     if (SceneDocumentResult result = SceneDocument::save(path, scene, assets, m_options); !result) {
         return result;
     }
+    // The document moves to the new path only once both files are written.
+    if (const SceneEditorDataResult result = writeSceneEditorData(path, m_editorData); !result) {
+        return {.error = "The scene was saved, but not its editor data: " + result.error};
+    }
     m_path = path;
     m_dirty = false;
+    m_savedEditorData = m_editorData;
     return {.success = true};
 }
 
@@ -68,7 +86,8 @@ void EditorDocument::setDirty(bool dirty) {
 }
 
 bool EditorDocument::dirty() const {
-    return m_dirty;
+    // A moved 3D cursor is an unsaved change too, though it is not undone.
+    return m_dirty || m_editorData != m_savedEditorData;
 }
 
 const std::optional<std::filesystem::path>& EditorDocument::path() const {
@@ -77,7 +96,7 @@ const std::optional<std::filesystem::path>& EditorDocument::path() const {
 
 std::string EditorDocument::displayName() const {
     std::string name = m_path ? m_path->filename().string() : "Untitled";
-    if (m_dirty) {
+    if (dirty()) {
         name += '*';
     }
     return name;
@@ -85,6 +104,18 @@ std::string EditorDocument::displayName() const {
 
 const SceneDocumentOptions& EditorDocument::options() const {
     return m_options;
+}
+
+const SceneEditorData& EditorDocument::editorData() const {
+    return m_editorData;
+}
+
+SceneEditorData& EditorDocument::editorData() {
+    return m_editorData;
+}
+
+std::string EditorDocument::takeEditorDataWarning() {
+    return std::exchange(m_editorDataWarning, {});
 }
 
 void EditorDocument::setComponentTypes(std::shared_ptr<const ComponentTypeRegistry> componentTypes) {

@@ -143,12 +143,6 @@ glm::mat4 lensGizmoProjectionMatrix(const RenderView& lens, float aspectRatio) {
     return glm::perspectiveRH_NO(lens.verticalFovRadians, aspectRatio, lens.nearPlane, lens.farPlane);
 }
 
-namespace {
-struct LensRay {
-    glm::vec3 origin{0.0f};
-    glm::vec3 direction{0.0f, 0.0f, -1.0f};
-};
-
 LensRay lensRay(const RenderView& lens, glm::vec2 normalizedViewportPosition, float aspectRatio) {
     const glm::mat4 inverseViewProjection =
         glm::inverse(lensProjectionMatrix(lens, aspectRatio) * lensViewMatrix(lens));
@@ -160,6 +154,7 @@ LensRay lensRay(const RenderView& lens, glm::vec2 normalizedViewportPosition, fl
     return {.origin = lens.position, .direction = glm::normalize(glm::vec3(farPoint - nearPoint))};
 }
 
+namespace {
 bool insideIsolation(const std::vector<RenderObjectId>* isolatedObjects, Entity picked) {
     return isolatedObjects == nullptr ||
            std::ranges::binary_search(*isolatedObjects, static_cast<RenderObjectId>(entt::to_integral(picked)));
@@ -188,6 +183,11 @@ void forEachPickableDraw(const Scene& scene, const std::vector<RenderObjectId>* 
     }
 }
 } // namespace
+
+void forEachPickableMesh(const Scene& scene, const std::vector<RenderObjectId>* isolatedObjects,
+                         const std::function<void(Entity meshEntity, const glm::mat4& world, Entity picked)>& visit) {
+    forEachPickableDraw(scene, isolatedObjects, visit);
+}
 
 Entity pickThroughLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
                        glm::vec2 normalizedViewportPosition, float aspectRatio,

@@ -683,6 +683,43 @@ covers clicks, the pending-pick fallback, box, lasso, cycling, the eyedropper,
 and local view headless with a synthetic `ViewportPickProvider`; the editor
 smoke clicks an object through the real id buffer and toggles local view.
 
+Snapping, pivot points, and the 3D cursor. Each viewport's
+`TransformToolSettings` (`panels/ViewportChrome`) hold the pivot point
+(`TransformPivot`: Median Point, Active Element, Individual Origins, 3D Cursor;
+`transform.pivot_set {pivot}`), the snap target (`SnapTarget`: Increment,
+Surface, Vertex; `transform.snap_target_set {target}`), Absolute Grid Snap,
+and the increments, chosen in the Gizmos menu or the sidebar's Tool tab and
+saved in the viewport's area state under `"tools"` beside `"overlays"`. Modal
+G/R/S (`interaction/ModalTransform`, driven by
+`application/EditorObjectCommands`) and the gizmo use them: rotation and
+scale turn about the pivot (Individual Origins turns each object in place);
+translation snaps the selection's median (or active origin) in increments
+from the start, onto the absolute grid, or onto the surface or vertex under
+the mouse, projected onto an axis or plane constraint; Ctrl inverts snapping
+while held. The gizmo sits on the cursor while rotating or scaling about it,
+and snaps its translation along the axes being dragged. `viewport/SnapQueries`
+finds targets on the CPU against pickable meshes, skipping the moved objects
+and their descendants (the id buffer holds only the front-most surface, which
+during a snapping drag is the moved object, and arrives frames late; physics
+bodies only exist while simulating). `viewport/Cursor3D` places, draws, and
+operates the cursor: Shift+RMB in a viewport runs `view3d.cursor3d_place {x,
+y}` (the surface under the mouse, or the cursor's depth along the view ray);
+`view3d.cursor_reset`, `view3d.snap_cursor_to_selected`, and the undoable
+`view3d.snap_selected_to_cursor {offset}` sit in View > Snap. Every viewport
+records the cursor into its view's debug list (`overlays.cursor`, the
+`palette::cursor*` tokens). The cursor belongs to the scene:
+`EditorDocument::editorData()` (`document/SceneEditorData`) reads it from
+the sidecar `<scene file>.editor.json` on open, writes it on save (removing
+the sidecar while the cursor is at the origin), and resets it for a new scene;
+it is not part of undo. New objects spawn at the cursor: the add operators and
+`prefab.instantiate` fill their `location` from it through
+`Operator::invokeDefaults` (so Adjust Last Operation shows and edits it, and
+an explicit location wins), and dropped models go to it
+(`EntityCommands::placeModel`). `tests/editor/SnappingCursorTests.cpp` covers
+the pivot and snap math, the queries against real cube meshes, the operators,
+spawning, drawing, area state, and the sidecar headless; the editor smoke
+(frame 310) places the cursor, adds an Empty at it, and undoes.
+
 `panels/InfoPanel` is the unified log view. Its CPU-only `InfoLog` model
 merges, by time, the engine log (`ApplicationContext::logger`), editor
 diagnostics (sources `Build` and `Game Module` get their own source filter),

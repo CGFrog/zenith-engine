@@ -47,7 +47,7 @@ struct OverlayName {
     const char* label;
 };
 
-constexpr std::array<OverlayName, 13> overlayNames{{
+constexpr std::array<OverlayName, 14> overlayNames{{
     {ViewportOverlay::Grid, "grid", "Grid"},
     {ViewportOverlay::SelectionOutline, "selection_outline", "Selection Outline"},
     {ViewportOverlay::ActiveName, "active_name", "Active Object Name"},
@@ -61,7 +61,111 @@ constexpr std::array<OverlayName, 13> overlayNames{{
     {ViewportOverlay::Names, "names", "Names"},
     {ViewportOverlay::SelectionBounds, "selection_bounds", "Selection Bounds"},
     {ViewportOverlay::SceneInPlay, "scene_in_play", "Scene Overlays in Play"},
+    {ViewportOverlay::Cursor3D, "cursor_3d", "3D Cursor"},
 }};
+
+struct PivotName {
+    TransformPivot pivot;
+    const char* key;
+    const char* label;
+};
+
+constexpr std::array<PivotName, 4> pivotNames{{
+    {TransformPivot::MedianPoint, "median_point", "Median Point"},
+    {TransformPivot::ActiveElement, "active_element", "Active Element"},
+    {TransformPivot::IndividualOrigins, "individual_origins", "Individual Origins"},
+    {TransformPivot::Cursor, "cursor", "3D Cursor"},
+}};
+
+struct SnapTargetName {
+    SnapTarget target;
+    const char* key;
+    const char* label;
+};
+
+constexpr std::array<SnapTargetName, 3> snapTargetNames{{
+    {SnapTarget::Increment, "increment", "Increment"},
+    {SnapTarget::Surface, "surface", "Surface"},
+    {SnapTarget::Vertex, "vertex", "Vertex"},
+}};
+
+struct PivotProperties {
+    TransformPivot pivot{TransformPivot::MedianPoint};
+};
+
+struct SnapTargetProperties {
+    SnapTarget target{SnapTarget::Increment};
+};
+
+std::vector<EnumOption> pivotOptions() {
+    std::vector<EnumOption> options;
+    for (const PivotName& name : pivotNames) {
+        options.push_back({name.key, name.label, static_cast<int64_t>(name.pivot)});
+    }
+    return options;
+}
+
+std::vector<EnumOption> snapTargetOptions() {
+    std::vector<EnumOption> options;
+    for (const SnapTargetName& name : snapTargetNames) {
+        options.push_back({name.key, name.label, static_cast<int64_t>(name.target)});
+    }
+    return options;
+}
+
+// The tool settings saved in the area state, under "tools".
+nlohmann::json toolStateJson(const TransformToolSettings& tools) {
+    nlohmann::json saved{{"snapping", tools.snapping},
+                         {"absolute_grid", tools.absoluteGridSnap},
+                         {"translation_snap", tools.translationSnap},
+                         {"rotation_snap_degrees", tools.rotationSnapDegrees},
+                         {"scale_snap", tools.scaleSnap}};
+    for (const PivotName& name : pivotNames) {
+        if (name.pivot == tools.pivot) {
+            saved["pivot"] = name.key;
+        }
+    }
+    for (const SnapTargetName& name : snapTargetNames) {
+        if (name.target == tools.snapTarget) {
+            saved["snap_target"] = name.key;
+        }
+    }
+    return saved;
+}
+
+void restoreToolState(const nlohmann::json& saved, TransformToolSettings& tools) {
+    const auto readBool = [&saved](const char* key, bool& value) {
+        if (const auto found = saved.find(key); found != saved.end() && found->is_boolean()) {
+            value = found->get<bool>();
+        }
+    };
+    // Increments must stay positive, as the widgets keep them.
+    const auto readIncrement = [&saved](const char* key, float& value) {
+        if (const auto found = saved.find(key);
+            found != saved.end() && found->is_number() && found->get<float>() > 0.0f) {
+            value = found->get<float>();
+        }
+    };
+    readBool("snapping", tools.snapping);
+    readBool("absolute_grid", tools.absoluteGridSnap);
+    readIncrement("translation_snap", tools.translationSnap);
+    readIncrement("rotation_snap_degrees", tools.rotationSnapDegrees);
+    readIncrement("scale_snap", tools.scaleSnap);
+    if (const auto pivot = saved.find("pivot"); pivot != saved.end() && pivot->is_string()) {
+        for (const PivotName& name : pivotNames) {
+            if (pivot->get<std::string>() == name.key) {
+                tools.pivot = name.pivot;
+            }
+        }
+    }
+    if (const auto target = saved.find("snap_target"); target != saved.end() && target->is_string()) {
+        for (const SnapTargetName& name : snapTargetNames) {
+            if (target->get<std::string>() == name.key) {
+                tools.snapTarget = name.target;
+            }
+        }
+    }
+}
 
 struct ScopeName {
     OverlayScope scope;
@@ -218,6 +322,22 @@ void drawSpaceChoice(TransformToolSettings& tools) {
     tools.space = static_cast<TransformSpace>(space);
 }
 
+void drawSnapTargetMenuItems(TransformToolSettings& tools) {
+    for (const SnapTargetName& name : snapTargetNames) {
+        if (ImGui::MenuItem(name.label, nullptr, tools.snapTarget == name.target)) {
+            tools.snapTarget = name.target;
+        }
+    }
+}
+
+void drawPivotMenuItems(TransformToolSettings& tools) {
+    for (const PivotName& name : pivotNames) {
+        if (ImGui::MenuItem(name.label, nullptr, tools.pivot == name.pivot)) {
+            tools.pivot = name.pivot;
+        }
+    }
+}
+
 void drawSnapIncrements(TransformToolSettings& tools) {
     // Scoped so the labels do not collide with the tool choices of the same name.
     ImGui::PushID("SnapIncrements");
@@ -249,6 +369,8 @@ bool* viewportOverlayFlag(ViewportOverlays& overlays, ViewportOverlay overlay) {
         return &overlays.scene.selectionBounds;
     case ViewportOverlay::SceneInPlay:
         return &overlays.sceneInPlay;
+    case ViewportOverlay::Cursor3D:
+        return &overlays.cursor;
     default:
         return nullptr;
     }
@@ -321,6 +443,90 @@ void restoreViewportAreaState(std::string_view state, ViewportChromeState& chrom
     }
 }
 
+std::string viewportAreaState(const ViewportChromeState& chrome, const TransformToolSettings& tools) {
+    nlohmann::json state = nlohmann::json::parse(viewportAreaState(chrome));
+    state["tools"] = toolStateJson(tools);
+    return state.dump();
+}
+
+void restoreViewportAreaState(std::string_view state, ViewportChromeState& chrome, TransformToolSettings& tools) {
+    restoreViewportAreaState(state, chrome);
+    const nlohmann::json parsed = nlohmann::json::parse(state, nullptr, false);
+    if (!parsed.is_object()) {
+        return;
+    }
+    if (const auto saved = parsed.find("tools"); saved != parsed.end() && saved->is_object()) {
+        restoreToolState(*saved, tools);
+    }
+}
+
+TransformSnapping transformSnapping(const TransformToolSettings& tools, bool invert) {
+    return {.enabled = tools.snapping != invert,
+            .translation = tools.translationSnap,
+            .rotationDegrees = tools.rotationSnapDegrees,
+            .scale = tools.scaleSnap,
+            .target = tools.snapTarget,
+            .absoluteGrid = tools.absoluteGridSnap};
+}
+
+const char* transformPivotLabel(TransformPivot pivot) {
+    for (const PivotName& name : pivotNames) {
+        if (name.pivot == pivot) {
+            return name.label;
+        }
+    }
+    return "Median Point";
+}
+
+const char* snapTargetLabel(SnapTarget target) {
+    for (const SnapTargetName& name : snapTargetNames) {
+        if (name.target == target) {
+            return name.label;
+        }
+    }
+    return "Increment";
+}
+
+std::vector<Operator> transformToolOperators(TransformToolTarget target) {
+    const auto hasTools = [target](const OperatorContext&) { return target() != nullptr; };
+    std::vector<Operator> operators;
+    operators.push_back(
+        {.id = "transform.pivot_set",
+         .label = "Set Pivot Point",
+         .description = "Choose what rotating and scaling turn about",
+         .properties = OperatorProperties::make(
+             PivotProperties{},
+             std::move(Fields<PivotProperties>().add("pivot", &PivotProperties::pivot).options(pivotOptions()))),
+         .poll = hasTools,
+         .execute = [target](OperatorContext&, OperatorProperties& properties) {
+             TransformToolSettings* tools = target();
+             const PivotProperties* values = properties.get<PivotProperties>();
+             if (tools == nullptr || values == nullptr) {
+                 return OperatorResult::failed(noViewportError);
+             }
+             tools->pivot = values->pivot;
+             return OperatorResult::finished();
+         }});
+    operators.push_back({.id = "transform.snap_target_set",
+                         .label = "Set Snap Target",
+                         .description = "Choose whether moving snaps to increments, surfaces, or vertices",
+                         .properties = OperatorProperties::make(
+                             SnapTargetProperties{}, std::move(Fields<SnapTargetProperties>()
+                                                                   .add("target", &SnapTargetProperties::target)
+                                                                   .options(snapTargetOptions()))),
+                         .poll = hasTools,
+                         .execute = [target](OperatorContext&, OperatorProperties& properties) {
+                             TransformToolSettings* tools = target();
+                             const SnapTargetProperties* values = properties.get<SnapTargetProperties>();
+                             if (tools == nullptr || values == nullptr) {
+                                 return OperatorResult::failed(noViewportError);
+                             }
+                             tools->snapTarget = values->target;
+                             return OperatorResult::finished();
+                         }});
+    return operators;
+}
+
 const char* viewportShadingLabel(ViewportShading shading) {
     switch (shading) {
     case ViewportShading::Rendered:
@@ -385,6 +591,7 @@ void drawOverlaysMenu(ViewportOverlays& overlays) {
     ImGui::MenuItem("Selection Outline", nullptr, &overlays.selectionOutline);
     ImGui::MenuItem("Active Object Name", nullptr, &overlays.activeName);
     ImGui::MenuItem("Transform Gizmo", nullptr, &overlays.gizmo);
+    ImGui::MenuItem("3D Cursor", nullptr, &overlays.cursor);
     ImGui::SeparatorText("Scene");
     for (const OverlayName& name : overlayNames) {
         if (OverlayScope* scope = viewportOverlayScope(overlays, name.overlay)) {
@@ -403,8 +610,16 @@ void drawGizmosMenu(TransformToolSettings& tools) {
     if (ImGui::MenuItem("Local", nullptr, tools.space == TransformSpace::Local)) {
         tools.space = TransformSpace::Local;
     }
-    ImGui::Separator();
+    ImGui::SeparatorText("Pivot Point");
+    drawPivotMenuItems(tools);
+    ImGui::SeparatorText("Snapping");
     ImGui::MenuItem("Snapping", nullptr, &tools.snapping);
+    if (ImGui::BeginMenu("Snap To")) {
+        drawSnapTargetMenuItems(tools);
+        ImGui::EndMenu();
+    }
+    ImGui::MenuItem("Absolute Grid Snap", nullptr, &tools.absoluteGridSnap);
+    ImGui::SetItemTooltip("Increment snapping moves onto the world grid instead of in steps");
     ImGui::PushItemWidth(ImGui::GetFontSize() * 8.0f);
     drawSnapIncrements(tools);
     ImGui::PopItemWidth();
@@ -429,7 +644,24 @@ void drawToolTab(TransformToolSettings& tools) {
     ImGui::Separator();
     drawSpaceChoice(tools);
     ImGui::Separator();
+    int pivot = static_cast<int>(tools.pivot);
+    ImGui::TextUnformatted("Pivot Point");
+    for (const PivotName& name : pivotNames) {
+        ImGui::RadioButton(name.label, &pivot, static_cast<int>(name.pivot));
+    }
+    tools.pivot = static_cast<TransformPivot>(pivot);
+    ImGui::Separator();
     ImGui::Checkbox("Snapping", &tools.snapping);
+    int snapTarget = static_cast<int>(tools.snapTarget);
+    ImGui::PushID("SnapTo");
+    for (const SnapTargetName& name : snapTargetNames) {
+        ImGui::RadioButton(name.label, &snapTarget, static_cast<int>(name.target));
+        ImGui::SameLine();
+    }
+    ImGui::NewLine();
+    ImGui::PopID();
+    tools.snapTarget = static_cast<SnapTarget>(snapTarget);
+    ImGui::Checkbox("Absolute Grid Snap", &tools.absoluteGridSnap);
     drawSnapIncrements(tools);
 }
 

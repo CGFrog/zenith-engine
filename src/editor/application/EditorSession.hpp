@@ -253,6 +253,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // GPU click picking and local view in the active viewport
     // (EditorPickingSmoke.cpp).
     bool updateSmokePicking(ApplicationContext& context);
+    // Places the 3D cursor, adds an Empty at it, and undoes (frame 310).
+    bool updateSmokeCursor(ApplicationContext& context);
     // Exercises multi-entity component operators and their undo.
     bool updateSmokeComponents(ApplicationContext& context);
 

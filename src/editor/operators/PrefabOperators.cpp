@@ -91,15 +91,31 @@ std::filesystem::path projectRelative(const OperatorContext& context, const std:
     return path.lexically_normal().lexically_relative(root);
 }
 
+// Moves an instance root so its origin lands on a world location, keeping
+// its rotation and scale.
+void placeInstanceRoot(Scene& scene, Entity root, const glm::vec3& location) {
+    scene.updateWorldTransforms();
+    const Entity parent = scene.registry().get<RelationshipComponent>(root).parent;
+    const glm::vec4 local =
+        parent == entt::null
+            ? glm::vec4(location, 1.0f)
+            : glm::inverse(scene.registry().get<TransformComponent>(parent).world) * glm::vec4(location, 1.0f);
+    scene.registry().get<TransformComponent>(root).local[3] = local;
+    scene.markTransformDirty(root);
+    scene.updateWorldTransforms();
+}
+
 Operator instantiateOperator() {
     return {.id = "prefab.instantiate",
             .label = "Instantiate Prefab",
             .description = "Add an instance of a prefab to the scene and select it",
             .flags = OperatorFlags::Undo | OperatorFlags::Register | OperatorFlags::Internal,
-            .properties = OperatorProperties::make(InstantiatePrefabProperties{},
-                                                   std::move(Fields<InstantiatePrefabProperties>()
-                                                                 .add("asset", &InstantiatePrefabProperties::asset)
-                                                                 .add("parent", &InstantiatePrefabProperties::parent))),
+            .properties = OperatorProperties::make(
+                InstantiatePrefabProperties{}, std::move(Fields<InstantiatePrefabProperties>()
+                                                             .add("asset", &InstantiatePrefabProperties::asset)
+                                                             .add("parent", &InstantiatePrefabProperties::parent)
+                                                             .add("location", &InstantiatePrefabProperties::location)
+                                                             .drag(0.05f))),
             .poll = [](const OperatorContext& context) { return context.editMode(); },
             .execute =
                 typed<InstantiatePrefabProperties>([](OperatorContext& context, InstantiatePrefabProperties& values) {
@@ -119,10 +135,18 @@ Operator instantiateOperator() {
                     const PrefabResult result =
                         authoring(context).instantiate(scene, projectRelative(context, values.asset), parent, root);
                     if (result) {
+                        placeInstanceRoot(scene, root, values.location);
                         context.selection.selectOnly(scene.id(root));
                     }
                     return finish(context, result);
-                })};
+                }),
+            // Instances start at the 3D cursor, as the add operators do.
+            .invokeDefaults =
+                [](const OperatorContext& context, OperatorProperties& properties) {
+                    if (InstantiatePrefabProperties* values = properties.get<InstantiatePrefabProperties>()) {
+                        values->location = context.editing.document().editorData().cursorLocation;
+                    }
+                }};
 }
 
 // Apply, revert, and unpack differ only in the workflow they run.

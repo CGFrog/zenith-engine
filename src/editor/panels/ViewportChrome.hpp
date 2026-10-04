@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/interaction/ModalTransform.hpp"
 #include "editor/operators/Operator.hpp"
 #include "editor/viewport/SceneGizmoDraw.hpp"
 
@@ -32,10 +33,37 @@ struct TransformToolSettings {
     float translationSnap{1.0f};
     float rotationSnapDegrees{5.0f};
     float scaleSnap{0.1f};
+    // What translation snaps to (ModalTransform.hpp); rotation and scale
+    // always snap in increments.
+    SnapTarget snapTarget{SnapTarget::Increment};
+    // Increment snapping onto the absolute grid rather than in steps from
+    // where the selection started.
+    bool absoluteGridSnap{false};
+    // What rotation and scale turn about.
+    TransformPivot pivot{TransformPivot::MedianPoint};
 
     // The increment for the current gizmo mode; Select uses the scale value.
     float& activeSnap();
 };
+
+// The snapping a transform evaluates with: the tool's choices, with
+// `enabled` inverted while invert (Ctrl) is held. targetPoint stays empty for
+// the caller to fill.
+TransformSnapping transformSnapping(const TransformToolSettings& tools, bool invert);
+
+// Labels of the pivot and snap target choices, as menus show them.
+const char* transformPivotLabel(TransformPivot pivot);
+const char* snapTargetLabel(SnapTarget target);
+
+// The tool settings an operator acts on when it runs (the active viewport's),
+// or null when there is none.
+using TransformToolTarget = std::function<TransformToolSettings*()>;
+
+// transform.pivot_set {pivot} (median_point, active_element,
+// individual_origins, cursor) and transform.snap_target_set {target}
+// (increment, surface, vertex), acting on target's settings. They poll false
+// while target returns null and run headless.
+std::vector<Operator> transformToolOperators(TransformToolTarget target);
 
 // How one viewport shades the scene, mirroring Blender's header buttons. The
 // values match the engine's view shading modes one to one; ViewportPanel maps
@@ -54,6 +82,8 @@ struct ViewportOverlays {
     // The active object's name in the top-left corner.
     bool activeName{true};
     bool gizmo{true};
+    // The 3D cursor (editor/viewport/Cursor3D).
+    bool cursor{true};
     // Scene gizmos recorded into the viewport's render view (lights, cameras,
     // colliders, volumes, selection bounds, names).
     SceneGizmoOverlays scene;
@@ -78,6 +108,7 @@ enum class ViewportOverlay : uint8_t {
     Names,
     SelectionBounds,
     SceneInPlay,
+    Cursor3D,
 };
 
 // The overlay's on/off flag, or null for a scoped (Off/Selected/All) overlay.
@@ -114,6 +145,10 @@ std::vector<Operator> viewportChromeOperators(ViewportChromeTarget target);
 // overlays, so an empty state restores the defaults.
 std::string viewportAreaState(const ViewportChromeState& chrome);
 void restoreViewportAreaState(std::string_view state, ViewportChromeState& chrome);
+// The same object with the transform tool choices (pivot, snapping, and the
+// snap increments) under a "tools" member, restored with the same tolerance.
+std::string viewportAreaState(const ViewportChromeState& chrome, const TransformToolSettings& tools);
+void restoreViewportAreaState(std::string_view state, ViewportChromeState& chrome, TransformToolSettings& tools);
 
 // Widgets for the viewport's header, tool shelf, and sidebar. Each draws into
 // the current ImGui window and edits the referenced settings directly.

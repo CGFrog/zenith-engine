@@ -7,6 +7,7 @@
 
 #include "editor/areas/AreaWindows.hpp"
 #include "editor/panels/ViewportOperators.hpp"
+#include "editor/viewport/Cursor3D.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -18,6 +19,9 @@
 
 void EditorSession::registerViewportOperators() {
     for (Operator& op : viewportOperators(m_viewports)) {
+        registerOperator(std::move(op));
+    }
+    for (Operator& op : cursorOperators(m_viewports, m_document)) {
         registerOperator(std::move(op));
     }
 }
@@ -210,4 +214,51 @@ bool EditorSession::updateSmokeViewports(ApplicationContext& context) {
         m_workspacesDirty = true;
     }
     return m_smokeFrame > firstFrame + 8;
+}
+
+bool EditorSession::updateSmokeCursor(ApplicationContext& context) {
+    // Frame 310: place the 3D cursor through view3d.cursor3d_place at a point
+    // of the active viewport, add an Empty, check it spawned at the cursor,
+    // undo it, and restore the cursor. Skipped without a viewport.
+    constexpr uint32_t firstFrame = 310;
+    if (m_smokeFrame != firstFrame) {
+        return m_smokeFrame > firstFrame;
+    }
+    const auto fail = [&](const std::string& message) {
+        const std::string error = "3D cursor smoke failed: " + message;
+        std::cerr << error << '\n';
+        m_diagnostics.reportError(error);
+        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+    };
+    const ViewportPanel* viewport = m_viewports.active();
+    if (viewport == nullptr || m_playMode.mode() != EditorMode::Edit) {
+        return true;
+    }
+    const glm::vec3 previousCursor = m_document.editorData().cursorLocation;
+    const glm::vec2 point = viewport->size() * glm::vec2(0.4f, 0.6f);
+    if (!invokeOperator(context, "view3d.cursor3d_place", nlohmann::json{{"x", point.x}, {"y", point.y}}.dump(),
+                        KeymapRegion::Viewport)) {
+        fail("view3d.cursor3d_place did not run");
+        return true;
+    }
+    const glm::vec3 cursor = m_document.editorData().cursorLocation;
+    const size_t entityCount = context.scene.registry().view<const SceneEntityIdComponent>().size();
+    if (!invokeOperator(context, "object.add_empty", {}, KeymapRegion::Viewport) || m_selection.size() != 1) {
+        fail("object.add_empty did not add and select an Empty");
+        return true;
+    }
+    context.scene.updateWorldTransforms();
+    const Entity added = context.scene.findEntity(*m_selection.active());
+    const glm::vec3 location = added != entt::null
+                                   ? glm::vec3(context.scene.registry().get<TransformComponent>(added).world[3])
+                                   : glm::vec3(0.0f);
+    if (added == entt::null || glm::length(location - cursor) > 1e-3f) {
+        fail("the Empty did not spawn at the 3D cursor");
+    }
+    undo(context);
+    if (context.scene.registry().view<const SceneEntityIdComponent>().size() != entityCount) {
+        fail("undo did not remove the Empty");
+    }
+    m_document.editorData().cursorLocation = previousCursor;
+    return true;
 }

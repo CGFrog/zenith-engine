@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/document/SceneEditorData.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
 #include <filesystem>
@@ -37,8 +38,23 @@ class EditorDocument {
     // ownership of the registry.
     void setComponentTypes(std::shared_ptr<const ComponentTypeRegistry> componentTypes);
 
+    // The open scene's editor-only state (the 3D cursor), kept in a sidecar
+    // beside the scene file (SceneEditorData.hpp): open reads it, save and
+    // saveAs write it, createNew resets it. It is not part of undo, but a
+    // change from the saved value makes the document dirty.
+    const SceneEditorData& editorData() const;
+    SceneEditorData& editorData();
+    // Why the last open could not read the sidecar (its defaults were used
+    // instead), or empty. Taking it clears it.
+    std::string takeEditorDataWarning();
+
   private:
     SceneDocumentOptions m_options;
     std::optional<std::filesystem::path> m_path;
     bool m_dirty{false};
+    SceneEditorData m_editorData;
+    // The editor data as last opened or saved; a difference makes the
+    // document dirty.
+    SceneEditorData m_savedEditorData;
+    std::string m_editorDataWarning;
 };
