@@ -555,8 +555,10 @@ add_library(zenith_editor_app STATIC
     src/editor/application/EditorPickingSmoke.cpp
     src/editor/application/EditorViewports.cpp
     src/editor/application/EditorPlayMode.cpp
+    src/editor/application/EditorPlayback.cpp
     src/editor/application/EditorPreferences.cpp
     src/editor/application/NativeFileDialog.cpp
+    src/editor/application/PlayTargets.cpp
     src/editor/application/EditorSession.cpp
     src/editor/application/EntityCommands.cpp
     src/editor/application/SceneEditing.cpp
@@ -1721,6 +1723,19 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_editor_play_mode COMMAND zenith_editor_play_mode_tests)
 
+    # Play targets: game views, input routing, mouse capture, the mode tint,
+    # and the standalone game with a fake process.
+    add_executable(zenith_play_targets_tests tests/editor/PlayTargetsTests.cpp)
+    target_link_libraries(zenith_play_targets_tests PRIVATE zenith_editor_app)
+    target_compile_definitions(zenith_play_targets_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_play_targets_tests zenith_assets)
+    if(MSVC)
+        target_compile_options(zenith_play_targets_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_play_targets_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_play_targets COMMAND zenith_play_targets_tests)
+
     add_executable(zenith_editor_hardening_tests tests/editor/EditorHardeningTests.cpp)
     target_link_libraries(zenith_editor_hardening_tests PRIVATE zenith_editor_app)
     if(MSVC)
@@ -2067,7 +2082,7 @@ if(BUILD_TESTING)
     add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
     set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES
         ENVIRONMENT
-            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/vulkan_smoke"
+            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=900;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/vulkan_smoke"
         LABELS "vulkan;smoke"
         TIMEOUT 45
         FIXTURES_REQUIRED zenith_editor_test_settings
@@ -2096,7 +2111,7 @@ if(BUILD_TESTING)
         COMMAND zenith_editor "${CMAKE_CURRENT_BINARY_DIR}/editor-module-smoke-$<CONFIG>.zenith-project")
     set_tests_properties(zenith_editor_module_smoke PROPERTIES
         ENVIRONMENT
-            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/module_smoke"
+            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=900;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/module_smoke"
         LABELS "vulkan;smoke"
         TIMEOUT 60
         FIXTURES_REQUIRED zenith_editor_test_settings
@@ -2174,7 +2189,7 @@ if(BUILD_TESTING)
     )
     zenith_add_validation_smoke(zenith_validation_editor
         COMMAND zenith_editor
-        ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=600
+        ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=900
             ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/validation_editor
     )
     set_tests_properties(zenith_validation_editor PROPERTIES FIXTURES_REQUIRED zenith_editor_test_settings)

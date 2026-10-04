@@ -20,6 +20,15 @@ class ThemeChrome {
         return m_parameters;
     }
 
+    // The wash painted over the wallpaper, glass, panes, and around the edge
+    // of the main viewport from the next beginFrame on (none until set). The
+    // 3D views' images stay untinted.
+    void setModeTint(ThemeModeTint tint);
+
+    ThemeModeTint modeTint() const {
+        return m_modeTint;
+    }
+
     // Once per frame before the dockspace: keeps the wallpaper current and
     // paints it behind every window.
     void beginFrame(RenderRuntime& rendering);
@@ -49,4 +58,5 @@ class ThemeChrome {
 
     GlassBackdrop m_backdrop;
     ThemeParameters m_parameters;
+    ThemeModeTint m_modeTint{ThemeModeTint::None};
 };

@@ -155,6 +155,13 @@ void testMouseCapturePolicies(Window& window) {
         pushMouseButton(SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_LEFT);
         expect(!harness.update({.mouse = true}).mouseCaptured, "capture: a click over UI never captures the mouse");
     }
+    {
+        Harness harness(window, false);
+        pushMouseButton(SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_BUTTON_LEFT);
+        expect(harness.update().mouseCaptured, "capture: a persistent click captures the mouse");
+        expect(!harness.update({}, MouseCapturePolicy::WhileRightMouseDown).mouseCaptured,
+               "capture: switching from persistent to while-right-down releases the mouse");
+    }
 }
 
 void testWindowRequestsAndObserver(Window& window) {

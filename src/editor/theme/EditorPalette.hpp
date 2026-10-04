@@ -154,6 +154,14 @@ inline constexpr ThemeColor iconSlate = ThemeColor::hex(0x6D8296);
 inline constexpr ThemeColor iconRed = ThemeColor::hex(0xE04848);
 inline constexpr ThemeColor iconWhite = ThemeColor::hex(0xF4FFFB);
 
+// The wash over the editor's glass, panes, and edge while a game runs
+// (ThemeChrome::setModeTint): warm for Play, violet for Simulate, so the two
+// are told apart at a glance. The play viewport's banner uses the Play hue.
+inline constexpr ThemeColor playTint = ThemeColor::hex(0xFF7A2E, 0.2f);
+inline constexpr ThemeColor simulateTint = ThemeColor::hex(0x8A5CFF, 0.2f);
+inline constexpr ThemeColor playBanner = ThemeColor::hex(0x7A2A08, 0.9f);
+inline constexpr ThemeColor playBannerInk = ThemeColor::hex(0xFFE6C8);
+
 inline constexpr ThemeColor modalDim = ThemeColor::hex(0x000000, 0.5f);
 // For backgrounds the theme paints itself.
 inline constexpr ThemeColor transparent = ThemeColor::hex(0x000000, 0.0f);

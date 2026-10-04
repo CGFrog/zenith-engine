@@ -451,7 +451,9 @@ module at the same relative path. The copy is whichever configuration was
 built last; an editor of another configuration refuses it by build hash, so
 rebuild the module in the editor's configuration.
 
-The `zenith` executable accepts `--project <project-file>`. The demo application
+The `zenith` executable accepts `--project <project-file>` and `--scene
+<scene-file>` (an absolute `.zenith-scene` run in place of the startup scene;
+the editor's standalone play target). The demo application
 loads authored scene content through this engine contract, then adds its
 game-specific player and behavior in `src/game/`.
 
@@ -792,7 +794,7 @@ host gives `EditorDocument` the module's merged component registry, so the
 startup scene, Play mode, autosave, copy/paste, undo, and the inspector's Add
 Component menu all see module components. Module systems run through a
 `SystemScheduler`: `Update` from `EditorSession::update` and `FixedUpdate` from
-`fixedUpdate` in Play mode (pause and single step apply), and `RunIn::Edit`
+`fixedUpdate` in Play mode (pause and frame step apply), and `RunIn::Edit`
 systems every Edit-mode frame, with fixed updates on an editor-side fixed
 clock. Edit-mode systems change the scene directly, outside undo.
 
@@ -812,6 +814,35 @@ system's phase, modes, and frame/average/max CPU time (`GameModuleHost::
 systemProfile()`, published by `finishSystemFrame` at the start of `drawUi`),
 the engine's CPU phases, and the GPU pass table; `profiler.reset_max` restarts
 the maxima. The headless play operators live in `operators/PlayOperators`.
+
+Play targets (`application/PlayTargets`, wired in `application/
+EditorPlayback.cpp`): `play.start {target}` runs Play in `viewport` (the
+active viewport), `floating` (a new Viewport area undocked through
+`AreaInstance::floatRequest`, closed on Stop), or `standalone`; without a
+target (`F5`) it reuses the last one. A viewport target turns the viewport
+into a game view (`ViewportPanel::beginGameView`): it looks through
+`gameCamera(scene)` (the first primary camera, the renderer's fallback) by
+clearing its view override, ignores editor navigation, picking, and the
+gizmo, and shows a banner about game input. Module systems get the frame's
+`InputState` only while the game view has focus (`EditorSession::gameInput`;
+a neutral state otherwise), and `EditorSession::mouseCapturePolicy()` is
+`Persistent` exactly then, published to `EditorApplication` each frame.
+`play.focus_game_view` (a click on the view) and `play.release_game_input`
+(Esc or a click elsewhere) move the focus. `standalone` writes the document
+to a temporary scene and runs `zenith [--project <file>] --scene <scene>`
+through `StandalonePlayer` (its `GameProcess` is a `ChildProcess`, a fake in
+tests), streams the output into the log under `game`, removes the scene when
+the game ends, and leaves Play then; Stop cancels it. `play.step` (`F7`)
+advances a paused runtime scene by one frame of the fixed time step
+(`EditorPlayMode::requestFrameStep`, the clock's `frameStepSeconds`).
+`ThemeChrome::setModeTint` washes the editor warm in Play and violet in
+Simulate (`playModeTint`). The playback toolbar after the Module menu holds
+the play buttons, the target dropdown, a Simulate dropdown whose contents are
+`EditorSession::drawSimulateOptions` (the Simulate system picker's slot), and
+the time-scale field. `tests/editor/PlayTargetsTests.cpp` and
+`EditorSessionTests` cover the targets headless; the editor smoke plays the
+startup scene in the active viewport and, when `zenith` is built, launches it
+standalone for a moment (frames 350-420).
 
 Hot reload (`module.reload` in the Module menu, a settled change to the
 library file, or a successful Build that changed it) waits for Edit mode, a

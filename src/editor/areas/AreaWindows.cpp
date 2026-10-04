@@ -50,6 +50,16 @@ AreaWindowResult drawAreaWindow(AreaInstance& area, const AreaType& type, const 
     if (area.dockRequest != 0) {
         ImGui::SetNextWindowDockID(area.dockRequest, ImGuiCond_Always);
         area.dockRequest = 0;
+        area.floatRequest = false;
+    } else if (area.floatRequest) {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowDockID(0, ImGuiCond_Always);
+        ImGui::SetNextWindowPos(
+            {viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, viewport->WorkPos.y + viewport->WorkSize.y * 0.5f},
+            ImGuiCond_Always, {0.5f, 0.5f});
+        ImGui::SetNextWindowSize({viewport->WorkSize.x * 0.6f, viewport->WorkSize.y * 0.6f}, ImGuiCond_Always);
+        ImGui::SetNextWindowFocus();
+        area.floatRequest = false;
     }
     AreaWindowResult result;
     bool open = true;

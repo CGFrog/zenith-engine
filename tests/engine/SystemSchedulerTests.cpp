@@ -190,8 +190,18 @@ void testSimulationClock() {
     const SimulationClock paused{.timeScale = 0.5f, .paused = true};
     expect(simulatedSeconds(paused, 0.02f) == 0.0f && audioPlaybackRate(paused) == 0.0f,
            "a paused clock stops animation and audio");
-    expect(fixedStepAccumulation(paused, 0.02f) == 0.02f,
-           "a requested single step accumulates at wall-clock rate whatever the scale");
+    expect(fixedStepAccumulation(paused, 0.02f) == 0.0f, "a paused clock accumulates no fixed steps");
+
+    // A frame step advances one frame by its own length whatever the scale.
+    const SimulationClock stepping{.timeScale = 0.25f, .paused = true, .frameStepSeconds = 1.0f / 60.0f};
+    expect(simulatedSeconds(stepping, 0.1f) == 1.0f / 60.0f && fixedStepAccumulation(stepping, 0.1f) == 1.0f / 60.0f &&
+               audioPlaybackRate(stepping) == 1.0f,
+           "a frame step advances animation, fixed steps, and audio by one step");
+    const SimulationClock negativeStep{.paused = true, .frameStepSeconds = -1.0f};
+    expect(simulatedSeconds(negativeStep, 0.1f) == 0.0f && audioPlaybackRate(negativeStep) == 0.0f,
+           "a negative frame step holds the clock");
+    const SimulationClock runningWithStep{.timeScale = 2.0f, .frameStepSeconds = 5.0f};
+    expect(simulatedSeconds(runningWithStep, 0.02f) == 0.04f, "a running clock ignores the frame step");
 
     expect(clampTimeScale(-1.0f) == 0.0f && clampTimeScale(25.0f) == 10.0f && clampTimeScale(0.25f) == 0.25f &&
                clampTimeScale(std::numeric_limits<float>::quiet_NaN()) == 1.0f,
@@ -217,6 +227,8 @@ void testSimulationClock() {
     expect(fixedSteps(SimulationClock{.timeScale = 0.5f}, 60) == 30, "half speed runs half the fixed steps");
     expect(fixedSteps(doubled, 60) == 120, "double speed runs twice the fixed steps");
     expect(fixedSteps(SimulationClock{.timeScale = 0.0f}, 60) == 0, "a zero time scale runs no fixed steps");
+    expect(fixedSteps(stepping, 1) == 1, "a frame step of one fixed time step runs exactly one fixed step");
+    expect(fixedSteps(paused, 60) == 0, "a paused clock runs no fixed steps");
 }
 } // namespace
 

@@ -24,21 +24,46 @@ int runApplication(int argc, char** argv) {
         verifyPackage = true;
         ++argument;
     }
-    if (argument < argc) {
-        if (argument + 2 != argc || std::string_view{argv[argument]} != "--project") {
-            std::cerr << "Usage: zenith [--verify-package] [--project <project-file>]\n";
+    std::optional<std::filesystem::path> projectFile;
+    std::optional<std::filesystem::path> sceneFile;
+    for (; argument < argc; argument += 2) {
+        const std::string_view flag{argv[argument]};
+        if (argument + 1 >= argc || (flag != "--project" && flag != "--scene")) {
+            std::cerr << "Usage: zenith [--verify-package] [--project <project-file>] [--scene <scene-file>]\n";
             return EXIT_FAILURE;
         }
+        (flag == "--project" ? projectFile : sceneFile) = std::filesystem::path(argv[argument + 1]);
+    }
+    if (projectFile) {
         ProjectConfig loaded;
-        if (const ProjectConfigResult result = loadProjectConfig(argv[argument + 1], loaded); !result) {
+        if (const ProjectConfigResult result = loadProjectConfig(*projectFile, loaded); !result) {
             std::cerr << result.error << '\n';
             return EXIT_FAILURE;
         }
-        if (loaded.startupScene.empty()) {
+        if (loaded.startupScene.empty() && !sceneFile) {
             std::cerr << "Project '" << loaded.displayName << "' does not configure a startup scene\n";
             return EXIT_FAILURE;
         }
         project = std::move(loaded);
+    }
+    if (sceneFile) {
+        // --scene <absolute .zenith-scene>: the editor's Standalone play
+        // target (src/editor/application/PlayTargets.hpp) runs an unsaved
+        // scene in place of the startup scene, with the project's assets (or
+        // the default project's without --project). Its folder becomes the
+        // scene root for the run. A minimal parse that the packaged runtime's
+        // argument handling may supersede, keeping this contract.
+        std::error_code error;
+        const std::filesystem::path scene = std::filesystem::absolute(*sceneFile, error).lexically_normal();
+        if (error || !std::filesystem::is_regular_file(scene, error)) {
+            std::cerr << "Scene file '" << sceneFile->string() << "' does not exist\n";
+            return EXIT_FAILURE;
+        }
+        if (!project) {
+            project = ProjectConfig{.displayName = "Zenith Demo", .assetRoot = assetRoot()};
+        }
+        project->sceneRoot = scene.parent_path();
+        project->startupScene = scene;
     }
 
     if (verifyPackage) {

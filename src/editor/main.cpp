@@ -118,10 +118,16 @@ int main(int argc, char** argv) {
     // Automated runs pass their own settings directory so they never read or
     // replace the user's workspaces and preferences.
     const char* settingsOverride = SDL_getenv(editorSettingsDirectoryVariable);
+    // Play's Standalone target runs the game built (or packaged) beside the
+    // editor.
+    const char* editorDirectory = SDL_GetBasePath();
+    EditorPlayServices play{.gameExecutable =
+                                gameExecutableBeside(editorDirectory != nullptr ? fromUtf8(editorDirectory)
+                                                                                : std::filesystem::current_path())};
     EditorApplication application(resolveEditorSettingsDirectory(settingsOverride != nullptr ? settingsOverride : "",
                                                                  userDataDirectory("Zenith", "Editor")),
                                   resourceRoot() / "editor" / "fonts" / "Inter-Regular.ttf", std::move(project),
-                                  std::move(projectHub));
+                                  std::move(projectHub), std::move(play));
     const bool success = engine.run(application);
     engine.shutdown();
     return validationExitCode(engine.graphicsValidation(), success ? EXIT_SUCCESS : EXIT_FAILURE);

@@ -55,6 +55,18 @@ ThemeParameters clampedThemeParameters(ThemeParameters parameters) {
     return parameters;
 }
 
+std::optional<ThemeColor> themeModeTintColor(ThemeModeTint tint) {
+    switch (tint) {
+    case ThemeModeTint::None:
+        return std::nullopt;
+    case ThemeModeTint::Play:
+        return palette::playTint;
+    case ThemeModeTint::Simulate:
+        return palette::simulateTint;
+    }
+    return std::nullopt;
+}
+
 ThemeColor paneColor(const ThemeParameters& parameters) {
     return palette::pane.withAlpha(parameters.paneOpacity);
 }

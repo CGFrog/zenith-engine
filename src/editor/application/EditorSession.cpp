@@ -60,6 +60,10 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     : m_settings(settingsDirectory / "settings.ini")
     , m_document(assetRoot)
     , m_recovery(settingsDirectory / (std::string("recovery") + sceneExtension))
+    , m_projectFile(projectServices.projectFile)
+    , m_playServices(projectServices.play)
+    , m_standalone(m_playServices.makeGameProcess ? m_playServices.makeGameProcess() : makeGameProcess())
+    , m_mouseCaptureChanged(projectServices.mouseCaptureChanged)
     , m_fileDialog("Zenith scene", sceneExtension)
     , m_operatorRunner(m_operators, m_history)
     , m_gameModulePath(std::move(gameModule))
@@ -231,34 +235,8 @@ void EditorSession::registerSessionOperators() {
          .poll = [](const OperatorContext& context) { return context.app != nullptr && context.editMode(); },
          .execute = [this](OperatorContext& context, OperatorProperties&) { return pasteClipboard(*context.app); }});
 
-    registerOperator(applicationOperator(
-        "play.start", "Play", "Run the scene in Play mode on a copy of the document",
-        [](const OperatorContext& context) { return context.mode == EditorMode::Edit; },
-        [this](ApplicationContext& app) { enterPlayMode(app); }));
-    registerOperator(applicationOperator(
-        "play.simulate", "Simulate",
-        "Run physics and the systems chosen in the System Profiler on a copy of the document, keeping the editor "
-        "camera and tools",
-        [](const OperatorContext& context) { return context.mode == EditorMode::Edit; },
-        [this](ApplicationContext& app) { enterPlayMode(app, EditorRuntime::Simulate); }));
-    registerOperator(applicationOperator(
-        "play.toggle_pause", "Pause / Resume", "Pause or resume Play or Simulate",
-        [](const OperatorContext& context) { return context.mode != EditorMode::Edit; },
-        [this](ApplicationContext&) {
-            if (m_playMode.running()) {
-                m_playMode.pause();
-            } else {
-                m_playMode.resume();
-            }
-        }));
-    registerOperator(applicationOperator(
-        "play.step", "Single Step", "Advance paused Play or Simulate by one fixed update",
-        [](const OperatorContext& context) { return context.mode == EditorMode::Paused; },
-        [this](ApplicationContext&) { m_playMode.requestSingleStep(); }));
-    registerOperator(applicationOperator(
-        "play.stop", "Stop", "Leave Play or Simulate and restore the authored scene",
-        [](const OperatorContext& context) { return context.mode != EditorMode::Edit; },
-        [this](ApplicationContext& app) { stopPlayMode(app); }));
+    // play.start, play.simulate, play.toggle_pause, play.step, play.stop.
+    registerPlayOperatorsOfSession();
 
     registerOperator(applicationOperator("wm.search_menu", "Search Operators",
                                          "Find and run any available operator by name", {},
@@ -463,6 +441,7 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
     }
     updateAutosave(context, deltaSeconds);
     updatePackaging();
+    updateStandalone(context);
     // Once per frame, however many asset browsers are open.
     m_projectAssets.pollChanges(m_diagnostics, projectAssetActions(context), deltaSeconds);
     updateAreas(context, input, deltaSeconds);
@@ -508,7 +487,7 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
         enterPlayMode(context);
     } else if (m_smokeFrame == 3) {
         m_playMode.pause();
-        m_playMode.requestSingleStep();
+        m_playMode.requestFrameStep(context.physics.config().fixedTimeStep);
     } else if (m_smokeFrame == 4) {
         stopPlayMode(context);
     } else if (m_smokeFrame == 5) {
@@ -566,11 +545,12 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     const bool outlinerDone = updateSmokeOutliner(context);
     // Starts after the outliner step.
     const bool pickingDone = updateSmokePicking(context);
+    const bool playTargetsDone = updateSmokePlayTargets(context);
     if (m_smokeFrame == 500 && !m_smokeStreamCompleted) {
         m_diagnostics.reportError("Streaming smoke did not commit while frames were being presented");
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
     } else if (areasDone && viewportsDone && componentsDone && menusDone && simulateDone && outlinerDone &&
-               pickingDone && m_smokeStreamCompleted) {
+               pickingDone && playTargetsDone && m_smokeStreamCompleted) {
         updateSmokeModuleReload(context);
     }
 }
@@ -686,6 +666,10 @@ bool EditorSession::updateSmokeSimulate(ApplicationContext& context) {
     };
     if (m_smokeFrame < firstFrame) {
         return false;
+    }
+    if (m_smokeFrame > lastFrame) {
+        // Later steps (the play targets at 350) run Play themselves.
+        return true;
     }
     if (m_smokeFrame == firstFrame) {
         m_smokeSimulateSnapshot = snapshot();
@@ -830,7 +814,7 @@ void EditorSession::fixedUpdate(ApplicationContext& context, const InputState& i
     if (m_playMode.mode() != EditorMode::Edit) {
         const SimulationMode mode = m_playMode.simulationMode();
         m_moduleHost.runSystems(SystemPhase::FixedUpdate, context.scene, &context, mode, deltaSeconds,
-                                mode == SimulationMode::Simulate ? nullptr : &input);
+                                mode == SimulationMode::Simulate ? nullptr : &gameInput(input));
     }
 }
 
@@ -854,7 +838,11 @@ void EditorSession::drawUi(ApplicationContext& context) {
     // Every system of this frame ran in update and fixedUpdate; publish
     // their timings for the System Profiler areas drawn below.
     m_moduleHost.finishSystemFrame();
+    // The engine has run this frame's fixed steps, so a frame step is done;
+    // play.step below requests the next one.
+    m_playMode.finishFrame();
     ImGuizmo::BeginFrame();
+    m_themeChrome.setModeTint(playModeTint(m_playMode.mode(), m_playMode.simulating()));
     m_themeChrome.beginFrame(context.rendering);
     // The dockspace host is transparent so the wallpaper shows between areas.
     ImGui::PushStyleColor(ImGuiCol_WindowBg, toImVec4(palette::transparent));
@@ -876,6 +864,7 @@ void EditorSession::drawUi(ApplicationContext& context) {
     drawObjectPopups(context);
     drawOperatorWindows(context);
     drawStatusBar(context.rendering.stats());
+    publishMouseCapture();
 }
 
 void EditorSession::updateEyedropper(ApplicationContext& context) {
@@ -922,7 +911,10 @@ void EditorSession::unload(ApplicationContext& context) {
         std::error_code ignored;
         std::filesystem::remove(m_smokeScenePath, ignored);
     }
-    stopPlayMode(context);
+    stopPlay(context);
+    if (m_mouseCaptureChanged) {
+        m_mouseCaptureChanged(MouseCapturePolicy::WhileRightMouseDown);
+    }
     // The scene and document release module code before the module unloads.
     context.audio.stopSceneVoices();
     context.physics.clear();
@@ -1033,17 +1025,21 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Play")) {
-        if (m_playMode.mode() == EditorMode::Edit) {
-            operatorMenuItem(context, "play.start", "Play");
-            operatorMenuItem(context, "play.simulate", "Simulate");
-        } else {
-            operatorMenuItem(context, "play.toggle_pause", m_playMode.running() ? "Pause" : "Resume");
-            operatorMenuItem(context, "play.step", "Single Step");
-            operatorMenuItem(context, "play.stop", "Stop");
+        operatorMenuItem(context, "play.start", "Play");
+        for (const PlayTargetInfo& target : playTargets()) {
+            const std::string label = "Play in " + std::string(target.label);
+            const std::string properties = nlohmann::json{{"target", target.key}}.dump();
+            operatorMenuItem(context, "play.start", label.c_str(), properties, target.target == m_lastPlayTarget);
         }
+        operatorMenuItem(context, "play.simulate", "Simulate");
+        ImGui::Separator();
+        operatorMenuItem(context, "play.toggle_pause", m_playMode.mode() == EditorMode::Paused ? "Resume" : "Pause");
+        operatorMenuItem(context, "play.step", "Step Frame");
+        operatorMenuItem(context, "play.stop", "Stop");
         ImGui::EndMenu();
     }
     drawModuleMenu(context);
+    drawPlaybackToolbar(context);
     drawWorkspaceTabs(context);
     ImGui::EndMainMenuBar();
 }
@@ -1102,7 +1098,11 @@ void EditorSession::drawPlayModePill() const {
     using namespace palette;
     switch (m_playMode.mode()) {
     case EditorMode::Edit:
-        widgets::StatusPill(EditorIcon::Stop, "Edit", buttonTop, buttonBottom, ink);
+        if (m_standalone.running()) {
+            widgets::StatusPill(EditorIcon::Play, "Standalone", buttonActiveTop, buttonActiveBottom, activeInk);
+        } else {
+            widgets::StatusPill(EditorIcon::Stop, "Edit", buttonTop, buttonBottom, ink);
+        }
         break;
     case EditorMode::Play:
         widgets::StatusPill(EditorIcon::Play, "Play", buttonActiveTop, buttonActiveBottom, activeInk);
@@ -1354,9 +1354,7 @@ void EditorSession::projectFilesRemoved(ApplicationContext&, std::span<const std
 
 void EditorSession::requestClose(ApplicationContext& context) {
     m_pendingOpenPath.reset();
-    if (m_playMode.mode() != EditorMode::Edit) {
-        stopPlayMode(context);
-    }
+    stopPlay(context);
     m_pendingAction = PendingAction::CloseEditor;
     if (m_document.dirty()) {
         m_openUnsavedDialog = true;
@@ -1367,9 +1365,7 @@ void EditorSession::requestClose(ApplicationContext& context) {
 
 void EditorSession::requestProjectHub(ApplicationContext& context, ProjectHubEntry entry) {
     m_pendingOpenPath.reset();
-    if (m_playMode.mode() != EditorMode::Edit) {
-        stopPlayMode(context);
-    }
+    stopPlay(context);
     m_pendingAction = PendingAction::LeaveForProjectHub;
     m_pendingHubEntry = entry;
     if (m_document.dirty()) {
@@ -1464,7 +1460,7 @@ OperatorResult EditorSession::pasteClipboard(ApplicationContext& context) {
     return OperatorResult::finished();
 }
 
-void EditorSession::enterPlayMode(ApplicationContext& context, EditorRuntime runtime) {
+bool EditorSession::enterPlayMode(ApplicationContext& context, EditorRuntime runtime) {
     context.physics.clear();
     context.audio.stopSceneVoices();
     if (const SceneDocumentResult result =
@@ -1473,10 +1469,11 @@ void EditorSession::enterPlayMode(ApplicationContext& context, EditorRuntime run
         m_diagnostics.reportError(std::string(runtime == EditorRuntime::Simulate ? "Could not enter Simulate: "
                                                                                  : "Could not enter Play mode: ") +
                                   result.error);
-        return;
+        return false;
     }
     m_history.crossBoundary(CommandHistoryBoundary::EnterPlayMode);
     m_diagnostics.acknowledgeErrors();
+    return true;
 }
 
 void EditorSession::stopPlayMode(ApplicationContext& context) {
@@ -1485,6 +1482,7 @@ void EditorSession::stopPlayMode(ApplicationContext& context) {
     }
     context.audio.stopSceneVoices();
     context.physics.clear();
+    endGameView();
     std::vector<SceneEntityId> restoredSelection;
     m_playMode.stop(context.scene, restoredSelection);
     m_selection.assign(std::move(restoredSelection));

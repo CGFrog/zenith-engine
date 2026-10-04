@@ -31,6 +31,10 @@ struct AreaInstance {
     // Dock node to move the window into the next time it is drawn, so a new
     // or retyped area takes another area's place. 0 for none.
     uint32_t dockRequest{0};
+    // Undock the window the next time it is drawn and float it centred over
+    // the main viewport (the floating Play target). Runtime only; ignored
+    // while a dockRequest is pending.
+    bool floatRequest{false};
 
     std::string id() const;
     std::string windowName(std::string_view title) const;
