@@ -3,6 +3,7 @@
 #include "../audio/AudioSystem.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <limits>
@@ -10,7 +11,6 @@
 Scene::Scene() {
     m_changedTransforms.reserve(256);
     m_dirtyTransformRoots.reserve(256);
-    m_transformAuditScratch.reserve(256);
     m_physicsLifecycleEvents.reserve(256);
 }
 
@@ -35,12 +35,13 @@ SceneResult Scene::createEntityWithId(SceneEntityId id, std::string name, Entity
     m_registry.emplace<SceneEntityIdComponent>(createdEntity, id);
     m_registry.emplace<NameComponent>(createdEntity, std::move(name));
     m_registry.emplace<TransformComponent>(createdEntity);
-    m_registry.emplace<TransformCacheComponent>(createdEntity);
+    auto& cache = m_registry.emplace<TransformCacheComponent>(createdEntity);
     m_registry.emplace<RelationshipComponent>(createdEntity);
+    m_entitiesById.emplace(id.value, createdEntity);
     m_nextEntityId =
         id.value == std::numeric_limits<uint64_t>::max() ? id.value : std::max(m_nextEntityId, id.value + 1);
     entity = createdEntity;
-    m_dirtyTransformRoots.push_back(createdEntity);
+    queueTransformRoot(createdEntity, cache);
     ++m_revisions.transform;
     ++m_renderPacketRevision;
     return {.success = true};
@@ -60,13 +61,12 @@ SceneEntityId Scene::id(Entity entity) const {
 }
 
 Entity Scene::findEntity(SceneEntityId id) const {
-    auto view = m_registry.view<const SceneEntityIdComponent>();
-    for (Entity entity : view) {
-        if (view.get<const SceneEntityIdComponent>(entity).id == id) {
-            return entity;
-        }
+    const auto found = m_entitiesById.find(id.value);
+    if (found == m_entitiesById.end()) {
+        return entt::null;
     }
-    return entt::null;
+    assert(m_registry.valid(found->second) && this->id(found->second) == id);
+    return found->second;
 }
 
 void Scene::setParent(Entity child, Entity parent) {
@@ -237,6 +237,9 @@ void Scene::destroyEntity(Entity entity) {
     const bool camera = m_registry.any_of<CameraComponent>(entity);
     const bool skin = m_registry.any_of<SkinComponent, MorphWeightsComponent>(entity);
     setParent(entity, entt::null);
+    if (const auto* sceneId = m_registry.try_get<SceneEntityIdComponent>(entity)) {
+        m_entitiesById.erase(sceneId->id.value);
+    }
     m_registry.destroy(entity);
     m_revisions.transform++;
     m_revisions.renderable += renderable ? 1 : 0;
@@ -251,7 +254,7 @@ void Scene::clear() {
     m_nextEntityId = 1;
     m_changedTransforms.clear();
     m_dirtyTransformRoots.clear();
-    m_transformAuditScratch.clear();
+    m_entitiesById.clear();
     m_physicsLifecycleEvents.clear();
     m_collections = {};
     ++m_revisions.transform;
@@ -278,7 +281,8 @@ void Scene::replaceWith(Scene&& scene) {
     m_revisions = nextRevisions;
     m_changedTransforms = std::move(scene.m_changedTransforms);
     m_dirtyTransformRoots = std::move(scene.m_dirtyTransformRoots);
-    m_transformAuditScratch = std::move(scene.m_transformAuditScratch);
+    m_transformUpdate = scene.m_transformUpdate;
+    m_entitiesById = std::move(scene.m_entitiesById);
     m_transformAuditCountdown = scene.m_transformAuditCountdown;
     m_physicsLifecycleEvents = std::move(scene.m_physicsLifecycleEvents);
     m_renderPacketRevision = nextRevision;
@@ -286,6 +290,8 @@ void Scene::replaceWith(Scene&& scene) {
     m_collections = std::move(scene.m_collections);
     scene.m_collections = {};
     scene.m_nextEntityId = 1;
+    scene.m_dirtyTransformRoots.clear();
+    scene.m_entitiesById.clear();
 }
 
 void Scene::swap(Scene& other) noexcept {
@@ -307,7 +313,8 @@ void Scene::swap(Scene& other) noexcept {
                          .material = nextRevisions.material + 1};
     std::swap(m_changedTransforms, other.m_changedTransforms);
     std::swap(m_dirtyTransformRoots, other.m_dirtyTransformRoots);
-    std::swap(m_transformAuditScratch, other.m_transformAuditScratch);
+    std::swap(m_transformUpdate, other.m_transformUpdate);
+    std::swap(m_entitiesById, other.m_entitiesById);
     std::swap(m_transformAuditCountdown, other.m_transformAuditCountdown);
     std::swap(m_physicsLifecycleEvents, other.m_physicsLifecycleEvents);
     std::swap(m_collections, other.m_collections);
@@ -319,7 +326,7 @@ void Scene::swap(Scene& other) noexcept {
     other.m_contentGeneration = nextGeneration + 1;
 }
 
-bool Scene::updateBranch(Entity entity, const glm::mat4& parentWorld, bool parentChanged) {
+void Scene::updateBranch(Entity entity, const glm::mat4& parentWorld, bool parentChanged) {
     ++m_lastTransformUpdateStats.visited;
     auto& transform = m_registry.get_or_emplace<TransformComponent>(entity);
     auto& cache = m_registry.get_or_emplace<TransformCacheComponent>(entity);
@@ -339,14 +346,20 @@ bool Scene::updateBranch(Entity entity, const glm::mat4& parentWorld, bool paren
         ++m_lastTransformUpdateStats.recomputed;
         m_changedTransforms.push_back(entity);
     }
-    const auto children = m_registry.get_or_emplace<RelationshipComponent>(entity).children;
-
-    for (Entity child : children) {
+    // Copied: recursing may emplace components and move this one's storage.
+    const glm::mat4 world = transform.world;
+    // By index, re-reading the children each time, so the walk needs no copy
+    // of the list and stays valid if the list changes underneath it.
+    for (size_t index = 0;; ++index) {
+        const auto* relationship = m_registry.try_get<RelationshipComponent>(entity);
+        if (relationship == nullptr || index >= relationship->children.size()) {
+            break;
+        }
+        const Entity child = relationship->children[index];
         if (m_registry.valid(child)) {
-            updateBranch(child, transform.world, changed);
+            updateBranch(child, world, changed);
         }
     }
-    return changed;
 }
 
 void Scene::updateWorldTransforms() {
@@ -370,29 +383,38 @@ void Scene::updateWorldTransforms() {
             }
         }
     }
-    m_transformAuditScratch.clear();
+    // Zero is every cache's initial rootUpdate, so it is never used.
+    m_transformUpdate = m_transformUpdate == std::numeric_limits<uint32_t>::max() ? 1 : m_transformUpdate + 1;
     for (Entity entity : m_dirtyTransformRoots) {
         if (!m_registry.valid(entity)) {
             continue;
         }
+        // The topmost queued ancestor updates the whole branch.
         Entity root = entity;
         for (Entity parent = m_registry.get_or_emplace<RelationshipComponent>(root).parent;
              parent != entt::null && m_registry.valid(parent);
              parent = m_registry.get_or_emplace<RelationshipComponent>(root).parent) {
-            if (std::ranges::find(m_dirtyTransformRoots, parent) == m_dirtyTransformRoots.end()) {
+            const auto* parentCache = m_registry.try_get<TransformCacheComponent>(parent);
+            if (parentCache == nullptr || !parentCache->queued) {
                 break;
             }
             root = parent;
         }
-        if (std::ranges::find(m_transformAuditScratch, root) != m_transformAuditScratch.end()) {
+        auto& rootCache = m_registry.get_or_emplace<TransformCacheComponent>(root);
+        if (rootCache.rootUpdate == m_transformUpdate) {
             continue;
         }
-        m_transformAuditScratch.push_back(root);
+        rootCache.rootUpdate = m_transformUpdate;
         const Entity parent = m_registry.get_or_emplace<RelationshipComponent>(root).parent;
         const glm::mat4 parentWorld = parent != entt::null && m_registry.valid(parent)
                                           ? m_registry.get<TransformComponent>(parent).world
                                           : glm::mat4(1.0f);
         updateBranch(root, parentWorld, false);
+    }
+    for (Entity entity : m_dirtyTransformRoots) {
+        if (auto* cache = m_registry.try_get<TransformCacheComponent>(entity)) {
+            cache->queued = false;
+        }
     }
     m_dirtyTransformRoots.clear();
     if (m_lastTransformUpdateStats.recomputed > 0) {
@@ -403,10 +425,16 @@ void Scene::updateWorldTransforms() {
 
 void Scene::markTransformDirty(Entity entity) {
     if (m_registry.valid(entity)) {
-        m_registry.get_or_emplace<TransformCacheComponent>(entity).dirty = true;
-        if (std::ranges::find(m_dirtyTransformRoots, entity) == m_dirtyTransformRoots.end()) {
-            m_dirtyTransformRoots.push_back(entity);
-        }
+        auto& cache = m_registry.get_or_emplace<TransformCacheComponent>(entity);
+        cache.dirty = true;
+        queueTransformRoot(entity, cache);
+    }
+}
+
+void Scene::queueTransformRoot(Entity entity, TransformCacheComponent& cache) {
+    if (!cache.queued) {
+        cache.queued = true;
+        m_dirtyTransformRoots.push_back(entity);
     }
 }
 

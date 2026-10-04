@@ -61,6 +61,7 @@ zenith_add_test(zenith_input_actions EXECUTABLE zenith_input_action_tests
     SOURCES InputActionTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_game_ui SOURCES GameUiTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_scene_hierarchy SOURCES SceneHierarchyTests.cpp LIBS zenith_engine)
+zenith_add_test(zenith_scene_entity_index SOURCES SceneEntityIndexTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_logger SOURCES LoggerTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_child_process SOURCES ChildProcessTests.cpp LIBS zenith_engine
     DEFINITIONS ZENITH_TEST_CMAKE="${CMAKE_COMMAND}")
@@ -140,4 +141,6 @@ zenith_add_test(zenith_render_packet_benchmark_run EXECUTABLE zenith_render_pack
     SOURCES RenderPacketBenchmarkTests.cpp LIBS zenith_engine LABELS benchmark)
 zenith_add_test(zenith_simulation_benchmark_run EXECUTABLE zenith_simulation_benchmark
     SOURCES SimulationBenchmark.cpp LIBS zenith_engine LABELS benchmark)
+zenith_add_test(zenith_scene_scaling_benchmark_run EXECUTABLE zenith_scene_scaling_benchmark
+    SOURCES SceneScalingBenchmark.cpp LIBS zenith_engine LABELS benchmark)
 zenith_add_test(zenith_benchmark SOURCES BenchmarkTests.cpp LIBS zenith_engine)

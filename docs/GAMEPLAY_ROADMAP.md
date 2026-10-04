@@ -33,6 +33,12 @@ Approved 2026-10-04. Nothing is implemented yet.
   tool for bulk logic. Python and other scripting languages were rejected for
   performance and are not to be re-proposed. This settles the "choose a
   scripting runtime" item of `NEXT_STEPS.md` Milestone 20.
+- **2026-10-04: `Scene` maintains its id index itself (A1).** The roadmap
+  suggested EnTT construct/destroy signals on `SceneEntityIdComponent`.
+  `Scene` is the only code that creates or destroys entities or writes that
+  component, so it updates the index directly. Signal handlers bind the
+  `Scene` instance, and `swap`/`replaceWith` move the registry to another
+  `Scene`, so signals would have updated the wrong index.
 - **2026-10-04: engine owns mechanisms, games own rules.** The character
   controller, physics queries, events, timers, effects, save slots and UI
   widgets are reusable engine mechanisms. Weapons, damage, HUD contents and
@@ -42,7 +48,7 @@ Approved 2026-10-04. Nothing is implemented yet.
 
 | Item | Title | Depends on | Status |
 | --- | --- | --- | --- |
-| A1 | Scene costs that grow with entity count | — | todo |
+| A1 | Scene costs that grow with entity count | — | done |
 | A2 | System phases and `GameServices` | — | todo |
 | A3 | Physics queries, layers, triggers | A2 (trigger events) | todo |
 | A4 | Shared input actions | A2 | todo |
@@ -120,28 +126,49 @@ Read first: [Scene](engine/scene.md), [Game modules](engine/modules.md),
 Files: `src/engine/scene/Scene.{hpp,cpp}`, `src/engine/physics/PhysicsWorld.cpp`,
 `src/engine/Engine.cpp`.
 
-- [ ] Stop `Scene::markTransformDirty` from searching `m_dirtyTransformRoots`
+- [x] Stop `Scene::markTransformDirty` from searching `m_dirtyTransformRoots`
       on every call. Today physics calls it twice per active body per frame,
       so the cost grows with the square of the body count. Use the
       `TransformCacheComponent::dirty` flag as the membership test, or a hash
       set.
-- [ ] Remove the linear finds in the `updateWorldTransforms` root walk the
+- [x] Remove the linear finds in the `updateWorldTransforms` root walk the
       same way.
-- [ ] Stop `updateBranch` from copying each node's child vector. Keep it
+- [x] Stop `updateBranch` from copying each node's child vector. Keep it
       correct if the hierarchy changes during iteration.
-- [ ] Make `Scene::findEntity(SceneEntityId)` constant time. It currently scans
+- [x] Make `Scene::findEntity(SceneEntityId)` constant time. It currently scans
       the whole scene and is called about 100 times across 36 files. Keep an
       id-to-entity map updated from EnTT construct and destroy signals on
       `SceneEntityIdComponent`, so there is one place to maintain.
-- [ ] `PhysicsWorld::interpolate` and `Engine.cpp` both call
+- [x] `PhysicsWorld::interpolate` and `Engine.cpp` both call
       `updateWorldTransforms` each frame. Remove one call, or prove the second
       is a no-op.
-- [ ] Tests: id lookup after create, destroy, duplicate and document load; many
+- [x] Tests: id lookup after create, destroy, duplicate and document load; many
       dirty bodies; hierarchy changes during an update.
 
 Exit criteria: transform update stats and frame timings are recorded before
 and after, in a scene with about 5k dynamic bodies, and the comparison is
 noted here.
+
+Result: `tests/engine/SceneScalingBenchmark.cpp`, which is
+`zenith_scene_scaling_benchmark` (Release, 5,000 awake dynamic boxes, 60
+measured frames of step, then interpolate, then `updateWorldTransforms`, plus
+10k `findEntity` lookups). Mean milliseconds:
+
+| Measure | Before | After |
+| --- | --- | --- |
+| `physics.step` | 5.08 | 1.43 |
+| of which write-back (`sync_out`) | 4.08 | 0.69 |
+| `physics.interpolate` | 7.20 | 0.49 |
+| `updateWorldTransforms` | 3.55 | 0.48 |
+| Frame total (step + interpolate + transforms) | 15.83 | 2.40 |
+| 10k `findEntity` lookups | 22.48 | 0.17 |
+| Creating the 5,001 entities | 12.98 | 2.07 |
+
+Transform stats are unchanged: 5,000 visited and 5,000 recomputed per update.
+
+- The second `updateWorldTransforms` call is gone. `interpolate` updates the
+  scene first only when an interpolated body has a parent; the frame's own
+  call then recomputes only the interpolated bodies.
 
 ### A2. System phases and `GameServices`
 

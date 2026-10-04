@@ -608,7 +608,12 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
 
 void PhysicsWorld::interpolate(Scene& scene, float alpha) const {
     const float amount = std::clamp(alpha, 0.0f, 1.0f);
-    scene.updateWorldTransforms();
+    // A parented body's local transform needs its parent's current world
+    // transform, which systems may have changed since the last step. Bodies
+    // without a parent (the usual case) need no update first: their world
+    // and local transforms are written together below, and the caller's next
+    // updateWorldTransforms propagates them to their children.
+    bool parentWorldsCurrent = false;
     for (const auto& [entity, state] : m_impl->bodies) {
         if (state.motionType != PhysicsMotionType::Dynamic || !state.activeLastStep ||
             !scene.registry().valid(entity)) {
@@ -617,13 +622,16 @@ void PhysicsWorld::interpolate(Scene& scene, float alpha) const {
         const glm::vec3 position = glm::mix(state.previousPosition, state.currentPosition, amount);
         const glm::quat rotation = glm::slerp(state.previousRotation, state.currentRotation, amount);
         const glm::mat4 world = composeTransform(position, rotation, state.scale);
+        const Entity parent = scene.registry().get<RelationshipComponent>(entity).parent;
+        const bool parented = parent != entt::null && scene.registry().valid(parent);
+        if (parented && !parentWorldsCurrent) {
+            scene.updateWorldTransforms();
+            parentWorldsCurrent = true;
+        }
         auto& transform = scene.registry().get<TransformComponent>(entity);
-        const auto& relationship = scene.registry().get<RelationshipComponent>(entity);
         transform.world = world;
         transform.local =
-            relationship.parent != entt::null && scene.registry().valid(relationship.parent)
-                ? glm::inverse(scene.registry().get<TransformComponent>(relationship.parent).world) * world
-                : world;
+            parented ? glm::inverse(scene.registry().get<TransformComponent>(parent).world) * world : world;
         scene.markTransformDirty(entity);
     }
 }

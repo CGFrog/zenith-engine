@@ -20,7 +20,17 @@ Wraps an EnTT registry and defines the core ECS components:
 `setParent` updates both sides of a relationship and rejects self-parenting and
 cycles. `instantiateModel` expands imported nodes into entities while preserving
 their hierarchy. `destroyEntity` recursively destroys descendants.
-`updateWorldTransforms` walks roots and computes `world = parent.world * local`.
+`updateWorldTransforms` computes `world = parent.world * local` for the
+branches under entities marked with `markTransformDirty` (and, in an audit
+every frame in debug builds and every 300 calls otherwise, any entity whose
+local transform or parent changed without being marked). Its cost follows the
+number of changed entities, not the scene's size: marking is constant time and
+each dirty branch is walked once per call.
+
+`findEntity` is a constant-time lookup in an id index that `Scene` keeps
+itself, since it is the only code that creates or destroys entities or writes
+`SceneEntityIdComponent`; `clear`, `swap`, and `replaceWith` move the index
+with the registry. Never create or destroy entities through `registry()`.
 
 ## `src/engine/reflection/*` and `src/engine/scene/ComponentTypes.*`
 

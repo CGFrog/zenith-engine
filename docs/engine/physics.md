@@ -16,7 +16,11 @@ Owns Jolt through a private implementation. Each step discovers entities with
 transform, collider, and rigid-body components; creates missing bodies; removes
 orphaned bodies; moves kinematic bodies from ECS transforms; advances Jolt; and
 writes dynamic translation/rotation back while preserving scale. Interpolation
-blends previous and current dynamic poses for smooth rendering.
+blends previous and current dynamic poses for smooth rendering, writing each
+body's world and local transforms and marking it dirty; it updates the scene's
+transforms first only when an interpolated body has a parent. The host's
+`updateWorldTransforms` after interpolation then carries the bodies' poses to
+their children (`Engine::run` calls it once per frame).
 
 It exposes forces, impulses, velocity, raycasts, and begin/persist/end contacts
 in terms of ECS entities. `refreshBody` rebuilds a body after collider or body

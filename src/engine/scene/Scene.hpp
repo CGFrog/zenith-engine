@@ -13,6 +13,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -340,19 +341,32 @@ class Scene {
     struct TransformCacheComponent {
         glm::mat4 local{1.0f};
         Entity parent{entt::null};
+        // The updateWorldTransforms call that last walked from this entity
+        // as a root, so each dirty branch is updated once per call.
+        uint32_t rootUpdate{0};
         bool valid{false};
         bool dirty{true};
+        // Whether the entity is in m_dirtyTransformRoots.
+        bool queued{false};
     };
 
-    bool updateBranch(Entity entity, const glm::mat4& parentWorld, bool parentChanged);
+    void queueTransformRoot(Entity entity, TransformCacheComponent& cache);
+
+    void updateBranch(Entity entity, const glm::mat4& parentWorld, bool parentChanged);
 
     entt::registry m_registry;
     uint64_t m_nextEntityId{1};
     SceneTransformUpdateStats m_lastTransformUpdateStats;
     SceneRevisions m_revisions;
     std::vector<Entity> m_changedTransforms;
+    // Each entity at most once; TransformCacheComponent::queued marks membership.
     std::vector<Entity> m_dirtyTransformRoots;
-    std::vector<Entity> m_transformAuditScratch;
+    uint32_t m_transformUpdate{0};
+    // Every live entity by its scene id. Only Scene creates and destroys
+    // entities or writes SceneEntityIdComponent, so it maintains the index
+    // directly; EnTT signals would bind this Scene and break when swap or
+    // replaceWith move the registry to another one.
+    std::unordered_map<uint64_t, Entity> m_entitiesById;
     bool m_collectingTransformChanges{false};
     uint32_t m_transformAuditCountdown{0};
     std::vector<PhysicsLifecycleEvent> m_physicsLifecycleEvents;
