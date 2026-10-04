@@ -143,6 +143,10 @@ add_library(zenith_engine SHARED
     physics/JoltDebugDraw.cpp
     physics/JoltRuntime.cpp
     platform/FileWatcher.cpp
+    platform/FileWatchBackends.cpp
+    platform/FileWatchPolling.cpp
+    platform/FileWatchWin32.cpp
+    platform/FileWatchInotify.cpp
     platform/ChildProcess.cpp
     platform/FileContents.cpp
     platform/PlatformServices.cpp

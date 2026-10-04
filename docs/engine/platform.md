@@ -24,6 +24,11 @@ overflow or watch failure yields `RescanRequired`. Ignored suffixes and an
 ignore predicate hide temporary files. `FileWatchCoalescer` holds the merge
 rules so they can be tested without the file system.
 
+Each backend has its own file: `FileWatchPolling.cpp`, `FileWatchWin32.cpp`
+and `FileWatchInotify.cpp`; the native ones compile only on their platform.
+The internal `FileWatchBackends.hpp` holds what they share: the `ChangeSink`
+that filters and coalesces their events, the tree walk, and the path helpers.
+
 ## `src/engine/platform/ChildProcess.*`
 
 Starts a program (exact arguments, no shell) or a platform-shell command line
