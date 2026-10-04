@@ -161,6 +161,7 @@ add_library(zenith_engine SHARED
     scene/Collections.cpp
     scene/ComponentTypes.cpp
     scene/SceneAssetReferences.cpp
+    scene/SaveGame.cpp
     scene/SceneDocument.cpp
     scene/EntityReferenceRemap.cpp
     scene/SceneVisibility.cpp

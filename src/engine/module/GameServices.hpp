@@ -8,6 +8,9 @@
 #include "engine/diagnostics/Logger.hpp"
 #include "engine/physics/PhysicsWorld.hpp"
 #include "engine/scene/Prefab.hpp"
+#include "engine/scene/SaveGame.hpp"
+
+#include <optional>
 
 class AssetManager;
 class BehaviourRegistry;
@@ -60,6 +63,14 @@ class GameServices {
     Timers& timers();
     // Short-lived effects that remove themselves when they end.
     Effects& effects();
+    // The session's save slots, or null when the host gives none (tests, the
+    // editor without a project). scene is the scene document the session
+    // plays, which saves are recorded against.
+    void setSaveGames(SaveGameStore saves, std::filesystem::path scene);
+    SaveGameStore* saveGames();
+    // Saves scene into slot of the session's save games. Loading belongs to
+    // the game's flow (it replaces the scene): SaveGameStore::load.
+    SaveGameResult saveGame(const Scene& scene, std::string_view slot, std::string title = {});
     // Lines and shapes drawn this frame in every view; cleared after the
     // frame renders.
     DebugDraw& debugDraw();
@@ -91,6 +102,10 @@ class GameServices {
     std::shared_ptr<const BehaviourRegistry> m_behaviours;
     GameplayPhysicsEvents m_physicsEvents;
     Effects m_effects{m_commands, m_timers, m_log};
+    AssetManager& m_assets;
+    SceneDocumentOptions m_documents;
+    std::optional<SaveGameStore> m_saveGames;
+    std::filesystem::path m_savedScene;
 };
 
 // Runs one phase of systems and then, when context.services is set, flushes

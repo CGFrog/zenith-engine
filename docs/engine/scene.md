@@ -35,8 +35,13 @@ with the registry. Never create or destroy entities through `registry()`.
 ## `src/engine/reflection/*` and `src/engine/scene/ComponentTypes.*`
 
 `Fields<T>` describes a struct's members (`FieldDescriptor`: key, kind,
-optional flag, and inspector hints such as ranges, angles, and colors);
-`FieldJson` reads and writes described fields generically. A `SceneEntityId`
+optional flag, runtime-state flag, and inspector hints such as ranges,
+angles, and colors); `FieldJson` reads and writes described fields
+generically. A field marked `.runtimeState()` (health left, a door's
+progress) is left out of documents whose `SceneDocumentOptions::purpose` is
+`Scene` (scene files, prefabs, undo snapshots) and written for `SaveGame`;
+readers treat it as optional either way. Custom codecs see the purpose in
+their save context. A `SceneEntityId`
 member is an entity reference field (`FieldKind::EntityReference`), written
 as the entity's id or `null` like a scene document's `parent`; an id whose
 entity no longer exists is kept unchanged. Reflection does not know the id
@@ -90,6 +95,22 @@ component JSON the key `path` is reserved for asset references, which lets
 Prefab entities use the same entity form and component codecs, so their asset
 references carry GUIDs too; nested-prefab sources are still paths relative to
 the containing prefab.
+
+## `src/engine/scene/SaveGame.*`
+
+`SaveGameStore` keeps save slots (`<slot>.zsave`, names of letters, digits,
+`-` and `_`) in a directory. `save` serializes the running scene for a save
+game and records only how it differs from its baseline scene document
+(`SceneDocument::diff`, keeping each changed entity's new state), with a
+title, a timestamp, and the baseline's path (relative to the store's content
+root when inside it). `load` reads the baseline again and applies the changes
+(`applyChanges`, forward), then replaces the destination scene, so entities
+the game never touched follow later edits of the level. Writes are atomic; a
+missing or corrupted slot loads its previous save from the `.bak` backup.
+`list` returns the slots newest first. Games reach the session's store
+through `GameServices::saveGames` and `saveGame`; `ProjectApplication` puts
+it under `userDataDirectory("Zenith", <project name>)/saves`, and the editor's
+Play under the project's `.zenith/saves`.
 
 ## `src/engine/scene/Collections.*`, `SceneVisibility.*`, `CollectionComponentTypes.cpp`
 

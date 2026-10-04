@@ -15,6 +15,13 @@ class AssetDatabase;
 class AssetManager;
 class ComponentTypeRegistry;
 
+// What a document is for: a scene (the default) leaves fields marked
+// .runtimeState() out; a save game keeps them.
+enum class SceneDocumentPurpose {
+    Scene,
+    SaveGame,
+};
+
 struct SceneDocumentOptions {
     std::filesystem::path assetRoot;
     // Component types the document reads and writes. Null uses the built-in
@@ -27,6 +34,8 @@ struct SceneDocumentOptions {
     // path-only references, which load by path. The caller keeps the database
     // current (rescanned) and must not mutate it during a document call.
     std::shared_ptr<const AssetDatabase> assetDatabase;
+    // Read by writers; readers accept runtime-state fields either way.
+    SceneDocumentPurpose purpose{SceneDocumentPurpose::Scene};
 };
 
 struct SceneDocumentResult {

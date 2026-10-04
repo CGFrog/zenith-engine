@@ -153,6 +153,9 @@ It holds:
   destroyed, and the next pooled spawn of that prefab moves and restarts it,
   which avoids restarting every emitter in the scene as entity changes do.
   Spawns apply at the next flush, before the entity commands.
+- Save games, when the host provides them (`setSaveGames`): `saveGames()`
+  and `saveGame(scene, slot, title)` against the scene document the session
+  plays (see [Scene](scene.md)).
 - `Timers`: one-shot or repeating callbacks on simulated time. They follow the
   clock's time scale and stop while paused. A timer may have an owner entity;
   the timer is dropped when its owner is gone.

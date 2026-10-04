@@ -473,10 +473,28 @@ Follow-ups:
 
 ### B5. Save game
 
-- [ ] Add a `SaveGame` API over `SceneDocument` serialize and diff, with slots
+- [x] Add a `SaveGame` API over `SceneDocument` serialize and diff, with slots
       under the platform's writable location.
-- [ ] Add a `.runtimeState()` field hint: fields marked with it are skipped in
+- [x] Add a `.runtimeState()` field hint: fields marked with it are skipped in
       scene documents but kept in saves.
+
+Result:
+- `src/engine/scene/SaveGame.*` (`SaveGameStore`); `SceneDocumentOptions::
+  purpose` selects whether runtime-state fields are written
+  (`RuntimeStateFields` in `FieldJson`).
+- A save stores only the changed entities' new states against the baseline
+  scene document, so untouched entities follow later level edits.
+- `GameServices::saveGames()`/`saveGame()`; `ProjectApplication` and the
+  editor's Play set the store and the baseline.
+- Coverage: `tests/engine/SaveGameTests.cpp` (`zenith_save_game`).
+
+Follow-ups:
+- Loading a save into a running session is the game's flow (a scene request
+  that loads the slot); C6's template should show it.
+- A baseline written in an older document version diffs against every
+  entity, so such saves are larger until the level is re-saved.
+- Undo snapshots also leave runtime state out; a Play-mode edit that is undone
+  resets runtime fields to their defaults.
 
 ### B6. Game UI widgets and settings screen
 

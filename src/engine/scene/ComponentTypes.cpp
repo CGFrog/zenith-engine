@@ -135,7 +135,9 @@ SceneDocumentResult ComponentType::save(const Scene& scene, Entity entity, const
             return result;
         }
     } else {
-        writeReflectedFields(component, m_fields, output);
+        writeReflectedFields(component, m_fields, output,
+                             context.options.purpose == SceneDocumentPurpose::SaveGame ? RuntimeStateFields::Include
+                                                                                       : RuntimeStateFields::Skip);
     }
     for (const TextureBinding& binding : m_textures) {
         void* mutableComponent = const_cast<void*>(component);

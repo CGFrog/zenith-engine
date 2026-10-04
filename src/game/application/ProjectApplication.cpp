@@ -1,6 +1,7 @@
 #include "ProjectApplication.hpp"
 
 #include "engine/graphics/RenderConfiguration.hpp"
+#include "engine/platform/PlatformServices.hpp"
 #include "game/application/GameLaunch.hpp"
 
 #include <string>
@@ -42,6 +43,9 @@ class ProjectPlayScene final : public ApplicationScene {
             return {.success = true};
         }
         m_gameplay.start(context, m_project.assetRoot);
+        m_gameplay.services()->setSaveGames(SaveGameStore(userDataDirectory("Zenith", m_project.displayName) / "saves",
+                                                          m_project.projectFile.parent_path()),
+                                            m_project.startupScene);
         context.logger.log(LogLevel::Info, "game",
                            "Playing " + utf8FromPath(m_project.startupScene.filename()) +
                                " with Play systems: " + playSystemList(*gameplay.systems));

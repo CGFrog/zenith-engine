@@ -89,6 +89,9 @@ struct FieldDescriptor {
     // Optional fields may be missing from a document; the object keeps the
     // value it had, normally its default.
     bool optional{false};
+    // Runtime state (health left, a door's progress): left out of scene
+    // documents and prefabs, kept in save games, and optional when read.
+    bool runtimeState{false};
     FieldPresentation presentation;
     // Maps the owning object to this field. FloatRange uses it for the minimum
     // and secondAddress for the maximum.
@@ -193,6 +196,12 @@ template <typename Object> class Fields {
         field.address = [member](void* object) -> void* { return &(static_cast<Object*>(object)->*member); };
         field.children = std::move(nested).build();
         m_fields.push_back(std::move(field));
+        return *this;
+    }
+
+    // The last field is runtime state: saved in save games, not in scenes.
+    Fields& runtimeState() {
+        last().runtimeState = true;
         return *this;
     }
 

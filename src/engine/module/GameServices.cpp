@@ -7,11 +7,13 @@
 
 GameServices::GameServices(AssetManager& assets, SceneDocumentOptions documents, DebugDraw& debugDraw, Logger* logger,
                            std::shared_ptr<const BehaviourRegistry> behaviours)
-    : m_prefabs(assets, std::move(documents))
+    : m_prefabs(assets, documents)
     , m_debugDraw(debugDraw)
     , m_logger(logger)
     , m_log(logger, "gameplay")
-    , m_behaviours(std::move(behaviours)) {}
+    , m_behaviours(std::move(behaviours))
+    , m_assets(assets)
+    , m_documents(std::move(documents)) {}
 
 PrefabSystem& GameServices::prefabs() {
     return m_prefabs;
@@ -31,6 +33,22 @@ Timers& GameServices::timers() {
 
 Effects& GameServices::effects() {
     return m_effects;
+}
+
+void GameServices::setSaveGames(SaveGameStore saves, std::filesystem::path scene) {
+    m_saveGames.emplace(std::move(saves));
+    m_savedScene = std::move(scene);
+}
+
+SaveGameStore* GameServices::saveGames() {
+    return m_saveGames ? &*m_saveGames : nullptr;
+}
+
+SaveGameResult GameServices::saveGame(const Scene& scene, std::string_view slot, std::string title) {
+    if (!m_saveGames) {
+        return {.error = "This session has no save games"};
+    }
+    return m_saveGames->save(slot, scene, m_assets, m_documents, m_savedScene, std::move(title));
 }
 
 DebugDraw& GameServices::debugDraw() {

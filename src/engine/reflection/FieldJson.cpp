@@ -30,7 +30,7 @@ bool readFloats(const Json& input, float* values, size_t count) {
     return true;
 }
 
-Json writeField(const void* object, const FieldDescriptor& field) {
+Json writeField(const void* object, const FieldDescriptor& field, RuntimeStateFields runtimeState) {
     switch (field.kind) {
     case FieldKind::Bool:
         return field.value<bool>(object);
@@ -70,7 +70,7 @@ Json writeField(const void* object, const FieldDescriptor& field) {
     }
     case FieldKind::Struct: {
         Json nested;
-        writeReflectedFields(&field.value<char>(object), field.children, nested);
+        writeReflectedFields(&field.value<char>(object), field.children, nested, runtimeState);
         return nested;
     }
     }
@@ -179,10 +179,14 @@ std::string readField(const Json& input, void* object, const FieldDescriptor& fi
 }
 } // namespace
 
-void writeReflectedFields(const void* object, std::span<const FieldDescriptor> fields, Json& output) {
+void writeReflectedFields(const void* object, std::span<const FieldDescriptor> fields, Json& output,
+                          RuntimeStateFields runtimeState) {
     output = Json::object();
     for (const FieldDescriptor& field : fields) {
-        output[field.key] = writeField(object, field);
+        if (field.runtimeState && runtimeState == RuntimeStateFields::Skip) {
+            continue;
+        }
+        output[field.key] = writeField(object, field, runtimeState);
     }
 }
 
@@ -193,7 +197,7 @@ std::string readReflectedFields(const Json& input, void* object, std::span<const
     for (const FieldDescriptor& field : fields) {
         const auto found = input.find(field.key);
         if (found == input.end()) {
-            if (field.optional) {
+            if (field.optional || field.runtimeState) {
                 continue;
             }
             return "Missing required field '" + field.key + "'";
