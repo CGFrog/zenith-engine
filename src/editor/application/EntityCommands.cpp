@@ -86,7 +86,8 @@ void duplicateSelection(const SceneEditing& editing, Selection& selection) {
     }
 }
 
-void placeModel(const SceneEditing& editing, Selection& selection, const std::filesystem::path& path, Entity parent) {
+void placeModel(const SceneEditing& editing, Selection& selection, const std::filesystem::path& path, Entity parent,
+                const glm::vec3& location) {
     Scene& scene = editing.scene();
     const AssetLoadResult<ModelHandle> loaded = editing.assets().loadModel(path);
     if (!loaded) {
@@ -98,9 +99,14 @@ void placeModel(const SceneEditing& editing, Selection& selection, const std::fi
         return;
     }
     const Entity root = scene.createEntity(path.stem().string());
+    glm::vec4 local(location, 1.0f);
     if (parent != entt::null) {
         scene.setParent(root, parent);
+        scene.updateWorldTransforms();
+        local = glm::inverse(scene.registry().get<TransformComponent>(parent).world) * local;
     }
+    scene.registry().get<TransformComponent>(root).local[3] = local;
+    scene.markTransformDirty(root);
     if (const SceneResult result = scene.instantiateModel(root, loaded.handle, editing.assets()); !result) {
         scene.destroyEntity(root);
         editing.diagnostics().reportError("Could not place model: " + result.error);

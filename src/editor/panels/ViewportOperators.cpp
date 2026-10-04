@@ -122,6 +122,12 @@ std::vector<Operator> viewportOperators(ViewportRegistry& viewports) {
         ViewportPanel* viewport = viewports.active();
         return viewport != nullptr ? &viewport->chrome() : nullptr;
     });
+    for (Operator& op : transformToolOperators([&viewports]() -> TransformToolSettings* {
+             ViewportPanel* viewport = viewports.active();
+             return viewport != nullptr ? &viewport->tools() : nullptr;
+         })) {
+        operators.push_back(std::move(op));
+    }
 
     operators.push_back(viewportOperator(viewports,
                                          {.id = "view3d.toggle_snapping",

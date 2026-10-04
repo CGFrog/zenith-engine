@@ -62,6 +62,14 @@ OperatorResult selectCreated(OperatorContext& context, Entity entity) {
     return OperatorResult::finished();
 }
 
+// The add operators start at the 3D cursor; a location the caller passes, or
+// one edited in Adjust Last Operation, still wins.
+template <typename Properties> void startAtCursor(const OperatorContext& context, OperatorProperties& properties) {
+    if (Properties* values = properties.get<Properties>()) {
+        values->location = context.editing.document().editorData().cursorLocation;
+    }
+}
+
 Fields<AddObjectProperties> addObjectFields() {
     return std::move(Fields<AddObjectProperties>().add("location", &AddObjectProperties::location).drag(0.05f));
 }
@@ -79,7 +87,8 @@ Operator addObjectOperator(std::string id, std::string label, std::string descri
                 const Entity entity = create(scene);
                 placeEntity(scene, entity, values.location, 1.0f);
                 return selectCreated(context, entity);
-            })};
+            }),
+            .invokeDefaults = startAtCursor<AddObjectProperties>};
 }
 
 Operator addCubeOperator() {
@@ -104,7 +113,8 @@ Operator addCubeOperator() {
                 }
                 placeEntity(scene, cube, values.location, values.size);
                 return selectCreated(context, cube);
-            })};
+            }),
+            .invokeDefaults = startAtCursor<AddCubeProperties>};
 }
 
 Operator createEntityOperator() {
@@ -303,7 +313,8 @@ Operator addEmptyWithOperator() {
                 type->addDefault(scene, entity);
                 placeEntity(scene, entity, values.location, 1.0f);
                 return selectCreated(context, entity);
-            })};
+            }),
+            .invokeDefaults = startAtCursor<AddEmptyWithProperties>};
 }
 
 // Removes a registered component, or the preserved data of a component type

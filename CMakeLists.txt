@@ -571,6 +571,7 @@ add_library(zenith_editor_app STATIC
     src/editor/document/EditorDocument.cpp
     src/editor/document/EditorRecovery.cpp
     src/editor/document/PrefabAuthoring.cpp
+    src/editor/document/SceneEditorData.cpp
     src/editor/document/SceneFragment.cpp
     src/editor/interaction/ComponentEditors.cpp
     src/editor/interaction/EditorCamera.cpp
@@ -661,8 +662,10 @@ add_library(zenith_editor_app STATIC
     src/editor/theme/ThemeChrome.cpp
     src/editor/viewport/SceneGizmoDraw.cpp
     src/editor/viewport/BoxSelect.cpp
+    src/editor/viewport/Cursor3D.cpp
     src/editor/viewport/LassoSelect.cpp
     src/editor/viewport/RegionSelect.cpp
+    src/editor/viewport/SnapQueries.cpp
     src/editor/viewport/ViewFraming.cpp
     src/editor/viewport/ViewportPickProvider.cpp
     src/editor/viewport/ViewportPicker.cpp
@@ -1290,6 +1293,7 @@ if(BUILD_TESTING)
     add_executable(zenith_editor_document_tests
         tests/editor/EditorDocumentTests.cpp
         src/editor/document/EditorDocument.cpp
+        src/editor/document/SceneEditorData.cpp
     )
     target_include_directories(zenith_editor_document_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     target_link_libraries(zenith_editor_document_tests PRIVATE zenith_engine)
@@ -1681,6 +1685,16 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME zenith_viewport_picking COMMAND zenith_viewport_picking_tests)
 
+    add_executable(zenith_snapping_cursor_tests tests/editor/SnappingCursorTests.cpp)
+    target_compile_definitions(zenith_snapping_cursor_tests PRIVATE ZENITH_ASSET_DIR="${ZENITH_ASSET_BINARY_DIR}")
+    add_dependencies(zenith_snapping_cursor_tests zenith_assets)
+    target_link_libraries(zenith_snapping_cursor_tests PRIVATE zenith_editor_app)
+    if(MSVC)
+        target_compile_options(zenith_snapping_cursor_tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(zenith_snapping_cursor_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME zenith_snapping_cursor COMMAND zenith_snapping_cursor_tests)
     add_executable(zenith_project_asset_tests
         tests/editor/ProjectAssetTests.cpp
         src/editor/project/AssetCatalog.cpp
@@ -2067,7 +2081,7 @@ if(BUILD_TESTING)
     add_test(NAME zenith_editor_vulkan_smoke COMMAND zenith_editor)
     set_tests_properties(zenith_editor_vulkan_smoke PROPERTIES
         ENVIRONMENT
-            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/vulkan_smoke"
+            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=900;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/vulkan_smoke"
         LABELS "vulkan;smoke"
         TIMEOUT 45
         FIXTURES_REQUIRED zenith_editor_test_settings
@@ -2096,7 +2110,7 @@ if(BUILD_TESTING)
         COMMAND zenith_editor "${CMAKE_CURRENT_BINARY_DIR}/editor-module-smoke-$<CONFIG>.zenith-project")
     set_tests_properties(zenith_editor_module_smoke PROPERTIES
         ENVIRONMENT
-            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=600;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/module_smoke"
+            "ZENITH_EDITOR_SMOKE=1;ZENITH_SMOKE_FRAMES=900;ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/module_smoke"
         LABELS "vulkan;smoke"
         TIMEOUT 60
         FIXTURES_REQUIRED zenith_editor_test_settings
@@ -2174,7 +2188,7 @@ if(BUILD_TESTING)
     )
     zenith_add_validation_smoke(zenith_validation_editor
         COMMAND zenith_editor
-        ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=600
+        ENVIRONMENT ZENITH_EDITOR_SMOKE=1 ZENITH_SMOKE_FRAMES=900
             ZENITH_EDITOR_SETTINGS_DIR=${ZENITH_EDITOR_TEST_SETTINGS_DIR}/validation_editor
     )
     set_tests_properties(zenith_validation_editor PROPERTIES FIXTURES_REQUIRED zenith_editor_test_settings)

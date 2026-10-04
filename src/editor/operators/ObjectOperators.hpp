@@ -16,11 +16,13 @@
 // files, Play mode, the camera) are registered by the editor session.
 
 struct AddObjectProperties {
-    // World-space position of the new object, in meters.
+    // World-space position of the new object, in meters. An invocation
+    // starts it at the scene's 3D cursor (SceneEditorData).
     glm::vec3 location{0.0f};
 };
 
 struct AddCubeProperties {
+    // As AddObjectProperties::location: starts at the 3D cursor.
     glm::vec3 location{0.0f};
     // Uniform scale; the default cube is one meter across.
     float size{1.0f};
@@ -66,7 +68,8 @@ struct ComponentProperties {
 struct AddEmptyWithProperties {
     // Component type key, for example "point_light".
     std::string component;
-    // World-space position of the new object, in meters.
+    // World-space position of the new object, in meters; starts at the 3D
+    // cursor.
     glm::vec3 location{0.0f};
 };
 

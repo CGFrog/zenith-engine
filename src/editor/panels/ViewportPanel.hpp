@@ -7,6 +7,7 @@
 #include "editor/panels/ViewportRegistry.hpp"
 #include "editor/viewport/BoxSelect.hpp"
 #include "editor/viewport/LassoSelect.hpp"
+#include "editor/viewport/SnapQueries.hpp"
 #include "editor/viewport/ViewportPicker.hpp"
 #include "engine/graphics/Rendering.hpp"
 #include "engine/scene/Scene.hpp"
@@ -55,7 +56,10 @@ bool viewportDrawsSceneGizmos(EditorMode mode, bool lookingThroughSceneCamera, c
 //
 // Selection: a left click runs view3d.select (Alt: view3d.select_cycle,
 // Shift extends), B starts the box tool (view3d.select_box) and Ctrl+RMB
-// drags a lasso (view3d.select_lasso). Picks resolve through the GPU id
+// drags a lasso (view3d.select_lasso). Shift+RMB places the 3D cursor
+// (view3d.cursor3d_place), which the viewport also draws (overlays.cursor).
+// The gizmo follows the tool settings' pivot point and snapping
+// (TransformToolSettings). Picks resolve through the GPU id
 // buffer when the view renders and fall back to CPU ray casts otherwise
 // (ViewportPicker documents the timing); an armed eyedropper takes a click
 // instead of the selection. Local view (view3d.localview) isolates some
@@ -72,7 +76,7 @@ class ViewportPanel final : public EditorPanel {
     void update(EditorContext& context, const InputState& input, float deltaSeconds) override;
     void draw(EditorContext& context) override;
     void hidden(EditorContext& context) override;
-    // The overlays (viewportAreaState).
+    // The overlays and transform tool choices (viewportAreaState).
     std::string areaState() const override;
     void restoreAreaState(std::string_view state) override;
 
@@ -97,6 +101,9 @@ class ViewportPanel final : public EditorPanel {
     // The lens the viewport shows: the scene camera it looks through while
     // that camera exists, otherwise its editor camera.
     RenderView lens(const Scene& scene) const;
+    // What snapping and the 3D cursor look through: the lens, the image
+    // size from the latest draw, and the local view's isolation.
+    SnapView snapView(const Scene& scene) const;
     // The settings override sent to the render view in the latest draw.
     const std::optional<RenderSettings>& appliedViewSettings() const;
 
@@ -186,6 +193,12 @@ class ViewportPanel final : public EditorPanel {
     void selectAtMouse(EditorContext& context);
     // Starts the Ctrl+RMB lasso through view3d.select_lasso.
     void startLassoGesture(EditorContext& context);
+    // The Shift+RMB gesture: view3d.cursor3d_place at the mouse.
+    void placeCursorAtMouse(EditorContext& context);
+    // Snaps the gizmo's dragged position (absolute grid, surface, or vertex)
+    // along the components of its frame that moved since the drag started.
+    glm::vec3 snapGizmoTranslation(EditorContext& context, const TransformSnapping& snapping, const glm::vec3& position,
+                                   const glm::mat3& localAxes) const;
     void updateSelectTools(bool imageHovered);
     // Starts a queued pick and applies a resolved one.
     void processPicks(EditorContext& context);
@@ -213,6 +226,8 @@ class ViewportPanel final : public EditorPanel {
     // Where the chrome leaves the image uncovered, for the name label.
     glm::vec2 m_labelOrigin{0.0f};
     bool m_gizmoWasUsing{false};
+    // Where the gizmo was when the current drag started.
+    glm::vec3 m_gizmoStartPosition{0.0f};
     // Scene snapshot from before the current gizmo drag, for undo.
     std::string m_gizmoBefore;
     std::vector<RenderObjectId> m_outlinedObjects;

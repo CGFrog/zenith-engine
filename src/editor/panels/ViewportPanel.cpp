@@ -1,5 +1,6 @@
 #include "ViewportPanel.hpp"
 
+#include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/PickQueries.hpp"
 #include "editor/panels/AssetDragPayloads.hpp"
@@ -8,6 +9,7 @@
 #include "editor/theme/EditorWidgets.hpp"
 #include "editor/theme/PixelPainter.hpp"
 #include "editor/theme/ThemeChrome.hpp"
+#include "editor/viewport/Cursor3D.hpp"
 #include "editor/viewport/SceneGizmoDraw.hpp"
 #include "editor/viewport/ViewFraming.hpp"
 #include "engine/graphics/ViewShading.hpp"
@@ -18,6 +20,7 @@
 #include <ImGuizmo.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <utility>
 
@@ -49,6 +52,17 @@ const char* selectionSetModeName(SelectionSetMode mode) {
         return "subtract";
     }
     return "auto";
+}
+
+glm::mat3 normalizedAxes(const glm::mat4& world) {
+    glm::mat3 axes(1.0f);
+    for (int column = 0; column < 3; ++column) {
+        const glm::vec3 basis(world[column]);
+        if (glm::length(basis) > 1e-8f) {
+            axes[column] = glm::normalize(basis);
+        }
+    }
+    return axes;
 }
 } // namespace
 
@@ -108,11 +122,11 @@ void ViewportPanel::releaseRenderView() {
 }
 
 std::string ViewportPanel::areaState() const {
-    return viewportAreaState(m_chrome);
+    return viewportAreaState(m_chrome, m_tools);
 }
 
 void ViewportPanel::restoreAreaState(std::string_view state) {
-    restoreViewportAreaState(state, m_chrome);
+    restoreViewportAreaState(state, m_chrome, m_tools);
 }
 
 const char* ViewportPanel::title() const {
@@ -178,6 +192,12 @@ RenderView ViewportPanel::lens(const Scene& scene) const {
         }
     }
     return m_camera.renderView();
+}
+
+SnapView ViewportPanel::snapView(const Scene& scene) const {
+    return {.lens = lens(scene),
+            .viewSize = m_size,
+            .isolatedObjects = m_localViewObjects ? &*m_localViewObjects : nullptr};
 }
 
 const std::optional<RenderSettings>& ViewportPanel::appliedViewSettings() const {
@@ -306,11 +326,13 @@ void ViewportPanel::update(EditorContext& context, const InputState& input, floa
     // Looking through a scene camera is read-only: the editor camera waits.
     // So does it during a box or lasso, and from a Ctrl+RMB press, which
     // starts a lasso rather than fly navigation.
+    // Shift+RMB places the 3D cursor; it starts no navigation either.
     const bool ctrlDown = input.keyDown(Key::LeftControl) || input.keyDown(Key::RightControl);
-    const bool lassoGesture = ctrlDown && input.mouseButtonDown(MouseButton::Right) && !m_navigating;
+    const bool shiftDown = input.keyDown(Key::LeftShift) || input.keyDown(Key::RightShift);
+    const bool rightGesture = (ctrlDown || shiftDown) && input.mouseButtonDown(MouseButton::Right) && !m_navigating;
     const bool cameraInputActive = m_inputActive && !context.actions.modalTransformActive() &&
                                    !m_suppressCameraUntilRelease && !m_cameraView && !selectToolActive() &&
-                                   !lassoGesture;
+                                   !rightGesture;
     m_navigating =
         cameraInputActive && (input.mouseButtonDown(MouseButton::Middle) || input.mouseButtonDown(MouseButton::Right));
     m_camera.update(input, deltaSeconds, cameraInputActive);
@@ -361,6 +383,9 @@ void ViewportPanel::recordSceneGizmos(EditorContext& context) {
                      .aspectRatio = m_size.x / std::max(m_size.y, 1.0f),
                      .viewCamera = viewCamera},
                     m_chrome.overlays.scene, *output);
+    if (m_chrome.overlays.cursor) {
+        recordCursor3D(context.editing.document().editorData().cursorLocation, lens(scene), m_size, *output);
+    }
 }
 
 void ViewportPanel::drawSceneLabels(EditorContext& context) const {
@@ -511,6 +536,9 @@ void ViewportPanel::draw(EditorContext& context) {
         } else if (imageHovered && ImGui::GetIO().KeyCtrl && ImGui::IsMouseClicked(ImGuiMouseButton_Right) &&
                    !gizmoBlocksPicking && !context.eyedropperArmed()) {
             startLassoGesture(context);
+        } else if (imageHovered && ImGui::GetIO().KeyShift && ImGui::IsMouseClicked(ImGuiMouseButton_Right) &&
+                   !gizmoBlocksPicking && !context.eyedropperArmed()) {
+            placeCursorAtMouse(context);
         }
     }
     processPicks(context);
@@ -623,6 +651,26 @@ void ViewportPanel::drawViewMenu(EditorContext& context) {
     if (ImGui::MenuItem("Exit Camera View", nullptr, false, m_cameraView.has_value())) {
         exitCameraView();
     }
+    ImGui::Separator();
+    if (ImGui::BeginMenu("Snap")) {
+        constexpr std::array<std::pair<const char*, const char*>, 3> cursorItems{{
+            {"Cursor to Selected", "view3d.snap_cursor_to_selected"},
+            {"Cursor to World Origin", "view3d.cursor_reset"},
+            {"Selection to Cursor", "view3d.snap_selected_to_cursor"},
+        }};
+        for (const auto& [label, operatorId] : cursorItems) {
+            const std::string shortcut = context.shortcut(operatorId);
+            if (ImGui::MenuItem(label, shortcut.c_str(), false, context.canInvoke(operatorId))) {
+                context.invoke(operatorId);
+            }
+        }
+        constexpr const char* keepOffset = R"({"offset":true})";
+        if (ImGui::MenuItem("Selection to Cursor (Keep Offset)", nullptr, false,
+                            context.canInvoke("view3d.snap_selected_to_cursor"))) {
+            context.invoke("view3d.snap_selected_to_cursor", keepOffset);
+        }
+        ImGui::EndMenu();
+    }
 }
 
 bool ViewportPanel::drawToolShelf(float headerHeight) {
@@ -730,6 +778,13 @@ void ViewportPanel::startLassoGesture(EditorContext& context) {
         io.KeyShift ? SelectionSetMode::Extend : (io.KeyAlt ? SelectionSetMode::Subtract : SelectionSetMode::Set);
     const nlohmann::json properties{{"mode", selectionSetModeName(mode)}, {"right_drag", true}};
     context.actions.invokeOperator(context.app, "view3d.select_lasso", properties.dump(), KeymapRegion::Viewport);
+}
+
+void ViewportPanel::placeCursorAtMouse(EditorContext& context) {
+    // The press must not also start fly navigation.
+    suppressCameraUntilRightRelease();
+    const nlohmann::json properties{{"x", m_mouseInView.x}, {"y", m_mouseInView.y}};
+    context.actions.invokeOperator(context.app, "view3d.cursor3d_place", properties.dump(), KeymapRegion::Viewport);
 }
 
 void ViewportPanel::updateSelectTools(bool imageHovered) {
@@ -884,7 +939,19 @@ bool ViewportPanel::drawGizmo(EditorContext& context) {
     }
     entt::registry& registry = scene.registry();
     scene.updateWorldTransforms();
-    glm::mat4 world = registry.get<TransformComponent>(entity).world;
+    const glm::mat4 startWorld = registry.get<TransformComponent>(entity).world;
+    // The gizmo sits on the pivot: the 3D cursor while rotating or scaling
+    // about it, otherwise the object's origin (with one object selected, the
+    // median, active, and individual origins are all that origin).
+    const bool aboutCursor = m_tools.pivot == TransformPivot::Cursor && m_tools.gizmo != GizmoMode::Translate;
+    glm::mat4 gizmo = startWorld;
+    if (aboutCursor) {
+        gizmo[3] = glm::vec4(context.editing.document().editorData().cursorLocation, 1.0f);
+    }
+    const glm::mat4 gizmoBefore = gizmo;
+    if (!m_gizmoWasUsing) {
+        m_gizmoStartPosition = glm::vec3(gizmo[3]);
+    }
     const RenderView currentLens = lens(scene);
     const glm::mat4 view = lensViewMatrix(currentLens);
     const glm::mat4 projection = lensGizmoProjectionMatrix(currentLens, m_size.x / m_size.y);
@@ -899,14 +966,32 @@ bool ViewportPanel::drawGizmo(EditorContext& context) {
             ? ImGuizmo::TRANSLATE
             : (m_tools.gizmo == GizmoMode::Rotate ? ImGuizmo::ROTATE : ImGuizmo::SCALE);
     const ImGuizmo::MODE mode = m_tools.space == TransformSpace::Local ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+    // Ctrl inverts snapping, as during modal transforms. ImGuizmo snaps in
+    // increments from the drag start; the absolute grid and surface or vertex
+    // targets snap its translation here instead.
+    const TransformSnapping snapping = transformSnapping(m_tools, ImGui::GetIO().KeyCtrl);
+    const bool snapsTranslationHere = snapping.enabled && m_tools.gizmo == GizmoMode::Translate &&
+                                      (snapping.absoluteGrid || snapping.target != SnapTarget::Increment);
     const float snapValue = m_tools.activeSnap();
     const float snap[3]{snapValue, snapValue, snapValue};
     const glm::mat4 localBeforeManipulation = registry.get<TransformComponent>(entity).local;
-    const bool changed = ImGuizmo::Manipulate(&view[0][0], &projection[0][0], operation, mode, &world[0][0], nullptr,
-                                              m_tools.snapping ? snap : nullptr);
+    const bool changed = ImGuizmo::Manipulate(&view[0][0], &projection[0][0], operation, mode, &gizmo[0][0], nullptr,
+                                              snapping.enabled && !snapsTranslationHere ? snap : nullptr);
     const bool usingGizmo = ImGuizmo::IsUsing();
     const bool overGizmo = ImGuizmo::IsOver();
     ImGuizmo::PopID();
+    if (changed && snapsTranslationHere) {
+        gizmo[3] =
+            glm::vec4(snapGizmoTranslation(context, snapping, glm::vec3(gizmo[3]), normalizedAxes(gizmoBefore)), 1.0f);
+    }
+    // About the cursor the object follows the gizmo's change; otherwise the
+    // gizmo is the object.
+    glm::mat4 world = gizmo;
+    if (aboutCursor) {
+        world = std::abs(glm::determinant(glm::mat3(gizmoBefore))) > 1e-12f
+                    ? gizmo * glm::inverse(gizmoBefore) * startWorld
+                    : startWorld;
+    }
     if (changed) {
         const Entity parent = registry.get<RelationshipComponent>(entity).parent;
         registry.get<TransformComponent>(entity).local =
@@ -933,4 +1018,39 @@ bool ViewportPanel::drawGizmo(EditorContext& context) {
     }
     m_gizmoWasUsing = usingGizmo;
     return usingGizmo || overGizmo;
+}
+
+glm::vec3 ViewportPanel::snapGizmoTranslation(EditorContext& context, const TransformSnapping& snapping,
+                                              const glm::vec3& position, const glm::mat3& localAxes) const {
+    // The gizmo's axis or plane is whichever of its frame's components moved
+    // since the drag started; only those snap.
+    const glm::mat3 frame = m_tools.space == TransformSpace::Local ? localAxes : glm::mat3(1.0f);
+    const glm::mat3 toFrame = glm::transpose(frame);
+    const glm::vec3 start = toFrame * m_gizmoStartPosition;
+    const glm::vec3 moved = toFrame * (position - m_gizmoStartPosition);
+    std::optional<glm::vec3> target;
+    if (snapping.target != SnapTarget::Increment) {
+        Scene& scene = context.app.scene;
+        const std::vector<Entity> excluded = snapExclusions(scene, context.selection.ids());
+        target = snapTargetPoint(snapping.target, scene, context.app.assets, snapView(scene), m_mouseInView, excluded);
+        if (!target) {
+            return position;
+        }
+    }
+    glm::vec3 snapped = moved;
+    for (int index = 0; index < 3; ++index) {
+        if (std::abs(moved[index]) <= 1e-6f) {
+            continue;
+        }
+        if (target) {
+            snapped[index] = (toFrame * (*target - m_gizmoStartPosition))[index];
+        } else {
+            const float increment = snapping.translation;
+            if (increment <= 0.0f) {
+                continue;
+            }
+            snapped[index] = std::round((start[index] + moved[index]) / increment) * increment - start[index];
+        }
+    }
+    return m_gizmoStartPosition + frame * snapped;
 }

@@ -170,6 +170,27 @@ last hovered. `Numpad 0` (or **View > Look Through**) looks through a scene
 camera; navigation is locked while you do, and any view key or **View > Exit
 Camera View** returns to the editor camera.
 
+**Snapping and pivots.** The **Gizmos** menu (or the sidebar's **Tool** tab)
+picks the **Pivot Point** rotating and scaling turn about: Median Point,
+Active Element, Individual Origins (each object turns or scales in place), or
+the 3D Cursor. Under **Snapping**, **Snap To** chooses Increment (whole steps
+of the snap values; tick **Absolute Grid Snap** to land on the world grid
+instead of stepping from where you started), Surface (the selection's centre
+lands on the surface under the mouse), or Vertex (it lands on the mesh vertex
+nearest the mouse). `Shift+Tab` toggles snapping, and holding `Ctrl` during a
+move inverts it. Axis and plane constraints (`X`, `Shift+Z`, ...) still apply
+to surface and vertex snapping. Each viewport remembers these choices.
+
+**The 3D cursor** is the red and white ring in every viewport.
+`Shift+Right-click` places it on the surface under the mouse (over empty
+space it keeps its distance from the view). New objects from the Add menu,
+dropped models, and prefabs appear at the cursor; the Adjust Last Operation
+panel still lets you change the location. **View > Snap** moves the cursor to
+the selection or back to the world origin, or moves the selection to the
+cursor. The cursor is saved with the scene (in a small
+`<scene>.editor.json` file beside it) and is not affected by undo; hide it
+with **Overlays > 3D Cursor**.
+
 The **Overlays** menu also draws the scene's invisible helpers: light ranges
 and cones, camera frustums (the active camera highlighted), colliders,
 reflection probe, decal, and irradiance volume bounds, selection bounds, and

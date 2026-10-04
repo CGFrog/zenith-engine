@@ -2,6 +2,8 @@
 
 #include "editor/operators/OperatorRegistry.hpp"
 
+#include <glm/vec3.hpp>
+
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -10,7 +12,7 @@
 // entity's prefab instance:
 //
 //   prefab.create_from_selection {path}   new prefab from the active entity
-//   prefab.instantiate {asset, parent}    new instance, selected
+//   prefab.instantiate {asset, parent, location}  new instance, selected
 //   prefab.apply                          write the instance into its prefab
 //   prefab.revert                         reset the instance to its prefab
 //   prefab.unpack                         keep the entities, drop the link
@@ -39,6 +41,10 @@ struct InstantiatePrefabProperties {
     // Stable id of the entity to parent the instance to, in decimal; empty
     // places it at the scene root.
     std::string parent;
+    // World position of the instance root, in meters; an invocation starts
+    // it at the 3D cursor (the root's transform places an instance and is
+    // never an override).
+    glm::vec3 location{0.0f};
 };
 
 struct RevertPrefabFieldProperties {

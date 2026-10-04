@@ -86,23 +86,38 @@ const char* spaceName(ConstraintSpace space) {
 }
 } // namespace
 
+glm::vec3 transformPivotPoint(const ModalTransformPivot& pivot, std::span<const glm::mat4> world) {
+    if (pivot.mode == TransformPivot::Cursor) {
+        return pivot.cursor;
+    }
+    if (pivot.mode == TransformPivot::ActiveElement && pivot.activeOrigin) {
+        return *pivot.activeOrigin;
+    }
+    glm::vec3 median(0.0f);
+    for (const glm::mat4& matrix : world) {
+        median += glm::vec3(matrix[3]);
+    }
+    if (!world.empty()) {
+        median /= static_cast<float>(world.size());
+    }
+    return median;
+}
+
 ModalTransform::ModalTransform(TransformOperation operation, std::vector<glm::mat4> startWorld, glm::mat3 localAxes,
-                               glm::vec2 mouse, ModalTransformView view)
+                               glm::vec2 mouse, ModalTransformView view, ModalTransformPivot pivot)
     : m_operation(operation)
     , m_startWorld(std::move(startWorld))
     , m_localAxes(localAxes)
     , m_view(view)
+    , m_pivot(transformPivotPoint(pivot, m_startWorld))
+    , m_pivotMode(pivot.mode)
+    , m_translationOrigin(
+          transformPivotPoint({.mode = pivot.mode == TransformPivot::Cursor ? TransformPivot::MedianPoint : pivot.mode,
+                               .activeOrigin = pivot.activeOrigin},
+                              m_startWorld))
     , m_lastMouse(mouse)
     , m_virtualMouse(mouse)
-    , m_originMouse(mouse) {
-    // Blender's default pivot: the median point of the transformed origins.
-    for (const glm::mat4& world : m_startWorld) {
-        m_pivot += glm::vec3(world[3]);
-    }
-    if (!m_startWorld.empty()) {
-        m_pivot /= static_cast<float>(m_startWorld.size());
-    }
-}
+    , m_originMouse(mouse) {}
 
 TransformOperation ModalTransform::operation() const {
     return m_operation;
@@ -199,11 +214,15 @@ ModalTransformResult ModalTransform::evaluate(const TransformSnapping& snapping)
 }
 
 glm::vec3 ModalTransform::pivot() const {
-    return m_pivot;
+    return m_operation == TransformOperation::Translate ? m_translationOrigin : m_pivot;
+}
+
+TransformPivot ModalTransform::pivotMode() const {
+    return m_pivotMode;
 }
 
 glm::vec2 ModalTransform::pivotOnScreen() const {
-    return worldToScreen(m_view, m_pivot);
+    return worldToScreen(m_view, pivot());
 }
 
 glm::vec2 ModalTransform::toScreen(const glm::vec3& point) const {
@@ -246,6 +265,45 @@ float ModalTransform::numericValue() const {
     return m_numericNegated ? -value : value;
 }
 
+glm::vec3 ModalTransform::constrain(const glm::vec3& offset) const {
+    if (m_constraint == TransformConstraint::Axis) {
+        const glm::vec3 direction = axisDirection(m_axis);
+        return direction * glm::dot(offset, direction);
+    }
+    if (m_constraint == TransformConstraint::Plane) {
+        const glm::vec3 normal = axisDirection(m_axis);
+        return offset - normal * glm::dot(offset, normal);
+    }
+    return offset;
+}
+
+glm::vec3 ModalTransform::snapTranslation(glm::vec3 delta, const TransformSnapping& snapping) const {
+    if (snapping.target != SnapTarget::Increment) {
+        return snapping.targetPoint ? constrain(*snapping.targetPoint - m_translationOrigin) : delta;
+    }
+    const glm::mat3 frame = constraintFrame();
+    const glm::vec3 start = glm::transpose(frame) * m_translationOrigin;
+    glm::vec3 components = glm::transpose(frame) * delta;
+    for (int index = 0; index < 3; ++index) {
+        // Only the axes the constraint lets the selection move along snap.
+        const bool onAxis = index == static_cast<int>(m_axis);
+        const bool free =
+            m_constraint == TransformConstraint::None || (m_constraint == TransformConstraint::Axis ? onAxis : !onAxis);
+        if (!free) {
+            continue;
+        }
+        components[index] = snapping.absoluteGrid
+                                ? snapTo(start[index] + components[index], snapping.translation) - start[index]
+                                : snapTo(components[index], snapping.translation);
+    }
+    return frame * components;
+}
+
+glm::mat4 ModalTransform::aboutPivot(const glm::mat4& turn, const glm::mat4& world) const {
+    const glm::vec3 center = m_pivotMode == TransformPivot::IndividualOrigins ? glm::vec3(world[3]) : m_pivot;
+    return glm::translate(glm::mat4(1.0f), center) * turn * glm::translate(glm::mat4(1.0f), -center) * world;
+}
+
 void ModalTransform::resetMouseOrigin() {
     m_originMouse = m_virtualMouse;
     m_rotationRadians = 0.0f;
@@ -270,26 +328,26 @@ ModalTransformResult ModalTransform::translate(const TransformSnapping& snapping
         const Ray current = screenRay(m_view, m_virtualMouse);
         if (m_constraint == TransformConstraint::Axis) {
             const glm::vec3 axis = axisDirection(m_axis);
-            delta = axis * (closestLineParameter(current, m_pivot, axis) - closestLineParameter(origin, m_pivot, axis));
+            delta = axis * (closestLineParameter(current, m_translationOrigin, axis) -
+                            closestLineParameter(origin, m_translationOrigin, axis));
         } else {
             const glm::vec3 normal =
                 m_constraint == TransformConstraint::Plane ? axisDirection(m_axis) : cameraAxes(m_view).forward;
-            const auto from = intersectPlane(origin, m_pivot, normal);
-            const auto to = intersectPlane(current, m_pivot, normal);
+            const auto from = intersectPlane(origin, m_translationOrigin, normal);
+            const auto to = intersectPlane(current, m_translationOrigin, normal);
             if (from && to) {
                 delta = *to - *from;
             }
         }
         if (snapping.enabled) {
-            glm::vec3 components = glm::transpose(frame) * delta;
-            for (int index = 0; index < 3; ++index) {
-                components[index] = snapTo(components[index], snapping.translation);
-            }
-            delta = frame * components;
+            delta = snapTranslation(delta, snapping);
         }
     }
 
     ModalTransformResult result;
+    if (snapping.enabled && snapping.target != SnapTarget::Increment && !numericInputActive()) {
+        result.snappedTo = snapping.targetPoint;
+    }
     const glm::mat4 translation = glm::translate(glm::mat4(1.0f), delta);
     for (const glm::mat4& world : m_startWorld) {
         result.world.push_back(translation * world);
@@ -333,10 +391,9 @@ ModalTransformResult ModalTransform::rotate(const TransformSnapping& snapping) c
     }
 
     ModalTransformResult result;
-    const glm::mat4 rotation = glm::translate(glm::mat4(1.0f), m_pivot) * glm::rotate(glm::mat4(1.0f), angle, axis) *
-                               glm::translate(glm::mat4(1.0f), -m_pivot);
+    const glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), angle, axis);
     for (const glm::mat4& world : m_startWorld) {
-        result.world.push_back(rotation * world);
+        result.world.push_back(aboutPivot(rotation, world));
     }
     const std::string value = numericInputActive()
                                   ? "[" + std::string(m_numericNegated ? "-" : "") + m_numericText + "|]"
@@ -360,12 +417,10 @@ ModalTransformResult ModalTransform::trackball(const TransformSnapping& snapping
     // Dragging right turns the near surface right; dragging down turns it down.
     const glm::mat4 rotation =
         glm::rotate(glm::mat4(1.0f), yaw, camera.up) * glm::rotate(glm::mat4(1.0f), pitch, camera.right);
-    const glm::mat4 aboutPivot =
-        glm::translate(glm::mat4(1.0f), m_pivot) * rotation * glm::translate(glm::mat4(1.0f), -m_pivot);
 
     ModalTransformResult result;
     for (const glm::mat4& world : m_startWorld) {
-        result.world.push_back(aboutPivot * world);
+        result.world.push_back(aboutPivot(rotation, world));
     }
     result.description = format("Trackball: %.2f %.2f", glm::degrees(yaw), glm::degrees(pitch));
     return result;
@@ -399,7 +454,9 @@ ModalTransformResult ModalTransform::scale(const TransformSnapping& snapping) co
     ModalTransformResult result;
     for (const glm::mat4& world : m_startWorld) {
         glm::mat4 scaled = world;
-        scaled[3] = glm::vec4(m_pivot + scaling * (glm::vec3(world[3]) - m_pivot), 1.0f);
+        // Individual origins scale each object in place.
+        const glm::vec3 center = m_pivotMode == TransformPivot::IndividualOrigins ? glm::vec3(world[3]) : m_pivot;
+        scaled[3] = glm::vec4(center + scaling * (glm::vec3(world[3]) - center), 1.0f);
         // Scale each object along its own axes so rotated objects never shear.
         for (int column = 0; column < 3; ++column) {
             const glm::vec3 basis(world[column]);

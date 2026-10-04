@@ -2,6 +2,7 @@
 
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/EntityCommands.hpp"
+#include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/EntityEyedropper.hpp"
 
 #include <nlohmann/json.hpp>
@@ -11,7 +12,8 @@ void EditorContext::placeModel(const std::filesystem::path& path, Entity parent)
         diagnostics.reportError("Assets can only be placed in Edit mode");
         return;
     }
-    EntityCommands::placeModel(editing, selection, path, parent);
+    // Spawns at the scene's 3D cursor, as the add operators do.
+    EntityCommands::placeModel(editing, selection, path, parent, editing.document().editorData().cursorLocation);
 }
 
 void EditorContext::placePrefab(const std::filesystem::path& path, Entity parent) {

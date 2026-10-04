@@ -566,11 +566,12 @@ void EditorSession::updateSmokeScenario(ApplicationContext& context) {
     const bool outlinerDone = updateSmokeOutliner(context);
     // Starts after the outliner step.
     const bool pickingDone = updateSmokePicking(context);
+    const bool cursorDone = updateSmokeCursor(context);
     if (m_smokeFrame == 500 && !m_smokeStreamCompleted) {
         m_diagnostics.reportError("Streaming smoke did not commit while frames were being presented");
         context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
     } else if (areasDone && viewportsDone && componentsDone && menusDone && simulateDone && outlinerDone &&
-               pickingDone && m_smokeStreamCompleted) {
+               pickingDone && cursorDone && m_smokeStreamCompleted) {
         updateSmokeModuleReload(context);
     }
 }
@@ -1183,6 +1184,9 @@ bool EditorSession::completeOpen(ApplicationContext& context, const std::filesys
     m_history.crossBoundary(CommandHistoryBoundary::OpenDocument);
     m_selection.clear();
     onDocumentPathCommitted();
+    if (const std::string warning = m_document.takeEditorDataWarning(); !warning.empty()) {
+        m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Editor", warning);
+    }
     return true;
 }
 

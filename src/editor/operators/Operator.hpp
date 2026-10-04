@@ -166,6 +166,12 @@ struct Operator {
     // Does the work. It may write back properties it resolved (for example the
     // name it used) so the redo panel shows them.
     std::function<OperatorResult(OperatorContext&, OperatorProperties&)> execute;
+    // Optional, Blender's invoke: fills defaults that depend on the editor's
+    // state when the operator is started (the add operators start at the 3D
+    // cursor). The runner calls it on a copy of `properties` before a
+    // caller's JSON values are applied, and not when a caller passes complete
+    // properties (Adjust Last Operation's re-run), so edited values stick.
+    std::function<void(const OperatorContext&, OperatorProperties&)> invokeDefaults;
 
     bool canRun(const OperatorContext& context) const {
         return !poll || poll(context);

@@ -34,11 +34,13 @@ class OperatorRunner {
   public:
     OperatorRunner(const OperatorRegistry& registry, const CommandHistory& history);
 
-    // Runs id with the given properties, or the operator's defaults.
+    // Runs id with the given properties, or the operator's defaults
+    // completed by its invokeDefaults.
     OperatorResult invoke(std::string_view id, OperatorContext& context,
                           const OperatorProperties* properties = nullptr);
-    // Runs id with its defaults overridden by a JSON object of property
-    // values, as keymap bindings and menu items store them.
+    // Runs id with its defaults (completed by its invokeDefaults) overridden
+    // by a JSON object of property values, as keymap bindings and menu items
+    // store them.
     OperatorResult invokeWithJson(std::string_view id, OperatorContext& context, std::string_view propertiesJson);
 
     // nullptr when there is no last operator, or when other edits, undo, or
@@ -65,6 +67,9 @@ class OperatorRunner {
     OperatorResult reportFailure(OperatorContext& context, OperatorResult result) const;
     OperatorResult run(const Operator* op, std::string_view id, OperatorContext& context,
                        const OperatorProperties* properties);
+    // The operator's default properties with its invokeDefaults applied
+    // (only when it can run, since defaults may read state its poll checks).
+    static OperatorProperties invocationDefaults(const Operator& op, const OperatorContext& context);
     static OperatorHistoryEntry pendingInvocation(std::string_view id, const Operator* op, std::string propertiesJson);
     void recordInvocation(OperatorHistoryEntry entry, const OperatorResult& result);
 
