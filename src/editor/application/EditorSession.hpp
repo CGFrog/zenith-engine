@@ -108,6 +108,8 @@ class EditorSession final : public ApplicationScene,
     SceneResult load(ApplicationContext& context) override;
     void update(ApplicationContext& context, const InputState& input, float deltaSeconds) override;
     void fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) override;
+    void afterPhysicsStep(ApplicationContext& context) override;
+    void lateUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) override;
     bool fixedUpdatesEnabled() const override;
     bool beginFixedUpdate() override;
     SimulationClock simulationClock() const override;
@@ -213,6 +215,8 @@ class EditorSession final : public ApplicationScene,
     // Game module hosting.
     void loadGameModule();
     void updateGameModule(ApplicationContext& context, const InputState& input, float deltaSeconds);
+    // Runs the module's Ui systems into m_gameViewUi for the game view.
+    void drawGameViewUi(ApplicationContext& context);
     void reloadGameModule(ApplicationContext& context);
     void reportGameModule(const GameModuleHostResult& result);
     std::string gameModuleStatusText() const;
@@ -328,6 +332,11 @@ class EditorSession final : public ApplicationScene,
     std::string m_floatingPlayWorkspace;
     // What module systems get while the game view lacks focus.
     InputState m_idleGameInput;
+    // The input the frame's Update systems saw, for its LateUpdate and Ui
+    // systems; idle outside Play.
+    InputState m_frameGameInput;
+    // What the module's Ui systems draw over the game view, sized to it.
+    GameUiContext m_gameViewUi;
     std::filesystem::path m_projectFile;
     EditorPlayServices m_playServices;
     StandalonePlayer m_standalone;

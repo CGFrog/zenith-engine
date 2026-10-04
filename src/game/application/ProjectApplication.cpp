@@ -12,7 +12,7 @@ constexpr SceneKey projectSceneKey{0};
 
 std::string playSystemList(const SystemScheduler& systems) {
     std::string names;
-    for (const SystemPhase phase : {SystemPhase::Update, SystemPhase::FixedUpdate}) {
+    for (const SystemPhase phase : systemPhases) {
         for (const std::string& name : systems.schedule(phase, SimulationMode::Play)) {
             names += (names.empty() ? "" : ", ") + name;
         }
@@ -28,20 +28,23 @@ class ProjectPlayScene final : public ApplicationScene {
         , m_captureCamera(captureCamera) {}
 
     SceneResult load(ApplicationContext& context) override {
-        if (!m_gameplay) {
+        const Gameplay& gameplay = m_gameplay.gameplay();
+        if (!gameplay) {
             return {.error = "Project scene was created without gameplay"};
         }
         if (const ProjectConfigResult result = loadProjectSceneFile(m_project, m_project.startupScene, context.assets,
-                                                                    context.scene, m_gameplay.componentTypes);
+                                                                    context.scene, gameplay.componentTypes);
             !result) {
             return {.error = result.error};
         }
         if (m_captureCamera) {
             m_captureCameraEntity = spawnCaptureCamera(context.scene, *m_captureCamera);
+            return {.success = true};
         }
+        m_gameplay.start(context, m_project.assetRoot);
         context.logger.log(LogLevel::Info, "game",
                            "Playing " + utf8FromPath(m_project.startupScene.filename()) +
-                               " with Play systems: " + playSystemList(*m_gameplay.systems));
+                               " with Play systems: " + playSystemList(*gameplay.systems));
         return {.success = true};
     }
 
@@ -53,21 +56,41 @@ class ProjectPlayScene final : public ApplicationScene {
             moveCaptureCamera(context.scene, m_captureCameraEntity, *m_captureCamera, m_captureElapsedSeconds);
             return;
         }
-        m_gameplay.play(SystemPhase::Update, context, input, deltaSeconds);
+        m_gameplay.update(context, input, deltaSeconds, simulatedSeconds(simulationClock(), deltaSeconds));
     }
 
     void fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) override {
         if (m_captureCamera) {
             return;
         }
-        m_gameplay.play(SystemPhase::FixedUpdate, context, input, deltaSeconds);
+        m_gameplay.fixedUpdate(context, input, deltaSeconds);
     }
 
-    void unload(ApplicationContext&) override {}
+    void afterPhysicsStep(ApplicationContext& context) override {
+        if (!m_captureCamera) {
+            m_gameplay.afterPhysicsStep(context);
+        }
+    }
+
+    void lateUpdate(ApplicationContext& context, const InputState&, float) override {
+        if (!m_captureCamera) {
+            m_gameplay.lateUpdate(context);
+        }
+    }
+
+    void drawUi(ApplicationContext& context) override {
+        if (!m_captureCamera) {
+            m_gameplay.drawUi(context);
+        }
+    }
+
+    void unload(ApplicationContext&) override {
+        m_gameplay.stop();
+    }
 
   private:
     ProjectConfig m_project;
-    Gameplay m_gameplay;
+    GameplayRunner m_gameplay;
     std::optional<CaptureCameraPath> m_captureCamera;
     Entity m_captureCameraEntity{entt::null};
     float m_captureElapsedSeconds{0.0f};

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -11,6 +12,10 @@
 #include <unordered_map>
 #include <vector>
 
+class GameServices;
+class GameUiContext;
+class InputActionState;
+class Logger;
 class Scene;
 struct ApplicationContext;
 struct InputState;
@@ -46,26 +51,52 @@ constexpr bool runsIn(RunIn flags, SimulationMode mode) {
     return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(required)) != 0;
 }
 
-// The frame step a system runs in. Update runs once per rendered frame with
-// the frame's duration; FixedUpdate runs zero or more times per frame with the
-// fixed simulation step, before physics advances.
+// The frame step a system runs in, in frame order:
+// - Update runs once per rendered frame with the frame's duration.
+// - FixedUpdate runs zero or more times per frame with the fixed simulation
+//   step, each time before physics advances.
+// - LateUpdate runs once per frame after physics has interpolated the bodies'
+//   poses for rendering, for cameras and anything that follows a body.
+// - Ui runs once per frame inside the host's UI frame, drawing the game's HUD
+//   and menus through SystemContext::ui.
+// Values are stable; new phases are appended.
 enum class SystemPhase {
     Update,
     FixedUpdate,
+    LateUpdate,
+    Ui,
 };
 
-// What a system may touch while it runs. application is null when the host
-// has no running application services, as in the editor's edit mode. input is
-// the device state of the current frame, or null when the host routes no
-// player input to the scene (for example while an editor viewport is not
-// focused, and always in Simulate); systems that read it must tolerate null.
+inline constexpr size_t systemPhaseCount = 4;
+inline constexpr std::array<SystemPhase, systemPhaseCount> systemPhases{SystemPhase::Update, SystemPhase::FixedUpdate,
+                                                                        SystemPhase::LateUpdate, SystemPhase::Ui};
+
+// "Update", "FixedUpdate", "LateUpdate", or "Ui".
+std::string_view systemPhaseName(SystemPhase phase);
+
+// What a system may touch while it runs. Pointers that may be null must be
+// tolerated by systems that read them:
+// - application is null when the host has no running application services,
+//   as in the editor's edit mode.
+// - services is null in Edit mode (see GameServices).
+// - logger is never null when a host runs the systems, in every mode.
+// - input is the device state of the current frame (of the fixed step, for
+//   FixedUpdate), or null when the host routes no player input to the scene
+//   (always in Simulate and Edit). actions is the game's input actions
+//   evaluated from that same input, and null whenever input is.
+// - ui is set only in the Ui phase.
 struct SystemContext {
     Scene& scene;
     ApplicationContext* application{nullptr};
     SimulationMode mode{SimulationMode::Play};
-    // Seconds; the frame duration for Update, the fixed step for FixedUpdate.
+    // Seconds; the frame duration for Update, LateUpdate and Ui, the fixed
+    // step for FixedUpdate.
     float deltaSeconds{0.0f};
     const InputState* input{nullptr};
+    Logger* logger{nullptr};
+    GameServices* services{nullptr};
+    const InputActionState* actions{nullptr};
+    GameUiContext* ui{nullptr};
 };
 
 // A named per-frame callback over a scene, usually registered by a game
@@ -103,8 +134,8 @@ class SystemRegistry {
 
 // Which Play systems Simulate runs, by system name. A system the mask does
 // not name uses the default: FixedUpdate systems run (they advance the
-// simulated world in step with physics), Update systems do not (they usually
-// react to the player: input, cameras, menus). A plain value, so a host can
+// simulated world in step with physics); Update, LateUpdate, and Ui systems
+// do not (they usually react to the player: input, cameras, menus, HUDs). A plain value, so a host can
 // keep it across module reloads and save it; names of systems that no longer
 // exist are kept and ignored.
 class SimulateSystemMask {
@@ -212,8 +243,8 @@ class SystemScheduler {
     bool runs(const SystemDescriptor& system, SimulationMode mode) const;
 
     std::shared_ptr<const SystemRegistry> m_registry;
-    std::vector<const SystemDescriptor*> m_update;
-    std::vector<const SystemDescriptor*> m_fixedUpdate;
+    // Indexed by SystemPhase.
+    std::array<std::vector<const SystemDescriptor*>, systemPhaseCount> m_phases;
     SimulateSystemMask m_simulateMask;
 
     const std::vector<const SystemDescriptor*>& ordered(SystemPhase phase) const;

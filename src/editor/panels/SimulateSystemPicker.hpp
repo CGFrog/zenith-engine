@@ -17,8 +17,13 @@ struct SimulateSystemChoice {
 };
 
 // The module's systems that run in Simulate when enabled (the Play systems),
-// Update systems first, each in its scheduler order, with its mask state.
+// in phase order (Update first), each in its scheduler order, with its mask
+// state.
 std::vector<SimulateSystemChoice> simulateSystemChoices(const GameModuleHost& modules);
+
+// The checkbox label the picker gives choice: its name, with its phase for
+// systems outside Update ("move (fixed)"), and the picker's id suffix.
+std::string simulateSystemLabel(const SimulateSystemChoice& choice);
 
 // The Simulate system picker: a checkbox per choice, each change running
 // play.set_simulate_system. Drawn inline in the current window, menu, or

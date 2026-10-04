@@ -2,7 +2,9 @@
 
 #include "editor/menus/MenuRegistry.hpp"
 #include "editor/modules/EditorModuleApi.hpp"
+#include "engine/diagnostics/Logger.hpp"
 #include "engine/module/GameModule.hpp"
+#include "engine/module/GameServices.hpp"
 #include "engine/module/SystemScheduler.hpp"
 
 #include <chrono>
@@ -17,6 +19,8 @@
 
 class AssetManager;
 class ComponentEditorOverrides;
+class DebugDraw;
+class GameUiContext;
 class EditorDocument;
 class OperatorRegistry;
 class OperatorRunner;
@@ -128,7 +132,7 @@ class GameModuleHost {
     // not react to input. Simulate never passes input to systems, whatever
     // the caller gives, and runs only the systems simulateMask() enables.
     void runSystems(SystemPhase phase, Scene& scene, ApplicationContext* application, SimulationMode mode,
-                    float deltaSeconds, const InputState* input = nullptr);
+                    float deltaSeconds, const InputState* input = nullptr, GameUiContext* ui = nullptr);
     // Edit mode, once per frame: runs Update systems for deltaSeconds, then
     // FixedUpdate systems once per elapsed fixedStepSeconds (the simulation
     // itself does not step in Edit mode, so the host keeps the fixed clock).
@@ -147,6 +151,20 @@ class GameModuleHost {
     const SystemProfile& systemProfile() const;
     void finishSystemFrame();
     void resetSystemTimingMaxima();
+    // The log systems receive in every mode; it must outlive the host. Until
+    // set, systems log to a log of the host's own.
+    void setLogger(Logger& logger);
+
+    // Gameplay services for one Play or Simulate session, which runSystems
+    // hands to systems outside Edit mode. Prefab references resolve against
+    // documents (the edit document's options); assets and debugDraw must
+    // outlive the session. Starting again replaces the services; unloading
+    // or reloading the module stops them first.
+    void startGameplay(AssetManager& assets, SceneDocumentOptions documents, DebugDraw& debugDraw);
+    void stopGameplay();
+    // Null outside a gameplay session.
+    GameServices* gameServices();
+
     // Which Play systems Simulate runs. Kept across module reloads (by
     // system name) and while no module is loaded.
     const SimulateSystemMask& simulateMask() const;
@@ -231,6 +249,10 @@ class GameModuleHost {
     std::chrono::steady_clock::time_point m_pendingSince{};
     std::chrono::steady_clock::time_point m_lastCheck{};
 
+    Logger m_fallbackLogger;
+    Logger* m_logger{&m_fallbackLogger};
+    // Holds module code (commands, timers, events): released with the module.
+    std::unique_ptr<GameServices> m_gameServices;
     float m_editFixedAccumulator{0.0f};
     // Names and timings only; holds no module code.
     SystemProfile m_profile;

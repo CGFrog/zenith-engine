@@ -79,10 +79,11 @@ points. The host loads a uniquely named shadow copy so the original can be
 rebuilt while loaded, refuses a module whose API version or toolchain/runtime
 build hash differs, and lets it register component types into a copy of the
 host's registry and systems into its own `SystemRegistry`. A
-`SystemScheduler` runs systems per update or fixed-update phase by order,
+`SystemScheduler` runs systems per phase (Update, FixedUpdate, LateUpdate,
+Ui; see [Game modules](engine/modules.md) for the frame order) by order,
 filtered by edit/play `RunIn` flags. `SimulationMode::Simulate` (the editor's
 Simulate) runs the Play systems a `SimulateSystemMask` enables (by default
-every FixedUpdate system and no Update system) and never passes input. Given a
+every FixedUpdate system and none of the others) and never passes input. Given a
 `SystemProfile`, `run` records each system's CPU time (this frame, a rolling
 average, and a resettable maximum); the scheduler itself stays immutable and
 shareable. A system receives the frame's raw
@@ -162,9 +163,11 @@ Poll SDL events and build InputState
   -> while accumulator >= fixed step and below maxSubSteps
        ApplicationScene::fixedUpdate
        physics step
+       ApplicationScene::afterPhysicsStep
        consume buffered key presses
   -> clamp excessive backlog
   -> interpolate dynamic body transforms
+  -> ApplicationScene::lateUpdate
   -> update scene transforms and render the HDR scene
   -> tone map, compose game UI, and present
   -> present

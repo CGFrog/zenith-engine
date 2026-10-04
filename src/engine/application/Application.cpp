@@ -34,6 +34,10 @@ void Application::onStop(ApplicationContext&) {}
 
 void ApplicationScene::drawUi(ApplicationContext&) {}
 
+void ApplicationScene::afterPhysicsStep(ApplicationContext&) {}
+
+void ApplicationScene::lateUpdate(ApplicationContext&, const InputState&, float) {}
+
 bool ApplicationScene::fixedUpdatesEnabled() const {
     return true;
 }
@@ -101,6 +105,19 @@ void ApplicationSession::update(const InputState& input, float deltaSeconds) {
 void ApplicationSession::fixedUpdate(const InputState& input, float deltaSeconds) {
     if (m_activeScene) {
         m_activeScene->fixedUpdate(m_context, input, deltaSeconds);
+        m_sceneAssets = m_context.assets.leaseSceneAssets(m_context.scene);
+    }
+}
+
+void ApplicationSession::afterPhysicsStep() {
+    if (m_activeScene) {
+        m_activeScene->afterPhysicsStep(m_context);
+    }
+}
+
+void ApplicationSession::lateUpdate(const InputState& input, float deltaSeconds) {
+    if (m_activeScene) {
+        m_activeScene->lateUpdate(m_context, input, deltaSeconds);
         m_sceneAssets = m_context.assets.leaseSceneAssets(m_context.scene);
     }
 }

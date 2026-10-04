@@ -12,6 +12,7 @@
 #include "editor/settings/SimulateSystemSettings.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
+#include "engine/module/GameEvents.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
 #include <imgui.h>
@@ -307,6 +308,7 @@ SceneResult EditorSession::load(ApplicationContext& context) {
         m_diagnostics.reportError(result.error);
     }
     m_moduleHost.setSimulateMask(std::move(simulateMask));
+    m_moduleHost.setLogger(context.logger);
     m_projectAssets.refresh(m_diagnostics);
     m_openRecoveryDialog = m_recovery.available();
 
@@ -407,6 +409,32 @@ void EditorSession::fixedUpdate(ApplicationContext& context, const InputState& i
     }
 }
 
+void EditorSession::afterPhysicsStep(ApplicationContext&) {}
+
+void EditorSession::lateUpdate(ApplicationContext& context, const InputState&, float deltaSeconds) {
+    if (m_playMode.mode() == EditorMode::Edit || !m_playMode.advancesThisFrame()) {
+        return;
+    }
+    const SimulationMode mode = m_playMode.simulationMode();
+    m_moduleHost.runSystems(SystemPhase::LateUpdate, context.scene, &context, mode,
+                            simulatedSeconds(m_playMode.simulationClock(), deltaSeconds), &m_frameGameInput);
+}
+
+void EditorSession::drawGameViewUi(ApplicationContext& context) {
+    ViewportPanel* viewport = gameViewport();
+    if (viewport == nullptr || m_playMode.mode() == EditorMode::Edit || m_playMode.simulating()) {
+        return;
+    }
+    // The game sees the pointer relative to its view, as it would its window.
+    InputState input = m_frameGameInput;
+    input.mousePosition -= viewport->position();
+    const glm::vec2 size = glm::max(viewport->size(), glm::vec2(1.0f));
+    m_gameViewUi.beginFrame({static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y)}, input);
+    m_moduleHost.runSystems(SystemPhase::Ui, context.scene, &context, m_playMode.simulationMode(), 0.0f, &input,
+                            &m_gameViewUi);
+    viewport->setGameUi(&m_gameViewUi);
+}
+
 bool EditorSession::fixedUpdatesEnabled() const {
     return m_playMode.fixedUpdatesEnabled();
 }
@@ -430,6 +458,8 @@ void EditorSession::drawUi(ApplicationContext& context) {
     // The engine has run this frame's fixed steps, so a frame step is done;
     // play.step below requests the next one.
     m_playMode.finishFrame();
+    // Before the areas, so the game view draws this frame's game UI.
+    drawGameViewUi(context);
     ImGuizmo::BeginFrame();
     m_themeChrome.setModeTint(playModeTint(m_playMode.mode(), m_playMode.simulating()));
     m_themeChrome.beginFrame(context.rendering);
@@ -1079,6 +1109,10 @@ bool EditorSession::enterPlayMode(ApplicationContext& context, EditorRuntime run
                                   result.error);
         return false;
     }
+    m_moduleHost.startGameplay(context.assets, m_document.options(), context.rendering.debugDraw());
+    if (GameServices* services = m_moduleHost.gameServices()) {
+        services->events().publish(SceneLoaded{});
+    }
     m_history.crossBoundary(CommandHistoryBoundary::EnterPlayMode);
     m_diagnostics.acknowledgeErrors();
     return true;
@@ -1091,6 +1125,7 @@ void EditorSession::stopPlayMode(ApplicationContext& context) {
     context.audio.stopSceneVoices();
     context.physics.clear();
     endGameView();
+    m_moduleHost.stopGameplay();
     std::vector<SceneEntityId> restoredSelection;
     m_playMode.stop(context.scene, restoredSelection);
     m_selection.assign(std::move(restoredSelection));

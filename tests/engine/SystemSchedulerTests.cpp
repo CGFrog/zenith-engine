@@ -176,6 +176,45 @@ void testInputReachesSystemsUnchanged() {
     expect(recorded.receivedInput == std::vector<bool>{true}, "the scheduler passes the context's input through");
 }
 
+// Each phase keeps its own systems and order; Simulate runs only FixedUpdate
+// systems unless the mask says otherwise; a phase the engine does not know is
+// refused.
+void testPhases() {
+    std::vector<std::string> calls;
+    auto registry = std::make_shared<SystemRegistry>();
+    const auto record = [&calls](std::string name) {
+        return [&calls, name](const SystemContext&) { calls.push_back(name); };
+    };
+    for (const SystemPhase phase : systemPhases) {
+        const std::string name(systemPhaseName(phase));
+        expect(
+            registry->add({.name = name + "_late", .phase = phase, .order = 1, .run = record(name + "_late")}).success,
+            "a system registers in every phase");
+        expect(registry->add({.name = name + "_early", .phase = phase, .order = -1, .run = record(name + "_early")})
+                   .success,
+               "a second system registers in every phase");
+    }
+    expect(!registry->add({.name = "unknown", .phase = static_cast<SystemPhase>(systemPhaseCount), .run = record("x")})
+                .success,
+           "a system in an unknown phase is refused");
+    const SystemScheduler scheduler(registry);
+    Scene scene;
+    for (const SystemPhase phase : systemPhases) {
+        calls.clear();
+        scheduler.run(phase, {.scene = scene, .mode = SimulationMode::Play});
+        const std::string name(systemPhaseName(phase));
+        expect(calls == std::vector<std::string>{name + "_early", name + "_late"},
+               "a phase runs only its own systems, by order");
+        expect(scheduler.systems(phase).size() == 2, "the scheduler lists each phase's systems");
+    }
+    expect(scheduler.schedule(SystemPhase::LateUpdate, SimulationMode::Simulate).empty() &&
+               scheduler.schedule(SystemPhase::Ui, SimulationMode::Simulate).empty() &&
+               scheduler.schedule(SystemPhase::FixedUpdate, SimulationMode::Simulate).size() == 2,
+           "Simulate runs FixedUpdate systems by default, and no LateUpdate or Ui systems");
+    expect(systemPhaseName(SystemPhase::LateUpdate) == "LateUpdate" && systemPhaseName(SystemPhase::Ui) == "Ui",
+           "phases have readable names");
+}
+
 void testSimulationClock() {
     const SimulationClock realTime;
     expect(simulatedSeconds(realTime, 0.02f) == 0.02f && fixedStepAccumulation(realTime, 0.02f) == 0.02f &&
@@ -233,6 +272,7 @@ void testSimulationClock() {
 } // namespace
 
 int main() {
+    testPhases();
     testSimulateMask();
     testSimulateScheduling();
     testProfile();

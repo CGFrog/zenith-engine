@@ -14,12 +14,14 @@
 #include "game/application/RuntimeGameplay.hpp"
 #include "game/gameplay/DemoGameplay.hpp"
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -256,7 +258,10 @@ void testModuleProjectPlays(const fs::path& directory) {
         PhysicsWorld physics;
         AudioSystem audio;
         audio.init(AudioConfig{.outputEnabled = false});
-        ApplicationSession session(application, scene, assets, physics, audio);
+        RenderRuntime rendering;
+        GameUiContext gameUi;
+        Logger logger;
+        ApplicationSession session(application, scene, assets, physics, audio, rendering, gameUi, logger);
         const SceneResult started = session.start();
         expect(started.success, "the project application plays the module's startup scene");
         if (!started) {
@@ -275,6 +280,29 @@ void testModuleProjectPlays(const fs::path& directory) {
         expect(counterField(*counter, scene, entity, "edit_ticks") == 0, "Edit-only systems do not run in the game");
         session.fixedUpdate(InputState{}, 1.0f / 60.0f);
         expect(counterField(*counter, scene, entity, "fixed_ticks") == 1, "FixedUpdate systems run each fixed step");
+        expect(counterField(*counter, scene, entity, "logger_seen") == 1 &&
+                   counterField(*counter, scene, entity, "services_seen") == 1,
+               "game systems get a logger and gameplay services");
+        const auto spawned = [&scene] {
+            return std::ranges::count_if(scene.registry().view<const NameComponent>(), [&scene](Entity candidate) {
+                return scene.registry().get<const NameComponent>(candidate).name == "Spawned on load";
+            });
+        };
+        expect(spawned() == 1, "a module system read SceneLoaded and its deferred spawn applied after Update");
+        session.update(InputState{}, 1.0f / 60.0f);
+        expect(spawned() == 1, "SceneLoaded is read in the first frame only");
+        session.lateUpdate(InputState{}, 1.0f / 60.0f);
+        expect(counterField(*counter, scene, entity, "late_ticks") == 1, "LateUpdate systems run once per frame");
+        // The exit criterion of GAMEPLAY_ROADMAP A2 for zenith --project.
+        gameUi.beginFrame({640, 360}, InputState{});
+        session.drawUi();
+        const std::string hud = "HUD " + std::to_string(counterField(*counter, scene, entity, "value"));
+        expect(std::ranges::any_of(gameUi.commands(),
+                                   [&hud](const UiCommand& command) {
+                                       const auto* text = std::get_if<UiTextCommand>(&command.payload);
+                                       return text != nullptr && text->text == hud;
+                                   }),
+               "the module's Ui system draws its HUD in the game's UI frame");
         session.shutdown();
     }
 

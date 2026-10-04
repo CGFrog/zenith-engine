@@ -10,6 +10,7 @@
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
 
@@ -120,9 +121,7 @@ void SystemProfilerPanel::drawRuntimeControls(EditorContext& context) const {
 }
 
 void SystemProfilerPanel::drawSystems(EditorContext& context) const {
-    const std::span<const SystemDescriptor* const> update = m_modules.systems(SystemPhase::Update);
-    const std::span<const SystemDescriptor* const> fixed = m_modules.systems(SystemPhase::FixedUpdate);
-    if (update.empty() && fixed.empty()) {
+    if (std::ranges::all_of(systemPhases, [this](SystemPhase phase) { return m_modules.systems(phase).empty(); })) {
         ImGui::TextDisabled("The game module has no systems.");
         return;
     }
@@ -139,8 +138,8 @@ void SystemProfilerPanel::drawSystems(EditorContext& context) const {
     ImGui::TableSetupColumn("Avg", ImGuiTableColumnFlags_WidthFixed);
     ImGui::TableSetupColumn("Max", ImGuiTableColumnFlags_WidthFixed);
     ImGui::TableHeadersRow();
-    for (const std::span<const SystemDescriptor* const> phase : {update, fixed}) {
-        for (const SystemDescriptor* system : phase) {
+    for (const SystemPhase phase : systemPhases) {
+        for (const SystemDescriptor* system : m_modules.systems(phase)) {
             ImGui::TableNextRow();
             ImGui::PushID(system->name.c_str());
             ImGui::TableNextColumn();
@@ -156,7 +155,8 @@ void SystemProfilerPanel::drawSystems(EditorContext& context) const {
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(system->name.c_str());
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(system->phase == SystemPhase::Update ? "Update" : "Fixed");
+            const std::string_view phaseName = systemPhaseName(system->phase);
+            ImGui::TextUnformatted(phaseName.data(), phaseName.data() + phaseName.size());
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(runInName(system->runIn));
             const SystemTiming* timing = profile.find(system->name);

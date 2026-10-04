@@ -61,6 +61,13 @@ class ApplicationScene {
     virtual SceneResult load(ApplicationContext& context) = 0;
     virtual void update(ApplicationContext& context, const InputState& input, float deltaSeconds) = 0;
     virtual void fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) = 0;
+    // After each fixed step's physics step, for reading what the step
+    // produced (contacts, triggers). The default does nothing.
+    virtual void afterPhysicsStep(ApplicationContext& context);
+    // Once per frame after physics interpolated the bodies' poses for
+    // rendering and before the world transforms are finalized, with the
+    // frame's input and duration. The default does nothing.
+    virtual void lateUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds);
     virtual bool fixedUpdatesEnabled() const;
     virtual bool beginFixedUpdate();
     // Read each frame after update (so a change made there applies to that
@@ -111,6 +118,8 @@ class ApplicationSession {
     SceneResult start();
     void update(const InputState& input, float deltaSeconds);
     void fixedUpdate(const InputState& input, float deltaSeconds);
+    void afterPhysicsStep();
+    void lateUpdate(const InputState& input, float deltaSeconds);
     bool fixedUpdatesEnabled() const;
     bool beginFixedUpdate();
     // The active scene's clock, or the default one without a scene.

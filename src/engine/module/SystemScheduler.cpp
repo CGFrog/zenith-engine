@@ -4,12 +4,29 @@
 #include <numeric>
 #include <utility>
 
+std::string_view systemPhaseName(SystemPhase phase) {
+    switch (phase) {
+    case SystemPhase::Update:
+        return "Update";
+    case SystemPhase::FixedUpdate:
+        return "FixedUpdate";
+    case SystemPhase::LateUpdate:
+        return "LateUpdate";
+    case SystemPhase::Ui:
+        return "Ui";
+    }
+    return "Unknown";
+}
+
 SystemRegistryResult SystemRegistry::add(SystemDescriptor system) {
     if (system.name.empty()) {
         return {.error = "A system must have a name"};
     }
     if (!system.run) {
         return {.error = "System '" + system.name + "' has no callback"};
+    }
+    if (static_cast<size_t>(system.phase) >= systemPhaseCount) {
+        return {.error = "System '" + system.name + "' has an unknown phase"};
     }
     if (find(system.name) != nullptr) {
         return {.error = "A system named '" + system.name + "' is already registered"};
@@ -123,14 +140,15 @@ SystemScheduler::SystemScheduler(std::shared_ptr<const SystemRegistry> registry)
         return;
     }
     for (const SystemDescriptor& system : m_registry->systems()) {
-        (system.phase == SystemPhase::Update ? m_update : m_fixedUpdate).push_back(&system);
+        m_phases[static_cast<size_t>(system.phase)].push_back(&system);
     }
     // Stable, so equal orders keep registration order.
     const auto byOrder = [](const SystemDescriptor* left, const SystemDescriptor* right) {
         return left->order < right->order;
     };
-    std::stable_sort(m_update.begin(), m_update.end(), byOrder);
-    std::stable_sort(m_fixedUpdate.begin(), m_fixedUpdate.end(), byOrder);
+    for (std::vector<const SystemDescriptor*>& systems : m_phases) {
+        std::stable_sort(systems.begin(), systems.end(), byOrder);
+    }
 }
 
 void SystemScheduler::run(SystemPhase phase, const SystemContext& context, SystemProfile* profile) const {
@@ -178,5 +196,5 @@ bool SystemScheduler::runs(const SystemDescriptor& system, SimulationMode mode) 
 }
 
 const std::vector<const SystemDescriptor*>& SystemScheduler::ordered(SystemPhase phase) const {
-    return phase == SystemPhase::Update ? m_update : m_fixedUpdate;
+    return m_phases[static_cast<size_t>(phase)];
 }

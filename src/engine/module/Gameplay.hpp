@@ -1,7 +1,10 @@
 #pragma once
 
+#include "GameServices.hpp"
 #include "SystemScheduler.hpp"
+#include "engine/input/InputManager.hpp"
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -25,12 +28,57 @@ struct Gameplay {
     explicit operator bool() const {
         return componentTypes != nullptr && systems != nullptr;
     }
+};
 
-    // Runs the systems of phase that run in Play over context.scene, with the
-    // application's services and the frame's input. deltaSeconds is the frame
-    // duration for Update and the fixed step for FixedUpdate. Does nothing
-    // without systems.
-    void play(SystemPhase phase, ApplicationContext& context, const InputState& input, float deltaSeconds) const;
+// Plays a Gameplay's Play systems in a game's ApplicationScene, in the
+// engine's frame order, with a GameServices it owns from start to stop. The
+// scene forwards its ApplicationScene calls:
+//
+//   update            begins the frame (events), runs Update, then timers
+//   fixedUpdate       runs FixedUpdate (once per fixed step)
+//   afterPhysicsStep  publishes the step's physics events
+//   lateUpdate        runs LateUpdate (after physics interpolation)
+//   drawUi            runs Ui into the application's GameUiContext
+//
+// Entity commands flush after every phase. Without start, systems run with
+// null services.
+class GameplayRunner {
+  public:
+    GameplayRunner() = default;
+    explicit GameplayRunner(Gameplay gameplay);
+
+    GameplayRunner(const GameplayRunner&) = delete;
+    GameplayRunner& operator=(const GameplayRunner&) = delete;
+
+    const Gameplay& gameplay() const;
+
+    // Creates the services for context's scene (prefab references are
+    // relative to assetRoot) and publishes SceneLoaded. Restarting replaces
+    // the services.
+    void start(ApplicationContext& context, std::filesystem::path assetRoot);
+    // Destroys the services: pending commands, timers, and events are dropped.
+    void stop();
+    // Null unless started.
+    GameServices* services();
+
+    // simulatedSeconds is deltaSeconds on the scene's simulation clock; timers
+    // advance by it.
+    void update(ApplicationContext& context, const InputState& input, float deltaSeconds, float simulatedSeconds);
+    void fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds);
+    void afterPhysicsStep(ApplicationContext& context);
+    // LateUpdate and Ui see the input of the frame's update.
+    void lateUpdate(ApplicationContext& context);
+    void drawUi(ApplicationContext& context);
+
+  private:
+    void run(SystemPhase phase, ApplicationContext& context, const InputState* input, float deltaSeconds,
+             GameUiContext* ui = nullptr);
+
+    Gameplay m_gameplay;
+    std::unique_ptr<GameServices> m_services;
+    // The last update's input and duration.
+    InputState m_frameInput;
+    float m_frameSeconds{0.0f};
 };
 
 struct GameplayResult {

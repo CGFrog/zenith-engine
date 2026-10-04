@@ -189,7 +189,7 @@ void testLoadRegisterAndUnload(const TestPaths& paths) {
     expect(builtInComponentTypes()->find("test_counter") == nullptr,
            "loading a module leaves the built-in registry unchanged");
     const ComponentType* counterType = types->find("test_counter");
-    expect(counterType != nullptr && counterType->fields().size() == 5 && counterType->category() == "Test",
+    expect(counterType != nullptr && counterType->fields().size() == 8 && counterType->category() == "Test",
            "the module's component type carries its reflected fields");
     if (counterType == nullptr) {
         return;
@@ -203,10 +203,15 @@ void testLoadRegisterAndUnload(const TestPaths& paths) {
         const SystemScheduler scheduler(module->systems());
         expect(module->registriesShared(), "a scheduler shares the module's systems");
         expect(scheduler.schedule(SystemPhase::Update, SimulationMode::Play) ==
-                   std::vector<std::string>{"add_one", "double"},
+                   std::vector<std::string>{"add_one", "double", "context_probe"},
                "module systems are ordered by their order, not registration");
-        expect(scheduler.schedule(SystemPhase::Update, SimulationMode::Edit) == std::vector<std::string>{"edit_tick"},
+        expect(scheduler.schedule(SystemPhase::Update, SimulationMode::Edit) ==
+                   std::vector<std::string>{"edit_tick", "context_probe"},
                "edit mode runs only the module's edit systems");
+        expect(scheduler.schedule(SystemPhase::LateUpdate, SimulationMode::Play) ==
+                       std::vector<std::string>{"late_tick"} &&
+                   scheduler.schedule(SystemPhase::Ui, SimulationMode::Play) == std::vector<std::string>{"hud"},
+               "module systems register in the LateUpdate and Ui phases");
 
         scheduler.run(SystemPhase::Update, {.scene = scene, .mode = SimulationMode::Play, .deltaSeconds = 0.5f});
         scheduler.run(SystemPhase::Update, {.scene = scene, .mode = SimulationMode::Edit, .deltaSeconds = 0.5f});

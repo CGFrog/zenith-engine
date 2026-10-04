@@ -76,13 +76,14 @@ GameplayScene::GameplayScene(Gameplay gameplay, AudioClipHandle interactionSound
     , m_captureCamera(captureCamera) {}
 
 SceneResult GameplayScene::load(ApplicationContext& context) {
-    if (!m_gameplay) {
+    const Gameplay& gameplay = m_gameplay.gameplay();
+    if (!gameplay) {
         return {.error = "Gameplay scene was created without gameplay"};
     }
     Scene& scene = context.scene;
     if (m_project) {
         const ProjectConfigResult result =
-            loadProjectSceneFile(*m_project, m_project->startupScene, context.assets, scene, m_gameplay.componentTypes);
+            loadProjectSceneFile(*m_project, m_project->startupScene, context.assets, scene, gameplay.componentTypes);
         if (!result) {
             return {.error = result.error};
         }
@@ -104,6 +105,9 @@ SceneResult GameplayScene::load(ApplicationContext& context) {
     } else {
         // A scene authored with its own character controller keeps it.
         completeAuthoredPlayers(scene);
+    }
+    if (!m_captureCamera) {
+        m_gameplay.start(context, m_project ? m_project->assetRoot : std::filesystem::path{});
     }
     return {.success = true};
 }
@@ -182,14 +186,26 @@ void GameplayScene::update(ApplicationContext& context, const InputState& input,
         context.audio.playAt(m_interactionSound, options);
     }
     applyViewPreferences(context.scene);
-    m_gameplay.play(SystemPhase::Update, context, input, deltaSeconds);
+    m_gameplay.update(context, input, deltaSeconds, deltaSeconds);
 }
 
 void GameplayScene::fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) {
     if (m_captureCamera) {
         return;
     }
-    m_gameplay.play(SystemPhase::FixedUpdate, context, input, deltaSeconds);
+    m_gameplay.fixedUpdate(context, input, deltaSeconds);
+}
+
+void GameplayScene::afterPhysicsStep(ApplicationContext& context) {
+    if (!m_captureCamera) {
+        m_gameplay.afterPhysicsStep(context);
+    }
+}
+
+void GameplayScene::lateUpdate(ApplicationContext& context, const InputState&, float) {
+    if (!m_captureCamera && m_screen == Screen::Playing) {
+        m_gameplay.lateUpdate(context);
+    }
 }
 
 void GameplayScene::applyViewPreferences(Scene& scene) const {
@@ -216,6 +232,7 @@ void GameplayScene::drawUi(ApplicationContext& context) {
         break;
     case Screen::Playing:
         drawHud(context.gameUi, context.scene);
+        m_gameplay.drawUi(context);
         break;
     case Screen::Paused:
         drawPause(context);
@@ -339,4 +356,6 @@ void GameplayScene::persistSettings() const {
     }
 }
 
-void GameplayScene::unload(ApplicationContext&) {}
+void GameplayScene::unload(ApplicationContext&) {
+    m_gameplay.stop();
+}

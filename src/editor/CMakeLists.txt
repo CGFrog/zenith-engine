@@ -148,6 +148,7 @@ add_library(zenith_editor_app STATIC
     viewport/SceneGizmoDraw.cpp
     viewport/BoxSelect.cpp
     viewport/Cursor3D.cpp
+    viewport/GameUiOverlay.cpp
     viewport/LassoSelect.cpp
     viewport/RegionSelect.cpp
     viewport/SnapQueries.cpp

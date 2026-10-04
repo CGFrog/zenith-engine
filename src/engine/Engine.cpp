@@ -231,6 +231,7 @@ bool Engine::run(Application& application) {
                     break;
                 }
                 physicsMilliseconds += elapsedMilliseconds(physicsBegin);
+                applicationSession.afterPhysicsStep();
                 fixedUpdateMilliseconds += elapsedMilliseconds(fixedBegin);
                 if (measuring) {
                     benchmarkReport.physics(m_physics.stats());
@@ -246,6 +247,10 @@ bool Engine::run(Application& application) {
                 m_physicsAccumulator = std::min(m_physicsAccumulator, fixedStep);
             }
             m_physics.interpolate(m_scene, m_physicsAccumulator / fixedStep);
+            // Counted with the frame's update: LateUpdate systems are part of it.
+            const auto lateUpdateBegin = std::chrono::steady_clock::now();
+            applicationSession.lateUpdate(m_input.state(), deltaSeconds);
+            updateMilliseconds += elapsedMilliseconds(lateUpdateBegin);
         }
 
         const auto transformsBegin = std::chrono::steady_clock::now();

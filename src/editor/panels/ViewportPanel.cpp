@@ -11,6 +11,7 @@
 #include "editor/theme/PixelPainter.hpp"
 #include "editor/theme/ThemeChrome.hpp"
 #include "editor/viewport/Cursor3D.hpp"
+#include "editor/viewport/GameUiOverlay.hpp"
 #include "editor/viewport/SceneGizmoDraw.hpp"
 #include "editor/viewport/ViewFraming.hpp"
 #include "engine/graphics/ViewShading.hpp"
@@ -187,7 +188,12 @@ void ViewportPanel::beginGameView() {
     m_gameInputFocus = true;
 }
 
+void ViewportPanel::setGameUi(const GameUiContext* ui) {
+    m_gameUi = ui;
+}
+
 void ViewportPanel::endGameView() {
+    m_gameUi = nullptr;
     m_gameView = false;
     m_gameInputFocus = false;
     m_gameImageHovered = false;
@@ -1013,6 +1019,10 @@ void ViewportPanel::drawGameView(EditorContext& context, bool imageHovered, bool
         context.invoke("play.focus_game_view");
     }
 
+    if (m_gameUi != nullptr) {
+        // Under the banner, which reports the editor's state.
+        drawGameUiOverlay(*ImGui::GetWindowDrawList(), m_position, *m_gameUi);
+    }
     m_gameViewBanner = ::gameViewBanner(m_gameView, m_gameInputFocus, m_cursorCaptured);
     const std::string_view text = gameViewBannerText(m_gameViewBanner);
     if (text.empty()) {

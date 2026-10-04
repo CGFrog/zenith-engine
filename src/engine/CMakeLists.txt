@@ -118,13 +118,17 @@ add_library(zenith_engine SHARED
     input/InputProfiles.cpp
     jobs/JobSystem.cpp
     jobs/FrameTaskGraph.cpp
+    module/EntityCommandBuffer.cpp
+    module/EventQueue.cpp
     module/GameModule.cpp
+    module/GameServices.cpp
     module/Gameplay.cpp
     module/ModuleApi.cpp
     module/ModuleRegistrar.cpp
     module/ModuleShadowCopy.cpp
     module/SharedLibrary.cpp
     module/SystemScheduler.cpp
+    module/Timers.cpp
     physics/PhysicsWorld.cpp
     physics/JoltDebugDraw.cpp
     physics/JoltRuntime.cpp

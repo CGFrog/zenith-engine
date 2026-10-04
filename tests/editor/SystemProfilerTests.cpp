@@ -186,7 +186,7 @@ void testSimulatePicker(ProfilerFixture& fixture) {
     if (pickerWindow == nullptr) {
         return;
     }
-    const std::string label = first.name + (first.phase == SystemPhase::FixedUpdate ? " (fixed)" : "") + "##simulate";
+    const std::string label = simulateSystemLabel(first);
     HeadlessImGuiContext::activateNextFrame(
         HeadlessImGuiContext::itemId(*pickerWindow, first.name.c_str(), label.c_str()));
     draw();

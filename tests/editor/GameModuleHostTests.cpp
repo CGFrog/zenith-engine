@@ -4,9 +4,11 @@
 #include "editor/interaction/EntityPropertiesView.hpp"
 #include "editor/menus/DefaultMenus.hpp"
 #include "editor/modules/GameModuleHost.hpp"
+#include "engine/graphics/DebugDraw.hpp"
 #include "engine/input/InputManager.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/SceneDocument.hpp"
+#include "engine/ui/GameUi.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -17,6 +19,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -218,6 +221,48 @@ void testLoadEditAndPlay(HostFixture& fixture, const TestPaths& paths, SceneEnti
     expect(fixture.counterValue(counterId, "fixed_ticks") == 5, "play fixed updates run fixed-update systems");
 }
 
+// Edit systems get a logger but no gameplay services; a gameplay session gives
+// Play systems both, and its Ui phase draws into the given game UI.
+void testGameplaySession(HostFixture& fixture, SceneEntityId counterId) {
+    // Restored at the end: the later tests count from it.
+    const int32_t value = fixture.counterValue(counterId, "value");
+    const int32_t loggerSeen = fixture.counterValue(counterId, "logger_seen");
+    const int32_t servicesSeen = fixture.counterValue(counterId, "services_seen");
+    fixture.host.runEditFrame(fixture.scene, 0.016f, 0.0f);
+    expect(fixture.counterValue(counterId, "logger_seen") == loggerSeen + 1 &&
+               fixture.counterValue(counterId, "services_seen") == servicesSeen,
+           "edit systems get a logger and no gameplay services");
+
+    DebugDraw debugDraw;
+    fixture.host.startGameplay(fixture.assets, fixture.document.options(), debugDraw);
+    expect(fixture.host.gameServices() != nullptr, "a gameplay session has services");
+    fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Play, 0.016f);
+    expect(fixture.counterValue(counterId, "logger_seen") == loggerSeen + 2 &&
+               fixture.counterValue(counterId, "services_seen") == servicesSeen + 1,
+           "play systems get a logger and the session's services");
+    fixture.host.runEditFrame(fixture.scene, 0.016f, 0.0f);
+    expect(fixture.counterValue(counterId, "services_seen") == servicesSeen + 1,
+           "edit systems get no services even during a session");
+
+    GameUiContext ui;
+    ui.beginFrame({640, 360}, InputState{});
+    fixture.host.runSystems(SystemPhase::Ui, fixture.scene, nullptr, SimulationMode::Play, 0.0f, nullptr, &ui);
+    const std::string expected = "HUD " + std::to_string(fixture.counterValue(counterId, "value"));
+    expect(std::ranges::any_of(ui.commands(),
+                               [&expected](const UiCommand& command) {
+                                   const auto* text = std::get_if<UiTextCommand>(&command.payload);
+                                   return text != nullptr && text->text == expected;
+                               }),
+           "Ui systems draw the HUD into the game UI they are given");
+
+    fixture.host.stopGameplay();
+    expect(fixture.host.gameServices() == nullptr, "stopping the session releases its services");
+    fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Play, 0.016f);
+    expect(fixture.counterValue(counterId, "services_seen") == servicesSeen + 1,
+           "play systems outside a session get no services");
+    *fixture.counterField<int32_t>(counterId, "value") = value;
+}
+
 // The module's menu entry, sidebar tab, and inspector override, used the way
 // the editor uses them. Leaves the scene, selection, and undo history as it
 // found them (two extra entities without counters aside).
@@ -306,8 +351,9 @@ void testSimulate(HostFixture& fixture, SceneEntityId counterId) {
     const int32_t value = fixture.counterValue(counterId, "value");
     const int32_t fixedTicks = fixture.counterValue(counterId, "fixed_ticks");
     const int32_t inputTicks = fixture.counterValue(counterId, "input_ticks");
-    expect(fixture.host.systems(SystemPhase::Update).size() == 2 &&
-               fixture.host.systems(SystemPhase::FixedUpdate).size() == 1,
+    expect(fixture.host.systems(SystemPhase::Update).size() == 3 &&
+               fixture.host.systems(SystemPhase::FixedUpdate).size() == 1 &&
+               fixture.host.systems(SystemPhase::Ui).size() == 1,
            "the host lists the module's systems by phase");
 
     fixture.host.finishSystemFrame();
@@ -380,7 +426,8 @@ void testHotReload(HostFixture& fixture, const TestPaths& paths, SceneEntityId c
     expect(fixture.extensionsRegistered() && reloaded.warnings.size() == 1,
            "the reload released every extension, so registering them again succeeds once each");
     expect(!fixture.host.panels().empty() && fixture.host.panels()[0].visible, "an open module panel stays open");
-    expect(fixture.host.systemProfile().timings().size() == 1,
+    // count_play and probe_context ran once since the reload.
+    expect(fixture.host.systemProfile().timings().size() == 2,
            "a reload starts the profile over with the new module's systems");
     fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Simulate, 0.016f);
     expect(fixture.host.simulateMask().enabled("count_play", SystemPhase::Update) &&
@@ -471,6 +518,7 @@ int main() {
         SceneEntityId counterId;
         testLoadEditAndPlay(fixture, paths, counterId);
         if (fixture.host.module() != nullptr) {
+            testGameplaySession(fixture, counterId);
             testEditorExtensions(fixture, counterId);
             testSimulate(fixture, counterId);
             testHotReload(fixture, paths, counterId);

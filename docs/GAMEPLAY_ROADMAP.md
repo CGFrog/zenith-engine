@@ -39,6 +39,18 @@ Approved 2026-10-04. Nothing is implemented yet.
   component, so it updates the index directly. Signal handlers bind the
   `Scene` instance, and `swap`/`replaceWith` move the registry to another
   `Scene`, so signals would have updated the wrong index.
+- **2026-10-04: `GameServices` ownership and names (A2).**
+  - `GameServices` is owned by what runs gameplay:
+    - `GameplayRunner`, used by a game's `ApplicationScene`;
+    - the editor's `GameModuleHost`, for each Play or Simulate session.
+  - Systems reach it through `SystemContext::services`, not through
+    `ApplicationSession`/`ApplicationContext`: its `PrefabSystem` needs the
+    gameplay's component registry, which only those owners know.
+  - It is null in Edit mode.
+  - The deferred command list is `EntityCommandBuffer`, because the editor
+    already has a global `EntityCommands` namespace.
+  - Event types are keyed by a `static constexpr eventKey` string. A C++ type
+    id would differ between the engine and a module DLL.
 - **2026-10-04: engine owns mechanisms, games own rules.** The character
   controller, physics queries, events, timers, effects, save slots and UI
   widgets are reusable engine mechanisms. Weapons, damage, HUD contents and
@@ -48,8 +60,8 @@ Approved 2026-10-04. Nothing is implemented yet.
 
 | Item | Title | Depends on | Status |
 | --- | --- | --- | --- |
-| A1 | Scene costs that grow with entity count | — | done |
-| A2 | System phases and `GameServices` | — | todo |
+| A1 | Scene costs that grow with entity count | — | done d1519ef |
+| A2 | System phases and `GameServices` | — | done |
 | A3 | Physics queries, layers, triggers | A2 (trigger events) | todo |
 | A4 | Shared input actions | A2 | todo |
 | B1 | Engine character controller | A3, A2 | todo |
@@ -177,29 +189,45 @@ Files: `src/engine/module/SystemScheduler.hpp`, `ModuleRegistrar.hpp`,
 `src/game/application/ProjectApplication.*`, editor play mode
 (`src/editor/application/EditorPlayMode.*`).
 
-- [ ] Add `SystemPhase::LateUpdate`, which runs after physics interpolation
+- [x] Add `SystemPhase::LateUpdate`, which runs after physics interpolation
       (for cameras).
-- [ ] Add `SystemPhase::Ui`, which runs inside the engine's UI frame. Hook it
+- [x] Add `SystemPhase::Ui`, which runs inside the engine's UI frame. Hook it
       into `ProjectApplication::drawUi` and the editor's play mode.
-- [ ] Add `GameServices`, owned by the application session and reached
+- [x] Add `GameServices`, owned by the application session and reached
       through `ApplicationContext`, with a pointer in `SystemContext`:
-  - [ ] `PrefabSystem&`, built with the session's component-type registry.
-  - [ ] `EntityCommands`: deferred spawn, destroy and reparent, flushed at a
+  - [x] `PrefabSystem&`, built with the session's component-type registry.
+  - [x] `EntityCommands`: deferred spawn, destroy and reparent, flushed at a
         documented point after each phase.
-  - [ ] `EventQueue`: typed and double-buffered per frame. Engine events are
+  - [x] `EventQueue`: typed and double-buffered per frame. Engine events are
         `TriggerEntered`, `TriggerExited`, `EntitySpawned`, `EntityDestroyed`
         and `SceneLoaded`. Modules can declare their own event types.
-  - [ ] `Timers`: one-shot or repeating, optionally owned by an entity, scaled
+  - [x] `Timers`: one-shot or repeating, optionally owned by an entity, scaled
         by the simulation clock.
-  - [ ] `DebugDraw&`, the existing engine debug draw.
-- [ ] Give `Logger` to systems in every mode, including Edit, where
+  - [x] `DebugDraw&`, the existing engine debug draw.
+- [x] Give `Logger` to systems in every mode, including Edit, where
       `application` stays null.
-- [ ] Tests: phase order, Ui systems run in the stock runtime, flush semantics
+- [x] Tests: phase order, Ui systems run in the stock runtime, flush semantics
       of `EntityCommands`, event lifetime across frames, timers under time
       scale and pause.
 
 Exit criteria: a test game module draws a HUD element through a Ui system, in
 both `zenith --project` and editor Play.
+
+Result:
+- `tests/engine/modules/TestGameModule.cpp` registers a `hud` Ui system.
+  `ProjectRuntimeTests` plays it through `ProjectApplication` and finds its
+  text in the `GameUiContext` after `drawUi`.
+- `tests/editor/modules/EditorTestModule.cpp` does the same. In
+  `GameModuleHostTests`, its Ui phase draws into a game-view `GameUiContext`.
+  `EditorSession::drawGameViewUi` runs it each Play frame, and `GameUiOverlay`
+  draws it over the game view.
+
+Follow-ups:
+- The editor's game-view overlay draws text in the ImGui font and images as
+  their tint. A per-view GameUi pass in the renderer would remove the
+  difference.
+- The System Profiler counts Ui system time in the following frame, because
+  the profile frame ends at the start of `drawUi`.
 
 ### A3. Physics queries, layers and triggers
 

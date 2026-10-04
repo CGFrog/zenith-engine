@@ -11,6 +11,7 @@
 #include "engine/module/ModuleApi.hpp"
 #include "engine/module/ModuleRegistrar.hpp"
 #include "engine/scene/Scene.hpp"
+#include "engine/ui/GameUi.hpp"
 
 #include <imgui.h>
 
@@ -36,6 +37,10 @@ struct EditorTestCounter {
     int32_t fixedTicks{0};
     int32_t inputTicks{0};
     std::string label{"counter"};
+    // Update runs (in any mode) that had a logger, and that had gameplay
+    // services. Optional, so documents written before them still load.
+    int32_t loggerSeen{0};
+    int32_t servicesSeen{0};
 };
 
 template <typename Function> void forEachCounter(Scene& scene, Function function) {
@@ -53,7 +58,11 @@ void zenith_module_register(ModuleRegistrar& registrar) {
                                                .add("edit_ticks", &EditorTestCounter::editTicks)
                                                .add("fixed_ticks", &EditorTestCounter::fixedTicks)
                                                .add("input_ticks", &EditorTestCounter::inputTicks)
-                                               .add("label", &EditorTestCounter::label))
+                                               .add("label", &EditorTestCounter::label)
+                                               .add("logger_seen", &EditorTestCounter::loggerSeen)
+                                               .optional()
+                                               .add("services_seen", &EditorTestCounter::servicesSeen)
+                                               .optional())
                                    .build());
     registrar.addSystem({.name = "count_play",
                          .phase = SystemPhase::Update,
@@ -70,6 +79,26 @@ void zenith_module_register(ModuleRegistrar& registrar) {
                          .run = [](const SystemContext& context) {
                              forEachCounter(context.scene, [](EditorTestCounter& counter) { ++counter.editTicks; });
                          }});
+    registrar.addSystem({.name = "probe_context",
+                         .phase = SystemPhase::Update,
+                         .runIn = RunIn::EditAndPlay,
+                         .order = 10,
+                         .run = [](const SystemContext& context) {
+                             forEachCounter(context.scene, [&context](EditorTestCounter& counter) {
+                                 counter.loggerSeen += context.logger != nullptr ? 1 : 0;
+                                 counter.servicesSeen += context.services != nullptr ? 1 : 0;
+                             });
+                         }});
+    // The game's HUD: the counter's value.
+    registrar.addSystem(
+        {.name = "hud", .phase = SystemPhase::Ui, .runIn = RunIn::Play, .run = [](const SystemContext& context) {
+             if (context.ui == nullptr) {
+                 return;
+             }
+             forEachCounter(context.scene, [&context](const EditorTestCounter& counter) {
+                 context.ui->text({16.0f, 16.0f}, "HUD " + std::to_string(counter.value));
+             });
+         }});
     registrar.addSystem({.name = "count_fixed",
                          .phase = SystemPhase::FixedUpdate,
                          .runIn = RunIn::EditAndPlay,

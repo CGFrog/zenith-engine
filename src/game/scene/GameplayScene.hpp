@@ -22,6 +22,8 @@ class GameplayScene final : public ApplicationScene {
     SceneResult load(ApplicationContext& context) override;
     void update(ApplicationContext& context, const InputState& input, float deltaSeconds) override;
     void fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) override;
+    void afterPhysicsStep(ApplicationContext& context) override;
+    void lateUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) override;
     bool fixedUpdatesEnabled() const override;
     void drawUi(ApplicationContext& context) override;
     void unload(ApplicationContext& context) override;
@@ -47,7 +49,7 @@ class GameplayScene final : public ApplicationScene {
 
     void applyViewPreferences(Scene& scene) const;
 
-    Gameplay m_gameplay;
+    GameplayRunner m_gameplay;
     AudioClipHandle m_interactionSound;
     std::shared_ptr<InputActionMap> m_inputActions;
     std::shared_ptr<GameSettings> m_settings;

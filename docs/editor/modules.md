@@ -8,10 +8,18 @@ diagnostics source and the editor continues with the built-in types). The
 host gives `EditorDocument` the module's merged component registry, so the
 startup scene, Play mode, autosave, copy/paste, undo, and the inspector's Add
 Component menu all see module components. Module systems run through a
-`SystemScheduler`: `Update` from `EditorSession::update` and `FixedUpdate` from
-`fixedUpdate` in Play mode (pause and frame step apply), and `RunIn::Edit`
-systems every Edit-mode frame, with fixed updates on an editor-side fixed
-clock. Edit-mode systems change the scene directly, outside undo.
+`SystemScheduler`. In Play mode (pause and frame step apply):
+- `Update` runs from `EditorSession::update`;
+- `FixedUpdate` from `fixedUpdate`;
+- `LateUpdate` from `lateUpdate`;
+- `Ui`, while a game view is open, from `EditorSession::drawUi`, into a
+  `GameUiContext` sized to the view that `GameUiOverlay` draws over its image.
+
+`RunIn::Edit` systems run every Edit-mode frame, with fixed updates on an
+editor-side fixed clock. Edit-mode systems change the scene directly, outside
+undo. Systems get the engine's log in every mode. In Play and Simulate they
+also get the host's `GameServices`, which `enterPlayMode` starts and
+`stopPlayMode` (or any module unload) stops.
 
 Hot reload (`module.reload` in the Module menu, a settled change to the
 library file, or a successful Build that changed it) waits for Edit mode, a

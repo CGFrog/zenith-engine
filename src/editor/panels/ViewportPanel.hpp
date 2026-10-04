@@ -21,6 +21,8 @@
 #include <string_view>
 #include <vector>
 
+class GameUiContext;
+
 // The renderer's shading mode for a viewport shading choice.
 ViewShading toViewShading(ViewportShading shading);
 
@@ -142,6 +144,10 @@ class ViewportPanel final : public EditorPanel {
     bool gameViewHoldsCursor() const;
     // The banner the latest draw showed.
     GameViewBanner gameViewBanner() const;
+    // The game UI the game view draws over its image (the session runs the
+    // module's Ui systems into it each frame); null draws none. It must stay
+    // valid while set; endGameView clears it.
+    void setGameUi(const GameUiContext* ui);
 
     // Screen-space rectangle of the viewport image from the latest draw.
     glm::vec2 position() const;
@@ -264,6 +270,7 @@ class ViewportPanel final : public EditorPanel {
     ViewportChromeState m_chrome;
     bool m_inputActive{false};
     bool m_gameView{false};
+    const GameUiContext* m_gameUi{nullptr};
     bool m_gameInputFocus{false};
     // Whether the engine's input held the mouse at the latest update.
     bool m_cursorCaptured{false};

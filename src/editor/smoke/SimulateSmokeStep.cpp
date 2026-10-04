@@ -83,7 +83,7 @@ class SimulateSmokeStep final : public SmokeStep {
     std::string countSystemRuns(const GameModuleHost& host, bool& fixedSystemsEnabled) {
         const SystemProfile& profile = host.systemProfile();
         const SimulateSystemMask& mask = host.simulateMask();
-        for (const SystemPhase phase : {SystemPhase::Update, SystemPhase::FixedUpdate}) {
+        for (const SystemPhase phase : systemPhases) {
             for (const SystemDescriptor* system : host.systems(phase)) {
                 const SystemTiming* timing = profile.find(system->name);
                 const bool runs = runsIn(system->runIn, SimulationMode::Simulate) && mask.enabled(system->name, phase);

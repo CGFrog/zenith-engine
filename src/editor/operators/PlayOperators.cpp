@@ -16,7 +16,7 @@
 
 namespace {
 bool moduleHasSystem(const GameModuleHost& modules, std::string_view name) {
-    for (const SystemPhase phase : {SystemPhase::Update, SystemPhase::FixedUpdate}) {
+    for (const SystemPhase phase : systemPhases) {
         if (std::ranges::any_of(modules.systems(phase),
                                 [name](const SystemDescriptor* system) { return system->name == name; })) {
             return true;

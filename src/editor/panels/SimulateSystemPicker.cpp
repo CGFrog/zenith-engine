@@ -10,7 +10,7 @@
 std::vector<SimulateSystemChoice> simulateSystemChoices(const GameModuleHost& modules) {
     std::vector<SimulateSystemChoice> choices;
     const SimulateSystemMask& mask = modules.simulateMask();
-    for (const SystemPhase phase : {SystemPhase::Update, SystemPhase::FixedUpdate}) {
+    for (const SystemPhase phase : systemPhases) {
         for (const SystemDescriptor* system : modules.systems(phase)) {
             // Simulate considers only systems that run in Play.
             if (runsIn(system->runIn, SimulationMode::Simulate)) {
@@ -19,6 +19,24 @@ std::vector<SimulateSystemChoice> simulateSystemChoices(const GameModuleHost& mo
         }
     }
     return choices;
+}
+
+std::string simulateSystemLabel(const SimulateSystemChoice& choice) {
+    const char* suffix = "";
+    switch (choice.phase) {
+    case SystemPhase::Update:
+        break;
+    case SystemPhase::FixedUpdate:
+        suffix = " (fixed)";
+        break;
+    case SystemPhase::LateUpdate:
+        suffix = " (late)";
+        break;
+    case SystemPhase::Ui:
+        suffix = " (UI)";
+        break;
+    }
+    return choice.name + suffix + "##simulate";
 }
 
 void drawSimulateSystemPicker(EditorContext& context, const GameModuleHost& modules) {
@@ -32,8 +50,7 @@ void drawSimulateSystemPicker(EditorContext& context, const GameModuleHost& modu
         // The Simulate mask names systems, which are unique across phases.
         ImGui::PushID(choice.name.c_str());
         bool enabled = choice.enabled;
-        const std::string label =
-            choice.name + (choice.phase == SystemPhase::FixedUpdate ? " (fixed)" : "") + "##simulate";
+        const std::string label = simulateSystemLabel(choice);
         if (ImGui::Checkbox(label.c_str(), &enabled)) {
             context.invoke("play.set_simulate_system",
                            nlohmann::json{{"system", choice.name}, {"enabled", enabled}}.dump());

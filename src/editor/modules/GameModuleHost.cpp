@@ -209,6 +209,7 @@ GameModuleHost::GameModuleHost(GameModuleEditorServices services, GameModuleHost
     , m_options(std::move(options)) {}
 
 GameModuleHost::~GameModuleHost() {
+    stopGameplay();
     releaseEditorExtensions();
     m_scheduler = SystemScheduler{};
 }
@@ -335,6 +336,7 @@ void GameModuleHost::unload(Scene& scene, EditorDocument& document) {
 }
 
 void GameModuleHost::releaseModule(Scene& scene, EditorDocument& document, std::vector<std::string>& warnings) {
+    stopGameplay();
     releaseEditorExtensions();
     m_services.runner.forgetLast();
     m_scheduler = SystemScheduler{};
@@ -381,16 +383,40 @@ void GameModuleHost::releaseEditorExtensions() {
 }
 
 void GameModuleHost::runSystems(SystemPhase phase, Scene& scene, ApplicationContext* application, SimulationMode mode,
-                                float deltaSeconds, const InputState* input) {
+                                float deltaSeconds, const InputState* input, GameUiContext* ui) {
     if (!m_module) {
         return;
     }
-    if (mode == SimulationMode::Simulate) {
+    if (mode != SimulationMode::Play) {
         input = nullptr;
     }
-    m_scheduler.run(
-        phase, {.scene = scene, .application = application, .mode = mode, .deltaSeconds = deltaSeconds, .input = input},
-        &m_profile);
+    runGameplayPhase(m_scheduler, phase,
+                     {.scene = scene,
+                      .application = application,
+                      .mode = mode,
+                      .deltaSeconds = deltaSeconds,
+                      .input = input,
+                      .logger = m_logger,
+                      .services = mode == SimulationMode::Edit ? nullptr : m_gameServices.get(),
+                      .ui = phase == SystemPhase::Ui ? ui : nullptr},
+                     &m_profile);
+}
+
+void GameModuleHost::setLogger(Logger& logger) {
+    m_logger = &logger;
+}
+
+void GameModuleHost::startGameplay(AssetManager& assets, SceneDocumentOptions documents, DebugDraw& debugDraw) {
+    m_gameServices.reset();
+    m_gameServices = std::make_unique<GameServices>(assets, std::move(documents), debugDraw, m_logger);
+}
+
+void GameModuleHost::stopGameplay() {
+    m_gameServices.reset();
+}
+
+GameServices* GameModuleHost::gameServices() {
+    return m_gameServices.get();
 }
 
 std::span<const SystemDescriptor* const> GameModuleHost::systems(SystemPhase phase) const {

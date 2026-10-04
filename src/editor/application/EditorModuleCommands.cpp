@@ -70,14 +70,23 @@ void EditorSession::updateGameModule(ApplicationContext& context, const InputSta
 
     if (m_playMode.mode() == EditorMode::Edit) {
         m_moduleHost.runEditFrame(context.scene, deltaSeconds, context.physics.config().fixedTimeStep);
-    } else if (m_playMode.advancesThisFrame()) {
-        // Update systems run on simulated time (a paused frame step's own
-        // length); the engine scales the fixed steps, animation, and audio by
-        // the same clock.
-        const SimulationMode mode = m_playMode.simulationMode();
-        m_moduleHost.runSystems(SystemPhase::Update, context.scene, &context, mode,
-                                simulatedSeconds(m_playMode.simulationClock(), deltaSeconds),
-                                mode == SimulationMode::Simulate ? nullptr : &gameInput(input));
+        return;
+    }
+    const SimulationMode mode = m_playMode.simulationMode();
+    m_frameGameInput = mode == SimulationMode::Play ? gameInput(input) : m_idleGameInput;
+    if (m_playMode.advancesThisFrame()) {
+        // Update systems and timers run on simulated time (a paused frame
+        // step's own length); the engine scales the fixed steps, animation,
+        // and audio by the same clock.
+        const float seconds = simulatedSeconds(m_playMode.simulationClock(), deltaSeconds);
+        GameServices* services = m_moduleHost.gameServices();
+        if (services != nullptr) {
+            services->beginFrame();
+        }
+        m_moduleHost.runSystems(SystemPhase::Update, context.scene, &context, mode, seconds, &m_frameGameInput);
+        if (services != nullptr) {
+            services->advanceTimers(context.scene, seconds);
+        }
     }
 }
 
