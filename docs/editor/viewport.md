@@ -46,7 +46,7 @@ math for any `RenderView`. `RenderRuntime::setViewVisibleEntities` isolates a
 render view to a set of objects for local view (a default view falls back to
 CPU submission while isolated); its sun, point, and spot shadows then cast
 from that set only, through its own shadow maps when another view needs the
-whole scene's (	ests/engine/IsolatedShadowSmokeTests.cpp). `tests/editor/ViewportChromeTests.cpp` and
+whole scene's (`tests/engine/IsolatedShadowSmokeTests.cpp`). `tests/editor/ViewportChromeTests.cpp` and
 `tests/editor/MultiViewportTests.cpp` cover this headless.
 
 `viewport/SceneGizmoDraw` records a viewport's scene overlays into its own

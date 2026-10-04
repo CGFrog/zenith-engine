@@ -60,7 +60,11 @@ older `settings.ini` and its `layout.ini` are migrated into the Layout
 workspace (window sections renamed to the area windows).
 
 The settings directory is `%LOCALAPPDATA%\Zenith\Editor` (or the platform's
-view, projections, and picking share.
+user data directory) unless `ZENITH_EDITOR_SETTINGS_DIR` names another one;
+`src/editor/main.cpp` resolves it. The editor smoke tests set it to a
+directory under the build tree, emptied by the `zenith_editor_test_settings_reset`
+fixture each ctest run, so they start from the default workspaces and never
+touch the user's settings.
 
 ## Making a panel visible as an area type
 
