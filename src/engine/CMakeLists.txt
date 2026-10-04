@@ -127,6 +127,11 @@ add_library(zenith_engine SHARED
     scene/Scene.cpp
     scene/ParticleEmitter.cpp
     scene/BuiltInComponentTypes.cpp
+    scene/RenderComponentTypes.cpp
+    scene/AnimationComponentTypes.cpp
+    scene/LightComponentTypes.cpp
+    scene/PhysicsComponentTypes.cpp
+    scene/ComponentTypeHelpers.cpp
     scene/CollectionComponentTypes.cpp
     scene/Collections.cpp
     scene/ComponentTypes.cpp
