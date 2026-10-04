@@ -13,3 +13,20 @@ ZENITH_GAME_MODULE("{{PROJECT_IDENTIFIER}}", "0.1.0");
 void zenith_module_register(ModuleRegistrar& registrar) {
     registerSpinnerGameplay(registrar);
 }
+
+// Editor tools for the game (docs/EDITOR_EXTENSIONS.md in the Zenith source
+// tree). Uncomment to add a sidebar tab to every 3D viewport that shows how
+// many entities are selected and runs an editor operator:
+//
+// #include "editor/modules/EditorModuleApi.hpp"
+//
+// #include <imgui.h>
+//
+// ZENITH_EDITOR_MODULE_REGISTER {
+//     registrar.addSidebarTab({.title = "{{PROJECT_NAME}}", .draw = [](EditorModulePanelContext& context) {
+//                                  ImGui::Text("%zu selected", context.selection.size());
+//                                  if (ImGui::Button("Duplicate")) {
+//                                      context.invokeOperator("object.duplicate");
+//                                  }
+//                              }});
+// }

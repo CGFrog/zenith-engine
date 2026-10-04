@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/document/PrefabAuthoring.hpp"
+#include "editor/interaction/ComponentEditorOverrides.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <cstdint>
@@ -39,7 +40,8 @@ std::vector<std::string> entityComponentCategories(const ComponentTypeRegistry& 
 // display order of the ComponentInspectorLayout, which also remembers which
 // sections are collapsed. Each is drawn from its reflected fields unless a
 // custom editor is registered for its key, so new component types appear
-// without view code.
+// without view code. An override in the context's ComponentEditorOverrides
+// (a game module's inspector) replaces both.
 //
 // Several entities are edited together: a component they all have is shown
 // with the first (active) entity's values, a field whose values differ shows
@@ -56,7 +58,7 @@ std::vector<std::string> entityComponentCategories(const ComponentTypeRegistry& 
 class EntityPropertiesView {
   public:
     // Draws a component in place and returns whether it changed.
-    using CustomEditor = std::function<bool(EditorContext& context, Entity entity, void* component)>;
+    using CustomEditor = ComponentEditorDraw;
 
     // What a component header offers.
     enum class HeaderActions : uint8_t {
@@ -131,6 +133,9 @@ class EntityPropertiesView {
     // request, run after drawing.
     std::optional<HeaderAction> drawComponentValues(EditorContext& context, const ComponentType& type,
                                                     std::span<const Entity> shown, std::string_view filter) const;
+    // The context's override for the component type, else the built-in
+    // custom editor, else null.
+    const CustomEditor* customEditor(const EditorContext& context, const std::string& componentKey) const;
 
     ComponentInspectorLayout& m_layout;
     std::unordered_map<std::string, CustomEditor> m_customEditors;

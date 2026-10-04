@@ -1,23 +1,40 @@
+#include "HeadlessImGui.hpp"
+
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/SceneEditing.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
+#include "editor/interaction/ComponentEditorOverrides.hpp"
+#include "editor/interaction/EntityPropertiesView.hpp"
 #include "editor/interaction/Selection.hpp"
+#include "editor/menus/DefaultMenus.hpp"
+#include "editor/menus/EditorMenus.hpp"
 #include "editor/modules/GameModuleHost.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/operators/OperatorRunner.hpp"
+#include "editor/panels/EditorContext.hpp"
+#include "editor/panels/ViewportRegistry.hpp"
+#include "editor/settings/ComponentInspectorLayout.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/audio/AudioSystem.hpp"
+#include "engine/diagnostics/Logger.hpp"
 #include "engine/input/InputManager.hpp"
+#include "engine/physics/PhysicsWorld.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneDocument.hpp"
+#include "engine/ui/GameUi.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 int failures = 0;
@@ -31,6 +48,9 @@ void expect(bool condition, const char* message) {
 
 constexpr std::string_view counterKey = "editor_test_counter";
 constexpr std::string_view addCounterOperator = "editor_test.add_counter";
+constexpr std::string_view moduleMenu = "EDITOR_TEST_MT_tools";
+constexpr std::string_view moduleSidebarTab = "Test Tab";
+constexpr int32_t bumpAmount = 1000;
 
 struct TestPaths {
     std::filesystem::path root;
@@ -47,23 +67,70 @@ struct HostFixture {
     CommandHistory history;
     EditorDiagnostics diagnostics;
     Selection selection;
+    EditorMenus menus;
     OperatorRegistry operators;
     OperatorRunner runner{operators, history};
+    ViewportRegistry viewports;
+    ComponentEditorOverrides componentEditors;
     GameModuleHost host;
 
     explicit HostFixture(const TestPaths& paths)
-        : host(operators, runner,
+        : host({.operators = operators,
+                .runner = runner,
+                .menus = menus.registry(),
+                .viewports = viewports,
+                .componentEditors = componentEditors},
                {.shadowDirectory = paths.shadow,
                 .settleTime = std::chrono::milliseconds(100),
-                .checkInterval = std::chrono::milliseconds(0)}) {}
+                .checkInterval = std::chrono::milliseconds(0)}) {
+        expect(registerDefaultMenus(menus.registry()).success, "the editor's menus register");
+    }
 
     SceneEditing editing() {
         return {scene, assets, document, history, diagnostics};
     }
 
+    OperatorContext operatorContext() {
+        return {.editing = editing(), .selection = selection, .mode = EditorMode::Edit};
+    }
+
     OperatorResult invoke(std::string_view id) {
-        OperatorContext context{.editing = editing(), .selection = selection};
+        OperatorContext context = operatorContext();
         return runner.invoke(id, context);
+    }
+
+    // The item of items labelled label, or null.
+    static const MenuItem* findItem(const std::vector<MenuItem>& items, std::string_view label) {
+        const auto found = std::ranges::find_if(items, [label](const MenuItem& item) { return item.label == label; });
+        return found == items.end() ? nullptr : &*found;
+    }
+
+    std::optional<ResolvedMenu> addMenu() {
+        const OperatorContext context = operatorContext();
+        return menus.resolve({.menu = addMenuId, .category = {}}, context);
+    }
+
+    bool hasSidebarTab() const {
+        return std::ranges::any_of(viewports.sidebarTabs(),
+                                   [](const ViewportSidebarTab& tab) { return tab.title == moduleSidebarTab; });
+    }
+
+    // Whether no extension of the module is left in the editor's registries.
+    bool extensionsReleased() {
+        const std::optional<ResolvedMenu> add = addMenu();
+        return operators.find(addCounterOperator) == nullptr && componentEditors.size() == 0 && !hasSidebarTab() &&
+               menus.registry().find(moduleMenu) == nullptr && add && findItem(add->items, "Editor Test") == nullptr &&
+               host.extensionCounts() == GameModuleHost::ExtensionCounts{};
+    }
+
+    // Whether the module's extensions are each registered exactly once.
+    bool extensionsRegistered() {
+        const std::optional<ResolvedMenu> add = addMenu();
+        const MenuItem* submenu = add ? findItem(add->items, "Editor Test") : nullptr;
+        return operators.find(addCounterOperator) != nullptr && componentEditors.find(counterKey) != nullptr &&
+               componentEditors.size() == 1 && viewports.sidebarTabs().size() == 1 && hasSidebarTab() &&
+               menus.registry().find(moduleMenu) != nullptr && submenu != nullptr && submenu->children.size() == 1 &&
+               host.missingExtensions().empty();
     }
 
     const ComponentType* counterType() const {
@@ -89,6 +156,87 @@ struct HostFixture {
     int32_t counterValue(SceneEntityId id, std::string_view key) {
         const int32_t* value = counterField<int32_t>(id, key);
         return value != nullptr ? *value : -1;
+    }
+};
+
+// The session workflows the inspector and sidebar tabs trigger, reduced to
+// running operators.
+class OperatorActions final : public EditorSessionActions {
+  public:
+    explicit OperatorActions(HostFixture& fixture)
+        : m_fixture(fixture) {}
+
+    OperatorResult invokeOperator(ApplicationContext&, std::string_view operatorId, std::string_view properties,
+                                  KeymapRegion) override {
+        OperatorContext context = m_fixture.operatorContext();
+        return m_fixture.runner.invokeWithJson(operatorId, context, properties);
+    }
+
+    bool operatorAvailable(ApplicationContext&, std::string_view operatorId) override {
+        return m_fixture.operators.find(operatorId) != nullptr;
+    }
+
+    std::string operatorShortcut(std::string_view, std::string_view) const override {
+        return {};
+    }
+
+    void requestOpenScene(ApplicationContext&, std::filesystem::path) override {}
+
+    void projectFilesMoved(ApplicationContext&, std::span<const ProjectFileMove>) override {}
+
+    void projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path>) override {}
+
+    void handleObjectKeys(ApplicationContext&, KeymapRegion) override {}
+
+    bool modalTransformActive() const override {
+        return false;
+    }
+
+    void updateModalTransform(ApplicationContext&, ViewportId) override {}
+
+  private:
+    HostFixture& m_fixture;
+};
+
+// What the Inspector draws with: an application context around the
+// fixture's scene, ImGui without a window, and the session's actions.
+struct InspectorFixture {
+    HostFixture& host;
+    PhysicsWorld physics;
+    AudioSystem audio;
+    ApplicationControl control;
+    RenderRuntime rendering;
+    GameUiContext gameUi;
+    Logger logger;
+    ApplicationContext app{host.scene, host.assets, physics, audio, control, rendering, gameUi, logger};
+    OperatorActions actions{host};
+    ComponentInspectorLayout layout;
+    EntityPropertiesView view{layout};
+    HeadlessImGuiContext imgui;
+
+    explicit InspectorFixture(HostFixture& fixture)
+        : host(fixture) {}
+
+    EditorContext context() {
+        return {.app = app,
+                .editing = host.editing(),
+                .selection = host.selection,
+                .diagnostics = host.diagnostics,
+                .mode = EditorMode::Edit,
+                .actions = actions,
+                .menus = host.menus,
+                .componentEditors = &host.componentEditors};
+    }
+
+    // Runs draw in one frame and returns the text it rendered.
+    template <typename Draw> std::string drawLogged(Draw draw) {
+        HeadlessImGuiFrame frame("Inspector");
+        ImGui::LogToBuffer();
+        EditorContext editor = context();
+        draw(editor);
+        std::string text = ImGui::GetCurrentContext()->LogBuffer.c_str();
+        ImGui::LogFinish();
+        return text;
     }
 };
 
@@ -123,6 +271,7 @@ void testWithoutModule(const TestPaths& paths) {
            "a failed load leaves the host failed with the error");
     expect(fixture.document.options().componentTypes == nullptr && fixture.counterType() == nullptr,
            "after a failed load the document uses the built-in component types");
+    expect(fixture.extensionsReleased(), "a host without a module adds nothing to the editor's registries");
 }
 
 void testLoadEditAndPlay(HostFixture& fixture, const TestPaths& paths, SceneEntityId& counterId) {
@@ -167,6 +316,87 @@ void testLoadEditAndPlay(HostFixture& fixture, const TestPaths& paths, SceneEnti
            "edit mode runs edit fixed-update systems once per elapsed fixed step");
     fixture.host.runSystems(SystemPhase::FixedUpdate, fixture.scene, nullptr, SimulationMode::Play, 0.25f);
     expect(fixture.counterValue(counterId, "fixed_ticks") == 5, "play fixed updates run fixed-update systems");
+}
+
+// The module's menu entry, sidebar tab, and inspector override, used the way
+// the editor uses them. Leaves the scene, selection, and undo history as it
+// found them (two extra entities without counters aside).
+void testEditorExtensions(HostFixture& fixture, SceneEntityId counterId) {
+    expect(fixture.extensionsRegistered(), "the module's sidebar tab, inspector override, and menus are registered");
+    const GameModuleHost::ExtensionCounts counts = fixture.host.extensionCounts();
+    expect(counts.sidebarTabs == 1 && counts.inspectorOverrides == 1 && counts.menus == 1 && counts.menuEntries == 2,
+           "the host records every extension the module registered");
+    const size_t historyBefore = fixture.history.size();
+    InspectorFixture inspector(fixture);
+
+    // Add > Editor Test > Add Test Counter runs the module operator on two
+    // new entities.
+    const SceneEntityId first = fixture.scene.id(fixture.scene.createEntity("Bumped"));
+    const SceneEntityId second = fixture.scene.id(fixture.scene.createEntity("Copied"));
+    fixture.selection.assign({first, second});
+    const std::optional<ResolvedMenu> add = fixture.addMenu();
+    const MenuItem* submenu = add ? HostFixture::findItem(add->items, "Editor Test") : nullptr;
+    const MenuItem* entry = submenu != nullptr ? HostFixture::findItem(submenu->children, "Add Test Counter") : nullptr;
+    expect(entry != nullptr && entry->operatorId == addCounterOperator,
+           "the module's submenu of the Add menu resolves to its operator");
+    if (entry == nullptr) {
+        return;
+    }
+    OperatorContext menuContext = fixture.operatorContext();
+    expect(fixture.runner.invokeWithJson(entry->operatorId, menuContext, entry->properties).status ==
+                   OperatorStatus::Finished &&
+               fixture.counterField<int32_t>(first, "value") != nullptr &&
+               fixture.counterField<int32_t>(second, "value") != nullptr,
+           "the module's menu entry runs its operator");
+    if (fixture.counterField<int32_t>(second, "value") == nullptr) {
+        return;
+    }
+
+    // The override replaces the reflected fields; its edit of the active
+    // entity is one undo step, and the changed keys reach the other entity.
+    *fixture.counterField<std::string>(first, "label") = "bump";
+    *fixture.counterField<int32_t>(first, "value") = 5;
+    *fixture.counterField<int32_t>(second, "value") = 7;
+    *fixture.counterField<int32_t>(second, "edit_ticks") = 3;
+    const size_t historyBeforeEdit = fixture.history.size();
+    const std::vector<SceneEntityId> selected = fixture.selection.ids();
+    const std::string drawn =
+        inspector.drawLogged([&](EditorContext& context) { inspector.view.drawComponents(context, selected, {}); });
+    expect(drawn.find("Editor test inspector") != std::string::npos && drawn.find("Edit Ticks") == std::string::npos,
+           "the Inspector draws the module's override instead of the reflected fields");
+    expect(fixture.counterValue(first, "value") == 5 + bumpAmount &&
+               *fixture.counterField<std::string>(first, "label") == "bumped",
+           "the override edits the active entity's component");
+    expect(fixture.counterValue(second, "value") == 5 + bumpAmount &&
+               *fixture.counterField<std::string>(second, "label") == "bumped" &&
+               fixture.counterValue(second, "edit_ticks") == 3,
+           "the view copies only the keys the override changed to the other selected entity");
+    expect(fixture.history.size() == historyBeforeEdit + 1, "the override's edit is recorded as one undo step");
+    fixture.editing().undo();
+    expect(fixture.counterValue(first, "value") == 5 && fixture.counterValue(second, "value") == 7 &&
+               *fixture.counterField<std::string>(first, "label") == "bump",
+           "undo restores both entities from before the override's edit");
+
+    // Every viewport draws the module's sidebar tab through the registry.
+    const std::span<const ViewportSidebarTab> tabs = fixture.viewports.sidebarTabs();
+    const std::string tabText = inspector.drawLogged([&](EditorContext& context) {
+        for (int viewport = 0; viewport < 2; ++viewport) {
+            for (const ViewportSidebarTab& tab : tabs) {
+                tab.draw(context);
+            }
+        }
+    });
+    const size_t firstTab = tabText.find("Editor test sidebar tab: 2 selected");
+    expect(firstTab != std::string::npos &&
+               tabText.find("Editor test sidebar tab: 2 selected", firstTab + 1) != std::string::npos,
+           "the module's sidebar tab draws with the selection in each viewport");
+
+    // Leave the history and selection as the later tests expect them: undo
+    // the menu entry's step too (the override's step is undone already).
+    for (size_t step = 1; step < fixture.history.size() - historyBefore; ++step) {
+        fixture.editing().undo();
+    }
+    fixture.selection.selectOnly(counterId);
 }
 
 // Simulate runs FixedUpdate systems and the Update systems the user enabled,
@@ -247,6 +477,8 @@ void testHotReload(HostFixture& fixture, const TestPaths& paths, SceneEntityId c
     expect(fixture.counterValue(counterId, "value") == 106, "the reloaded module's systems run");
     expect(fixture.operators.find(addCounterOperator) != nullptr && fixture.host.panels().size() == 1,
            "the reloaded module's editor extensions are registered again");
+    expect(fixture.extensionsRegistered() && reloaded.warnings.size() == 1,
+           "the reload released every extension, so registering them again succeeds once each");
     expect(!fixture.host.panels().empty() && fixture.host.panels()[0].visible, "an open module panel stays open");
     expect(fixture.host.systemProfile().timings().size() == 1,
            "a reload starts the profile over with the new module's systems");
@@ -279,6 +511,8 @@ void testFailedReloadPreservesData(HostFixture& fixture, const TestPaths& paths,
     expect(fixture.host.operatorIds().empty() && fixture.operators.find(addCounterOperator) == nullptr &&
                fixture.host.panels().empty(),
            "a failed reload removes the module's editor extensions");
+    expect(fixture.extensionsReleased(),
+           "a failed reload removes the module's sidebar tab, inspector override, and menus");
 
     const Entity entity = fixture.scene.findEntity(counterId);
     const auto* preserved =
@@ -299,6 +533,7 @@ void testFailedReloadPreservesData(HostFixture& fixture, const TestPaths& paths,
     installModule(ZENITH_EDITOR_TEST_MODULE_V1, paths.module);
     const GameModuleHostResult recovered = fixture.host.reload(fixture.scene, fixture.assets, fixture.document);
     expect(recovered.success && fixture.host.module()->version() == "1.0.0", "a fixed module reloads after failure");
+    expect(fixture.extensionsRegistered(), "a fixed module registers its editor extensions again");
     expect(!fixture.host.panels().empty() && fixture.host.panels()[0].visible,
            "a panel open before a failed reload reopens when the module loads again");
     expect(fixture.counterValue(counterId, "value") == 106, "preserved module data becomes components again");
@@ -315,6 +550,7 @@ void testUnload(HostFixture& fixture, const TestPaths& paths) {
                fixture.document.options().componentTypes == nullptr &&
                fixture.operators.find(addCounterOperator) == nullptr,
            "unloading releases the scene, the document's registry, and the editor extensions");
+    expect(fixture.extensionsReleased(), "unloading removes every editor extension from the editor's registries");
     expect(directoryEmpty(paths.shadow), "every module copy is unloaded and deleted, so nothing still referenced it");
 }
 } // namespace
@@ -335,6 +571,7 @@ int main() {
         SceneEntityId counterId;
         testLoadEditAndPlay(fixture, paths, counterId);
         if (fixture.host.module() != nullptr) {
+            testEditorExtensions(fixture, counterId);
             testSimulate(fixture, counterId);
             testHotReload(fixture, paths, counterId);
             testFailedReloadPreservesData(fixture, paths, counterId);

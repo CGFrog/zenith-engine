@@ -10,6 +10,7 @@
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/EditorRecovery.hpp"
+#include "editor/interaction/ComponentEditorOverrides.hpp"
 #include "editor/interaction/EntityEyedropper.hpp"
 #include "editor/interaction/ModalTransform.hpp"
 #include "editor/interaction/Selection.hpp"
@@ -280,9 +281,20 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     EditorMenus m_menus;
     OperatorRegistry m_operators;
     OperatorRunner m_operatorRunner;
-    // Declared after the operator registry and runner, which it removes the
-    // module's operators from when destroyed.
-    GameModuleHost m_moduleHost{m_operators, m_operatorRunner};
+    // Every viewport area registers here; declared before the areas, which
+    // own the viewport panels, and before the module host, which adds the
+    // module's sidebar tabs, so it outlives both.
+    ViewportRegistry m_viewports;
+    // Inspector overrides from the game module, shared by the Inspector and
+    // Properties areas.
+    ComponentEditorOverrides m_componentEditors;
+    // Declared after the registries it adds the module's editor extensions
+    // to, which it removes them from when destroyed.
+    GameModuleHost m_moduleHost{{.operators = m_operators,
+                                 .runner = m_operatorRunner,
+                                 .menus = m_menus.registry(),
+                                 .viewports = m_viewports,
+                                 .componentEditors = m_componentEditors}};
     std::filesystem::path m_gameModulePath;
     // A reload waits for Edit mode, a finished build, and no modal tool.
     bool m_moduleReloadPending{false};
@@ -316,9 +328,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     std::filesystem::path m_componentLayoutPath;
     // Where the component copy and paste operators exchange values.
     SystemClipboard m_componentClipboard;
-    // Every viewport area registers here; declared before the areas, which
-    // own the viewport panels, so it outlives them.
-    ViewportRegistry m_viewports;
     // Panels holding editor-wide state, shown by single-instance area types.
     // Per-area panels (Viewport, Hierarchy, Asset Browser, Graphics, ...) are
     // created by their types (EditorAreaTypes.hpp, EditorAreas.cpp).
@@ -369,6 +378,8 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     uint32_t m_smokeRenderablesBeforeHide{0};
     bool m_smokeHideSkipped{false};
     bool m_smokeModuleReloadRequested{false};
+    // The game module's editor extensions before the smoke reloaded it.
+    GameModuleHost::ExtensionCounts m_smokeModuleExtensions;
     // The workspace the area smoke started in, restored when it ends, and
     // the extra Hierarchy area it opened.
     std::string m_smokeWorkspace;

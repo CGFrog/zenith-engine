@@ -95,8 +95,10 @@ into `Engine` and the editor is application composition. The editor's
 `GameModuleHost` (`editor/modules/`) does this for the project's module,
 hot reloading it by serializing the scene, replacing the scene's registry, and
 restoring it with the new module's registry. A module's optional editor
-extensions use a header-only, editor-owned API (`EditorModuleApi.hpp`) the
-engine never sees.
+extensions (operators, panels, viewport sidebar tabs, inspector overrides,
+and menus; see [Editor extensions](EDITOR_EXTENSIONS.md)) use a header-only,
+editor-owned API (`EditorModuleApi.hpp`) the engine never sees; the host
+removes each from the editor's registries before the module unloads.
 
 ## Ownership and lifetime
 

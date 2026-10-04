@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 
+class ComponentEditorOverrides;
 class EditorDiagnostics;
 class EntityEyedropper;
 class EditorMenus;
@@ -69,6 +70,9 @@ struct EditorContext {
     // The session's menus, to draw one inline; open a popup menu by running
     // wm.call_menu.
     EditorMenus& menus;
+    // Custom component editors added by the game module, used by the
+    // Inspector and Properties editors; null where there are none (tests).
+    const ComponentEditorOverrides* componentEditors{nullptr};
 
     bool editMode() const {
         return mode == EditorMode::Edit;
