@@ -11,7 +11,7 @@ zenith_add_test(zenith_audio SOURCES AudioSystemTests.cpp LIBS zenith_engine NEE
 zenith_add_test_executable(zenith_file_watcher_tests SOURCES FileWatcherTests.cpp LIBS zenith_engine)
 foreach(file_watcher_backend IN ITEMS native polling)
     zenith_add_test(zenith_file_watcher_${file_watcher_backend}
-        EXECUTABLE zenith_file_watcher_tests COMMAND_ARGS ${file_watcher_backend})
+        EXECUTABLE zenith_file_watcher_tests COMMAND_ARGS ${file_watcher_backend} TIMEOUT 60)
 endforeach()
 
 zenith_add_test(zenith_asset_scene EXECUTABLE zenith_asset_tests

@@ -95,6 +95,33 @@ void appendFile(const fs::path& path, const std::string& contents) {
     output << contents;
 }
 
+// Runs a rename or delete, retrying while it fails. On Windows the polling
+// backend's directory walk holds search handles that can briefly refuse a
+// change in that directory; the throwing overloads would abort the whole run
+// (and a Debug abort dialog looks like a hang). A failure that lasts is a test
+// failure.
+void changeFiles(const std::string& what, const std::function<void(std::error_code&)>& change) {
+    std::error_code error;
+    const auto deadline = Clock::now() + 2s;
+    do {
+        error.clear();
+        change(error);
+        if (!error) {
+            return;
+        }
+        std::this_thread::sleep_for(10ms);
+    } while (Clock::now() < deadline);
+    expect(false, what + " failed: " + error.message());
+}
+
+void renamePath(const fs::path& from, const fs::path& to) {
+    changeFiles("renaming " + from.generic_string(), [&](std::error_code& error) { fs::rename(from, to, error); });
+}
+
+void removePath(const fs::path& path) {
+    changeFiles("removing " + path.generic_string(), [&](std::error_code& error) { fs::remove_all(path, error); });
+}
+
 // ---- Coalescer rules (deterministic, no file system) ----
 
 Events coalesce(const Events& input) {
@@ -254,14 +281,14 @@ void testWatcher(const fs::path& base, FileWatchBackendPreference preference, co
            label + "nested directory is Added as a directory" + describe(events));
     expect(nestedFile && !nestedFile->isDirectory, label + "nested file is Added" + describe(events));
 
-    fs::rename(root / "a.txt", root / "renamed.txt");
+    renamePath(root / "a.txt", root / "renamed.txt");
     events = collectUntil(*watcher,
                           [](const Events& all) { return contains(all, FileWatchEventKind::Renamed, "renamed.txt"); });
     const FileWatchEvent* renamedFile = findEvent(events, FileWatchEventKind::Renamed, "renamed.txt");
     expect(renamedFile && renamedFile->oldPath == "a.txt" && !renamedFile->isDirectory,
            label + "file rename is reported with its old path" + describe(events));
 
-    fs::rename(root / "sub", root / "moved");
+    renamePath(root / "sub", root / "moved");
     if (polling) {
         events = collectUntil(*watcher, [](const Events& all) {
             return contains(all, FileWatchEventKind::Removed, "sub") &&
@@ -289,7 +316,7 @@ void testWatcher(const fs::path& base, FileWatchBackendPreference preference, co
     writeFile(root / "doc.txt", "version 1");
     collectUntil(*watcher, [](const Events& all) { return contains(all, FileWatchEventKind::Added, "doc.txt"); });
     writeFile(root / "doc.txt.tmp", "version 2, longer");
-    fs::rename(root / "doc.txt.tmp", root / "doc.txt");
+    renamePath(root / "doc.txt.tmp", root / "doc.txt");
     events = collectUntil(*watcher, [](const Events& all) {
         return contains(all, FileWatchEventKind::Modified, "doc.txt") ||
                contains(all, FileWatchEventKind::Added, "doc.txt");
@@ -301,18 +328,18 @@ void testWatcher(const fs::path& base, FileWatchBackendPreference preference, co
            label + "the temporary file of a save is hidden" + describe(events));
 
     writeFile(root / "transient.txt", "short lived");
-    fs::remove(root / "transient.txt");
+    removePath(root / "transient.txt");
     events = collectFor(*watcher, 400ms);
     expect(!mentions(events, "transient"),
            label + "a file created and removed within the debounce is not reported" + describe(events));
 
-    fs::remove(root / "renamed.txt");
+    removePath(root / "renamed.txt");
     events = collectUntil(*watcher,
                           [](const Events& all) { return contains(all, FileWatchEventKind::Removed, "renamed.txt"); });
     expect(contains(events, FileWatchEventKind::Removed, "renamed.txt"),
            label + "deleted file is Removed" + describe(events));
 
-    fs::remove_all(root / "moved");
+    removePath(root / "moved");
     events =
         collectUntil(*watcher, [](const Events& all) { return contains(all, FileWatchEventKind::Removed, "moved"); });
     const FileWatchEvent* removedTree = findEvent(events, FileWatchEventKind::Removed, "moved");
@@ -337,7 +364,7 @@ void testPollingRootRemoval(const fs::path& base) {
     if (!watcher) {
         return;
     }
-    fs::remove_all(root);
+    removePath(root);
     const Events events = collectUntil(*watcher, [](const Events& all) {
         return std::ranges::any_of(
             all, [](const FileWatchEvent& event) { return event.kind == FileWatchEventKind::RescanRequired; });

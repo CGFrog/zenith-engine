@@ -169,11 +169,11 @@ Approved 2026-10-04. Phases A, B, and C are done; Phase D remains.
 | C6 | FPS template and tutorial | B1–B6, C2, C3 | done 6a257db |
 | D1 | Split `PrefabSystem.cpp` | — | todo |
 | D2 | Split `EditorSession.cpp` | — | todo |
-| D3 | Split `FileWatcher.cpp` per backend | — | todo |
+| D3 | Split `FileWatcher.cpp` per backend | — | done fe541bd |
 | D4 | Targeted diffs in `SceneEditing` | — | todo |
 | D5 | Shared versioned-settings helper | — | todo |
 | D6 | Measure prefab compare/refresh cost | — | todo |
-| D7 | Docs hygiene | — | done |
+| D7 | Docs hygiene | — | done c5b111b |
 
 Suggested batches:
 
@@ -804,8 +804,14 @@ These items are independent and can go into any batch.
 - [ ] **D2.** Split `src/editor/application/EditorSession.cpp` (about 1100
       lines): move file dialogs, autosave and recovery, and the main menu and
       status bar into their own units.
-- [ ] **D3.** Split `src/engine/platform/FileWatcher.cpp` (about 1200 lines)
+- [x] **D3.** Split `src/engine/platform/FileWatcher.cpp` (about 1200 lines)
       into one file per backend: polling, Win32, inotify.
+
+  Result: `FileWatchPolling.cpp`, `FileWatchWin32.cpp` and
+  `FileWatchInotify.cpp`, with the shared sink, tree walk and path helpers in
+  the internal `FileWatchBackends.*`. `FileWatcher.cpp` (about 350 lines)
+  keeps the coalescer and the public class. The polling test's hang is under
+  [Open questions](#open-questions-and-follow-ups).
 - [ ] **D4.** `SceneEditing::perform` serializes the whole scene twice per
       edit. Diff only the touched entities. Measure on a large scene first.
 - [ ] **D5.** Add a shared versioned-settings JSON helper. Adopt it in
@@ -844,8 +850,15 @@ These items are independent and can go into any batch.
 ## Open questions and follow-ups
 
 - `zenith_file_watcher_polling` hung twice under the parallel CPU suite while
-  Phase B landed, though it passes alone in about 3 s. Its waits are bounded,
-  so a deadlock in `FileWatcher`'s polling backend is likely.
+  Phase B landed, though it passes alone in about 3 s. D3 found no deadlock in
+  the polling backend: it has no lock cycle and every wait is bounded. The
+  likelier cause was the test, which renamed and deleted with the throwing
+  `std::filesystem` calls while the polling walk held search handles in the
+  same folders. On Windows that can fail; the uncaught exception aborts, and a
+  Debug build's abort dialog waits forever. The test now retries those calls
+  and fails instead of aborting, and both watcher tests have a 60 s timeout.
+  Eight repeated parallel suite runs passed. Since the hang was never
+  reproduced on demand, reopen this if it comes back.
 
 - Hot reload during Play is out of scope for now. Reloads stay queued until
   Stop.
