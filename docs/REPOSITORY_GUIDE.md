@@ -53,7 +53,7 @@ src/
 |- game/                   current demo client
 |  |- application/ scene/  game executable composition (command line, runtime
 |  |                       gameplay, ProjectApplication, the demo's application)
-|  |- gameplay/ input/ player/  gameplay registered by the demo game module
+|  |- gameplay/ input/      gameplay registered by the demo game module
 |  |- module/              zenith_game_demo entry points
 `- main.cpp                game executable composition root
 tests/

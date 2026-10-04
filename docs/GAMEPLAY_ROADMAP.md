@@ -130,6 +130,16 @@ Approved 2026-10-04. Phases A, B, and C are done; Phase D remains.
     loads.
   - The template's input actions come from its project file only; its module
     registers none in code.
+- **2026-10-04: Phase D scope.**
+  - D7 restores `PERFORMANCE_ROADMAP.md` rather than removing its links: it
+    is the record of the renderer's measurement contract and baselines.
+  - D5 adopts the helper in the files that really are versioned JSON. The
+    roadmap's ViewportChrome and HierarchyPanel store unversioned area state
+    inside `workspaces.json`, and the editor preferences are `key=value`
+    text, so they are left as they are.
+  - D6 also measures the runtime spawn path (`PrefabSystem::instantiate`
+    from `EntityCommandBuffer` and effects), not only the editor's compare
+    and refresh.
 - **2026-10-04: engine owns mechanisms, games own rules.** The character
   controller, physics queries, events, timers, effects, save slots and UI
   widgets are reusable engine mechanisms. Weapons, damage, HUD contents and
@@ -163,7 +173,7 @@ Approved 2026-10-04. Phases A, B, and C are done; Phase D remains.
 | D4 | Targeted diffs in `SceneEditing` | — | todo |
 | D5 | Shared versioned-settings helper | — | todo |
 | D6 | Measure prefab compare/refresh cost | — | todo |
-| D7 | Docs hygiene | — | todo |
+| D7 | Docs hygiene | — | done |
 
 Suggested batches:
 
@@ -803,11 +813,16 @@ These items are independent and can go into any batch.
       HierarchyPanel, EditorAreas and PlatformServices.
 - [ ] **D6.** Measure prefab compare and refresh through the staging scene.
       Optimize only if it shows up in the measurements.
-- [ ] **D7.** Docs hygiene:
+- [x] **D7.** Docs hygiene:
   - `docs/PERFORMANCE_ROADMAP.md` is linked from `ARCHITECTURE.md`,
     `NEXT_STEPS.md` and `REPOSITORY_GUIDE.md` but does not exist. Restore it
     or remove the links.
   - Fix the stale controller line in `docs/engine/physics.md`.
+
+  Result: the file is restored unchanged from before 92c6498, which deleted
+  it by mistake; `README.md` links it too. The physics line was already
+  fixed in A3. `REPOSITORY_GUIDE.md` no longer lists the removed
+  `src/game/player/`.
 
 ## Conventions for every item
 
