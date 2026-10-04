@@ -19,6 +19,7 @@ class ComponentEditorOverrides;
 class EditorDiagnostics;
 class EntityEyedropper;
 class EditorMenus;
+class EditorScriptInfo;
 class NavigationWorld;
 
 // Session-level workflows a panel can trigger but does not own: running
@@ -98,6 +99,9 @@ struct EditorContext {
     // The preview navigation mesh the viewports draw; null where there is
     // none (tests).
     const NavigationWorld* navigationPreview{nullptr};
+    // The game module's behaviour sources and build state, for the
+    // inspector's Edit Script button and badges; null where there is none.
+    const EditorScriptInfo* scripts{nullptr};
 
     bool editMode() const {
         return mode == EditorMode::Edit;

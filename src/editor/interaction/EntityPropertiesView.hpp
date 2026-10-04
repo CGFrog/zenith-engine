@@ -2,6 +2,7 @@
 
 #include "editor/document/PrefabAuthoring.hpp"
 #include "editor/interaction/ComponentEditorOverrides.hpp"
+#include "editor/modules/EditorScriptInfo.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <cstdint>
@@ -58,7 +59,10 @@ std::vector<std::string> entityComponentCategories(const ComponentTypeRegistry& 
 // menu running the component operators (reset, copy and paste values, copy
 // to selected, move). Those act on the selection, so only views of the
 // selection offer them, and a component only the active entity has offers
-// only the actions that read the active entity (see HeaderActions).
+// only the actions that read the active entity (see HeaderActions). A
+// behaviour's header also has Edit Script, which opens its registration in
+// the IDE, and a badge while its module is building or after a failed build
+// or reload (EditorContext::scripts).
 class EntityPropertiesView {
   public:
     // Draws a component in place and returns whether it changed.
@@ -150,6 +154,11 @@ class EntityPropertiesView {
     std::optional<HeaderAction> drawComponentMenu(EditorContext& context, const ComponentType& type,
                                                   const ComponentDrawOptions& options, SceneEntityId shownEntity,
                                                   std::optional<SceneEntityId> overriddenEntity) const;
+    // A behaviour's Edit Script button (module.edit_script) and build badge,
+    // after the header's other buttons; nothing for other component types.
+    std::optional<HeaderAction> drawScriptControls(EditorContext& context, const ComponentType& type) const;
+    // A badge on the current line saying why a behaviour's code may be stale.
+    static void drawScriptBadge(ScriptStatus status);
     // Draws the values of the first target, copying edits to the others, and
     // records a change as one undo step. Returns a field's "Revert to Prefab"
     // request, run after drawing.

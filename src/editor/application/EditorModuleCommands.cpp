@@ -41,6 +41,23 @@ void EditorSession::requestModuleReload() {
     m_moduleReloadPending = true;
 }
 
+std::optional<EditorSourceLocation> EditorSession::behaviourSource(std::string_view componentKey) const {
+    return m_moduleHost.behaviourSource(componentKey);
+}
+
+ScriptStatus EditorSession::scriptStatus() const {
+    if (m_moduleHost.status() == GameModuleStatus::Failed) {
+        return ScriptStatus::ReloadFailed;
+    }
+    if (m_projectBuild.running()) {
+        return ScriptStatus::Building;
+    }
+    if (m_projectBuild.runner().state() == BuildState::Failed) {
+        return ScriptStatus::BuildFailed;
+    }
+    return ScriptStatus::Current;
+}
+
 void EditorSession::openNewCodeDialog(GeneratedCodeKind kind) {
     m_newCodeDialog.open(kind);
 }

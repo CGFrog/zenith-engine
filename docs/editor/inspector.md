@@ -16,6 +16,19 @@ entity).
 Components are listed in the display order of
 `settings/ComponentInspectorLayout`, which also remembers collapsed sections
 per component type and is saved by the session to `component-inspector.json`.
+
+A game module's behaviours are component types in the `Behaviours` category
+(`BehaviourOptions::category`), so Add Component lists them there and they
+serialize, multi-edit, undo, override in prefabs, edit live in Play, and apply
+to the edit scene like any component. Their headers also have **Edit Script**
+(`module.edit_script {component}`), which opens the IDE where the module
+registered the type (`GameModuleHost::behaviourSource`, from the
+`std::source_location` that `ModuleRegistrar::addBehaviour` records), and a
+badge from `EditorContext::scripts` (`modules/EditorScriptInfo`, which the
+session implements): **Building** while the project builds, **Build failed**
+when the loaded code is older than a failed build. A module that failed to
+load leaves its components as "(unknown type)" sections, badged **Reload
+failed**.
 A component header has Remove and a context menu (right click or "...")
 running the headless operators in `operators/ComponentOperators`:
 `object.component_remove` (in `ObjectOperators`), `object.component_reset`,

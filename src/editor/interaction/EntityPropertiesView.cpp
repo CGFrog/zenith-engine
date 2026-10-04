@@ -7,6 +7,7 @@
 #include "editor/interaction/ReflectedFieldEditor.hpp"
 #include "editor/operators/ComponentOperators.hpp"
 #include "editor/panels/EditorContext.hpp"
+#include "editor/project/ProjectFileOperations.hpp"
 #include "editor/settings/ComponentInspectorLayout.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
@@ -599,6 +600,28 @@ EntityPropertiesView::drawComponentMenu(EditorContext& context, const ComponentT
             action = run("object.component_remove");
         }
     }
+    if (std::optional<HeaderAction> script = drawScriptControls(context, type)) {
+        action = std::move(script);
+    }
+    return action;
+}
+
+std::optional<EntityPropertiesView::HeaderAction>
+EntityPropertiesView::drawScriptControls(EditorContext& context, const ComponentType& type) const {
+    if (context.scripts == nullptr) {
+        return std::nullopt;
+    }
+    const std::optional<EditorSourceLocation> source = context.scripts->behaviourSource(type.key());
+    if (!source) {
+        return std::nullopt;
+    }
+    std::optional<HeaderAction> action;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Edit Script")) {
+        action = HeaderAction{.operatorId = "module.edit_script", .properties = Json{{"component", type.key()}}.dump()};
+    }
+    ImGui::SetItemTooltip("%s:%u", utf8PathText(source->file).c_str(), source->line);
+    drawScriptBadge(context.scripts->scriptStatus());
     return action;
 }
 
@@ -699,6 +722,30 @@ const EntityPropertiesView::CustomEditor* EntityPropertiesView::customEditor(con
     return builtIn == m_customEditors.end() ? nullptr : &builtIn->second;
 }
 
+void EntityPropertiesView::drawScriptBadge(ScriptStatus status) {
+    const char* badge = scriptStatusBadge(status);
+    if (badge == nullptr) {
+        return;
+    }
+    ImGui::SameLine();
+    const ThemeColor ink = status == ScriptStatus::Building ? palette::warning : palette::error;
+    ImGui::TextColored(toImVec4(ink), "%s", badge);
+    switch (status) {
+    case ScriptStatus::Building:
+        ImGui::SetItemTooltip("The game module is building; it reloads in Edit mode when the build succeeds.");
+        break;
+    case ScriptStatus::BuildFailed:
+        ImGui::SetItemTooltip("The last build failed, so this behaviour runs its previous code. See the Build panel.");
+        break;
+    case ScriptStatus::ReloadFailed:
+        ImGui::SetItemTooltip("The game module failed to load. Its data is kept until a reload succeeds; see "
+                              "Diagnostics.");
+        break;
+    case ScriptStatus::Current:
+        break;
+    }
+}
+
 void EntityPropertiesView::drawPreservedComponents(EditorContext& context, SceneEntityId entityId) const {
     Scene& scene = context.app.scene;
     const auto* preserved = scene.registry().try_get<PreservedComponentsComponent>(scene.findEntity(entityId));
@@ -713,6 +760,11 @@ void EntityPropertiesView::drawPreservedComponents(EditorContext& context, Scene
         const bool open = widgets::SectionHeader(header.c_str());
         ImGui::SameLine();
         const bool remove = ImGui::SmallButton("Remove");
+        // A module that failed to load leaves its behaviours and components
+        // here until a reload succeeds.
+        if (context.scripts != nullptr && context.scripts->scriptStatus() == ScriptStatus::ReloadFailed) {
+            drawScriptBadge(ScriptStatus::ReloadFailed);
+        }
         if (open && !remove) {
             ImGui::TextWrapped("No registered component type uses this key, for example because the game module "
                                "that defines it is not loaded. Its data is kept unchanged and saved with the scene.");

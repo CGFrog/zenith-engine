@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/application/EditorDiagnostics.hpp"
 #include "editor/menus/MenuRegistry.hpp"
 #include "editor/modules/EditorModuleApi.hpp"
 #include "engine/diagnostics/Logger.hpp"
@@ -16,6 +17,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 class AssetManager;
@@ -184,6 +186,10 @@ class GameModuleHost {
     const std::filesystem::path& sourcePath() const;
     // Null unless status() is Loaded.
     const GameModule* module() const;
+    // Where the loaded module registered the behaviour with this component
+    // key (ModuleRegistrar::addBehaviour), for Edit Script; nullopt when no
+    // module is loaded or the key is not one of its behaviours.
+    std::optional<EditorSourceLocation> behaviourSource(std::string_view componentKey) const;
     // The last load or reload failure; empty while Loaded.
     const std::string& error() const;
     // How many times the module has loaded successfully.

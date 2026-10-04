@@ -15,12 +15,15 @@
 #include "editor/operators/PlayOperators.hpp"
 #include "editor/panels/HierarchyPanel.hpp"
 #include "editor/panels/InspectorPanel.hpp"
+#include "engine/behaviour/Behaviour.hpp"
+#include "engine/module/ModuleRegistrar.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
 #include <algorithm>
 #include <filesystem>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -353,11 +356,54 @@ void testInspectorInPlay() {
 }
 } // namespace
 
+// A behaviour as a game module registers one.
+class Beacon final : public Behaviour {
+  public:
+    float range{5.0f};
+};
+
+// Behaviours are ordinary component types: their fields edit live in Play
+// and Apply to Edit Scene carries them, and enabled, back to the edit scene.
+void testBehaviourFieldsInPlay() {
+    LiveFixture fixture;
+    auto types = std::make_shared<ComponentTypeRegistry>();
+    expect(registerBuiltInComponentTypes(*types).success, "the built-in types register");
+    SystemRegistry systems;
+    InputActionMap actions;
+    BehaviourRegistry behaviours;
+    ModuleRegistrar registrar(*types, systems, actions, behaviours);
+    expect(registrar.addBehaviour<Beacon>("beacon", "Beacon", std::move(Fields<Beacon>().add("range", &Beacon::range))),
+           "the behaviour registers");
+    fixture.document.setComponentTypes(types);
+    const Entity tower = fixture.scene.createEntity("Tower");
+    fixture.scene.registry().emplace<Beacon>(tower);
+    const SceneEntityId towerId = fixture.scene.id(tower);
+
+    fixture.play();
+    Beacon& running = fixture.scene.registry().get<Beacon>(fixture.find(towerId));
+    running.range = 12.0f;
+    running.enabled = false;
+    const Scene& edit = *fixture.playMode.editScene();
+    expect(edit.registry().get<Beacon>(edit.findEntity(towerId)).range == 5.0f,
+           "a live behaviour edit leaves the edit scene alone");
+    expect(static_cast<bool>(fixture.invoke("play.apply_to_edit", R"({"entity":")" + std::to_string(towerId.value) +
+                                                                      R"(","component":"beacon"})")),
+           "applying a behaviour finishes");
+    const Beacon& applied = edit.registry().get<Beacon>(edit.findEntity(towerId));
+    expect(applied.range == 12.0f && !applied.enabled && fixture.history.size() == 1,
+           "Apply to Edit Scene carries the behaviour's fields and enabled as one step");
+    expect(!applied.created() && !applied.started(), "the edit scene's behaviour is not created or started");
+    fixture.stop();
+    expect(fixture.scene.registry().get<Beacon>(fixture.find(towerId)).range == 12.0f,
+           "Stop keeps the applied behaviour values");
+}
+
 int main() {
     testRuntimeEditingRecordsNothing();
     testRuntimeOperators();
     testApplyToEditScene();
     testRuntimeChanges();
     testInspectorInPlay();
+    testBehaviourFieldsInPlay();
     return failures == 0 ? 0 : 1;
 }

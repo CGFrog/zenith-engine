@@ -19,6 +19,7 @@
 #include "editor/interaction/ModalTransform.hpp"
 #include "editor/interaction/Selection.hpp"
 #include "editor/menus/EditorMenus.hpp"
+#include "editor/modules/EditorScriptInfo.hpp"
 #include "editor/modules/GameModuleHost.hpp"
 #include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/operators/Keymap.hpp"
@@ -102,7 +103,8 @@ class EditorSession final : public ApplicationScene,
                             private EditorDocumentCommands,
                             private EditorPlayCommands,
                             private EditorObjectModeCommands,
-                            private EditorWindowCommands {
+                            private EditorWindowCommands,
+                            private EditorScriptInfo {
   public:
     // gameModule is the project's module library, or empty for none.
     // appearance is the application's and must outlive the session.
@@ -187,6 +189,10 @@ class EditorSession final : public ApplicationScene,
     void resetActiveWorkspace() override;
     void requestModuleReload() override;
     void openNewCodeDialog(GeneratedCodeKind kind) override;
+
+    // EditorScriptInfo (EditorModuleCommands.cpp)
+    std::optional<EditorSourceLocation> behaviourSource(std::string_view componentKey) const override;
+    ScriptStatus scriptStatus() const override;
 
     SceneEditing editing(ApplicationContext& context);
     EditorContext editorContext(ApplicationContext& context);

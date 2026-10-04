@@ -135,7 +135,7 @@ Approved 2026-10-04. Nothing is implemented yet.
 | B8 | Audio polish | A3 | done 41ac78d |
 | C1 | Build as an operator | — | done |
 | C2 | Code generators | B2, C1 | done |
-| C3 | Inspector integration for Behaviours | B2 | todo |
+| C3 | Inspector integration for Behaviours | B2 | done |
 | C4 | Debugging tools | A2 | todo |
 | C5 | Project settings editors | A3, A4 | todo |
 | C6 | FPS template and tutorial | B1–B6, C2, C3 | todo |
@@ -646,13 +646,25 @@ Follow-ups:
 
 ### C3. Inspector integration for Behaviours
 
-- [ ] Show behaviours in Add Component under a "Behaviours" category.
-- [ ] Add an **Edit Script** button to each behaviour's section header. It
+- [x] Show behaviours in Add Component under a "Behaviours" category.
+- [x] Add an **Edit Script** button to each behaviour's section header. It
       opens the registered `source_location`.
-- [ ] Show a badge on the header while a build is running or after a failed
+- [x] Show a badge on the header while a build is running or after a failed
       reload.
-- [ ] Check that live Play inspection and Apply to Edit Scene work for
+- [x] Check that live Play inspection and Apply to Edit Scene work for
       behaviour fields.
+
+Result:
+- The category already came from `BehaviourOptions`; a test now pins it.
+- `modules/EditorScriptInfo.hpp` is what the inspector asks: the session
+  answers from `GameModuleHost::behaviourSource` and `ProjectBuild`, through
+  `EditorContext::scripts`. `module.edit_script` is in the `code` family.
+- Badges: Building, Build failed, and Reload failed. A failed reload
+  unregisters the module's types, so that badge sits on the preserved
+  "(unknown type)" sections instead.
+- Coverage: `PropertiesPanelTests` (button, badges, Add Component),
+  `LiveEditingTests` (`testBehaviourFieldsInPlay`), `CodeGeneratorTests`
+  (`module.edit_script`).
 
 ### C4. Debugging tools
 

@@ -168,6 +168,8 @@ struct EditorTestFixture {
     // When set (to a play mode the test owns), the mode, Simulate flag, and
     // edited scene follow it, as in the session.
     EditorPlayMode* followedPlayMode{nullptr};
+    // What panels learn about the game module's behaviours; none by default.
+    const EditorScriptInfo* scripts{nullptr};
     TestSessionActions defaultActions{operators, runner, sessionContextSource()};
 
     // The context the session runs an operator in: operatorContext() with
@@ -228,7 +230,8 @@ struct EditorTestFixture {
                 .eyedropper = &eyedropper,
                 .menus = menus,
                 .simulating = followedPlayMode != nullptr ? followedPlayMode->simulating() : simulating,
-                .componentEditors = &componentEditors};
+                .componentEditors = &componentEditors,
+                .scripts = scripts};
     }
 
   private:

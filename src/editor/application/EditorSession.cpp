@@ -126,7 +126,8 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .menus = m_menus,
             .simulating = m_playMode.simulating(),
             .componentEditors = &m_componentEditors,
-            .navigationPreview = &m_navigationPreview};
+            .navigationPreview = &m_navigationPreview,
+            .scripts = this};
 }
 
 OperatorContext EditorSession::operatorContext(ApplicationContext& context, KeymapRegion region) {

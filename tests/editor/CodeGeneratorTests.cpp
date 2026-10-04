@@ -257,13 +257,34 @@ void testOperators(const fs::path& root) {
         fixture.invoke("module.generate_code", R"({"kind":"component","name":"Armor","fields":"value"})");
     expect(!badFields && contains(badFields.message, "name:type"), "operators: bad field text fails with the reason");
 
+    OperatorRegistry scripts;
+    OperatorRunner scriptRunner{scripts, fixture.history};
+    registerCodeOperators(
+        scripts, {.tools = tools,
+                  .build = build,
+                  .behaviourSource = [&](std::string_view key) -> std::optional<EditorSourceLocation> {
+                      if (key != "door_opener") {
+                          return std::nullopt;
+                      }
+                      return EditorSourceLocation{.file = project.parent_path() / "src" / "DoorOpener.cpp", .line = 12};
+                  }});
+    OperatorContext scriptContext = fixture.operatorContext();
+    expect(static_cast<bool>(
+               scriptRunner.invokeWithJson("module.edit_script", scriptContext, R"({"component":"door_opener"})")),
+           "operators: Edit Script opens a behaviour's registration");
+    const OperatorResult unknown =
+        scriptRunner.invokeWithJson("module.edit_script", scriptContext, R"({"component":"transform"})");
+    expect(!unknown && contains(unknown.message, "no behaviour"),
+           "operators: Edit Script on another type fails with the reason");
+
     OperatorRegistry noProject;
     OperatorRunner runner{noProject, fixture.history};
     registerCodeOperators(noProject, {.tools = tools, .build = build});
     OperatorContext context = fixture.operatorContext();
     expect(!noProject.find("module.generate_code")->canRun(context) &&
-               !noProject.find("module.new_system")->canRun(context),
-           "operators: without a project the generators are unavailable");
+               !noProject.find("module.new_system")->canRun(context) &&
+               !noProject.find("module.edit_script")->canRun(context),
+           "operators: without a project or module the code operators are unavailable");
 }
 } // namespace
 

@@ -4,12 +4,18 @@
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/EntityPropertiesView.hpp"
 #include "editor/interaction/ReflectedFieldEditor.hpp"
+#include "editor/menus/AddComponentMenu.hpp"
+#include "editor/menus/MenuRegistry.hpp"
+#include "editor/modules/EditorScriptInfo.hpp"
+#include "editor/operators/CodeOperators.hpp"
 #include "editor/operators/ComponentOperators.hpp"
 #include "editor/operators/ObjectOperators.hpp"
 #include "editor/panels/GraphicsPanel.hpp"
 #include "editor/panels/InspectorPanel.hpp"
 #include "editor/panels/PropertiesPanel.hpp"
 #include "editor/settings/RenderSettingsController.hpp"
+#include "engine/behaviour/Behaviour.hpp"
+#include "engine/module/ModuleRegistrar.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
 #include <algorithm>
@@ -513,6 +519,111 @@ void testComponentMenu() {
     expect(fixture.componentLayout.takeChanged(), "the move should be a layout change to save");
 }
 
+// What the session reports about the game module's behaviours: Health is a
+// behaviour registered in its source file.
+class StubScripts final : public EditorScriptInfo {
+  public:
+    std::optional<EditorSourceLocation> behaviourSource(std::string_view componentKey) const override {
+        if (componentKey != "health") {
+            return std::nullopt;
+        }
+        return EditorSourceLocation{.file = "C:/game/src/Health.cpp", .line = 42};
+    }
+
+    ScriptStatus scriptStatus() const override {
+        return status;
+    }
+
+    ScriptStatus status{ScriptStatus::Current};
+};
+
+void testBehaviourHeader() {
+    PanelFixture fixture;
+    StubScripts scripts;
+    fixture.scripts = &scripts;
+    std::vector<std::string> edited;
+    expect(fixture.operators
+               .add({.id = "module.edit_script",
+                     .label = "Edit Script",
+                     .properties = OperatorProperties::make(
+                         EditScriptProperties{},
+                         std::move(Fields<EditScriptProperties>().add("component", &EditScriptProperties::component))),
+                     .execute =
+                         [&edited](OperatorContext&, OperatorProperties& properties) {
+                             edited.push_back(properties.get<EditScriptProperties>()->component);
+                             return OperatorResult::finished();
+                         }})
+               .success,
+           "a stand-in Edit Script operator should register");
+    const SceneEntityId subject = addHealthy(fixture, "Subject", 10.0f, false);
+    fixture.selection.selectOnly(subject);
+    InspectorPanel inspector(fixture.componentLayout);
+    HeadlessImGuiContext imgui;
+    fixture.draw(inspector);
+
+    std::string text = fixture.drawLogged(inspector);
+    expect(lineContaining(text, "Health").find("Edit Script") != std::string::npos &&
+               lineContaining(text, "Marker").find("Edit Script") == std::string::npos,
+           "only a behaviour's header should offer Edit Script");
+    expect(text.find("Building") == std::string::npos && text.find("failed") == std::string::npos,
+           "a current module should show no badge");
+
+    scripts.status = ScriptStatus::Building;
+    expect(lineContaining(fixture.drawLogged(inspector), "Health").find("Building") != std::string::npos,
+           "a behaviour header should show a running build");
+    scripts.status = ScriptStatus::BuildFailed;
+    text = fixture.drawLogged(inspector);
+    expect(lineContaining(text, "Health").find("Build failed") != std::string::npos &&
+               lineContaining(text, "Marker").find("Build failed") == std::string::npos,
+           "only behaviour headers should show a failed build");
+
+    const ImGuiWindow* window = HeadlessImGuiContext::findWindow(inspector.title());
+    expect(window != nullptr, "the Inspector window should exist");
+    if (window != nullptr) {
+        HeadlessImGuiContext::activateNextFrame(HeadlessImGuiContext::itemId(*window, "health", "Edit Script"));
+        fixture.draw(inspector);
+    }
+    expect(edited.size() == 1 && edited.front() == "health",
+           "Edit Script should run module.edit_script for the behaviour's key");
+    expect(fixture.history.size() == 0, "Edit Script should record no edit");
+
+    // A module that failed to load leaves its components preserved, badged.
+    scripts.status = ScriptStatus::ReloadFailed;
+    const Entity lost = fixture.scene.createEntity("Lost");
+    fixture.scene.registry().emplace<PreservedComponentsComponent>(lost).components.push_back(
+        {"door_opener", R"({"enabled":true})"});
+    fixture.selection.selectOnly(fixture.scene.id(lost));
+    expect(lineContaining(fixture.drawLogged(inspector), "door_opener").find("Reload failed") != std::string::npos,
+           "a preserved component should show a failed reload");
+}
+
+// A Behaviour type registered as a game module does, which Add Component
+// lists under its category.
+class Lantern final : public Behaviour {
+  public:
+    float brightness{1.0f};
+};
+
+void testBehavioursInAddComponent() {
+    PanelFixture fixture;
+    auto types = std::make_shared<ComponentTypeRegistry>();
+    expect(registerBuiltInComponentTypes(*types).success, "built-in component types should register");
+    SystemRegistry systems;
+    InputActionMap actions;
+    BehaviourRegistry behaviours;
+    ModuleRegistrar registrar(*types, systems, actions, behaviours);
+    expect(registrar.addBehaviour<Lantern>("lantern", "Lantern",
+                                           std::move(Fields<Lantern>().add("brightness", &Lantern::brightness))),
+           "a behaviour should register");
+    fixture.document.setComponentTypes(types);
+    fixture.selection.selectOnly(fixture.scene.id(fixture.scene.createEntity("Post")));
+    std::vector<MenuEntry> entries;
+    addComponentEntries(fixture.operatorContext(), entries);
+    const auto lantern = std::ranges::find_if(entries, [](const MenuEntry& entry) { return entry.label == "Lantern"; });
+    expect(lantern != entries.end() && lantern->category == std::vector<std::string>{"Behaviours"},
+           "Add Component should list a behaviour under Behaviours");
+}
+
 void testCollapseState() {
     PanelFixture fixture;
     const SceneEntityId subject = addHealthy(fixture, "Subject", 10.0f, std::nullopt);
@@ -699,6 +810,8 @@ int main() {
     testMultiSelectionEdit();
     testAltAppliesToSelected();
     testComponentMenu();
+    testBehaviourHeader();
+    testBehavioursInAddComponent();
     testCollapseState();
     testMultiSelectionNameAndTransform();
     testMixedFieldCommitsTheShownValue();

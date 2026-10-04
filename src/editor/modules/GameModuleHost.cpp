@@ -8,6 +8,7 @@
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/ViewportRegistry.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/behaviour/BehaviourRegistry.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
@@ -515,6 +516,20 @@ const std::filesystem::path& GameModuleHost::sourcePath() const {
 
 const GameModule* GameModuleHost::module() const {
     return m_module.get();
+}
+
+std::optional<EditorSourceLocation> GameModuleHost::behaviourSource(std::string_view componentKey) const {
+    if (m_module == nullptr) {
+        return std::nullopt;
+    }
+    const BehaviourType* behaviour = m_module->behaviours()->find(componentKey);
+    if (behaviour == nullptr || behaviour->source.file.empty()) {
+        return std::nullopt;
+    }
+    // std::source_location's file name is the compiler's UTF-8 path.
+    const std::string& file = behaviour->source.file;
+    return EditorSourceLocation{.file = std::filesystem::path(std::u8string(file.begin(), file.end())),
+                                .line = behaviour->source.line};
 }
 
 const std::string& GameModuleHost::error() const {
