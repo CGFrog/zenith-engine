@@ -1,28 +1,19 @@
 #include "AssetBrowserSettings.hpp"
 
-#include <nlohmann/json.hpp>
+#include "engine/platform/VersionedJson.hpp"
 
-#include <fstream>
-#include <sstream>
+#include <nlohmann/json.hpp>
 
 namespace {
 using Json = nlohmann::json;
 
-constexpr int currentVersion = 1;
+const VersionedJsonFormat assetBrowserSettingsFormat{.description = "asset browser settings"};
 
 const char* viewModeName(AssetBrowserViewMode mode) {
     return mode == AssetBrowserViewMode::List ? "list" : "grid";
 }
 
-AssetBrowserSettingsResult parse(const std::string& text, AssetBrowserSettings& settings) {
-    const Json document = Json::parse(text, nullptr, false);
-    if (document.is_discarded() || !document.is_object()) {
-        return {.error = "the file is not a JSON object"};
-    }
-    const auto version = document.find("version");
-    if (version == document.end() || !version->is_number_integer() || version->get<int>() != currentVersion) {
-        return {.error = "unsupported version (expected " + std::to_string(currentVersion) + ")"};
-    }
+AssetBrowserSettingsResult parse(const Json& document, AssetBrowserSettings& settings) {
     AssetBrowserSettings parsed;
     const auto viewModeEntry = document.find("viewMode");
     if (viewModeEntry != document.end() && !viewModeEntry->is_string()) {
@@ -58,20 +49,14 @@ AssetBrowserSettingsResult parse(const std::string& text, AssetBrowserSettings& 
 
 AssetBrowserSettingsResult loadAssetBrowserSettings(const std::filesystem::path& path, AssetBrowserSettings& settings) {
     settings = {};
-    std::error_code error;
-    if (!std::filesystem::exists(path, error)) {
-        if (error) {
-            return {.error = "Cannot inspect asset browser settings " + path.string() + ": " + error.message()};
-        }
+    const VersionedJsonResult read = readVersionedJson(path, assetBrowserSettingsFormat);
+    if (!read) {
+        return {.error = read.error + "; using defaults."};
+    }
+    if (!read.found) {
         return {.success = true};
     }
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        return {.error = "Cannot read asset browser settings " + path.string() + "; using defaults."};
-    }
-    std::ostringstream contents;
-    contents << input.rdbuf();
-    if (AssetBrowserSettingsResult result = parse(contents.str(), settings); !result) {
+    if (AssetBrowserSettingsResult result = parse(read.document, settings); !result) {
         return {.error =
                     "Invalid asset browser settings in " + path.string() + " (" + result.error + "); using defaults."};
     }
@@ -80,22 +65,11 @@ AssetBrowserSettingsResult loadAssetBrowserSettings(const std::filesystem::path&
 
 AssetBrowserSettingsResult saveAssetBrowserSettings(const std::filesystem::path& path,
                                                     const AssetBrowserSettings& settings) {
-    const Json document{{"version", currentVersion},
-                        {"viewMode", viewModeName(settings.viewMode)},
+    const Json document{{"viewMode", viewModeName(settings.viewMode)},
                         {"favourites", settings.favourites},
                         {"lastFolder", settings.lastFolder}};
-    std::error_code error;
-    if (const std::filesystem::path parent = path.parent_path(); !parent.empty()) {
-        std::filesystem::create_directories(parent, error);
-        if (error) {
-            return {.error = "Cannot create the asset browser settings directory: " + error.message()};
-        }
-    }
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    // Replace invalid UTF-8 rather than throwing from dump().
-    output << document.dump(2, ' ', false, Json::error_handler_t::replace) << '\n';
-    if (!output) {
-        return {.error = "Cannot write asset browser settings " + path.string()};
+    if (const PlatformResult written = writeVersionedJson(path, assetBrowserSettingsFormat, document); !written) {
+        return {.error = written.error};
     }
     return {.success = true};
 }

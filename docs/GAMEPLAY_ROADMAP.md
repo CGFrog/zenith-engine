@@ -830,9 +830,27 @@ These items are independent and can go into any batch.
   [Open questions](#open-questions-and-follow-ups).
 - [ ] **D4.** `SceneEditing::perform` serializes the whole scene twice per
       edit. Diff only the touched entities. Measure on a large scene first.
-- [ ] **D5.** Add a shared versioned-settings JSON helper. Adopt it in
+- [x] **D5.** Add a shared versioned-settings JSON helper. Adopt it in
       GameSettings, EditorPreferences, InputProfiles, ViewportChrome,
       HierarchyPanel, EditorAreas and PlatformServices.
+
+  Result: `engine/platform/VersionedJson.*` (`zenith_versioned_json`), and an
+  explicit `UserDataBackup` choice for `atomicWriteUserData`, which now also
+  takes a bare file name. Adopted in:
+  - GameSettings and InputProfiles;
+  - PlatformServices (diagnostic bundle, release provenance);
+  - the editor's `WorkspaceFile` (EditorAreas), `AssetBrowserSettings`,
+    `ComponentInspectorLayout`, `SimulateSystemSettings`, `RecentProjects`
+    and `SceneEditorData`.
+
+  The three editor settings files that overwrote themselves in place are now
+  written atomically. Only the platform files keep a `.bak`, as before.
+
+  Not adopted:
+  - ViewportChrome, HierarchyPanel and EditorPreferences (see Decisions).
+  - `Keymap`: its public `serializeOverrides`/`loadOverrides` work on text,
+    and it deletes its file when nothing is overridden. Adopting it would mean
+    changing that API for little gain.
 - [ ] **D6.** Measure prefab compare and refresh through the staging scene.
       Optimize only if it shows up in the measurements.
 - [x] **D7.** Docs hygiene:

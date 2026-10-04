@@ -1,16 +1,16 @@
 #include "ComponentInspectorLayout.hpp"
 
+#include "engine/platform/VersionedJson.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <fstream>
-#include <sstream>
 #include <utility>
 
 namespace {
 using Json = nlohmann::json;
 
-constexpr int currentVersion = 1;
+const VersionedJsonFormat componentInspectorLayoutFormat{.description = "component inspector settings"};
 
 bool contains(std::span<const std::string> keys, std::string_view key) {
     return std::ranges::find(keys, key) != keys.end();
@@ -129,31 +129,18 @@ ComponentInspectorLayoutResult ComponentInspectorLayout::load(const std::filesys
     m_order.clear();
     m_collapsed.clear();
     m_changed = false;
-    std::error_code error;
-    if (!std::filesystem::exists(path, error)) {
-        if (error) {
-            return {.error = "Cannot inspect component inspector settings " + path.string() + ": " + error.message()};
-        }
+    const VersionedJsonResult read = readVersionedJson(path, componentInspectorLayoutFormat);
+    if (!read) {
+        return {.error = read.error + "; using defaults."};
+    }
+    if (!read.found) {
         return {.success = true};
     }
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        return {.error = "Cannot read component inspector settings " + path.string() + "; using defaults."};
-    }
-    std::ostringstream contents;
-    contents << input.rdbuf();
+    const Json& document = read.document;
     const auto invalid = [&path](const std::string& reason) {
         return ComponentInspectorLayoutResult{.error = "Invalid component inspector settings in " + path.string() +
                                                        " (" + reason + "); using defaults."};
     };
-    const Json document = Json::parse(contents.str(), nullptr, false);
-    if (document.is_discarded() || !document.is_object()) {
-        return invalid("the file is not a JSON object");
-    }
-    const auto version = document.find("version");
-    if (version == document.end() || !version->is_number_integer() || version->get<int>() != currentVersion) {
-        return invalid("unsupported version (expected " + std::to_string(currentVersion) + ")");
-    }
     std::vector<std::string> order;
     std::vector<std::string> collapsedKeys;
     std::string reason;
@@ -166,19 +153,9 @@ ComponentInspectorLayoutResult ComponentInspectorLayout::load(const std::filesys
 }
 
 ComponentInspectorLayoutResult ComponentInspectorLayout::save(const std::filesystem::path& path) const {
-    const Json document{{"version", currentVersion}, {"order", m_order}, {"collapsed", m_collapsed}};
-    std::error_code error;
-    if (const std::filesystem::path parent = path.parent_path(); !parent.empty()) {
-        std::filesystem::create_directories(parent, error);
-        if (error) {
-            return {.error = "Cannot create the component inspector settings directory: " + error.message()};
-        }
-    }
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    // Replace invalid UTF-8 rather than throwing from dump().
-    output << document.dump(2, ' ', false, Json::error_handler_t::replace) << '\n';
-    if (!output) {
-        return {.error = "Cannot write component inspector settings " + path.string()};
+    const Json document{{"order", m_order}, {"collapsed", m_collapsed}};
+    if (const PlatformResult written = writeVersionedJson(path, componentInspectorLayoutFormat, document); !written) {
+        return {.error = written.error};
     }
     return {.success = true};
 }

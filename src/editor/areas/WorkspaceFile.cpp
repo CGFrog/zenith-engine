@@ -1,18 +1,18 @@
 #include "editor/areas/WorkspaceFile.hpp"
 
 #include "editor/areas/Workspace.hpp"
+#include "engine/platform/VersionedJson.hpp"
 
 #include <nlohmann/json.hpp>
 
-#include <fstream>
 #include <limits>
-#include <sstream>
 
 namespace {
 using Json = nlohmann::json;
 
-// The first version; files from 1 up to the current one are outdated.
-constexpr int firstVersion = 1;
+// Files from version 1 up to the current one are outdated.
+const VersionedJsonFormat workspaceFileFormat{.description = "workspaces",
+                                              .currentVersion = currentWorkspaceFileVersion};
 
 WorkspaceFileResult parseArea(const Json& entry, AreaRecord& area) {
     if (!entry.is_object()) {
@@ -77,19 +77,7 @@ WorkspaceFileResult parseWorkspace(const Json& entry, WorkspaceRecord& workspace
     return {.success = true};
 }
 
-WorkspaceFileResult parse(const std::string& text, WorkspaceFileContents& contents) {
-    const Json document = Json::parse(text, nullptr, false);
-    if (document.is_discarded() || !document.is_object()) {
-        return {.error = "the file is not a JSON object"};
-    }
-    const auto version = document.find("version");
-    if (version == document.end() || !version->is_number_integer() || version->get<int64_t>() < firstVersion ||
-        version->get<int64_t>() > currentWorkspaceFileVersion) {
-        return {.error = "unsupported version (expected " + std::to_string(currentWorkspaceFileVersion) + ")"};
-    }
-    if (version->get<int64_t>() < currentWorkspaceFileVersion) {
-        return {.success = true, .outdated = true};
-    }
+WorkspaceFileResult parse(const Json& document, WorkspaceFileContents& contents) {
     WorkspaceFileContents parsed;
     const auto workspaces = document.find("workspaces");
     if (workspaces == document.end() || !workspaces->is_array() || workspaces->empty()) {
@@ -131,27 +119,22 @@ Json toJson(const WorkspaceFileContents& contents) {
         workspaces.push_back(
             {{"name", workspace.name}, {"areas", std::move(areas)}, {"imguiLayout", workspace.imguiLayout}});
     }
-    return {{"version", currentWorkspaceFileVersion},
-            {"activeWorkspace", contents.activeWorkspace},
-            {"workspaces", std::move(workspaces)}};
+    return {{"activeWorkspace", contents.activeWorkspace}, {"workspaces", std::move(workspaces)}};
 }
 } // namespace
 
 WorkspaceFileResult loadWorkspaceFile(const std::filesystem::path& path, WorkspaceFileContents& contents) {
-    std::error_code error;
-    if (!std::filesystem::exists(path, error)) {
-        if (error) {
-            return {.error = "Cannot inspect workspaces " + path.string() + ": " + error.message()};
-        }
+    const VersionedJsonResult read = readVersionedJson(path, workspaceFileFormat);
+    if (!read) {
+        return {.error = read.error};
+    }
+    if (!read.found) {
         return {.success = true, .found = false};
     }
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        return {.error = "Cannot read workspaces " + path.string()};
+    if (read.version < currentWorkspaceFileVersion) {
+        return {.success = true, .outdated = true};
     }
-    std::ostringstream text;
-    text << input.rdbuf();
-    WorkspaceFileResult result = parse(text.str(), contents);
+    WorkspaceFileResult result = parse(read.document, contents);
     if (!result) {
         return {.error = "Invalid workspaces in " + path.string() + " (" + result.error + ")"};
     }
@@ -159,30 +142,8 @@ WorkspaceFileResult loadWorkspaceFile(const std::filesystem::path& path, Workspa
 }
 
 WorkspaceFileResult saveWorkspaceFile(const std::filesystem::path& path, const WorkspaceFileContents& contents) {
-    std::error_code error;
-    if (const std::filesystem::path parent = path.parent_path(); !parent.empty()) {
-        std::filesystem::create_directories(parent, error);
-        if (error) {
-            return {.error = "Cannot create the workspaces folder: " + error.message()};
-        }
-    }
-    std::filesystem::path temporary = path;
-    temporary += ".tmp";
-    {
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        if (!output) {
-            return {.error = "Cannot write workspaces " + temporary.string()};
-        }
-        output << toJson(contents).dump(2) << '\n';
-        if (!output) {
-            return {.error = "Cannot finish writing workspaces " + temporary.string()};
-        }
-    }
-    std::filesystem::rename(temporary, path, error);
-    if (error) {
-        std::error_code ignored;
-        std::filesystem::remove(temporary, ignored);
-        return {.error = "Cannot replace workspaces " + path.string() + ": " + error.message()};
+    if (const PlatformResult written = writeVersionedJson(path, workspaceFileFormat, toJson(contents)); !written) {
+        return {.error = written.error};
     }
     return {.success = true};
 }

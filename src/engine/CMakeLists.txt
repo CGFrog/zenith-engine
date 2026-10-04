@@ -150,6 +150,7 @@ add_library(zenith_engine SHARED
     platform/ChildProcess.cpp
     platform/FileContents.cpp
     platform/PlatformServices.cpp
+    platform/VersionedJson.cpp
     project/ProjectConfig.cpp
     reflection/FieldJson.cpp
     reflection/Reflection.cpp

@@ -1,10 +1,19 @@
 #include "engine/platform/PlatformServices.hpp"
 
+#include "engine/platform/VersionedJson.hpp"
+
 #include <cstdlib>
 #include <fstream>
 #include <nlohmann/json.hpp>
 
 namespace {
+const VersionedJsonFormat diagnosticBundleFormat{
+    .description = "diagnostic bundle", .versionKey = "formatVersion", .backup = UserDataBackup::Keep};
+const VersionedJsonFormat releaseProvenanceFormat{.description = "release provenance",
+                                                  .versionKey = "formatVersion",
+                                                  .missing = MissingJsonFile::Error,
+                                                  .backup = UserDataBackup::Keep};
+
 std::filesystem::path environmentPath(const char* name) {
 #ifdef _WIN32
     char* value = nullptr;
@@ -39,22 +48,26 @@ std::filesystem::path userDataDirectory(std::string_view organization, std::stri
     return root / std::filesystem::path(organization) / std::filesystem::path(application);
 }
 
-PlatformResult atomicWriteUserData(const std::filesystem::path& path, std::span<const uint8_t> bytes) {
+PlatformResult atomicWriteUserData(const std::filesystem::path& path, std::span<const uint8_t> bytes,
+                                   UserDataBackup backup) {
     std::error_code error;
-    std::filesystem::create_directories(path.parent_path(), error);
-    if (error) {
-        return {.error = "could not create user-data directory: " + error.message()};
+    if (path.has_parent_path()) {
+        std::filesystem::create_directories(path.parent_path(), error);
+        if (error) {
+            return {.error = "could not create user-data directory: " + error.message()};
+        }
     }
     const std::filesystem::path temporary = path.string() + ".tmp";
-    const std::filesystem::path backup = path.string() + ".bak";
+    const std::filesystem::path backupPath = path.string() + ".bak";
     std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
     output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     output.close();
     if (!output) {
+        std::filesystem::remove(temporary, error);
         return {.error = "could not finish user-data write: " + temporary.string()};
     }
-    if (std::filesystem::exists(path)) {
-        std::filesystem::copy_file(path, backup, std::filesystem::copy_options::overwrite_existing, error);
+    if (backup == UserDataBackup::Keep && std::filesystem::exists(path)) {
+        std::filesystem::copy_file(path, backupPath, std::filesystem::copy_options::overwrite_existing, error);
         if (error) {
             return {.error = "could not preserve user-data backup: " + error.message()};
         }
@@ -65,8 +78,12 @@ PlatformResult atomicWriteUserData(const std::filesystem::path& path, std::span<
         error.clear();
         std::filesystem::rename(temporary, path, error);
     }
-    return error ? PlatformResult{.error = "could not atomically replace user data: " + error.message()}
-                 : PlatformResult{.success = true};
+    if (error) {
+        const std::string reason = error.message();
+        std::filesystem::remove(temporary, error);
+        return {.error = "could not atomically replace user data: " + reason};
+    }
+    return {.success = true};
 }
 
 PlatformResult recoverAtomicUserData(const std::filesystem::path& path) {
@@ -103,38 +120,38 @@ PlatformResult DiagnosticBundleWriter::write(const CrashReport& report,
             files.push_back(attachment.generic_string());
         }
     }
-    const nlohmann::json document = {
-        {"formatVersion", 1},      {"timestampUtc", report.timestampUtc}, {"productVersion", report.productVersion},
-        {"reason", report.reason}, {"context", report.context},           {"attachments", files},
-        {"uploaded", false}};
-    const std::string encoded = document.dump(2) + '\n';
-    return atomicWriteUserData(output, {reinterpret_cast<const uint8_t*>(encoded.data()), encoded.size()});
+    const nlohmann::json document = {{"timestampUtc", report.timestampUtc},
+                                     {"productVersion", report.productVersion},
+                                     {"reason", report.reason},
+                                     {"context", report.context},
+                                     {"attachments", files},
+                                     {"uploaded", false}};
+    return writeVersionedJson(output, diagnosticBundleFormat, document);
 }
 
 PlatformResult writeReleaseProvenance(const std::filesystem::path& path, const ReleaseProvenance& provenance) {
-    const nlohmann::json document = {{"formatVersion", provenance.formatVersion},
-                                     {"sourceRevision", provenance.sourceRevision},
+    if (provenance.formatVersion != releaseProvenanceFormat.currentVersion) {
+        return {.error = "release provenance version " + std::to_string(provenance.formatVersion) +
+                         " cannot be written; this build writes version " +
+                         std::to_string(releaseProvenanceFormat.currentVersion)};
+    }
+    const nlohmann::json document = {{"sourceRevision", provenance.sourceRevision},
                                      {"dependencyRevision", provenance.dependencyRevision},
                                      {"toolchain", provenance.toolchain},
                                      {"contentManifestDigest", provenance.contentManifestDigest},
                                      {"targetPlatform", provenance.targetPlatform}};
-    const std::string encoded = document.dump(2) + '\n';
-    return atomicWriteUserData(path, {reinterpret_cast<const uint8_t*>(encoded.data()), encoded.size()});
+    return writeVersionedJson(path, releaseProvenanceFormat, document);
 }
 
 PlatformResult readReleaseProvenance(const std::filesystem::path& path, ReleaseProvenance& provenance) {
-    std::ifstream input(path);
-    if (!input) {
-        return {.error = "could not open release provenance: " + path.string()};
+    const VersionedJsonResult read = readVersionedJson(path, releaseProvenanceFormat);
+    if (!read) {
+        return {.error = read.error};
     }
     try {
-        nlohmann::json document;
-        input >> document;
+        const nlohmann::json& document = read.document;
         ReleaseProvenance loaded;
-        loaded.formatVersion = document.value("formatVersion", 0);
-        if (loaded.formatVersion != 1) {
-            return {.error = "unsupported release provenance version"};
-        }
+        loaded.formatVersion = read.version;
         loaded.sourceRevision = document.at("sourceRevision").get<std::string>();
         loaded.dependencyRevision = document.at("dependencyRevision").get<std::string>();
         loaded.toolchain = document.at("toolchain").get<std::string>();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <map>
 #include <span>
@@ -16,8 +17,18 @@ struct PlatformResult {
     }
 };
 
+// Whether atomicWriteUserData copies the file it replaces to `<path>.bak`
+// first, for recoverAtomicUserData.
+enum class UserDataBackup : uint8_t {
+    Keep,
+    None,
+};
+
 std::filesystem::path userDataDirectory(std::string_view organization, std::string_view application);
-PlatformResult atomicWriteUserData(const std::filesystem::path& path, std::span<const uint8_t> bytes);
+// Writes bytes to `<path>.tmp` and renames it over path, creating the parent
+// folder, so an interrupted write never leaves a truncated file.
+PlatformResult atomicWriteUserData(const std::filesystem::path& path, std::span<const uint8_t> bytes,
+                                   UserDataBackup backup = UserDataBackup::Keep);
 PlatformResult recoverAtomicUserData(const std::filesystem::path& path);
 
 struct CrashReport {

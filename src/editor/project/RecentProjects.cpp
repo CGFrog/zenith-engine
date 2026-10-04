@@ -1,15 +1,19 @@
 #include "RecentProjects.hpp"
 
+#include "engine/platform/VersionedJson.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
-#include <fstream>
 #include <system_error>
 #include <utility>
 
 namespace {
 using Json = nlohmann::json;
+
+const VersionedJsonFormat recentProjectsFormat{.description = "recent projects list",
+                                               .currentVersion = RecentProjects::currentVersion};
 
 std::filesystem::path normalizedProjectPath(const std::filesystem::path& path) {
     std::error_code error;
@@ -47,24 +51,14 @@ RecentProjects::RecentProjects(std::filesystem::path file)
 
 RecentProjectsResult RecentProjects::load() {
     m_entries.clear();
-    std::error_code error;
-    if (!std::filesystem::exists(m_file, error)) {
+    const VersionedJsonResult read = readVersionedJson(m_file, recentProjectsFormat);
+    if (!read) {
+        return {.error = read.error};
+    }
+    if (!read.found) {
         return {.success = true};
     }
-    std::ifstream input(m_file);
-    if (!input) {
-        return {.error = "Could not open the recent projects list: " + m_file.string()};
-    }
-    Json document;
-    try {
-        input >> document;
-    } catch (const Json::exception& parseError) {
-        return {.error = "Could not parse the recent projects list '" + m_file.string() + "': " + parseError.what()};
-    }
-    const auto version = document.is_object() ? document.find("version") : document.end();
-    if (version == document.end() || !version->is_number_integer() || version->get<int>() != currentVersion) {
-        return {.error = "Unsupported recent projects list: " + m_file.string()};
-    }
+    const Json& document = read.document;
     const auto projects = document.find("projects");
     if (projects == document.end() || !projects->is_array()) {
         return {.error = "The recent projects list has no 'projects' array: " + m_file.string()};
@@ -100,33 +94,9 @@ RecentProjectsResult RecentProjects::save() const {
              {"lastOpened",
               std::chrono::duration_cast<std::chrono::seconds>(project.lastOpened.time_since_epoch()).count()}});
     }
-    const Json document = {{"version", currentVersion}, {"projects", std::move(projects)}};
-
-    std::error_code error;
-    if (m_file.has_parent_path()) {
-        std::filesystem::create_directories(m_file.parent_path(), error);
-        if (error) {
-            return {.error = "Could not create the editor settings directory: " + error.message()};
-        }
-    }
-    // Written beside the list and renamed over it, so an interrupted write
-    // never leaves a truncated list.
-    std::filesystem::path temporary = m_file;
-    temporary += ".tmp";
-    {
-        std::ofstream output(temporary, std::ios::trunc);
-        if (!output) {
-            return {.error = "Could not write the recent projects list: " + temporary.string()};
-        }
-        output << document.dump(2) << '\n';
-        if (!output) {
-            return {.error = "Could not finish writing the recent projects list: " + temporary.string()};
-        }
-    }
-    std::filesystem::rename(temporary, m_file, error);
-    if (error) {
-        std::filesystem::remove(temporary, error);
-        return {.error = "Could not replace the recent projects list: " + m_file.string()};
+    const Json document = {{"projects", std::move(projects)}};
+    if (const PlatformResult written = writeVersionedJson(m_file, recentProjectsFormat, document); !written) {
+        return {.error = written.error};
     }
     return {.success = true};
 }

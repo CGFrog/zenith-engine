@@ -1,12 +1,13 @@
 #include "SceneEditorData.hpp"
 
+#include "engine/platform/VersionedJson.hpp"
+
 #include <nlohmann/json.hpp>
 
-#include <fstream>
-#include <sstream>
-
 namespace {
-constexpr int currentVersion = 1;
+// Kept beside the scene and often under version control, so an older editor
+// still reads what a newer one wrote.
+const VersionedJsonFormat sceneEditorDataFormat{.description = "scene editor data", .newer = NewerJsonVersions::Read};
 
 SceneEditorDataResult failure(const std::filesystem::path& path, const std::string& reason) {
     return {.error = "Scene editor data '" + path.string() + "': " + reason};
@@ -22,24 +23,14 @@ std::filesystem::path sceneEditorDataPath(const std::filesystem::path& scenePath
 SceneEditorDataResult readSceneEditorData(const std::filesystem::path& scenePath, SceneEditorData& data) {
     data = {};
     const std::filesystem::path path = sceneEditorDataPath(scenePath);
-    std::error_code error;
-    if (!std::filesystem::exists(path, error)) {
+    const VersionedJsonResult read = readVersionedJson(path, sceneEditorDataFormat);
+    if (!read) {
+        return {.error = read.error};
+    }
+    if (!read.found) {
         return {.success = true};
     }
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        return failure(path, "could not be opened");
-    }
-    std::ostringstream contents;
-    contents << input.rdbuf();
-    const nlohmann::json document = nlohmann::json::parse(contents.str(), nullptr, false);
-    if (!document.is_object()) {
-        return failure(path, "is not a JSON object");
-    }
-    const auto version = document.find("version");
-    if (version == document.end() || !version->is_number_integer() || version->get<int>() < 1) {
-        return failure(path, "has no valid version");
-    }
+    const nlohmann::json& document = read.document;
     const auto cursor = document.find("cursor");
     if (cursor == document.end()) {
         return {.success = true};
@@ -70,24 +61,9 @@ SceneEditorDataResult writeSceneEditorData(const std::filesystem::path& scenePat
         return {.success = true};
     }
     const nlohmann::json document{
-        {"version", currentVersion},
         {"cursor", {{"location", {data.cursorLocation.x, data.cursorLocation.y, data.cursorLocation.z}}}}};
-    std::filesystem::path temporary = path;
-    temporary += ".tmp";
-    {
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        output << document.dump(2) << '\n';
-        output.flush();
-        if (!output) {
-            std::filesystem::remove(temporary, error);
-            return failure(path, "could not be written");
-        }
-    }
-    std::filesystem::rename(temporary, path, error);
-    if (error) {
-        const std::string reason = error.message();
-        std::filesystem::remove(temporary, error);
-        return failure(path, "could not replace the previous file: " + reason);
+    if (const PlatformResult written = writeVersionedJson(path, sceneEditorDataFormat, document); !written) {
+        return {.error = written.error};
     }
     return {.success = true};
 }

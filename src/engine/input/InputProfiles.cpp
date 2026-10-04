@@ -1,11 +1,14 @@
 #include "engine/input/InputProfiles.hpp"
 
+#include "engine/platform/VersionedJson.hpp"
+
 #include <algorithm>
-#include <fstream>
 #include <nlohmann/json.hpp>
 #include <type_traits>
 
 namespace {
+const VersionedJsonFormat inputProfilesFormat{.description = "input profiles", .missing = MissingJsonFile::Error};
+
 bool sameSource(const InputBinding& first, const InputBinding& second) {
     return first.source == second.source && first.modifiers == second.modifiers;
 }
@@ -130,42 +133,20 @@ InputProfileResult saveInputProfiles(const std::filesystem::path& path, const In
         }
         encodedProfiles.push_back({{"name", profile.name}, {"bindings", std::move(bindings)}});
     }
-    const nlohmann::json document = {
-        {"version", 1}, {"selected", profiles.selectedName()}, {"profiles", std::move(encodedProfiles)}};
-    const std::string bytes = document.dump(2) + '\n';
-    std::error_code error;
-    std::filesystem::create_directories(path.parent_path(), error);
-    if (error) {
-        return {.error = "could not create input-profile directory: " + error.message()};
+    const nlohmann::json document = {{"selected", profiles.selectedName()}, {"profiles", std::move(encodedProfiles)}};
+    if (const PlatformResult written = writeVersionedJson(path, inputProfilesFormat, document); !written) {
+        return {.error = written.error};
     }
-    const std::filesystem::path temporary = path.string() + ".tmp";
-    std::ofstream output(temporary, std::ios::trunc);
-    output << bytes;
-    output.close();
-    if (!output) {
-        return {.error = "could not write input profiles"};
-    }
-    std::filesystem::rename(temporary, path, error);
-    if (error) {
-        std::filesystem::remove(path, error);
-        error.clear();
-        std::filesystem::rename(temporary, path, error);
-    }
-    return error ? InputProfileResult{.error = "could not commit input profiles: " + error.message()}
-                 : InputProfileResult{.success = true};
+    return {.success = true};
 }
 
 InputProfileResult loadInputProfiles(const std::filesystem::path& path, InputProfileSet& profiles) {
-    std::ifstream input(path);
-    if (!input) {
-        return {.error = "could not open input profiles: " + path.string()};
+    const VersionedJsonResult read = readVersionedJson(path, inputProfilesFormat);
+    if (!read) {
+        return {.error = read.error};
     }
     try {
-        nlohmann::json document;
-        input >> document;
-        if (document.value("version", 0) != 1) {
-            return {.error = "unsupported input-profile version"};
-        }
+        const nlohmann::json& document = read.document;
         InputProfileSet loaded;
         for (const auto& encodedProfile : document.at("profiles")) {
             InputProfile profile;

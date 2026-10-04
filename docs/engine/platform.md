@@ -8,6 +8,24 @@ Resolves platform writable locations, performs atomic user-data writes and
 backup recovery, writes local-only structured diagnostics, and serializes exact
 release provenance.
 
+## `src/engine/platform/VersionedJson.*`
+
+`readVersionedJson` and `writeVersionedJson` handle the outer layer of a settings
+or state file: a JSON object with a format version at its top level. A
+`VersionedJsonFormat` says:
+- what the file holds, for error messages;
+- the version key and the version range this build reads;
+- whether a missing file is an error or means "use the defaults";
+- whether a newer version is read or rejected;
+- whether the replaced file is kept as `.bak`.
+
+A read returns the parsed object and its version; the caller reads the contents
+and migrates an older version. A write stamps the current version and goes
+through `atomicWriteUserData`. Game settings, input profiles, the diagnostic
+bundle, release provenance, and the editor's workspace, asset browser,
+inspector layout, Simulate system, recent project and scene editor data files
+use it.
+
 ## `src/engine/platform/FileContents.*`
 
 Reads a whole file into bytes or text with one sized read, reporting whether

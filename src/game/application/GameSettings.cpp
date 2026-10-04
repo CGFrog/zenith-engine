@@ -1,25 +1,23 @@
 #include "GameSettings.hpp"
 
+#include "engine/platform/VersionedJson.hpp"
+
 #include <algorithm>
-#include <fstream>
 #include <nlohmann/json.hpp>
 
 namespace {
-constexpr int currentVersion = 3;
+const VersionedJsonFormat gameSettingsFormat{
+    .description = "game settings", .currentVersion = 3, .missing = MissingJsonFile::Error};
 }
 
 GameSettingsResult loadGameSettings(const std::filesystem::path& path, GameSettings& settings) {
-    std::ifstream input(path);
-    if (!input) {
-        return {.error = "Could not open game settings: " + path.string()};
+    const VersionedJsonResult read = readVersionedJson(path, gameSettingsFormat);
+    if (!read) {
+        return {.error = read.error};
     }
-    nlohmann::json document;
     try {
-        input >> document;
-        const int version = document.value("version", 0);
-        if (!document.is_object() || version < 1 || version > currentVersion) {
-            return {.error = "Unsupported game settings version: " + path.string()};
-        }
+        const nlohmann::json& document = read.document;
+        const int version = read.version;
         GameSettings loaded;
         const int antialiasing = document.at("antialiasing").get<int>();
         const int bloom = document.at("bloom").get<int>();
@@ -62,18 +60,7 @@ GameSettingsResult loadGameSettings(const std::filesystem::path& path, GameSetti
 }
 
 GameSettingsResult saveGameSettings(const std::filesystem::path& path, const GameSettings& settings) {
-    std::error_code error;
-    std::filesystem::create_directories(path.parent_path(), error);
-    if (error) {
-        return {.error = "Could not create game settings directory: " + error.message()};
-    }
-    const std::filesystem::path temporary = path.string() + ".tmp";
-    std::ofstream output(temporary, std::ios::trunc);
-    if (!output) {
-        return {.error = "Could not write game settings: " + temporary.string()};
-    }
     const nlohmann::json document = {
-        {"version", currentVersion},
         {"antialiasing", static_cast<int>(settings.antialiasing)},
         {"bloom", static_cast<int>(settings.bloom)},
         {"masterMuted", settings.masterMuted},
@@ -90,19 +77,8 @@ GameSettingsResult saveGameSettings(const std::filesystem::path& path, const Gam
           {"colorIndependentIndicators", settings.accessibility.colorIndependentIndicators}}},
         {"inputProfiles", settings.inputProfiles},
         {"activeInputProfile", settings.activeInputProfile}};
-    output << document.dump(2) << '\n';
-    output.close();
-    if (!output) {
-        return {.error = "Could not finish writing game settings: " + temporary.string()};
-    }
-    std::filesystem::rename(temporary, path, error);
-    if (error) {
-        std::filesystem::remove(path, error);
-        error.clear();
-        std::filesystem::rename(temporary, path, error);
-    }
-    if (error) {
-        return {.error = "Could not replace game settings: " + error.message()};
+    if (const PlatformResult written = writeVersionedJson(path, gameSettingsFormat, document); !written) {
+        return {.error = written.error};
     }
     return {.success = true};
 }
