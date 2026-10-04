@@ -22,6 +22,7 @@
 #include "engine/input/InputActions.hpp"
 #include "engine/module/GameModule.hpp"
 #include "engine/module/Gameplay.hpp"
+#include "engine/physics/CharacterController.hpp"
 #include "engine/physics/PhysicsWorld.hpp"
 #include "engine/project/ProjectConfig.hpp"
 #include "engine/scene/ComponentTypes.hpp"
@@ -396,6 +397,24 @@ int playFpsScene(const GameModule& module, const ProjectConfig& project) {
     frames(3);
     const bool destroyed = scene.findEntity(targetId) == entt::null;
     const bool scored = hudShows(ui, "Targets 1 / 5");
+
+    // Walking and looking: W moves the player, the mouse turns the view.
+    const auto characters = scene.registry().view<const CharacterControllerComponent>();
+    const Entity player = characters.empty() ? entt::null : characters.front();
+    const glm::vec3 startPosition(scene.registry().get<TransformComponent>(player).world[3]);
+    const float startYaw = scene.registry().get<FirstPersonCameraComponent>(camera).yawRadians;
+    InputState walk;
+    walk.setKeyDown(Key::W);
+    walk.mouseDelta = {40.0f, 0.0f};
+    for (int index = 0; index < 30; ++index) {
+        frame(walk);
+    }
+    const float walkedDistance =
+        glm::distance(startPosition, glm::vec3(scene.registry().get<TransformComponent>(player).world[3]));
+    const bool walked = walkedDistance > 0.5f;
+    const bool looked = scene.registry().get<FirstPersonCameraComponent>(camera).yawRadians != startYaw;
+    std::cout << "walked " << walkedDistance << " m, yaw "
+              << scene.registry().get<FirstPersonCameraComponent>(camera).yawRadians << '\n';
     InputState pause;
     pause.setKeyDown(Key::Escape);
     pause.setKeyPressed(Key::Escape);
@@ -403,9 +422,10 @@ int playFpsScene(const GameModule& module, const ProjectConfig& project) {
     frame(InputState{});
     const bool paused = hudShows(ui, "Paused");
     runner.stop();
-    if (!counted || !destroyed || !scored || !paused) {
-        std::cerr << "FAILED: playing the FPS scene: targets counted " << counted << ", target destroyed " << destroyed
-                  << ", HUD updated " << scored << ", paused " << paused << '\n';
+    if (!counted || !walked || !looked || !destroyed || !scored || !paused) {
+        std::cerr << "FAILED: playing the FPS scene: targets counted " << counted << ", walked " << walked
+                  << ", looked " << looked << ", target destroyed " << destroyed << ", HUD updated " << scored
+                  << ", paused " << paused << '\n';
         return 1;
     }
     std::cout << "Played the FPS scene: shot a target, the HUD counted it, and the game paused\n";
