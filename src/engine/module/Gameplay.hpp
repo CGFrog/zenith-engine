@@ -68,16 +68,23 @@ class GameplayRunner {
     // relative to assetRoot) and publishes SceneLoaded. Restarting replaces
     // the services.
     void start(ApplicationContext& context, std::filesystem::path assetRoot);
-    // Destroys the services: pending commands, timers, and events are dropped.
-    void stop();
+    // Runs onDisable and onDestroy for the behaviours of context's scene, then
+    // destroys the services: pending commands, timers, and events are dropped.
+    // Call it before the scene is discarded (ApplicationScene::unload).
+    void stop(ApplicationContext& context);
     // Null unless started.
     GameServices* services();
     // The input actions systems receive; the game may change the bindings.
     InputActionMap& actionMap();
+    // The game's clock (GameServices::simulationClock), which the scene
+    // reports as its ApplicationScene::simulationClock so the engine steps
+    // physics, animation, and audio by it; the default clock unless started.
+    SimulationClock simulationClock() const;
 
-    // simulatedSeconds is deltaSeconds on the scene's simulation clock; timers
-    // advance by it.
-    void update(ApplicationContext& context, const InputState& input, float deltaSeconds, float simulatedSeconds);
+    // deltaSeconds is the frame's wall-clock time. Update and LateUpdate
+    // systems and the timers get it on simulationClock(); Ui systems and
+    // SystemContext::unscaledDeltaSeconds get it unchanged.
+    void update(ApplicationContext& context, const InputState& input, float deltaSeconds);
     void fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds);
     void afterPhysicsStep(ApplicationContext& context);
     // LateUpdate and Ui see the input of the frame's update.
@@ -86,15 +93,15 @@ class GameplayRunner {
 
   private:
     void run(SystemPhase phase, ApplicationContext& context, const InputState* input, const InputActionState* actions,
-             float deltaSeconds, GameUiContext* ui = nullptr);
+             float deltaSeconds, float unscaledDeltaSeconds, GameUiContext* ui = nullptr);
 
     Gameplay m_gameplay;
     InputActionMap m_actionMap;
     std::unique_ptr<GameServices> m_services;
-    // The last update's input, its actions, and its duration.
+    // The last update's input, its actions, and its wall-clock duration.
     InputState m_frameInput;
     InputActionState m_frameActions;
-    float m_frameSeconds{0.0f};
+    float m_unscaledFrameSeconds{0.0f};
 };
 
 struct GameplayResult {

@@ -379,6 +379,8 @@ class EditorSession final : public ApplicationScene,
     // The input the frame's Update systems saw, for its LateUpdate and Ui
     // systems; idle outside Play.
     InputState m_frameGameInput;
+    // The frame's wall-clock seconds, for the Ui systems.
+    float m_frameGameSeconds{0.0f};
     // What the module's Ui systems draw over the game view, sized to it.
     GameUiContext m_gameViewUi;
     std::filesystem::path m_projectFile;

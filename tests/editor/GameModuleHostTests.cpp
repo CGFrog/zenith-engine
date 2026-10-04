@@ -268,7 +268,7 @@ void testGameplaySession(HostFixture& fixture, SceneEntityId counterId) {
                                }),
            "Ui systems draw the HUD into the game UI they are given");
 
-    fixture.host.stopGameplay();
+    fixture.host.stopGameplay(fixture.scene);
     expect(fixture.host.gameServices() == nullptr, "stopping the session releases its services");
     fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Play, 0.016f);
     expect(fixture.counterValue(counterId, "services_seen") == servicesSeen + 1,

@@ -134,8 +134,11 @@ class GameModuleHost {
     // is the frame's device state in Play mode and null when systems must
     // not react to input. Simulate never passes input to systems, whatever
     // the caller gives, and runs only the systems simulateMask() enables.
+    // unscaledDeltaSeconds is the frame's wall-clock time
+    // (SystemContext::unscaledDeltaSeconds); deltaSeconds when not given.
     void runSystems(SystemPhase phase, Scene& scene, ApplicationContext* application, SimulationMode mode,
-                    float deltaSeconds, const InputState* input = nullptr, GameUiContext* ui = nullptr);
+                    float deltaSeconds, const InputState* input = nullptr, GameUiContext* ui = nullptr,
+                    std::optional<float> unscaledDeltaSeconds = std::nullopt);
     // Edit mode, once per frame: runs Update systems for deltaSeconds, then
     // FixedUpdate systems once per elapsed fixedStepSeconds (the simulation
     // itself does not step in Edit mode, so the host keeps the fixed clock).
@@ -164,9 +167,13 @@ class GameModuleHost {
     // outlive the session. Starting again replaces the services; unloading
     // or reloading the module stops them first.
     void startGameplay(AssetManager& assets, SceneDocumentOptions documents, DebugDraw& debugDraw);
-    void stopGameplay();
+    // Runs onDisable and onDestroy for scene's behaviours, then releases the
+    // services. Call it with the session's scene before the scene is
+    // discarded.
+    void stopGameplay(Scene& scene);
     // Null outside a gameplay session.
     GameServices* gameServices();
+    const GameServices* gameServices() const;
 
     // Which Play systems Simulate runs. Kept across module reloads (by
     // system name) and while no module is loaded.

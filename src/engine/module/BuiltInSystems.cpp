@@ -29,7 +29,9 @@ SystemDescriptor firstPersonCameraSystem() {
             .phase = SystemPhase::LateUpdate,
             .runIn = RunIn::Play,
             .run = [](const SystemContext& context) {
-                updateFirstPersonCameras(context.scene, context.actions, context.deltaSeconds);
+                // A paused game holds the view still, as it does the player.
+                const bool paused = context.services != nullptr && context.services->paused();
+                updateFirstPersonCameras(context.scene, paused ? nullptr : context.actions, context.deltaSeconds);
             }};
 }
 

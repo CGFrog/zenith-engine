@@ -44,6 +44,31 @@ SaveGameStore* GameServices::saveGames() {
     return m_saveGames ? &*m_saveGames : nullptr;
 }
 
+void GameServices::setPaused(bool paused) {
+    m_paused = paused;
+}
+
+bool GameServices::paused() const {
+    return m_paused;
+}
+
+void GameServices::setTimeScale(float scale) {
+    m_timeScale = clampTimeScale(scale);
+}
+
+float GameServices::timeScale() const {
+    return m_timeScale;
+}
+
+SimulationClock GameServices::simulationClock(SimulationClock host) const {
+    host.timeScale = clampTimeScale(clampTimeScale(host.timeScale) * m_timeScale);
+    if (m_paused) {
+        host.paused = true;
+        host.frameStepSeconds = 0.0f;
+    }
+    return host;
+}
+
 NavigationWorld& GameServices::navigation(const Scene& scene) {
     if (!m_navigationBaked) {
         m_navigationBaked = true;

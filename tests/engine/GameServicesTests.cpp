@@ -1,6 +1,6 @@
 // CPU-only coverage of the gameplay services systems receive: deferred entity
 // commands and their flush points, double-buffered events, and timers on
-// simulated time.
+// simulated time, and the game's pause and time scale.
 
 #include "engine/assets/Assets.hpp"
 #include "engine/graphics/DebugDraw.hpp"
@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -325,6 +326,35 @@ void testLogChannels() {
            "a named channel is gameplay.<name> on the same logger");
 }
 
+void testGameClock() {
+    ServicesFixture fixture;
+    GameServices& services = fixture.services;
+    expect(!services.paused() && services.timeScale() == 1.0f, "a session starts running at normal speed");
+    const SimulationClock idle = services.simulationClock();
+    expect(!idle.paused && idle.timeScale == 1.0f, "an idle game leaves the host's clock as it is");
+
+    services.setTimeScale(0.5f);
+    expect(services.simulationClock({.timeScale = 2.0f}).timeScale == 1.0f,
+           "the game's time scale multiplies the host's");
+    services.setTimeScale(100.0f);
+    expect(services.timeScale() == SimulationClock::maximumTimeScale, "the game's time scale is clamped");
+    expect(services.simulationClock({.timeScale = 4.0f}).timeScale == SimulationClock::maximumTimeScale,
+           "the combined time scale is clamped");
+    services.setTimeScale(std::numeric_limits<float>::quiet_NaN());
+    expect(services.timeScale() == 1.0f, "a NaN time scale becomes 1");
+
+    services.setPaused(true);
+    const SimulationClock paused = services.simulationClock();
+    expect(paused.paused && simulatedSeconds(paused, 0.016f) == 0.0f && audioPlaybackRate(paused) == 0.0f,
+           "a paused game holds simulated time and audio still");
+    const SimulationClock stepping = services.simulationClock({.paused = true, .frameStepSeconds = 1.0f / 60.0f});
+    expect(stepping.paused && simulatedSeconds(stepping, 0.016f) == 0.0f,
+           "the game's pause holds through the editor's frame step");
+    services.setPaused(false);
+    expect(simulatedSeconds(services.simulationClock({.paused = true, .frameStepSeconds = 0.25f}), 0.016f) == 0.25f,
+           "a running game keeps the host's frame step");
+}
+
 int main() {
     testCommandsApplyAtFlush();
     testCommandsRunInPhases();
@@ -333,6 +363,7 @@ int main() {
     testEventsLastOneFrame();
     testTimers();
     testLogChannels();
+    testGameClock();
     if (failures == 0) {
         std::cout << "Game services tests passed\n";
     }

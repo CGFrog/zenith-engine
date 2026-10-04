@@ -58,9 +58,12 @@ Selection** on an entity with a Particle Emitter.
 ## Pause and settings
 
 `drawPauseMenu` and `drawSettingsMenu` are the engine's menus; the game
-supplies their entries. The template's pause clears the player's action
-names, so the engine's character and camera systems stop moving it, and
-restores them on Resume. The settings change `FirstPersonViewPreferences`,
-which the camera system reads.
+supplies their entries. The template's pause calls
+`context.services->setPaused(true)`: physics, FixedUpdate, timers,
+animation, scene audio, and the player's look stop, while Update systems
+keep running with a zero `deltaSeconds` (and the real frame time in
+`unscaledDeltaSeconds`), so the score system can read the Pause key and
+resume. The settings change `FirstPersonViewPreferences`, which the camera
+system reads.
 
 Next: [Debug, test, and ship](06-debug-test-and-ship.md).

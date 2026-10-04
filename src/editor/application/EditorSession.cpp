@@ -398,7 +398,8 @@ void EditorSession::lateUpdate(ApplicationContext& context, const InputState&, f
     }
     const SimulationMode mode = m_playMode.simulationMode();
     m_moduleHost.runSystems(SystemPhase::LateUpdate, context.scene, &context, mode,
-                            simulatedSeconds(m_playMode.simulationClock(), deltaSeconds), &m_frameGameInput);
+                            simulatedSeconds(simulationClock(), deltaSeconds), &m_frameGameInput, nullptr,
+                            deltaSeconds);
 }
 
 bool EditorSession::fixedUpdatesEnabled() const {
@@ -410,7 +411,10 @@ bool EditorSession::beginFixedUpdate() {
 }
 
 SimulationClock EditorSession::simulationClock() const {
-    return m_playMode.simulationClock();
+    // The game's own pause and time scale apply on top of the editor's.
+    const SimulationClock editorClock = m_playMode.simulationClock();
+    const GameServices* services = m_moduleHost.gameServices();
+    return services != nullptr ? services->simulationClock(editorClock) : editorClock;
 }
 
 void EditorSession::requestQuit(ApplicationContext& context) {

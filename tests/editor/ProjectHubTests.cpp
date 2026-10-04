@@ -371,11 +371,15 @@ int playFpsScene(const GameModule& module, const ProjectConfig& project) {
     GameplayRunner runner(gameplay);
     runner.start(context, project.assetRoot);
     constexpr float step = 1.0f / 60.0f;
+    // As the engine does: fixed steps (and physics) run only while the game's
+    // clock advances.
     const auto frame = [&](const InputState& input) {
-        runner.update(context, input, step, step);
-        runner.fixedUpdate(context, input, step);
-        physics.step(scene, assets, step);
-        runner.afterPhysicsStep(context);
+        runner.update(context, input, step);
+        if (fixedStepAccumulation(runner.simulationClock(), step) > 0.0f) {
+            runner.fixedUpdate(context, input, step);
+            physics.step(scene, assets, step);
+            runner.afterPhysicsStep(context);
+        }
         runner.lateUpdate(context);
         scene.updateWorldTransforms();
         ui.beginFrame({1280, 720}, input);
@@ -420,12 +424,23 @@ int playFpsScene(const GameModule& module, const ProjectConfig& project) {
     pause.setKeyPressed(Key::Escape);
     frame(pause);
     frame(InputState{});
-    const bool paused = hudShows(ui, "Paused");
-    runner.stop();
-    if (!counted || !walked || !looked || !destroyed || !scored || !paused) {
+    const bool paused = hudShows(ui, "Paused") && runner.services()->paused();
+    // Paused, the world holds still: walking and looking do nothing.
+    const glm::vec3 pausedPosition(scene.registry().get<TransformComponent>(player).world[3]);
+    const float pausedYaw = scene.registry().get<FirstPersonCameraComponent>(camera).yawRadians;
+    for (int index = 0; index < 10; ++index) {
+        frame(walk);
+    }
+    const bool held =
+        glm::distance(pausedPosition, glm::vec3(scene.registry().get<TransformComponent>(player).world[3])) < 1e-4f &&
+        scene.registry().get<FirstPersonCameraComponent>(camera).yawRadians == pausedYaw;
+    frame(pause);
+    const bool resumed = !runner.services()->paused();
+    runner.stop(context);
+    if (!counted || !walked || !looked || !destroyed || !scored || !paused || !held || !resumed) {
         std::cerr << "FAILED: playing the FPS scene: targets counted " << counted << ", walked " << walked
                   << ", looked " << looked << ", target destroyed " << destroyed << ", HUD updated " << scored
-                  << ", paused " << paused << '\n';
+                  << ", paused " << paused << ", held while paused " << held << ", resumed " << resumed << '\n';
         return 1;
     }
     std::cout << "Played the FPS scene: shot a target, the HUD counted it, and the game paused\n";

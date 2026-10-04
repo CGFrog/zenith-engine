@@ -21,3 +21,10 @@ void runBehaviours(SystemPhase phase, const SystemContext& context);
 // GameServices calls it for entities its EntityCommandBuffer destroys.
 void destroyBehaviours(const BehaviourRegistry& behaviours, Scene& scene, Entity root, GameServices* services,
                        Logger* logger);
+
+// Calls onDisable (when enabled) and onDestroy on every created behaviour of
+// scene, in run order (types in registration order, then entities by scene
+// id), when a session stops or its scene unloads. The entities stay; the
+// behaviours count as uncreated afterwards. Hosts call it before they release
+// the session's GameServices, so commands the hooks record are dropped.
+void destroyAllBehaviours(const BehaviourRegistry& behaviours, Scene& scene, GameServices* services, Logger* logger);

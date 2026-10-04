@@ -92,9 +92,15 @@ struct SystemContext {
     Scene& scene;
     ApplicationContext* application{nullptr};
     SimulationMode mode{SimulationMode::Play};
-    // Seconds; the frame duration for Update, LateUpdate and Ui, the fixed
-    // step for FixedUpdate.
+    // Seconds; the frame duration on the simulated clock for Update and
+    // LateUpdate (zero while the game or the editor is paused, scaled by the
+    // time scale), the wall-clock frame duration for Ui, the fixed step for
+    // FixedUpdate.
     float deltaSeconds{0.0f};
+    // The frame's wall-clock seconds, which neither a pause nor a time scale
+    // changes, for menus and other UI that run while the game is paused; the
+    // fixed step for FixedUpdate.
+    float unscaledDeltaSeconds{0.0f};
     const InputState* input{nullptr};
     Logger* logger{nullptr};
     GameServices* services{nullptr};

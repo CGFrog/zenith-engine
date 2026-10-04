@@ -9,6 +9,7 @@
 #include "editor/panels/ViewportRegistry.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/behaviour/BehaviourRegistry.hpp"
+#include "engine/behaviour/BehaviourScheduler.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
@@ -210,7 +211,8 @@ GameModuleHost::GameModuleHost(GameModuleEditorServices services, GameModuleHost
     , m_options(std::move(options)) {}
 
 GameModuleHost::~GameModuleHost() {
-    stopGameplay();
+    // The scene the session played is gone by now; only the services remain.
+    m_gameServices.reset();
     releaseEditorExtensions();
     m_scheduler = SystemScheduler{};
 }
@@ -339,7 +341,9 @@ void GameModuleHost::unload(Scene& scene, EditorDocument& document) {
 }
 
 void GameModuleHost::releaseModule(Scene& scene, EditorDocument& document, std::vector<std::string>& warnings) {
-    stopGameplay();
+    // Ends the behaviours that ran in Edit mode too: the reloaded scene's
+    // copies start uncreated.
+    stopGameplay(scene);
     releaseEditorExtensions();
     m_services.runner.forgetLast();
     m_scheduler = SystemScheduler{};
@@ -387,7 +391,8 @@ void GameModuleHost::releaseEditorExtensions() {
 }
 
 void GameModuleHost::runSystems(SystemPhase phase, Scene& scene, ApplicationContext* application, SimulationMode mode,
-                                float deltaSeconds, const InputState* input, GameUiContext* ui) {
+                                float deltaSeconds, const InputState* input, GameUiContext* ui,
+                                std::optional<float> unscaledDeltaSeconds) {
     if (!m_module) {
         return;
     }
@@ -403,6 +408,7 @@ void GameModuleHost::runSystems(SystemPhase phase, Scene& scene, ApplicationCont
                       .application = application,
                       .mode = mode,
                       .deltaSeconds = deltaSeconds,
+                      .unscaledDeltaSeconds = unscaledDeltaSeconds.value_or(deltaSeconds),
                       .input = input,
                       .logger = m_logger,
                       .services = mode == SimulationMode::Edit ? nullptr : m_gameServices.get(),
@@ -422,11 +428,18 @@ void GameModuleHost::startGameplay(AssetManager& assets, SceneDocumentOptions do
                                                     m_module ? m_module->behaviours() : nullptr);
 }
 
-void GameModuleHost::stopGameplay() {
+void GameModuleHost::stopGameplay(Scene& scene) {
+    if (m_module && m_module->behaviours()) {
+        destroyAllBehaviours(*m_module->behaviours(), scene, m_gameServices.get(), m_logger);
+    }
     m_gameServices.reset();
 }
 
 GameServices* GameModuleHost::gameServices() {
+    return m_gameServices.get();
+}
+
+const GameServices* GameModuleHost::gameServices() const {
     return m_gameServices.get();
 }
 

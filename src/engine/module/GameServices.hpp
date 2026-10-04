@@ -5,6 +5,7 @@
 #include "EventQueue.hpp"
 #include "SystemScheduler.hpp"
 #include "Timers.hpp"
+#include "engine/application/SimulationClock.hpp"
 #include "engine/diagnostics/Logger.hpp"
 #include "engine/navigation/NavigationWorld.hpp"
 #include "engine/physics/PhysicsWorld.hpp"
@@ -76,6 +77,22 @@ class GameServices {
     // first time it is asked for (a failed bake is logged once and leaves it
     // empty). Bake it again after the static geometry changes.
     NavigationWorld& navigation(const Scene& scene);
+    // The game's own pause and time scale, for menus, inventory screens, and
+    // slow motion. The host combines them with its own clock (the editor's
+    // pause and time scale; simulationClock). While the game is paused,
+    // physics, FixedUpdate, timers, animation, scene audio, and first-person
+    // look stop; Update and LateUpdate keep running with zero deltaSeconds,
+    // and Ui as usual, so the game can draw menus and unpause itself.
+    void setPaused(bool paused);
+    bool paused() const;
+    // Clamped like SimulationClock::timeScale.
+    void setTimeScale(float scale);
+    float timeScale() const;
+    // host with the game's request applied: the time scales multiply, and the
+    // game's pause holds the simulation still even through the host's frame
+    // step. Hosts hand the result to the engine (ApplicationScene::
+    // simulationClock) and run systems and timers on its simulatedSeconds.
+    SimulationClock simulationClock(SimulationClock host = {}) const;
     // Lines and shapes drawn this frame in every view; cleared after the
     // frame renders.
     DebugDraw& debugDraw();
@@ -116,6 +133,8 @@ class GameServices {
     std::filesystem::path m_savedScene;
     NavigationWorld m_navigation;
     bool m_navigationBaked{false};
+    bool m_paused{false};
+    float m_timeScale{1.0f};
 };
 
 // Runs one phase of systems and then, when context.services is set, flushes

@@ -41,10 +41,6 @@ struct FpsGameState {
     // A line the HUD shows for a moment.
     std::string message;
     float messageSeconds{0.0f};
-    // The player's input actions while paused, restored on resume.
-    std::string moveAction;
-    std::string jumpAction;
-    std::string lookAction;
 };
 
 FpsGameState& fpsGameState(Scene& scene);

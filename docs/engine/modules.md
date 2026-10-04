@@ -68,7 +68,7 @@ Besides the scene, mode, and delta, a system gets:
   [Window and input](window-input.md).
 
 Changing `SystemContext`, `ModuleRegistrar`, or a registered descriptor bumps
-`ZENITH_MODULE_API_VERSION` (now 7: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, B1 made `character_controller` an engine component type with engine systems, B2 added behaviours to `ModuleRegistrar` and `SystemContext`, and C6 added `BehaviourContext::physics`).
+`ZENITH_MODULE_API_VERSION` (now 8: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, B1 made `character_controller` an engine component type with engine systems, B2 added behaviours to `ModuleRegistrar` and `SystemContext`, C6 added `BehaviourContext::physics`, and E7 added `unscaledDeltaSeconds` to both contexts and the pause and time scale to `GameServices`).
 
 ## Behaviours (`src/engine/behaviour/`)
 
@@ -99,11 +99,20 @@ with `SystemContext::behaviours`. Each pass:
 
 Types run in registration order and each type's entities in creation order
 (scene id), so the order is deterministic. Hooks receive a `BehaviourContext`:
-the scene, entity, delta, `GameServices` (null in Edit), actions, logger, and
+the scene, entity, delta on the simulated clock and on the wall clock
+(`unscaledDeltaSeconds`), `GameServices` (null in Edit), actions, logger, and
 the physics world for queries (null in Edit).
 Hooks change entities through `GameServices::commands()`; when a destroy
 command applies, `GameServices` calls `onDisable` and `onDestroy` on the
-subtree's behaviours first (`destroyBehaviours`). A copied behaviour (a
+subtree's behaviours first (`destroyBehaviours`). When a session stops or its
+scene unloads, the host calls them on every created behaviour, in run order,
+before it releases the services (`destroyAllBehaviours`, from
+`GameplayRunner::stop` and `GameModuleHost::stopGameplay`, which a module
+reload also runs for behaviours that ran in Edit mode); the behaviours count
+as uncreated afterwards. A hook that throws is caught: the `gameplay` log gets
+an error naming the behaviour type, the entity, the hook, and the exception,
+and the behaviour is disabled, so it gets `onDisable` on the next pass and no
+more updates. The other behaviours and the session carry on. A copied behaviour (a
 duplicate, a prefab instance, the Play copy of the scene) starts uncreated;
 assignment (undo, Apply to Edit Scene) keeps the target's lifecycle state.
 Behaviours survive a module reload as any component does: by their serialized
@@ -167,6 +176,18 @@ It holds:
 - `Timers`: one-shot or repeating callbacks on simulated time. They follow the
   clock's time scale and stop while paused. A timer may have an owner entity;
   the timer is dropped when its owner is gone.
+- The game's own clock: `setPaused` and `setTimeScale`, for menus, inventory
+  screens, and slow motion. `simulationClock(host)` combines them with the
+  host's clock (the editor's pause, frame step, and time scale): the scales
+  multiply and the game's pause holds even through a frame step. Hosts report
+  the result as their `ApplicationScene::simulationClock`, so the engine
+  stops physics and FixedUpdate, animation, and scene audio with it, and run
+  Update and LateUpdate systems and the timers on its `simulatedSeconds`. A
+  paused game's Update and LateUpdate systems still run, with a zero
+  `deltaSeconds`, so they can read input and resume; Ui systems get the
+  wall-clock frame time, and every phase has it as
+  `SystemContext::unscaledDeltaSeconds`. The first-person camera ignores look
+  input while the game is paused.
 - `DebugDraw&`: `RenderRuntime::debugDraw()`, drawn in every view this frame.
 
 Commands, timer callbacks, and event channels hold module code, so the

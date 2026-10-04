@@ -199,7 +199,7 @@ and is open.
 | E4 | Building and replacing a floor at runtime | — | open |
 | E5 | Partial paths and crowd avoidance | E4 | open |
 | E6 | Audio for gameplay | — | open |
-| E7 | Pause, teardown and one game clock | — | open |
+| E7 | Pause, teardown and one game clock | — | done |
 
 Suggested batches:
 
@@ -1062,17 +1062,59 @@ Several agent sizes and area costs wait for the first enemy that needs them.
 
 ### E7. Pause, teardown and one game clock
 
-- [ ] A pause request in `GameServices` stops the simulated clock, physics,
+- [x] A pause request in `GameServices` stops the simulated clock, physics,
       timers and FixedUpdate. Ui systems keep running so menus work. The FPS
       template uses it instead of clearing the player's actions (C6
       follow-up).
-- [ ] Stopping a session or unloading a scene runs `onDisable` and
+- [x] Stopping a session or unloading a scene runs `onDisable` and
       `onDestroy` for every live behaviour (B2 follow-up).
-- [ ] Update systems, behaviours, timers, animation and the animator all
+- [x] Update systems, behaviours, timers, animation and the animator all
       advance on simulated time, with the unscaled frame time available
       separately (B2 and B3 follow-ups).
-- [ ] A hook that throws is caught. The entity and behaviour are logged, and
+- [x] A hook that throws is caught. The entity and behaviour are logged, and
       the behaviour is disabled (B2 follow-up).
+
+Result:
+- `GameServices::setPaused`, `setTimeScale` and `simulationClock(host)`. The
+  game's clock combines with the host's: the scales multiply, and the game's
+  pause holds even through the editor's frame step.
+  - `GameplayRunner::simulationClock` is what the game's scenes
+    (`ProjectApplication`, `GameplayScene`) report to the engine.
+  - `EditorSession::simulationClock` applies it on top of `EditorPlayMode`.
+- While paused, Update and LateUpdate still run with a zero `deltaSeconds`,
+  so a game can read its pause key and resume. Without that, a pause could
+  never end.
+  - `SystemContext` and `BehaviourContext` gain `unscaledDeltaSeconds`.
+  - Ui systems get the wall-clock frame time in both hosts (the editor
+    passed zero before).
+  - The first-person camera ignores look input while the game is paused.
+- The game host now runs Update, LateUpdate and the timers on the game's
+  clock. The editor already did. The animator and `updateAnimations` share
+  one clock, which closes the B2 and B3 time-base follow-ups.
+- `destroyAllBehaviours` ends every created behaviour in run order and marks
+  it uncreated. It runs from:
+  - `GameplayRunner::stop(context)` (from each scene's `unload`);
+  - `GameModuleHost::stopGameplay(scene)` (Stop, and module release, which
+    also ends behaviours that ran in Edit mode).
+- Every hook call goes through one guard. It logs
+  `Behaviour '<key>' on entity <id> (<name>) threw in <hook>: <what>` and
+  disables the behaviour, so the lifecycle calls `onDisable` on the next
+  pass. Failures in `onDisable` and `onDestroy` are logged only.
+- The FPS template pauses through `setPaused`. Its saved action names are
+  gone.
+- `ZENITH_MODULE_API_VERSION` is 8.
+- Coverage:
+  - `testSessionEnd` and `testThrowingHooks` in `BehaviourTests`;
+  - `testGameClock` in `GameServicesTests`;
+  - `zenith_fps_template_module_build`, which now checks that a paused
+    player neither walks nor looks, and that the game resumes.
+
+Follow-ups:
+- A paused clock sets the audio playback rate to zero for every voice, so
+  menu sounds and music freeze with the world. E6 should let a bus (UI,
+  music) ignore the simulation clock.
+- A system (not a behaviour) that throws still propagates. Only behaviour
+  hooks are guarded.
 
 ### Not in Phase E
 

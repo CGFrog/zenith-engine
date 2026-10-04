@@ -131,7 +131,7 @@ void GameplayScene::update(ApplicationContext& context, const InputState& input,
         context.audio.playAt(m_interactionSound, options);
     }
     applyViewPreferences(context.scene);
-    m_gameplay.update(context, input, deltaSeconds, deltaSeconds);
+    m_gameplay.update(context, input, deltaSeconds);
 }
 
 void GameplayScene::fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) {
@@ -339,6 +339,10 @@ void GameplayScene::persistSettings() const {
     }
 }
 
-void GameplayScene::unload(ApplicationContext&) {
-    m_gameplay.stop();
+SimulationClock GameplayScene::simulationClock() const {
+    return m_gameplay.simulationClock();
+}
+
+void GameplayScene::unload(ApplicationContext& context) {
+    m_gameplay.stop(context);
 }

@@ -6,6 +6,7 @@
 #include "ModuleRegistrar.hpp"
 #include "engine/application/Application.hpp"
 #include "engine/behaviour/BehaviourRegistry.hpp"
+#include "engine/behaviour/BehaviourScheduler.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
 GameplayRunner::GameplayRunner(Gameplay gameplay)
@@ -25,7 +26,10 @@ void GameplayRunner::start(ApplicationContext& context, std::filesystem::path as
     m_services->events().publish(SceneLoaded{});
 }
 
-void GameplayRunner::stop() {
+void GameplayRunner::stop(ApplicationContext& context) {
+    if (m_services && m_gameplay.behaviours) {
+        destroyAllBehaviours(*m_gameplay.behaviours, context.scene, m_services.get(), &context.logger);
+    }
     m_services.reset();
 }
 
@@ -37,23 +41,29 @@ InputActionMap& GameplayRunner::actionMap() {
     return m_actionMap;
 }
 
-void GameplayRunner::update(ApplicationContext& context, const InputState& input, float deltaSeconds,
-                            float simulatedSeconds) {
+SimulationClock GameplayRunner::simulationClock() const {
+    return m_services ? m_services->simulationClock() : SimulationClock{};
+}
+
+void GameplayRunner::update(ApplicationContext& context, const InputState& input, float deltaSeconds) {
     m_frameInput = input;
     m_frameActions = m_actionMap.evaluate(input);
-    m_frameSeconds = deltaSeconds;
+    m_unscaledFrameSeconds = deltaSeconds;
+    const float seconds = simulatedSeconds(simulationClock(), deltaSeconds);
     if (m_services) {
         m_services->beginFrame();
     }
-    run(SystemPhase::Update, context, &m_frameInput, &m_frameActions, deltaSeconds);
+    run(SystemPhase::Update, context, &m_frameInput, &m_frameActions, seconds, deltaSeconds);
     if (m_services) {
-        m_services->advanceTimers(context.scene, simulatedSeconds);
+        // On the clock as the systems left it, so a pause they requested
+        // holds the timers this frame.
+        m_services->advanceTimers(context.scene, simulatedSeconds(simulationClock(), deltaSeconds));
     }
 }
 
 void GameplayRunner::fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) {
     const InputActionState actions = m_actionMap.evaluate(input);
-    run(SystemPhase::FixedUpdate, context, &input, &actions, deltaSeconds);
+    run(SystemPhase::FixedUpdate, context, &input, &actions, deltaSeconds, deltaSeconds);
 }
 
 void GameplayRunner::afterPhysicsStep(ApplicationContext& context) {
@@ -64,15 +74,19 @@ void GameplayRunner::afterPhysicsStep(ApplicationContext& context) {
 }
 
 void GameplayRunner::lateUpdate(ApplicationContext& context) {
-    run(SystemPhase::LateUpdate, context, &m_frameInput, &m_frameActions, m_frameSeconds);
+    // The engine stepped this frame by the clock as Update left it.
+    run(SystemPhase::LateUpdate, context, &m_frameInput, &m_frameActions,
+        simulatedSeconds(simulationClock(), m_unscaledFrameSeconds), m_unscaledFrameSeconds);
 }
 
 void GameplayRunner::drawUi(ApplicationContext& context) {
-    run(SystemPhase::Ui, context, &m_frameInput, &m_frameActions, m_frameSeconds, &context.gameUi);
+    run(SystemPhase::Ui, context, &m_frameInput, &m_frameActions, m_unscaledFrameSeconds, m_unscaledFrameSeconds,
+        &context.gameUi);
 }
 
 void GameplayRunner::run(SystemPhase phase, ApplicationContext& context, const InputState* input,
-                         const InputActionState* actions, float deltaSeconds, GameUiContext* ui) {
+                         const InputActionState* actions, float deltaSeconds, float unscaledDeltaSeconds,
+                         GameUiContext* ui) {
     if (!m_gameplay.systems) {
         return;
     }
@@ -81,6 +95,7 @@ void GameplayRunner::run(SystemPhase phase, ApplicationContext& context, const I
                       .application = &context,
                       .mode = SimulationMode::Play,
                       .deltaSeconds = deltaSeconds,
+                      .unscaledDeltaSeconds = unscaledDeltaSeconds,
                       .input = input,
                       .logger = &context.logger,
                       .services = m_services.get(),

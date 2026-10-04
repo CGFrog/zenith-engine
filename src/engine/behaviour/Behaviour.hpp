@@ -14,12 +14,15 @@ class PhysicsWorld;
 // reaches the scene, as for systems (see SystemContext). physics is the
 // scene's physics world, for raycasts and other queries; null where no
 // application runs the hooks (Edit mode, onDestroy). deltaSeconds is the
-// frame duration, or the fixed step in onFixedUpdate and the trigger and
-// collision hooks; zero in onDestroy.
+// frame duration on the simulated clock (zero while paused), or the fixed
+// step in onFixedUpdate and the trigger and collision hooks; zero in
+// onDestroy. unscaledDeltaSeconds is the frame's wall-clock duration (see
+// SystemContext).
 struct BehaviourContext {
     Scene& scene;
     Entity entity{entt::null};
     float deltaSeconds{0.0f};
+    float unscaledDeltaSeconds{0.0f};
     GameServices* services{nullptr};
     const InputActionState* actions{nullptr};
     Logger* logger{nullptr};
@@ -47,8 +50,12 @@ struct BehaviourCollision {
 //   onCreate when it starts enabled).
 // - onStart once, before the first update hook of an enabled behaviour.
 // - onDestroy when its entity is destroyed through the session's
-//   EntityCommandBuffer (after onDisable when enabled). A scene destroyed
-//   another way, or a session that stops, calls no hook.
+//   EntityCommandBuffer, and when the session stops or its scene unloads
+//   (after onDisable when enabled). Entities removed another way call no
+//   hook.
+//
+// A hook that throws is caught: the error is logged with the behaviour and
+// its entity, and the behaviour is disabled (so it gets onDisable next).
 //
 // Disabled behaviours get no update, trigger, or collision hooks. Trigger and
 // collision hooks run at the start of the next FixedUpdate after the physics

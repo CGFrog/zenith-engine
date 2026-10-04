@@ -1,8 +1,9 @@
 // Behaviours: registration as component types, the order and lifecycle of
 // their hooks, deferred destruction from a hook, trigger and collision hooks,
-// the modes they run in, and copies.
+// the modes they run in, copies, the end of a session, and hooks that throw.
 
 #include "engine/assets/Assets.hpp"
+#include "engine/behaviour/BehaviourScheduler.hpp"
 #include "engine/graphics/DebugDraw.hpp"
 #include "engine/module/BuiltInSystems.hpp"
 #include "engine/module/GameServices.hpp"
@@ -14,7 +15,9 @@
 #include <algorithm>
 #include <iostream>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -114,6 +117,33 @@ class EditTicker : public Behaviour {
     }
 };
 
+// Throws from the hook throwIn names ("start" or "update").
+class Thrower : public Behaviour {
+  public:
+    std::string throwIn;
+    int32_t updates{0};
+
+    void onStart(BehaviourContext&) override {
+        throwFrom("start");
+    }
+
+    void onUpdate(BehaviourContext&) override {
+        ++updates;
+        throwFrom("update");
+    }
+
+    void onDisable(BehaviourContext& context) override {
+        calls.push_back("T " + nameOf(context, context.entity) + " disable");
+    }
+
+  private:
+    void throwFrom(std::string_view hook) const {
+        if (throwIn == hook) {
+            throw std::runtime_error("boom in " + std::string(hook));
+        }
+    }
+};
+
 const BehaviourType* registeredA = nullptr;
 
 void registerBehaviours(ModuleRegistrar& registrar) {
@@ -124,6 +154,7 @@ void registerBehaviours(ModuleRegistrar& registrar) {
     registrar.addBehaviour<EditTicker>("edit_ticker", "Edit Ticker",
                                        Fields<EditTicker>().add("ticks", &EditTicker::ticks),
                                        {.runIn = RunIn::EditAndPlay, .category = "Tools"});
+    registrar.addBehaviour<Thrower>("thrower", "Thrower");
 }
 
 struct Fixture {
@@ -174,7 +205,7 @@ bool sameCalls(const std::vector<std::string>& expected) {
 void testRegistration() {
     Fixture fixture;
     const BehaviourRegistry& behaviours = *fixture.gameplay.behaviours;
-    expect(behaviours.types().size() == 3 && behaviours.types()[0].key == "recorder_b" &&
+    expect(behaviours.types().size() == 4 && behaviours.types()[0].key == "recorder_b" &&
                behaviours.types()[1].key == "recorder_a",
            "behaviour types keep their registration order");
     registeredA = behaviours.find("recorder_a");
@@ -375,6 +406,76 @@ void testCopiesAreNewBehaviours() {
                       "A Duplicate update"}),
            "a duplicated behaviour is created and started on its own");
 }
+
+void testSessionEnd() {
+    Fixture fixture;
+    const Entity first = fixture.add("First");
+    const Entity second = fixture.add("Second");
+    const Entity idle = fixture.add("Idle");
+    fixture.scene.registry().emplace<RecorderA>(first);
+    fixture.scene.registry().emplace<RecorderA>(second);
+    fixture.scene.registry().emplace<RecorderB>(second);
+    fixture.scene.registry().emplace<RecorderA>(idle).enabled = false;
+    fixture.run(SystemPhase::Update);
+    const Entity unseen = fixture.add("Unseen");
+    fixture.scene.registry().emplace<RecorderA>(unseen);
+
+    calls.clear();
+    destroyAllBehaviours(*fixture.gameplay.behaviours, fixture.scene, &*fixture.services, &fixture.logger);
+    expect(sameCalls({"B Second disable", "B Second destroy", "A First disable", "A First destroy", "A Second disable",
+                      "A Second destroy", "A Idle destroy"}),
+           "ending a session disables and destroys every created behaviour in run order, and skips uncreated ones");
+    expect(fixture.scene.registry().valid(first) && fixture.scene.registry().valid(unseen),
+           "ending a session leaves the entities to their owner");
+    expect(!fixture.scene.registry().get<RecorderA>(first).created() &&
+               !fixture.scene.registry().get<RecorderA>(first).started(),
+           "an ended behaviour counts as uncreated");
+
+    calls.clear();
+    fixture.run(SystemPhase::Update);
+    expect(std::ranges::find(calls, "A First create") != calls.end() &&
+               std::ranges::find(calls, "A First start") != calls.end(),
+           "a later session creates and starts the behaviour again");
+}
+
+bool loggedError(const Logger& logger, std::string_view text) {
+    return std::ranges::any_of(logger.entries(), [text](const LogEntry& entry) {
+        return entry.level == LogLevel::Error && entry.message.find(text) != std::string::npos;
+    });
+}
+
+void testThrowingHooks() {
+    Fixture fixture;
+    const Entity faulty = fixture.add("Faulty");
+    const Entity starter = fixture.add("Starter");
+    const Entity fine = fixture.add("Fine");
+    fixture.scene.registry().emplace<Thrower>(faulty).throwIn = "update";
+    fixture.scene.registry().emplace<Thrower>(starter).throwIn = "start";
+    fixture.scene.registry().emplace<RecorderA>(fine);
+
+    fixture.run(SystemPhase::Update);
+    expect(std::ranges::find(calls, "A Fine update") != calls.end(),
+           "a throwing hook does not stop the other behaviours");
+    const auto& thrower = fixture.scene.registry().get<Thrower>(faulty);
+    expect(thrower.updates == 1 && !thrower.enabled, "a behaviour whose hook throws is disabled");
+    expect(!fixture.scene.registry().get<Thrower>(starter).enabled &&
+               fixture.scene.registry().get<Thrower>(starter).updates == 0,
+           "a behaviour whose onStart throws is disabled before its first update");
+    const std::string faultyId = std::to_string(fixture.scene.id(faulty).value);
+    expect(loggedError(fixture.logger, "Behaviour 'thrower' on entity " + faultyId +
+                                           " (Faulty) threw in onUpdate: "
+                                           "boom in update; it is disabled"),
+           "the error names the behaviour, its entity, the hook, and the exception");
+    expect(loggedError(fixture.logger, "(Starter) threw in onStart: boom in start"),
+           "a throwing onStart is reported too");
+
+    calls.clear();
+    fixture.run(SystemPhase::Update);
+    expect(fixture.scene.registry().get<Thrower>(faulty).updates == 1, "a disabled behaviour gets no more updates");
+    expect(std::ranges::find(calls, "T Faulty disable") != calls.end() &&
+               std::ranges::find(calls, "T Starter disable") != calls.end(),
+           "a behaviour disabled by a failure gets onDisable on the next pass");
+}
 } // namespace
 
 int main() {
@@ -384,5 +485,7 @@ int main() {
     testTriggerAndCollisionHooks();
     testModes();
     testCopiesAreNewBehaviours();
+    testSessionEnd();
+    testThrowingHooks();
     return failures == 0 ? 0 : 1;
 }

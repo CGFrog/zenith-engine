@@ -26,6 +26,8 @@ class GameplayScene final : public ApplicationScene {
     void afterPhysicsStep(ApplicationContext& context) override;
     void lateUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) override;
     bool fixedUpdatesEnabled() const override;
+    // The game module's pause and time scale (GameServices).
+    SimulationClock simulationClock() const override;
     void drawUi(ApplicationContext& context) override;
     void unload(ApplicationContext& context) override;
 

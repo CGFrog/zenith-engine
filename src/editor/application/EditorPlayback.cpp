@@ -339,8 +339,8 @@ void EditorSession::drawGameViewUi(ApplicationContext& context) {
     input.mousePosition -= viewport->position();
     const glm::vec2 size = glm::max(viewport->size(), glm::vec2(1.0f));
     m_gameViewUi.beginFrame({static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y)}, input);
-    m_moduleHost.runSystems(SystemPhase::Ui, context.scene, &context, m_playMode.simulationMode(), 0.0f, &input,
-                            &m_gameViewUi);
+    m_moduleHost.runSystems(SystemPhase::Ui, context.scene, &context, m_playMode.simulationMode(), m_frameGameSeconds,
+                            &input, &m_gameViewUi);
     viewport->setGameUi(&m_gameViewUi);
 }
 
@@ -376,7 +376,7 @@ void EditorSession::stopPlayMode(ApplicationContext& context) {
     context.audio.stopSceneVoices();
     context.physics.clear();
     endGameView();
-    m_moduleHost.stopGameplay();
+    m_moduleHost.stopGameplay(context.scene);
     std::vector<SceneEntityId> restoredSelection;
     m_playMode.stop(context.scene, restoredSelection);
     m_selection.assign(std::move(restoredSelection));

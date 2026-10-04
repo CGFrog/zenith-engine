@@ -60,7 +60,7 @@ class ProjectPlayScene final : public ApplicationScene {
             moveCaptureCamera(context.scene, m_captureCameraEntity, *m_captureCamera, m_captureElapsedSeconds);
             return;
         }
-        m_gameplay.update(context, input, deltaSeconds, simulatedSeconds(simulationClock(), deltaSeconds));
+        m_gameplay.update(context, input, deltaSeconds);
     }
 
     void fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) override {
@@ -88,8 +88,12 @@ class ProjectPlayScene final : public ApplicationScene {
         }
     }
 
-    void unload(ApplicationContext&) override {
-        m_gameplay.stop();
+    SimulationClock simulationClock() const override {
+        return m_gameplay.simulationClock();
+    }
+
+    void unload(ApplicationContext& context) override {
+        m_gameplay.stop(context);
     }
 
   private:

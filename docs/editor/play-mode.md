@@ -15,7 +15,10 @@ camera. The mask is edited with `play.set_simulate_system {system, enabled}`
 `simulate-systems.json` (`settings/SimulateSystemSettings`).
 `play.set_time_scale {scale}` sets `EditorPlayMode`'s time scale, which the
 session's `simulationClock()` reports in Play and Simulate (real time in Edit)
-and which also scales Update systems. The **System Profiler** area
+and which also scales Update and LateUpdate systems. The session applies the
+game module's own pause and time scale on top (`GameServices::
+simulationClock`), so a game that pauses itself for a menu stops in the
+editor as it does in a build. The **System Profiler** area
 (`panels/SystemProfilerPanel`, type `system_profiler`) shows each module
 system's phase, modes, and frame/average/max CPU time (`GameModuleHost::
 systemProfile()`, published by `finishSystemFrame` at the start of `drawUi`),

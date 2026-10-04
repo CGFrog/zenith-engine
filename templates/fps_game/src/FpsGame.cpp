@@ -3,7 +3,6 @@
 #include "engine/gameplay/FirstPerson.hpp"
 #include "engine/module/GameServices.hpp"
 #include "engine/module/ModuleRegistrar.hpp"
-#include "engine/physics/CharacterController.hpp"
 #include "engine/ui/GameMenus.hpp"
 #include "engine/ui/GameUi.hpp"
 
@@ -20,36 +19,11 @@ void showMessage(FpsGameState& state, std::string text) {
     state.messageSeconds = messageSeconds;
 }
 
-// The engine's character and camera systems read the player's input through
-// these action names; clearing them stops the player while a menu is open.
-void setPlayerInput(Scene& scene, FpsGameState& state, bool enabled) {
-    auto& registry = scene.registry();
-    for (auto [entity, character] : registry.view<CharacterControllerComponent>().each()) {
-        if (enabled) {
-            if (character.moveAction.empty()) {
-                character.moveAction = state.moveAction;
-                character.jumpAction = state.jumpAction;
-            }
-        } else if (!character.moveAction.empty()) {
-            state.moveAction = std::exchange(character.moveAction, {});
-            state.jumpAction = std::exchange(character.jumpAction, {});
-            character.desiredVelocity = glm::vec3(0.0f);
-        }
-    }
-    for (auto [entity, view] : registry.view<FirstPersonCameraComponent>().each()) {
-        if (enabled) {
-            if (view.lookAction.empty()) {
-                view.lookAction = state.lookAction;
-            }
-        } else if (!view.lookAction.empty()) {
-            state.lookAction = std::exchange(view.lookAction, {});
-        }
-    }
-}
-
-void setScreen(Scene& scene, FpsGameState& state, FpsScreen screen) {
+// Every screen but Playing pauses the game: physics, the player, timers, and
+// animation stop until it resumes.
+void setScreen(GameServices& services, FpsGameState& state, FpsScreen screen) {
     state.screen = screen;
-    setPlayerInput(scene, state, screen == FpsScreen::Playing);
+    services.setPaused(screen != FpsScreen::Playing);
 }
 
 FirstPersonViewPreferences& viewPreferences(Scene& scene) {
@@ -82,10 +56,10 @@ void updateScore(const SystemContext& context) {
     if (context.actions != nullptr && context.actions->pressed("Pause")) {
         switch (state.screen) {
         case FpsScreen::Playing:
-            setScreen(context.scene, state, FpsScreen::Paused);
+            setScreen(*context.services, state, FpsScreen::Paused);
             break;
         case FpsScreen::Paused:
-            setScreen(context.scene, state, FpsScreen::Playing);
+            setScreen(*context.services, state, FpsScreen::Playing);
             break;
         case FpsScreen::Settings:
             state.screen = FpsScreen::Paused;
@@ -113,7 +87,9 @@ void drawMenus(const SystemContext& context, GameUiContext& ui, FpsGameState& st
         // The game runs in the editor too, so the menu does not quit.
         switch (drawPauseMenu(ui, {.showQuit = false})) {
         case MenuAction::Resume:
-            setScreen(context.scene, state, FpsScreen::Playing);
+            if (context.services != nullptr) {
+                setScreen(*context.services, state, FpsScreen::Playing);
+            }
             break;
         case MenuAction::OpenSettings:
             state.screen = FpsScreen::Settings;
