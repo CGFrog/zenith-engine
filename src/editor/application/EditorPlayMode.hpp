@@ -33,8 +33,8 @@ enum class EditorRuntime {
 
 class EditorPlayMode {
   public:
-    // Runtime changes are intentionally discarded on stop. Applying selected
-    // runtime state back requires a future explicit document command.
+    // Runtime changes are intentionally discarded on stop; Apply to Edit
+    // Scene carries selected runtime state back by patching editScene().
     SceneDocumentResult enter(Scene& activeScene, AssetManager& assets, const SceneDocumentOptions& options,
                               std::span<const SceneEntityId> selection, EditorRuntime runtime = EditorRuntime::Play);
     void pause();
@@ -60,6 +60,11 @@ class EditorPlayMode {
     // playing); a runtime scene runs at the time scale, or not at all while
     // paused.
     SimulationClock simulationClock() const;
+
+    // The edit scene parked while Play or Simulate runs, which stop() swaps
+    // back; null in Edit mode. Apply to Edit Scene patches it (through
+    // SceneEditing::applyToEditScene) so Stop restores the patched version.
+    Scene* editScene();
 
   private:
     Scene m_editScene;

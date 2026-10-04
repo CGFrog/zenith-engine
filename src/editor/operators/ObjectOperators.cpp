@@ -30,12 +30,15 @@ template <typename Properties, typename Function> ExecuteFunction typed(Function
     };
 }
 
-bool inEditMode(const OperatorContext& context) {
-    return context.editMode();
+// Object operators edit whichever scene the context edits: the document in
+// Edit mode, or, live, the runtime scene of Play and Simulate, where nothing
+// is recorded and Stop discards the change (SceneEditing::runtime).
+bool sceneEditable(const OperatorContext&) {
+    return true;
 }
 
 bool hasSelection(const OperatorContext& context) {
-    return context.editMode() && !context.selection.empty();
+    return !context.selection.empty();
 }
 
 Entity activeEntity(const OperatorContext& context) {
@@ -44,7 +47,7 @@ Entity activeEntity(const OperatorContext& context) {
 }
 
 bool hasActive(const OperatorContext& context) {
-    return context.editMode() && activeEntity(context) != entt::null;
+    return activeEntity(context) != entt::null;
 }
 
 void placeEntity(Scene& scene, Entity entity, const glm::vec3& location, float size) {
@@ -73,7 +76,7 @@ Operator addObjectOperator(std::string id, std::string label, std::string descri
             .description = std::move(description),
             .flags = OperatorFlags::Undo | OperatorFlags::Register,
             .properties = OperatorProperties::make(AddObjectProperties{}, addObjectFields()),
-            .poll = inEditMode,
+            .poll = sceneEditable,
             .execute = typed<AddObjectProperties>([create](OperatorContext& context, AddObjectProperties& values) {
                 Scene& scene = context.editing.scene();
                 const Entity entity = create(scene);
@@ -93,7 +96,7 @@ Operator addCubeOperator() {
                                                                  .drag(0.05f)
                                                                  .add("size", &AddCubeProperties::size)
                                                                  .drag(0.01f, 0.001, 1000.0))),
-            .poll = inEditMode,
+            .poll = sceneEditable,
             .execute = typed<AddCubeProperties>([](OperatorContext& context, AddCubeProperties& values) {
                 Scene& scene = context.editing.scene();
                 Entity cube = entt::null;
@@ -120,7 +123,7 @@ Operator createEntityOperator() {
                                         {"child", "Child of active", static_cast<int64_t>(NewEntityPlacement::Child)},
                                         {"sibling", "Sibling of active",
                                          static_cast<int64_t>(NewEntityPlacement::Sibling)}}))),
-            .poll = inEditMode,
+            .poll = sceneEditable,
             .execute = typed<CreateEntityProperties>([](OperatorContext& context, CreateEntityProperties& values) {
                 Scene& scene = context.editing.scene();
                 const Entity active = activeEntity(context);
@@ -199,7 +202,7 @@ Operator selectAllOperator() {
                               .options({{"select", "Select", static_cast<int64_t>(SelectAllAction::Select)},
                                         {"deselect", "Deselect", static_cast<int64_t>(SelectAllAction::Deselect)},
                                         {"invert", "Invert", static_cast<int64_t>(SelectAllAction::Invert)}}))),
-            .poll = inEditMode,
+            .poll = sceneEditable,
             .execute = typed<SelectAllProperties>([](OperatorContext& context, SelectAllProperties& values) {
                 switch (values.action) {
                 case SelectAllAction::Select:
@@ -291,7 +294,7 @@ Operator addEmptyWithOperator() {
                                                                  .add("component", &AddEmptyWithProperties::component)
                                                                  .add("location", &AddEmptyWithProperties::location)
                                                                  .drag(0.05f))),
-            .poll = inEditMode,
+            .poll = sceneEditable,
             .execute = typed<AddEmptyWithProperties>([](OperatorContext& context, AddEmptyWithProperties& values) {
                 const ComponentType* type =
                     componentTypesFor(context.editing.document().options()).find(values.component);

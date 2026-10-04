@@ -49,12 +49,15 @@ OperatorResult OperatorRunner::run(const Operator* op, std::string_view id, Oper
         return reportFailure(context, OperatorResult::failed("Unknown operator '" + std::string(id) + "'"));
     }
     if (!op->canRun(context)) {
-        return OperatorResult::cancelled(op->label + " is not available now");
+        return OperatorResult::cancelled(unavailableMessage(*op, context));
     }
     OperatorProperties values = properties != nullptr ? *properties : op->properties;
     if (!values.sameType(op->properties)) {
         return reportFailure(context,
                              OperatorResult::failed("Properties given to '" + op->id + "' do not match the operator"));
+    }
+    if (context.editing.runtime()) {
+        return runOnRuntimeScene(*op, context, values);
     }
 
     const bool undoable = hasFlag(op->flags, OperatorFlags::Undo);
@@ -93,6 +96,45 @@ OperatorResult OperatorRunner::run(const Operator* op, std::string_view id, Oper
     } else if (recorded) {
         // A newer undo step sits above the remembered operator.
         m_last.reset();
+    }
+    return result;
+}
+
+std::string OperatorRunner::unavailableMessage(const Operator& op, const OperatorContext& context) {
+    if (!context.editMode()) {
+        // Polls are pure, so asking again as Edit mode tells whether the mode
+        // is what blocks the operator.
+        OperatorContext asEdit = context;
+        asEdit.mode = EditorMode::Edit;
+        if (op.canRun(asEdit)) {
+            return op.label + " works only in Edit mode; stop Play or Simulate first";
+        }
+    }
+    return op.label + " is not available now";
+}
+
+OperatorResult OperatorRunner::runOnRuntimeScene(const Operator& op, OperatorContext& context,
+                                                 OperatorProperties& values) {
+    // The snapshot only tells the runtime commit what to mark changed for
+    // the renderer and physics; nothing is recorded.
+    const bool changesScene = hasFlag(op.flags, OperatorFlags::Undo);
+    std::string before;
+    if (changesScene && !context.editing.capture(before)) {
+        return OperatorResult::failed("Could not run " + op.label + " on the running scene");
+    }
+    OperatorResult result = op.execute(context, values);
+    if (result.status == OperatorStatus::Failed && result.message.empty()) {
+        result.message = op.label + " failed";
+    }
+    if (!result) {
+        return reportFailure(context, std::move(result));
+    }
+    // Nothing is recorded, so nothing can be adjusted afterwards either.
+    m_last.reset();
+    if (changesScene) {
+        context.editing.commit(op.label, {}, std::move(before));
+        context.editing.diagnostics().add(EditorDiagnosticSeverity::Info, "Play",
+                                          op.label + " changed the running scene only; Stop discards it.");
     }
     return result;
 }

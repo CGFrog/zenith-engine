@@ -109,10 +109,12 @@ void testPollAndUndo() {
     expect(nothingSelected.status == OperatorStatus::Cancelled && !fixture.history.canUndo(),
            "an operator whose poll fails should be cancelled without changing history");
     {
+        // Object operators edit the running scene live in Play
+        // (LiveEditingTests); document-only ones refuse.
         OperatorContext playing = fixture.context(EditorMode::Play);
-        expect(fixture.runner.invoke("object.add_empty", playing).status == OperatorStatus::Cancelled &&
-                   entityCount(fixture.scene) == 0,
-               "authoring operators should not run in Play mode");
+        expect(fixture.runner.invoke("collection.new", playing).status == OperatorStatus::Cancelled &&
+                   fixture.scene.collections().empty(),
+               "document-only operators should not run in Play mode");
     }
     const OperatorResult unknown = fixture.invoke("object.missing");
     expect(unknown.status == OperatorStatus::Failed && fixture.diagnostics.hasUnacknowledgedError(),

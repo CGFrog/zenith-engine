@@ -66,11 +66,18 @@ ViewShading toViewShading(ViewportShading shading) {
     return ViewShading::Rendered;
 }
 
+ViewportShadingSource viewportShadingSource(EditorMode mode, bool simulating) {
+    if (mode == EditorMode::Edit || simulating) {
+        return ViewportShadingSource::Viewport;
+    }
+    return ViewportShadingSource::Project;
+}
+
 std::optional<RenderSettings> viewportViewSettings(const RenderSettings& projectSettings,
                                                    const RenderCapabilities& capabilities, ViewportShading shading,
-                                                   EditorMode mode) {
+                                                   ViewportShadingSource source) {
     const ViewShading viewShading = toViewShading(shading);
-    if (mode != EditorMode::Edit || viewShading == projectSettings.viewShading) {
+    if (source == ViewportShadingSource::Project || viewShading == projectSettings.viewShading) {
         return std::nullopt;
     }
     RenderSettings settings = projectSettings;
@@ -326,8 +333,8 @@ void ViewportPanel::syncRenderView(EditorContext& context) {
     }
     const RenderView currentLens = lens(scene);
     rendering.setViewOverride(m_view, currentLens);
-    m_appliedViewSettings =
-        viewportViewSettings(rendering.settings(), rendering.capabilities(), m_chrome.shading, context.mode);
+    m_appliedViewSettings = viewportViewSettings(rendering.settings(), rendering.capabilities(), m_chrome.shading,
+                                                 viewportShadingSource(context.mode, context.simulating));
     rendering.setViewSettings(m_view, m_appliedViewSettings);
     if (m_chrome.overlays.grid) {
         const float distance = std::max(m_cameraView ? std::abs(currentLens.position.y) : m_camera.distance(), 0.1f);
@@ -697,8 +704,8 @@ void ViewportPanel::drawItemTab(EditorContext& context) {
     }
     ImGui::TextUnformatted(scene.registry().get<NameComponent>(entity).name.c_str());
     ImGui::Separator();
-    // Play mode edits a throwaway copy of the scene, so only Edit mode edits.
-    ImGui::BeginDisabled(!context.editMode());
+    // In Play and Simulate this edits the running scene live (SceneEditing
+    // records nothing there).
     TransformComponent& transform = scene.registry().get<TransformComponent>(entity);
     const TransformComponent original = transform;
     if (ComponentEditors::drawTransform(transform)) {
@@ -713,7 +720,6 @@ void ViewportPanel::drawItemTab(EditorContext& context) {
             context.editing.commit("Edit Transform", "transform:" + std::to_string(active->value), std::move(before));
         }
     }
-    ImGui::EndDisabled();
 }
 
 void ViewportPanel::selectAtMouse(EditorContext& context) {
@@ -928,6 +934,8 @@ bool ViewportPanel::drawGizmo(EditorContext& context) {
         scene.markTransformDirty(entity);
         scene.updateWorldTransforms();
     } else if (!usingGizmo && m_gizmoWasUsing && !m_gizmoBefore.empty()) {
+        // In Play and Simulate the editing is the runtime scene's, which
+        // records nothing: a drag there never reaches the edit history.
         context.editing.commit("Transform Gizmo", {}, std::move(m_gizmoBefore));
         m_gizmoBefore.clear();
     }

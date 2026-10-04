@@ -107,3 +107,7 @@ SimulationClock EditorPlayMode::simulationClock() const {
     }
     return {.timeScale = m_timeScale, .paused = m_mode == EditorMode::Paused};
 }
+
+Scene* EditorPlayMode::editScene() {
+    return m_mode == EditorMode::Edit ? nullptr : &m_editScene;
+}

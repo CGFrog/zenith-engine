@@ -24,12 +24,11 @@ struct LastOperator {
     std::string sceneAfter;
 };
 
-// Invokes operators: checks poll, runs execute, wraps Undo operators in one
-// undo step, reports failures to diagnostics, records every invocation in a
-// bounded history, and remembers the last Register operator so it can be
-// re-run with edited properties. It holds references to
-// the registry and the history the invocation contexts edit; both must
-// outlive it.
+// Invokes operators: checks poll (explaining when only Edit mode allows the
+// operator), runs execute, wraps Undo operators in one undo step (except on
+// the runtime scene of Play or Simulate, whose edits are never recorded), reports failures to diagnostics, records
+// every invocation in a bounded history, and remembers the last Register operator so it can be re-run with edited
+// properties. It holds references to the registry and the history the invocation contexts edit; both must outlive it.
 class OperatorRunner {
   public:
     OperatorRunner(const OperatorRegistry& registry, const CommandHistory& history);
@@ -65,6 +64,12 @@ class OperatorRunner {
     OperatorResult reportFailure(OperatorContext& context, OperatorResult result) const;
     OperatorResult run(const Operator* op, std::string_view id, OperatorContext& context,
                        const OperatorProperties* properties);
+    // Why op cannot run: Edit mode only, or unavailable for another reason.
+    static std::string unavailableMessage(const Operator& op, const OperatorContext& context);
+    // Runs op on the runtime scene of Play or Simulate (SceneEditing::runtime):
+    // no undo step and no Adjust Last Operation, and an Undo operator's change
+    // is noted in Info as discarded on Stop.
+    OperatorResult runOnRuntimeScene(const Operator& op, OperatorContext& context, OperatorProperties& values);
     static OperatorHistoryEntry pendingInvocation(std::string_view id, const Operator* op, std::string propertiesJson);
     void recordInvocation(OperatorHistoryEntry entry, const OperatorResult& result);
 

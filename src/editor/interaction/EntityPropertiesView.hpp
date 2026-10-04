@@ -32,7 +32,10 @@ std::vector<std::string> entityComponentCategories(const ComponentTypeRegistry& 
 //
 // Every edit is recorded through the context's SceneEditing as one undoable
 // command whose coalesce key names the entities and what changed, so a drag
-// merges into one step. filter is a case-insensitive label filter (see
+// merges into one step. In Play and Simulate the view draws the running
+// scene's current values each frame and edits them live through the same
+// calls, which the runtime SceneEditing does not record; a component header
+// then also offers Apply to Edit Scene. filter is a case-insensitive label filter (see
 // matchesInspectorFilter); empty shows everything.
 //
 // Components are listed from the document's component registry, in the
@@ -111,8 +114,15 @@ class EntityPropertiesView {
     // instance). Draws nothing for other entities.
     void drawPrefabHeader(EditorContext& context, SceneEntityId entityId) const;
 
+    // In Play and Simulate (the context edits the running scene live, see
+    // SceneEditing::runtime): a notice that edits are unrecorded and lost on
+    // Stop, with an Apply Selection to Edit Scene button
+    // (play.apply_to_edit). Draws nothing in Edit mode.
+    void drawRuntimeNotice(EditorContext& context) const;
+
     // How the entity differs from its prefab, as the view highlights it;
-    // cached until the document revision or the prefab file changes.
+    // cached until the document revision or the prefab file changes. Empty
+    // (unlinked) outside Edit mode, where the running scene is shown.
     const PrefabEntityOverrides& prefabOverrides(const EditorContext& context, SceneEntityId entityId) const;
 
   private:
@@ -123,8 +133,9 @@ class EntityPropertiesView {
         std::string properties;
     };
 
+    // shownEntity is the entity whose values the section shows.
     std::optional<HeaderAction> drawComponentMenu(EditorContext& context, const ComponentType& type,
-                                                  const ComponentDrawOptions& options,
+                                                  const ComponentDrawOptions& options, SceneEntityId shownEntity,
                                                   std::optional<SceneEntityId> overriddenEntity) const;
     // Draws the values of the first target, copying edits to the others, and
     // records a change as one undo step. Returns a field's "Revert to Prefab"

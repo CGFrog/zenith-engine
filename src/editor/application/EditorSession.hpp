@@ -255,6 +255,9 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     bool updateSmokePicking(ApplicationContext& context);
     // Exercises multi-entity component operators and their undo.
     bool updateSmokeComponents(ApplicationContext& context);
+    // Edits the running scene in Play, applies it to the edit scene, stops,
+    // and undoes it (EditorLiveEditSmoke.cpp); true when done.
+    bool updateSmokeLiveEdit(ApplicationContext& context);
 
     enum class PendingAction {
         None,
@@ -419,6 +422,11 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     PickTicket m_smokePickTicket;
     SceneEntityId m_smokePickEntity;
     RenderObjectId m_smokePickObject{0};
+    // The live edit smoke's empty, its location before the smoke moved it,
+    // and the edit history's size once it was added.
+    SceneEntityId m_smokeLiveEntity;
+    glm::vec3 m_smokeLiveStartLocation{0.0f};
+    size_t m_smokeLiveHistorySize{0};
 
     struct ActiveTransform {
         ModalTransform transform;

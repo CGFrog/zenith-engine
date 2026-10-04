@@ -22,15 +22,28 @@
 // The renderer's shading mode for a viewport shading choice.
 ViewShading toViewShading(ViewportShading shading);
 
+// Whose shading a viewport shows.
+enum class ViewportShadingSource : uint8_t {
+    // The viewport's own shading choice (Solid, Wireframe, ...).
+    Viewport,
+    // The project's render settings: the game's look.
+    Project,
+};
+
+// Play (running or paused) shows the game's look; Edit and Simulate, which
+// like Blender's simulation is an editor view of the running scene, keep each
+// viewport's own shading. simulating is EditorPlayMode::simulating.
+ViewportShadingSource viewportShadingSource(EditorMode mode, bool simulating);
+
 // The per-view settings override a viewport hands its render view: none
-// (follow the project's settings) outside Edit mode, so Play mode always shows
-// the game's look, and when the project's settings already shade that way;
-// otherwise a copy of projectSettings with the viewport's shading, reduced
-// for that mode (viewShadingFrameSettings, including the capability
+// (follow the project's settings) when the source is Project, so Play mode
+// always shows the game's look, and when the project's settings already shade
+// that way; otherwise a copy of projectSettings with the viewport's shading,
+// reduced for that mode (viewShadingFrameSettings, including the capability
 // fallback). The project's settings themselves are never changed.
 std::optional<RenderSettings> viewportViewSettings(const RenderSettings& projectSettings,
                                                    const RenderCapabilities& capabilities, ViewportShading shading,
-                                                   EditorMode mode);
+                                                   ViewportShadingSource source);
 
 // Whether a viewport records its scene gizmos (ViewportOverlays::scene): always
 // in Edit mode; in Play mode only when the user enabled sceneInPlay, and never

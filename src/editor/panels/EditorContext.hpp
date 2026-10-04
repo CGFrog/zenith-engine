@@ -69,6 +69,9 @@ struct EditorContext {
     // The session's menus, to draw one inline; open a popup menu by running
     // wm.call_menu.
     EditorMenus& menus;
+    // Whether the runtime scene (running or paused) is a Simulate, which keeps
+    // the editor's view of it (see EditorPlayMode::simulating).
+    bool simulating{false};
 
     bool editMode() const {
         return mode == EditorMode::Edit;

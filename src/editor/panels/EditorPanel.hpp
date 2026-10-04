@@ -21,8 +21,10 @@ class EditorPanel {
         return 0;
     }
 
-    // Panels that edit the authored scene are read-only outside Edit mode,
-    // because Play mode runs on a throwaway copy of the scene.
+    // Whether the panel is drawn disabled outside Edit mode. Scene editing
+    // panels need not be: in Play and Simulate their SceneEditing edits the
+    // running scene live without recording history (SceneEditing::runtime).
+    // Only a panel that edits nothing but the document should return true.
     virtual bool editModeOnly() const {
         return false;
     }

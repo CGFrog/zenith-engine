@@ -4,6 +4,7 @@
 #include "editor/interaction/GraphicsSettingsEditor.hpp"
 #include "editor/modules/GameModuleHost.hpp"
 #include "editor/panels/EditorContext.hpp"
+#include "editor/panels/SimulateSystemPicker.hpp"
 #include "editor/theme/EditorWidgets.hpp"
 
 #include <imgui.h>
@@ -114,6 +115,8 @@ void SystemProfilerPanel::drawRuntimeControls(EditorContext& context) const {
     if (widgets::Button("Reset Max")) {
         context.invoke("profiler.reset_max");
     }
+    ImGui::SameLine();
+    drawSimulateSystemPickerButton(context, m_modules);
 }
 
 void SystemProfilerPanel::drawSystems(EditorContext& context) const {

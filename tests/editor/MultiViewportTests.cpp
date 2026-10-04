@@ -99,6 +99,7 @@ struct Fixture {
     OperatorActions actions{editing(), history, selection};
     EditorMenus menus;
     EditorMode mode{EditorMode::Edit};
+    bool simulating{false};
     ViewportRegistry viewports;
     std::vector<std::unique_ptr<ViewportPanel>> panels;
 
@@ -126,7 +127,8 @@ struct Fixture {
                 .diagnostics = diagnostics,
                 .mode = mode,
                 .actions = actions,
-                .menus = menus};
+                .menus = menus,
+                .simulating = simulating};
     }
 
     ViewportPanel& addViewport() {
@@ -305,18 +307,26 @@ void testShadingStaysOutOfProjectSettings() {
     project.ambientOcclusion = AmbientOcclusionQuality::Off;
     RenderCapabilities capabilities;
     capabilities.wireframe = true;
-    expect(!viewportViewSettings(project, capabilities, ViewportShading::Rendered, EditorMode::Edit),
+    constexpr ViewportShadingSource ownShading = ViewportShadingSource::Viewport;
+    expect(!viewportViewSettings(project, capabilities, ViewportShading::Rendered, ownShading),
            "a Rendered viewport should follow the project's settings");
     const std::optional<RenderSettings> wireframe =
-        viewportViewSettings(project, capabilities, ViewportShading::Wireframe, EditorMode::Edit);
+        viewportViewSettings(project, capabilities, ViewportShading::Wireframe, ownShading);
     expect(wireframe && wireframe->viewShading == ViewShading::Wireframe,
            "a Wireframe viewport should override its view's shading");
     expect(project.viewShading == ViewShading::Rendered, "the project's settings should be left unchanged");
-    expect(!viewportViewSettings(project, capabilities, ViewportShading::Wireframe, EditorMode::Play),
-           "Play mode should show the project's own look");
+    expect(!viewportViewSettings(project, capabilities, ViewportShading::Wireframe, ViewportShadingSource::Project),
+           "the project source should show the project's own look");
+    expect(viewportShadingSource(EditorMode::Edit, false) == ownShading &&
+               viewportShadingSource(EditorMode::Play, false) == ViewportShadingSource::Project &&
+               viewportShadingSource(EditorMode::Paused, false) == ViewportShadingSource::Project,
+           "Edit keeps the viewport's shading and Play (also paused) shows the project's");
+    expect(viewportShadingSource(EditorMode::Simulate, true) == ownShading &&
+               viewportShadingSource(EditorMode::Paused, true) == ownShading,
+           "Simulate (also paused) is an editor view and keeps the viewport's shading");
     capabilities.wireframe = false;
     const std::optional<RenderSettings> fallback =
-        viewportViewSettings(project, capabilities, ViewportShading::Wireframe, EditorMode::Edit);
+        viewportViewSettings(project, capabilities, ViewportShading::Wireframe, ownShading);
     expect(fallback && fallback->viewShading == ViewShading::Solid,
            "Wireframe should fall back to Solid without the wireframe capability");
 
@@ -334,6 +344,11 @@ void testShadingStaysOutOfProjectSettings() {
     fixture.mode = EditorMode::Play;
     imgui.frame(fixture, {5.0f, 5.0f}, {&left, &right});
     expect(!right.appliedViewSettings(), "Play mode should not inherit the viewport's shading");
+    fixture.mode = EditorMode::Simulate;
+    fixture.simulating = true;
+    imgui.frame(fixture, {5.0f, 5.0f}, {&left, &right});
+    expect(right.appliedViewSettings() && right.appliedViewSettings()->viewShading == ViewShading::Solid,
+           "Simulate should keep the viewport's own shading");
 }
 
 void testCameraView() {

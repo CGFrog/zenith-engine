@@ -94,10 +94,6 @@ const char* HierarchyPanel::title() const {
     return "Hierarchy";
 }
 
-bool HierarchyPanel::editModeOnly() const {
-    return true;
-}
-
 std::string HierarchyPanel::areaState() const {
     return std::string(outlinerDisplayModeKey(m_mode));
 }
@@ -149,6 +145,9 @@ void HierarchyPanel::draw(EditorContext& context) {
     m_setAllOpen = std::exchange(m_requestedAllOpen, std::nullopt);
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
         context.actions.handleObjectKeys(context.app, KeymapRegion::Outliner);
+    }
+    if (!context.editMode()) {
+        widgets::CaptionText("Running scene: changes are lost on Stop", palette::warning);
     }
     drawHeader(context);
     ImGui::Separator();
@@ -466,6 +465,12 @@ void HierarchyPanel::drawEntityContextMenu(EditorContext& context, SceneEntityId
         context.selection.selectOnly(entity);
     }
     const Scene& scene = context.app.scene;
+    if (!context.editMode()) {
+        // Everything else here changes the running scene only.
+        operatorMenuItem(context, "Apply to Edit Scene", "play.apply_to_edit");
+        ImGui::TextDisabled("Other changes here are lost on Stop");
+        ImGui::Separator();
+    }
     operatorMenuItem(context, "Create Child", "object.create_entity", R"({"placement":"child"})");
     operatorMenuItem(context, "Create Sibling", "object.create_entity", R"({"placement":"sibling"})");
     ImGui::Separator();

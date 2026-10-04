@@ -31,8 +31,9 @@ Entity activeEntity(const OperatorContext& context) {
     return active ? context.editing.scene().findEntity(*active) : entt::null;
 }
 
+// In Play and Simulate the operators edit the runtime scene live, unrecorded.
 bool hasActive(const OperatorContext& context) {
-    return context.editMode() && activeEntity(context) != entt::null;
+    return activeEntity(context) != entt::null;
 }
 
 bool hasSeveralSelected(const OperatorContext& context) {
