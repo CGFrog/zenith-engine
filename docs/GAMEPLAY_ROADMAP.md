@@ -6,7 +6,7 @@ roadmap (reflection, module hot reload, operators, workspaces, prefabs, play
 targets). Each item is sized so that one session, or one `/batch` unit, can
 finish it.
 
-Approved 2026-10-04. Phases A, B, and C are done; Phase D remains.
+Approved 2026-10-04. Every phase (A to D) is done.
 
 ## How to use this document
 
@@ -167,12 +167,12 @@ Approved 2026-10-04. Phases A, B, and C are done; Phase D remains.
 | C4 | Debugging tools | A2 | done e68d709 |
 | C5 | Project settings editors | A3, A4 | done 8975b5d |
 | C6 | FPS template and tutorial | B1–B6, C2, C3 | done 6a257db |
-| D1 | Split `PrefabSystem.cpp` | — | todo |
+| D1 | Split `PrefabSystem.cpp` | — | done 10eb690 |
 | D2 | Split `EditorSession.cpp` | — | done 122b2bb |
 | D3 | Split `FileWatcher.cpp` per backend | — | done fe541bd |
-| D4 | Targeted diffs in `SceneEditing` | — | todo |
-| D5 | Shared versioned-settings helper | — | todo |
-| D6 | Measure prefab compare/refresh cost | — | todo |
+| D4 | Targeted diffs in `SceneEditing` | — | done a8e58bd |
+| D5 | Shared versioned-settings helper | — | done 89d1a71 |
+| D6 | Measure prefab compare/refresh cost | — | done d518873 |
 | D7 | Docs hygiene | — | done c5b111b |
 
 Suggested batches:
@@ -961,6 +961,11 @@ These items are independent and can go into any batch.
   and fails instead of aborting, and both watcher tests have a 60 s timeout.
   Eight repeated parallel suite runs passed. Since the hang was never
   reproduced on demand, reopen this if it comes back.
+
+- `zenith_showcase_capture_fsr1_upscale` failed once in the Phase D
+  `check.ps1 -Full` run and passed alone four times. It is a GPU reference
+  capture that Phase D's CPU-side changes do not reach, so it is likely a
+  flake under parallel Vulkan load.
 
 - Hot reload during Play is out of scope for now. Reloads stay queued until
   Stop.
