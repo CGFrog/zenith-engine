@@ -120,6 +120,14 @@ SceneResult ProjectApplication::onStart(ApplicationContext& context) {
     if (const PhysicsResult result = context.physics.setLayers(m_project.physicsLayerTable()); !result) {
         return {.error = "Invalid project physics layers: " + result.error};
     }
+    // The project's action file overrides the module's default bindings; a
+    // bad file is reported and the module's defaults are played with.
+    InputActionMap actions = m_gameplay.inputActions ? *m_gameplay.inputActions : InputActionMap{};
+    if (const ProjectConfigResult loaded = loadProjectInputActions(m_project, actions); !loaded) {
+        context.logger.log(LogLevel::Error, "game", loaded.error);
+    } else {
+        m_gameplay.inputActions = std::make_shared<const InputActionMap>(std::move(actions));
+    }
     return {.success = true};
 }
 

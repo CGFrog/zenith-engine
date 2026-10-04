@@ -80,6 +80,9 @@ struct FieldPresentation {
     bool color{false};
     bool readOnly{false};
     bool hidden{false};
+    // An integer index chosen from a list of names the editor supplies (for
+    // example physicsLayerNameList); empty edits the number itself.
+    std::string nameList;
 };
 
 struct FieldDescriptor {
@@ -260,6 +263,13 @@ template <typename Object> class Fields {
 
     Fields& hidden() {
         last().presentation.hidden = true;
+        return *this;
+    }
+
+    // The last field, an integer, indexes the editor's list of names called
+    // listName; the inspector shows a choice of names instead of a number.
+    Fields& nameList(std::string listName) {
+        last().presentation.nameList = std::move(listName);
         return *this;
     }
 

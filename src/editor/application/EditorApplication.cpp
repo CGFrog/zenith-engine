@@ -219,10 +219,15 @@ std::unique_ptr<ApplicationScene> EditorApplication::createSession() {
     // Without a project file, render settings persist beside the editor's
     // own settings.
     EditorRenderSettings renderSettings(m_project, m_settingsDirectory / "render-settings.json");
+    InputActionMap projectActions;
+    const ProjectConfigResult actionsLoaded = loadProjectInputActions(m_project, projectActions);
     EditorProjectServices services{
         .build = projectBuildRequest(m_project.projectFile),
         .projectFile = m_project.projectFile,
         .codeSnippetDirectory = m_codeSnippetDirectory,
+        .tags = m_project.tags,
+        .inputActions = std::move(projectActions),
+        .inputActionsError = actionsLoaded ? std::string{} : actionsLoaded.error,
         .physicsLayers = m_project.physicsLayerTable(),
         .play = m_play,
         // The session publishes its policy every frame and resets it

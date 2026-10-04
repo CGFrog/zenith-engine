@@ -7,13 +7,15 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 class AssetManager;
 class ComponentTypeRegistry;
+class InputActionMap;
 class Scene;
 
 struct ProjectConfig {
-    static constexpr int currentVersion = 5;
+    static constexpr int currentVersion = 6;
 
     std::filesystem::path projectFile;
     std::string displayName;
@@ -30,6 +32,15 @@ struct ProjectConfig {
     // {"name", "collidesWith": [names]} objects whose order gives each
     // layer's index; a pair collides when either lists the other.
     std::optional<PhysicsLayerTable> physicsLayers;
+    // The project's default input actions (version 6): a JSON file
+    // (InputActionsJson.hpp) stored relative to the project file and resolved
+    // to an absolute path on load. Its actions replace the game module's
+    // actions of the same name (loadProjectInputActions). Empty when the
+    // project has none.
+    std::filesystem::path inputActions;
+    // The tag names the project declares for TagsComponent (version 6), in
+    // the order the editor lists them; unique and non-empty.
+    std::vector<std::string> tags;
 
     // physicsLayers, or the defaults.
     PhysicsLayerTable physicsLayerTable() const;
@@ -45,6 +56,12 @@ struct ProjectConfigResult {
 };
 
 ProjectConfigResult loadProjectConfig(const std::filesystem::path& path, ProjectConfig& config);
+// Empty when tags can be saved: unique, non-empty, and on one line each.
+std::string validateProjectTags(const std::vector<std::string>& tags);
+// Reads the project's input action file, when it names one, and lets its
+// actions replace those of actions with the same name (a game's defaults,
+// from its module). A project without the file leaves actions alone.
+ProjectConfigResult loadProjectInputActions(const ProjectConfig& config, InputActionMap& actions);
 ProjectConfigResult saveProjectConfig(const std::filesystem::path& path, const ProjectConfig& config);
 ProjectConfigResult resolveProjectScene(const ProjectConfig& config, const std::filesystem::path& reference,
                                         std::filesystem::path& scenePath);

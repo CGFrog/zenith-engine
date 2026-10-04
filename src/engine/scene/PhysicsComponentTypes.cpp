@@ -7,6 +7,7 @@
 #include "ComponentTypeHelpers.hpp"
 #include "ComponentTypes.hpp"
 #include "engine/physics/CharacterController.hpp"
+#include "engine/physics/PhysicsLayers.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -101,6 +102,7 @@ ComponentType rigidBodyComponentType() {
                     // An index into the project's layer table (0 Static, 1
                     // Dynamic, 2 Player by default).
                     .add("layer", &C::layer)
+                    .nameList(std::string(physicsLayerNameList))
                     .drag(0.1f, 0.0, static_cast<double>(maxPhysicsLayers - 1))
                     .add("mass", &C::mass)
                     .drag(0.05f, 0.001, 100000.0)
@@ -146,6 +148,7 @@ ComponentType characterControllerComponentType() {
                     .format("%.2f m")
                     .tooltip("Half the capsule's cylinder height, excluding the end caps")
                     .add("layer", &C::layer)
+                    .nameList(std::string(physicsLayerNameList))
                     .drag(0.1f, 0.0, static_cast<double>(maxPhysicsLayers - 1))
                     .add("slope_limit", &C::slopeLimitRadians)
                     .angle()

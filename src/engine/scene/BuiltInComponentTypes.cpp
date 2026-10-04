@@ -36,7 +36,7 @@ SceneDocumentResult registerBuiltInComponentTypes(ComponentTypeRegistry& registr
         return result;
     }
     for (ComponentType type : {characterControllerComponentType(), firstPersonCameraComponentType(),
-                               animatorComponentType(), navAgentComponentType()}) {
+                               animatorComponentType(), navAgentComponentType(), tagsComponentType()}) {
         if (SceneDocumentResult result = registry.add(std::move(type)); !result) {
             return result;
         }

@@ -1,3 +1,4 @@
+#include "engine/input/InputActionsJson.hpp"
 #include "engine/project/ProjectConfig.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 #include "engine/scene/ComponentTypes.hpp"
@@ -166,7 +167,7 @@ int main() {
     expect(saveProjectConfig(moduleProjectPath, withModule).success, "a project with a game module should save");
     const std::string moduleProjectText = readFile(moduleProjectPath);
     expect(moduleProjectText.find(R"("gameModule": "bin/game_module.dll")") != std::string::npos &&
-               moduleProjectText.find(R"("version": 5)") != std::string::npos,
+               moduleProjectText.find(R"("version": 6)") != std::string::npos,
            "the game module is written relative to the project file");
     ProjectConfig loadedWithModule;
     expect(loadProjectConfig(moduleProjectPath, loadedWithModule).success &&
@@ -240,6 +241,55 @@ int main() {
     ProjectConfig versionFour;
     expect(loadProjectConfig(versionFourPath, versionFour).success && !versionFour.physicsLayers,
            "version 4 projects load with the default physics layers");
+
+    // Version 6: the input action file and the tag list.
+    ProjectConfig withInput = source;
+    withInput.inputActions = directory / "config" / "input_actions.json";
+    withInput.tags = {"enemy", "pickup"};
+    const std::filesystem::path inputPath = directory / "input.zenith-project";
+    ProjectConfig loadedInput;
+    expect(saveProjectConfig(inputPath, withInput).success && loadProjectConfig(inputPath, loadedInput).success &&
+               loadedInput.inputActions == withInput.inputActions && loadedInput.tags == withInput.tags &&
+               readFile(inputPath).find(R"("inputActions": "config/input_actions.json")") != std::string::npos,
+           "the input action file (relative to the project) and tags round-trip");
+    ProjectConfig badTags = source;
+    badTags.tags = {"enemy", "enemy"};
+    expect(!saveProjectConfig(directory / "bad-tags.zenith-project", badTags), "a tag listed twice is not saved");
+    const std::filesystem::path versionFivePath = directory / "version-five.zenith-project";
+    {
+        nlohmann::json document = nlohmann::json::parse(readFile(inputPath));
+        document["version"] = 5;
+        writeFile(versionFivePath, document.dump());
+    }
+    ProjectConfig versionFive;
+    expect(loadProjectConfig(versionFivePath, versionFive).success && versionFive.inputActions.empty() &&
+               versionFive.tags.empty(),
+           "version 5 projects load without input actions or tags");
+
+    // The project's actions override the module's of the same name.
+    InputActionMap moduleActions;
+    moduleActions.addAction("Jump", InputActionValueType::Button);
+    moduleActions.addBinding("Jump", {.source = Key::Space});
+    moduleActions.addAction("Fire", InputActionValueType::Button);
+    InputActionMap projectActions;
+    projectActions.addAction("Jump", InputActionValueType::Button);
+    projectActions.addBinding("Jump", {.source = Key::E});
+    projectActions.addAction("Crouch", InputActionValueType::Button);
+    expect(saveInputActionMap(withInput.inputActions, projectActions).success, "the project's actions save");
+    InputActionMap merged = moduleActions;
+    expect(loadProjectInputActions(loadedInput, merged).success && merged.actionNames().size() == 3 &&
+               merged.bindings("Jump").size() == 1 && std::get<Key>(merged.bindings("Jump")[0].source) == Key::E &&
+               merged.contains("Fire"),
+           "the project's actions replace the module's of the same name and add their own");
+    InputActionMap untouched = moduleActions;
+    expect(loadProjectInputActions(source, untouched).success && untouched.bindings("Jump").size() == 1,
+           "a project without an input action file leaves the module's actions alone");
+    writeFile(withInput.inputActions, "{\"version\": 1, \"actions\": [{\"name\": \"Jump\", \"type\": \"leap\"}]}");
+    InputActionMap afterBadFile = moduleActions;
+    const ProjectConfigResult badFile = loadProjectInputActions(loadedInput, afterBadFile);
+    expect(!badFile && badFile.error.find("Jump") != std::string::npos &&
+               std::get<Key>(afterBadFile.bindings("Jump")[0].source) == Key::Space,
+           "a bad input action file is reported and changes nothing");
 
     writeFile(projectPath, "{not json");
     ProjectConfig preserved = loaded;

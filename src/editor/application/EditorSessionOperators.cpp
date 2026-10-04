@@ -100,5 +100,12 @@ OperatorRegistrationResult registerOperatorWindowFamily(OperatorRegistry& regist
     operators.push_back(applicationOperator("wm.keymap_editor", "Keymap Editor",
                                             "Change, add, or reset keyboard shortcuts", {},
                                             [&windows](ApplicationContext&) { windows.openKeymapEditor(); }));
+    operators.push_back(applicationOperator(
+        "project.settings", "Project Settings",
+        "Edit the project's physics layers and collision matrix, input actions, and tags",
+        [hasProject = !services.projectFile.empty()](const OperatorContext& context) {
+            return hasProject && context.app != nullptr;
+        },
+        [&windows](ApplicationContext& context) { windows.openProjectSettings(context); }));
     return addOperators(registry, std::move(operators));
 }

@@ -219,6 +219,15 @@ into stable scene instances with per-instance asset leases, desired-set
 streaming, deterministic unload, and validated cross-instance entity
 references.
 
+## `src/engine/scene/Tags.*`
+
+`TagsComponent` (key `tags`, category Gameplay) lists names game code finds
+entities by: `hasTag(scene, entity, tag)` and `findEntitiesWithTag(scene,
+tag)`, in scene id order. It saves as `{"tags": [...]}` through a custom
+codec, since reflection has no string lists, and rejects empty names. The
+project's manifest lists the tags the editor's picker offers, but any name
+works at runtime.
+
 ## Folder contents
 
 `src/engine/reflection/`: Plain-data field descriptors and their JSON codec; no

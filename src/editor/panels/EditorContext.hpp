@@ -22,6 +22,7 @@ class EditorMenus;
 class EditorScriptInfo;
 class NavigationWorld;
 class WatchList;
+struct EditorProjectNames;
 
 // Session-level workflows a panel can trigger but does not own: running
 // operators, the region keymaps, document replacement, and modal transforms.
@@ -106,6 +107,9 @@ struct EditorContext {
     // The fields the Properties panel watches; null where there is none.
     // Change it through debug.watch_field and debug.unwatch_field.
     const WatchList* watches{nullptr};
+    // The project's physics layer and tag names, which inspectors offer as
+    // choices; null where there is none.
+    const EditorProjectNames* projectNames{nullptr};
 
     bool editMode() const {
         return mode == EditorMode::Edit;

@@ -4,9 +4,14 @@
 #include "GameplayComponentTypes.hpp"
 
 #include "ComponentTypes.hpp"
+#include "Tags.hpp"
 #include "engine/gameplay/FirstPerson.hpp"
 
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
 #include <string>
+#include <vector>
 
 ComponentType firstPersonCameraComponentType() {
     using C = FirstPersonCameraComponent;
@@ -43,6 +48,32 @@ ComponentType firstPersonCameraComponentType() {
                 return "first-person camera minimum pitch must not exceed its maximum";
             }
             return {};
+        })
+        .build();
+}
+
+ComponentType tagsComponentType() {
+    using Json = nlohmann::json;
+    return ComponentTypeBuilder<TagsComponent>("tags", "Tags")
+        .category("Gameplay")
+        .codec(
+            [](const TagsComponent& component, const ComponentSaveContext&, Json& output) {
+                output = {{"tags", component.tags}};
+                return SceneDocumentResult{.success = true};
+            },
+            [](const Json& input, TagsComponent& component, const ComponentLoadContext&) {
+                const auto tags = input.find("tags");
+                if (tags == input.end() || !tags->is_array() ||
+                    !std::ranges::all_of(*tags, [](const Json& tag) { return tag.is_string(); })) {
+                    return SceneDocumentResult{.error = "tags must be an array of names"};
+                }
+                component.tags = tags->get<std::vector<std::string>>();
+                return SceneDocumentResult{.success = true};
+            })
+        .validate([](const TagsComponent& component) {
+            return std::ranges::any_of(component.tags, [](const std::string& tag) { return tag.empty(); })
+                       ? std::string("a tag must not be empty")
+                       : std::string{};
         })
         .build();
 }

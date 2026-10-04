@@ -117,7 +117,7 @@ void testBuiltIns() {
     expect(builtIns == builtInComponentTypes(), "the built-in registry should be created once");
     // 18 engine components, collection membership, collection instance, and
     // visibility, plus the two prefab link types.
-    expect(builtIns->types().size() == 27, "every serialized engine component should be registered");
+    expect(builtIns->types().size() == 28, "every serialized engine component should be registered");
     const ComponentType* light = builtIns->find("point_light");
     expect(light != nullptr && light->displayName() == "Point Light" && !light->internal(),
            "point lights should be a user-facing type");
@@ -175,7 +175,8 @@ void testBuiltInRegistrationOrder() {
                                                  "character_controller",
                                                  "first_person_camera",
                                                  "animator",
-                                                 "nav_agent"};
+                                                 "nav_agent",
+                                                 "tags"};
     std::vector<std::string_view> actual;
     for (const ComponentType& type : builtInComponentTypes()->types()) {
         actual.push_back(type.key());

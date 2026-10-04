@@ -365,6 +365,27 @@ std::string escapePointerToken(std::string_view key) {
     return escaped;
 }
 
+// A combo choosing an index by name. An index past the names (a layer the
+// project removed) shows as its number until another is chosen.
+bool drawNamedIndex(const char* label, uint32_t& index, const std::vector<std::string>& names, bool mixed) {
+    const std::string preview = mixed                  ? std::string(mixedValueText)
+                                : index < names.size() ? names[index]
+                                                       : "#" + std::to_string(index) + " (not in the project)";
+    bool changed = false;
+    if (ImGui::BeginCombo(label, preview.c_str())) {
+        for (uint32_t candidate = 0; candidate < names.size(); ++candidate) {
+            ImGui::PushID(static_cast<int>(candidate));
+            if (ImGui::Selectable(names[candidate].c_str(), !mixed && candidate == index)) {
+                index = candidate;
+                changed = true;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
 // Marks the field just drawn when it is a prefab override, and gives it a
 // context menu (##FieldMenu) with Revert to Prefab for an override and Watch
 // Field when the options watch. Struct fields (tree nodes) and read-only text
@@ -426,6 +447,12 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
         break;
     case FieldKind::UInt32: {
         uint32_t& stored = field.value<uint32_t>(object);
+        const std::vector<std::string>* names =
+            !presentation.nameList.empty() && options.nameList ? options.nameList(presentation.nameList) : nullptr;
+        if (names != nullptr) {
+            changed = drawNamedIndex(label, stored, *names, mixed.any);
+            break;
+        }
         int value = static_cast<int>(std::min<uint32_t>(stored, INT_MAX));
         if (drawInt(label, value, presentation, 0, mixed.any)) {
             stored = static_cast<uint32_t>(std::max(value, 0));

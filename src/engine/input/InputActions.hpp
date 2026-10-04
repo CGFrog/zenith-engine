@@ -3,6 +3,8 @@
 #include "InputManager.hpp"
 
 #include <glm/glm.hpp>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -67,6 +69,17 @@ class InputActionMap {
     bool replaceBinding(std::string_view action, size_t index, InputBinding binding);
     bool clearBindings(std::string_view action);
     size_t bindingCount(std::string_view action) const;
+    // The action's value type, or nullopt for an unknown action.
+    std::optional<InputActionValueType> actionType(std::string_view action) const;
+    // Whether the action's value is clamped; false for an unknown action.
+    bool clampsValue(std::string_view action) const;
+    // The action's bindings in order; empty for an unknown action.
+    std::span<const InputBinding> bindings(std::string_view action) const;
+    bool removeAction(std::string_view action);
+    // Adds every action of other; an action other shares with this map is
+    // replaced by other's (type, clamping, and bindings). A project's action
+    // file overrides a game module's defaults this way.
+    void overrideWith(const InputActionMap& other);
     InputActionState evaluate(const InputState& input) const;
 
   private:

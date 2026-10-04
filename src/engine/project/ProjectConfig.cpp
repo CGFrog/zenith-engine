@@ -1,8 +1,11 @@
 #include "ProjectConfig.hpp"
 
+#include "engine/input/InputActionsJson.hpp"
+
 #include "engine/graphics/RenderConfiguration.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <system_error>
@@ -112,6 +115,23 @@ ProjectConfigResult readPhysicsLayers(const Json& document, std::optional<Physic
     return {.success = true};
 }
 
+ProjectConfigResult readTags(const Json& document, std::vector<std::string>& tags) {
+    tags.clear();
+    const auto found = document.find("tags");
+    if (found == document.end()) {
+        return {.success = true};
+    }
+    if (!found->is_array() || !std::ranges::all_of(*found, [](const Json& tag) { return tag.is_string(); })) {
+        return {.error = "Project field 'tags' must be an array of names"};
+    }
+    std::vector<std::string> names = found->get<std::vector<std::string>>();
+    if (const std::string error = validateProjectTags(names); !error.empty()) {
+        return {.error = "Invalid project tags: " + error};
+    }
+    tags = std::move(names);
+    return {.success = true};
+}
+
 Json writePhysicsLayers(const PhysicsLayerTable& table) {
     Json layers = Json::array();
     for (uint32_t index = 0; index < table.size(); ++index) {
@@ -213,8 +233,44 @@ ProjectConfigResult loadProjectConfig(const std::filesystem::path& path, Project
             return result;
         }
     }
+    if (version >= 6) {
+        if (ProjectConfigResult result =
+                readOptionalPath(document, "inputActions", projectDirectory, loaded.inputActions);
+            !result) {
+            return result;
+        }
+        if (ProjectConfigResult result = readTags(document, loaded.tags); !result) {
+            return result;
+        }
+    }
 
     config = std::move(loaded);
+    return {.success = true};
+}
+
+std::string validateProjectTags(const std::vector<std::string>& tags) {
+    for (size_t index = 0; index < tags.size(); ++index) {
+        const std::string& tag = tags[index];
+        if (tag.empty() || tag.find_first_of("\r\n") != std::string::npos) {
+            return "a tag needs a name on one line";
+        }
+        if (std::find(tags.begin(), tags.begin() + static_cast<std::ptrdiff_t>(index), tag) !=
+            tags.begin() + static_cast<std::ptrdiff_t>(index)) {
+            return "the tag '" + tag + "' is listed twice";
+        }
+    }
+    return {};
+}
+
+ProjectConfigResult loadProjectInputActions(const ProjectConfig& config, InputActionMap& actions) {
+    if (config.inputActions.empty()) {
+        return {.success = true};
+    }
+    InputActionMap project;
+    if (const InputActionsJsonResult loaded = loadInputActionMap(config.inputActions, project); !loaded) {
+        return {.error = loaded.error};
+    }
+    actions.overrideWith(project);
     return {.success = true};
 }
 
@@ -230,6 +286,9 @@ ProjectConfigResult saveProjectConfig(const std::filesystem::path& path, const P
         if (const std::string error = config.physicsLayers->validate(); !error.empty()) {
             return {.error = "Invalid project physics layers: " + error};
         }
+    }
+    if (const std::string error = validateProjectTags(config.tags); !error.empty()) {
+        return {.error = "Invalid project tags: " + error};
     }
 
     const std::filesystem::path projectPath = std::filesystem::absolute(path).lexically_normal();
@@ -263,6 +322,15 @@ ProjectConfigResult saveProjectConfig(const std::filesystem::path& path, const P
         }
     }
 
+    std::filesystem::path inputActions;
+    if (!config.inputActions.empty()) {
+        if (ProjectConfigResult result =
+                rootRelativeForSave(projectDirectory, config.inputActions, "inputActions", inputActions);
+            !result) {
+            return result;
+        }
+    }
+
     std::error_code error;
     std::filesystem::create_directories(projectDirectory, error);
     if (error) {
@@ -287,6 +355,12 @@ ProjectConfigResult saveProjectConfig(const std::filesystem::path& path, const P
     }
     if (config.physicsLayers) {
         document["physicsLayers"] = writePhysicsLayers(*config.physicsLayers);
+    }
+    if (!inputActions.empty()) {
+        document["inputActions"] = inputActions.generic_string();
+    }
+    if (!config.tags.empty()) {
+        document["tags"] = config.tags;
     }
     output << document.dump(2) << '\n';
     if (!output) {

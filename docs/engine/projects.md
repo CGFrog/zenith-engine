@@ -5,7 +5,7 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 ## `src/engine/project/ProjectConfig.*`
 
 Defines the shared versioned project manifest used by both game and editor
-applications. Version 5 stores:
+applications. Version 6 stores:
 
 - a display name;
 - project-relative asset and scene roots;
@@ -14,10 +14,18 @@ applications. Version 5 stores:
 - an optional project-relative `gameModule` library path;
 - optional `physicsLayers`: an array of `{"name", "collidesWith": [names]}`
   whose order gives each layer's index. A pair collides when either lists the
-  other. Without it the project uses `PhysicsLayerTable::defaults()`.
+  other. Without it the project uses `PhysicsLayerTable::defaults()`;
+- an optional project-relative `inputActions` file (see
+  [Window and input](window-input.md)), whose actions replace the game
+  module's actions of the same name and add new ones
+  (`loadProjectInputActions`);
+- optional `tags`: the tag names the editor offers for `TagsComponent`.
 
-The game and the editor give the table to their `PhysicsWorld`. Versions 1 to
-4 remain readable and are upgraded on save. Scene references are validated against the scene root before
+The game and the editor give the table to their `PhysicsWorld`, and apply the
+action file over the module's actions (`ProjectApplication::onStart`, and
+`GameModuleHost::setProjectInputActions` in the editor); a bad action file is
+logged and the module's defaults are used. Versions 1 to 5 remain readable
+and are upgraded on save. Scene references are validated against the scene root before
 `SceneDocument` loads them. `loadProjectScene` and `loadProjectStartupScene`
 take an optional component type registry (null means the built-in types) so a
 game can load scenes holding its own components; `loadProjectSceneFile` loads

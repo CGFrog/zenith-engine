@@ -7,6 +7,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 struct EntityReferenceFieldContext;
 
@@ -22,6 +23,9 @@ struct ReflectedFieldEditorOptions {
     // Names referenced entities and offers the eyedropper; without it entity
     // reference fields show their id only.
     const EntityReferenceFieldContext* entityReferences{nullptr};
+    // The names a UInt32 field with FieldPresentation::nameList indexes
+    // (the project's physics layers); null, or no callback, edits the number.
+    std::function<const std::vector<std::string>*(std::string_view listName)> nameList;
     // With several objects, show mixedValueText for a field whose values
     // differ. When false the first object's values are shown and the others
     // are only edit targets (an Alt-applied edit).

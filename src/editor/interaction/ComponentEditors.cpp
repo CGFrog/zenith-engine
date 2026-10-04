@@ -6,9 +6,12 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <imgui.h>
+#include <misc/cpp/imgui_stdlib.h>
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -159,4 +162,57 @@ bool drawIrradianceVolume(IrradianceVolumeComponent& component) {
     return changed;
 }
 
+bool drawTags(TagsComponent& component, std::span<const std::string> projectTags, std::string& otherTag) {
+    bool changed = false;
+    std::optional<size_t> removed;
+    for (size_t index = 0; index < component.tags.size(); ++index) {
+        const std::string& tag = component.tags[index];
+        ImGui::PushID(static_cast<int>(index));
+        if (ImGui::SmallButton("x")) {
+            removed = index;
+        }
+        ImGui::SameLine();
+        ImGui::TextUnformatted(tag.c_str());
+        if (std::ranges::find(projectTags, tag) == projectTags.end()) {
+            ImGui::SameLine();
+            ImGui::TextColored(toImVec4(palette::warning), "(not a project tag)");
+            ImGui::SetItemTooltip("Declare it in Edit > Project Settings > Tags, or check its spelling.");
+        }
+        ImGui::PopID();
+    }
+    if (removed) {
+        component.tags.erase(component.tags.begin() + static_cast<std::ptrdiff_t>(*removed));
+        changed = true;
+    }
+    if (component.tags.empty()) {
+        ImGui::TextDisabled("No tags");
+    }
+    if (ImGui::Button("Add Tag")) {
+        ImGui::OpenPopup("##AddTag");
+    }
+    if (ImGui::BeginPopup("##AddTag")) {
+        bool any = false;
+        for (const std::string& tag : projectTags) {
+            if (component.has(tag)) {
+                continue;
+            }
+            any = true;
+            if (ImGui::MenuItem(tag.c_str())) {
+                changed = component.add(tag) || changed;
+            }
+        }
+        if (!any) {
+            ImGui::TextDisabled(projectTags.empty() ? "The project declares no tags" : "Every project tag is added");
+        }
+        ImGui::Separator();
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::InputTextWithHint("##OtherTag", "Other tag", &otherTag, ImGuiInputTextFlags_EnterReturnsTrue) &&
+            !otherTag.empty()) {
+            changed = component.add(std::exchange(otherTag, {})) || changed;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    return changed;
+}
 } // namespace ComponentEditors

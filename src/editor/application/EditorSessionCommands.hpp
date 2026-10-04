@@ -98,6 +98,8 @@ class EditorWindowCommands {
     // Opens the New Behaviour, Component, or System dialog
     // (module.new_behaviour and the others).
     virtual void openNewCodeDialog(GeneratedCodeKind kind) = 0;
+    // Opens Project Settings on the project file's current values.
+    virtual void openProjectSettings(ApplicationContext& context) = 0;
 
   protected:
     ~EditorWindowCommands() = default;

@@ -156,6 +156,37 @@ size_t InputActionMap::bindingCount(std::string_view action) const {
     return found == m_actions.end() ? 0 : found->second.bindings.size();
 }
 
+std::optional<InputActionValueType> InputActionMap::actionType(std::string_view action) const {
+    const auto found = m_actions.find(std::string(action));
+    if (found == m_actions.end()) {
+        return std::nullopt;
+    }
+    return found->second.type;
+}
+
+bool InputActionMap::clampsValue(std::string_view action) const {
+    const auto found = m_actions.find(std::string(action));
+    return found != m_actions.end() && found->second.clampValue;
+}
+
+std::span<const InputBinding> InputActionMap::bindings(std::string_view action) const {
+    const auto found = m_actions.find(std::string(action));
+    if (found == m_actions.end()) {
+        return {};
+    }
+    return found->second.bindings;
+}
+
+bool InputActionMap::removeAction(std::string_view action) {
+    return m_actions.erase(std::string(action)) > 0;
+}
+
+void InputActionMap::overrideWith(const InputActionMap& other) {
+    for (const auto& [name, definition] : other.m_actions) {
+        m_actions.insert_or_assign(name, definition);
+    }
+}
+
 InputActionState InputActionMap::evaluate(const InputState& input) const {
     InputActionState result;
     result.m_activeDevice = input.activeDevice;

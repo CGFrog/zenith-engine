@@ -59,6 +59,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_projectFile(projectServices.projectFile)
     , m_codeSnippetDirectory(projectServices.codeSnippetDirectory)
     , m_physicsLayers(projectServices.physicsLayers)
+    , m_projectNames{.physicsLayers = m_physicsLayers.names, .tags = projectServices.tags}
     , m_playServices(projectServices.play)
     , m_standalone(m_playServices.makeGameProcess ? m_playServices.makeGameProcess() : makeGameProcess())
     , m_mouseCaptureChanged(projectServices.mouseCaptureChanged)
@@ -108,6 +109,11 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     // Scene references resolve through the project's asset database by GUID.
     m_document.setAssetDatabase(m_projectAssets.assetDatabase());
     m_projectBuild.setProjectBuild(std::move(projectServices.build));
+    m_moduleHost.setProjectInputActions(std::move(projectServices.inputActions));
+    if (!projectServices.inputActionsError.empty()) {
+        m_diagnostics.add(EditorDiagnosticSeverity::Error, "Project", projectServices.inputActionsError,
+                          "Fix the project's input action file, or its actions in Edit > Project Settings.");
+    }
 }
 
 SceneEditing EditorSession::editing(ApplicationContext& context) {
@@ -128,7 +134,8 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .componentEditors = &m_componentEditors,
             .navigationPreview = &m_navigationPreview,
             .scripts = this,
-            .watches = &m_watches};
+            .watches = &m_watches,
+            .projectNames = &m_projectNames};
 }
 
 OperatorContext EditorSession::operatorContext(ApplicationContext& context, KeymapRegion region) {
@@ -264,6 +271,7 @@ void EditorSession::drawOperatorWindows(ApplicationContext& context) {
     if (m_preferences.draw(m_settings, preferencesContext(context))) {
         saveSettings();
     }
+    drawProjectSettings(context);
     if (m_playMode.mode() != EditorMode::Edit || m_activeTransform) {
         return;
     }
@@ -637,6 +645,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         operatorMenuItem(context, "wm.search_menu", "Search Operators...");
         operatorMenuItem(context, "wm.keymap_editor", "Keymap...");
         operatorMenuItem(context, "wm.preferences", "Preferences...");
+        operatorMenuItem(context, "project.settings", "Project Settings...");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Object")) {

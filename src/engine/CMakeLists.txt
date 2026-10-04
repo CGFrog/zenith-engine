@@ -115,6 +115,7 @@ add_library(zenith_engine SHARED
     graphics/swapchain/Swapchain.cpp
     graphics/vulkan/VulkanContext.cpp
     input/InputActions.cpp
+    input/InputActionsJson.cpp
     input/InputManager.cpp
     input/InputProfiles.cpp
     jobs/JobSystem.cpp
@@ -168,6 +169,7 @@ add_library(zenith_engine SHARED
     scene/SceneDocument.cpp
     scene/EntityReferenceRemap.cpp
     scene/SceneVisibility.cpp
+    scene/Tags.cpp
     scene/AdditiveSceneManager.cpp
     scene/Prefab.cpp
     scene/PrefabComponentTypes.cpp

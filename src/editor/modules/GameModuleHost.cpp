@@ -262,6 +262,7 @@ GameModuleHostResult GameModuleHost::loadSource(EditorDocument& document) {
     m_scheduler = SystemScheduler(m_module->systems());
     m_scheduler.setSimulateMask(m_simulateMask);
     m_inputActions = *m_module->inputActions();
+    m_inputActions.overrideWith(m_projectInputActions);
     m_profile.clear();
     document.setComponentTypes(m_module->componentTypes());
 
@@ -516,6 +517,18 @@ const std::filesystem::path& GameModuleHost::sourcePath() const {
 
 const GameModule* GameModuleHost::module() const {
     return m_module.get();
+}
+
+void GameModuleHost::setProjectInputActions(InputActionMap actions) {
+    m_projectInputActions = std::move(actions);
+    if (m_module != nullptr) {
+        m_inputActions = *m_module->inputActions();
+        m_inputActions.overrideWith(m_projectInputActions);
+    }
+}
+
+const InputActionMap& GameModuleHost::inputActions() const {
+    return m_inputActions;
 }
 
 std::optional<EditorSourceLocation> GameModuleHost::behaviourSource(std::string_view componentKey) const {

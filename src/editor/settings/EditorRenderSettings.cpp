@@ -48,7 +48,12 @@ EditorRenderSettingsResult EditorRenderSettings::load() {
 
 EditorRenderSettingsResult EditorRenderSettings::save() {
     if (savesToProject()) {
-        ProjectConfig updated = m_project;
+        // The rest of the file may have changed since (Project Settings saves
+        // it too), so only the render settings are written over it.
+        ProjectConfig updated;
+        if (!loadProjectConfig(m_project.projectFile, updated)) {
+            updated = m_project;
+        }
         updated.renderSettings = m_requested;
         if (const ProjectConfigResult result = saveProjectConfig(updated.projectFile, updated); !result) {
             return {.error = result.error};

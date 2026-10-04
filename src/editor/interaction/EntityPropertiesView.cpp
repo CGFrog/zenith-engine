@@ -4,6 +4,7 @@
 #include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/EntityReferenceField.hpp"
+#include "editor/interaction/ProjectNames.hpp"
 #include "editor/interaction/ReflectedFieldEditor.hpp"
 #include "editor/operators/ComponentOperators.hpp"
 #include "editor/panels/EditorContext.hpp"
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <any>
 #include <cmath>
+#include <memory>
 #include <span>
 #include <string>
 #include <utility>
@@ -200,6 +202,14 @@ EntityPropertiesView::EntityPropertiesView(ComponentInspectorLayout& layout)
     m_customEditors.emplace("collider", typedEditor(ComponentEditors::drawCollider));
     m_customEditors.emplace("morph_weights", typedEditor(ComponentEditors::drawMorphWeights));
     m_customEditors.emplace("irradiance_volume", typedEditor(ComponentEditors::drawIrradianceVolume));
+    // The tag being typed; shared by copies of the editor.
+    m_customEditors.emplace("tags", [otherTag = std::make_shared<std::string>()](EditorContext& context, Entity,
+                                                                                 void* component) {
+        const std::span<const std::string> projectTags = context.projectNames != nullptr
+                                                             ? std::span<const std::string>(context.projectNames->tags)
+                                                             : std::span<const std::string>{};
+        return ComponentEditors::drawTags(*static_cast<TagsComponent*>(component), projectTags, *otherTag);
+    });
     m_customEditors.emplace("animation", [](EditorContext& context, Entity entity, void* component) {
         // Clip names and durations come from the entity's model.
         const auto* model = context.app.scene.registry().try_get<ModelComponent>(entity);
@@ -674,6 +684,10 @@ EntityPropertiesView::drawComponentValues(EditorContext& context, const Componen
                     return type.textureLoaded(type.find(scene, entity), fieldKey);
                 },
             .entityReferences = &entityReferences,
+            .nameList =
+                [&context](std::string_view listName) {
+                    return context.projectNames != nullptr ? context.projectNames->list(listName) : nullptr;
+                },
             .showMixedValues = targets.size() == shown.size()};
         if (overrides.linked && !overrides.added) {
             fieldOptions.overridden = [&overrides, &type](std::string_view pointer) {

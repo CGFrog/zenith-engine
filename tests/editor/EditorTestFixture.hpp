@@ -172,6 +172,8 @@ struct EditorTestFixture {
     const EditorScriptInfo* scripts{nullptr};
     // The Properties panel's watch list; none by default.
     const WatchList* watches{nullptr};
+    // The project's names inspectors offer; none by default.
+    const EditorProjectNames* projectNames{nullptr};
     TestSessionActions defaultActions{operators, runner, sessionContextSource()};
 
     // The context the session runs an operator in: operatorContext() with
@@ -234,7 +236,8 @@ struct EditorTestFixture {
                 .simulating = followedPlayMode != nullptr ? followedPlayMode->simulating() : simulating,
                 .componentEditors = &componentEditors,
                 .scripts = scripts,
-                .watches = watches};
+                .watches = watches,
+                .projectNames = projectNames};
     }
 
   private:

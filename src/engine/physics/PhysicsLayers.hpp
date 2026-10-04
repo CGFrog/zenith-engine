@@ -10,6 +10,10 @@
 #include <string_view>
 #include <vector>
 
+// The name list (FieldPresentation::nameList) that physics layer fields
+// index: the project's layer names.
+inline constexpr std::string_view physicsLayerNameList = "physics_layers";
+
 // A project's collision layers and which of them collide. A layer's index is
 // its position in names; a body names its layer by index
 // (RigidBodyComponent::layer). Layers beyond names collide with nothing.

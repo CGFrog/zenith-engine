@@ -186,6 +186,12 @@ class GameModuleHost {
     const std::filesystem::path& sourcePath() const;
     // Null unless status() is Loaded.
     const GameModule* module() const;
+    // The project's input actions (loadProjectInputActions), which replace
+    // the module's actions of the same name from now on and at every load.
+    void setProjectInputActions(InputActionMap actions);
+    // The actions systems are evaluated against: the module's, overridden by
+    // the project's.
+    const InputActionMap& inputActions() const;
     // Where the loaded module registered the behaviour with this component
     // key (ModuleRegistrar::addBehaviour), for Edit Script; nullopt when no
     // module is loaded or the key is not one of its behaviours.
@@ -258,6 +264,7 @@ class GameModuleHost {
 
     // A copy of the module's input actions, evaluated for systems that get input.
     InputActionMap m_inputActions;
+    InputActionMap m_projectInputActions;
     Logger m_fallbackLogger;
     Logger* m_logger{&m_fallbackLogger};
     // Holds module code (commands, timers, events): released with the module.

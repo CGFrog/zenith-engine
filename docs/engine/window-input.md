@@ -37,6 +37,18 @@ read the result as `SystemContext::actions` instead of evaluating bindings:
 - the editor's `GameModuleHost` evaluates it from the input it gives systems,
   so actions are null whenever input is (Edit, Simulate).
 
+## `src/engine/input/InputActionsJson.*`
+
+A project's default actions as hand-editable JSON: version 1, an `actions`
+array of `{name, type, clamp, bindings}` where a type is `button`, `axis1d`,
+or `axis2d` and each binding is `{source, scale, deadZone, modifiers}`.
+Sources are named `<kind>:<name>` (`key:W`, `mouseButton:Left`,
+`mouseAxis:DeltaX`, `gamepadButton:South`, `gamepadAxis:LeftX`) by
+`inputSourceName` and `parseInputSource`, so the file survives enum
+reordering, unlike `InputProfiles`' numeric encoding. `InputActionMap`
+exposes `actionType`, `clampsValue`, and `bindings` for it, `removeAction`,
+and `overrideWith`, which replaces shared actions whole.
+
 ## `src/engine/input/InputProfiles.*`
 
 Named binding profiles with conflict checks (`InputProfileSet`), saved to and

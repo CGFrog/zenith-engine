@@ -112,6 +112,15 @@ Approved 2026-10-04. Nothing is implemented yet.
   - Generated components and systems get a `Component` or `System` suffix;
     behaviours keep their name.
   - Generating builds through `build.run`'s queue, so a reload follows.
+- **2026-10-04: project settings (C5).**
+  - Tags are a project tag list (manifest `tags`) plus the engine's
+    `TagsComponent` of names; any name works at runtime, and the editor
+    marks names the project does not declare.
+  - A project's default input actions live in a JSON file the manifest names
+    (`inputActions`, version 6). Its actions replace the module's of the same
+    name whole, so code-declared actions keep working without the file.
+    Sources are written as names (`key:W`), not enum numbers.
+  - Physics layers are added and removed only at the end of the table.
 - **2026-10-04: engine owns mechanisms, games own rules.** The character
   controller, physics queries, events, timers, effects, save slots and UI
   widgets are reusable engine mechanisms. Weapons, damage, HUD contents and
@@ -137,7 +146,7 @@ Approved 2026-10-04. Nothing is implemented yet.
 | C2 | Code generators | B2, C1 | done |
 | C3 | Inspector integration for Behaviours | B2 | done |
 | C4 | Debugging tools | A2 | done |
-| C5 | Project settings editors | A3, A4 | todo |
+| C5 | Project settings editors | A3, A4 | done |
 | C6 | FPS template and tutorial | B1–B6, C2, C3 | todo |
 | D1 | Split `PrefabSystem.cpp` | — | todo |
 | D2 | Split `EditorSession.cpp` | — | todo |
@@ -697,10 +706,29 @@ Follow-ups:
 
 ### C5. Project settings editors
 
-- [ ] Physics Layers tab: layer names and the collision matrix (A3).
-- [ ] Input Actions tab: actions and bindings, saved as the module's default
+- [x] Physics Layers tab: layer names and the collision matrix (A3).
+- [x] Input Actions tab: actions and bindings, saved as the module's default
       action JSON (A4).
-- [ ] Tags.
+- [x] Tags.
+
+Result:
+- `panels/ProjectSettingsWindow.*` (`project.settings`, Edit menu) and the
+  session's `EditorProjectSettings.cpp`. Docs: `docs/editor/project-settings.md`.
+- Manifest version 6: `inputActions` (a file, `InputActionsJson.*`, whose
+  actions override the module's) and `tags`. `ProjectApplication` and the
+  editor's `GameModuleHost` apply the file.
+- `TagsComponent` (`scene/Tags.*`) with `hasTag` and `findEntitiesWithTag`.
+- `Fields::nameList` lets the inspector choose physics layers by name, which
+  closes A3's follow-up.
+- `EditorRenderSettings::save` re-reads the project file, so it no longer
+  writes back stale layers.
+- Coverage: `InputActionsJsonTests`, `TagsTests`, `ProjectConfigTests`,
+  `ProjectSettingsTests`.
+
+Follow-ups:
+- A player's rebinding (`InputProfile`) is still not saved per game (A4).
+- Removing a layer from the middle is not offered; it would need remapping
+  every body's index.
 
 ### C6. FPS template and tutorial
 

@@ -169,6 +169,7 @@ Editor (`src/editor/`):
 - [Scene editing, history, and live inspection](editor/scene-editing.md): `SceneEditing` diffs, undo history, and editing the running scene.
 - [Build and IDE workflow](editor/build-ide.md): the Build panel, compiler output, IDE launching, and Build and Package.
 - [Theme, preferences, and render settings](editor/theme-settings.md): Preferences, the Pixel Aero Night theme, and the render settings and Graphics panel.
+- [Project Settings](editor/project-settings.md): the project's physics layers, input actions, and tags, and the inspector's choices from them.
 - [Operators and keymaps](editor/operators.md): the operator registry and runner, keymaps, search, and the headless operator sets.
 - [Menus](editor/menus.md): menus as data, popups, pie menus, and the default menus.
 - [Game module hosting](editor/modules.md): loading a project's module, running its systems, hot reload, and the editor extension API.

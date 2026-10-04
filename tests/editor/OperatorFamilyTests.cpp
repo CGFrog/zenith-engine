@@ -117,6 +117,8 @@ class NoSessionCommands final : public EditorDocumentCommands,
     void requestModuleReload() override {}
 
     void openNewCodeDialog(GeneratedCodeKind) override {}
+
+    void openProjectSettings(ApplicationContext&) override {}
 };
 
 // What the session owns for its operator families, beyond the shared

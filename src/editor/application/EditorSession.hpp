@@ -17,6 +17,7 @@
 #include "editor/interaction/ComponentEditorOverrides.hpp"
 #include "editor/interaction/EntityEyedropper.hpp"
 #include "editor/interaction/ModalTransform.hpp"
+#include "editor/interaction/ProjectNames.hpp"
 #include "editor/interaction/Selection.hpp"
 #include "editor/interaction/WatchList.hpp"
 #include "editor/menus/EditorMenus.hpp"
@@ -34,6 +35,7 @@
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/InfoPanel.hpp"
 #include "editor/panels/PreferencesWindow.hpp"
+#include "editor/panels/ProjectSettingsWindow.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/project/PackageRunner.hpp"
 #include "editor/project/ProjectAssets.hpp"
@@ -80,6 +82,12 @@ struct EditorProjectServices {
     // The C++ game template's code snippets, which the module.new_* operators
     // generate from; empty when the editor found no template.
     std::filesystem::path codeSnippetDirectory;
+    // The project's tags, which the inspector offers for TagsComponent.
+    std::vector<std::string> tags;
+    // The project's input action overrides (loadProjectInputActions), and
+    // why they could not be read; empty when the project has none.
+    InputActionMap inputActions;
+    std::string inputActionsError;
     // The project's collision layers, which the session gives the physics
     // world when it loads.
     PhysicsLayerTable physicsLayers{PhysicsLayerTable::defaults()};
@@ -190,6 +198,7 @@ class EditorSession final : public ApplicationScene,
     void resetActiveWorkspace() override;
     void requestModuleReload() override;
     void openNewCodeDialog(GeneratedCodeKind kind) override;
+    void openProjectSettings(ApplicationContext& context) override;
 
     // EditorScriptInfo (EditorModuleCommands.cpp)
     std::optional<EditorSourceLocation> behaviourSource(std::string_view componentKey) const override;
@@ -310,6 +319,9 @@ class EditorSession final : public ApplicationScene,
     void drawObjectPopups(ApplicationContext& context);
     // The New Behaviour, Component, and System dialog (EditorModuleCommands.cpp).
     void drawNewCodeDialog(ApplicationContext& context);
+    // Project Settings, and applying what it saves (EditorProjectSettings.cpp).
+    void drawProjectSettings(ApplicationContext& context);
+    std::string applyProjectSettings(ApplicationContext& context, const ProjectSettingsValues& values);
     void finishModalTransform(ApplicationContext& context, bool confirm);
     void drawModalTransformOverlay(const ViewportPanel& viewport, const ModalTransformResult& result) const;
 
@@ -366,6 +378,8 @@ class EditorSession final : public ApplicationScene,
     std::filesystem::path m_projectFile;
     std::filesystem::path m_codeSnippetDirectory;
     PhysicsLayerTable m_physicsLayers;
+    // The project's layer and tag names the inspector offers.
+    EditorProjectNames m_projectNames;
     EditorPlayServices m_playServices;
     StandalonePlayer m_standalone;
     std::function<void(MouseCapturePolicy)> m_mouseCaptureChanged;
@@ -409,6 +423,7 @@ class EditorSession final : public ApplicationScene,
     LastOperatorPanel m_lastOperatorPanel;
     bool m_showKeymapEditor{false};
     PreferencesWindow m_preferences;
+    ProjectSettingsWindow m_projectSettings;
     // The application's look on ImGui, which outlives the session; the
     // session's preference changes go through it, so the Project Hub shows
     // them after the session ends.

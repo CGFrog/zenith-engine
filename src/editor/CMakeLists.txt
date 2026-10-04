@@ -10,6 +10,7 @@ add_library(zenith_editor_app STATIC
     application/EditorModuleCommands.cpp
     application/EditorObjectCommands.cpp
     application/NewCodeDialog.cpp
+    application/EditorProjectSettings.cpp
     interaction/WatchList.cpp
     application/EditorViewports.cpp
     application/EditorPlayMode.cpp
@@ -81,6 +82,7 @@ add_library(zenith_editor_app STATIC
     operators/VisibilityOperators.cpp
     panels/AssetBrowserPanel.cpp
     panels/BuildPanel.cpp
+    panels/ProjectSettingsWindow.cpp
     panels/DiagnosticsPanel.cpp
     panels/EditorContext.cpp
     panels/GameModulePanel.cpp
