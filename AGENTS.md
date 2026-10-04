@@ -111,7 +111,9 @@ cmake --preset worktree
 ```
 
 (`cmake --preset default` configures a standalone checkout and downloads the
-dependencies.) Both presets use `build/`.
+dependencies.) Both presets use `build/`. Precompiled headers and parallel
+compilation are on by default; `docs/DEVELOPMENT.md` (Build speed) covers them
+and the optional `sccache` compiler cache (`winget install Mozilla.sccache`).
 
 Then build, run the CPU-only tests, and format the C++ files changed on the
 branch in one step (PowerShell 7):

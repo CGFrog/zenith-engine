@@ -162,6 +162,10 @@ add_library(zenith_engine SHARED
     window/Window.cpp
 )
 
+# The stb implementation files compile third-party C code without warnings,
+# and without the precompiled header, whose warning state would replace /W0.
+set_source_files_properties(audio/StbVorbis.cpp diagnostics/StbImageWrite.cpp
+    PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 if(MSVC)
     set_source_files_properties(audio/StbVorbis.cpp PROPERTIES COMPILE_OPTIONS /W0)
     set_source_files_properties(diagnostics/StbImageWrite.cpp PROPERTIES COMPILE_OPTIONS /W0)
@@ -209,6 +213,7 @@ foreach(header_dependency IN ITEMS volk imgui zenith_imguizmo)
 endforeach()
 
 zenith_target_warnings(zenith_engine)
+zenith_target_precompile_headers(zenith_engine ZenithEnginePch.hpp)
 if(MSVC)
     target_compile_options(zenith_engine PRIVATE /FS)
 endif()

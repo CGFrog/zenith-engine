@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- CMake 3.24 or newer
+- CMake 3.25 or newer
 - Git (CMake fetches pinned dependencies during configuration)
 - Python 3 (required by fetched build tooling)
 - A C++20 compiler; MSVC is the documented Windows path
@@ -45,6 +45,36 @@ cmake -S . -B build -DBUILD_TESTING=ON
 # Optimized build for benchmark measurements
 cmake --build build --config Release --parallel 4
 ```
+
+### Build speed
+
+Three cache options (`cmake/CompilerSettings.cmake`) shorten builds; set them
+with `-D<option>=<value>` when configuring.
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `ZENITH_USE_PCH` | `ON` (`OFF` when an MSVC compiler cache is in use) | Precompiles `src/engine/ZenithEnginePch.hpp` for `zenith_engine` and `src/editor/ZenithEditorPch.hpp` for `zenith_editor_app`. |
+| `ZENITH_VS_PARALLEL_COMPILE` | `ON` | With a Visual Studio generator, compiles each project's sources in parallel (MSBuild `UseMultiToolTask`), capped at one compiler per core across the projects `--parallel` builds at once. |
+| `ZENITH_COMPILER_CACHE` | `auto` | `auto` launches compilers through `sccache`, else `ccache`, when one is on `PATH`; `sccache` or `ccache` requires it; `off` disables caching. |
+
+The precompiled headers hold only standard and third-party headers that are
+not macro sensitive (no Vulkan, volk, SDL, Jolt, or Windows headers, and no
+Zenith headers). Sources never rely on them: every file includes what it uses,
+and a tree configured with `-DZENITH_USE_PCH=OFF` must still build. Check that
+after changing includes widely. `zenith_engine` exports every symbol, so it
+reuses a header compiled in the `zenith_engine_pch` static library rather than
+linking the header's own object file, whose symbols would otherwise be
+exported.
+
+A compiler cache helps most for new worktrees and branch switches. Install
+`sccache` once with `winget install Mozilla.sccache`. CMake runs a compiler
+launcher only with the Ninja and Makefile generators, so the default Visual
+Studio generator builds uncached; configure a separate tree with `-G Ninja`
+from a Visual Studio developer prompt to use it. A cached MSVC build embeds
+debug information in each object (`/Z7`) instead of a shared PDB. MSVC caches
+cannot cache translation units that use a precompiled header, which is why
+the precompiled headers default to off with a cache; with both on, the cache
+covers only the third-party and test sources.
 
 ## Run and controls
 
