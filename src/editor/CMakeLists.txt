@@ -201,3 +201,4 @@ target_compile_definitions(zenith_editor PRIVATE
 )
 
 zenith_target_warnings(zenith_editor_app)
+zenith_target_precompile_headers(zenith_editor_app ZenithEditorPch.hpp)
