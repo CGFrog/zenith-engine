@@ -3,6 +3,7 @@
 #include "editor/operators/CollectionOperators.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/Keymap.hpp"
+#include "editor/operators/KeymapDispatch.hpp"
 #include "editor/operators/KeymapEditor.hpp"
 #include "editor/operators/LastOperatorPanel.hpp"
 #include "editor/operators/ObjectOperators.hpp"
@@ -679,6 +680,244 @@ void testKeymapEditorWindow() {
            "capturing a new shortcut should add a binding");
 }
 
+size_t bindingIndex(const Keymap& keymap, std::string_view operatorId, ImGuiKeyChord chord) {
+    const auto found = std::ranges::find_if(keymap.bindings(), [&](const KeymapBinding& binding) {
+        return binding.operatorId == operatorId && binding.chord == chord;
+    });
+    return static_cast<size_t>(found - keymap.bindings().begin());
+}
+
+void testMouseChordsAndTriggers() {
+    for (const ImGuiKeyChord chord : {ImGuiMod_Ctrl | ImGuiKey_MouseRight, ImGuiKey_MouseLeft | 0,
+                                      ImGuiMod_Shift | ImGuiMod_Alt | ImGuiKey_MouseMiddle, ImGuiKey_MouseX2 | 0}) {
+        const std::optional<ImGuiKeyChord> parsed = parseKeyChord(formatKeyChord(chord));
+        expect(parsed && *parsed == chord && isMouseChord(chord), "mouse chords should survive formatting");
+    }
+    expect(formatKeyChord(ImGuiMod_Ctrl | ImGuiKey_MouseRight) == "Ctrl+RMB", "mouse chords should read as Ctrl+RMB");
+    expect(!isMouseChord(ImGuiKey_X) && parseKeyChord("X1") == (ImGuiKey_MouseX1 | 0),
+           "X1 should name the mouse button, not a key");
+    for (const KeyTrigger trigger : allKeyTriggers) {
+        expect(parseKeyTrigger(keyTriggerName(trigger)) == trigger, "trigger names should round-trip");
+    }
+
+    Keymap keymap(defaultEditorKeymap());
+    expect(keymap.find(KeymapRegion::Viewport, ImGuiMod_Ctrl | ImGuiKey_MouseRight, KeyTrigger::Drag) != nullptr &&
+               keymap.find(KeymapRegion::Viewport, ImGuiMod_Alt | ImGuiKey_MouseLeft, KeyTrigger::Click) != nullptr &&
+               keymap.find(KeymapRegion::Viewport, ImGuiMod_Shift | ImGuiKey_MouseRight, KeyTrigger::Click) != nullptr,
+           "the lasso, select cycle, and 3D cursor gestures should be default bindings");
+    expect(keymap.bindsChord(KeymapRegion::Viewport, ImGuiMod_Ctrl | ImGuiKey_MouseRight) &&
+               !keymap.bindsChord(KeymapRegion::Viewport, ImGuiKey_MouseRight | 0) &&
+               !keymap.bindsChord(KeymapRegion::Viewport, ImGuiKey_MouseMiddle | 0),
+           "plain RMB and MMB should stay free for camera navigation");
+    expect(std::ranges::none_of(keymap.chords(KeymapRegion::Viewport), isMouseChord) &&
+               !keymap.mouseChords(KeymapRegion::Viewport).empty(),
+           "keyboard polling should not see mouse chords");
+
+    // Conflicts consider the trigger: Ctrl+RMB may click and drag.
+    const KeymapResult dragConflict = keymap.add({.operatorId = "game.paint",
+                                                  .region = KeymapRegion::Viewport,
+                                                  .chord = ImGuiMod_Ctrl | ImGuiKey_MouseRight,
+                                                  .trigger = KeyTrigger::Drag});
+    expect(!dragConflict && dragConflict.error.find("view3d.select_lasso") != std::string::npos,
+           "a second Ctrl+RMB drag should conflict with the lasso");
+    expect(keymap
+               .add({.operatorId = "game.paint",
+                     .region = KeymapRegion::Viewport,
+                     .chord = ImGuiMod_Ctrl | ImGuiKey_MouseRight,
+                     .trigger = KeyTrigger::Click})
+               .success,
+           "a Ctrl+RMB click may sit beside the Ctrl+RMB drag");
+    expect(!keymap.add({.operatorId = "game.paint", .region = KeymapRegion::Global, .chord = ImGuiKey_MouseX1 | 0}),
+           "mouse chords should only bind in the viewport");
+    const size_t boxSelect = bindingIndex(keymap, "view3d.select_box", ImGuiKey_B);
+    expect(keymap.setTrigger(boxSelect, KeyTrigger::Hold).success &&
+               keymap.find(KeymapRegion::Viewport, ImGuiKey_B, KeyTrigger::Hold) != nullptr &&
+               keymap.resolve(KeymapRegion::Viewport, ImGuiKey_B, 1.0, 0.3) == nullptr,
+           "a Hold binding should not run on the press");
+
+    // keymap.json round-trips Hold and Release triggers and mouse chords.
+    keymap.add({.operatorId = "game.charge",
+                .region = KeymapRegion::Viewport,
+                .chord = ImGuiKey_C,
+                .trigger = KeyTrigger::Release});
+    keymap.rebind(bindingIndex(keymap, "view3d.select_lasso", ImGuiMod_Ctrl | ImGuiKey_MouseRight),
+                  ImGuiMod_Alt | ImGuiKey_MouseX1);
+    Keymap loaded(defaultEditorKeymap());
+    const KeymapResult result = loaded.loadOverrides(keymap.serializeOverrides());
+    std::vector<KeymapBinding> expected = keymap.bindings();
+    std::vector<KeymapBinding> actual = loaded.bindings();
+    const auto order = [](const KeymapBinding& left, const KeymapBinding& right) {
+        return std::tie(left.operatorId, left.region, left.chord, left.trigger, left.properties) <
+               std::tie(right.operatorId, right.region, right.chord, right.trigger, right.properties);
+    };
+    std::ranges::sort(expected, order);
+    std::ranges::sort(actual, order);
+    expect(result.success && result.warnings.empty() && expected == actual,
+           "keymap.json should round-trip Hold, Release, Click triggers and mouse chords");
+    expect(keymap.serializeOverrides().find(R"("trigger": "release")") != std::string::npos &&
+               keymap.serializeOverrides().find("Alt+X1") != std::string::npos,
+           "keymap.json should name triggers and mouse buttons");
+    Keymap broken(defaultEditorKeymap());
+    const KeymapResult skipped = broken.loadOverrides(
+        R"({"version":1,"added":[{"operator":"a","region":"viewport","chord":"Q","trigger":"wiggle"},
+                                {"operator":"b","region":"outliner","chord":"LMB"}]})");
+    expect(skipped.success && skipped.warnings.size() == 2,
+           "unknown triggers and mouse chords outside the viewport should be skipped with warnings");
+}
+
+void testKeymapGestures() {
+    Keymap keymap(defaultEditorKeymap());
+    keymap.add({.operatorId = "test.hold",
+                .region = KeymapRegion::Viewport,
+                .chord = ImGuiKey_J,
+                .trigger = KeyTrigger::Hold});
+    keymap.add({.operatorId = "test.release",
+                .region = KeymapRegion::Viewport,
+                .chord = ImGuiKey_J,
+                .trigger = KeyTrigger::Release});
+    constexpr float threshold = 6.0f;
+
+    // A key held past the hold time runs Hold once, then Release.
+    KeymapGesture held(KeymapRegion::Viewport, ImGuiKey_J, 1.0, {100.0f, 100.0f});
+    expect(held.advance(keymap, {.down = true, .timeSeconds = 1.1, .mouse = {100.0f, 100.0f}}, threshold).empty(),
+           "nothing should run before the hold time");
+    const std::vector<KeymapInvocation> hold =
+        held.advance(keymap, {.down = true, .timeSeconds = 1.1 + keyHoldSeconds, .mouse = {100.0f, 100.0f}}, threshold);
+    expect(hold.size() == 1 && hold.front().operatorId == "test.hold", "holding the key should run Hold");
+    expect(held.advance(keymap, {.down = true, .timeSeconds = 3.0, .mouse = {100.0f, 100.0f}}, threshold).empty(),
+           "Hold should run once");
+    const std::vector<KeymapInvocation> release =
+        held.advance(keymap, {.down = false, .timeSeconds = 3.1, .mouse = {100.0f, 100.0f}}, threshold);
+    expect(release.size() == 1 && release.front().operatorId == "test.release" && held.finished(),
+           "letting go should run Release and finish");
+
+    // A click runs on release without movement; a drag replaces it.
+    const ImGuiKeyChord altLeft = ImGuiMod_Alt | ImGuiKey_MouseLeft;
+    KeymapGesture click(KeymapRegion::Viewport, altLeft, 0.0, {10.0f, 10.0f});
+    click.advance(keymap, {.down = true, .timeSeconds = 0.05, .mouse = {12.0f, 11.0f}}, threshold);
+    const std::vector<KeymapInvocation> clicked =
+        click.advance(keymap, {.down = false, .timeSeconds = 0.1, .mouse = {12.0f, 11.0f}}, threshold);
+    expect(clicked.size() == 1 && clicked.front().operatorId == "view3d.select_cycle",
+           "Alt+LMB released in place should run the click binding");
+    const ImGuiKeyChord ctrlRight = ImGuiMod_Ctrl | ImGuiKey_MouseRight;
+    KeymapGesture drag(KeymapRegion::Viewport, ctrlRight, 0.0, {10.0f, 10.0f});
+    const std::vector<KeymapInvocation> dragged =
+        drag.advance(keymap, {.down = true, .timeSeconds = 0.05, .mouse = {30.0f, 10.0f}}, threshold);
+    expect(dragged.size() == 1 && dragged.front().operatorId == "view3d.select_lasso" &&
+               dragged.front().properties == R"({"mode":"set","right_drag":true})",
+           "moving past the threshold should run the drag binding with its properties");
+    expect(drag.advance(keymap, {.down = false, .timeSeconds = 0.2, .mouse = {30.0f, 10.0f}}, threshold).empty(),
+           "a drag should not also click");
+}
+
+void testKeymapDispatcher() {
+    Keymap keymap(defaultEditorKeymap());
+    keymap.add({.operatorId = "test.release",
+                .region = KeymapRegion::Viewport,
+                .chord = ImGuiKey_J,
+                .trigger = KeyTrigger::Release});
+    KeymapDispatcher dispatcher;
+    HeadlessImGui imgui;
+    std::vector<KeymapInvocation> ran;
+    const auto run = [&](const KeymapInvocation& invocation) { ran.push_back(invocation); };
+    // Viewport keys and Shift+RMB press, follow, and finish through ImGui.
+    const auto draw = [&] {
+        for (const KeymapInvocation& invocation : dispatcher.update(keymap)) {
+            run(invocation);
+        }
+        if (const std::optional<KeymapInvocation> pressed = dispatcher.pressKeys(keymap, KeymapRegion::Viewport)) {
+            run(*pressed);
+        }
+        dispatcher.dispatchMouse(keymap, KeymapRegion::Viewport, allMouseButtons, run);
+    };
+    imgui.frame(draw);
+    imgui.press(ImGuiKey_J, draw);
+    expect(ran.size() == 1 && ran.front().operatorId == "test.release" && !dispatcher.gesture(),
+           "letting go of a key should run its Release binding");
+
+    ran.clear();
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMousePosEvent(200.0f, 200.0f);
+    io.AddKeyEvent(ImGuiMod_Shift, true);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Right, true);
+    uint32_t claimed = 0;
+    imgui.frame([&] {
+        dispatcher.update(keymap);
+        claimed = dispatcher.dispatchMouse(keymap, KeymapRegion::Viewport, allMouseButtons, run);
+    });
+    expect(claimed == (1u << ImGuiMouseButton_Right) && ran.empty() && dispatcher.gesture(),
+           "a Shift+RMB press should be claimed and wait for its click");
+    io.AddMouseButtonEvent(ImGuiMouseButton_Right, false);
+    io.AddKeyEvent(ImGuiMod_Shift, false);
+    imgui.frame(draw);
+    expect(ran.size() == 1 && ran.front().operatorId == "view3d.cursor3d_place",
+           "releasing Shift+RMB in place should place the 3D cursor");
+
+    ran.clear();
+    io.AddMouseButtonEvent(ImGuiMouseButton_Right, true);
+    imgui.frame([&] { claimed = dispatcher.dispatchMouse(keymap, KeymapRegion::Viewport, allMouseButtons, run); });
+    io.AddMouseButtonEvent(ImGuiMouseButton_Right, false);
+    imgui.frame(draw);
+    expect(claimed == 0 && ran.empty(), "a plain RMB press should be left to camera navigation");
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+    imgui.frame([&] { claimed = dispatcher.dispatchMouse(keymap, KeymapRegion::Viewport, 0, run); });
+    io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+    imgui.frame(draw);
+    expect(claimed == 0 && ran.empty(), "presses outside the allowed buttons should be ignored");
+
+    // A gesture whose operator is not registered leaves the press alone.
+    dispatcher.setOperatorFilter([](std::string_view operatorId) { return operatorId != "view3d.cursor3d_place"; });
+    io.AddKeyEvent(ImGuiMod_Shift, true);
+    imgui.frame(draw);
+    expect(!dispatcher.mouseButtonBound(keymap, KeymapRegion::Viewport, ImGuiMouseButton_Right) &&
+               dispatcher.mouseButtonBound(keymap, KeymapRegion::Viewport, ImGuiMouseButton_Left),
+           "an unregistered gesture should not bind its button");
+    io.AddMouseButtonEvent(ImGuiMouseButton_Right, true);
+    imgui.frame([&] { claimed = dispatcher.dispatchMouse(keymap, KeymapRegion::Viewport, allMouseButtons, run); });
+    io.AddMouseButtonEvent(ImGuiMouseButton_Right, false);
+    imgui.frame(draw);
+    io.AddKeyEvent(ImGuiMod_Shift, false);
+    imgui.frame(draw);
+    expect(claimed == 0 && ran.empty(), "an unregistered gesture should neither claim nor run");
+}
+
+void testKeymapEditorMouseBinding() {
+    OperatorRegistry registry;
+    registerObjectOperators(registry);
+    Keymap keymap(defaultEditorKeymap());
+    KeymapEditor editor;
+    HeadlessImGui imgui;
+    bool open = true;
+    bool changed = false;
+    const auto draw = [&] { changed |= editor.draw(open, keymap, registry); };
+    imgui.frame(draw);
+
+    const size_t lasso = bindingIndex(keymap, "view3d.select_lasso", ImGuiMod_Ctrl | ImGuiKey_MouseRight);
+    editor.captureRebind(lasso);
+    imgui.frame(draw);
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddKeyEvent(ImGuiMod_Alt, true);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Middle, true);
+    imgui.frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Middle, false);
+    io.AddKeyEvent(ImGuiMod_Alt, false);
+    imgui.frame(draw);
+    expect(changed && !editor.capturing() && keymap.bindings()[lasso].chord == (ImGuiMod_Alt | ImGuiKey_MouseMiddle) &&
+               keymap.bindings()[lasso].trigger == KeyTrigger::Drag,
+           "capturing a viewport shortcut should take a mouse chord and keep its trigger");
+
+    changed = false;
+    const size_t save = bindingIndex(keymap, "file.save", ImGuiMod_Ctrl | ImGuiKey_S);
+    editor.captureRebind(save);
+    imgui.frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Right, true);
+    imgui.frame(draw);
+    io.AddMouseButtonEvent(ImGuiMouseButton_Right, false);
+    imgui.frame(draw);
+    expect(!changed && editor.capturing(), "a global shortcut should not capture a mouse button");
+    imgui.press(ImGuiKey_Escape, draw);
+}
+
 void testLastOperatorPanel() {
     EditingFixture fixture;
     fixture.invoke("object.add_cube");
@@ -707,6 +946,10 @@ int main() {
     testFuzzySearch();
     testOperatorSearchPopup();
     testKeymapEditorWindow();
+    testMouseChordsAndTriggers();
+    testKeymapGestures();
+    testKeymapDispatcher();
+    testKeymapEditorMouseBinding();
     testLastOperatorPanel();
     if (failures != 0) {
         std::cerr << failures << " operator test(s) failed\n";

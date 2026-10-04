@@ -5,11 +5,12 @@
 #include <utility>
 
 namespace {
-KeymapBinding binding(std::string operatorId, KeymapRegion region, ImGuiKeyChord chord, std::string properties = {}) {
+KeymapBinding binding(std::string operatorId, KeymapRegion region, ImGuiKeyChord chord, std::string properties = {},
+                      KeyTrigger trigger = KeyTrigger::Press) {
     return {.operatorId = std::move(operatorId),
             .region = region,
             .chord = chord,
-            .trigger = KeyTrigger::Press,
+            .trigger = trigger,
             .properties = std::move(properties)};
 }
 
@@ -66,10 +67,32 @@ std::vector<KeymapBinding> defaultEditorKeymap() {
         binding("view3d.view_orbit", viewport, ImGuiKey_Keypad6, R"({"direction":"right"})"),
         binding("view3d.view_orbit", viewport, ImGuiKey_Keypad8, R"({"direction":"up"})"),
         binding("view3d.view_orbit", viewport, ImGuiKey_Keypad2, R"({"direction":"down"})"),
-        // Clicks and the Ctrl+RMB lasso are mouse gestures the viewport turns
-        // into view3d.select, view3d.select_cycle, and view3d.select_lasso.
         binding("view3d.select_box", viewport, ImGuiKey_B),
         binding("view3d.localview", viewport, ImGuiKey_KeypadDivide),
+        // Pie menus; with pies off in Preferences they open as searchable
+        // menus. Numpad keys stay the direct views.
+        binding("wm.call_pie", viewport, ImGuiKey_Z, R"({"menu":"VIEW3D_MT_shading_pie"})"),
+        binding("wm.call_pie", viewport, ImGuiKey_GraveAccent, R"({"menu":"VIEW3D_MT_view_pie"})"),
+        binding("wm.call_pie", viewport, ImGuiKey_Period, R"({"menu":"VIEW3D_MT_pivot_pie"})"),
+
+        // Mouse gestures: a click selects at the mouse, Alt cycles through
+        // the objects under it, a Ctrl+RMB drag lassos (Shift extends, Alt
+        // subtracts), and Shift+RMB places the 3D cursor. Unbound presses
+        // (RMB, MMB) navigate the camera.
+        binding("view3d.select", viewport, ImGuiKey_MouseLeft),
+        binding("view3d.select", viewport, ImGuiMod_Shift | ImGuiKey_MouseLeft, R"({"extend":true})"),
+        binding("view3d.select", viewport, ImGuiMod_Ctrl | ImGuiKey_MouseLeft),
+        binding("view3d.select", viewport, ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_MouseLeft, R"({"extend":true})"),
+        binding("view3d.select_cycle", viewport, ImGuiMod_Alt | ImGuiKey_MouseLeft, {}, KeyTrigger::Click),
+        binding("view3d.select_cycle", viewport, ImGuiMod_Shift | ImGuiMod_Alt | ImGuiKey_MouseLeft,
+                R"({"extend":true})", KeyTrigger::Click),
+        binding("view3d.select_lasso", viewport, ImGuiMod_Ctrl | ImGuiKey_MouseRight,
+                R"({"mode":"set","right_drag":true})", KeyTrigger::Drag),
+        binding("view3d.select_lasso", viewport, ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_MouseRight,
+                R"({"mode":"extend","right_drag":true})", KeyTrigger::Drag),
+        binding("view3d.select_lasso", viewport, ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiKey_MouseRight,
+                R"({"mode":"subtract","right_drag":true})", KeyTrigger::Drag),
+        binding("view3d.cursor3d_place", viewport, ImGuiMod_Shift | ImGuiKey_MouseRight, {}, KeyTrigger::Click),
     };
     addObjectKey(bindings, "object.location_clear", ImGuiMod_Alt | ImGuiKey_G);
     addObjectKey(bindings, "object.rotation_clear", ImGuiMod_Alt | ImGuiKey_R);

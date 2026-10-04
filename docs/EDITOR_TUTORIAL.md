@@ -97,14 +97,29 @@ Every menu item and key runs a named operator. Press `F3` to search all
 operators that can run right now, with their shortcuts; use the arrow keys and
 `Enter`. **Edit > Keymap...** lists every operator: click a shortcut and press
 a new key chord to rebind it (conflicts in the same region are refused), `+`
-adds a shortcut, and **Reset** restores the defaults. Your changes are saved to
-`keymap.json` in the editor settings folder.
+adds a shortcut, and **Reset** restores the defaults. The box beside each
+shortcut chooses when it runs: **Press**, **Twice** (a quick double press),
+**Hold**, **Release**, **Click** (let go without dragging), or **Drag**.
+Viewport mouse gestures are shortcuts too, so they can be rebound the same
+way (click a viewport shortcut and press a mouse button with any modifiers):
+a left click selects (`Shift` extends), `Alt+click` cycles through the objects
+under the mouse, a `Ctrl+RMB` drag draws a lasso (`Ctrl+Shift` extends,
+`Ctrl+Alt` subtracts), and a `Shift+RMB` click places the 3D cursor. A right
+or middle press no shortcut claims still flies or orbits the camera. Your
+changes are saved to `keymap.json` in the editor settings folder.
+
+Over the viewport, `Z` opens the shading choices, `` ` `` the view directions
+(the numpad keys still switch views directly), and `.` the pivot point. They
+open as searchable menus; turn on **Pie menus** in **Preferences >
+Interface** to get Blender's pies instead: hold the key, point at an item,
+and let go to pick it, or tap the key and click an item. `Esc` or a right
+click closes a pie.
 
 **Edit > Preferences...** tunes the editor and applies each change at once:
 
 - **Interface**: the wallpaper, how frosted and how opaque the glass is, panel
-  opacity, the accent colour, and the UI scale (Automatic follows your
-  display; 1x to 4x keep the pixel grid crisp).
+  opacity, the accent colour, the UI scale (Automatic follows your
+  display; 1x to 4x keep the pixel grid crisp), and **Pie menus**.
 - **Keymap**: where `keymap.json` lives and a button to the keymap editor.
 - **External IDE**: the command that opens a compiler error, with `{file}`,
   `{line}`, and `{column}` placeholders; **Test** launches it.

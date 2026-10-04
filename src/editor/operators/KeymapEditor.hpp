@@ -9,8 +9,10 @@
 
 // The keymap editor window: lists every operator with its shortcuts per
 // region. Clicking a shortcut captures the next key chord pressed (Escape
-// cancels); conflicts are refused with a warning. Operators can gain extra
-// shortcuts, lose them, or be reset to their defaults.
+// cancels), or for a viewport shortcut also a mouse button with modifiers;
+// each shortcut's trigger (Press, Twice, Hold, Release, Click, Drag) is
+// chosen beside it. Conflicts are refused with a warning. Operators can gain
+// extra shortcuts, lose them, or be reset to their defaults.
 class KeymapEditor {
   public:
     // Draws the window while open is true. Returns whether the keymap
@@ -32,8 +34,12 @@ class KeymapEditor {
         std::optional<size_t> bindingIndex;
         std::string operatorId;
         KeymapRegion region{KeymapRegion::Global};
+        // The ImGui frame capturing started in, whose click is not captured.
+        int startFrame{0};
     };
 
+    // The key or (for viewport bindings) mouse button pressed this frame.
+    std::optional<ImGuiKey> capturedKey(const Keymap& keymap) const;
     bool updateCapture(Keymap& keymap);
     bool drawOperator(Keymap& keymap, const std::string& operatorId, const std::string& label,
                       const std::string& description);

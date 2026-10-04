@@ -4,6 +4,7 @@
 #include "editor/menus/EditorMenus.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/Keymap.hpp"
+#include "editor/operators/KeymapDispatch.hpp"
 #include "editor/operators/OperatorRunner.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/ViewportOperators.hpp"
@@ -83,9 +84,20 @@ class HeadlessSessionActions final : public EditorSessionActions {
 
     void updateModalTransform(ApplicationContext&, ViewportId) override {}
 
+    uint32_t dispatchMouseChords(ApplicationContext& context, KeymapRegion region, uint32_t allowedButtons) override {
+        return m_dispatcher.dispatchMouse(keymap, region, allowedButtons, [&](const KeymapInvocation& invocation) {
+            invokeOperator(context, invocation.operatorId, invocation.properties, invocation.region);
+        });
+    }
+
+    bool mouseButtonBound(KeymapRegion region, int button) const override {
+        return m_dispatcher.mouseButtonBound(keymap, region, button);
+    }
+
   private:
     SceneEditing m_editing;
     Selection& m_selection;
+    KeymapDispatcher m_dispatcher;
 };
 
 // Everything EditorContext references, owned together.

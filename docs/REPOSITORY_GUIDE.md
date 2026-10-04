@@ -728,11 +728,21 @@ reflected `Fields<T>`, and `Undo`/`Register` flags) registered in the
 undo step, reports failures to diagnostics, records every invocation in an
 `OperatorHistory` (shown by the Info panel), and keeps the last `Register`
 operator so the Adjust Last Operation panel can undo it and re-run it with
-edited properties. `Keymap` binds chords to operator ids per region (Global,
-Viewport, Outliner) with conflict detection and double-tap triggers; only the
+edited properties. `Keymap` binds key chords, and in the Viewport region mouse
+chords (LMB, MMB, RMB, X1, X2 with modifiers), to operator ids per region
+(Global, Viewport, Outliner) with a `KeyTrigger` (Press, DoubleTap, Hold,
+Release, Click, Drag) and conflict detection per chord and trigger; only the
 user's differences from `DefaultKeymap` are saved to `keymap.json` in the
-editor settings directory. `OperatorSearch` is the F3 popup and `KeymapEditor`
-the rebinding window. `ObjectOperators` holds the document-only object
+editor settings directory. `KeymapDispatch` turns ImGui input into bindings
+to run: `KeymapDispatcher` polls key and mouse presses and follows a press as
+a `KeymapGesture` (pure, tested with synthetic frames) for its Hold, Drag,
+Release, and Click bindings. The session updates it once per frame and the
+viewport asks it, through `EditorSessionActions::dispatchMouseChords` and
+`mouseButtonBound`, which operator a mouse chord runs (select, Alt+click
+cycle, the Ctrl+RMB drag lasso, the Shift+RMB 3D cursor), so unbound right
+and middle presses stay camera navigation. `OperatorSearch` is the F3 popup
+and `KeymapEditor` the rebinding window (keys, viewport mouse chords, and a
+trigger per binding). `ObjectOperators` holds the document-only object
 operators, which run headless in `tests/editor/OperatorTests.cpp`, and
 registers `CollectionOperators` (`collection.new`, `delete`, `link`, `unlink`,
 `set_flag`, and `object.collection_instance_add`) and `VisibilityOperators`
@@ -777,11 +787,17 @@ its leaves with `fuzzyMatchScore`. `MenuPopup` draws a snapshot Blender style
 menu's **Edit > Add**). `EditorMenus` is the session-owned registry plus the
 open popup, reached through `EditorContext::menus`; `wm.call_menu {menu,
 category}` opens a menu at the mouse and `object.add_menu` (Shift A) opens
-the Add menu. `DefaultMenus` registers the Add menu (add-object entries plus
-Component > category > type running `object.add_empty_with`) and the Add
-Component menu, whose sections come from the document's component registry
-in `AddComponentMenu`, so game module types appear. Tests live in
-`tests/editor/MenuTests.cpp`.
+the Add menu. `PieMenu` draws a menu as a Blender pie in the pixel theme (up
+to eight leaves, filled left, right, bottom, top, then the diagonals):
+`wm.call_pie {menu}` opens it, it follows the key held at that moment
+(letting go picks the item the mouse points at; a quick tap waits for a
+click), and Esc or a right click cancels. With the `ui.pie_menus` preference
+off (the default) `wm.call_pie` opens the ordinary searchable popup instead.
+`DefaultMenus` registers the Add menu (add-object entries plus Component >
+category > type running `object.add_empty_with`), the Add Component menu,
+whose sections come from the document's component registry in
+`AddComponentMenu`, so game module types appear, and the Shading (Z), View
+(`), and Pivot Point (.) pies. Tests live in `tests/editor/MenuTests.cpp`.
 
 ### Game module hosting (`src/editor/modules/`)
 

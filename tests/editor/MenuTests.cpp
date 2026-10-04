@@ -7,6 +7,7 @@
 #include "editor/menus/DefaultMenus.hpp"
 #include "editor/menus/EditorMenus.hpp"
 #include "editor/menus/MenuRegistry.hpp"
+#include "editor/menus/PieMenu.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/Keymap.hpp"
 #include "editor/operators/ObjectOperators.hpp"
@@ -23,6 +24,7 @@
 #include "engine/ui/GameUi.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <iostream>
@@ -527,6 +529,193 @@ void testAddComponentPopup() {
            "a component the entity has should not be offered");
     press(ImGuiKey_Escape, [&] { fixture.drawPanel(inspector); });
 }
+
+void testPieGeometry() {
+    constexpr float deadZone = 10.0f;
+    expect(pieItemAt({-100.0f, 0.0f}, 4, deadZone) == 0u && pieItemAt({100.0f, 0.0f}, 4, deadZone) == 1u &&
+               pieItemAt({0.0f, 100.0f}, 4, deadZone) == 2u && pieItemAt({0.0f, -100.0f}, 4, deadZone) == 3u,
+           "pie items should fill left, right, bottom, top");
+    expect(pieItemAt({70.0f, -70.0f}, 8, deadZone) == 5u && pieItemAt({-70.0f, 70.0f}, 8, deadZone) == 6u,
+           "the diagonals should hold items five to eight");
+    expect(pieItemAt({30.0f, -100.0f}, 2, deadZone) == 1u, "with two items the right half should pick the right one");
+    expect(!pieItemAt({4.0f, 3.0f}, 4, deadZone) && !pieItemAt({100.0f, 0.0f}, 0, deadZone),
+           "the dead zone and an empty pie should pick nothing");
+
+    MenuFixture fixture;
+    const std::vector<MenuItem> shading = pieItems(fixture.resolve(shadingPieMenuId));
+    expect(shading.size() == 4 && shading[0].label == "Wireframe" && shading[0].operatorId == "view3d.shading_set" &&
+               shading[0].properties == R"({"type":"wireframe"})",
+           "the Shading pie should put Wireframe on the left");
+    expect(pieItems(fixture.resolve(viewPieMenuId)).size() == maximumPieItems,
+           "the View pie should fill all eight directions");
+    const std::vector<MenuItem> pivot = pieItems(fixture.resolve(pivotPieMenuId));
+    expect(!pivot.empty() && std::ranges::all_of(
+                                 pivot, [](const MenuItem& item) { return item.operatorId == "transform.pivot_set"; }),
+           "the Pivot pie should run transform.pivot_set even before it is registered");
+    Keymap keymap(defaultEditorKeymap());
+    const KeymapBinding* z = keymap.resolve(KeymapRegion::Viewport, ImGuiKey_Z, 0.0, 0.3);
+    expect(z != nullptr && z->operatorId == "wm.call_pie" && z->properties == R"({"menu":"VIEW3D_MT_shading_pie"})",
+           "Z should call the Shading pie in the viewport");
+}
+
+// A fixture with a test pie whose entries record which one ran; the fourth
+// (top) entry's operator never polls.
+struct PieFixture : MenuFixture {
+    struct RecordProperties {
+        std::string name;
+    };
+
+    std::vector<std::string> picked;
+    HeadlessImGuiContext imgui;
+    ImVec2 center{640.0f, 360.0f};
+
+    PieFixture() {
+        expect(operators
+                   .add({.id = "test.record",
+                         .label = "Record",
+                         .description = "Records its name",
+                         .flags = OperatorFlags::None,
+                         .properties = OperatorProperties::make(
+                             RecordProperties{},
+                             std::move(Fields<RecordProperties>().add("name", &RecordProperties::name))),
+                         .poll = {},
+                         .execute =
+                             [this](OperatorContext&, OperatorProperties& properties) {
+                                 picked.push_back(properties.get<RecordProperties>()->name);
+                                 return OperatorResult::finished();
+                             }})
+                   .success,
+               "the recording operator should register");
+        expect(operators
+                   .add({.id = "test.never",
+                         .label = "Never",
+                         .description = "Never available",
+                         .flags = OperatorFlags::None,
+                         .properties = {},
+                         .poll = [](const OperatorContext&) { return false; },
+                         .execute = [](OperatorContext&, OperatorProperties&) { return OperatorResult::finished(); }})
+                   .success,
+               "the unavailable operator should register");
+        MenuRegistry& registry = menus.registry();
+        expect(registry.addMenu(editorMenuOwner, {.id = "TEST_MT_pie", .title = "Test"}).success,
+               "the test pie should register");
+        for (const char* name : {"west", "east", "south"}) {
+            MenuEntry entry = operatorEntry(name, "test.record");
+            entry.properties = std::string(R"({"name":")") + name + "\"}";
+            registry.addEntry(editorMenuOwner, "TEST_MT_pie", std::move(entry));
+        }
+        registry.addEntry(editorMenuOwner, "TEST_MT_pie", operatorEntry("north", "test.never"));
+        menus.setPieMenusEnabled(true);
+        moveMouse({0.0f, 0.0f});
+    }
+
+    void moveMouse(ImVec2 offset) {
+        ImGui::GetIO().AddMousePosEvent(center.x + offset.x, center.y + offset.y);
+        drawMenus();
+    }
+
+    // Opens the pie with key held down (ImGuiKey_None for none).
+    void openPie(ImGuiKey key) {
+        if (key != ImGuiKey_None) {
+            ImGui::GetIO().AddKeyEvent(key, true);
+            drawMenus();
+        }
+        expect(static_cast<bool>(invoke("wm.call_pie", R"({"menu":"TEST_MT_pie"})")) && menus.pieOpen(),
+               "wm.call_pie should open the pie");
+        drawMenus();
+    }
+
+    void release(ImGuiKey key) {
+        ImGui::GetIO().AddKeyEvent(key, false);
+        drawMenus();
+    }
+
+    void click(ImGuiMouseButton button) {
+        ImGui::GetIO().AddMouseButtonEvent(button, true);
+        drawMenus();
+        ImGui::GetIO().AddMouseButtonEvent(button, false);
+        drawMenus();
+    }
+};
+
+void testPieHoldRelease() {
+    PieFixture fixture;
+    fixture.openPie(ImGuiKey_Z);
+    expect(fixture.menus.pie().followsKey(), "a pie opened by a held key should follow it");
+    expect(std::abs(fixture.menus.pie().center().x - fixture.center.x) < 1.0f, "the pie should open around the mouse");
+    fixture.moveMouse({PieMenu::radius(), 4.0f});
+    expect(fixture.menus.pie().highlighted() == 1u, "pointing right should highlight the right item");
+    fixture.release(ImGuiKey_Z);
+    expect(fixture.picked == std::vector<std::string>{"east"} && !fixture.menus.pieOpen(),
+           "letting go of the key should run the item the mouse points at and close the pie");
+
+    // Letting go over an unavailable item, or after holding in the middle,
+    // closes without running anything.
+    fixture.moveMouse({0.0f, 0.0f});
+    fixture.openPie(ImGuiKey_Z);
+    fixture.moveMouse({0.0f, -PieMenu::radius()});
+    fixture.release(ImGuiKey_Z);
+    expect(fixture.picked.size() == 1 && !fixture.menus.pieOpen(), "an unavailable item should not run");
+    fixture.moveMouse({0.0f, 0.0f});
+    fixture.openPie(ImGuiKey_Z);
+    for (int frame = 0; frame < 30; ++frame) {
+        fixture.drawMenus();
+    }
+    fixture.release(ImGuiKey_Z);
+    expect(fixture.picked.size() == 1 && !fixture.menus.pieOpen(),
+           "a long hold let go in the middle should close the pie");
+}
+
+void testPieTapThenClick() {
+    PieFixture fixture;
+    fixture.openPie(ImGuiKey_Z);
+    fixture.release(ImGuiKey_Z);
+    expect(fixture.menus.pieOpen() && !fixture.menus.pie().followsKey() && fixture.picked.empty(),
+           "a quick tap should leave the pie open for a click");
+    fixture.moveMouse({-4.0f, PieMenu::radius()});
+    fixture.click(ImGuiMouseButton_Left);
+    expect(fixture.picked == std::vector<std::string>{"south"} && !fixture.menus.pieOpen(),
+           "a click should run the item the mouse points at");
+
+    // Without a held key (opened from a menu) the pie waits for a click; a
+    // click in the middle dismisses it.
+    fixture.moveMouse({0.0f, 0.0f});
+    fixture.openPie(ImGuiKey_None);
+    expect(fixture.menus.pieOpen() && !fixture.menus.pie().followsKey(), "a pie opened without a key should wait");
+    fixture.click(ImGuiMouseButton_Left);
+    expect(fixture.picked.size() == 1 && !fixture.menus.pieOpen(), "a click in the middle should dismiss the pie");
+}
+
+void testPieCancel() {
+    PieFixture fixture;
+    fixture.openPie(ImGuiKey_None);
+    fixture.moveMouse({-PieMenu::radius(), 0.0f});
+    press(ImGuiKey_Escape, [&] { fixture.drawMenus(); });
+    expect(!fixture.menus.pieOpen() && fixture.picked.empty(), "Escape should cancel the pie");
+
+    fixture.moveMouse({0.0f, 0.0f});
+    fixture.openPie(ImGuiKey_Z);
+    fixture.moveMouse({-PieMenu::radius(), 0.0f});
+    fixture.click(ImGuiMouseButton_Right);
+    fixture.release(ImGuiKey_Z);
+    expect(!fixture.menus.pieOpen() && fixture.picked.empty(), "a right click should cancel a held pie");
+}
+
+void testPiesOffFallBack() {
+    PieFixture fixture;
+    fixture.menus.setPieMenusEnabled(false);
+    expect(static_cast<bool>(fixture.invoke("wm.call_pie", R"({"menu":"TEST_MT_pie"})")) && fixture.menus.isOpen() &&
+               !fixture.menus.pieOpen() && fixture.menus.request().menu == "TEST_MT_pie",
+           "with pies off, wm.call_pie should open the searchable menu");
+    fixture.openFrames();
+    HeadlessImGuiContext::typeNextFrame("east");
+    fixture.drawMenus();
+    press(ImGuiKey_Enter, [&] { fixture.drawMenus(); });
+    expect(fixture.picked == std::vector<std::string>{"east"}, "the fallback menu should be searchable");
+    expect(fixture.invoke("wm.call_pie", R"({"menu":"MISSING_MT"})").status == OperatorStatus::Failed,
+           "calling an unknown pie should fail");
+    fixture.diagnostics.acknowledgeErrors();
+}
 } // namespace
 
 int main() {
@@ -539,6 +728,11 @@ int main() {
     testCallMenuOperators();
     testAddMenuPopup();
     testAddComponentPopup();
+    testPieGeometry();
+    testPieHoldRelease();
+    testPieTapThenClick();
+    testPieCancel();
+    testPiesOffFallBack();
     if (failures != 0) {
         std::cerr << failures << " menu test(s) failed\n";
         return 1;
