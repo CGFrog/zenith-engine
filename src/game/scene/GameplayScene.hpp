@@ -3,6 +3,7 @@
 #include "engine/application/Application.hpp"
 #include "engine/module/Gameplay.hpp"
 #include "engine/project/ProjectConfig.hpp"
+#include "engine/ui/GameMenus.hpp"
 #include "game/application/GameSettings.hpp"
 #include "game/input/DemoInput.hpp"
 #include "game/scene/CaptureCamera.hpp"
@@ -41,6 +42,9 @@ class GameplayScene final : public ApplicationScene {
     void drawPause(ApplicationContext& context);
     void drawSettings(ApplicationContext& context);
     void persistSettings() const;
+    // The settings screen's entries over m_settings and the engine services
+    // they apply to.
+    std::vector<SettingsEntry> settingsEntries(ApplicationContext& context);
     // Gives an authored player what spawnFirstPersonPlayer would: an audio
     // listener on a camera child when the scene has none.
     void completeAuthoredPlayers(Scene& scene);

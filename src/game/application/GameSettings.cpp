@@ -5,7 +5,7 @@
 #include <nlohmann/json.hpp>
 
 namespace {
-constexpr int currentVersion = 2;
+constexpr int currentVersion = 3;
 }
 
 GameSettingsResult loadGameSettings(const std::filesystem::path& path, GameSettings& settings) {
@@ -26,6 +26,9 @@ GameSettingsResult loadGameSettings(const std::filesystem::path& path, GameSetti
         loaded.masterMuted = document.at("masterMuted").get<bool>();
         loaded.lookSensitivity = document.at("lookSensitivity").get<float>();
         loaded.invertLookY = document.at("invertLookY").get<bool>();
+        if (version >= 3) {
+            loaded.masterVolume = document.at("masterVolume").get<float>();
+        }
         if (version >= 2) {
             loaded.locale = document.value("locale", "en");
             const auto& accessibility = document.at("accessibility");
@@ -40,10 +43,11 @@ GameSettingsResult loadGameSettings(const std::filesystem::path& path, GameSetti
         }
         if (antialiasing < static_cast<int>(AntialiasingMode::Off) ||
             antialiasing > static_cast<int>(AntialiasingMode::Taa) || bloom < static_cast<int>(BloomQuality::Off) ||
-            bloom > static_cast<int>(BloomQuality::Downsampled) || loaded.lookSensitivity < 0.25f ||
-            loaded.lookSensitivity > 4.0f || loaded.accessibility.uiScale < 0.75f ||
-            loaded.accessibility.uiScale > 2.5f || loaded.accessibility.textScale < 0.75f ||
-            loaded.accessibility.textScale > 3.0f || loaded.locale.empty() || loaded.inputProfiles.empty() ||
+            bloom > static_cast<int>(BloomQuality::Downsampled) || !(loaded.masterVolume >= 0.0f) ||
+            loaded.masterVolume > 1.0f || loaded.lookSensitivity < 0.25f || loaded.lookSensitivity > 4.0f ||
+            loaded.accessibility.uiScale < 0.75f || loaded.accessibility.uiScale > 2.5f ||
+            loaded.accessibility.textScale < 0.75f || loaded.accessibility.textScale > 3.0f || loaded.locale.empty() ||
+            loaded.inputProfiles.empty() ||
             std::find(loaded.inputProfiles.begin(), loaded.inputProfiles.end(), loaded.activeInputProfile) ==
                 loaded.inputProfiles.end()) {
             return {.error = "Game settings contain an out-of-range value: " + path.string()};
@@ -73,6 +77,7 @@ GameSettingsResult saveGameSettings(const std::filesystem::path& path, const Gam
         {"antialiasing", static_cast<int>(settings.antialiasing)},
         {"bloom", static_cast<int>(settings.bloom)},
         {"masterMuted", settings.masterMuted},
+        {"masterVolume", settings.masterVolume},
         {"lookSensitivity", settings.lookSensitivity},
         {"invertLookY", settings.invertLookY},
         {"locale", settings.locale},

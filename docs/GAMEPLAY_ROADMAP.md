@@ -498,11 +498,29 @@ Follow-ups:
 
 ### B6. Game UI widgets and settings screen
 
-- [ ] Add slider, toggle, progress bar and simple row/column layout to
+- [x] Add slider, toggle, progress bar and simple row/column layout to
       `GameUiContext`.
-- [ ] Move the demo's pause and settings screens out of
+- [x] Move the demo's pause and settings screens out of
       `src/game/scene/GameplayScene.cpp` into a reusable engine screen built on
       `GameUi`.
+
+Result:
+- `GameUiContext::toggle`, `slider` (pointer drag, and left/right
+  navigation through the new `UiNavigationInput` fields), `progressBar`, and
+  `UiLayout`; widgets share one focus and frame helper with `button`.
+- `src/engine/ui/GameMenus.*`: `drawPauseMenu` and `drawSettingsMenu` over
+  game-supplied `SettingsEntry` controls, so the engine screen holds no demo
+  policy. The demo's settings gained a volume slider (`GameSettings`
+  version 3) and a sensitivity slider.
+- Coverage: `GameUiTests.cpp`, the new `GameMenusTests.cpp`
+  (`zenith_game_menus`), and `GameSettingsTests.cpp`.
+
+Follow-ups:
+- Key rebinding is not on the settings screen: the input layer has no "any
+  key pressed" query and only 14 keys. A4's follow-up to persist the input
+  profile still stands.
+- `ProjectApplication` has no pause or settings screen; C6's template should
+  use the engine menus there.
 
 ### B7. Navigation
 

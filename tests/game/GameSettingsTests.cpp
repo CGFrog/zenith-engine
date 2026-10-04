@@ -24,6 +24,7 @@ int main() {
     const GameSettings source{.antialiasing = AntialiasingMode::Off,
                               .bloom = BloomQuality::Downsampled,
                               .masterMuted = true,
+                              .masterVolume = 0.35f,
                               .lookSensitivity = 1.5f,
                               .invertLookY = true,
                               .locale = "fr",
@@ -39,9 +40,9 @@ int main() {
     GameSettings loaded;
     expect(static_cast<bool>(loadGameSettings(path, loaded)), "saved game settings should load");
     expect(loaded.antialiasing == source.antialiasing && loaded.bloom == source.bloom &&
-               loaded.masterMuted == source.masterMuted && loaded.lookSensitivity == source.lookSensitivity &&
-               loaded.invertLookY == source.invertLookY && loaded.locale == source.locale &&
-               loaded.accessibility.uiScale == source.accessibility.uiScale &&
+               loaded.masterMuted == source.masterMuted && loaded.masterVolume == source.masterVolume &&
+               loaded.lookSensitivity == source.lookSensitivity && loaded.invertLookY == source.invertLookY &&
+               loaded.locale == source.locale && loaded.accessibility.uiScale == source.accessibility.uiScale &&
                loaded.accessibility.highContrast == source.accessibility.highContrast &&
                loaded.activeInputProfile == source.activeInputProfile && loaded.inputProfiles.size() == 2,
            "render, audio, and input settings should round-trip");
@@ -60,8 +61,15 @@ int main() {
         << R"({"version":1,"antialiasing":1,"bloom":0,"masterMuted":false,"lookSensitivity":1.0,"invertLookY":false})";
     legacy.close();
     GameSettings migrated;
-    expect(loadGameSettings(path, migrated) && migrated.locale == "en" && migrated.activeInputProfile == "Default",
-           "version 1 settings migrate atomically to accessibility-safe defaults");
+    expect(loadGameSettings(path, migrated) && migrated.locale == "en" && migrated.activeInputProfile == "Default" &&
+               migrated.masterVolume == 1.0f,
+           "version 1 settings migrate atomically to accessibility-safe defaults and full volume");
+
+    std::ofstream loud(path, std::ios::trunc);
+    loud << R"({"version":3,"antialiasing":1,"bloom":0,"masterMuted":false,"masterVolume":1.5,"lookSensitivity":1.0,)"
+         << R"("invertLookY":false,"accessibility":{}})";
+    loud.close();
+    expect(!loadGameSettings(path, migrated), "a master volume above 1 is rejected");
 
     std::filesystem::remove_all(directory, error);
     return failures == 0 ? 0 : 1;

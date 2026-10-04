@@ -16,6 +16,8 @@ inline constexpr std::string_view Reload = "Reload";
 inline constexpr std::string_view MenuNext = "MenuNext";
 inline constexpr std::string_view MenuPrevious = "MenuPrevious";
 inline constexpr std::string_view MenuAccept = "MenuAccept";
+inline constexpr std::string_view MenuLeft = "MenuLeft";
+inline constexpr std::string_view MenuRight = "MenuRight";
 } // namespace DemoAction
 
 std::shared_ptr<InputActionMap> createDemoInputMap();

@@ -60,5 +60,11 @@ std::shared_ptr<InputActionMap> createDemoInputMap() {
     actions->addAction(std::string(DemoAction::MenuAccept), InputActionValueType::Button);
     actions->addBinding(DemoAction::MenuAccept, keyBinding(Key::Space));
     actions->addBinding(DemoAction::MenuAccept, gamepadButtonBinding(GamepadButton::South));
+    actions->addAction(std::string(DemoAction::MenuLeft), InputActionValueType::Button);
+    actions->addBinding(DemoAction::MenuLeft, keyBinding(Key::A));
+    actions->addBinding(DemoAction::MenuLeft, gamepadButtonBinding(GamepadButton::DpadLeft));
+    actions->addAction(std::string(DemoAction::MenuRight), InputActionValueType::Button);
+    actions->addBinding(DemoAction::MenuRight, keyBinding(Key::D));
+    actions->addBinding(DemoAction::MenuRight, gamepadButtonBinding(GamepadButton::DpadRight));
     return actions;
 }

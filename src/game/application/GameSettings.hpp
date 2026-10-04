@@ -11,6 +11,8 @@ struct GameSettings {
     AntialiasingMode antialiasing{AntialiasingMode::Fxaa};
     BloomQuality bloom{BloomQuality::Off};
     bool masterMuted{false};
+    // The master bus gain, 0 to 1 (version 3).
+    float masterVolume{1.0f};
     float lookSensitivity{1.0f};
     bool invertLookY{false};
     std::string locale{"en"};

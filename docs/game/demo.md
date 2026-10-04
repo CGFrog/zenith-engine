@@ -41,8 +41,12 @@ the gameplay's component types (the demo module's, or the linked ones), spawns
 a player (`spawnFirstPersonPlayer`) only when the scene has no authored
 character controller (otherwise it gives an authored one's camera the audio
 listener when the scene has none), and runs the gameplay's systems while the
-game is not paused. It also composes the title screen, HUD, pause menu, and persisted
-audio, rendering, and input settings with the engine game-UI API.
+game is not paused. It also composes the title screen and HUD with the engine game-UI API,
+and its pause and settings screens with the engine's `drawPauseMenu` and
+`drawSettingsMenu`: the settings entries apply anti-aliasing, bloom, master
+volume and mute, look sensitivity and inversion, and accessibility, and are
+persisted in `GameSettings` (version 3 added `masterVolume`). `MenuLeft` and
+`MenuRight` step the focused slider.
 
 ## Folder contents
 

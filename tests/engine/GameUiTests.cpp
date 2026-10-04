@@ -12,6 +12,88 @@ void expect(bool condition, const char* message) {
         ++failures;
     }
 }
+
+void testToggle() {
+    GameUiContext ui;
+    bool value = false;
+    InputState click;
+    click.mousePosition = {50.0f, 50.0f};
+    click.setMouseButtonPressed(MouseButton::Left);
+    ui.beginFrame({1920, 1080}, click);
+    expect(ui.toggle("toggle", {{0.0f, 0.0f}, {400.0f, 100.0f}}, "Toggle", value) && value,
+           "clicking a toggle turns it on");
+    ui.beginFrame({1920, 1080}, {});
+    expect(!ui.toggle("toggle", {{0.0f, 0.0f}, {400.0f, 100.0f}}, "Toggle", value) && value,
+           "a toggle keeps its value without input");
+    ui.beginFrame({1920, 1080}, {});
+    ui.setNavigation({.activatePressed = true});
+    expect(ui.toggle("toggle", {{0.0f, 0.0f}, {400.0f, 100.0f}}, "Toggle", value) && !value,
+           "activating a focused toggle turns it off");
+    expect(ui.commands().size() == 4, "a toggle draws its frame, label, box, and fill");
+}
+
+void testSlider() {
+    GameUiContext ui;
+    const UiRect rect{{0.0f, 0.0f}, {1000.0f, 100.0f}};
+    float value = 0.0f;
+    // The track spans x 560 to 960.
+    InputState press;
+    press.mousePosition = {760.0f, 50.0f};
+    press.setMouseButtonPressed(MouseButton::Left);
+    press.setMouseButtonDown(MouseButton::Left);
+    ui.beginFrame({1920, 1080}, press);
+    expect(ui.slider("slider", rect, "Slider", value, 0.0f, 10.0f, 1.0f) && value == 5.0f,
+           "pressing on the track sets the slider");
+    InputState drag;
+    drag.mousePosition = {1500.0f, 300.0f};
+    drag.setMouseButtonDown(MouseButton::Left);
+    ui.beginFrame({1920, 1080}, drag);
+    expect(ui.slider("slider", rect, "Slider", value, 0.0f, 10.0f, 1.0f) && value == 10.0f,
+           "dragging past the end of the track clamps to the maximum, even off the widget");
+    InputState released;
+    released.mousePosition = {560.0f, 50.0f};
+    ui.beginFrame({1920, 1080}, released);
+    expect(!ui.slider("slider", rect, "Slider", value, 0.0f, 10.0f, 1.0f) && value == 10.0f,
+           "releasing the pointer ends the drag");
+
+    ui.beginFrame({1920, 1080}, released);
+    ui.setNavigation({.leftPressed = true});
+    expect(ui.slider("slider", rect, "Slider", value, 0.0f, 10.0f, 1.0f) && value == 9.0f,
+           "left navigation steps the focused slider down");
+    value = 10.0f;
+    ui.beginFrame({1920, 1080}, released);
+    ui.setNavigation({.rightPressed = true});
+    expect(!ui.slider("slider", rect, "Slider", value, 0.0f, 10.0f, 1.0f) && value == 10.0f,
+           "a slider at its maximum does not step past it");
+    value = 3.3f;
+    ui.beginFrame({1920, 1080}, {});
+    ui.slider("slider", rect, "Slider", value, 0.0f, 10.0f, 1.0f);
+    expect(value == 3.0f, "a slider rounds its value to its step");
+}
+
+void testProgressBarAndLayout() {
+    GameUiContext ui;
+    ui.beginFrame({1920, 1080}, {});
+    ui.progressBar({{0.0f, 0.0f}, {200.0f, 20.0f}}, 0.25f);
+    const auto* fill = std::get_if<UiPanelCommand>(&ui.commands().back().payload);
+    expect(ui.commands().size() == 2 && fill != nullptr && fill->rect.size.x == 50.0f,
+           "a progress bar fills its fraction of the width");
+    ui.progressBar({{0.0f, 0.0f}, {200.0f, 20.0f}}, 2.0f);
+    fill = std::get_if<UiPanelCommand>(&ui.commands().back().payload);
+    expect(fill != nullptr && fill->rect.size.x == 200.0f, "a progress bar clamps its fraction");
+    ui.progressBar({{0.0f, 0.0f}, {200.0f, 20.0f}}, std::nanf(""));
+    expect(ui.commands().size() == 5, "an empty or invalid progress bar draws only its background");
+
+    UiLayout column = UiLayout::column({10.0f, 20.0f}, 5.0f);
+    const UiRect first = column.next({100.0f, 30.0f});
+    const UiRect second = column.next({100.0f, 30.0f});
+    expect(first.position == glm::vec2(10.0f, 20.0f) && second.position == glm::vec2(10.0f, 55.0f),
+           "a column places widgets downward with spacing");
+    UiLayout row = UiLayout::row({0.0f, 0.0f}, 4.0f);
+    row.next({50.0f, 10.0f});
+    expect(row.next({20.0f, 10.0f}).position == glm::vec2(54.0f, 0.0f) && row.cursor() == glm::vec2(78.0f, 0.0f),
+           "a row places widgets rightward with spacing");
+}
 } // namespace
 
 int main() {
@@ -50,6 +132,10 @@ int main() {
     ui.text({20.0f, 30.0f}, "Text", 24.0f);
     ui.image({{30.0f, 40.0f}, {64.0f, 64.0f}}, TextureHandle{0, 1});
     expect(ui.commands().size() == 7, "panels, button layers, text, and images produce renderer commands");
+
+    testToggle();
+    testSlider();
+    testProgressBarAndLayout();
 
     return failures == 0 ? 0 : 1;
 }

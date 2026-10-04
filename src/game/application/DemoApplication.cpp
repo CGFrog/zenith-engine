@@ -46,6 +46,7 @@ SceneResult DemoApplication::onStart(ApplicationContext& context) {
         }
     }
     context.audio.setBusMuted(AudioBus::Master, m_settings->masterMuted);
+    context.audio.setBusGain(AudioBus::Master, m_settings->masterVolume);
     context.gameUi.setAccessibility(m_settings->accessibility);
 
     const std::filesystem::path assets = m_project ? m_project->assetRoot : ::assetRoot();

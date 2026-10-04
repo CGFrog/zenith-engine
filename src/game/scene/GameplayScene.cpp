@@ -170,7 +170,9 @@ void GameplayScene::drawUi(ApplicationContext& context) {
     }
     context.gameUi.setNavigation({.nextPressed = m_actions.pressed(DemoAction::MenuNext),
                                   .previousPressed = m_actions.pressed(DemoAction::MenuPrevious),
-                                  .activatePressed = m_actions.pressed(DemoAction::MenuAccept)});
+                                  .activatePressed = m_actions.pressed(DemoAction::MenuAccept),
+                                  .leftPressed = m_actions.pressed(DemoAction::MenuLeft),
+                                  .rightPressed = m_actions.pressed(DemoAction::MenuRight)});
     switch (m_screen) {
     case Screen::Title:
         drawTitle(context);
@@ -216,82 +218,118 @@ void GameplayScene::drawTitle(ApplicationContext& context) {
 }
 
 void GameplayScene::drawPause(ApplicationContext& context) {
-    GameUiContext& ui = context.gameUi;
-    ui.panel({{-320.0f, -270.0f}, {640.0f, 540.0f}}, {.color = {0.025f, 0.035f, 0.055f, 0.94f}, .cornerRadius = 18.0f},
-             UiAnchor::Center);
-    ui.text({-95.0f, -205.0f}, "Paused", 48.0f, glm::vec4(1.0f), UiAnchor::Center);
-    if (ui.button("pause.resume", {{-200.0f, -80.0f}, {400.0f, 70.0f}}, "Resume", UiAnchor::Center)) {
+    switch (drawPauseMenu(context.gameUi)) {
+    case MenuAction::Resume:
         m_screen = Screen::Playing;
-    }
-    if (ui.button("pause.settings", {{-200.0f, 10.0f}, {400.0f, 70.0f}}, "Settings", UiAnchor::Center)) {
+        break;
+    case MenuAction::OpenSettings:
         m_settingsReturnScreen = Screen::Paused;
         m_screen = Screen::Settings;
-    }
-    if (ui.button("pause.quit", {{-200.0f, 100.0f}, {400.0f, 70.0f}}, "Quit", UiAnchor::Center)) {
+        break;
+    case MenuAction::Quit:
         context.control.requestQuit();
+        break;
+    default:
+        break;
     }
 }
 
-void GameplayScene::drawSettings(ApplicationContext& context) {
-    GameUiContext& ui = context.gameUi;
-    ui.panel({{-380.0f, -520.0f}, {760.0f, 1040.0f}}, {.color = {0.025f, 0.035f, 0.055f, 0.96f}, .cornerRadius = 18.0f},
-             UiAnchor::Center);
-    ui.text({-105.0f, -465.0f}, "Settings", 44.0f, glm::vec4(1.0f), UiAnchor::Center);
-    RenderSettings settings = context.rendering.settings();
-    const std::string aaLabel = settings.antialiasing == AntialiasingMode::Off    ? "Anti-aliasing: Off"
-                                : settings.antialiasing == AntialiasingMode::Fxaa ? "Anti-aliasing: FXAA"
-                                                                                  : "Anti-aliasing: TAA";
-    if (ui.button("settings.aa", {{-250.0f, -140.0f}, {500.0f, 68.0f}}, aaLabel, UiAnchor::Center)) {
-        settings.antialiasing = static_cast<AntialiasingMode>((static_cast<uint32_t>(settings.antialiasing) + 1) %
-                                                              (static_cast<uint32_t>(AntialiasingMode::Taa) + 1));
+std::vector<SettingsEntry> GameplayScene::settingsEntries(ApplicationContext& context) {
+    const auto renderSetting = [&context, this](auto change) {
+        RenderSettings settings = context.rendering.settings();
+        change(settings);
         context.rendering.setSettings(settings);
         m_settings->antialiasing = settings.antialiasing;
-        persistSettings();
-    }
-    const std::string bloomLabel = settings.bloom == BloomQuality::Off ? "Bloom: Off" : "Bloom: Downsampled";
-    if (ui.button("settings.bloom", {{-250.0f, -52.0f}, {500.0f, 68.0f}}, bloomLabel, UiAnchor::Center)) {
-        settings.bloom = settings.bloom == BloomQuality::Off ? BloomQuality::Downsampled : BloomQuality::Off;
-        context.rendering.setSettings(settings);
         m_settings->bloom = settings.bloom;
+    };
+    const auto accessibility = [&context, this](auto change) {
+        change(m_settings->accessibility);
+        context.gameUi.setAccessibility(m_settings->accessibility);
+    };
+    const auto percent = [](float value) { return std::to_string(static_cast<int>(value * 100.0f + 0.5f)) + "%"; };
+    return {
+        {.id = "aa",
+         .label = "Anti-aliasing",
+         .control = SettingsChoice{
+             .options = {"Off", "FXAA", "TAA"},
+             .get = [&context] { return static_cast<size_t>(context.rendering.settings().antialiasing); },
+             .set =
+                 [renderSetting](size_t option) {
+                     renderSetting([option](RenderSettings& settings) {
+                         settings.antialiasing = static_cast<AntialiasingMode>(option);
+                     });
+                 }}},
+        {.id = "bloom",
+         .label = "Bloom",
+         .control =
+             SettingsToggle{.get = [&context] { return context.rendering.settings().bloom != BloomQuality::Off; },
+                            .set =
+                                [renderSetting](bool on) {
+                                    renderSetting([on](RenderSettings& settings) {
+                                        settings.bloom = on ? BloomQuality::Downsampled : BloomQuality::Off;
+                                    });
+                                }}},
+        {.id = "volume",
+         .label = "Volume",
+         .control = SettingsSlider{.minimum = 0.0f,
+                                   .maximum = 1.0f,
+                                   .step = 0.05f,
+                                   .get = [this] { return m_settings->masterVolume; },
+                                   .set =
+                                       [&context, this](float volume) {
+                                           m_settings->masterVolume = volume;
+                                           context.audio.setBusGain(AudioBus::Master, volume);
+                                       },
+                                   .format = percent}},
+        {.id = "mute",
+         .label = "Mute audio",
+         .control = SettingsToggle{.get = [this] { return m_settings->masterMuted; },
+                                   .set =
+                                       [&context, this](bool muted) {
+                                           m_settings->masterMuted = muted;
+                                           context.audio.setBusMuted(AudioBus::Master, muted);
+                                       }}},
+        {.id = "sensitivity",
+         .label = "Look sensitivity",
+         .control = SettingsSlider{.minimum = 0.25f,
+                                   .maximum = 4.0f,
+                                   .step = 0.05f,
+                                   .get = [this] { return m_settings->lookSensitivity; },
+                                   .set = [this](float sensitivity) { m_settings->lookSensitivity = sensitivity; }}},
+        {.id = "invert",
+         .label = "Invert look",
+         .control = SettingsToggle{.get = [this] { return m_settings->invertLookY; },
+                                   .set = [this](bool invert) { m_settings->invertLookY = invert; }}},
+        {.id = "contrast",
+         .label = "High contrast",
+         .control = SettingsToggle{.get = [this] { return m_settings->accessibility.highContrast; },
+                                   .set =
+                                       [accessibility](bool on) {
+                                           accessibility(
+                                               [on](AccessibilitySettings& settings) { settings.highContrast = on; });
+                                       }}},
+        {.id = "motion",
+         .label = "Reduced motion",
+         .control = SettingsToggle{.get = [this] { return m_settings->accessibility.reducedMotion; },
+                                   .set =
+                                       [accessibility](bool on) {
+                                           accessibility(
+                                               [on](AccessibilitySettings& settings) { settings.reducedMotion = on; });
+                                       }}},
+    };
+}
+
+void GameplayScene::drawSettings(ApplicationContext& context) {
+    const std::vector<SettingsEntry> entries = settingsEntries(context);
+    switch (drawSettingsMenu(context.gameUi, entries)) {
+    case MenuAction::Changed:
         persistSettings();
-    }
-    const bool muted = context.audio.busMuted(AudioBus::Master);
-    if (ui.button("settings.audio", {{-250.0f, 36.0f}, {500.0f, 68.0f}}, muted ? "Audio: Muted" : "Audio: On",
-                  UiAnchor::Center)) {
-        context.audio.setBusMuted(AudioBus::Master, !muted);
-        m_settings->masterMuted = !muted;
-        persistSettings();
-    }
-    const std::string sensitivityLabel = m_settings->lookSensitivity < 0.9f   ? "Look sensitivity: Low"
-                                         : m_settings->lookSensitivity > 1.1f ? "Look sensitivity: High"
-                                                                              : "Look sensitivity: Normal";
-    if (ui.button("settings.sensitivity", {{-250.0f, 124.0f}, {500.0f, 68.0f}}, sensitivityLabel, UiAnchor::Center)) {
-        m_settings->lookSensitivity = m_settings->lookSensitivity < 0.9f   ? 1.0f
-                                      : m_settings->lookSensitivity < 1.1f ? 1.5f
-                                                                           : 0.65f;
-        persistSettings();
-    }
-    if (ui.button("settings.invert", {{-250.0f, 212.0f}, {500.0f, 68.0f}},
-                  m_settings->invertLookY ? "Invert look: On" : "Invert look: Off", UiAnchor::Center)) {
-        m_settings->invertLookY = !m_settings->invertLookY;
-        persistSettings();
-    }
-    if (ui.button("settings.contrast", {{-250.0f, 300.0f}, {500.0f, 68.0f}},
-                  m_settings->accessibility.highContrast ? "High contrast: On" : "High contrast: Off",
-                  UiAnchor::Center)) {
-        m_settings->accessibility.highContrast = !m_settings->accessibility.highContrast;
-        ui.setAccessibility(m_settings->accessibility);
-        persistSettings();
-    }
-    if (ui.button("settings.motion", {{-250.0f, 388.0f}, {500.0f, 68.0f}},
-                  m_settings->accessibility.reducedMotion ? "Reduced motion: On" : "Reduced motion: Off",
-                  UiAnchor::Center)) {
-        m_settings->accessibility.reducedMotion = !m_settings->accessibility.reducedMotion;
-        ui.setAccessibility(m_settings->accessibility);
-        persistSettings();
-    }
-    if (ui.button("settings.back", {{-250.0f, 476.0f}, {500.0f, 68.0f}}, "Back", UiAnchor::Center)) {
+        break;
+    case MenuAction::Back:
         m_screen = m_settingsReturnScreen;
+        break;
+    default:
+        break;
     }
 }
 

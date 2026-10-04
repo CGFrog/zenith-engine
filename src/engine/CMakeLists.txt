@@ -169,6 +169,7 @@ add_library(zenith_engine SHARED
     scene/Prefab.cpp
     scene/PrefabComponentTypes.cpp
     scene/PrefabSystem.cpp
+    ui/GameMenus.cpp
     ui/GameUi.cpp
     ui/Accessibility.cpp
     ui/Localization.cpp

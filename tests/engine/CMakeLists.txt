@@ -66,6 +66,7 @@ zenith_add_test(zenith_project_config SOURCES ProjectConfigTests.cpp LIBS zenith
 zenith_add_test(zenith_input_actions EXECUTABLE zenith_input_action_tests
     SOURCES InputActionTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_game_ui SOURCES GameUiTests.cpp LIBS zenith_engine)
+zenith_add_test(zenith_game_menus SOURCES GameMenusTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_scene_hierarchy SOURCES SceneHierarchyTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_scene_entity_index SOURCES SceneEntityIndexTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_logger SOURCES LoggerTests.cpp LIBS zenith_engine)
