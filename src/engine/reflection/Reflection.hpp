@@ -31,6 +31,10 @@ enum class FieldKind : uint8_t {
     FloatRange,
     // A nested struct described by FieldDescriptor::children.
     Struct,
+    // A std::vector of nested structs, each described by
+    // FieldDescriptor::children, reached through listSize, resizeList, and
+    // listElement.
+    List,
     // A reference to another entity by its stable 64-bit id, stored as a
     // standard-layout type whose only member is a uint64_t; zero means none.
     // Reflection does not know the id type: it opts in through
@@ -105,8 +109,13 @@ struct FieldDescriptor {
     EnumEncoding encoding{EnumEncoding::Name};
     std::function<int64_t(const void*)> readEnum;
     std::function<void(void*, int64_t)> writeEnum;
-    // Struct only.
+    // Struct and List (each element's fields).
     std::vector<FieldDescriptor> children;
+    // List only, given the owning object: the element count, a resize (new
+    // elements are default-constructed), and an element by index.
+    std::function<size_t(const void*)> listSize;
+    std::function<void(void*, size_t)> resizeList;
+    std::function<void*(void*, size_t)> listElement;
 
     template <typename Value> Value& value(void* object) const {
         return *static_cast<Value*>(address(object));
@@ -198,6 +207,26 @@ template <typename Object> class Fields {
         field.kind = FieldKind::Struct;
         field.address = [member](void* object) -> void* { return &(static_cast<Object*>(object)->*member); };
         field.children = std::move(nested).build();
+        m_fields.push_back(std::move(field));
+        return *this;
+    }
+
+    // A list of nested structs written as an array of objects.
+    template <typename Element>
+    Fields& list(std::string key, std::vector<Element> Object::* member, Fields<Element> element) {
+        FieldDescriptor field;
+        field.presentation.label = labelFromKey(key);
+        field.key = std::move(key);
+        field.kind = FieldKind::List;
+        field.address = [member](void* object) -> void* { return &(static_cast<Object*>(object)->*member); };
+        field.children = std::move(element).build();
+        field.listSize = [member](const void* object) { return (static_cast<const Object*>(object)->*member).size(); };
+        field.resizeList = [member](void* object, size_t size) {
+            (static_cast<Object*>(object)->*member).resize(size);
+        };
+        field.listElement = [member](void* object, size_t index) -> void* {
+            return &(static_cast<Object*>(object)->*member)[index];
+        };
         m_fields.push_back(std::move(field));
         return *this;
     }

@@ -73,6 +73,17 @@ Json writeField(const void* object, const FieldDescriptor& field, RuntimeStateFi
         writeReflectedFields(&field.value<char>(object), field.children, nested, runtimeState);
         return nested;
     }
+    case FieldKind::List: {
+        void* mutableObject = const_cast<void*>(object);
+        Json elements = Json::array();
+        const size_t size = field.listSize(object);
+        for (size_t index = 0; index < size; ++index) {
+            Json element;
+            writeReflectedFields(field.listElement(mutableObject, index), field.children, element, runtimeState);
+            elements.push_back(std::move(element));
+        }
+        return elements;
+    }
     }
     return nullptr;
 }
@@ -174,6 +185,21 @@ std::string readField(const Json& input, void* object, const FieldDescriptor& fi
             return field.key + ": " + error;
         }
         return {};
+    case FieldKind::List: {
+        if (!input.is_array()) {
+            return mismatch("an array of objects");
+        }
+        // Every element starts from its defaults, whatever the list held.
+        field.resizeList(object, 0);
+        field.resizeList(object, input.size());
+        for (size_t index = 0; index < input.size(); ++index) {
+            if (std::string error = readReflectedFields(input[index], field.listElement(object, index), field.children);
+                !error.empty()) {
+                return field.key + "[" + std::to_string(index) + "]: " + error;
+            }
+        }
+        return {};
+    }
     }
     return mismatch("a supported value");
 }

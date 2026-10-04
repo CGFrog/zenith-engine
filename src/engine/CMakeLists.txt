@@ -122,6 +122,7 @@ add_library(zenith_engine SHARED
     jobs/FrameTaskGraph.cpp
     behaviour/BehaviourRegistry.cpp
     behaviour/BehaviourScheduler.cpp
+    gameplay/DefinitionTable.cpp
     gameplay/FirstPerson.cpp
     gameplay/Random.cpp
     module/BuiltInSystems.cpp

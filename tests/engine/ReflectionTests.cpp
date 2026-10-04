@@ -8,6 +8,7 @@
 #include <limits>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Direct contract tests for reflected field descriptors and their JSON codec,
 // which component types, operators, and settings documents all build on.
@@ -298,6 +299,54 @@ void testEntityReferences() {
            "entity reference: color presentation is rejected");
 }
 
+struct Drop {
+    std::string item;
+    float weight{1.0f};
+};
+
+struct Loot {
+    std::vector<Drop> drops;
+};
+
+std::vector<FieldDescriptor> lootFields() {
+    return built(Fields<Loot>().list("drops", &Loot::drops,
+                                     Fields<Drop>().add("item", &Drop::item).add("weight", &Drop::weight).optional()));
+}
+
+// A list of nested structs is an array of objects; reading it replaces the
+// list, and every element starts from its defaults.
+void testLists() {
+    const std::vector<FieldDescriptor> fields = lootFields();
+    expect(fields[0].kind == FieldKind::List && validateFieldDescriptors(fields).empty(), "list: the field is valid");
+
+    const Loot source{.drops = {{.item = "sword", .weight = 3.0f}, {.item = "coin", .weight = 0.5f}}};
+    nlohmann::json document;
+    writeReflectedFields(&source, fields, document);
+    expect(document["drops"].is_array() && document["drops"].size() == 2 && document["drops"][1]["item"] == "coin",
+           "list: elements are written as an array of objects");
+
+    Loot restored{.drops = {{.item = "old", .weight = 9.0f}, {}, {}}};
+    document["drops"][1].erase("weight");
+    expect(readReflectedFields(document, &restored, fields).empty(), "list: a written list reads back");
+    expect(restored.drops.size() == 2 && restored.drops[0].item == "sword" && restored.drops[0].weight == 3.0f &&
+               restored.drops[1].weight == 1.0f,
+           "list: reading replaces the list, and a missing optional field keeps the element's default");
+
+    nlohmann::json bad = document;
+    bad["drops"][1]["item"] = 7;
+    Loot rejected;
+    expect(contains(readReflectedFields(bad, &rejected, fields), "drops[1]: Field 'item' must be a string"),
+           "list: an element's error names its index");
+    bad["drops"] = nlohmann::json::object();
+    expect(contains(readReflectedFields(bad, &rejected, fields), "'drops' must be an array of objects"),
+           "list: a non-array is rejected");
+
+    std::vector<FieldDescriptor> duplicate = built(
+        Fields<Loot>().list("drops", &Loot::drops, Fields<Drop>().add("item", &Drop::item).add("item", &Drop::item)));
+    expect(validateFieldDescriptors(duplicate) == "drops.Duplicate reflected field 'item'",
+           "list: element problems are prefixed with the list key");
+}
+
 void testValidateFieldDescriptors() {
     std::vector<FieldDescriptor> emptyKey = built(Fields<Sample>().add("", &Sample::weight));
     expect(contains(validateFieldDescriptors(emptyKey), "empty key"), "validate: an empty key is rejected");
@@ -334,6 +383,7 @@ int main() {
     testRejectsMismatchedValues();
     testValidateFieldDescriptors();
     testEntityReferences();
+    testLists();
     if (failures != 0) {
         std::cerr << failures << " reflection test(s) failed\n";
         return 1;

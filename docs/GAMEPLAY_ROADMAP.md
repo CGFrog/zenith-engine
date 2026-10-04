@@ -159,6 +159,16 @@ and is open.
   - The game is a project created from `templates/fps_game`, not code in
     `src/game/`. Phase E adds only reusable mechanisms; the generator, AI
     states, stats, items and loot are the game's.
+- **2026-10-04: definition tables (E3).**
+  - Reflection gained `FieldKind::List` (a `std::vector` of nested structs)
+    rather than tables flattening lists into one row per element: a loot
+    table's drops, an enemy's attacks, and a floor theme's rooms are lists.
+  - Tables reject unknown keys, while scene documents keep ignoring them.
+    Tables are written by hand, so a typo must fail. Scene documents must
+    stay readable by older builds.
+  - A table reloads by comparing its file's write time and size, not
+    through the editor's file watcher, so the mechanism is the same in a
+    shipped game and needs no editor wiring.
 - **2026-10-04: engine owns mechanisms, games own rules.** The character
   controller, physics queries, events, timers, effects, save slots and UI
   widgets are reusable engine mechanisms. Weapons, damage, HUD contents and
@@ -193,9 +203,9 @@ and is open.
 | D5 | Shared versioned-settings helper | — | done 89d1a71 |
 | D6 | Measure prefab compare/refresh cost | — | done d518873 |
 | D7 | Docs hygiene | — | done c5b111b |
-| E1 | Seeded gameplay random streams | — | done |
+| E1 | Seeded gameplay random streams | — | done ba6064d |
 | E2 | Run and profile save data | E1 | open |
-| E3 | Definition tables | — | open |
+| E3 | Definition tables | — | done |
 | E4 | Building and replacing a floor at runtime | — | open |
 | E5 | Partial paths and crowd avoidance | E4 | open |
 | E6 | Audio for gameplay | — | open |
@@ -1035,16 +1045,50 @@ slot on death is game policy.
 
 ### E3. Definition tables
 
-- [ ] Load a JSON array of a reflected struct into a table keyed by a
+- [x] Load a JSON array of a reflected struct into a table keyed by a
       string id: `DefinitionTable<T>`, with lookups by id and iteration in
       file order.
-- [ ] Report a duplicate id, an unknown field, a wrong type and a missing
+- [x] Report a duplicate id, an unknown field, a wrong type and a missing
       required field with the file, the entry's index and the field name.
-- [ ] Reload a changed table in the editor through the file watcher, when it
+- [x] Reload a changed table in the editor through the file watcher, when it
       validates.
 
 The game defines the schemas (items, enemies, loot tables, floor themes).
 Today content can come only from prefabs and components.
+
+Result:
+- Reflection gains `FieldKind::List`, through `Fields::list`. A loot table's
+  drops could not be described without it.
+  - A list is a `std::vector` of nested structs, written as an array of
+    objects. Reading one replaces the list, and each element starts from its
+    defaults.
+  - Covered by validation and entity-reference remapping.
+  - The inspector edits a list on one selected object: add, remove, and each
+    element's fields. Several selected objects show only the counts.
+- `engine/gameplay/DefinitionTable.*`:
+  - `DefinitionTable<Entry>` has `load`, `parse`, `find(id)`, `entries()`
+    and `reloadIfChanged()`.
+  - The JSON work is in a non-template core (`definition_detail`), so the
+    header stays free of nlohmann.
+  - Loading is strict: unknown keys at any depth are errors, unlike scene
+    documents. Errors read like
+    `loot.json[0] 'crypt': unknown field 'drops[1].wieght'`. A failed load
+    keeps the previous entries.
+- Reloading compares the file's write time and size (`reloadIfChanged`)
+  instead of using the editor's file watcher. It works the same in the
+  editor and in a shipped game, needs no editor wiring, and a few stat calls
+  a second cost nothing. See Decisions.
+- Coverage:
+  - `tests/engine/DefinitionTableTests.cpp` (`zenith_definition_tables`):
+    lookups, lists, every error, keep-on-failure and reload;
+  - `testLists` in `ReflectionTests`.
+
+Follow-ups:
+- No lists of plain values (strings, numbers) yet; a list of one-field
+  structs works meanwhile.
+- The eyedropper cannot pick an entity reference inside a list.
+- Reflection still ignores unknown keys in scene documents. That is
+  deliberate, so newer documents stay readable.
 
 ### E4. Building and replacing a floor at runtime
 

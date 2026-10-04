@@ -226,7 +226,7 @@ costs, whatever the size of the scene.
 One generic pass rewriting the entity references held by a scene document
 entity's component objects when a set of entities is copied: every reflected
 `FieldKind::EntityReference` field of the registered types (nested `Struct`
-fields included, addressed by JSON pointer) plus the custom-codec
+fields and `List` elements included, addressed by JSON pointer) plus the custom-codec
 `model_node`/`skin` `instance_root`. Prefab capture, instantiate, refresh, and
 the editor's duplicate/paste (`SceneFragment`) all use it.
 
@@ -252,7 +252,12 @@ works at runtime.
 
 `src/engine/reflection/`: Plain-data field descriptors and their JSON codec; no
 scene or asset knowledge (types such as `SceneEntityId` opt into a kind through
-`ReflectedFieldKind`).
+`ReflectedFieldKind`). `Fields::list` describes a `std::vector` of nested
+structs (`FieldKind::List`), written as an array of objects; reading one
+replaces the list, each element starting from its defaults. The inspector
+edits a list on one selected object (add, remove, and each element's
+fields); several selected objects show only their counts. There are no lists
+of plain values (strings, numbers) yet.
 
 `src/engine/scene/`: ECS components, hierarchy, transforms, collections and
 visibility (`Collections`, `SceneVisibility`), the component type registry, and

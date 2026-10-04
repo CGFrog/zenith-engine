@@ -5,7 +5,8 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 Reusable gameplay mechanisms built on the engine's subsystems. They hold no
 game rules: a game chooses the actions, numbers, and content. The engine's
 built-in systems (`module/BuiltInSystems.*`) drive the first-person player in
-every host; games draw from the random streams through `GameServices`.
+every host; games draw from the random streams through `GameServices` and
+load their content through definition tables.
 
 ## `FirstPerson.*`
 
@@ -62,3 +63,27 @@ and build type, so a seed replays the same run.
 when a run begins. `tests/engine/RandomTests.cpp` checks PCG32's reference
 sequence and pins the named-stream derivation with golden values. Changing
 the derivation changes every saved seed's game.
+
+## `DefinitionTable.*`
+
+Data-driven content: `DefinitionTable<Entry>` loads a JSON file holding an
+array of objects, one reflected `Entry` each (items, enemy species, loot
+tables, floor themes), keyed by a required string id field (`id` by
+default). The game defines `Entry` and its `Fields`, including
+`Fields::list` for nested lists such as a loot table's drops.
+
+- `load(path)` and `parse(text, source)`, then `find(id)` and `entries()`
+  in file order.
+- Loading is strict, since the file is written by hand. An unknown key at
+  any depth (a typo; scene documents ignore unknown keys instead), a wrong
+  type, a missing required field, a missing, empty, or duplicate id, broken
+  JSON, and a file that is not an array are errors. Each names the file, the
+  entry's index and id, and the field path, for example
+  `loot.json[0] 'crypt': unknown field 'drops[1].wieght'`. A failed load
+  keeps the table's previous entries.
+- `reloadIfChanged()` loads the file again when its write time or size
+  changed since the last attempt, so a game picks up edits while playing by
+  calling it from a system. A broken edit is reported once and retried only
+  after the file changes again.
+
+`tests/engine/DefinitionTableTests.cpp` (`zenith_definition_tables`).
