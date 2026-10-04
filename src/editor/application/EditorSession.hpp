@@ -241,8 +241,6 @@ class EditorSession final : public ApplicationScene,
     // Game module hosting.
     void loadGameModule();
     void updateGameModule(ApplicationContext& context, const InputState& input, float deltaSeconds);
-    // Runs the module's Ui systems into m_gameViewUi for the game view.
-    void drawGameViewUi(ApplicationContext& context);
     void reloadGameModule(ApplicationContext& context);
     void reportGameModule(const GameModuleHostResult& result);
     std::string gameModuleStatusText() const;
@@ -272,34 +270,43 @@ class EditorSession final : public ApplicationScene,
     void updateSmokeScenario(ApplicationContext& context);
     // What the editor does when project files change; dispatched by m_projectAssets.
     ProjectAssetActions projectAssetActions(ApplicationContext& context);
-    void updateAutosave(ApplicationContext& context, float deltaSeconds);
-    void drawMainMenu(ApplicationContext& context);
-    void handleGlobalShortcuts(ApplicationContext& context);
-    void drawPanels(ApplicationContext& context);
-    void drawStatusBar(const RenderStats& stats);
-    void drawPlayModePill() const;
     // Cancels the entity eyedropper on Esc, a right-click, Play mode, or a
     // target that no longer exists, and shows its hint at the mouse.
     void updateEyedropper(ApplicationContext& context);
+    // Undoes the steps recorded since marker, so a smoke step that took a
+    // marker before editing undoes exactly its own steps.
+    void undoSince(ApplicationContext& context, CommandHistoryMarker marker);
+
+    // Autosave and the recovery prompt (EditorRecovery.cpp).
+    void updateAutosave(ApplicationContext& context, float deltaSeconds);
+    void drawRecoveryDialog(ApplicationContext& context);
+
+    // The main menu bar (EditorMainMenu.cpp) and the status bar
+    // (EditorStatusBar.cpp).
+    void drawMainMenu(ApplicationContext& context);
+    void handleGlobalShortcuts(ApplicationContext& context);
+    void drawStatusBar(const RenderStats& stats);
+    void drawPlayModePill() const;
+
+    // File dialogs and the unsaved-changes workflow (EditorFileDialogs.cpp).
     void drawPathDialog(ApplicationContext& context);
     void drawUnsavedChangesDialog(ApplicationContext& context);
-    void drawRecoveryDialog(ApplicationContext& context);
     void requestFileDialog(FileDialogKind kind);
     void openPathDialog(FileDialogKind kind);
     void pollFileDialog(ApplicationContext& context);
     bool completeOpen(ApplicationContext& context, const std::filesystem::path& path);
     bool completeSaveAs(ApplicationContext& context, const std::filesystem::path& path);
     void onDocumentPathCommitted();
-    // Undoes the steps recorded since marker, so a smoke step that took a
-    // marker before editing undoes exactly its own steps.
-    void undoSince(ApplicationContext& context, CommandHistoryMarker marker);
+    void finishPendingAction(ApplicationContext& context);
+
+    // Play targets, entering and leaving Play mode, game views, the
+    // standalone game, and the playback toolbar (EditorPlayback.cpp).
     // Runs the document on a throwaway copy as Play or Simulate; false (after
     // reporting why) when it could not.
     bool enterPlayMode(ApplicationContext& context, EditorRuntime runtime = EditorRuntime::Play);
     void stopPlayMode(ApplicationContext& context);
-
-    // Play targets, game views, the standalone game, and the playback
-    // toolbar (EditorPlayback.cpp).
+    // Runs the module's Ui systems into m_gameViewUi for the game view.
+    void drawGameViewUi(ApplicationContext& context);
     OperatorResult startStandalone(ApplicationContext& context);
     void endGameView();
     // The input module systems get: the frame's input while a game view has
@@ -313,7 +320,6 @@ class EditorSession final : public ApplicationScene,
     // Slot in the toolbar's Simulate dropdown for the Simulate system picker
     // (Unit 18); shows a pointer to the System Profiler until then.
     void drawSimulateOptions(ApplicationContext& context);
-    void finishPendingAction(ApplicationContext& context);
 
     // Blender object-mode workflows (EditorObjectCommands.cpp).
     void drawObjectPopups(ApplicationContext& context);

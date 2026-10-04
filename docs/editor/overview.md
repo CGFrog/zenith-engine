@@ -48,4 +48,11 @@ received no engine entries by its sixth frame.
 `EditorAppearance`, the preferred look shared by the Project Hub and sessions)
 and the UI/session coordinator, including Play mode and its targets
 (`PlayTargets`: game views, input routing, mouse capture, the standalone game
-process; wired in `EditorPlayback.cpp`).
+process; wired in `EditorPlayback.cpp`). `EditorSession` is one class
+implemented across several files, one per domain: `EditorSession.cpp` (the
+frame loop, operators and keymaps), `EditorFileDialogs.cpp`,
+`EditorRecovery.cpp` (autosave), `EditorMainMenu.cpp`, `EditorStatusBar.cpp`,
+`EditorPlayback.cpp`, `EditorAreas.cpp`, `EditorObjectCommands.cpp`,
+`EditorModuleCommands.cpp`, `EditorPreferences.cpp`,
+`EditorProjectSettings.cpp`, `EditorViewports.cpp` and `EditorSessionSmoke.cpp`.
+The header tags each member group with its file.

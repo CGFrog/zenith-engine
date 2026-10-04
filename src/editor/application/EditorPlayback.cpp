@@ -1,7 +1,8 @@
 // EditorSession's play workflows: the play operators and their targets (the
-// active viewport, a floating viewport, or a standalone game process), game
-// views and the input they route to module systems, the mouse capture
-// policy, and the playback toolbar in the main menu bar.
+// active viewport, a floating viewport, or a standalone game process),
+// entering and leaving Play mode, game views and the input and Ui they route
+// to module systems, the mouse capture policy, and the playback toolbar in
+// the main menu bar.
 
 #include "EditorSession.hpp"
 
@@ -9,6 +10,7 @@
 #include "editor/panels/SimulateSystemPicker.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
+#include "engine/module/GameEvents.hpp"
 
 #include <imgui.h>
 #include <nlohmann/json.hpp>
@@ -325,4 +327,59 @@ void EditorSession::drawSimulateOptions(ApplicationContext& context) {
     ImGui::Separator();
     EditorContext editor = editorContext(context);
     drawSimulateSystemPicker(editor, m_moduleHost);
+}
+
+void EditorSession::drawGameViewUi(ApplicationContext& context) {
+    ViewportPanel* viewport = gameViewport();
+    if (viewport == nullptr || m_playMode.mode() == EditorMode::Edit || m_playMode.simulating()) {
+        return;
+    }
+    // The game sees the pointer relative to its view, as it would its window.
+    InputState input = m_frameGameInput;
+    input.mousePosition -= viewport->position();
+    const glm::vec2 size = glm::max(viewport->size(), glm::vec2(1.0f));
+    m_gameViewUi.beginFrame({static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y)}, input);
+    m_moduleHost.runSystems(SystemPhase::Ui, context.scene, &context, m_playMode.simulationMode(), 0.0f, &input,
+                            &m_gameViewUi);
+    viewport->setGameUi(&m_gameViewUi);
+}
+
+bool EditorSession::enterPlayMode(ApplicationContext& context, EditorRuntime runtime) {
+    context.physics.clear();
+    context.audio.stopSceneVoices();
+    if (const SceneDocumentResult result =
+            m_playMode.enter(context.scene, context.assets, m_document.options(), m_selection.ids(), runtime);
+        !result) {
+        m_diagnostics.reportError(std::string(runtime == EditorRuntime::Simulate ? "Could not enter Simulate: "
+                                                                                 : "Could not enter Play mode: ") +
+                                  result.error);
+        return false;
+    }
+    m_moduleHost.startGameplay(context.assets, m_document.options(), context.rendering.debugDraw());
+    if (GameServices* services = m_moduleHost.gameServices()) {
+        // Play saves into the project, apart from the shipped game's saves.
+        if (!m_projectFile.empty() && m_document.path()) {
+            const std::filesystem::path project = m_projectFile.parent_path();
+            services->setSaveGames(SaveGameStore(project / ".zenith" / "saves", project), *m_document.path());
+        }
+        services->events().publish(SceneLoaded{});
+    }
+    m_history.crossBoundary(CommandHistoryBoundary::EnterPlayMode);
+    m_diagnostics.acknowledgeErrors();
+    return true;
+}
+
+void EditorSession::stopPlayMode(ApplicationContext& context) {
+    if (m_playMode.mode() == EditorMode::Edit) {
+        return;
+    }
+    context.audio.stopSceneVoices();
+    context.physics.clear();
+    endGameView();
+    m_moduleHost.stopGameplay();
+    std::vector<SceneEntityId> restoredSelection;
+    m_playMode.stop(context.scene, restoredSelection);
+    m_selection.assign(std::move(restoredSelection));
+    m_history.crossBoundary(CommandHistoryBoundary::LeavePlayMode);
+    m_document.setDirty(m_history.dirty());
 }

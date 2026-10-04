@@ -801,9 +801,15 @@ These items are independent and can go into any batch.
 
 - [ ] **D1.** Split `src/engine/scene/PrefabSystem.cpp` (about 1775 lines) into
       id remapping, overrides, nested instances and instance queries.
-- [ ] **D2.** Split `src/editor/application/EditorSession.cpp` (about 1100
+- [x] **D2.** Split `src/editor/application/EditorSession.cpp` (about 1100
       lines): move file dialogs, autosave and recovery, and the main menu and
       status bar into their own units.
+
+  Result: `EditorFileDialogs.cpp` (with the unsaved-changes workflow),
+  `EditorRecovery.cpp`, `EditorMainMenu.cpp` and `EditorStatusBar.cpp`;
+  entering and leaving Play mode and the game view's Ui moved to
+  `EditorPlayback.cpp`. `EditorSession.cpp` is about 600 lines. The unused
+  `drawPanels` declaration is gone.
 - [x] **D3.** Split `src/engine/platform/FileWatcher.cpp` (about 1200 lines)
       into one file per backend: polling, Win32, inotify.
 
