@@ -1,0 +1,20 @@
+# Normalize text to LF in the repository and the working tree.
+* text=auto eol=lf
+
+# Windows command scripts keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary content.
+*.bin binary
+*.glb binary
+*.hdr binary
+*.jpg binary
+*.jpeg binary
+*.ktx2 binary
+*.ogg binary
+*.png binary
+*.spv binary
+*.ttf binary
+*.wav binary
+*.zvol binary
