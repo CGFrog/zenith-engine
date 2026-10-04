@@ -1,16 +1,10 @@
-#include "editor/application/EditorDiagnostics.hpp"
-#include "editor/document/CommandHistory.hpp"
-#include "editor/document/EditorDocument.hpp"
-#include "editor/menus/EditorMenus.hpp"
+#include "EditorTestFixture.hpp"
+
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/Keymap.hpp"
 #include "editor/operators/KeymapDispatch.hpp"
-#include "editor/operators/OperatorRunner.hpp"
-#include "editor/panels/EditorContext.hpp"
 #include "editor/panels/ViewportOperators.hpp"
 #include "editor/panels/ViewportPanel.hpp"
-#include "engine/application/Application.hpp"
-#include "engine/diagnostics/Logger.hpp"
 
 #include <imgui.h>
 
@@ -29,39 +23,11 @@ void expect(bool condition, const char* message) {
 }
 
 // The session's operator and keymap services without a window: operators run
-// through a real registry, runner, and default keymap, and region keys are
-// dispatched the way the session does.
-class HeadlessSessionActions final : public EditorSessionActions {
+// through the fixture's registry and runner with the default keymap, and
+// region keys are dispatched the way the session does.
+class HeadlessSessionActions final : public KeymapSessionActions {
   public:
-    HeadlessSessionActions(SceneEditing editing, CommandHistory& history, Selection& selection)
-        : runner(registry, history)
-        , m_editing(editing)
-        , m_selection(selection) {}
-
-    OperatorRegistry registry;
-    OperatorRunner runner;
-    Keymap keymap{defaultEditorKeymap()};
-
-    OperatorResult invokeOperator(ApplicationContext& context, std::string_view operatorId, std::string_view properties,
-                                  KeymapRegion region) override {
-        OperatorContext operatorContext{
-            .editing = m_editing, .selection = m_selection, .region = region, .app = &context};
-        return runner.invokeWithJson(operatorId, operatorContext, properties);
-    }
-
-    bool operatorAvailable(ApplicationContext&, std::string_view operatorId) override {
-        return registry.find(operatorId) != nullptr;
-    }
-
-    std::string operatorShortcut(std::string_view operatorId, std::string_view properties) const override {
-        return keymap.shortcutLabel(operatorId, properties);
-    }
-
-    void requestOpenScene(ApplicationContext&, std::filesystem::path) override {}
-
-    void projectFilesMoved(ApplicationContext&, std::span<const ProjectFileMove>) override {}
-
-    void projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path>) override {}
+    using KeymapSessionActions::KeymapSessionActions;
 
     void handleObjectKeys(ApplicationContext& context, KeymapRegion region) override {
         for (const ImGuiKeyChord chord : keymap.chords(region)) {
@@ -77,69 +43,21 @@ class HeadlessSessionActions final : public EditorSessionActions {
             return;
         }
     }
-
-    bool modalTransformActive() const override {
-        return false;
-    }
-
-    void updateModalTransform(ApplicationContext&, ViewportId) override {}
-
-    uint32_t dispatchMouseChords(ApplicationContext& context, KeymapRegion region, uint32_t allowedButtons) override {
-        return m_dispatcher.dispatchMouse(keymap, region, allowedButtons, [&](const KeymapInvocation& invocation) {
-            invokeOperator(context, invocation.operatorId, invocation.properties, invocation.region);
-        });
-    }
-
-    bool mouseButtonBound(KeymapRegion region, int button) const override {
-        return m_dispatcher.mouseButtonBound(keymap, region, button);
-    }
-
-  private:
-    SceneEditing m_editing;
-    Selection& m_selection;
-    KeymapDispatcher m_dispatcher;
 };
 
 // Everything EditorContext references, owned together.
-struct ViewportFixture {
-    Scene scene;
-    AssetManager assets;
-    PhysicsWorld physics;
-    AudioSystem audio;
-    ApplicationControl control;
-    RenderRuntime rendering;
-    GameUiContext gameUi;
-    Logger logger;
-    ApplicationContext app{scene, assets, physics, audio, control, rendering, gameUi, logger};
-    EditorDocument document{std::filesystem::temp_directory_path()};
-    CommandHistory history;
-    EditorDiagnostics diagnostics;
-    Selection selection;
-    HeadlessSessionActions actions{editing(), history, selection};
-    EditorMenus menus;
-    ViewportRegistry viewports;
+struct ViewportFixture : EditorTestFixture {
+    HeadlessSessionActions actions{operators, runner, sessionContextSource()};
     ViewportPanel viewport{viewports};
 
     ViewportFixture() {
+        useActions(actions);
         for (Operator& op : viewportOperators(viewports)) {
-            expect(static_cast<bool>(actions.registry.add(std::move(op))), "the viewport operators should register");
+            expect(static_cast<bool>(operators.add(std::move(op))), "the viewport operators should register");
         }
     }
 
-    SceneEditing editing() {
-        return SceneEditing(scene, assets, document, history, diagnostics);
-    }
-
-    EditorContext context() {
-        return {.app = app,
-                .editing = editing(),
-                .selection = selection,
-                .diagnostics = diagnostics,
-                .mode = EditorMode::Edit,
-                .actions = actions,
-                .menus = menus};
-    }
-
+    // Runs an operator through the session actions, as a button does.
     OperatorResult invoke(std::string_view operatorId, std::string_view properties = {}) {
         return actions.invokeOperator(app, operatorId, properties, KeymapRegion::Global);
     }

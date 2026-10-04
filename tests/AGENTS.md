@@ -28,3 +28,8 @@ explicitly with `zenith_add_test` (`cmake/ZenithTesting.cmake`), which builds
 the executable with the project warnings and registers the CTest; moving or
 adding a test requires updating the nearest `CMakeLists.txt`. Use temporary paths for files created by tests and clean up
 only paths owned by the test.
+Editor tests that need an `ApplicationContext` or `EditorContext` build it
+from the shared fixture in `editor/EditorTestFixture.hpp` (derive from
+`EditorTestFixture`; custom session actions derive from `TestSessionActions`
+and are installed with `useActions`), never from their own copy. When either
+context gains a required member, add it to the fixture.

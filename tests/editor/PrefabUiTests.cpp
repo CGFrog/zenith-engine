@@ -2,31 +2,19 @@
 // in the inspector, the instance header's actions, Add > Prefab, asset drops,
 // and Select Prefab Asset. Every flow runs through the prefab operators.
 
+#include "EditorTestFixture.hpp"
 #include "HeadlessImGui.hpp"
-#include "engine/diagnostics/Logger.hpp"
 
-#include "editor/application/EditorDiagnostics.hpp"
-#include "editor/document/CommandHistory.hpp"
-#include "editor/document/EditorDocument.hpp"
 #include "editor/document/PrefabAuthoring.hpp"
 #include "editor/interaction/ReflectedFieldEditor.hpp"
 #include "editor/menus/DefaultMenus.hpp"
-#include "editor/menus/EditorMenus.hpp"
 #include "editor/operators/ObjectOperators.hpp"
-#include "editor/operators/OperatorRegistry.hpp"
-#include "editor/operators/OperatorRunner.hpp"
 #include "editor/operators/PrefabOperators.hpp"
-#include "editor/panels/EditorContext.hpp"
 #include "editor/panels/InspectorPanel.hpp"
 #include "editor/project/ProjectAssets.hpp"
-#include "editor/settings/ComponentInspectorLayout.hpp"
 #include "editor/theme/EditorTheme.hpp"
-#include "engine/assets/Assets.hpp"
-#include "engine/audio/AudioSystem.hpp"
-#include "engine/physics/PhysicsWorld.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/Prefab.hpp"
-#include "engine/ui/GameUi.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -95,74 +83,16 @@ std::string readText(const std::filesystem::path& path) {
     return contents.str();
 }
 
-// The session workflows a panel triggers, reduced to running operators.
-class OperatorActions final : public EditorSessionActions {
-  public:
-    OperatorActions(OperatorRunner& runner, std::function<OperatorContext()> context)
-        : m_runner(runner)
-        , m_context(std::move(context)) {}
-
-    OperatorResult invokeOperator(ApplicationContext&, std::string_view operatorId, std::string_view properties,
-                                  KeymapRegion) override {
-        OperatorContext context = m_context();
-        return m_runner.invokeWithJson(operatorId, context, properties);
-    }
-
-    bool operatorAvailable(ApplicationContext&, std::string_view) override {
-        return true;
-    }
-
-    std::string operatorShortcut(std::string_view, std::string_view) const override {
-        return {};
-    }
-
-    void requestOpenScene(ApplicationContext&, std::filesystem::path) override {}
-
-    void projectFilesMoved(ApplicationContext&, std::span<const ProjectFileMove>) override {}
-
-    void projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path>) override {}
-
-    void handleObjectKeys(ApplicationContext&, KeymapRegion) override {}
-
-    bool modalTransformActive() const override {
-        return false;
-    }
-
-    void updateModalTransform(ApplicationContext&, ViewportId) override {}
-
-  private:
-    OperatorRunner& m_runner;
-    std::function<OperatorContext()> m_context;
-};
-
 // The objects an editor session owns, without a window or GPU, editing a
 // project under a fresh asset root.
-struct Fixture {
+struct Fixture : EditorTestFixture {
     std::filesystem::path root;
-    Scene scene;
-    AssetManager assets;
-    PhysicsWorld physics;
-    AudioSystem audio;
-    ApplicationControl control;
-    RenderRuntime rendering;
-    GameUiContext gameUi;
-    Logger logger;
-    ApplicationContext app{scene, assets, physics, audio, control, rendering, gameUi, logger};
-    EditorDocument document;
-    CommandHistory history;
-    EditorDiagnostics diagnostics;
-    Selection selection;
-    ComponentInspectorLayout componentLayout;
-    OperatorRegistry operators;
-    OperatorRunner runner{operators, history};
-    OperatorActions actions{runner, [this] { return operatorContext(); }};
-    EditorMenus menus;
     std::vector<std::filesystem::path> revealed;
     std::vector<std::filesystem::path> prefabFiles;
 
     explicit Fixture(const std::string& name)
-        : root(freshDirectory(name))
-        , document(root) {
+        : EditorTestFixture({.documentRoot = freshDirectory(name)})
+        , root(document.options().assetRoot) {
         document.setComponentTypes(componentTypes());
         expect(registerObjectOperators(operators).success, "the object operators should register");
         expect(registerPrefabOperators(
@@ -171,29 +101,6 @@ struct Fixture {
                "the prefab operators should register");
         expect(registerDefaultMenus(menus.registry(), {.projectPrefabs = [this] { return prefabFiles; }}).success,
                "the default menus should register");
-    }
-
-    SceneEditing editing() {
-        return {scene, assets, document, history, diagnostics};
-    }
-
-    OperatorContext operatorContext() {
-        return {.editing = editing(), .selection = selection, .mode = EditorMode::Edit};
-    }
-
-    EditorContext context() {
-        return {.app = app,
-                .editing = editing(),
-                .selection = selection,
-                .diagnostics = diagnostics,
-                .mode = EditorMode::Edit,
-                .actions = actions,
-                .menus = menus};
-    }
-
-    OperatorResult invoke(std::string_view id, std::string_view properties = {}) {
-        OperatorContext context = operatorContext();
-        return runner.invokeWithJson(id, context, properties);
     }
 
     void edit(const std::function<void()>& change) {

@@ -4,24 +4,16 @@
 // candidates merged with occluded ray hits), the eyedropper, and local view
 // all run headless against real cube meshes.
 
-#include "editor/application/EditorDiagnostics.hpp"
-#include "editor/document/CommandHistory.hpp"
+#include "EditorTestFixture.hpp"
+
 #include "editor/document/DefaultScene.hpp"
-#include "editor/document/EditorDocument.hpp"
-#include "editor/interaction/EntityEyedropper.hpp"
-#include "editor/menus/EditorMenus.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/KeymapDispatch.hpp"
-#include "editor/operators/OperatorRegistry.hpp"
-#include "editor/operators/OperatorRunner.hpp"
-#include "editor/panels/EditorContext.hpp"
 #include "editor/panels/ViewportOperators.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/viewport/BoxSelect.hpp"
 #include "editor/viewport/LassoSelect.hpp"
 #include "editor/viewport/ViewportPickProvider.hpp"
-#include "engine/application/Application.hpp"
-#include "engine/diagnostics/Logger.hpp"
 
 #include <imgui.h>
 #include <nlohmann/json.hpp>
@@ -45,17 +37,12 @@ void expect(bool condition, const char* message) {
     }
 }
 
-// Runs operators through a real runner and records eyedropper picks, which
-// the session would hand to ui.eyedropper_pick.
-class OperatorActions final : public EditorSessionActions {
+// Runs operators through the fixture's runner and default keymap and records
+// eyedropper picks, which the session would hand to ui.eyedropper_pick.
+class OperatorActions final : public KeymapSessionActions {
   public:
-    OperatorActions(SceneEditing editing, CommandHistory& history, Selection& selection)
-        : runner(registry, history)
-        , m_editing(editing)
-        , m_selection(selection) {}
+    using KeymapSessionActions::KeymapSessionActions;
 
-    OperatorRegistry registry;
-    OperatorRunner runner;
     std::vector<uint64_t> eyedropperPicks;
 
     OperatorResult invokeOperator(ApplicationContext& context, std::string_view operatorId, std::string_view properties,
@@ -64,50 +51,8 @@ class OperatorActions final : public EditorSessionActions {
             eyedropperPicks.push_back(nlohmann::json::parse(properties)["entity"].get<uint64_t>());
             return OperatorResult::finished();
         }
-        OperatorContext operatorContext{
-            .editing = m_editing, .selection = m_selection, .region = region, .app = &context};
-        return runner.invokeWithJson(operatorId, operatorContext, properties);
+        return KeymapSessionActions::invokeOperator(context, operatorId, properties, region);
     }
-
-    bool operatorAvailable(ApplicationContext&, std::string_view operatorId) override {
-        return registry.find(operatorId) != nullptr;
-    }
-
-    std::string operatorShortcut(std::string_view, std::string_view) const override {
-        return {};
-    }
-
-    void requestOpenScene(ApplicationContext&, std::filesystem::path) override {}
-
-    void projectFilesMoved(ApplicationContext&, std::span<const ProjectFileMove>) override {}
-
-    void projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path>) override {}
-
-    void handleObjectKeys(ApplicationContext&, KeymapRegion) override {}
-
-    bool modalTransformActive() const override {
-        return false;
-    }
-
-    void updateModalTransform(ApplicationContext&, ViewportId) override {}
-
-    // Mouse chords run through the default keymap, as in the session.
-    uint32_t dispatchMouseChords(ApplicationContext& context, KeymapRegion region, uint32_t allowedButtons) override {
-        return dispatcher.dispatchMouse(keymap, region, allowedButtons, [&](const KeymapInvocation& invocation) {
-            invokeOperator(context, invocation.operatorId, invocation.properties, invocation.region);
-        });
-    }
-
-    bool mouseButtonBound(KeymapRegion region, int button) const override {
-        return dispatcher.mouseButtonBound(keymap, region, button);
-    }
-
-    Keymap keymap{defaultEditorKeymap()};
-    KeymapDispatcher dispatcher;
-
-  private:
-    SceneEditing m_editing;
-    Selection& m_selection;
 };
 
 // A synthetic id buffer covering the whole view: rectangles of view pixels
@@ -215,24 +160,8 @@ class FakePicks final : public ViewportPickProvider {
     mutable std::vector<uint32_t> m_polls;
 };
 
-struct Fixture {
-    Scene scene;
-    AssetManager assets;
-    PhysicsWorld physics;
-    AudioSystem audio;
-    ApplicationControl control;
-    RenderRuntime rendering;
-    GameUiContext gameUi;
-    Logger logger;
-    ApplicationContext app{scene, assets, physics, audio, control, rendering, gameUi, logger};
-    EditorDocument document{std::filesystem::temp_directory_path()};
-    CommandHistory history;
-    EditorDiagnostics diagnostics;
-    Selection selection;
-    OperatorActions actions{editing(), history, selection};
-    EditorMenus menus;
-    EntityEyedropper eyedropper;
-    ViewportRegistry viewports;
+struct Fixture : EditorTestFixture {
+    OperatorActions actions{operators, runner, sessionContextSource()};
     FakePicks picks;
     std::unique_ptr<ViewportPanel> panel;
     // Front: a cube at the origin, one hidden behind it, one to the right, an
@@ -245,8 +174,9 @@ struct Fixture {
     Entity hidden{entt::null};
 
     Fixture() {
+        useActions(actions);
         for (Operator& op : viewportOperators(viewports)) {
-            expect(static_cast<bool>(actions.registry.add(std::move(op))), "the viewport operators should register");
+            expect(static_cast<bool>(operators.add(std::move(op))), "the viewport operators should register");
         }
         viewports.setPickProvider(&picks);
         panel = std::make_unique<ViewportPanel>(viewports);
@@ -269,9 +199,6 @@ struct Fixture {
         panel.reset();
     }
 
-    Fixture(const Fixture&) = delete;
-    Fixture& operator=(const Fixture&) = delete;
-
     Entity cube(glm::vec3 position) {
         Entity entity = entt::null;
         const SceneResult result = addCube(scene, assets, ZENITH_ASSET_DIR, entity);
@@ -283,21 +210,7 @@ struct Fixture {
         return entity;
     }
 
-    SceneEditing editing() {
-        return SceneEditing(scene, assets, document, history, diagnostics);
-    }
-
-    EditorContext context() {
-        return {.app = app,
-                .editing = editing(),
-                .selection = selection,
-                .diagnostics = diagnostics,
-                .mode = EditorMode::Edit,
-                .actions = actions,
-                .eyedropper = &eyedropper,
-                .menus = menus};
-    }
-
+    // Runs an operator through the session actions, as a viewport does.
     OperatorResult invoke(std::string_view operatorId, std::string_view properties = {}) {
         return actions.invokeOperator(app, operatorId, properties, KeymapRegion::Viewport);
     }
