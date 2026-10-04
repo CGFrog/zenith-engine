@@ -81,9 +81,16 @@ bool isDescendantOrSelf(const Scene& scene, Entity candidate, Entity ancestor) {
     return false;
 }
 
+// How randomEdit records its field edits: by capturing the whole scene
+// (perform), or only the edited entity (captureEntities).
+enum class EditCapture {
+    WholeScene,
+    Entities,
+};
+
 // Runs one randomly chosen edit through SceneEditing. Every operation is
 // valid, so none should report an error.
-void randomEdit(const SceneEditing& editing, std::mt19937& random, int step) {
+void randomEdit(const SceneEditing& editing, std::mt19937& random, int step, EditCapture capture) {
     Scene& scene = editing.scene();
     const std::vector<Entity> entities = entitiesById(scene);
     const auto pick = [&]() -> Entity {
@@ -92,6 +99,14 @@ void randomEdit(const SceneEditing& editing, std::mt19937& random, int step) {
     const Entity target = pick();
     const uint32_t operation = entities.empty() ? 0 : random() % 8;
     const auto edit = [&](std::string name, std::string key, auto mutation) {
+        if (capture == EditCapture::Entities) {
+            SceneEditing::EntitySnapshot before;
+            if (editing.captureEntities(std::span(&target, 1), before)) {
+                mutation();
+                editing.commit(std::move(name), std::move(key), std::move(before));
+            }
+            return;
+        }
         editing.perform(std::move(name), std::move(key), [&] {
             mutation();
             return SceneResult{.success = true};
@@ -148,8 +163,9 @@ void randomEdit(const SceneEditing& editing, std::mt19937& random, int step) {
 }
 
 // Diff-based undo must give exactly what restoring full snapshots gives: the
-// same serialized document and the same child order, at every step.
-void testRandomizedEquivalence() {
+// same serialized document and the same child order, at every step, whether
+// the field edits capture the whole scene or only their entity.
+void testRandomizedEquivalence(EditCapture capture) {
     AssetManager assets;
     Scene scene;
     EditorDocument document(std::filesystem::temp_directory_path());
@@ -164,7 +180,7 @@ void testRandomizedEquivalence() {
     bool liveMatches = true;
     for (int step = 0; step < 200; ++step) {
         const size_t recorded = history.size();
-        randomEdit(editing, random, step);
+        randomEdit(editing, random, step, capture);
         const std::string current = serialize(scene, assets, options);
         if (history.size() == recorded + 1) {
             timeline.push_back(current);
@@ -194,6 +210,53 @@ void testRandomizedEquivalence() {
     expect(!diagnostics.hasUnacknowledgedError(), "randomized undo and redo should not report errors");
 }
 
+// An edit that captured only some entities still records the entities it
+// created, reports destroying one it did not capture, and edits the runtime
+// scene live without recording.
+void testEntityCaptureGuards() {
+    AssetManager assets;
+    Scene scene;
+    EditorDocument document(std::filesystem::temp_directory_path());
+    CommandHistory history;
+    EditorDiagnostics diagnostics;
+    const SceneEditing editing(scene, assets, document, history, diagnostics);
+    const SceneDocumentOptions& options = document.options();
+    const Entity parent = scene.createEntity("Parent");
+    const Entity bystander = scene.createEntity("Bystander");
+    const std::string original = serialize(scene, assets, options);
+
+    SceneEditing::EntitySnapshot before;
+    expect(editing.captureEntities(std::span(&parent, 1), before), "the parent should be captured");
+    scene.setParent(scene.createEntity("Child"), parent);
+    editing.commit("Add Child", {}, std::move(before));
+    const std::string withChild = serialize(scene, assets, options);
+    expect(history.size() == 1 && withChild != original, "an entity created by a captured edit should be recorded");
+    editing.undo();
+    expect(serialize(scene, assets, options) == original, "undo should remove the entity the edit created");
+    editing.redo();
+    expect(serialize(scene, assets, options) == withChild, "redo should create it again");
+    expect(!diagnostics.hasUnacknowledgedError(), "a captured edit that creates an entity is valid");
+
+    expect(editing.captureEntities(std::span(&parent, 1), before), "the parent should be captured again");
+    scene.destroyEntity(bystander);
+    editing.commit("Destroy", {}, std::move(before));
+    expect(diagnostics.hasUnacknowledgedError(), "destroying an entity the edit did not capture should be reported");
+
+    Scene runtimeScene;
+    const Entity light = runtimeScene.createEntity("Light");
+    runtimeScene.registry().emplace<PointLightComponent>(light);
+    CommandHistory runtimeHistory;
+    EditorDiagnostics runtimeDiagnostics;
+    const SceneEditing live(runtimeScene, assets, document, runtimeHistory, runtimeDiagnostics, &scene);
+    SceneEditing::EntitySnapshot liveBefore;
+    expect(live.captureEntities(std::span(&light, 1), liveBefore), "a runtime entity should be captured");
+    runtimeScene.registry().get<PointLightComponent>(light).range = 9.0f;
+    live.commit("Edit Light", {}, std::move(liveBefore));
+    expect(runtimeHistory.size() == 0 && runtimeScene.registry().get<PointLightComponent>(light).range == 9.0f &&
+               !runtimeDiagnostics.hasUnacknowledgedError(),
+           "a captured runtime edit should stay applied and record nothing");
+}
+
 // A long history on a large scene stores only the edited entities.
 void testLargeSceneHistory() {
     AssetManager assets;
@@ -205,7 +268,8 @@ void testLargeSceneHistory() {
     const SceneDocumentOptions& options = document.options();
 
     // Large enough that one full snapshot dwarfs the per-entity diffs; every
-    // recorded edit serializes the whole scene twice, so this sets the cost.
+    // edit recorded with perform serializes the whole scene twice, so this
+    // sets the cost.
     constexpr uint32_t entityCount = 1'000;
     constexpr uint32_t groupSize = 10;
     std::vector<Entity> entities;
@@ -339,7 +403,9 @@ int main() {
     expect(diagnostics.hasUnacknowledgedError() && entityCount(scene) == 2,
            "placing a missing model should report and leave the scene unchanged");
 
-    testRandomizedEquivalence();
+    testRandomizedEquivalence(EditCapture::WholeScene);
+    testRandomizedEquivalence(EditCapture::Entities);
+    testEntityCaptureGuards();
     testLargeSceneHistory();
 
     if (failures != 0) {

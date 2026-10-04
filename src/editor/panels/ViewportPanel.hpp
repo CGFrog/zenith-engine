@@ -2,6 +2,7 @@
 
 #include "editor/application/EditorPlayMode.hpp"
 #include "editor/application/PlayTargets.hpp"
+#include "editor/application/SceneEditing.hpp"
 #include "editor/interaction/EditorCamera.hpp"
 #include "editor/panels/EditorPanel.hpp"
 #include "editor/panels/ViewportChrome.hpp"
@@ -290,7 +291,8 @@ class ViewportPanel final : public EditorPanel {
     // Where the gizmo was when the current drag started.
     glm::vec3 m_gizmoStartPosition{0.0f};
     // Scene snapshot from before the current gizmo drag, for undo.
-    std::string m_gizmoBefore;
+    // The dragged entity before a gizmo drag, recorded when it ends.
+    std::optional<SceneEditing::EntitySnapshot> m_gizmoBefore;
     std::vector<RenderObjectId> m_outlinedObjects;
     std::vector<Entity> m_outlineTraversal;
     glm::vec2 m_mouseInView{0.0f};

@@ -828,8 +828,43 @@ These items are independent and can go into any batch.
   the internal `FileWatchBackends.*`. `FileWatcher.cpp` (about 350 lines)
   keeps the coalescer and the public class. The polling test's hang is under
   [Open questions](#open-questions-and-follow-ups).
-- [ ] **D4.** `SceneEditing::perform` serializes the whole scene twice per
+- [x] **D4.** `SceneEditing::perform` serializes the whole scene twice per
       edit. Diff only the touched entities. Measure on a large scene first.
+
+  Result: undo history already stored per-entity diffs. The cost was in
+  recording each edit: two whole-scene serializations (three through the
+  operator runner), a string compare, and a diff that parses both again.
+  `tests/editor/SceneEditingBenchmark.cpp`
+  (`zenith_scene_editing_benchmark_run`), 5,000 entities, Release means in
+  milliseconds:
+
+  | Measure | Before | After |
+  | --- | --- | --- |
+  | Inspector field edit | 120.28 | 1.67 |
+  | Gizmo drag frame | 116.06 | 1.51 |
+  | Undoable operator (runner pattern) | 138.96 | 108.17 |
+  | Undo / redo | 0.59 / 0.61 | 0.63 / 0.65 |
+
+  - `SceneEditing::captureEntities` and `commit(EntitySnapshot)` serialize
+    only the listed entities, plus any the edit created, through
+    `SceneDocument::serializeEntities` (D6). They are used by the
+    inspector's name, transform and component edits, and by the viewport's
+    transform widget and gizmo.
+  - Structural edits and operators keep the whole-scene capture. The runner
+    passes its own after-capture (`commit(name, key, before, after)`).
+  - `testRandomizedEquivalence` runs its field edits both ways against full
+    snapshots; `testEntityCaptureGuards` covers created entities, an
+    unlisted destroy, and the runtime scene.
+
+  Follow-ups:
+  - About 1 ms of a recorded edit, and of a prefab spawn (D6), still grows
+    with the scene. The likely cause, not yet profiled, is that
+    `SceneDocument::applyChanges` validates every collection reference of the
+    resulting scene.
+  - Modal G/R/S and the code paths that create objects (duplicate, place
+    model) take their `before` as a whole-scene string;
+    `beginModalTransform`'s string parameter would have to change for them
+    to capture entities.
 - [x] **D5.** Add a shared versioned-settings JSON helper. Adopt it in
       GameSettings, EditorPreferences, InputProfiles, ViewportChrome,
       HierarchyPanel, EditorAreas and PlatformServices.

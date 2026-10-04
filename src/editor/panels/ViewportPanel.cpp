@@ -826,8 +826,8 @@ void ViewportPanel::drawItemTab(EditorContext& context) {
         // The widget edits in place; the undo snapshot needs the unedited value.
         const TransformComponent edited = transform;
         transform = original;
-        std::string before;
-        if (context.editing.capture(before)) {
+        SceneEditing::EntitySnapshot before;
+        if (context.editing.captureEntities(std::span(&entity, 1), before)) {
             transform = edited;
             scene.markTransformDirty(entity);
             // Shares the inspector's key so a drag in either merges into one step.
@@ -1051,7 +1051,7 @@ void ViewportPanel::drawGameView(EditorContext& context, bool imageHovered, bool
 bool ViewportPanel::drawGizmo(EditorContext& context) {
     if (m_tools.gizmo == GizmoMode::Select || context.selection.size() != 1) {
         m_gizmoWasUsing = false;
-        m_gizmoBefore.clear();
+        m_gizmoBefore.reset();
         return false;
     }
     Scene& scene = context.app.scene;
@@ -1128,17 +1128,18 @@ bool ViewportPanel::drawGizmo(EditorContext& context) {
         registry.get<TransformComponent>(entity).local = localBeforeManipulation;
         scene.markTransformDirty(entity);
         scene.updateWorldTransforms();
-        if (!context.editing.capture(m_gizmoBefore)) {
-            m_gizmoBefore.clear();
+        m_gizmoBefore.emplace();
+        if (!context.editing.captureEntities(std::span(&entity, 1), *m_gizmoBefore)) {
+            m_gizmoBefore.reset();
         }
         registry.get<TransformComponent>(entity).local = editedLocal;
         scene.markTransformDirty(entity);
         scene.updateWorldTransforms();
-    } else if (!usingGizmo && m_gizmoWasUsing && !m_gizmoBefore.empty()) {
+    } else if (!usingGizmo && m_gizmoWasUsing && m_gizmoBefore) {
         // In Play and Simulate the editing is the runtime scene's, which
         // records nothing: a drag there never reaches the edit history.
-        context.editing.commit("Transform Gizmo", {}, std::move(m_gizmoBefore));
-        m_gizmoBefore.clear();
+        context.editing.commit("Transform Gizmo", {}, std::move(*m_gizmoBefore));
+        m_gizmoBefore.reset();
     }
     m_gizmoWasUsing = usingGizmo;
     return usingGizmo || overGizmo;

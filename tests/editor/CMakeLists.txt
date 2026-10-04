@@ -82,6 +82,9 @@ zenith_add_test(zenith_pick_queries SOURCES PickQueriesTests.cpp LIBS zenith_edi
 zenith_add_test(zenith_selection SOURCES SelectionTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_outliner SOURCES OutlinerTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_scene_editing SOURCES SceneEditingTests.cpp LIBS zenith_editor_app)
+# Run by hand for numbers; CTest only checks that it completes.
+zenith_add_test(zenith_scene_editing_benchmark_run EXECUTABLE zenith_scene_editing_benchmark
+    SOURCES SceneEditingBenchmark.cpp LIBS zenith_editor_app LABELS benchmark TIMEOUT 600)
 zenith_add_test(zenith_live_editing SOURCES LiveEditingTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_reflected_field_editor SOURCES ReflectedFieldEditorTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_properties_panel SOURCES PropertiesPanelTests.cpp LIBS zenith_editor_app)

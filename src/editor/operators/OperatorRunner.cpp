@@ -93,7 +93,9 @@ OperatorResult OperatorRunner::run(const Operator* op, std::string_view id, Oper
             return OperatorResult::failed("Could not record " + op->label + " for undo");
         }
         if (after != before) {
-            context.editing.commit(op->label, {}, std::move(before));
+            // The runner keeps after for Adjust Last Operation, so it is
+            // passed rather than captured again.
+            context.editing.commit(op->label, {}, before, after);
             recorded = true;
         }
     }

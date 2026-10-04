@@ -246,8 +246,8 @@ void EntityPropertiesView::drawName(EditorContext& context, std::span<const Scen
     const bool edited =
         mixed ? ImGui::InputTextWithHint("Name", mixedValueText, &typed) : ImGui::InputText("Name", &typed);
     if (edited) {
-        std::string before;
-        if (context.editing.capture(before)) {
+        SceneEditing::EntitySnapshot before;
+        if (context.editing.captureEntities(entities, before)) {
             for (const Entity entity : entities) {
                 registry.get<NameComponent>(entity).name = typed;
             }
@@ -426,8 +426,8 @@ void EntityPropertiesView::drawTransform(EditorContext& context, std::span<const
         return;
     }
     // The scene is unedited so far, which is the snapshot undo needs.
-    std::string before;
-    if (!context.editing.capture(before)) {
+    SceneEditing::EntitySnapshot before;
+    if (!context.editing.captureEntities(entities, before)) {
         return;
     }
     for (size_t index = 0; index < entities.size(); ++index) {
@@ -720,8 +720,8 @@ EntityPropertiesView::drawComponentValues(EditorContext& context, const Componen
             edited.push_back(type.copy(component));
             type.assign(component, originals[index]);
         }
-        std::string before;
-        if (context.editing.capture(before)) {
+        SceneEditing::EntitySnapshot before;
+        if (context.editing.captureEntities(targets, before)) {
             for (size_t index = 0; index < targets.size(); ++index) {
                 type.assign(type.find(scene, targets[index]), edited[index]);
             }

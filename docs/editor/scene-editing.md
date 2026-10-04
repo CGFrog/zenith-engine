@@ -2,11 +2,24 @@
 
 Part of the [repository guide](../REPOSITORY_GUIDE.md).
 
-`SceneEditing` captures transient whole-scene snapshots around an edit but
-records only the entities it added, removed, or changed as an
-`EntityDiffCommand`, so history memory and undo/redo time scale with the edit
-rather than the scene. `CommandHistory::storedBytes` reports what the history
-keeps. Opening or creating a document still replaces the whole scene and
+`SceneEditing` records only the entities an edit added, removed, or changed,
+as an `EntityDiffCommand`, so history memory and undo/redo time scale with the
+edit rather than the scene. `CommandHistory::storedBytes` reports what the
+history keeps.
+
+There are two ways to capture an edit:
+- **The whole scene** (`capture`, then `commit` or `perform`). Use it when the
+  edit's reach is unknown: structural edits and operators. `OperatorRunner`
+  passes the after-capture it keeps for Adjust Last Operation to `commit`, so
+  it is not serialized twice.
+- **Only the entities the edit changes** (`captureEntities`, then `commit`
+  with the `EntitySnapshot`). The inspector's name, transform and component
+  edits and the viewport's transform widget and gizmo use it. Entities the
+  edit creates are found by id and recorded too. Destroying an entity the
+  snapshot did not list is reported, because undo could not bring it back.
+
+In a 5,000-entity scene, recording an inspector edit costs about 1.7 ms this
+way against 120 ms for the whole scene (`zenith_scene_editing_benchmark_run`). Opening or creating a document still replaces the whole scene and
 clears the history. `CommandHistory::marker` and `stepsSince` count the undo
 steps recorded after a point of the timeline (a difference of `size()` is no
 count once new steps discard redo steps); the smoke steps undo exactly their

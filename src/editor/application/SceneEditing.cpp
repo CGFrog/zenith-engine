@@ -48,25 +48,90 @@ bool SceneEditing::capture(std::string& snapshot) const {
     return true;
 }
 
-void SceneEditing::commit(std::string name, std::string coalesceKey, std::string before) const {
-    if (runtime()) {
-        // A runtime edit is already applied and is never recorded.
-        markRuntimeChanges(before);
-        return;
+bool SceneEditing::captureEntities(std::span<const Entity> entities, EntitySnapshot& snapshot) const {
+    EntitySnapshot captured{.firstNewId = m_scene.nextEntityId(),
+                            .entityCount = m_scene.registry().view<const SceneEntityIdComponent>().size()};
+    captured.ids.reserve(entities.size());
+    for (const Entity entity : entities) {
+        captured.ids.push_back(m_scene.id(entity));
     }
+    if (const SceneDocumentResult result =
+            SceneDocument::serializeEntities(m_scene, m_assets, m_document.options(), captured.ids, captured.entities);
+        !result) {
+        m_diagnostics.reportError(result.error);
+        return false;
+    }
+    snapshot = std::move(captured);
+    return true;
+}
+
+void SceneEditing::commit(std::string name, std::string coalesceKey, std::string before) const {
     std::string after;
     if (!capture(after)) {
         return;
     }
+    commit(std::move(name), std::move(coalesceKey), before, after);
+}
+
+void SceneEditing::commit(std::string name, std::string coalesceKey, std::string_view before,
+                          std::string_view after) const {
     if (before == after) {
         return;
     }
     SceneChanges changes;
     if (const SceneDocumentResult result = SceneDocument::diff(before, after, changes); !result) {
+        m_diagnostics.reportError((runtime() ? "Could not inspect the runtime edit: "
+                                             : "Could not record editor "
+                                               "command: ") +
+                                  result.error);
+        return;
+    }
+    record(std::move(name), std::move(coalesceKey), std::move(changes));
+}
+
+void SceneEditing::commit(std::string name, std::string coalesceKey, EntitySnapshot before) const {
+    // Entities the edit created are new on the after side.
+    size_t created = 0;
+    if (m_scene.nextEntityId().value != before.firstNewId.value) {
+        for (const Entity entity : m_scene.registry().view<const SceneEntityIdComponent>()) {
+            if (const SceneEntityId id = m_scene.id(entity); id.value >= before.firstNewId.value) {
+                before.ids.push_back(id);
+                before.entities.emplace_back();
+                ++created;
+            }
+        }
+    }
+    std::vector<std::optional<std::string>> after;
+    if (const SceneDocumentResult result =
+            SceneDocument::serializeEntities(m_scene, m_assets, m_document.options(), before.ids, after);
+        !result) {
         m_diagnostics.reportError("Could not record editor command: " + result.error);
         return;
     }
+    SceneChanges changes;
+    size_t destroyed = 0;
+    for (size_t index = 0; index < before.ids.size(); ++index) {
+        destroyed += before.entities[index] && !after[index] ? 1 : 0;
+        if (before.entities[index] != after[index]) {
+            changes.entities.push_back({.id = before.ids[index],
+                                        .before = std::move(before.entities[index]),
+                                        .after = std::move(after[index])});
+        }
+    }
+    if (m_scene.registry().view<const SceneEntityIdComponent>().size() + destroyed != before.entityCount + created) {
+        m_diagnostics.reportError(name + " destroyed entities it did not capture; undo cannot bring them back");
+    }
+    std::ranges::sort(changes.entities, {}, [](const SceneEntityChange& change) { return change.id.value; });
+    record(std::move(name), std::move(coalesceKey), std::move(changes));
+}
+
+void SceneEditing::record(std::string name, std::string coalesceKey, SceneChanges changes) const {
     if (changes.empty()) {
+        return;
+    }
+    if (runtime()) {
+        // A runtime edit is already applied and is never recorded.
+        markRuntimeChanges(changes);
         return;
     }
     // History commands apply their own after state, so the changed entities
@@ -101,16 +166,7 @@ void SceneEditing::perform(std::string name, std::string coalesceKey,
     commit(std::move(name), std::move(coalesceKey), std::move(before));
 }
 
-void SceneEditing::markRuntimeChanges(std::string_view before) const {
-    std::string after;
-    if (!capture(after) || before == after) {
-        return;
-    }
-    SceneChanges changes;
-    if (const SceneDocumentResult result = SceneDocument::diff(before, after, changes); !result) {
-        m_diagnostics.reportError("Could not inspect the runtime edit: " + result.error);
-        return;
-    }
+void SceneEditing::markRuntimeChanges(const SceneChanges& changes) const {
     // What applyChanges marks for a recorded edit, without rebuilding the
     // entities (which would drop runtime-only state such as physics bodies).
     const auto hadPhysics = [](const std::optional<std::string>& entity) {
