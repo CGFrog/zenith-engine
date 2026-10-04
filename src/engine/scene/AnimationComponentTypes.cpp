@@ -7,8 +7,12 @@
 #include "ComponentTypeHelpers.hpp"
 #include "ComponentTypes.hpp"
 #include "SceneAssetReferences.hpp"
+#include "engine/animation/Animator.hpp"
 
+#include <array>
 #include <nlohmann/json.hpp>
+#include <string>
+#include <utility>
 
 namespace {
 using Json = nlohmann::json;
@@ -90,5 +94,136 @@ ComponentType skinComponentType() {
                 skin.skinIndex = input.at("skin").get<uint32_t>();
                 return SceneDocumentResult{.success = true};
             })
+        .build();
+}
+
+namespace {
+using AnimatorParameterTypeName = std::pair<AnimatorParameterType, const char*>;
+constexpr std::array<AnimatorParameterTypeName, 3> parameterTypeNames{{{AnimatorParameterType::Float, "float"},
+                                                                       {AnimatorParameterType::Bool, "bool"},
+                                                                       {AnimatorParameterType::Trigger, "trigger"}}};
+using AnimatorConditionModeName = std::pair<AnimatorConditionMode, const char*>;
+constexpr std::array<AnimatorConditionModeName, 5> conditionModeNames{
+    {{AnimatorConditionMode::Greater, "greater"},
+     {AnimatorConditionMode::Less, "less"},
+     {AnimatorConditionMode::True, "true"},
+     {AnimatorConditionMode::False, "false"},
+     {AnimatorConditionMode::Triggered, "triggered"}}};
+
+template <typename Value, size_t Count>
+const char* nameOf(const std::array<std::pair<Value, const char*>, Count>& names, Value value) {
+    for (const auto& [candidate, name] : names) {
+        if (candidate == value) {
+            return name;
+        }
+    }
+    return names.front().second;
+}
+
+template <typename Value, size_t Count>
+bool valueOf(const std::array<std::pair<Value, const char*>, Count>& names, const std::string& name, Value& value) {
+    for (const auto& [candidate, candidateName] : names) {
+        if (name == candidateName) {
+            value = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+Json writeAnimator(const AnimatorDefinition& definition) {
+    Json parameters = Json::array();
+    for (const AnimatorParameter& parameter : definition.parameters) {
+        parameters.push_back({{"name", parameter.name},
+                              {"type", nameOf(parameterTypeNames, parameter.type)},
+                              {"value", parameter.value}});
+    }
+    Json states = Json::array();
+    for (const AnimatorState& state : definition.states) {
+        states.push_back(
+            {{"name", state.name}, {"clip", state.clip}, {"speed", state.speed}, {"looping", state.looping}});
+    }
+    Json transitions = Json::array();
+    for (const AnimatorTransition& transition : definition.transitions) {
+        Json conditions = Json::array();
+        for (const AnimatorCondition& condition : transition.conditions) {
+            conditions.push_back({{"parameter", condition.parameter},
+                                  {"mode", nameOf(conditionModeNames, condition.mode)},
+                                  {"threshold", condition.threshold}});
+        }
+        Json written = {{"from", transition.from},
+                        {"to", transition.to},
+                        {"conditions", std::move(conditions)},
+                        {"cross_fade", transition.crossFadeSeconds}};
+        if (transition.exitTime) {
+            written["exit_time"] = *transition.exitTime;
+        }
+        transitions.push_back(std::move(written));
+    }
+    Json events = Json::array();
+    for (const AnimatorEventMarker& marker : definition.events) {
+        events.push_back({{"state", marker.state}, {"time", marker.time}, {"name", marker.name}});
+    }
+    return {{"parameters", std::move(parameters)},
+            {"states", std::move(states)},
+            {"transitions", std::move(transitions)},
+            {"events", std::move(events)},
+            {"entry_state", definition.entryState}};
+}
+
+SceneDocumentResult readAnimator(const Json& input, AnimatorDefinition& definition) {
+    for (const Json& parameter : input.value("parameters", Json::array())) {
+        AnimatorParameter read{.name = parameter.at("name").get<std::string>(),
+                               .value = parameter.value("value", 0.0f)};
+        if (!valueOf(parameterTypeNames, parameter.value("type", std::string("float")), read.type)) {
+            return {.error = "Animator parameter '" + read.name + "' has an unknown type"};
+        }
+        definition.parameters.push_back(std::move(read));
+    }
+    for (const Json& state : input.value("states", Json::array())) {
+        definition.states.push_back({.name = state.at("name").get<std::string>(),
+                                     .clip = state.at("clip").get<std::string>(),
+                                     .speed = state.value("speed", 1.0f),
+                                     .looping = state.value("looping", true)});
+    }
+    for (const Json& transition : input.value("transitions", Json::array())) {
+        AnimatorTransition read{.from = transition.value("from", std::string{}),
+                                .to = transition.at("to").get<std::string>(),
+                                .crossFadeSeconds = transition.value("cross_fade", 0.2f)};
+        if (const auto exitTime = transition.find("exit_time"); exitTime != transition.end() && !exitTime->is_null()) {
+            read.exitTime = exitTime->get<float>();
+        }
+        for (const Json& condition : transition.value("conditions", Json::array())) {
+            AnimatorCondition readCondition{.parameter = condition.at("parameter").get<std::string>(),
+                                            .threshold = condition.value("threshold", 0.0f)};
+            if (!valueOf(conditionModeNames, condition.value("mode", std::string("true")), readCondition.mode)) {
+                return {.error = "Animator condition on '" + readCondition.parameter + "' has an unknown mode"};
+            }
+            read.conditions.push_back(std::move(readCondition));
+        }
+        definition.transitions.push_back(std::move(read));
+    }
+    for (const Json& marker : input.value("events", Json::array())) {
+        definition.events.push_back({.state = marker.at("state").get<std::string>(),
+                                     .time = marker.value("time", 0.0f),
+                                     .name = marker.at("name").get<std::string>()});
+    }
+    definition.entryState = input.value("entry_state", std::string{});
+    return {.success = true};
+}
+} // namespace
+
+ComponentType animatorComponentType() {
+    return ComponentTypeBuilder<AnimatorComponent>("animator", "Animator")
+        .category("Animation")
+        .codec(
+            [](const AnimatorComponent& animator, const ComponentSaveContext&, Json& output) {
+                output = writeAnimator(animator.definition);
+                return SceneDocumentResult{.success = true};
+            },
+            [](const Json& input, AnimatorComponent& animator, const ComponentLoadContext&) {
+                return readAnimator(input, animator.definition);
+            })
+        .validate([](const AnimatorComponent& animator) { return validateAnimatorDefinition(animator.definition); })
         .build();
 }

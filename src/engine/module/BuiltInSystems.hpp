@@ -20,6 +20,10 @@ inline constexpr std::string_view FirstPersonCamera = "zenith.first_person_camer
 inline constexpr std::string_view Behaviours = "zenith.behaviours";
 inline constexpr std::string_view FixedBehaviours = "zenith.fixed_behaviours";
 inline constexpr std::string_view LateBehaviours = "zenith.late_behaviours";
+// Update, Play, after the game's Update systems (order animatorOrder): runs
+// the animators (updateAnimators) before the animations advance.
+inline constexpr std::string_view Animator = "zenith.animator";
+inline constexpr int32_t animatorOrder = 1000;
 } // namespace EngineSystems
 
 // Adds the engine's systems to systems; fails if a name is taken.

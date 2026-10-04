@@ -422,12 +422,31 @@ Follow-ups:
 
 ### B3. Animation state machine
 
-- [ ] Add `AnimatorComponent` with parameters (float, bool, trigger), states
+- [x] Add `AnimatorComponent` with parameters (float, bool, trigger), states
       bound to clips, and transitions with conditions and cross-fade time. It
       is built on `beginAnimationCrossFade` and `blendAnimationPoses`.
-- [ ] Animation events at clip times are published to the `EventQueue`.
-- [ ] The first version is defined in JSON and code. A graph editor is later
+- [x] Animation events at clip times are published to the `EventQueue`.
+- [x] The first version is defined in JSON and code. A graph editor is later
       work.
+
+Result:
+- `src/engine/animation/Animator.*`: `AnimatorDefinition`, `updateAnimator`
+  (one animator against a clip list, testable without assets) and
+  `updateAnimators`. The `animator` component type is in
+  `AnimationComponentTypes.cpp`; `zenith.animator` runs it in Update after the
+  game's systems, before `updateAnimations`. Events are `AnimationEvent`.
+- Transitions can also wait for an exit time (clip lengths played), and
+  `from` may be empty for an any-state transition.
+- Coverage: `tests/engine/AnimatorTests.cpp` (`zenith_animator`); docs in
+  `docs/engine/animation.md`.
+
+Follow-ups:
+- States address clips by name; a model whose clips are renamed leaves its
+  animators inert (`updateAnimator` returns false) without a diagnostic.
+- Both clips of a cross-fade share the target state's speed and looping,
+  because `AnimationComponent` has one of each.
+- The animator advances on the Update frame time, `updateAnimations` on
+  simulated time; under a time scale their state times drift apart.
 
 ### B4. Effects and pooling
 

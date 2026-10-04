@@ -450,9 +450,9 @@ void testHotReload(HostFixture& fixture, const TestPaths& paths, SceneEntityId c
     expect(fixture.extensionsRegistered() && reloaded.warnings.size() == 1,
            "the reload released every extension, so registering them again succeeds once each");
     expect(!fixture.host.panels().empty() && fixture.host.panels()[0].visible, "an open module panel stays open");
-    // The engine's behaviour system, count_play, and probe_context ran once
-    // since the reload.
-    expect(fixture.host.systemProfile().timings().size() == 3,
+    // The engine's behaviour and animator systems, count_play, and
+    // probe_context ran once since the reload.
+    expect(fixture.host.systemProfile().timings().size() == 4,
            "a reload starts the profile over with the new module's systems");
     fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Simulate, 0.016f);
     expect(fixture.host.simulateMask().enabled("count_play", SystemPhase::Update) &&

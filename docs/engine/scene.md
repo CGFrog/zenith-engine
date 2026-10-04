@@ -49,10 +49,11 @@ validation, sanitizing, texture bindings, and schema migrations, and a
 order (the order documents are read in and the editor lists them; a test pins
 it). Their types are built in one family file per domain:
 `RenderComponentTypes.cpp` (model, model node, mesh renderer, camera, particle
-emitter, decal), `AnimationComponentTypes.cpp` (animation, morph weights,
-skin), `LightComponentTypes.cpp` (directional, point and spot lights,
+emitter, decal), `AnimationComponentTypes.cpp` (animation, animator, morph
+weights, skin), `LightComponentTypes.cpp` (directional, point and spot lights,
 environment light, volumetric fog, reflection probe, irradiance volume),
-`PhysicsComponentTypes.cpp` (collider, rigid body), plus
+`PhysicsComponentTypes.cpp` (collider, rigid body, character controller),
+`GameplayComponentTypes.cpp` (first-person camera), plus
 `CollectionComponentTypes.cpp` and `PrefabComponentTypes.cpp`; shared codec
 helpers are in the internal `ComponentTypeHelpers.hpp`. Add a new built-in
 type to the family file for its domain and append it to the list in

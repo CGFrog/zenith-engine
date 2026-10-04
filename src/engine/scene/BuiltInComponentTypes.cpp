@@ -34,7 +34,8 @@ SceneDocumentResult registerBuiltInComponentTypes(ComponentTypeRegistry& registr
     if (SceneDocumentResult result = registerPrefabComponentTypes(registry); !result) {
         return result;
     }
-    for (ComponentType type : {characterControllerComponentType(), firstPersonCameraComponentType()}) {
+    for (ComponentType type :
+         {characterControllerComponentType(), firstPersonCameraComponentType(), animatorComponentType()}) {
         if (SceneDocumentResult result = registry.add(std::move(type)); !result) {
             return result;
         }

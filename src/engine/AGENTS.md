@@ -8,6 +8,7 @@ This subtree is the reusable `zenith_engine` library. It must not include from
 | Path | Responsibility |
 | --- | --- |
 | `Engine.*` | Top-level ownership and runtime loop orchestration. [Application](../../docs/engine/application.md) |
+| `animation/` | Clip sampling, pose blending, animation playback, and the animator state machine. [Animation](../../docs/engine/animation.md) |
 | `application/` | Application/scene lifecycle contracts, deferred requests, and the simulation clock. [Application](../../docs/engine/application.md) |
 | `assets/` | Renderer-independent import, decoding, caching, and typed asset handles. [Assets](../../docs/engine/assets.md) |
 | `audio/` | SDL audio device, decoding, mixing, streaming, and audio handles. [Audio](../../docs/engine/audio.md) |

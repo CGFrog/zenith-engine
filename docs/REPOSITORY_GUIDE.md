@@ -151,6 +151,7 @@ Engine (`src/engine/`, `shaders/`):
 - [Assets](engine/assets.md): CPU asset types, import, streaming policy, texture cooking, GUIDs, and the asset database.
 - [Platform services](engine/platform.md): writable locations, file reads, the file watcher, and child processes.
 - [Physics](engine/physics.md): physics components, the character controller, `PhysicsWorld`, and the private Jolt runtime and debug draw.
+- [Animation](engine/animation.md): clip playback, cross-fades, and the animator state machine.
 - [Gameplay](engine/gameplay.md): reusable gameplay mechanisms such as the first-person player.
 - [Graphics](engine/graphics.md): the renderer structure, Vulkan context, swapchain, frame resources, render graph, and pipelines.
 - [Graphics scene passes](engine/graphics-passes.md): GPU-driven culling, AO, clustered and local-light shadows, fog, decals, particles, environment lighting, and `MeshPass`.

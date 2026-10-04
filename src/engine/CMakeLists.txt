@@ -9,6 +9,7 @@ add_library(zenith_engine SHARED
     diagnostics/RgbaImage.cpp
     diagnostics/StbImageWrite.cpp
     animation/AnimationSystem.cpp
+    animation/Animator.cpp
     audio/AudioSystem.cpp
     audio/StbVorbis.cpp
     Engine.cpp

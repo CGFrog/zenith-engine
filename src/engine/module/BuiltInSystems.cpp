@@ -1,5 +1,8 @@
 #include "BuiltInSystems.hpp"
 
+#include "GameServices.hpp"
+#include "engine/animation/Animator.hpp"
+#include "engine/application/Application.hpp"
 #include "engine/behaviour/BehaviourScheduler.hpp"
 #include "engine/gameplay/FirstPerson.hpp"
 
@@ -35,13 +38,29 @@ SystemDescriptor behaviourSystem(std::string_view name, SystemPhase phase) {
             .runIn = RunIn::EditAndPlay,
             .run = [phase](const SystemContext& context) { runBehaviours(phase, context); }};
 }
+
+// Needs the application's assets for the models' clips.
+SystemDescriptor animatorSystem() {
+    return {.name = std::string(EngineSystems::Animator),
+            .phase = SystemPhase::Update,
+            .runIn = RunIn::Play,
+            .order = EngineSystems::animatorOrder,
+            .run = [](const SystemContext& context) {
+                if (context.application != nullptr) {
+                    updateAnimators(context.scene, context.application->assets,
+                                    context.services != nullptr ? &context.services->events() : nullptr,
+                                    context.deltaSeconds);
+                }
+            }};
+}
 } // namespace
 
 SystemRegistryResult registerBuiltInSystems(SystemRegistry& systems) {
-    for (SystemDescriptor system : {characterInputSystem(), firstPersonCameraSystem(),
-                                    behaviourSystem(EngineSystems::Behaviours, SystemPhase::Update),
-                                    behaviourSystem(EngineSystems::FixedBehaviours, SystemPhase::FixedUpdate),
-                                    behaviourSystem(EngineSystems::LateBehaviours, SystemPhase::LateUpdate)}) {
+    for (SystemDescriptor system :
+         {characterInputSystem(), firstPersonCameraSystem(),
+          behaviourSystem(EngineSystems::Behaviours, SystemPhase::Update),
+          behaviourSystem(EngineSystems::FixedBehaviours, SystemPhase::FixedUpdate),
+          behaviourSystem(EngineSystems::LateBehaviours, SystemPhase::LateUpdate), animatorSystem()}) {
         if (SystemRegistryResult result = systems.add(std::move(system)); !result) {
             return result;
         }

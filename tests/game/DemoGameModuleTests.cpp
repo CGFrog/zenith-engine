@@ -57,7 +57,8 @@ void setFloatField(const ComponentType& type, void* component, std::string_view 
 }
 
 // The engine's systems run first, then the demo's.
-const std::vector<std::string> updateSystems{std::string(EngineSystems::Behaviours)};
+const std::vector<std::string> updateSystems{std::string(EngineSystems::Behaviours),
+                                             std::string(EngineSystems::Animator)};
 const std::vector<std::string> fixedSystems{std::string(EngineSystems::CharacterInput),
                                             std::string(EngineSystems::FixedBehaviours),
                                             std::string(DemoGameplay::ItemCollectionSystem)};

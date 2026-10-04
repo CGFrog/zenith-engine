@@ -15,8 +15,9 @@ built-in (or host-supplied) `ComponentTypeRegistry` plus its own
 `SystemRegistry`, recording which component keys the module added. Every
 registry starts with the engine's own systems (`BuiltInSystems.*`:
 `zenith.character_input` and `zenith.first_person_camera`, see
-[Gameplay](gameplay.md), and the three behaviour systems), so they run before
-a game's systems of the same phase and order.
+[Gameplay](gameplay.md), the three behaviour systems, and `zenith.animator`,
+see [Animation](animation.md)), so they run before a game's systems of the
+same phase and order (the animator is ordered after them).
 `SystemScheduler` runs a registry's systems per `SystemPhase` (`Update`,
 `FixedUpdate`, `LateUpdate`, `Ui`) by ascending order, filtered by `RunIn`
 edit/play flags; in `SimulationMode::Simulate` it runs the Play systems its
