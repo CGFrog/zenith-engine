@@ -8,7 +8,6 @@
 #include "editor/areas/AreaWindows.hpp"
 #include "editor/areas/DefaultWorkspaces.hpp"
 #include "editor/areas/WorkspaceFile.hpp"
-#include "editor/operators/CollectionOperators.hpp"
 #include "editor/panels/GameModulePanel.hpp"
 
 #include <imgui.h>
@@ -16,8 +15,6 @@
 
 #include <algorithm>
 #include <fstream>
-#include <iostream>
-#include <limits>
 #include <sstream>
 #include <utility>
 
@@ -388,130 +385,4 @@ void EditorSession::drawWorkspaceTabs(ApplicationContext& context) {
         invokeOperator(context, "wm.workspace_activate", nlohmann::json{{"workspace", *chosen}}.dump(),
                        KeymapRegion::Global);
     }
-}
-
-bool EditorSession::updateSmokeAreas(ApplicationContext& context) {
-    // Frames 6-9: open a second Hierarchy, switch workspace and back, check
-    // the area survived, and restore the areas it changed (a manual smoke
-    // run may use the user's workspaces.json; ctest gives it its own).
-    constexpr uint32_t firstFrame = 6;
-    const auto fail = [&](const std::string& message) {
-        const std::string error = "Workspace smoke failed: " + message;
-        std::cerr << error << '\n';
-        m_diagnostics.reportError(error);
-        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    };
-    const auto hierarchyAreas = [this] {
-        std::vector<std::string> ids;
-        for (const AreaInstance& area : m_workspaces.active().areas()) {
-            if (area.typeId == "hierarchy" && area.visible) {
-                ids.push_back(area.id());
-            }
-        }
-        return ids;
-    };
-    if (m_smokeFrame == firstFrame) {
-        m_smokeWorkspace = m_workspaces.active().name();
-        if (!m_workspaces.active().anyVisible("hierarchy")) {
-            m_smokeShowedHierarchy = true;
-            invokeOperator(context, "wm.toggle_panel", R"({"panel":"hierarchy"})", KeymapRegion::Global);
-        }
-        const std::vector<std::string> before = hierarchyAreas();
-        invokeOperator(context, "wm.area_new", R"({"type":"hierarchy"})", KeymapRegion::Global);
-        for (const std::string& id : hierarchyAreas()) {
-            if (std::ranges::find(before, id) == before.end()) {
-                m_smokeArea = id;
-            }
-        }
-        if (m_smokeArea.empty()) {
-            fail("wm.area_new did not open a second Hierarchy");
-        }
-    } else if (m_smokeFrame == firstFrame + 1) {
-        const std::string other = m_smokeWorkspace == "Debug" ? "Layout" : "Debug";
-        invokeOperator(context, "wm.workspace_activate", nlohmann::json{{"workspace", other}}.dump(),
-                       KeymapRegion::Global);
-    } else if (m_smokeFrame == firstFrame + 2) {
-        if (m_workspaces.active().name() == m_smokeWorkspace) {
-            fail("the workspace did not switch");
-        }
-        invokeOperator(context, "wm.workspace_activate", nlohmann::json{{"workspace", m_smokeWorkspace}}.dump(),
-                       KeymapRegion::Global);
-    } else if (m_smokeFrame == firstFrame + 3) {
-        const AreaInstance* area = m_workspaces.active().find(m_smokeArea);
-        if (m_workspaces.active().name() != m_smokeWorkspace || area == nullptr || !area->visible) {
-            fail("switching back did not restore the second Hierarchy");
-        }
-        invokeOperator(context, "wm.area_close", nlohmann::json{{"area", m_smokeArea}}.dump(), KeymapRegion::Global);
-        if (m_smokeShowedHierarchy) {
-            invokeOperator(context, "wm.toggle_panel", R"({"panel":"hierarchy"})", KeymapRegion::Global);
-        }
-    }
-    return m_smokeFrame > firstFrame + 3;
-}
-
-bool EditorSession::updateSmokeOutliner(ApplicationContext& context) {
-    // Frames 170-171, after the Simulate smoke has returned to Edit mode: show
-    // a Hierarchy in Collections mode, add an empty, create a collection and
-    // link the empty to it (the Hierarchy draws the result in between), then
-    // undo every step and restore the mode.
-    constexpr uint32_t firstFrame = 170;
-    const auto fail = [&](const std::string& message) {
-        const std::string error = "Outliner smoke failed: " + message;
-        std::cerr << error << '\n';
-        m_diagnostics.reportError(error);
-        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    };
-    if (m_smokeFrame == firstFrame) {
-        m_smokeOutlinerMarker = m_history.marker();
-        m_smokeOutlinerArea.clear();
-        for (const AreaInstance& area : m_workspaces.active().areas()) {
-            if (area.typeId == "hierarchy" && area.visible && area.panel) {
-                m_smokeOutlinerArea = area.id();
-                m_smokeOutlinerState = area.panel->areaState();
-                area.panel->restoreAreaState("collections");
-                if (area.panel->areaState() != "collections") {
-                    fail("the Hierarchy did not switch to the Collections display mode");
-                }
-                break;
-            }
-        }
-        if (const OperatorResult result = invokeOperator(context, "object.add_empty", {}, KeymapRegion::Global);
-            !result) {
-            fail("object.add_empty did not run: " + result.message);
-            return true;
-        }
-        const std::optional<SceneEntityId> added = m_selection.active();
-        invokeOperator(context, "collection.new", R"({"name":"Smoke Collection","link_selection":false})",
-                       KeymapRegion::Global);
-        const LastOperator* created = m_operatorRunner.lastOperator();
-        const NewCollectionProperties* properties =
-            created == nullptr ? nullptr : created->properties.get<NewCollectionProperties>();
-        if (!added || properties == nullptr || properties->created == 0) {
-            fail("collection.new did not create a collection");
-            return true;
-        }
-        const SceneCollectionId collection{properties->created};
-        const OperatorResult linked =
-            invokeOperator(context, "collection.link", nlohmann::json{{"collection", collection.value}}.dump(),
-                           KeymapRegion::Outliner);
-        const Entity entity = context.scene.findEntity(*added);
-        const auto* membership =
-            entity == entt::null ? nullptr : context.scene.registry().try_get<CollectionMembershipComponent>(entity);
-        if (membership == nullptr || !membership->contains(collection)) {
-            fail("collection.link did not link the new empty: " + linked.message);
-        }
-        m_smokeOutlinerEntity = *added;
-    } else if (m_smokeFrame == firstFrame + 1) {
-        const size_t collectionsBefore = context.scene.collections().all().size();
-        undoSince(context, m_smokeOutlinerMarker);
-        if (context.scene.collections().all().size() + 1 != collectionsBefore ||
-            context.scene.findEntity(m_smokeOutlinerEntity) != entt::null) {
-            fail("undo did not remove the smoke collection and empty");
-        }
-        if (const AreaInstance* area = m_workspaces.active().find(m_smokeOutlinerArea);
-            area != nullptr && area->panel) {
-            area->panel->restoreAreaState(m_smokeOutlinerState);
-        }
-    }
-    return m_smokeFrame > firstFrame + 1;
 }

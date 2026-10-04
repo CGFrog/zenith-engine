@@ -167,6 +167,7 @@ Editor (`src/editor/`):
 - [Inspector and Properties panels](editor/inspector.md): component sections, multi-entity editing, entity reference fields, and the Properties tabs.
 - [Outliner](editor/outliner.md): the Hierarchy panel's display modes, filtering, and drag and drop.
 - [Asset Browser and project assets](editor/asset-browser.md): the browser, `ProjectAssets`, the asset catalog, and file operations.
+- [Editor smoke](editor/smoke.md): the `ZENITH_EDITOR_SMOKE` scenario, its sequential step runner, and how to add a step.
 
 Game (`src/game/`):
 

@@ -14,12 +14,9 @@
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
-#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
-#include <iostream>
-#include <limits>
 #include <optional>
 #include <utility>
 
@@ -388,101 +385,4 @@ void EditorSession::drawModalTransformOverlay(const ViewportPanel& viewport, con
     drawList->AddText(position, ImGui::GetColorU32(ImGuiCol_Text), result.description.c_str());
     drawList->AddText({position.x, position.y + lineHeight}, ImGui::GetColorU32(ImGuiCol_TextDisabled), hint);
     drawList->PopClipRect();
-}
-
-bool EditorSession::updateSmokeMenus(ApplicationContext& context) {
-    // Frames 30-32: open the Add menu with wm.call_menu, choose Empty from its
-    // search as typing "empty" would, check the entity was added and
-    // selected, then undo it.
-    constexpr uint32_t firstFrame = 30;
-    const auto fail = [&](const std::string& message) {
-        const std::string error = "Menu smoke failed: " + message;
-        std::cerr << error << '\n';
-        m_diagnostics.reportError(error);
-        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    };
-    const auto entityCount = [&context] {
-        return context.scene.registry().view<const SceneEntityIdComponent>().size();
-    };
-    if (m_smokeFrame == firstFrame) {
-        m_smokeEntityCount = entityCount();
-        m_smokeMenuMarker = m_history.marker();
-        invokeOperator(context, "wm.call_menu", nlohmann::json{{"menu", addMenuId}}.dump(), KeymapRegion::Viewport);
-    } else if (m_smokeFrame == firstFrame + 1) {
-        const std::optional<ResolvedMenu> menu =
-            m_menus.resolve(m_menus.request(), operatorContext(context, KeymapRegion::Global));
-        const std::vector<MenuSearchResult> results =
-            menu ? searchMenu(*menu, "empty") : std::vector<MenuSearchResult>{};
-        if (!m_menus.isOpen() || results.empty()) {
-            fail("wm.call_menu did not open an Add menu offering Empty");
-            return true;
-        }
-        invokeOperator(context, results.front().item->operatorId, results.front().item->properties,
-                       KeymapRegion::Global);
-        m_menus.close();
-        if (entityCount() != m_smokeEntityCount + 1 || m_selection.size() != 1) {
-            fail("choosing Empty did not add and select one entity");
-        }
-    } else if (m_smokeFrame == firstFrame + 2) {
-        if (m_menus.isOpen()) {
-            fail("the Add menu did not close");
-        }
-        undoSince(context, m_smokeMenuMarker);
-        if (entityCount() != m_smokeEntityCount) {
-            fail("undo did not remove the added entity");
-        }
-    }
-    return m_smokeFrame > firstFrame + 2;
-}
-
-bool EditorSession::updateSmokePies(ApplicationContext& context) {
-    // Frames 335-337: open the Shading pie with wm.call_pie (pies turned on
-    // for the step), choose Wireframe from it as a release over that item
-    // would, check the active viewport's shading, then restore it.
-    constexpr uint32_t firstFrame = 335;
-    const auto fail = [&](const std::string& message) {
-        const std::string error = "Pie menu smoke failed: " + message;
-        std::cerr << error << '\n';
-        m_diagnostics.reportError(error);
-        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    };
-    ViewportPanel* viewport = m_viewports.active();
-    if (m_smokeFrame == firstFrame) {
-        if (viewport == nullptr) {
-            // Nothing to shade: the step is skipped.
-            return true;
-        }
-        m_smokePieShading = viewport->chrome().shading;
-        // applyAppearance restores the preference on the next update.
-        m_menus.setPieMenusEnabled(true);
-        invokeOperator(context, "wm.call_pie", nlohmann::json{{"menu", shadingPieMenuId}}.dump(),
-                       KeymapRegion::Viewport);
-        if (!m_menus.pieOpen()) {
-            fail("wm.call_pie did not open the Shading pie");
-        }
-    } else if (m_smokeFrame == firstFrame + 1 && m_smokePieShading) {
-        const std::optional<ResolvedMenu> pie =
-            m_menus.resolve(m_menus.pieRequest(), operatorContext(context, KeymapRegion::Viewport));
-        const std::vector<MenuItem> items = pie ? pieItems(*pie) : std::vector<MenuItem>{};
-        const auto wireframe =
-            std::ranges::find_if(items, [](const MenuItem& item) { return item.label == "Wireframe"; });
-        if (!m_menus.pieOpen() || wireframe == items.end()) {
-            fail("the Shading pie did not offer Wireframe");
-            return true;
-        }
-        invokeOperator(context, wireframe->operatorId, wireframe->properties, KeymapRegion::Viewport);
-        m_menus.closePie();
-        if (viewport == nullptr || viewport->chrome().shading != ViewportShading::Wireframe) {
-            fail("choosing Wireframe did not change the viewport's shading");
-        }
-    } else if (m_smokeFrame == firstFrame + 2 && m_smokePieShading) {
-        if (m_menus.pieOpen()) {
-            fail("the Shading pie did not close");
-        }
-        if (viewport != nullptr) {
-            viewport->chrome().shading = *m_smokePieShading;
-        }
-        m_smokePieShading.reset();
-    }
-    return m_smokeFrame > firstFrame + 2 || (m_smokeFrame >= firstFrame && !m_smokePieShading);
 }

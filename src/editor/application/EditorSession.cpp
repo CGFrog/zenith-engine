@@ -4,7 +4,6 @@
 #include "editor/areas/AreaWindows.hpp"
 #include "editor/areas/DefaultWorkspaces.hpp"
 #include "editor/document/DefaultScene.hpp"
-#include "editor/document/PrefabAuthoring.hpp"
 #include "editor/document/SceneFragment.hpp"
 #include "editor/menus/DefaultMenus.hpp"
 #include "editor/operators/ComponentOperators.hpp"
@@ -29,7 +28,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
-#include <limits>
 #include <utility>
 
 namespace {
@@ -80,7 +78,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_sceneRoot(std::move(sceneRoot))
     , m_initialSceneLoader(std::move(initialSceneLoader))
     , m_leaveForProjectHub(std::move(projectServices.leaveForProjectHub))
-    , m_smokeScenePath(settingsDirectory / (std::string("streaming-smoke") + sceneExtension)) {
+    , m_smokeScratchDirectory(settingsDirectory) {
     for (const std::string& problem : m_keymap.defaultProblems()) {
         m_diagnostics.reportError(problem);
     }
@@ -385,7 +383,6 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     m_moduleHost.setSimulateMask(std::move(simulateMask));
     m_projectAssets.refresh(m_diagnostics);
     m_openRecoveryDialog = m_recovery.available();
-    m_smokeScenario = SDL_getenv("ZENITH_EDITOR_SMOKE") != nullptr;
 
     // The theme, fonts, popup bevels, and the disabled imgui.ini are the
     // application's (EditorApplication::onStart), so they outlive a switch
@@ -409,32 +406,9 @@ SceneResult EditorSession::load(ApplicationContext& context) {
                !result) {
         m_diagnostics.reportError(result.error);
     }
-    if (m_smokeScenario) {
+    if (SDL_getenv("ZENITH_EDITOR_SMOKE") != nullptr) {
         return prepareSmokeScenario(context);
     }
-    return {.success = true};
-}
-
-SceneResult EditorSession::prepareSmokeScenario(ApplicationContext& context) {
-    Scene streamingFixture;
-    for (uint32_t index = 0; index < 5'000; ++index) {
-        streamingFixture.createEntity("Streamed entity " + std::to_string(index));
-    }
-    const auto models = context.scene.registry().view<const ModelComponent>();
-    if (!models.empty()) {
-        const ModelHandle model = models.get<const ModelComponent>(*models.begin()).model;
-        const Entity modelRoot = streamingFixture.createEntity("Streamed model");
-        if (SceneResult result = streamingFixture.instantiateModel(modelRoot, model, context.assets); !result) {
-            return {.error = "Could not prepare streaming smoke model: " + result.error};
-        }
-    }
-    if (SceneDocumentResult result =
-            SceneDocument::save(m_smokeScenePath, streamingFixture, context.assets, m_document.options());
-        !result) {
-        return {.error = "Could not prepare streaming smoke scene: " + result.error};
-    }
-    m_smokeJobs = std::make_unique<JobSystem>(JobSystemConfig{.workerCount = 1, .queueCapacity = 4});
-    m_smokeLayers = std::make_unique<AdditiveSceneManager>(*m_smokeJobs, context.assets, m_document.options());
     return {.success = true};
 }
 
@@ -444,7 +418,7 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
     // Before the smoke scenario, which checks the switch it requested.
     updateWorkspaces();
     beginViewportFrame(context);
-    if (m_smokeScenario) {
+    if (m_smokeRunner) {
         updateSmokeScenario(context);
     }
     updateAutosave(context, deltaSeconds);
@@ -477,374 +451,6 @@ ProjectAssetActions EditorSession::projectAssetActions(ApplicationContext& conte
         .filesRemoved =
             [this, &context](std::span<const std::filesystem::path> removed) { projectFilesRemoved(context, removed); },
     };
-}
-
-void EditorSession::updateSmokeScenario(ApplicationContext& context) {
-    if (m_smokeLayers) {
-        m_smokeLayers->update();
-    }
-    ++m_smokeFrame;
-    if (m_smokeFrame == 1) {
-        RenderSettings settings = context.rendering.settings();
-        settings.bloom = BloomQuality::Downsampled;
-        settings.shadows = ShadowQuality::CascadedHigh;
-        settings.visualizeShadowCascades = true;
-        context.rendering.setSettings(settings);
-        context.rendering.requestViewportSize(640, 360);
-    } else if (m_smokeFrame == 2) {
-        enterPlayMode(context);
-    } else if (m_smokeFrame == 3) {
-        m_playMode.pause();
-        m_playMode.requestFrameStep(context.physics.config().fixedTimeStep);
-    } else if (m_smokeFrame == 4) {
-        stopPlayMode(context);
-    } else if (m_smokeFrame == 5) {
-        context.rendering.requestViewportSize(800, 450);
-        m_smokeStreamInstance = m_smokeLayers->requestLoad(m_smokeScenePath, 100);
-    } else if (m_smokeFrame == 6) {
-        // The viewport chrome: open the sidebar, hide and restore the tool
-        // shelf, and render through a narrower lens with tighter clipping.
-        ViewportPanel* viewport = m_viewports.active();
-        for (const char* operatorId : {"view3d.toggle_sidebar", "view3d.toggle_toolbar", "view3d.toggle_toolbar"}) {
-            invokeOperator(context, operatorId, {}, KeymapRegion::Viewport);
-        }
-        if (viewport == nullptr) {
-            m_diagnostics.reportError("Viewport chrome smoke: no viewport is open");
-            context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-        } else {
-            viewport->camera().setVerticalFovRadians(glm::radians(45.0f));
-            viewport->camera().setClipPlanes(0.05f, 500.0f);
-            if (!viewport->chrome().sidebarVisible || !viewport->chrome().toolbarVisible) {
-                m_diagnostics.reportError("Viewport chrome smoke: the sidebar and toolbar should be visible");
-                context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-            }
-        }
-        // The renderer logs at least its validation-layer state at startup.
-        if (m_infoPanel.log().count(InfoSource::Engine) == 0) {
-            m_diagnostics.reportError("The Info panel received no engine log entries");
-            context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-        }
-    } else if (m_smokeFrame == 7 || m_smokeFrame == 8) {
-        updateSmokeHide(context);
-    } else if (m_smokeFrame == 9) {
-        updateSmokePrefabs(context);
-    }
-    if (m_smokeStreamInstance && !m_smokeStreamCompleted) {
-        const auto state = m_smokeLayers->state(*m_smokeStreamInstance);
-        if (state && state->status == AdditiveSceneStatus::Committed) {
-            m_smokeLayers->unload(*m_smokeStreamInstance);
-            context.assets.collectUnused(true);
-            m_smokeStreamCompleted = true;
-            // The layers share the document's component registry; release
-            // them so the module reload below can unload the old module.
-            releaseSmokeLayers();
-        } else if (state &&
-                   (state->status == AdditiveSceneStatus::Failed || state->status == AdditiveSceneStatus::Cancelled)) {
-            m_diagnostics.reportError("Streaming smoke failed: " + state->error);
-            context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-        }
-    }
-    const bool areasDone = updateSmokeAreas(context);
-    const bool viewportsDone = updateSmokeViewports(context);
-    const bool componentsDone = updateSmokeComponents(context);
-    const bool menusDone = updateSmokeMenus(context);
-    const bool piesDone = updateSmokePies(context);
-    const bool simulateDone = updateSmokeSimulate(context);
-    // Starts after the Simulate step's last frame, back in Edit mode.
-    const bool outlinerDone = updateSmokeOutliner(context);
-    // Starts after the outliner step.
-    const bool pickingDone = updateSmokePicking(context);
-    const bool cursorDone = updateSmokeCursor(context);
-    // Frames 350-420.
-    const bool playTargetsDone = updateSmokePlayTargets(context);
-    // Frames 425-427.
-    const bool liveEditDone = updateSmokeLiveEdit(context);
-    if (m_smokeFrame == 500 && !m_smokeStreamCompleted) {
-        m_diagnostics.reportError("Streaming smoke did not commit while frames were being presented");
-        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    } else if (areasDone && viewportsDone && componentsDone && menusDone && piesDone && simulateDone && outlinerDone &&
-               pickingDone && cursorDone && playTargetsDone && liveEditDone && m_smokeStreamCompleted) {
-        updateSmokeModuleReload(context);
-    }
-}
-
-void EditorSession::updateSmokePrefabs(ApplicationContext& context) {
-    // Prefab authoring on a staging scene, with prefabs written under a
-    // temporary asset root beside the smoke scene so the project is never
-    // touched: create, instantiate twice, delete an entity from one instance
-    // (a structural override), apply the other, and check both; then nest one
-    // in a second prefab and check a nested instance deleted from it stays
-    // deleted.
-    const auto fail = [&](const std::string& message) {
-        m_diagnostics.reportError("Prefab smoke failed: " + message);
-        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    };
-    SceneDocumentOptions options = m_document.options();
-    options.assetRoot = m_smokeScenePath.parent_path() / "prefab-smoke";
-    std::error_code error;
-    std::filesystem::remove_all(options.assetRoot, error);
-    PrefabAuthoring prefabs(context.assets, options);
-    Scene staging;
-    const Entity lamp = staging.createEntity("Lamp");
-    staging.registry().emplace<PointLightComponent>(lamp);
-    staging.setParent(staging.createEntity("Shade"), lamp);
-    Entity first = entt::null;
-    Entity second = entt::null;
-    if (PrefabResult created = prefabs.create(staging, lamp, "smoke/lamp.prefab"); !created) {
-        fail(created.error);
-    } else if (!prefabs.instantiate(staging, "smoke/lamp.prefab", entt::null, first) ||
-               !prefabs.instantiate(staging, "smoke/lamp.prefab", entt::null, second)) {
-        fail("the prefab did not instantiate");
-    } else {
-        const SceneEntityId firstId = staging.id(first);
-        const Entity shade = staging.registry().get<RelationshipComponent>(first).children.front();
-        recordPrefabEntityRemoval(staging, shade);
-        staging.destroyEntity(shade);
-        staging.registry().get<PointLightComponent>(second).intensity = 9.0f;
-        // Nest the first lamp in a cart prefab, delete it from a cart
-        // instance, and check a refresh keeps it deleted.
-        const auto checkNestedRemoval = [&] {
-            const Entity cart = staging.createEntity("Cart");
-            staging.setParent(staging.findEntity(firstId), cart);
-            Entity cartInstance = entt::null;
-            if (!prefabs.create(staging, cart, "smoke/cart.prefab") ||
-                !prefabs.instantiate(staging, "smoke/cart.prefab", entt::null, cartInstance)) {
-                fail("the prefab holding a nested prefab was not created");
-                return;
-            }
-            const Entity nestedLamp = staging.registry().get<RelationshipComponent>(cartInstance).children.front();
-            recordPrefabEntityRemoval(staging, nestedLamp);
-            staging.destroyEntity(nestedLamp);
-            PrefabSystem system(context.assets, options);
-            if (!system.refresh(staging, cartInstance, PrefabRefreshMode::KeepAddedObjects) ||
-                !staging.registry().get<RelationshipComponent>(cartInstance).children.empty()) {
-                fail("a deleted nested instance came back after a refresh");
-            }
-        };
-        if (PrefabResult applied = prefabs.apply(staging, second); !applied) {
-            fail(applied.error);
-        } else if (staging.registry().get<PointLightComponent>(staging.findEntity(firstId)).intensity != 9.0f ||
-                   !staging.registry().get<RelationshipComponent>(staging.findEntity(firstId)).children.empty()) {
-            fail("apply did not update the other instance while keeping its deletion");
-        } else {
-            checkNestedRemoval();
-        }
-    }
-    std::filesystem::remove_all(options.assetRoot, error);
-}
-
-bool EditorSession::updateSmokeComponents(ApplicationContext& context) {
-    // Frames 20-21: add two empties, select both, give the active one a
-    // point light, copy it to the other and reset both through the component
-    // operators (the Inspector draws the shared component in between), then
-    // undo every step.
-    constexpr uint32_t firstFrame = 20;
-    const auto fail = [&](const std::string& message) {
-        m_diagnostics.reportError("Component smoke failed: " + message);
-        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    };
-    const auto pointLights = [&] {
-        return static_cast<size_t>(std::ranges::count_if(m_smokeComponentEntities, [&](SceneEntityId id) {
-            return context.scene.registry().all_of<PointLightComponent>(context.scene.findEntity(id));
-        }));
-    };
-    if (m_smokeFrame == firstFrame) {
-        m_smokeComponentMarker = m_history.marker();
-        m_smokeComponentEntities.clear();
-        for (int index = 0; index < 2; ++index) {
-            invokeOperator(context, "object.add_empty", {}, KeymapRegion::Global);
-            if (const std::optional<SceneEntityId> added = m_selection.active()) {
-                m_smokeComponentEntities.push_back(*added);
-            }
-        }
-        m_selection.assign(
-            std::vector<SceneEntityId>(m_smokeComponentEntities.rbegin(), m_smokeComponentEntities.rend()));
-        constexpr std::string_view light = R"({"component":"point_light"})";
-        for (const char* operatorId :
-             {"object.component_add", "object.component_copy_to_selected", "object.component_reset"}) {
-            invokeOperator(context, operatorId, light, KeymapRegion::Global);
-        }
-        if (m_smokeComponentEntities.size() != 2 || pointLights() != 2) {
-            fail("the point light was not copied to both selected entities");
-        }
-    } else if (m_smokeFrame == firstFrame + 1) {
-        undoSince(context, m_smokeComponentMarker);
-        if (std::ranges::any_of(m_smokeComponentEntities,
-                                [&](SceneEntityId id) { return context.scene.findEntity(id) != entt::null; })) {
-            fail("undo did not remove the smoke entities");
-        }
-        m_selection.clear();
-    }
-    return m_smokeFrame > firstFrame + 1;
-}
-
-bool EditorSession::updateSmokeSimulate(ApplicationContext& context) {
-    // From frame 40: Simulate at half speed until a physics-step system has
-    // run a few times (or for at most 120 frames when the module has none),
-    // then Stop.
-    constexpr uint32_t firstFrame = 40;
-    constexpr uint32_t lastFrame = firstFrame + 120;
-    const auto fail = [&](const std::string& message) {
-        context.logger.log(LogLevel::Error, "editor", "Simulate smoke: " + message);
-        m_diagnostics.reportError("Simulate smoke: " + message);
-        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    };
-    const auto snapshot = [&] {
-        std::string text;
-        if (const SceneDocumentResult result =
-                SceneDocument::serialize(context.scene, context.assets, m_document.options(), text);
-            !result) {
-            fail("the scene could not be serialized: " + result.error);
-        }
-        return text;
-    };
-    if (m_smokeFrame < firstFrame) {
-        return false;
-    }
-    if (m_smokeFrame > lastFrame) {
-        // Stopped by lastFrame at the latest; later steps (the play targets at
-        // 350, live editing at 425) run Play themselves.
-        return true;
-    }
-    if (m_smokeFrame == firstFrame) {
-        m_smokeSimulateSnapshot = snapshot();
-        m_smokeSimulateFixedRuns = 0;
-        invokeOperator(context, "play.set_time_scale", R"({"scale":0.5})", KeymapRegion::Global);
-        if (!invokeOperator(context, "play.simulate", {}, KeymapRegion::Global) ||
-            m_playMode.mode() != EditorMode::Simulate || m_playMode.timeScale() != 0.5f) {
-            fail("play.simulate did not enter Simulate at half speed");
-            return true;
-        }
-        return false;
-    }
-    if (m_playMode.mode() == EditorMode::Edit) {
-        return true;
-    }
-    // The profile publishes the previous frame, which ran in Simulate.
-    const SystemProfile& profile = m_moduleHost.systemProfile();
-    const SimulateSystemMask& mask = m_moduleHost.simulateMask();
-    bool fixedSystemsEnabled = false;
-    for (const SystemPhase phase : {SystemPhase::Update, SystemPhase::FixedUpdate}) {
-        for (const SystemDescriptor* system : m_moduleHost.systems(phase)) {
-            const SystemTiming* timing = profile.find(system->name);
-            const bool runs = runsIn(system->runIn, SimulationMode::Simulate) && mask.enabled(system->name, phase);
-            if (!runs && timing != nullptr && timing->frameRuns > 0) {
-                fail("system '" + system->name + "' ran although Simulate does not run it");
-            }
-            if (runs && phase == SystemPhase::FixedUpdate) {
-                fixedSystemsEnabled = true;
-                m_smokeSimulateFixedRuns += timing != nullptr ? timing->frameRuns : 0;
-            }
-        }
-    }
-    const bool fixedDone = !fixedSystemsEnabled || m_smokeSimulateFixedRuns >= 3;
-    if (m_smokeFrame < firstFrame + 3 || (!fixedDone && m_smokeFrame < lastFrame)) {
-        return false;
-    }
-    if (!fixedDone) {
-        fail("no fixed-update system ran in Simulate");
-    }
-    invokeOperator(context, "play.stop", {}, KeymapRegion::Global);
-    invokeOperator(context, "play.set_time_scale", R"({"scale":1.0})", KeymapRegion::Global);
-    if (m_playMode.mode() != EditorMode::Edit || snapshot() != m_smokeSimulateSnapshot) {
-        fail("Stop did not restore the scene from before Simulate");
-    }
-    return true;
-}
-
-// H hides everything in the editor views (the frame rendered in between draws
-// fewer items), then Alt+H reveals it again.
-void EditorSession::updateSmokeHide(ApplicationContext& context) {
-    const auto fail = [&](const std::string& error) {
-        context.logger.log(LogLevel::Error, "editor", "Hide smoke: " + error);
-        m_diagnostics.reportError("Hide smoke: " + error);
-        context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-    };
-    if (m_smokeFrame == 7) {
-        m_smokeRenderablesBeforeHide = context.rendering.stats().renderableCount;
-        invokeOperator(context, "object.select_all", R"({"action":"select"})", KeymapRegion::Viewport);
-        if (m_selection.empty()) {
-            // An empty startup scene has nothing to hide.
-            context.logger.log(
-                LogLevel::Info, "editor",
-                "Hide smoke skipped: " +
-                    std::to_string(context.scene.registry().view<const SceneEntityIdComponent>().size()) +
-                    " entities, none selectable");
-            m_smokeHideSkipped = true;
-            return;
-        }
-        if (!invokeOperator(context, "object.hide", {}, KeymapRegion::Viewport)) {
-            fail("object.hide did not run");
-        }
-        return;
-    }
-    if (m_smokeHideSkipped) {
-        return;
-    }
-    const uint32_t renderablesWhileHidden = context.rendering.stats().renderableCount;
-    if (m_smokeRenderablesBeforeHide > 0 && renderablesWhileHidden >= m_smokeRenderablesBeforeHide) {
-        fail("hidden objects were still rendered");
-    }
-    if (!invokeOperator(context, "object.unhide", {}, KeymapRegion::Viewport)) {
-        fail("object.unhide did not run");
-    }
-}
-
-void EditorSession::updateSmokeModuleReload(ApplicationContext& context) {
-    if (m_moduleHost.sourcePath().empty()) {
-        context.control.requestQuit();
-        return;
-    }
-    // Every editor extension the module registered is in the editor's
-    // registries, and the reload releases and registers the same ones again
-    // (a release that missed one would make its re-registration fail).
-    const auto extensionsProblem = [this]() -> std::string {
-        std::string problem;
-        for (const std::string& missing : m_moduleHost.missingExtensions()) {
-            problem += (problem.empty() ? "missing " : ", ") + missing;
-        }
-        return problem;
-    };
-    if (!m_smokeModuleReloadRequested) {
-        // A project with a game module also hot reloads it once.
-        m_smokeModuleReloadRequested = true;
-        m_moduleReloadPending = true;
-        m_smokeModuleExtensions = m_moduleHost.extensionCounts();
-        if (const std::string problem = extensionsProblem(); !problem.empty()) {
-            m_diagnostics.reportError("Game module smoke: before the reload, " + problem);
-            context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-        }
-        return;
-    }
-    if (m_moduleReloadPending) {
-        return;
-    }
-    std::string error;
-    if (m_moduleHost.status() != GameModuleStatus::Loaded || m_moduleHost.loadCount() < 2) {
-        error = "Game module smoke reload failed: " + m_moduleHost.error();
-    } else if (m_moduleHost.extensionCounts() != m_smokeModuleExtensions) {
-        error = "Game module smoke: the reloaded module's editor extensions differ from those before the reload";
-    } else if (const std::string problem = extensionsProblem(); !problem.empty()) {
-        error = "Game module smoke: after the reload, " + problem;
-    }
-    if (error.empty()) {
-        context.control.requestQuit();
-        return;
-    }
-    context.logger.log(LogLevel::Error, "editor", error);
-    m_diagnostics.reportError(error);
-    context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
-}
-
-void EditorSession::releaseSmokeLayers() {
-    if (m_smokeLayers) {
-        m_smokeLayers->clear();
-        m_smokeLayers.reset();
-    }
-    if (m_smokeJobs) {
-        m_smokeJobs->shutdown(true);
-        m_smokeJobs.reset();
-    }
 }
 
 void EditorSession::updateAutosave(ApplicationContext& context, float deltaSeconds) {
@@ -963,11 +569,9 @@ void EditorSession::updateEyedropper(ApplicationContext& context) {
 }
 
 void EditorSession::unload(ApplicationContext& context) {
-    releaseSmokeLayers();
-    if (m_smokeScenario) {
-        std::error_code ignored;
-        std::filesystem::remove(m_smokeScenePath, ignored);
-    }
+    // An unfinished smoke run releases its streaming layers (which share the
+    // module's component types) and removes its files.
+    m_smokeRunner.reset();
     stopPlay(context);
     if (m_mouseCaptureChanged) {
         m_mouseCaptureChanged(MouseCapturePolicy::WhileRightMouseDown);

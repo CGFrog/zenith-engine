@@ -37,11 +37,10 @@
 #include "editor/settings/EditorRenderSettings.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "editor/settings/RenderSettingsController.hpp"
+#include "editor/smoke/SmokeRunner.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/ThemeChrome.hpp"
 #include "engine/application/Application.hpp"
-#include "engine/jobs/JobSystem.hpp"
-#include "engine/scene/AdditiveSceneManager.hpp"
 
 #include <array>
 #include <cstdint>
@@ -199,22 +198,15 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     void drawAreas(ApplicationContext& context);
     void drawAreaMenuItems(ApplicationContext& context);
     void drawWorkspaceTabs(ApplicationContext& context);
-    bool updateSmokeAreas(ApplicationContext& context);
-    bool updateSmokeOutliner(ApplicationContext& context);
 
+    // The editor smoke (EditorSessionSmoke.cpp; the steps are in
+    // editor/smoke/): builds the scenario when ZENITH_EDITOR_SMOKE is set,
+    // and runs it once per frame, quitting when it passes.
+    class SmokeHooks;
     SceneResult prepareSmokeScenario(ApplicationContext& context);
+    void updateSmokeScenario(ApplicationContext& context);
     // What the editor does when project files change; dispatched by m_projectAssets.
     ProjectAssetActions projectAssetActions(ApplicationContext& context);
-    void updateSmokeScenario(ApplicationContext& context);
-    void updateSmokeHide(ApplicationContext& context);
-    // Prefab create, instantiate, structural override, and apply on a
-    // staging scene under a temporary asset root.
-    void updateSmokePrefabs(ApplicationContext& context);
-    void updateSmokeModuleReload(ApplicationContext& context);
-    // Enters Simulate, checks that physics-step systems run and disabled
-    // Update systems do not, and that Stop restores the scene; true when done.
-    bool updateSmokeSimulate(ApplicationContext& context);
-    void releaseSmokeLayers();
     void updateAutosave(ApplicationContext& context, float deltaSeconds);
     void drawMainMenu(ApplicationContext& context);
     void handleGlobalShortcuts(ApplicationContext& context);
@@ -267,9 +259,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // Slot in the toolbar's Simulate dropdown for the Simulate system picker
     // (Unit 18); shows a pointer to the System Profiler until then.
     void drawSimulateOptions(ApplicationContext& context);
-    // Frames 350-420: Play in the active viewport (game camera, input, the
-    // banner, frame step), then the standalone game when it is built.
-    bool updateSmokePlayTargets(ApplicationContext& context);
     void requestNew(ApplicationContext& context);
     void requestOpen(ApplicationContext& context);
     void requestClose(ApplicationContext& context);
@@ -289,9 +278,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
                              std::string before, bool commitOnCancel);
     void finishModalTransform(ApplicationContext& context, bool confirm);
     void drawModalTransformOverlay(const ViewportPanel& viewport, const ModalTransformResult& result) const;
-    bool updateSmokeMenus(ApplicationContext& context);
-    // Frames 335-345: the Shading pie through wm.call_pie.
-    bool updateSmokePies(ApplicationContext& context);
 
     // Viewports (EditorViewports.cpp).
     void registerViewportOperators();
@@ -304,17 +290,6 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     // The bottom-left corner of the active viewport's image, or of the work
     // area when no viewport is open.
     glm::vec2 lastOperatorAnchor() const;
-    bool updateSmokeViewports(ApplicationContext& context);
-    // GPU click picking and local view in the active viewport
-    // (EditorPickingSmoke.cpp).
-    bool updateSmokePicking(ApplicationContext& context);
-    // Places the 3D cursor, adds an Empty at it, and undoes (frame 310).
-    bool updateSmokeCursor(ApplicationContext& context);
-    // Exercises multi-entity component operators and their undo.
-    bool updateSmokeComponents(ApplicationContext& context);
-    // Edits the running scene in Play, applies it to the edit scene, stops,
-    // and undoes it (EditorLiveEditSmoke.cpp); true when done.
-    bool updateSmokeLiveEdit(ApplicationContext& context);
 
     enum class PendingAction {
         None,
@@ -443,85 +418,11 @@ class EditorSession final : public ApplicationScene, private EditorSessionAction
     bool m_pathDialogSaves{false};
     float m_autosaveElapsed{0.0f};
 
-    bool m_smokeScenario{false};
-    uint32_t m_smokeFrame{0};
-    std::filesystem::path m_smokeScenePath;
-    std::unique_ptr<JobSystem> m_smokeJobs;
-    std::unique_ptr<AdditiveSceneManager> m_smokeLayers;
-    std::optional<SceneInstanceId> m_smokeStreamInstance;
-    bool m_smokeStreamCompleted{false};
-    // Items the renderer drew before the hide smoke hid everything.
-    uint32_t m_smokeRenderablesBeforeHide{0};
-    bool m_smokeHideSkipped{false};
-    bool m_smokeModuleReloadRequested{false};
-    // The game module's editor extensions before the smoke reloaded it.
-    GameModuleHost::ExtensionCounts m_smokeModuleExtensions;
-    // The workspace the area smoke started in, restored when it ends, and
-    // the extra Hierarchy area it opened.
-    std::string m_smokeWorkspace;
-    std::string m_smokeArea;
-    bool m_smokeShowedHierarchy{false};
-    // The entities the component smoke added, and the history before it.
-    std::vector<SceneEntityId> m_smokeComponentEntities;
-    CommandHistoryMarker m_smokeComponentMarker;
-    // The multi-viewport smoke: the second Viewport area it opened, the two
-    // viewports it compares, and their render views.
-    std::string m_smokeViewportArea;
-    bool m_smokeShowedViewport{false};
-    ViewportId m_smokeFirstViewport;
-    ViewportId m_smokeSecondViewport;
-    RenderViewId m_smokeSecondView;
-    uint32_t m_smokeViewCount{0};
-    ViewShading m_smokeProjectShading{ViewShading::Rendered};
-    // The ImGui layout from before the second viewport was docked beside
-    // the first, restored when the viewport smoke ends.
-    std::string m_smokeLayout;
-    // The first viewport's area state before the smoke set every scene
-    // overlay to All, restored afterwards.
-    std::string m_smokeOverlayState;
-    // Entities in the scene before the menu smoke added one, and the history
-    // before it.
-    size_t m_smokeEntityCount{0};
-    // The active viewport's shading before the pie smoke chose Wireframe.
-    std::optional<ViewportShading> m_smokePieShading;
-    CommandHistoryMarker m_smokeMenuMarker;
-    // The Simulate smoke: the scene before it entered Simulate, and how many
-    // fixed-update system runs it has seen.
-    std::string m_smokeSimulateSnapshot;
-    uint32_t m_smokeSimulateFixedRuns{0};
-    // The play target smoke: the scene from before Play, the frame its
-    // standalone phase launched the game, the log sequence before that, and
-    // whether the step is done.
-    std::string m_smokePlaySnapshot;
-    uint32_t m_smokeStandaloneFrame{0};
-    uint64_t m_smokeGameLogSequence{0};
-    bool m_smokePlayTargetsDone{false};
-    // The outliner smoke: the Hierarchy area whose display mode it switched
-    // (and that area's previous state), and the history before its edits.
-    std::string m_smokeOutlinerArea;
-    std::string m_smokeOutlinerState;
-    CommandHistoryMarker m_smokeOutlinerMarker;
-    SceneEntityId m_smokeOutlinerEntity;
-    // The picking smoke's step, the whole-view pick it waits for, and the
-    // object it clicked.
-    enum class SmokePickPhase : uint8_t {
-        Idle,
-        WholeView,
-        Click,
-        LocalView,
-        LocalViewPick,
-        LeftLocalView,
-        Done,
-    };
-    SmokePickPhase m_smokePickPhase{SmokePickPhase::Idle};
-    PickTicket m_smokePickTicket;
-    SceneEntityId m_smokePickEntity;
-    RenderObjectId m_smokePickObject{0};
-    // The live edit smoke's empty, its location before the smoke moved it,
-    // and the edit history's size once it was added.
-    SceneEntityId m_smokeLiveEntity;
-    glm::vec3 m_smokeLiveStartLocation{0.0f};
-    size_t m_smokeLiveHistorySize{0};
+    // Where the smoke steps write their files: the settings directory, which
+    // automated runs give their own.
+    std::filesystem::path m_smokeScratchDirectory;
+    // The smoke scenario; only while ZENITH_EDITOR_SMOKE runs it.
+    std::unique_ptr<SmokeRunner> m_smokeRunner;
 
     struct ActiveTransform {
         ModalTransform transform;

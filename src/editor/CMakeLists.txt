@@ -7,10 +7,8 @@ add_library(zenith_editor_app STATIC
     application/EditorAppearance.cpp
     application/EditorAreas.cpp
     application/EditorDiagnostics.cpp
-    application/EditorLiveEditSmoke.cpp
     application/EditorModuleCommands.cpp
     application/EditorObjectCommands.cpp
-    application/EditorPickingSmoke.cpp
     application/EditorViewports.cpp
     application/EditorPlayMode.cpp
     application/EditorPlayback.cpp
@@ -18,6 +16,7 @@ add_library(zenith_editor_app STATIC
     application/NativeFileDialog.cpp
     application/PlayTargets.cpp
     application/EditorSession.cpp
+    application/EditorSessionSmoke.cpp
     application/EntityCommands.cpp
     application/SceneEditing.cpp
     application/SystemClipboard.cpp
@@ -115,6 +114,25 @@ add_library(zenith_editor_app STATIC
     settings/EditorSettings.cpp
     settings/RenderSettingsController.cpp
     settings/SimulateSystemSettings.cpp
+    smoke/ComponentSmokeStep.cpp
+    smoke/CursorSmokeStep.cpp
+    smoke/EditorSmokeScenario.cpp
+    smoke/HideSmokeStep.cpp
+    smoke/LiveEditSmokeStep.cpp
+    smoke/MenuSmokeStep.cpp
+    smoke/ModuleReloadSmokeStep.cpp
+    smoke/MultiViewportSmokeStep.cpp
+    smoke/OutlinerSmokeStep.cpp
+    smoke/PickingSmokeStep.cpp
+    smoke/PieMenuSmokeStep.cpp
+    smoke/PlayTargetSmokeStep.cpp
+    smoke/PrefabSmokeStep.cpp
+    smoke/SimulateSmokeStep.cpp
+    smoke/SmokeRunner.cpp
+    smoke/StartupSmokeSteps.cpp
+    smoke/StreamingSmokeSteps.cpp
+    smoke/ViewportChromeSmokeStep.cpp
+    smoke/WorkspaceSmokeStep.cpp
     theme/EditorPalette.cpp
     theme/EditorTheme.cpp
     theme/EditorWidgets.cpp

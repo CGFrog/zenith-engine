@@ -49,4 +49,4 @@ the play buttons, the target dropdown, a Simulate dropdown whose contents are
 the time-scale field. `tests/editor/PlayTargetsTests.cpp` and
 `EditorSessionTests` cover the targets headless; the editor smoke plays the
 startup scene in the active viewport and, when `zenith` is built, launches it
-standalone for a moment (frames 350-420).
+standalone for a moment (its `play targets` step, see [Editor smoke](smoke.md)).
