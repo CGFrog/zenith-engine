@@ -4,19 +4,12 @@
 // with a fake process (temporary scene, arguments, streamed output, Stop,
 // and exit).
 
-#include "editor/application/EditorDiagnostics.hpp"
+#include "EditorTestFixture.hpp"
+
 #include "editor/application/PlayTargets.hpp"
-#include "editor/document/CommandHistory.hpp"
-#include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/EditorCamera.hpp"
-#include "editor/menus/EditorMenus.hpp"
-#include "editor/operators/OperatorRegistry.hpp"
-#include "editor/operators/OperatorRunner.hpp"
-#include "editor/panels/EditorContext.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/theme/ThemeChrome.hpp"
-#include "engine/application/Application.hpp"
-#include "engine/diagnostics/Logger.hpp"
 
 #include <imgui.h>
 
@@ -104,7 +97,7 @@ void testGameCamera() {
 }
 
 // Records what the game view asks the session for.
-class GameViewActions final : public EditorSessionActions {
+class GameViewActions final : public TestSessionActions {
   public:
     explicit GameViewActions(ViewportPanel*& gameView)
         : m_gameView(gameView) {}
@@ -127,49 +120,18 @@ class GameViewActions final : public EditorSessionActions {
         return true;
     }
 
-    std::string operatorShortcut(std::string_view, std::string_view) const override {
-        return {};
-    }
-
-    void requestOpenScene(ApplicationContext&, std::filesystem::path) override {}
-
-    void projectFilesMoved(ApplicationContext&, std::span<const ProjectFileMove>) override {}
-
-    void projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path>) override {}
-
-    void handleObjectKeys(ApplicationContext&, KeymapRegion) override {}
-
-    bool modalTransformActive() const override {
-        return false;
-    }
-
-    void updateModalTransform(ApplicationContext&, ViewportId) override {}
-
   private:
     ViewportPanel*& m_gameView;
 };
 
-struct GameViewFixture {
-    Scene scene;
-    AssetManager assets;
-    PhysicsWorld physics;
-    AudioSystem audio;
-    ApplicationControl control;
-    RenderRuntime rendering;
-    GameUiContext gameUi;
-    Logger logger{LoggerConfig{.echoToStderr = false}};
-    ApplicationContext app{scene, assets, physics, audio, control, rendering, gameUi, logger};
-    EditorDocument document{fs::temp_directory_path()};
-    CommandHistory history;
-    EditorDiagnostics diagnostics;
-    Selection selection;
+struct GameViewFixture : EditorTestFixture {
     ViewportPanel* gameView{nullptr};
     GameViewActions actions{gameView};
-    EditorMenus menus;
-    ViewportRegistry viewports;
     std::vector<std::unique_ptr<ViewportPanel>> panels;
 
-    GameViewFixture() {
+    GameViewFixture()
+        : EditorTestFixture({.logger = {.echoToStderr = false}}) {
+        useActions(actions);
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
         io.DisplaySize = {1280.0f, 720.0f};
@@ -187,9 +149,6 @@ struct GameViewFixture {
         panels.clear();
         ImGui::DestroyContext();
     }
-
-    GameViewFixture(const GameViewFixture&) = delete;
-    GameViewFixture& operator=(const GameViewFixture&) = delete;
 
     ViewportPanel& left() {
         return *panels[0];
@@ -212,15 +171,9 @@ struct GameViewFixture {
             ImGui::SetNextWindowSize({640.0f, 720.0f});
             const std::string name = "Viewport##viewport." + std::to_string(panel.id().value);
             ImGui::Begin(name.c_str(), nullptr, panel.windowFlags());
-            EditorContext context{.app = app,
-                                  .editing = SceneEditing(scene, assets, document, history, diagnostics),
-                                  .selection = selection,
-                                  .diagnostics = diagnostics,
-                                  .mode = EditorMode::Play,
-                                  .actions = actions,
-                                  .menus = menus};
-            panel.update(context, input, io.DeltaTime);
-            panel.draw(context);
+            EditorContext editor = context(EditorMode::Play);
+            panel.update(editor, input, io.DeltaTime);
+            panel.draw(editor);
             ImGui::End();
         }
         ImGui::Render();

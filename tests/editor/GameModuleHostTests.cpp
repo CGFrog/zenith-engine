@@ -1,29 +1,12 @@
+#include "EditorTestFixture.hpp"
 #include "HeadlessImGui.hpp"
 
-#include "editor/application/EditorDiagnostics.hpp"
-#include "editor/application/SceneEditing.hpp"
-#include "editor/document/CommandHistory.hpp"
-#include "editor/document/EditorDocument.hpp"
-#include "editor/interaction/ComponentEditorOverrides.hpp"
 #include "editor/interaction/EntityPropertiesView.hpp"
-#include "editor/interaction/Selection.hpp"
 #include "editor/menus/DefaultMenus.hpp"
-#include "editor/menus/EditorMenus.hpp"
 #include "editor/modules/GameModuleHost.hpp"
-#include "editor/operators/OperatorRegistry.hpp"
-#include "editor/operators/OperatorRunner.hpp"
-#include "editor/panels/EditorContext.hpp"
-#include "editor/panels/ViewportRegistry.hpp"
-#include "editor/settings/ComponentInspectorLayout.hpp"
-#include "engine/assets/Assets.hpp"
-#include "engine/audio/AudioSystem.hpp"
-#include "engine/diagnostics/Logger.hpp"
 #include "engine/input/InputManager.hpp"
-#include "engine/physics/PhysicsWorld.hpp"
 #include "engine/scene/ComponentTypes.hpp"
-#include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneDocument.hpp"
-#include "engine/ui/GameUi.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -60,18 +43,7 @@ struct TestPaths {
 };
 
 // The editor objects the session owns around the host, without a window.
-struct HostFixture {
-    AssetManager assets;
-    Scene scene;
-    EditorDocument document{std::filesystem::temp_directory_path()};
-    CommandHistory history;
-    EditorDiagnostics diagnostics;
-    Selection selection;
-    EditorMenus menus;
-    OperatorRegistry operators;
-    OperatorRunner runner{operators, history};
-    ViewportRegistry viewports;
-    ComponentEditorOverrides componentEditors;
+struct HostFixture : EditorTestFixture {
     GameModuleHost host;
 
     explicit HostFixture(const TestPaths& paths)
@@ -84,19 +56,6 @@ struct HostFixture {
                 .settleTime = std::chrono::milliseconds(100),
                 .checkInterval = std::chrono::milliseconds(0)}) {
         expect(registerDefaultMenus(menus.registry()).success, "the editor's menus register");
-    }
-
-    SceneEditing editing() {
-        return {scene, assets, document, history, diagnostics};
-    }
-
-    OperatorContext operatorContext() {
-        return {.editing = editing(), .selection = selection, .mode = EditorMode::Edit};
-    }
-
-    OperatorResult invoke(std::string_view id) {
-        OperatorContext context = operatorContext();
-        return runner.invoke(id, context);
     }
 
     // The item of items labelled label, or null.
@@ -159,80 +118,21 @@ struct HostFixture {
     }
 };
 
-// The session workflows the inspector and sidebar tabs trigger, reduced to
-// running operators.
-class OperatorActions final : public EditorSessionActions {
-  public:
-    explicit OperatorActions(HostFixture& fixture)
-        : m_fixture(fixture) {}
-
-    OperatorResult invokeOperator(ApplicationContext&, std::string_view operatorId, std::string_view properties,
-                                  KeymapRegion) override {
-        OperatorContext context = m_fixture.operatorContext();
-        return m_fixture.runner.invokeWithJson(operatorId, context, properties);
-    }
-
-    bool operatorAvailable(ApplicationContext&, std::string_view operatorId) override {
-        return m_fixture.operators.find(operatorId) != nullptr;
-    }
-
-    std::string operatorShortcut(std::string_view, std::string_view) const override {
-        return {};
-    }
-
-    void requestOpenScene(ApplicationContext&, std::filesystem::path) override {}
-
-    void projectFilesMoved(ApplicationContext&, std::span<const ProjectFileMove>) override {}
-
-    void projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path>) override {}
-
-    void handleObjectKeys(ApplicationContext&, KeymapRegion) override {}
-
-    bool modalTransformActive() const override {
-        return false;
-    }
-
-    void updateModalTransform(ApplicationContext&, ViewportId) override {}
-
-  private:
-    HostFixture& m_fixture;
-};
-
-// What the Inspector draws with: an application context around the
-// fixture's scene, ImGui without a window, and the session's actions.
+// What the Inspector draws with: the fixture's editor context, with its
+// module's component editors, and ImGui without a window.
 struct InspectorFixture {
     HostFixture& host;
-    PhysicsWorld physics;
-    AudioSystem audio;
-    ApplicationControl control;
-    RenderRuntime rendering;
-    GameUiContext gameUi;
-    Logger logger;
-    ApplicationContext app{host.scene, host.assets, physics, audio, control, rendering, gameUi, logger};
-    OperatorActions actions{host};
-    ComponentInspectorLayout layout;
-    EntityPropertiesView view{layout};
+    EntityPropertiesView view{host.componentLayout};
     HeadlessImGuiContext imgui;
 
     explicit InspectorFixture(HostFixture& fixture)
         : host(fixture) {}
 
-    EditorContext context() {
-        return {.app = app,
-                .editing = host.editing(),
-                .selection = host.selection,
-                .diagnostics = host.diagnostics,
-                .mode = EditorMode::Edit,
-                .actions = actions,
-                .menus = host.menus,
-                .componentEditors = &host.componentEditors};
-    }
-
     // Runs draw in one frame and returns the text it rendered.
     template <typename Draw> std::string drawLogged(Draw draw) {
         HeadlessImGuiFrame frame("Inspector");
         ImGui::LogToBuffer();
-        EditorContext editor = context();
+        EditorContext editor = host.context();
         draw(editor);
         std::string text = ImGui::GetCurrentContext()->LogBuffer.c_str();
         ImGui::LogFinish();

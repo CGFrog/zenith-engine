@@ -1,36 +1,22 @@
+#include "EditorTestFixture.hpp"
 #include "HeadlessImGui.hpp"
 
 #include "editor/application/EditorAreaTypes.hpp"
-#include "editor/application/EditorDiagnostics.hpp"
-#include "editor/application/EditorPlayMode.hpp"
 #include "editor/areas/AreaRegistry.hpp"
 #include "editor/areas/AreaWindows.hpp"
 #include "editor/areas/DefaultWorkspaces.hpp"
 #include "editor/areas/Workspace.hpp"
 #include "editor/areas/WorkspaceFile.hpp"
-#include "editor/document/CommandHistory.hpp"
-#include "editor/document/EditorDocument.hpp"
-#include "editor/interaction/ComponentEditorOverrides.hpp"
-#include "editor/menus/EditorMenus.hpp"
 #include "editor/modules/GameModuleHost.hpp"
-#include "editor/operators/OperatorRegistry.hpp"
-#include "editor/operators/OperatorRunner.hpp"
 #include "editor/panels/AssetBrowserPanel.hpp"
 #include "editor/panels/BuildPanel.hpp"
-#include "editor/panels/EditorContext.hpp"
 #include "editor/panels/InfoPanel.hpp"
 #include "editor/panels/PropertiesPanel.hpp"
 #include "editor/project/ProjectAssets.hpp"
-#include "editor/settings/ComponentInspectorLayout.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "editor/settings/RenderSettingsController.hpp"
 #include "editor/theme/ThemeChrome.hpp"
-#include "engine/assets/Assets.hpp"
-#include "engine/audio/AudioSystem.hpp"
-#include "engine/diagnostics/Logger.hpp"
 #include "engine/input/InputManager.hpp"
-#include "engine/physics/PhysicsWorld.hpp"
-#include "engine/ui/GameUi.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -61,36 +47,6 @@ void writeFile(const std::filesystem::path& path, std::string_view contents) {
     output << contents;
 }
 
-// The session workflows a panel may trigger, as no-ops.
-class NoSessionActions final : public EditorSessionActions {
-  public:
-    OperatorResult invokeOperator(ApplicationContext&, std::string_view, std::string_view, KeymapRegion) override {
-        return OperatorResult::cancelled();
-    }
-
-    bool operatorAvailable(ApplicationContext&, std::string_view) override {
-        return false;
-    }
-
-    std::string operatorShortcut(std::string_view, std::string_view) const override {
-        return {};
-    }
-
-    void requestOpenScene(ApplicationContext&, std::filesystem::path) override {}
-
-    void projectFilesMoved(ApplicationContext&, std::span<const ProjectFileMove>) override {}
-
-    void projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path>) override {}
-
-    void handleObjectKeys(ApplicationContext&, KeymapRegion) override {}
-
-    bool modalTransformActive() const override {
-        return false;
-    }
-
-    void updateModalTransform(ApplicationContext&, ViewportId) override {}
-};
-
 // The Viewport needs a GPU, so the tests stand in a plain panel for it.
 class ViewportStandIn final : public EditorPanel {
   public:
@@ -103,27 +59,10 @@ class ViewportStandIn final : public EditorPanel {
 
 // What an editor session owns for its areas, without a window or GPU, over a
 // small project in a temporary directory.
-struct SessionFixture {
+struct SessionFixture : EditorTestFixture {
     std::filesystem::path directory;
-    Scene scene;
-    AssetManager assets;
-    PhysicsWorld physics;
-    AudioSystem audio;
-    ApplicationControl control;
-    RenderRuntime rendering;
-    GameUiContext gameUi;
-    Logger logger;
-    ApplicationContext app{scene, assets, physics, audio, control, rendering, gameUi, logger};
-    EditorDocument document{std::filesystem::temp_directory_path()};
-    CommandHistory history;
-    EditorDiagnostics diagnostics;
-    Selection selection;
-    NoSessionActions actions;
-    EditorMenus menus;
-    OperatorRegistry operators;
-    OperatorRunner runner{operators, history};
-    ViewportRegistry viewports;
-    ComponentEditorOverrides componentEditors;
+    // Panels' operator calls do nothing.
+    TestSessionActions noActions;
     // Without a module: the System Profiler shows no systems.
     GameModuleHost modules{{.operators = operators,
                             .runner = runner,
@@ -133,7 +72,6 @@ struct SessionFixture {
     EditorPlayMode playMode;
     EditorToolSettings tools;
     RenderSettingsController renderSettings;
-    ComponentInspectorLayout componentLayout;
     // Without watchers, so rescans happen exactly when a test advances time.
     ProjectAssets projectAssets;
     BuildPanel build{tools};
@@ -146,6 +84,7 @@ struct SessionFixture {
         , renderSettings(EditorRenderSettings(ProjectConfig{}, directory / "settings" / "render-settings.json"))
         , projectAssets(directory / "content", directory / "scenes", directory / "settings" / "asset-browser.json",
                         AssetCatalogOptions{.watchFiles = false}) {
+        useActions(noActions);
         expect(registry.add(AreaType::shared("viewport", viewport)).success, "the viewport stand-in should register");
         for (AreaType& type : builtInAreaTypes({.projectAssets = projectAssets,
                                                 .renderSettings = renderSettings,
@@ -172,16 +111,6 @@ struct SessionFixture {
         writeFile(root / "content" / "models" / "cube.gltf", "{}");
         writeFile(root / "content" / "textures" / "noise.png", "png");
         return root;
-    }
-
-    EditorContext context() {
-        return {.app = app,
-                .editing = {scene, assets, document, history, diagnostics},
-                .selection = selection,
-                .diagnostics = diagnostics,
-                .mode = EditorMode::Edit,
-                .actions = actions,
-                .menus = menus};
     }
 
     // One headless frame updating and drawing panel in its own window, as

@@ -2,17 +2,10 @@
 // the active viewport, view3d operators acting on it, per-viewport shading
 // that never reaches the project's render settings, and camera view.
 
-#include "editor/application/EditorDiagnostics.hpp"
-#include "editor/document/CommandHistory.hpp"
-#include "editor/document/EditorDocument.hpp"
-#include "editor/menus/EditorMenus.hpp"
-#include "editor/operators/OperatorRegistry.hpp"
-#include "editor/operators/OperatorRunner.hpp"
-#include "editor/panels/EditorContext.hpp"
+#include "EditorTestFixture.hpp"
+
 #include "editor/panels/ViewportOperators.hpp"
 #include "editor/panels/ViewportPanel.hpp"
-#include "engine/application/Application.hpp"
-#include "engine/diagnostics/Logger.hpp"
 
 #include <imgui.h>
 
@@ -35,100 +28,20 @@ void expect(bool condition, const char* message) {
     }
 }
 
-class OperatorActions final : public EditorSessionActions {
-  public:
-    OperatorActions(SceneEditing editing, CommandHistory& history, Selection& selection)
-        : runner(registry, history)
-        , m_editing(editing)
-        , m_selection(selection) {}
-
-    OperatorRegistry registry;
-    OperatorRunner runner;
-
-    OperatorResult invokeOperator(ApplicationContext& context, std::string_view operatorId, std::string_view properties,
-                                  KeymapRegion region) override {
-        OperatorContext operatorContext{
-            .editing = m_editing, .selection = m_selection, .region = region, .app = &context};
-        return runner.invokeWithJson(operatorId, operatorContext, properties);
-    }
-
-    bool operatorAvailable(ApplicationContext&, std::string_view operatorId) override {
-        return registry.find(operatorId) != nullptr;
-    }
-
-    std::string operatorShortcut(std::string_view, std::string_view) const override {
-        return {};
-    }
-
-    void requestOpenScene(ApplicationContext&, std::filesystem::path) override {}
-
-    void projectFilesMoved(ApplicationContext&, std::span<const ProjectFileMove>) override {}
-
-    void projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path>) override {}
-
-    void handleObjectKeys(ApplicationContext&, KeymapRegion) override {}
-
-    bool modalTransformActive() const override {
-        return false;
-    }
-
-    void updateModalTransform(ApplicationContext&, ViewportId) override {}
-
-  private:
-    SceneEditing m_editing;
-    Selection& m_selection;
-};
-
 // Everything EditorContext references, plus the session's viewport registry
 // with its operators. Viewports are destroyed before the registry and the
 // render runtime they hold views of.
-struct Fixture {
-    Scene scene;
-    AssetManager assets;
-    PhysicsWorld physics;
-    AudioSystem audio;
-    ApplicationControl control;
-    RenderRuntime rendering;
-    GameUiContext gameUi;
-    Logger logger;
-    ApplicationContext app{scene, assets, physics, audio, control, rendering, gameUi, logger};
-    EditorDocument document{std::filesystem::temp_directory_path()};
-    CommandHistory history;
-    EditorDiagnostics diagnostics;
-    Selection selection;
-    OperatorActions actions{editing(), history, selection};
-    EditorMenus menus;
-    EditorMode mode{EditorMode::Edit};
-    bool simulating{false};
-    ViewportRegistry viewports;
+struct Fixture : EditorTestFixture {
     std::vector<std::unique_ptr<ViewportPanel>> panels;
 
     Fixture() {
         for (Operator& op : viewportOperators(viewports)) {
-            expect(static_cast<bool>(actions.registry.add(std::move(op))), "the viewport operators should register");
+            expect(static_cast<bool>(operators.add(std::move(op))), "the viewport operators should register");
         }
     }
 
     ~Fixture() {
         panels.clear();
-    }
-
-    Fixture(const Fixture&) = delete;
-    Fixture& operator=(const Fixture&) = delete;
-
-    SceneEditing editing() {
-        return SceneEditing(scene, assets, document, history, diagnostics);
-    }
-
-    EditorContext context() {
-        return {.app = app,
-                .editing = editing(),
-                .selection = selection,
-                .diagnostics = diagnostics,
-                .mode = mode,
-                .actions = actions,
-                .menus = menus,
-                .simulating = simulating};
     }
 
     ViewportPanel& addViewport() {
@@ -141,8 +54,9 @@ struct Fixture {
                       [&](const std::unique_ptr<ViewportPanel>& candidate) { return candidate.get() == &panel; });
     }
 
+    // Runs an operator through the session actions, as a viewport does.
     OperatorResult invoke(std::string_view operatorId, std::string_view properties = {}) {
-        return actions.invokeOperator(app, operatorId, properties, KeymapRegion::Viewport);
+        return actions().invokeOperator(app, operatorId, properties, KeymapRegion::Viewport);
     }
 };
 

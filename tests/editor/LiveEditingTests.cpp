@@ -5,32 +5,17 @@
 // Stop restores and undo and redo then act on, and the Inspector shows and
 // applies the running scene's values.
 
+#include "EditorTestFixture.hpp"
 #include "HeadlessImGui.hpp"
 
-#include "editor/application/EditorDiagnostics.hpp"
-#include "editor/application/EditorPlayMode.hpp"
-#include "editor/document/CommandHistory.hpp"
-#include "editor/document/EditorDocument.hpp"
 #include "editor/document/RuntimeApply.hpp"
-#include "editor/interaction/ComponentEditorOverrides.hpp"
-#include "editor/menus/EditorMenus.hpp"
 #include "editor/modules/GameModuleHost.hpp"
 #include "editor/operators/ComponentOperators.hpp"
 #include "editor/operators/ObjectOperators.hpp"
-#include "editor/operators/OperatorRegistry.hpp"
-#include "editor/operators/OperatorRunner.hpp"
 #include "editor/operators/PlayOperators.hpp"
-#include "editor/panels/EditorContext.hpp"
 #include "editor/panels/HierarchyPanel.hpp"
 #include "editor/panels/InspectorPanel.hpp"
-#include "editor/panels/ViewportRegistry.hpp"
-#include "editor/settings/ComponentInspectorLayout.hpp"
-#include "engine/assets/Assets.hpp"
-#include "engine/audio/AudioSystem.hpp"
-#include "engine/diagnostics/Logger.hpp"
-#include "engine/physics/PhysicsWorld.hpp"
 #include "engine/scene/ComponentTypes.hpp"
-#include "engine/ui/GameUi.hpp"
 
 #include <algorithm>
 #include <filesystem>
@@ -50,109 +35,25 @@ void expect(bool condition, const char* message) {
     }
 }
 
-// Runs operators as the session does.
-class OperatorActions final : public EditorSessionActions {
-  public:
-    OperatorActions(OperatorRunner& runner, std::function<OperatorContext()> context)
-        : m_runner(runner)
-        , m_context(std::move(context)) {}
-
-    OperatorResult invokeOperator(ApplicationContext&, std::string_view operatorId, std::string_view properties,
-                                  KeymapRegion) override {
-        OperatorContext context = m_context();
-        return m_runner.invokeWithJson(operatorId, context, properties);
-    }
-
-    bool operatorAvailable(ApplicationContext&, std::string_view) override {
-        return true;
-    }
-
-    std::string operatorShortcut(std::string_view, std::string_view) const override {
-        return {};
-    }
-
-    void requestOpenScene(ApplicationContext&, std::filesystem::path) override {}
-
-    void projectFilesMoved(ApplicationContext&, std::span<const ProjectFileMove>) override {}
-
-    void projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path>) override {}
-
-    void handleObjectKeys(ApplicationContext&, KeymapRegion) override {}
-
-    bool modalTransformActive() const override {
-        return false;
-    }
-
-    void updateModalTransform(ApplicationContext&, ViewportId) override {}
-
-  private:
-    OperatorRunner& m_runner;
-    std::function<OperatorContext()> m_context;
-};
-
 // What the session owns around live editing, without a window or GPU. The
 // scene is the active one: the edit scene in Edit mode, the runtime scene
 // while Play runs (EditorPlayMode parks the edit scene).
-struct LiveFixture {
-    Logger logger{{.minimumLevel = LogLevel::Debug, .echoToStderr = false}};
-    Scene scene;
-    AssetManager assets{&logger};
-    PhysicsWorld physics;
-    AudioSystem audio;
-    ApplicationControl control;
-    RenderRuntime rendering;
-    GameUiContext gameUi;
-    ApplicationContext app{scene, assets, physics, audio, control, rendering, gameUi, logger};
-    EditorDocument document{std::filesystem::temp_directory_path()};
-    CommandHistory history;
-    EditorDiagnostics diagnostics;
-    Selection selection;
-    EditorMenus menus;
+struct LiveFixture : EditorTestFixture {
     EditorPlayMode playMode;
-    MemoryClipboard clipboard;
-    ComponentInspectorLayout componentLayout;
-    OperatorRegistry operators;
-    OperatorRunner runner{operators, history};
-    ViewportRegistry viewports;
-    ComponentEditorOverrides componentEditors;
     GameModuleHost modules{{.operators = operators,
                             .runner = runner,
                             .menus = menus.registry(),
                             .viewports = viewports,
                             .componentEditors = componentEditors}};
-    OperatorActions actions{runner, [this] { return operatorContext(); }};
 
-    LiveFixture() {
+    LiveFixture()
+        : EditorTestFixture({.logger = {.minimumLevel = LogLevel::Debug, .echoToStderr = false}}) {
+        followedPlayMode = &playMode;
         expect(registerObjectOperators(operators).success, "the object operators register");
         expect(registerComponentOperators(operators, {.clipboard = clipboard, .layout = componentLayout}).success,
                "the component operators register");
         expect(registerPlayOperators(operators, {.playMode = playMode, .modules = modules}).success,
                "the play operators register");
-    }
-
-    // As EditorSession::editing: live on the runtime scene outside Edit mode.
-    SceneEditing editing() {
-        return {scene, assets, document, history, diagnostics, playMode.editScene()};
-    }
-
-    OperatorContext operatorContext() {
-        return {.editing = editing(), .selection = selection, .mode = playMode.mode()};
-    }
-
-    OperatorResult invoke(std::string_view id, std::string_view properties = {}) {
-        OperatorContext context = operatorContext();
-        return runner.invokeWithJson(id, context, properties);
-    }
-
-    EditorContext context() {
-        return {.app = app,
-                .editing = editing(),
-                .selection = selection,
-                .diagnostics = diagnostics,
-                .mode = playMode.mode(),
-                .actions = actions,
-                .menus = menus,
-                .simulating = playMode.simulating()};
     }
 
     std::string snapshot(const Scene& target) {

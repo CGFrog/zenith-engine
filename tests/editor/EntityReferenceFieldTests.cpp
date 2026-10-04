@@ -1,24 +1,11 @@
+#include "EditorTestFixture.hpp"
 #include "HeadlessImGui.hpp"
-#include "engine/diagnostics/Logger.hpp"
 
-#include "editor/application/EditorDiagnostics.hpp"
-#include "editor/document/CommandHistory.hpp"
-#include "editor/document/EditorDocument.hpp"
-#include "editor/interaction/EntityEyedropper.hpp"
 #include "editor/interaction/EntityPropertiesView.hpp"
 #include "editor/interaction/EntityReferenceField.hpp"
-#include "editor/menus/EditorMenus.hpp"
 #include "editor/operators/EyedropperOperators.hpp"
-#include "editor/operators/OperatorRegistry.hpp"
-#include "editor/operators/OperatorRunner.hpp"
-#include "editor/panels/EditorContext.hpp"
 #include "editor/panels/HierarchyPanel.hpp"
-#include "editor/settings/ComponentInspectorLayout.hpp"
-#include "engine/assets/Assets.hpp"
-#include "engine/audio/AudioSystem.hpp"
-#include "engine/physics/PhysicsWorld.hpp"
 #include "engine/scene/ComponentTypes.hpp"
-#include "engine/ui/GameUi.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -76,66 +63,7 @@ std::shared_ptr<const ComponentTypeRegistry> followComponentTypes() {
     return types;
 }
 
-// The session workflows a panel triggers, reduced to running operators.
-class OperatorActions final : public EditorSessionActions {
-  public:
-    OperatorActions(OperatorRunner& runner, std::function<OperatorContext()> context)
-        : m_runner(runner)
-        , m_context(std::move(context)) {}
-
-    OperatorResult invokeOperator(ApplicationContext&, std::string_view operatorId, std::string_view properties,
-                                  KeymapRegion) override {
-        OperatorContext context = m_context();
-        return m_runner.invokeWithJson(operatorId, context, properties);
-    }
-
-    bool operatorAvailable(ApplicationContext&, std::string_view) override {
-        return true;
-    }
-
-    std::string operatorShortcut(std::string_view, std::string_view) const override {
-        return {};
-    }
-
-    void requestOpenScene(ApplicationContext&, std::filesystem::path) override {}
-
-    void projectFilesMoved(ApplicationContext&, std::span<const ProjectFileMove>) override {}
-
-    void projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path>) override {}
-
-    void handleObjectKeys(ApplicationContext&, KeymapRegion) override {}
-
-    bool modalTransformActive() const override {
-        return false;
-    }
-
-    void updateModalTransform(ApplicationContext&, ViewportId) override {}
-
-  private:
-    OperatorRunner& m_runner;
-    std::function<OperatorContext()> m_context;
-};
-
-struct Fixture {
-    Scene scene;
-    AssetManager assets;
-    PhysicsWorld physics;
-    AudioSystem audio;
-    ApplicationControl control;
-    RenderRuntime rendering;
-    GameUiContext gameUi;
-    Logger logger;
-    ApplicationContext app{scene, assets, physics, audio, control, rendering, gameUi, logger};
-    EditorDocument document{std::filesystem::temp_directory_path()};
-    CommandHistory history;
-    EditorDiagnostics diagnostics;
-    Selection selection;
-    EntityEyedropper eyedropper;
-    EditorMenus menus;
-    ComponentInspectorLayout componentLayout;
-    OperatorRegistry operators;
-    OperatorRunner runner{operators, history};
-    OperatorActions actions{runner, [this] { return operatorContext(); }};
+struct Fixture : EditorTestFixture {
     EntityPropertiesView view{componentLayout};
     HierarchyPanel hierarchy;
     SceneEntityId owner;
@@ -149,25 +77,6 @@ struct Fixture {
         owner = scene.id(ownerEntity);
         chased = scene.id(scene.createEntity("Prey"));
         selection.selectOnly(owner);
-    }
-
-    SceneEditing editing() {
-        return {scene, assets, document, history, diagnostics};
-    }
-
-    OperatorContext operatorContext() {
-        return {.editing = editing(), .selection = selection, .mode = EditorMode::Edit};
-    }
-
-    EditorContext context() {
-        return {.app = app,
-                .editing = editing(),
-                .selection = selection,
-                .diagnostics = diagnostics,
-                .mode = EditorMode::Edit,
-                .actions = actions,
-                .eyedropper = &eyedropper,
-                .menus = menus};
     }
 
     FollowComponent& follow() {
@@ -191,8 +100,7 @@ struct Fixture {
     }
 
     OperatorResult invoke(std::string_view operatorId, const nlohmann::json& properties) {
-        OperatorContext operatorContext = this->operatorContext();
-        return runner.invokeWithJson(operatorId, operatorContext, properties.dump());
+        return EditorTestFixture::invoke(operatorId, properties.dump());
     }
 };
 

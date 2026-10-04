@@ -5,24 +5,17 @@
 // model drops, prefab instances), the cursor's drawing, the viewport area
 // state, and the cursor's per-scene sidecar.
 
-#include "editor/application/EditorDiagnostics.hpp"
-#include "editor/document/CommandHistory.hpp"
+#include "EditorTestFixture.hpp"
+
 #include "editor/document/DefaultScene.hpp"
-#include "editor/document/EditorDocument.hpp"
-#include "editor/menus/EditorMenus.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/KeymapDispatch.hpp"
 #include "editor/operators/ObjectOperators.hpp"
-#include "editor/operators/OperatorRegistry.hpp"
-#include "editor/operators/OperatorRunner.hpp"
 #include "editor/operators/PrefabOperators.hpp"
-#include "editor/panels/EditorContext.hpp"
 #include "editor/panels/ViewportOperators.hpp"
 #include "editor/panels/ViewportPanel.hpp"
 #include "editor/viewport/Cursor3D.hpp"
 #include "editor/viewport/SnapQueries.hpp"
-#include "engine/application/Application.hpp"
-#include "engine/diagnostics/Logger.hpp"
 #include "engine/graphics/DebugDraw.hpp"
 
 #include <imgui.h>
@@ -226,86 +219,12 @@ void testTargetSnapping() {
 
 // --- Viewport fixture -----------------------------------------------------
 
-// Runs operators through a real runner.
-class OperatorActions final : public EditorSessionActions {
-  public:
-    OperatorActions(SceneEditing editing, CommandHistory& history, Selection& selection)
-        : runner(registry, history)
-        , m_editing(editing)
-        , m_selection(selection) {}
-
-    OperatorRegistry registry;
-    OperatorRunner runner;
-
-    OperatorResult invokeOperator(ApplicationContext& context, std::string_view operatorId, std::string_view properties,
-                                  KeymapRegion region) override {
-        OperatorContext operatorContext{
-            .editing = m_editing, .selection = m_selection, .region = region, .app = &context};
-        return runner.invokeWithJson(operatorId, operatorContext, properties);
-    }
-
-    bool operatorAvailable(ApplicationContext& context, std::string_view operatorId) override {
-        const Operator* op = registry.find(operatorId);
-        OperatorContext operatorContext{.editing = m_editing, .selection = m_selection, .app = &context};
-        return op != nullptr && op->canRun(operatorContext);
-    }
-
-    std::string operatorShortcut(std::string_view, std::string_view) const override {
-        return {};
-    }
-
-    void requestOpenScene(ApplicationContext&, std::filesystem::path) override {}
-
-    void projectFilesMoved(ApplicationContext&, std::span<const ProjectFileMove>) override {}
-
-    void projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path>) override {}
-
-    void handleObjectKeys(ApplicationContext&, KeymapRegion) override {}
-
-    bool modalTransformActive() const override {
-        return false;
-    }
-
-    void updateModalTransform(ApplicationContext&, ViewportId) override {}
-
-    // Mouse chords run through the default keymap, as in the session, so
-    // Shift+RMB reaches view3d.cursor3d_place.
-    uint32_t dispatchMouseChords(ApplicationContext& context, KeymapRegion region, uint32_t allowedButtons) override {
-        return dispatcher.dispatchMouse(keymap, region, allowedButtons, [&](const KeymapInvocation& invocation) {
-            invokeOperator(context, invocation.operatorId, invocation.properties, invocation.region);
-        });
-    }
-
-    bool mouseButtonBound(KeymapRegion region, int button) const override {
-        return dispatcher.mouseButtonBound(keymap, region, button);
-    }
-
-    Keymap keymap{defaultEditorKeymap()};
-    KeymapDispatcher dispatcher;
-
-  private:
-    SceneEditing m_editing;
-    Selection& m_selection;
-};
-
-struct Fixture {
-    Scene scene;
-    AssetManager assets;
-    PhysicsWorld physics;
-    AudioSystem audio;
-    ApplicationControl control;
-    RenderRuntime rendering;
-    GameUiContext gameUi;
-    Logger logger;
-    ApplicationContext app{scene, assets, physics, audio, control, rendering, gameUi, logger};
+// A viewport over two cubes in a fresh asset root. Mouse chords run through
+// the default keymap, as in the session, so Shift+RMB reaches
+// view3d.cursor3d_place.
+struct Fixture : EditorTestFixture {
     std::filesystem::path root;
-    EditorDocument document;
-    CommandHistory history;
-    EditorDiagnostics diagnostics;
-    Selection selection;
-    OperatorActions actions{editing(), history, selection};
-    EditorMenus menus;
-    ViewportRegistry viewports;
+    KeymapSessionActions actions{operators, runner, sessionContextSource()};
     std::unique_ptr<ViewportPanel> panel;
     // A cube at the origin and one five meters behind it.
     Entity front{entt::null};
@@ -314,19 +233,20 @@ struct Fixture {
     float halfExtent{0.5f};
 
     explicit Fixture(const std::string& name)
-        : root(freshDirectory(name))
-        , document(root) {
+        : EditorTestFixture({.documentRoot = freshDirectory(name)})
+        , root(document.options().assetRoot) {
+        useActions(actions);
         // Every asset lives under the document's root, so undo snapshots
         // can name them.
         std::filesystem::create_directories(root / defaultCubeModel.parent_path());
         std::filesystem::copy_file(std::filesystem::path(ZENITH_ASSET_DIR) / defaultCubeModel, root / defaultCubeModel);
         for (Operator& op : viewportOperators(viewports)) {
-            expect(static_cast<bool>(actions.registry.add(std::move(op))), "the viewport operators should register");
+            expect(static_cast<bool>(operators.add(std::move(op))), "the viewport operators should register");
         }
         for (Operator& op : cursorOperators(viewports, document)) {
-            expect(static_cast<bool>(actions.registry.add(std::move(op))), "the cursor operators should register");
+            expect(static_cast<bool>(operators.add(std::move(op))), "the cursor operators should register");
         }
-        expect(registerObjectOperators(actions.registry).success && registerPrefabOperators(actions.registry).success,
+        expect(registerObjectOperators(operators).success && registerPrefabOperators(operators).success,
                "the object and prefab operators should register");
         panel = std::make_unique<ViewportPanel>(viewports);
         front = cube({0.0f, 0.0f, 0.0f});
@@ -353,9 +273,6 @@ struct Fixture {
         std::filesystem::remove_all(root, error);
     }
 
-    Fixture(const Fixture&) = delete;
-    Fixture& operator=(const Fixture&) = delete;
-
     Entity cube(glm::vec3 location) {
         Entity entity = entt::null;
         const SceneResult result = addCube(scene, assets, root, entity);
@@ -367,20 +284,7 @@ struct Fixture {
         return entity;
     }
 
-    SceneEditing editing() {
-        return SceneEditing(scene, assets, document, history, diagnostics);
-    }
-
-    EditorContext context() {
-        return {.app = app,
-                .editing = editing(),
-                .selection = selection,
-                .diagnostics = diagnostics,
-                .mode = EditorMode::Edit,
-                .actions = actions,
-                .menus = menus};
-    }
-
+    // Runs an operator through the session actions, as a viewport does.
     OperatorResult invoke(std::string_view operatorId, std::string_view properties = {}) {
         return actions.invokeOperator(app, operatorId, properties, KeymapRegion::Viewport);
     }
@@ -575,14 +479,14 @@ void testSpawnAtCursor() {
 
     expect(static_cast<bool>(fixture.invoke("object.add_empty")) && near(fixture.activePosition(), {1.0f, 2.0f, 3.0f}),
            "object.add_empty should spawn at the 3D cursor");
-    const LastOperator* last = fixture.actions.runner.lastOperator();
+    const LastOperator* last = fixture.runner.lastOperator();
     expect(last != nullptr && near(last->properties.get<AddObjectProperties>()->location, {1.0f, 2.0f, 3.0f}),
            "Adjust Last Operation should show the cursor as the location");
     if (last != nullptr) {
         OperatorProperties adjusted = last->properties;
         adjusted.get<AddObjectProperties>()->location = glm::vec3(4.0f, 0.0f, 0.0f);
         OperatorContext context{.editing = fixture.editing(), .selection = fixture.selection, .app = &fixture.app};
-        expect(static_cast<bool>(fixture.actions.runner.adjustLast(context, adjusted)) &&
+        expect(static_cast<bool>(fixture.runner.adjustLast(context, adjusted)) &&
                    near(fixture.activePosition(), {4.0f, 0.0f, 0.0f}),
                "an adjusted location should win over the cursor");
     }
