@@ -48,3 +48,14 @@ Add a component by declaring its struct, describing its fields with
 `Fields<T>` in a `ComponentTypeBuilder`, and registering it in
 `zenith_module_register`; add a system with `registrar.addSystem`. New source
 files go in `src/CMakeLists.txt`.
+
+## Extend the editor
+
+The module can also add editor tools that load with it and hot reload with
+it: operators (commands for the F3 search, keymap, and menus), dockable
+panels, viewport sidebar tabs, custom inspectors for components, and menus.
+Include `editor/modules/EditorModuleApi.hpp` and write a
+`ZENITH_EDITOR_MODULE_REGISTER { ... }` function; `src/GameModule.cpp` has a
+commented example. `docs/EDITOR_EXTENSIONS.md` in the Zenith source tree
+describes every extension point and the rules for module code. A game
+executable never loads these extensions.

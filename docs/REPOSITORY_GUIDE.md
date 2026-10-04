@@ -5,7 +5,8 @@ owns, what depends on it, and where a change belongs. For the runtime sequence
 and subsystem contracts, see [Architecture](ARCHITECTURE.md). For commands and
 common changes, see [Development](DEVELOPMENT.md). The remaining optimization
 objectives and their measurement gates are in
-[Performance roadmap](PERFORMANCE_ROADMAP.md).
+[Performance roadmap](PERFORMANCE_ROADMAP.md). How a game module extends the
+editor is in [Editor extensions](EDITOR_EXTENSIONS.md).
 
 ## Top level
 
@@ -85,7 +86,7 @@ explicit, so a file move must update `CMakeLists.txt` as well as include sites.
 | `zenith_bc7enc` | Static library | The bc7enc_rdo BC7/BC5 block encoders and decoders, linked privately into the engine for texture cooking. |
 | `zenith_asset_tests` | Test executable | Asset importing and scene hierarchy behavior. |
 | `zenith_game_module_tests` | Test executable | Loads, reloads, and unloads the `zenith_test_*_module` libraries: registration, system order and modes, shadow copies, and refused modules. |
-| `zenith_game_module_host_tests` | Test executable | Hosts `zenith_editor_test_module` in the editor's `GameModuleHost` without a window: module components through the document, edit/play systems, editor operators and panels, hot reload over the `_v2` build, and a failed reload that keeps module data as JSON. |
+| `zenith_game_module_host_tests` | Test executable | Hosts `zenith_editor_test_module` in the editor's `GameModuleHost` without a window: module components through the document, edit/play systems, editor operators, panels, sidebar tabs, inspector overrides (multi-entity edit and undo), and menus, and their release on unload, hot reload over the `_v2` build, and a failed reload that keeps module data as JSON. |
 | `zenith_collection_tests` | Test executable | Collections, visibility rules and modes, collection-instance expansion, the version 3 document form and v2 migration, and undo patches of collection definitions. |
 | `zenith_asset_reference_workflow_tests` | Test executable | Editor end-to-end GUID references: current-version scene saves, browser and external renames and moves followed by the watcher, the open scene following its file, automatic model reloads, and every checked-in scene loading through migration. |
 | `zenith_asset_database_tests` | Test executable | Content hashing, asset GUIDs, `.meta` sidecars, and asset database scans, moves, external changes, and dependencies on real temporary directories. |
@@ -1000,14 +1001,23 @@ built-in types and module components stay as `PreservedComponentsComponent`
 JSON until a later reload succeeds.
 
 A module may also export `zenith_module_register_editor`
-(`ZENITH_EDITOR_MODULE_REGISTER` in `modules/EditorModuleApi.hpp`) to add
-operators (undoable, Edit mode only, bindable like any operator) and ImGui
-panels (area types toggled in the Module menu). The API is header-only and dispatches
-through a virtual registrar, because a module links the engine but never the
-editor; the host removes everything it registered before unloading. The
-status bar and Module menu show the loaded module, its version, and pending
-or failed reloads. `zenith_editor_module_smoke` runs the editor smoke on a
-generated project naming `zenith_editor_test_module` and hot reloads it once.
+(`ZENITH_EDITOR_MODULE_REGISTER` in `modules/EditorModuleApi.hpp`, which also
+exports `zenith_module_editor_api_version`) to add operators (undoable, Edit
+mode only, bindable like any operator), ImGui panels (area types toggled in
+the Module menu), viewport sidebar tabs (`ViewportRegistry::addSidebarTab`),
+inspector overrides (custom component editors in
+`interaction/ComponentEditorOverrides`, which `EntityPropertiesView` prefers
+over reflected fields and its built-in editors), and menus and menu entries
+(under the host's own `MenuOwner`; the Module menu lists the module's menus).
+The API is header-only and dispatches through a virtual registrar, because a
+module links the engine but never the editor; the host refuses the editor
+extensions of a module reporting another editor API version, and removes
+everything a module registered before unloading it. `docs/EDITOR_EXTENSIONS.md`
+is the module author's guide. The status bar and Module menu show the loaded
+module, its version, and pending or failed reloads.
+`zenith_editor_module_smoke` runs the editor smoke on a generated project
+naming `zenith_editor_test_module`, hot reloads it once, and checks its
+editor extensions are registered before and after the reload.
 
 ### `src/editor/theme/`
 

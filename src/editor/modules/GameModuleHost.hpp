@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/menus/MenuRegistry.hpp"
 #include "editor/modules/EditorModuleApi.hpp"
 #include "engine/module/GameModule.hpp"
 #include "engine/module/SystemScheduler.hpp"
@@ -7,6 +8,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -14,11 +16,32 @@
 #include <vector>
 
 class AssetManager;
+class ComponentEditorOverrides;
 class EditorDocument;
 class OperatorRegistry;
 class OperatorRunner;
 class Scene;
+class ViewportRegistry;
 struct ApplicationContext;
+struct EditorContext;
+
+// The editor registries a module's editor extensions are added to. Each must
+// outlive the host, which removes the module's entries from them before the
+// module unloads.
+struct GameModuleEditorServices {
+    OperatorRegistry& operators;
+    OperatorRunner& runner;
+    MenuRegistry& menus;
+    // Every viewport's sidebar tabs.
+    ViewportRegistry& viewports;
+    // The Inspector and Properties editors' custom component editors.
+    ComponentEditorOverrides& componentEditors;
+};
+
+// Runs a module panel's or sidebar tab's draw function with a panel context
+// built from context: a copy of the selection, and operators invoked through
+// the session.
+void drawModulePanelContents(EditorContext& context, const std::function<void(EditorModulePanelContext&)>& draw);
 
 enum class GameModuleStatus : uint8_t {
     // The project names no game module.
@@ -57,20 +80,22 @@ struct GameModuleHostResult {
 
 // Hosts a project's game module in the editor: loads it, gives the document
 // its merged component registry, runs its systems, registers its editor
-// extensions (operators and panels), and hot reloads it while preserving the
+// extensions (operators, panels, sidebar tabs, inspector overrides, and
+// menus; docs/EDITOR_EXTENSIONS.md), and hot reloads it while preserving the
 // edited scene.
 //
 // Lifetime: everything that can hold module code is released, in this order,
 // before the module is unloaded: the editor operators it registered (and the
-// runner's remembered last operator), its panels, the system scheduler, the
-// document's component registry, and the scene's whole EnTT registry
-// (replaced, not cleared, because module code created the storage for module
-// component types). The caller must release any other scene or document
-// options sharing the registry first (Play mode's retained scene, additive
-// layers). The operator registry and runner must outlive the host.
+// runner's remembered last operator), its panels, sidebar tabs, inspector
+// overrides, and menus, the system scheduler, the document's component
+// registry, and the scene's whole EnTT registry (replaced, not cleared,
+// because module code created the storage for module component types). The
+// caller must release any other scene or document options sharing the
+// registry first (Play mode's retained scene, additive layers). The editor
+// services must outlive the host.
 class GameModuleHost {
   public:
-    GameModuleHost(OperatorRegistry& operators, OperatorRunner& runner, GameModuleHostOptions options = {});
+    explicit GameModuleHost(GameModuleEditorServices services, GameModuleHostOptions options = {});
     // Removes the module's editor extensions. The module is unloaded only if
     // nothing else shares its registries; call unload() first to release the
     // scene and document.
@@ -153,6 +178,28 @@ class GameModuleHost {
     };
 
     std::span<Panel> panels();
+    // Titles of the sidebar tabs, component keys of the inspector overrides,
+    // and the menus the module registered, in registration order.
+    std::span<const std::string> sidebarTabTitles() const;
+    std::span<const std::string> inspectorOverrideKeys() const;
+    std::span<const EditorModuleMenu> menus() const;
+
+    // How many of each editor extension the module registered.
+    struct ExtensionCounts {
+        size_t operators{0};
+        size_t panels{0};
+        size_t sidebarTabs{0};
+        size_t inspectorOverrides{0};
+        size_t menus{0};
+        size_t menuEntries{0};
+
+        bool operator==(const ExtensionCounts&) const = default;
+    };
+
+    ExtensionCounts extensionCounts() const;
+    // Descriptions of registered extensions the editor registries no longer
+    // hold; empty when every one is in place.
+    std::vector<std::string> missingExtensions() const;
 
   private:
     class Registrar;
@@ -170,8 +217,9 @@ class GameModuleHost {
     void releaseModule(Scene& scene, EditorDocument& document, std::vector<std::string>& warnings);
     void releaseEditorExtensions();
 
-    OperatorRegistry& m_operators;
-    OperatorRunner& m_runner;
+    GameModuleEditorServices m_services;
+    // The module's menus and menu entries; held while no module is loaded.
+    MenuOwner m_menuOwner;
     GameModuleHostOptions m_options;
     std::filesystem::path m_sourcePath;
     GameModuleStatus m_status{GameModuleStatus::None};
@@ -195,6 +243,11 @@ class GameModuleHost {
     SystemScheduler m_scheduler;
     std::vector<std::string> m_operatorIds;
     std::vector<Panel> m_panels;
+    std::vector<std::string> m_sidebarTabTitles;
+    std::vector<std::string> m_inspectorOverrideKeys;
+    // Data only (ids and titles); the entries live in the menu registry.
+    std::vector<EditorModuleMenu> m_menus;
+    size_t m_menuEntryCount{0};
     // Titles of the panels open when the module was last released, reopened
     // when the reloaded module registers them again.
     std::vector<std::string> m_visiblePanelTitles;

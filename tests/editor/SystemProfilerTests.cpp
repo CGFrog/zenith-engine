@@ -8,6 +8,7 @@
 #include "editor/application/EditorPlayMode.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
+#include "editor/interaction/ComponentEditorOverrides.hpp"
 #include "editor/interaction/Selection.hpp"
 #include "editor/menus/EditorMenus.hpp"
 #include "editor/modules/GameModuleHost.hpp"
@@ -105,12 +106,19 @@ struct ProfilerFixture {
     EditorPlayMode playMode;
     OperatorRegistry operators;
     OperatorRunner runner{operators, history};
+    ViewportRegistry viewports;
+    ComponentEditorOverrides componentEditors;
     GameModuleHost host;
     int maskSaves{0};
     RecordingActions actions{runner, [this] { return operatorContext(); }};
 
     explicit ProfilerFixture(const std::filesystem::path& shadow)
-        : host(operators, runner, {.shadowDirectory = shadow}) {
+        : host({.operators = operators,
+                .runner = runner,
+                .menus = menus.registry(),
+                .viewports = viewports,
+                .componentEditors = componentEditors},
+               {.shadowDirectory = shadow}) {
         expect(registerPlayOperators(
                    operators, {.playMode = playMode, .modules = host, .simulateMaskChanged = [this] { ++maskSaves; }})
                    .success,

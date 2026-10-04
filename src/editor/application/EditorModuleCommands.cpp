@@ -143,5 +143,14 @@ void EditorSession::drawModuleMenu(ApplicationContext& context) {
                              nlohmann::json{{"panel", typeId}}.dump(), m_workspaces.active().anyVisible(typeId));
         }
     }
+    // The module's own menus open as popups, like any wm.call_menu binding.
+    std::span<const EditorModuleMenu> menus = m_moduleHost.menus();
+    if (!menus.empty()) {
+        ImGui::Separator();
+        for (const EditorModuleMenu& menu : menus) {
+            const std::string label = (menu.title.empty() ? menu.id : menu.title) + "...";
+            operatorMenuItem(context, "wm.call_menu", label.c_str(), nlohmann::json{{"menu", menu.id}}.dump());
+        }
+    }
     ImGui::EndMenu();
 }

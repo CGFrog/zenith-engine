@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 
+class ComponentEditorOverrides;
 class EditorDiagnostics;
 class EntityEyedropper;
 class EditorMenus;
@@ -90,6 +91,9 @@ struct EditorContext {
     // Whether the runtime scene (running or paused) is a Simulate, which keeps
     // the editor's view of it (see EditorPlayMode::simulating).
     bool simulating{false};
+    // Custom component editors added by the game module, used by the
+    // Inspector and Properties editors; null where there are none (tests).
+    const ComponentEditorOverrides* componentEditors{nullptr};
 
     bool editMode() const {
         return mode == EditorMode::Edit;

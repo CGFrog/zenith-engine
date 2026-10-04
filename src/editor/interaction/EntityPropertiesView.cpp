@@ -358,7 +358,7 @@ void EntityPropertiesView::drawComponent(EditorContext& context, const Component
     }
     const std::string_view filter = options.filter;
     const bool nameMatches = matchesInspectorFilter(type.displayName(), filter);
-    if (!nameMatches && !m_customEditors.contains(type.key()) &&
+    if (!nameMatches && customEditor(context, type.key()) == nullptr &&
         std::ranges::none_of(type.fields(), [filter](const FieldDescriptor& field) {
             return matchesInspectorFilter(field.presentation.label, filter);
         })) {
@@ -504,13 +504,13 @@ EntityPropertiesView::drawComponentValues(EditorContext& context, const Componen
         components.push_back(type.find(scene, target));
         originals.push_back(type.copy(components.back()));
     }
-    const auto custom = m_customEditors.find(type.key());
+    const CustomEditor* custom = customEditor(context, type.key());
     bool changed = false;
-    if (custom != m_customEditors.end()) {
+    if (custom != nullptr) {
         if (customValuesDiffer(context, type, shown)) {
             ImGui::TextDisabled("Values differ (%s); an edit applies only the changed setting.", mixedValueText);
         }
-        changed = custom->second(context, targets.front(), components.front());
+        changed = (*custom)(context, targets.front(), components.front());
         if (changed && targets.size() > 1) {
             copyCustomEdit(context, type, targets, originals.front());
         }
@@ -563,6 +563,17 @@ EntityPropertiesView::drawComponentValues(EditorContext& context, const Componen
         ImGui::TextColored(problemColor, "%s", problem.c_str());
     }
     return revert;
+}
+
+const EntityPropertiesView::CustomEditor* EntityPropertiesView::customEditor(const EditorContext& context,
+                                                                             const std::string& componentKey) const {
+    if (context.componentEditors != nullptr) {
+        if (const CustomEditor* overriding = context.componentEditors->find(componentKey)) {
+            return overriding;
+        }
+    }
+    const auto builtIn = m_customEditors.find(componentKey);
+    return builtIn == m_customEditors.end() ? nullptr : &builtIn->second;
 }
 
 void EntityPropertiesView::drawPreservedComponents(EditorContext& context, SceneEntityId entityId) const {

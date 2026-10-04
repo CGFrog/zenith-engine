@@ -4,12 +4,15 @@
 // system adds, so a test can hot reload one build over the other.
 //
 // Like any game module it links only the engine: everything it uses from the
-// editor is the header-only EditorModuleApi.
+// editor is the header-only EditorModuleApi, and it draws with the Dear ImGui
+// the engine exports. It uses every editor extension point.
 
 #include "editor/modules/EditorModuleApi.hpp"
 #include "engine/module/ModuleApi.hpp"
 #include "engine/module/ModuleRegistrar.hpp"
 #include "engine/scene/Scene.hpp"
+
+#include <imgui.h>
 
 #include <cstdint>
 #include <string>
@@ -22,6 +25,7 @@ constexpr int32_t playIncrement = 100;
 constexpr const char* moduleVersion = "1.0.0";
 constexpr int32_t playIncrement = 1;
 #endif
+constexpr int32_t bumpAmount = 1000;
 
 struct EditorTestCounter {
     // Play Update adds playIncrement; Edit Update counts editTicks; every
@@ -98,4 +102,26 @@ ZENITH_EDITOR_MODULE_REGISTER {
                                return EditorModuleResult{.success = true};
                            }});
     registrar.addPanel({.title = "Test Counters", .draw = [](EditorModulePanelContext&) {}});
+    registrar.addSidebarTab({.title = "Test Tab", .draw = [](EditorModulePanelContext& context) {
+                                 ImGui::Text("Editor test sidebar tab: %zu selected", context.selection.size());
+                             }});
+    // Replaces the counter's reflected fields. Bump (or a label of "bump",
+    // which lets a headless test request it) adds bumpAmount to the value and
+    // relabels the counter, editing two top-level keys at once.
+    registrar.addInspectorOverride(
+        {.componentKey = "editor_test_counter", .draw = [](EditorModuleInspectorContext& context) {
+             EditorTestCounter& counter = context.get<EditorTestCounter>();
+             ImGui::Text("Editor test inspector: %d", counter.value);
+             if (!ImGui::Button("Bump") && counter.label != "bump") {
+                 return false;
+             }
+             counter.value += bumpAmount;
+             counter.label = "bumped";
+             return true;
+         }});
+    // Menus: the module's own, offered as a submenu of the Add menu.
+    registrar.addMenu({.id = "EDITOR_TEST_MT_tools", .title = "Editor Test"});
+    registrar.addMenuEntry(
+        {.menu = "EDITOR_TEST_MT_tools", .label = "Add Test Counter", .operatorId = "editor_test.add_counter"});
+    registrar.addMenuEntry({.menu = EditorModuleMenus::add, .label = "Editor Test", .submenu = "EDITOR_TEST_MT_tools"});
 }

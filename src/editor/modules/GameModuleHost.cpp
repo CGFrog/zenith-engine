@@ -1,14 +1,39 @@
 #include "GameModuleHost.hpp"
 
 #include "editor/document/EditorDocument.hpp"
+#include "editor/interaction/ComponentEditorOverrides.hpp"
+#include "editor/menus/EditorMenus.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/operators/OperatorRunner.hpp"
+#include "editor/panels/EditorContext.hpp"
+#include "editor/panels/ViewportRegistry.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
 #include <algorithm>
+#include <string_view>
 #include <system_error>
 #include <utility>
+
+// Modules name the editor's menus through EditorModuleApi, which cannot
+// include the editor's headers.
+static_assert(std::string_view(EditorModuleMenus::add) == addMenuId);
+static_assert(std::string_view(EditorModuleMenus::addComponent) == addComponentMenuId);
+
+void drawModulePanelContents(EditorContext& context, const std::function<void(EditorModulePanelContext&)>& draw) {
+    // Copied: an operator the panel invokes may change the selection.
+    const std::vector<SceneEntityId> selection = context.selection.ids();
+    EditorModulePanelContext panelContext{
+        .scene = context.app.scene,
+        .assets = context.app.assets,
+        .selection = selection,
+        .editMode = context.editMode(),
+        .invokeOperator = [&context](std::string_view operatorId) {
+            return static_cast<bool>(context.actions.invokeOperator(context.app, operatorId, {}, KeymapRegion::Global));
+        }};
+    draw(panelContext);
+}
 
 namespace {
 // Wraps a module operator as an editor operator. The wrapper shares the
@@ -48,6 +73,29 @@ Operator editorOperator(EditorModuleOperator source) {
     };
     return op;
 }
+
+// Wraps a module sidebar tab for every viewport. The wrapper holds the
+// module's draw function, so it must be removed before the module unloads.
+ViewportSidebarTab viewportSidebarTab(EditorModuleSidebarTab source) {
+    return {.title = std::move(source.title), .draw = [draw = std::move(source.draw)](EditorContext& context) {
+                drawModulePanelContents(context, draw);
+            }};
+}
+
+// Wraps a module inspector override as a component editor; removed from the
+// overrides before the module unloads.
+ComponentEditorDraw componentEditor(EditorModuleInspectorOverride source) {
+    return [key = source.componentKey, draw = std::move(source.draw)](EditorContext& context, Entity entity,
+                                                                      void* component) {
+        EditorModuleInspectorContext inspectorContext{.scene = context.app.scene,
+                                                      .assets = context.app.assets,
+                                                      .entity = context.app.scene.id(entity),
+                                                      .componentKey = key,
+                                                      .component = component,
+                                                      .editMode = context.editMode()};
+        return draw(inspectorContext);
+    };
+}
 } // namespace
 
 // Records what the module's editor registration adds. Its virtual functions
@@ -62,7 +110,8 @@ class GameModuleHost::Registrar final : public EditorModuleRegistrar {
             return fail("Module operator '" + op.id + "' needs an execute function");
         }
         const std::string id = op.id;
-        if (const OperatorRegistrationResult result = m_host.m_operators.add(editorOperator(std::move(op))); !result) {
+        if (const OperatorRegistrationResult result = m_host.m_services.operators.add(editorOperator(std::move(op)));
+            !result) {
             return fail(result.error);
         }
         m_host.m_operatorIds.push_back(id);
@@ -85,6 +134,61 @@ class GameModuleHost::Registrar final : public EditorModuleRegistrar {
         return {.success = true};
     }
 
+    EditorModuleResult addSidebarTab(EditorModuleSidebarTab tab) override {
+        const std::string title = tab.title;
+        if (const ViewportSidebarTabResult result =
+                m_host.m_services.viewports.addSidebarTab(viewportSidebarTab(std::move(tab)));
+            !result) {
+            return fail("Module sidebar tab: " + result.error);
+        }
+        m_host.m_sidebarTabTitles.push_back(title);
+        return {.success = true};
+    }
+
+    EditorModuleResult addInspectorOverride(EditorModuleInspectorOverride inspector) override {
+        const std::string key = inspector.componentKey;
+        const std::shared_ptr<const ComponentTypeRegistry> types = m_host.m_module->componentTypes();
+        if (types == nullptr || types->find(key) == nullptr) {
+            return fail("Inspector override for '" + key + "': no registered component type has that key");
+        }
+        if (!inspector.draw) {
+            return fail("Inspector override for '" + key + "' needs a draw function");
+        }
+        if (const ComponentEditorOverrideResult result =
+                m_host.m_services.componentEditors.add(key, componentEditor(std::move(inspector)));
+            !result) {
+            return fail(result.error);
+        }
+        m_host.m_inspectorOverrideKeys.push_back(key);
+        return {.success = true};
+    }
+
+    EditorModuleResult addMenu(EditorModuleMenu menu) override {
+        if (const MenuResult result = m_host.m_services.menus.addMenu(
+                m_host.m_menuOwner, {.id = menu.id, .title = menu.title, .layout = MenuLayout::Submenus});
+            !result) {
+            return fail("Module menu: " + result.error);
+        }
+        m_host.m_menus.push_back(std::move(menu));
+        return {.success = true};
+    }
+
+    EditorModuleResult addMenuEntry(EditorModuleMenuEntry entry) override {
+        const std::string menu = entry.menu;
+        MenuEntry menuEntry{.label = std::move(entry.label),
+                            .operatorId = std::move(entry.operatorId),
+                            .properties = std::move(entry.properties),
+                            .submenu = std::move(entry.submenu),
+                            .icon = std::nullopt,
+                            .category = std::move(entry.category)};
+        if (const MenuResult result = m_host.m_services.menus.addEntry(m_host.m_menuOwner, menu, std::move(menuEntry));
+            !result) {
+            return fail("Module menu entry: " + result.error);
+        }
+        ++m_host.m_menuEntryCount;
+        return {.success = true};
+    }
+
     std::vector<std::string> takeErrors() {
         return std::move(m_errors);
     }
@@ -99,9 +203,9 @@ class GameModuleHost::Registrar final : public EditorModuleRegistrar {
     std::vector<std::string> m_errors;
 };
 
-GameModuleHost::GameModuleHost(OperatorRegistry& operators, OperatorRunner& runner, GameModuleHostOptions options)
-    : m_operators(operators)
-    , m_runner(runner)
+GameModuleHost::GameModuleHost(GameModuleEditorServices services, GameModuleHostOptions options)
+    : m_services(services)
+    , m_menuOwner(services.menus.createOwner())
     , m_options(std::move(options)) {}
 
 GameModuleHost::~GameModuleHost() {
@@ -169,6 +273,16 @@ void GameModuleHost::registerEditorExtensions(std::vector<std::string>& warnings
     if (registerEditor == nullptr) {
         return;
     }
+    const auto apiVersion =
+        reinterpret_cast<ZenithEditorModuleApiVersionFunction>(m_module->findSymbol(editorModuleApiVersionSymbol));
+    const uint32_t moduleVersion = apiVersion != nullptr ? apiVersion() : 1;
+    if (moduleVersion != editorModuleApiVersion) {
+        warnings.push_back("Game module '" + m_module->name() + "' was built against editor module API version " +
+                           std::to_string(moduleVersion) + ", but this editor uses version " +
+                           std::to_string(editorModuleApiVersion) +
+                           "; its editor extensions are not loaded until it is rebuilt");
+        return;
+    }
     Registrar registrar(*this);
     registerEditor(registrar);
     for (std::string& error : registrar.takeErrors()) {
@@ -222,7 +336,7 @@ void GameModuleHost::unload(Scene& scene, EditorDocument& document) {
 
 void GameModuleHost::releaseModule(Scene& scene, EditorDocument& document, std::vector<std::string>& warnings) {
     releaseEditorExtensions();
-    m_runner.forgetLast();
+    m_services.runner.forgetLast();
     m_scheduler = SystemScheduler{};
     m_profile.clear();
     document.setComponentTypes(nullptr);
@@ -238,9 +352,22 @@ void GameModuleHost::releaseModule(Scene& scene, EditorDocument& document, std::
 
 void GameModuleHost::releaseEditorExtensions() {
     for (const std::string& id : m_operatorIds) {
-        m_operators.remove(id);
+        m_services.operators.remove(id);
     }
     m_operatorIds.clear();
+    for (const std::string& title : m_sidebarTabTitles) {
+        m_services.viewports.removeSidebarTab(title);
+    }
+    m_sidebarTabTitles.clear();
+    for (const std::string& key : m_inspectorOverrideKeys) {
+        m_services.componentEditors.remove(key);
+    }
+    m_inspectorOverrideKeys.clear();
+    // Menus hold no module code, but entries naming its operators and menus
+    // must not outlive them.
+    m_services.menus.removeOwner(m_menuOwner);
+    m_menus.clear();
+    m_menuEntryCount = 0;
     // A module that failed to load has no panels; keep what was open before.
     if (!m_panels.empty()) {
         m_visiblePanelTitles.clear();
@@ -369,4 +496,51 @@ std::span<const std::string> GameModuleHost::operatorIds() const {
 
 std::span<GameModuleHost::Panel> GameModuleHost::panels() {
     return m_panels;
+}
+
+std::span<const std::string> GameModuleHost::sidebarTabTitles() const {
+    return m_sidebarTabTitles;
+}
+
+std::span<const std::string> GameModuleHost::inspectorOverrideKeys() const {
+    return m_inspectorOverrideKeys;
+}
+
+std::span<const EditorModuleMenu> GameModuleHost::menus() const {
+    return m_menus;
+}
+
+GameModuleHost::ExtensionCounts GameModuleHost::extensionCounts() const {
+    return {.operators = m_operatorIds.size(),
+            .panels = m_panels.size(),
+            .sidebarTabs = m_sidebarTabTitles.size(),
+            .inspectorOverrides = m_inspectorOverrideKeys.size(),
+            .menus = m_menus.size(),
+            .menuEntries = m_menuEntryCount};
+}
+
+std::vector<std::string> GameModuleHost::missingExtensions() const {
+    std::vector<std::string> missing;
+    for (const std::string& id : m_operatorIds) {
+        if (m_services.operators.find(id) == nullptr) {
+            missing.push_back("operator '" + id + "'");
+        }
+    }
+    const std::span<const ViewportSidebarTab> tabs = m_services.viewports.sidebarTabs();
+    for (const std::string& title : m_sidebarTabTitles) {
+        if (std::ranges::none_of(tabs, [&title](const ViewportSidebarTab& tab) { return tab.title == title; })) {
+            missing.push_back("sidebar tab '" + title + "'");
+        }
+    }
+    for (const std::string& key : m_inspectorOverrideKeys) {
+        if (m_services.componentEditors.find(key) == nullptr) {
+            missing.push_back("inspector override '" + key + "'");
+        }
+    }
+    for (const EditorModuleMenu& menu : m_menus) {
+        if (m_services.menus.find(menu.id) == nullptr) {
+            missing.push_back("menu '" + menu.id + "'");
+        }
+    }
+    return missing;
 }

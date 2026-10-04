@@ -585,6 +585,7 @@ add_library(zenith_editor_app STATIC
     src/editor/document/SceneEditorData.cpp
     src/editor/document/RuntimeApply.cpp
     src/editor/document/SceneFragment.cpp
+    src/editor/interaction/ComponentEditorOverrides.cpp
     src/editor/interaction/ComponentEditors.cpp
     src/editor/interaction/EditorCamera.cpp
     src/editor/interaction/EntityEyedropper.cpp

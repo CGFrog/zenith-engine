@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <utility>
-#include <vector>
 
 std::string gameModuleAreaTypeId(std::string_view panelTitle) {
     std::string id = "module:" + std::string(panelTitle);
@@ -33,15 +32,5 @@ void GameModulePanel::draw(EditorContext& context) {
         ImGui::TextDisabled("The game module has no panel named \"%s\".", m_panelTitle.c_str());
         return;
     }
-    // Copied: an operator the panel invokes may change the selection.
-    const std::vector<SceneEntityId> selection = context.selection.ids();
-    EditorModulePanelContext panelContext{
-        .scene = context.app.scene,
-        .assets = context.app.assets,
-        .selection = selection,
-        .editMode = context.editMode(),
-        .invokeOperator = [&context](std::string_view operatorId) {
-            return static_cast<bool>(context.actions.invokeOperator(context.app, operatorId, {}, KeymapRegion::Global));
-        }};
-    panel->panel.draw(panelContext);
+    drawModulePanelContents(context, panel->panel.draw);
 }

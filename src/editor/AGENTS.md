@@ -34,7 +34,8 @@ depend on this subtree.
 - Component inspectors come from the engine's component registry. Prefer
   better field presentation hints over a custom editor; register a custom
   editor in `interaction/EntityPropertiesView` (shared by the Inspector and
-  Properties panels) only when reflected fields cannot express the UI. The
+  Properties panels) only when reflected fields cannot express the UI; a game
+  module's inspector override (`ComponentEditorOverrides`) takes precedence. The
   view edits several selected entities at once: a custom editor edits only the
   component it is given, and the view copies the document keys it changed to
   the others.
@@ -110,6 +111,11 @@ depend on this subtree.
   `pickEyedropperEntity` instead of changing the selection.
 - Never cache a game module's `ComponentType` pointers or registries across
   frames: read them from `EditorDocument::options()`. Before a module unloads,
-  `GameModuleHost` releases its registries, systems, operators, and panels and
-  replaces (never clears) the scene registry; a new holder of module code must
-  be released there too.
+  `GameModuleHost` releases its registries, systems, operators, panels,
+  sidebar tabs, inspector overrides, and menus and replaces (never clears) the
+  scene registry; a new holder of module code must be released there too.
+- A new editor extension point for modules goes in the header-only
+  `modules/EditorModuleApi.hpp` (bump `ZENITH_EDITOR_MODULE_API_VERSION`),
+  is registered and released by `GameModuleHost`, is used by
+  `tests/editor/modules/EditorTestModule.cpp`, and is documented in
+  `docs/EDITOR_EXTENSIONS.md`.

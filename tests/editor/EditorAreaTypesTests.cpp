@@ -10,6 +10,7 @@
 #include "editor/areas/WorkspaceFile.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
+#include "editor/interaction/ComponentEditorOverrides.hpp"
 #include "editor/menus/EditorMenus.hpp"
 #include "editor/modules/GameModuleHost.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
@@ -121,8 +122,14 @@ struct SessionFixture {
     EditorMenus menus;
     OperatorRegistry operators;
     OperatorRunner runner{operators, history};
+    ViewportRegistry viewports;
+    ComponentEditorOverrides componentEditors;
     // Without a module: the System Profiler shows no systems.
-    GameModuleHost modules{operators, runner};
+    GameModuleHost modules{{.operators = operators,
+                            .runner = runner,
+                            .menus = menus.registry(),
+                            .viewports = viewports,
+                            .componentEditors = componentEditors}};
     EditorPlayMode playMode;
     EditorToolSettings tools;
     RenderSettingsController renderSettings;

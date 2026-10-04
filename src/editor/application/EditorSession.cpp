@@ -155,7 +155,8 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .actions = *this,
             .eyedropper = &m_eyedropper,
             .menus = m_menus,
-            .simulating = m_playMode.simulating()};
+            .simulating = m_playMode.simulating(),
+            .componentEditors = &m_componentEditors};
 }
 
 OperatorContext EditorSession::operatorContext(ApplicationContext& context, KeymapRegion region) {
@@ -803,20 +804,42 @@ void EditorSession::updateSmokeModuleReload(ApplicationContext& context) {
         context.control.requestQuit();
         return;
     }
+    // Every editor extension the module registered is in the editor's
+    // registries, and the reload releases and registers the same ones again
+    // (a release that missed one would make its re-registration fail).
+    const auto extensionsProblem = [this]() -> std::string {
+        std::string problem;
+        for (const std::string& missing : m_moduleHost.missingExtensions()) {
+            problem += (problem.empty() ? "missing " : ", ") + missing;
+        }
+        return problem;
+    };
     if (!m_smokeModuleReloadRequested) {
         // A project with a game module also hot reloads it once.
         m_smokeModuleReloadRequested = true;
         m_moduleReloadPending = true;
+        m_smokeModuleExtensions = m_moduleHost.extensionCounts();
+        if (const std::string problem = extensionsProblem(); !problem.empty()) {
+            m_diagnostics.reportError("Game module smoke: before the reload, " + problem);
+            context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
+        }
         return;
     }
     if (m_moduleReloadPending) {
         return;
     }
-    if (m_moduleHost.status() == GameModuleStatus::Loaded && m_moduleHost.loadCount() >= 2) {
+    std::string error;
+    if (m_moduleHost.status() != GameModuleStatus::Loaded || m_moduleHost.loadCount() < 2) {
+        error = "Game module smoke reload failed: " + m_moduleHost.error();
+    } else if (m_moduleHost.extensionCounts() != m_smokeModuleExtensions) {
+        error = "Game module smoke: the reloaded module's editor extensions differ from those before the reload";
+    } else if (const std::string problem = extensionsProblem(); !problem.empty()) {
+        error = "Game module smoke: after the reload, " + problem;
+    }
+    if (error.empty()) {
         context.control.requestQuit();
         return;
     }
-    const std::string error = "Game module smoke reload failed: " + m_moduleHost.error();
     context.logger.log(LogLevel::Error, "editor", error);
     m_diagnostics.reportError(error);
     context.control.requestSceneChange({std::numeric_limits<uint32_t>::max()});
