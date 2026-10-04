@@ -770,13 +770,21 @@ shadows, a black sky). A view may then be isolated to a set of objects
 (`setViewVisibleEntities`, the editor's local view), which filters its
 CPU-submitted draws and its picks; a collection-instance draw belongs to its
 instancing entity. GPU-driven submission draws every record, so an isolated
-default view uses CPU submission. The directional shadow cascades are shared
-by every view of a frame (they follow the leading, active view's camera), so
-casters are limited only while every rendered view is isolated, to the union of
-their sets: a lone viewport in local view casts shadows from its isolated
-objects only, while an isolated view next to a non-isolated one keeps the
-whole scene's casters. Other shared work (local-light shadows, light lists,
-particles) still covers the whole filtered scene. Instance draws compose several entities'
+default view uses CPU submission. Shadows follow each view's isolation. The
+frame's sun cascades (placed by the leading, active view's camera) and its
+local-light atlas live in the frame's camera sets, so they cast from the
+isolation of the view drawing through those sets: the default view, else the
+leading one. A view isolated differently (a local view beside a full viewport,
+or a full view beside an isolated default view) draws its own maps
+(`MeshPass::ViewShadows`): cascades with the same placement and a local-light
+atlas for its own lights, both from its casters only and cached like the
+frame's (revisions, caster set, light matrices; a skipped frame redraws the
+atlas). They are created when first needed (about 25 MB of cascades plus the
+atlas quality's size, and host object records), retired through the release
+queue once the view samples the frame's maps again, and reported in
+`RenderViewStats` (`ownShadowMaps` and the view's shadow counts). A view without
+isolation costs nothing extra. Light lists and particles still cover the whole
+filtered scene. Instance draws compose several entities'
 transforms, so while any exist a transform or skin change rebuilds the render
 packets instead of updating them in place.
 
@@ -814,7 +822,8 @@ frame's set of the same slot before it records. GPU-driven submission and its
 occlusion history belong to the default view. A view that does not lead
 reuses the cascades, particle sort, probe residency, and local-shadow tiles of
 the leading view; its own light selection finds those tiles by stable light
-id. Only the leading view writes GPU timestamps, so pass timings describe the
+id. A view with its own shadow maps copies every shared binding but the shadow
+ones, which point at its maps. Only the leading view writes GPU timestamps, so pass timings describe the
 frame stage plus that view (other views count toward the frame total).
 
 Creating a view also creates its passes' pipelines through the pipeline cache.
@@ -825,7 +834,10 @@ per-view stats add up the views' draws; `RenderViewStats` reports each view's
 own counts and CPU recording time. `tests/engine/RenderViewTests.cpp` covers the
 registry and planning; `tests/engine/MultiViewSmokeTests.cpp` renders two
 created views beside the default one under strict validation, isolating views,
-switching the visibility mode, and moving a collection instance.
+switching the visibility mode, and moving a collection instance;
+`tests/engine/IsolatedShadowSmokeTests.cpp` checks through the per-view shadow
+counts that an isolated view's sun, point, and spot shadows cast from its
+objects only while the view beside it keeps the whole scene's.
 
 ### Debug drawing
 

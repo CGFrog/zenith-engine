@@ -146,6 +146,15 @@ std::pair<std::filesystem::path, std::string> normalizedPath(const std::filesyst
 }
 } // namespace
 
+BoundingBox calculateBoundingBox(std::span<const Vertex> vertices) {
+    BoundingBox box;
+    for (const Vertex& vertex : vertices) {
+        box.minimum = glm::min(box.minimum, vertex.position);
+        box.maximum = glm::max(box.maximum, vertex.position);
+    }
+    return box;
+}
+
 AssetManager::AssetManager(Logger* logger)
     : m_log(logger, "assets") {}
 
@@ -339,6 +348,7 @@ ModelHandle AssetManager::addModel(ModelAsset asset, std::filesystem::path sourc
 
 MeshHandle AssetManager::addMesh(MeshAsset asset, std::filesystem::path sourcePath, uint32_t meshIndex) {
     ++m_revision;
+    asset.localBox = calculateBoundingBox(asset.vertices);
     const uint64_t bytes = byteSize(asset);
     const MeshHandle handle =
         insertSlot<MeshAsset, MeshHandle>(m_meshes, m_meshMetadata, std::move(asset), bytes, ++m_useSerial);
