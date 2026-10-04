@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <span>
@@ -59,25 +60,36 @@ struct PrefabEntity {
 //
 //   component ""            field "/name" or "/local_transform"
 //   component ""            field "/parent"  value <prefab-local id>
-//                           (moved under another entity of the instance)
+//                           (moved under another entity of the instance), or
+//                           <scene id | 1 << 63> (moved under an entity added
+//                           to the instance in the scene)
 //   component ""            field "/removed" value true
 //                           (deleted from the instance, with its descendants)
 //   component "point_light" field "/intensity" (a value inside the component)
 //   component "point_light" field ""  value {...}  (component added or replaced)
 //   component "point_light" field ""  value null   (component removed)
 //
-// Entity references inside override values hold prefab-local ids for entities
-// of the instance, and for entities outside it their scene id with the top
-// bit (1 << 63) set, so the two cannot be confused. Scene-local
-// components (collection membership and collection instances) are never
-// overrides: they are scene organization, which a prefab does not store and a
-// refresh keeps.
+// An override with a non-zero `nested` targets the nested prefab record of
+// that id instead of an entity (entity is then zero). Its only form is field
+// "/removed" value true: the nested instance was deleted from the containing
+// instance. Persisted as {"nested", "component", "field", "value"}.
+//
+// Entity references inside override values hold the values a prefab document
+// holds for entities of the instance (see PrefabDocument), and for entities
+// outside it their scene id with the top bit (1 << 63) set, so the two cannot
+// be confused. In a prefab file, the overrides of a nested record use the top
+// bit for the containing prefab's entities instead (their prefab-local id), so
+// prefab files never hold scene ids. Scene-local components (collection
+// membership and collection instances) are never overrides: they are scene
+// organization, which a prefab does not store and a refresh keeps.
 struct PrefabOverride {
     PrefabEntityId entity;
     std::string component;
     std::string field;
     // Compact JSON.
     std::string jsonValue;
+    // The nested record the override targets, or zero for an entity override.
+    uint64_t nested{0};
 
     bool operator==(const PrefabOverride&) const = default;
 };
@@ -101,12 +113,25 @@ struct NestedPrefab {
 //      `component.pointLight`, and `component.camera`; any number of roots.
 //   2  Entities in the scene document entity form with registry component keys
 //      and asset reference objects; field-level JSON pointer overrides;
-//      exactly one root.
+//      exactly one root. An optional `metadata` object holds `display_name`.
+//
+// Entity references inside a document's components hold a prefab-local id, or,
+// for an entity of a nested instance, prefabNestedReference(record, local id
+// in the nested prefab) (bit 62 set). References into instances nested more
+// than one level deep are not stored.
 struct PrefabDocument {
     static constexpr uint32_t currentVersion = 2;
     std::vector<PrefabEntity> entities;
     std::vector<NestedPrefab> nested;
+    // The name people see (the Add menu, the instance header). Prefab file
+    // names are reduced to portable ASCII, so this keeps the name the prefab
+    // was created from; empty means the file name.
+    std::string displayName;
 };
+
+// The reference value naming entity local of the nested record's instance, or
+// zero when the ids do not fit (records above 2^30, entities above 2^32).
+uint64_t prefabNestedReference(uint64_t record, PrefabEntityId local);
 
 struct PrefabResult {
     bool success{false};
@@ -174,10 +199,22 @@ void unpackPrefabInstance(Scene& scene, Entity root);
 // entity of an instance, not the root) is about to be deleted, so refreshes
 // keep it deleted until the instance is reverted or the prefab applied. Call
 // it before destroying the entity; descendants need no record of their own.
-// Returns false, changing nothing, for entities outside instances, instance
-// roots (including nested ones), and entities added to an instance in the
-// scene.
+// A nested instance root created from a record of the containing instance is
+// recorded on the containing instance as a removed nested record. Returns
+// false, changing nothing, for entities outside instances, instance roots
+// placed in the scene, and entities added to an instance in the scene.
 bool recordPrefabEntityRemoval(Scene& scene, Entity entity);
+// Prepares entity for being parented to newParent (the scene root when null).
+// When that moves it out of the instance it belongs to (to the scene root,
+// under an entity of no instance, or into another instance, nested ones
+// included), the move is recorded as the removal of its prefab entities and
+// nested instances (as recordPrefabEntityRemoval does), and the moved subtree
+// is unlinked: its entities become plain scene entities that keep their
+// components, and nested instances in it become instances placed in the
+// scene. Moves within the instance, including under entities added to it in
+// the scene, need no record: they are live /parent overrides. Call it before
+// reparenting; returns whether it changed anything.
+bool recordPrefabEntityMove(Scene& scene, Entity entity, Entity newParent);
 
 struct PrefabInstanceResult {
     bool success{false};
@@ -208,6 +245,17 @@ struct PrefabCapture {
     PrefabDocument document;
     std::vector<std::pair<SceneEntityId, PrefabEntityId>> entityIds;
     std::vector<std::pair<SceneEntityId, uint64_t>> nestedIds;
+};
+
+// A prefab document prepared for comparing instances with it (see
+// PrefabSystem::prepareComparison), so repeated comparisons, such as override
+// highlighting while a value is dragged, skip normalizing the prefab.
+// Reusable while the document is unchanged.
+struct PrefabComparisonSource {
+    PrefabDocument document;
+    // Each entity in the canonical serialized form instance entities are
+    // compared in (compact JSON), keyed by prefab-local id.
+    std::map<uint64_t, std::string> entities;
 };
 
 // Instantiates prefabs into scenes and compares instances with their prefabs.
@@ -246,15 +294,28 @@ class PrefabSystem {
     // example its content before an apply replaced the file).
     PrefabResult overrides(const Scene& scene, Entity root, const PrefabDocument& source,
                            std::vector<PrefabOverride>& output) const;
+    // The same, against a prepared document.
+    PrefabResult overrides(const Scene& scene, Entity root, const PrefabComparisonSource& source,
+                           std::vector<PrefabOverride>& output) const;
+    // Only the value and parent overrides of entity, a member of the instance
+    // at root, sorted as overrides() sorts them; empty for an entity added in
+    // the scene. Much cheaper than comparing the whole instance.
+    PrefabResult entityOverrides(const Scene& scene, Entity root, Entity entity, const PrefabComparisonSource& source,
+                                 std::vector<PrefabOverride>& output) const;
+    PrefabResult prepareComparison(const PrefabDocument& document, PrefabComparisonSource& output) const;
 
     // Writes root's subtree as a document to be saved at reference. Nested
     // instances become nested records carrying their overrides. When root is
     // an instance of reference itself (an apply), its entities keep their
-    // prefab-local ids and nested records keep their ids; otherwise ids are
-    // assigned depth first from 1. Fails when saving would make a nested
+    // prefab-local ids, nested records keep their ids, and the document keeps
+    // its display name; otherwise ids are assigned depth first from 1 and the
+    // display name is root's name. Fails when saving would make a nested
     // cycle. Entity references between captured entities become prefab-local
-    // ids; references to anything else become none and are reported as
-    // diagnostics. Scene-local components are not captured.
+    // ids, and references to entities of nested instances become nested
+    // references (prefabNestedReference); references to anything else become
+    // none and are reported as diagnostics. Nested records' overrides name
+    // captured entities with the top bit set and drop other scene references
+    // the same way. Scene-local components are not captured.
     PrefabResult capture(const Scene& scene, Entity root, const std::filesystem::path& reference,
                          PrefabCapture& output) const;
 

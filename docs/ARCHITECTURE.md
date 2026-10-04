@@ -248,19 +248,29 @@ entity of its instance is a `/parent` override found by the diff, and deleting
 one through the editor's delete commands records a `/removed` override on the
 instance root (`recordPrefabEntityRemoval`), since a missing entity is
 otherwise indistinguishable from one the prefab gained since the last refresh.
+Deleting a nested instance records its nested record as removed on the
+containing instance. Moving a prefab entity under an entity added to the
+instance in the scene is a `/parent` override naming that entity's scene id
+(tagged); moving it out of the instance (to the scene root, a non-instance
+entity, or another instance) records its removal and unlinks the moved
+objects, which stay in the scene (`recordPrefabEntityMove`, called by the
+outliner's parent drop).
 Collection membership and collection instances are scene organization: prefabs
 never store them, instances keep their own through every refresh, and they are
 never overrides. Entity references are remapped by one generic pass over
 component JSON (`engine/scene/EntityReferenceRemap.hpp`, driven by the
 registry's reflected `EntityReference` fields, nested structs included, plus
 the model node and skin instance roots): prefab capture turns references
-between captured entities into prefab-local ids and clears (with a diagnostic)
-references outside the prefab; instantiate and refresh map them to the
+between captured entities into prefab-local ids, references into nested
+instances into nested references (record and nested-local id), and clears
+(with a diagnostic) references outside the prefab, also inside nested records'
+overrides, so prefab files never hold scene ids; instantiate and refresh map
+them to the
 instance's entities; duplicate and paste (`SceneFragment`) map references
 inside the copied set to the copies and keep the rest.
 Operators are undoable for their scene changes only: prefab files are asset
 content and stay as written when a step is undone. In the editor, the
-Inspector and Properties show an instance header (prefab name, Apply, Revert,
+Inspector and Properties show an instance header (prefab display name, Apply, Revert,
 Unpack, Select Prefab Asset) and mark overridden values with a bar in the
 `palette::prefabOverride` accent and bold override ink, with "Revert to
 Prefab" on right click; Add > Prefab lists the project's prefabs, and `.prefab`

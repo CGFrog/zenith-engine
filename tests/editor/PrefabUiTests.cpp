@@ -29,6 +29,7 @@
 #include "engine/ui/GameUi.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -380,9 +381,9 @@ void testAddMenuAndDrops() {
         const auto found = std::ranges::find(menu->items, std::string("Prefab"), &MenuItem::label);
         group = found == menu->items.end() ? nullptr : &*found;
     }
-    expect(group != nullptr && group->children.size() == 1 && group->children.front().label == "props/lamp" &&
+    expect(group != nullptr && group->children.size() == 1 && group->children.front().label == "props/Lamp" &&
                group->children.front().operatorId == "prefab.instantiate",
-           "Add > Prefab should list the project's prefabs and skip files outside the asset root");
+           "Add > Prefab should list the project's prefabs by display name and skip files outside the asset root");
     if (group != nullptr && !group->children.empty()) {
         const size_t before = prefabInstancesOf(fixture.scene, "props/lamp.prefab").size();
         expect(fixture.invoke(group->children.front().operatorId, group->children.front().properties).status ==
@@ -418,6 +419,120 @@ void testAddMenuAndDrops() {
            "a suggested path should not overwrite an existing prefab");
 }
 
+// A name that is not portable ASCII keeps its display name beside the
+// reduced file name.
+void testDisplayName() {
+    HeadlessImGuiContext imgui;
+    Fixture fixture("display-name");
+    const std::string name = "L\xC3\xA4mp: \xE2\x9C\xA8";
+    const Entity lamp = fixture.scene.createEntity(name);
+    const SceneEntityId lampId = fixture.scene.id(lamp);
+    fixture.selection.selectOnly(lampId);
+    expect(fixture.invoke("prefab.create_from_selection").status == OperatorStatus::Finished,
+           "a prefab should be created from a name that is not portable");
+    const std::filesystem::path file = fixture.root / "prefabs" / "L__mp_ ___.prefab";
+    PrefabDocument document;
+    expect(std::filesystem::is_regular_file(file) && loadPrefab(file, document).success &&
+               document.displayName == name && readText(file).find("\"display_name\"") != std::string::npos,
+           "the file name should be portable and the document should keep the display name");
+    fixture.prefabFiles.push_back(file);
+
+    PrefabAuthoring authoring(fixture.assets, fixture.document.options());
+    PrefabEntityOverrides overrides;
+    expect(authoring.overrides(fixture.scene, lamp, overrides).success && overrides.displayName == name,
+           "the instance header should show the display name");
+    InspectorPanel panel(fixture.componentLayout);
+    {
+        HeadlessImGuiFrame frame;
+        EditorContext context = fixture.context();
+        panel.draw(context);
+    }
+    const std::optional<ResolvedMenu> menu = fixture.menus.resolve({.menu = addMenuId}, fixture.operatorContext());
+    const auto group = menu ? std::ranges::find(menu->items, std::string("Prefab"), &MenuItem::label)
+                            : std::vector<MenuItem>::const_iterator{};
+    expect(menu && group != menu->items.end() && group->children.size() == 1 &&
+               group->children.front().label == "prefabs/" + name,
+           "Add > Prefab should show the display name");
+
+    // Applying a renamed instance keeps the prefab's display name.
+    fixture.edit([&] { fixture.scene.registry().get<NameComponent>(fixture.find(lampId)).name = "Renamed"; });
+    expect(fixture.invoke("prefab.apply").status == OperatorStatus::Finished && loadPrefab(file, document).success &&
+               document.displayName == name,
+           "apply should keep the display name");
+    PrefabDocument legacy{.entities = document.entities};
+    std::string encoded;
+    expect(serializePrefab(legacy, encoded).success && encoded.find("metadata") == std::string::npos,
+           "a prefab without a display name should not write metadata");
+}
+
+// Override highlighting on a 200-entity instance while a value is dragged:
+// the old cache compared the whole instance on every revision; the cache
+// now compares only the shown entity until the edits settle.
+void testOverrideCacheCost() {
+    Fixture fixture("cache");
+    Scene& scene = fixture.scene;
+    const Entity root = scene.createEntity("Big");
+    std::vector<SceneEntityId> children;
+    for (int index = 1; index < 200; ++index) {
+        const Entity child = scene.createEntity("Part " + std::to_string(index));
+        scene.registry().emplace<PointLightComponent>(child, glm::vec3(1.0f), 10.0f, 4.0f);
+        scene.registry().emplace<SpringComponent>(child);
+        scene.setParent(child, root);
+        children.push_back(scene.id(child));
+    }
+    PrefabAuthoring authoring(fixture.assets, fixture.document.options());
+    expect(authoring.create(scene, root, "big.prefab").success, "the 200-entity prefab should be created");
+    const SceneEntityId shownId = children[100];
+    const auto drag = [&](int frame) {
+        scene.registry().get<PointLightComponent>(fixture.find(shownId)).intensity = 10.0f + static_cast<float>(frame);
+    };
+    constexpr int frames = 20;
+    using Clock = std::chrono::steady_clock;
+    const auto millisecondsPerFrame = [](Clock::duration total) {
+        return std::chrono::duration<double, std::milli>(total).count() / frames;
+    };
+
+    // Before: every revision compared the whole instance.
+    const Clock::time_point fullStart = Clock::now();
+    PrefabEntityOverrides full;
+    for (int frame = 0; frame < frames; ++frame) {
+        drag(frame);
+        expect(authoring.overrides(scene, fixture.find(shownId), full).success, "the full comparison should succeed");
+    }
+    const double fullCost = millisecondsPerFrame(Clock::now() - fullStart);
+
+    // After: one full comparison, then one entity per revision.
+    PrefabOverrideCache cache(std::chrono::hours(1));
+    uint64_t revision = 1;
+    cache.get(authoring, scene, shownId, revision);
+    const Clock::time_point cachedStart = Clock::now();
+    for (int frame = 0; frame < frames; ++frame) {
+        drag(frame);
+        cache.get(authoring, scene, shownId, ++revision);
+    }
+    const double cachedCost = millisecondsPerFrame(Clock::now() - cachedStart);
+    std::cout << "Override highlighting, 200-entity instance: " << fullCost << " ms per drag frame before, "
+              << cachedCost << " ms after\n";
+    const PrefabEntityOverrides& dragged = cache.get(authoring, scene, shownId, revision);
+    expect(cache.partial() && dragged.overridden("point_light", "/intensity") &&
+               dragged.instanceOverrides == full.instanceOverrides,
+           "the per-entity update should highlight what a full comparison does");
+
+    // Another entity edited in the same step is counted once edits settle.
+    scene.registry().get<PointLightComponent>(fixture.find(children[3])).range = 9.0f;
+    PrefabOverrideCache settling(std::chrono::milliseconds(0));
+    settling.get(authoring, scene, shownId, revision);
+    scene.registry().get<PointLightComponent>(fixture.find(children[4])).range = 9.0f;
+    expect(settling.get(authoring, scene, shownId, revision + 1).instanceOverrides == 2 && settling.partial(),
+           "an edit should update only the shown entity at first");
+    expect(settling.get(authoring, scene, shownId, revision + 1).instanceOverrides == 3 && !settling.partial(),
+           "once edits settle the whole instance should be compared again");
+    PrefabEntityOverrides other;
+    expect(settling.get(authoring, scene, children[3], revision + 1).overridden("point_light", "/range") &&
+               authoring.overrides(scene, fixture.find(children[3]), other).success && other.instanceOverrides == 3,
+           "another entity of the instance should reuse the instance's overrides");
+}
+
 void testRevealRequest() {
     const std::filesystem::path root = freshDirectory("reveal");
     std::ofstream(root / "door.prefab") << R"({"version":2,"entities":[],"nested":[]})";
@@ -443,8 +558,10 @@ int main() {
     testFieldHighlight();
     testInspector();
     testAddMenuAndDrops();
+    testDisplayName();
+    testOverrideCacheCost();
     testRevealRequest();
-    for (const char* name : {"inspector", "menu", "reveal"}) {
+    for (const char* name : {"inspector", "menu", "reveal", "display-name", "cache"}) {
         std::error_code error;
         std::filesystem::remove_all(std::filesystem::temp_directory_path() / ("zenith-prefab-ui-" + std::string(name)),
                                     error);

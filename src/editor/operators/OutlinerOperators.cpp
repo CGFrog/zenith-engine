@@ -1,9 +1,13 @@
 #include "OutlinerOperators.hpp"
 
 #include "engine/scene/Collections.hpp"
+#include "engine/scene/Prefab.hpp"
 #include "engine/scene/Scene.hpp"
 
+#include <glm/glm.hpp>
+
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <utility>
 #include <vector>
@@ -127,6 +131,15 @@ Operator parentDropOperator() {
                 }
                 const ReparentMode mode =
                     values.keepTransform ? ReparentMode::PreserveWorldTransform : ReparentMode::PreserveLocalTransform;
+                // Fail before recording prefab moves: a failed operator keeps
+                // its changes without an undo step.
+                if (mode == ReparentMode::PreserveWorldTransform && parent != entt::null) {
+                    scene.updateWorldTransforms();
+                    if (std::abs(glm::determinant(scene.registry().get<TransformComponent>(parent).world)) < 1.0e-8f) {
+                        return OperatorResult::failed("Cannot preserve world transform under a singular parent "
+                                                      "transform");
+                    }
+                }
                 bool changed = false;
                 // Selected descendants of other selected objects move with them.
                 for (const SceneEntityId id : context.selection.transformRoots(scene)) {
@@ -138,6 +151,8 @@ Operator parentDropOperator() {
                     if (scene.registry().get<RelationshipComponent>(child).parent == parent) {
                         continue;
                     }
+                    // Leaving a prefab instance removes the object from it.
+                    recordPrefabEntityMove(scene, child, parent);
                     if (const SceneResult result = scene.reparent(child, parent, mode); !result) {
                         return OperatorResult::failed(result.error);
                     }

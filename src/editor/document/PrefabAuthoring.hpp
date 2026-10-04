@@ -2,12 +2,15 @@
 
 #include "engine/scene/Prefab.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 class AssetManager;
@@ -34,6 +37,9 @@ struct PrefabEntityOverrides {
     SceneEntityId instanceRoot;
     // Project-relative path of the instance's prefab.
     std::string prefab;
+    // The prefab's display name (PrefabDocument::displayName, or its file
+    // name when it has none).
+    std::string displayName;
     // The entity was added to the instance in the scene rather than created
     // from the prefab, so it has no prefab values to compare with.
     bool added{false};
@@ -55,11 +61,14 @@ struct PrefabEntityOverrides {
     bool overridden(std::string_view component, std::string_view field) const;
 };
 
-// Structural changes are overrides too: deleting a prefab entity from an
-// instance (through the editor's delete commands, which record it with
-// recordPrefabEntityRemoval) and moving one under another entity of the
-// instance survive refreshes; revert restores them and apply writes them into
-// the prefab.
+// Structural changes are overrides too: deleting a prefab entity or a nested
+// instance from an instance (through the editor's delete commands, which
+// record it with recordPrefabEntityRemoval), moving one under another entity
+// of the instance (including entities added in the scene), and moving one out
+// of the instance (outliner.parent_drop records it with
+// recordPrefabEntityMove: it is removed from the instance and stays in the
+// scene unlinked) survive refreshes; revert restores them and apply writes
+// them into the prefab.
 //
 // Prefab authoring workflows on an open scene. Each call edits the scene
 // directly and records no history: callers (the prefab operators) wrap them in
@@ -100,18 +109,47 @@ class PrefabAuthoring {
     // The file a project-relative prefab reference names.
     PrefabResult resolve(const std::filesystem::path& reference, std::filesystem::path& path) const;
 
+    const PrefabSystem& prefabs() const {
+        return m_prefabs;
+    }
+
   private:
     PrefabSystem m_prefabs;
 };
 
-// Keeps one entity's overrides between frames, so a panel does not reload and
-// compare the prefab every frame. A result is reused while the entity, the
-// document revision (CommandHistory::revision), and the prefab file's write
-// time stay the same.
+// Display names of prefab files for lists such as Add > Prefab; each file is
+// read once per write time.
+class PrefabDisplayNames {
+  public:
+    // The prefab's display name, or its file name without the extension when
+    // it has none or cannot be read.
+    const std::string& get(const std::filesystem::path& file);
+
+  private:
+    struct Entry {
+        std::filesystem::file_time_type writeTime{};
+        std::string name;
+    };
+
+    std::unordered_map<std::string, Entry> m_entries;
+};
+
+// Keeps an instance's overrides between frames, so a panel does not reload
+// and compare the prefab every frame. The prefab is loaded and prepared once
+// per file write time; the whole instance is compared once per instance,
+// prefab file, and scene (Scene::contentGeneration). After an edit (a new
+// document revision, CommandHistory::revision) only the shown entity is
+// compared again, which is exact for its own highlights, so a drag stays
+// cheap; the instance-wide counts (other entities edited in the same step,
+// removals) are refreshed by a full comparison once revisions have stopped
+// changing for settleDelay. Showing another entity of the same instance reuses
+// the instance's overrides.
 class PrefabOverrideCache {
   public:
-    // The entity's overrides; on failure they are empty (not linked) and
-    // error() says why.
+    explicit PrefabOverrideCache(std::chrono::milliseconds settleDelay = std::chrono::milliseconds(250));
+
+    // The entity's overrides; on failure they hold only the link (when the
+    // entity is in an instance) and error() says why.
     const PrefabEntityOverrides& get(const PrefabAuthoring& authoring, const Scene& scene, SceneEntityId entity,
                                      uint64_t revision);
 
@@ -119,21 +157,48 @@ class PrefabOverrideCache {
         return m_error;
     }
 
+    // Whether the instance's overrides were last updated for one entity only,
+    // so instance-wide counts may lag until the edits settle.
+    bool partial() const {
+        return m_partial;
+    }
+
     void clear();
 
   private:
-    struct Key {
-        SceneEntityId entity;
+    struct SourceKey {
+        std::string prefab;
+        std::filesystem::file_time_type writeTime{};
+
+        bool operator==(const SourceKey&) const = default;
+    };
+
+    struct InstanceKey {
+        SceneEntityId root;
         uint64_t revision{0};
         // Scene::contentGeneration, so a replaced scene (Play mode) is reread.
         uint64_t sceneGeneration{0};
         std::string prefab;
         std::filesystem::file_time_type prefabWriteTime{};
 
-        bool operator==(const Key&) const = default;
+        bool operator==(const InstanceKey&) const = default;
     };
 
-    std::optional<Key> m_key;
+    // Brings the prepared prefab and the instance's overrides up to key;
+    // returns whether they (or the error) changed.
+    bool update(const PrefabAuthoring& authoring, const Scene& scene, Entity root, Entity entity, bool added,
+                const InstanceKey& key);
+
+    std::chrono::milliseconds m_settleDelay;
+    std::optional<SourceKey> m_sourceKey;
+    PrefabComparisonSource m_source;
+    std::string m_sourceError;
+    std::optional<InstanceKey> m_instanceKey;
+    std::vector<PrefabOverride> m_instanceOverrides;
+    bool m_partial{false};
+    std::chrono::steady_clock::time_point m_lastPartialUpdate{};
+    // The entity and instance state m_overrides describes.
+    std::optional<std::pair<SceneEntityId, InstanceKey>> m_result;
     PrefabEntityOverrides m_overrides;
     std::string m_error;
 };

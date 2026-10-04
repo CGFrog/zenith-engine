@@ -347,6 +347,7 @@ struct OperatorFixture {
     explicit OperatorFixture(std::filesystem::path assetRoot)
         : root(std::move(assetRoot))
         , document(root) {
+        // The object operators include the outliner's (outliner.parent_drop).
         expect(registerObjectOperators(registry).success && registerPrefabOperators(registry).success,
                "the object and prefab operators should register");
         document.setComponentTypes(moduleComponentTypes());
@@ -868,6 +869,371 @@ void testStructuralOverrides() {
     expect(prefabs.overrides(scene, fixture.find(firstId), after).success && after.empty(),
            "the applied instance should have no structural overrides left");
 }
+
+bool hasNestedRemoval(const std::vector<PrefabOverride>& overrides) {
+    return std::ranges::any_of(
+        overrides, [](const PrefabOverride& value) { return value.nested != 0 && value.field == "/removed"; });
+}
+
+const std::vector<PrefabOverride>& persistedOverrides(const Scene& scene, Entity root) {
+    return scene.registry().get<PrefabInstanceComponent>(root).overrides;
+}
+
+// Refreshes an instance with its live overrides, as revertField and apply
+// propagation do.
+bool refreshWithLiveOverrides(PrefabSystem& prefabs, Scene& scene, Entity root) {
+    std::vector<PrefabOverride> live;
+    return prefabs.overrides(scene, root, live).success &&
+           prefabs.refresh(scene, root, live, PrefabRefreshMode::KeepAddedObjects).success;
+}
+
+void testNestedInstanceRemoval() {
+    OperatorFixture fixture(freshDirectory("nested-removal"));
+    Scene& scene = fixture.scene;
+    PrefabAuthoring authoring(fixture.assets, fixture.document.options());
+    PrefabSystem prefabs(fixture.assets, fixture.document.options());
+    const Entity wheel = scene.createEntity("Wheel");
+    scene.registry().emplace<PointLightComponent>(wheel);
+    expect(authoring.create(scene, wheel, "wheel.prefab").success, "the wheel prefab should be created");
+    const Entity cart = scene.createEntity("Cart");
+    scene.setParent(wheel, cart);
+    expect(authoring.create(scene, cart, "cart.prefab").success, "the cart prefab should be created");
+    const SceneEntityId firstId = scene.id(cart);
+    Entity second = entt::null;
+    Entity third = entt::null;
+    expect(authoring.instantiate(scene, "cart.prefab", entt::null, second).success &&
+               authoring.instantiate(scene, "cart.prefab", entt::null, third).success,
+           "more carts should instantiate");
+    const SceneEntityId secondId = scene.id(second);
+    const SceneEntityId thirdId = scene.id(third);
+
+    // Moving the third cart's wheel out of it removes it from the cart and
+    // keeps it as an instance of its own prefab.
+    const SceneEntityId movedWheelId = scene.id(namedChild(scene, thirdId, "Wheel"));
+    fixture.select(fixture.find(movedWheelId));
+    expect(fixture.invoke("outliner.parent_drop", R"({"parent":null})").status == OperatorStatus::Finished,
+           "the third cart's wheel should move to the scene root");
+    const Entity movedWheel = fixture.find(movedWheelId);
+    expect(scene.registry().get<RelationshipComponent>(movedWheel).parent == entt::null &&
+               scene.registry().get<PrefabInstanceComponent>(movedWheel).nestedId == 0 &&
+               hasNestedRemoval(persistedOverrides(scene, fixture.find(thirdId))),
+           "a nested instance moved out should become a placed instance and be recorded as removed");
+    expect(refreshWithLiveOverrides(prefabs, scene, fixture.find(thirdId)) &&
+               namedChild(scene, thirdId, "Wheel") == entt::null && fixture.find(movedWheelId) != entt::null,
+           "a refresh should not recreate a nested instance moved out");
+
+    // Delete the first cart's nested wheel.
+    fixture.select(namedChild(scene, firstId, "Wheel"));
+    expect(fixture.invoke("object.delete").status == OperatorStatus::Finished, "the nested wheel should delete");
+    expect(hasNestedRemoval(persistedOverrides(scene, fixture.find(firstId))),
+           "deleting a nested instance should be recorded on the containing instance");
+    std::vector<PrefabOverride> live;
+    expect(prefabs.overrides(scene, fixture.find(firstId), live).success && live.size() == 1 && hasNestedRemoval(live),
+           "the removed nested record should be a live override");
+    PrefabEntityOverrides header;
+    expect(authoring.overrides(scene, fixture.find(firstId), header).success && header.removedEntities == 1,
+           "the instance header should count the deleted nested instance");
+    expect(refreshWithLiveOverrides(prefabs, scene, fixture.find(firstId)) &&
+               prefabs.refresh(scene, fixture.find(firstId), PrefabRefreshMode::KeepAddedObjects).success &&
+               namedChild(scene, firstId, "Wheel") == entt::null,
+           "a refresh should not recreate the deleted nested instance");
+
+    // Survives a save and load of the scene.
+    std::string saved;
+    Scene reloaded;
+    expect(SceneDocument::serialize(scene, fixture.assets, fixture.document.options(), saved).success &&
+               SceneDocument::deserialize(saved, fixture.assets, fixture.document.options(), reloaded).success &&
+               prefabs.refresh(reloaded, reloaded.findEntity(firstId), PrefabRefreshMode::KeepAddedObjects).success &&
+               namedChild(reloaded, firstId, "Wheel") == entt::null,
+           "a reloaded instance should keep the nested instance deleted");
+
+    // Another instance's apply keeps it deleted.
+    fixture.edit(
+        [&] { scene.registry().get<PointLightComponent>(namedChild(scene, secondId, "Wheel")).intensity = 6.0f; });
+    expect(authoring.apply(scene, fixture.find(secondId)).success, "the second cart should apply");
+    expect(namedChild(scene, firstId, "Wheel") == entt::null && namedChild(scene, thirdId, "Wheel") == entt::null,
+           "apply propagation should keep the other instances' nested deletions");
+
+    // Revert restores it; undo deletes it again.
+    fixture.select(fixture.find(firstId));
+    expect(fixture.invoke("prefab.revert").status == OperatorStatus::Finished, "the first cart should revert");
+    const Entity restored = namedChild(scene, firstId, "Wheel");
+    expect(restored != entt::null && scene.registry().get<PointLightComponent>(restored).intensity == 6.0f,
+           "revert should recreate the nested instance from the current record");
+    fixture.editing().undo();
+    expect(namedChild(scene, firstId, "Wheel") == entt::null, "undoing revert should delete it again");
+
+    // Apply removes the record from the prefab and from the other instance.
+    fixture.select(fixture.find(firstId));
+    expect(fixture.invoke("prefab.apply").status == OperatorStatus::Finished, "the first cart should apply");
+    PrefabDocument document;
+    expect(loadPrefab(fixture.root / "cart.prefab", document).success && document.nested.empty(),
+           "apply should remove the deleted nested record from the prefab");
+    expect(namedChild(scene, secondId, "Wheel") == entt::null && fixture.find(movedWheelId) != entt::null,
+           "apply should remove the nested instance from the other instance and keep the one moved out");
+    std::vector<PrefabOverride> after;
+    expect(prefabs.overrides(scene, fixture.find(firstId), after).success && after.empty(),
+           "the applied instance should have no overrides left");
+}
+
+void testMovesOutOfAndWithinInstances() {
+    OperatorFixture fixture(freshDirectory("moves"));
+    Scene& scene = fixture.scene;
+    PrefabAuthoring authoring(fixture.assets, fixture.document.options());
+    PrefabSystem prefabs(fixture.assets, fixture.document.options());
+    const Entity cart = scene.createEntity("Cart");
+    const Entity seat = scene.createEntity("Seat");
+    const Entity lamp = scene.createEntity("Lamp");
+    const Entity bulb = scene.createEntity("Bulb");
+    scene.registry().emplace<PointLightComponent>(lamp, glm::vec3(1.0f), 3.0f, 4.0f);
+    scene.setParent(seat, cart);
+    scene.setParent(lamp, cart);
+    scene.setParent(bulb, lamp);
+    expect(authoring.create(scene, cart, "cart.prefab").success, "the cart prefab should be created");
+    const SceneEntityId firstId = scene.id(cart);
+    Entity second = entt::null;
+    expect(authoring.instantiate(scene, "cart.prefab", entt::null, second).success, "a second cart should instantiate");
+    const SceneEntityId secondId = scene.id(second);
+    const SceneEntityId seatId = scene.id(seat);
+    const SceneEntityId lampId = scene.id(lamp);
+    const SceneEntityId bulbId = scene.id(bulb);
+
+    // Move the seat under an object added to the first cart.
+    SceneEntityId rackId;
+    fixture.edit([&] {
+        const Entity rack = scene.createEntity("Rack");
+        scene.setParent(rack, fixture.find(firstId));
+        rackId = scene.id(rack);
+    });
+    fixture.select(fixture.find(seatId));
+    expect(fixture.invoke("outliner.parent_drop", R"({"parent":)" + std::to_string(rackId.value) + "}").status ==
+               OperatorStatus::Finished,
+           "the seat should move under the added rack");
+    std::vector<PrefabOverride> live;
+    expect(prefabs.overrides(scene, fixture.find(firstId), live).success && live.size() == 1 &&
+               live.front().field == "/parent" &&
+               nlohmann::json::parse(live.front().jsonValue).get<uint64_t>() == (rackId.value | (uint64_t{1} << 63u)),
+           "moving under an added object should be a /parent override naming it by tagged scene id");
+    PrefabEntityOverrides seatOverrides;
+    expect(authoring.overrides(scene, fixture.find(seatId), seatOverrides).success && seatOverrides.parent,
+           "the override query should report the move");
+    const auto seatParent = [&] { return scene.registry().get<RelationshipComponent>(fixture.find(seatId)).parent; };
+
+    // A refresh keeps it, also after a save and load.
+    fixture.edit([&] { scene.registry().get<NameComponent>(fixture.find(lampId)).name = "Torch"; });
+    expect(authoring.revertField(scene, fixture.find(lampId), "", "/name").success &&
+               seatParent() == fixture.find(rackId),
+           "a refresh should keep the seat under the added rack");
+    std::string saved;
+    Scene reloaded;
+    expect(SceneDocument::serialize(scene, fixture.assets, fixture.document.options(), saved).success &&
+               SceneDocument::deserialize(saved, fixture.assets, fixture.document.options(), reloaded).success &&
+               refreshWithLiveOverrides(prefabs, reloaded, reloaded.findEntity(firstId)) &&
+               reloaded.registry().get<RelationshipComponent>(reloaded.findEntity(seatId)).parent ==
+                   reloaded.findEntity(rackId),
+           "a reloaded instance should keep the seat under the rack through a refresh");
+
+    // Moving the lamp to the scene root takes it (and its bulb) out of the
+    // instance as plain objects that keep their components.
+    fixture.select(fixture.find(lampId));
+    expect(fixture.invoke("outliner.parent_drop", R"({"parent":null})").status == OperatorStatus::Finished,
+           "the lamp should move to the scene root");
+    const auto unlinkedLamp = [&] {
+        const Entity moved = fixture.find(lampId);
+        return moved != entt::null && scene.registry().get<RelationshipComponent>(moved).parent == entt::null &&
+               !scene.registry().all_of<PrefabEntityComponent>(moved) &&
+               !scene.registry().all_of<PrefabEntityComponent>(fixture.find(bulbId)) &&
+               scene.registry().get<PointLightComponent>(moved).intensity == 3.0f;
+    };
+    expect(unlinkedLamp(), "the moved lamp should be an unlinked scene object with its components");
+    expect(prefabs.overrides(scene, fixture.find(firstId), live).success &&
+               std::ranges::any_of(live, [](const PrefabOverride& value) { return value.field == "/removed"; }),
+           "moving out should be recorded as a removal");
+    expect(refreshWithLiveOverrides(prefabs, scene, fixture.find(firstId)) &&
+               namedChild(scene, firstId, "Lamp") == entt::null && unlinkedLamp() &&
+               seatParent() == fixture.find(rackId),
+           "a refresh should neither recreate the lamp in the instance nor touch the moved one");
+    fixture.editing().undo();
+    expect(scene.registry().get<RelationshipComponent>(fixture.find(lampId)).parent == fixture.find(firstId) &&
+               scene.registry().all_of<PrefabEntityComponent>(fixture.find(lampId)),
+           "undoing the move should put the lamp back, linked");
+    fixture.editing().redo();
+    expect(unlinkedLamp(), "redoing the move should unlink it again");
+
+    // Revert restores both; undo brings the overrides back.
+    fixture.select(fixture.find(firstId));
+    expect(fixture.invoke("prefab.revert").status == OperatorStatus::Finished, "the first cart should revert");
+    expect(seatParent() == fixture.find(firstId) && fixture.find(rackId) == entt::null &&
+               namedChild(scene, firstId, "Lamp") != entt::null && unlinkedLamp(),
+           "revert should restore the seat's parent and a lamp, and keep the moved lamp");
+    fixture.editing().undo();
+    expect(seatParent() == fixture.find(rackId) && namedChild(scene, firstId, "Lamp") == entt::null,
+           "undoing revert should restore the moves");
+
+    // Apply writes both into the prefab and the other instance.
+    fixture.select(fixture.find(firstId));
+    expect(fixture.invoke("prefab.apply").status == OperatorStatus::Finished, "the first cart should apply");
+    PrefabDocument document;
+    expect(
+        loadPrefab(fixture.root / "cart.prefab", document).success &&
+            std::ranges::none_of(document.entities, [](const PrefabEntity& entity) { return entity.name == "Lamp"; }),
+        "apply should remove the moved-out lamp from the prefab");
+    const Entity secondRack = namedChild(scene, secondId, "Rack");
+    expect(secondRack != entt::null && childNamed(scene, secondRack, "Seat") != entt::null &&
+               namedChild(scene, secondId, "Lamp") == entt::null && unlinkedLamp(),
+           "apply should give the other instance the rack with the seat and remove its lamp");
+    expect(prefabs.overrides(scene, fixture.find(firstId), live).success && live.empty(),
+           "the applied instance should have no overrides left");
+
+    // Moving into another instance makes the object an added one there.
+    fixture.select(fixture.find(seatId));
+    expect(fixture.invoke("outliner.parent_drop", R"({"parent":)" + std::to_string(secondId.value) + "}").status ==
+                   OperatorStatus::Finished &&
+               !scene.registry().all_of<PrefabEntityComponent>(fixture.find(seatId)),
+           "a prefab object moved into another instance should be added there, unlinked");
+    PrefabEntityOverrides movedOverrides;
+    expect(authoring.overrides(scene, fixture.find(seatId), movedOverrides).success && movedOverrides.added &&
+               movedOverrides.instanceRoot == secondId,
+           "the moved object should count as added to the other instance");
+}
+
+// R > Q > P, then P under an added A and Q under P: falling back to prefab
+// parents (as the validation rebuild does) must not make a cycle.
+void testMovesUnderAddedWithoutCycles() {
+    OperatorFixture fixture(freshDirectory("move-cycles"));
+    Scene& scene = fixture.scene;
+    PrefabAuthoring authoring(fixture.assets, fixture.document.options());
+    PrefabSystem prefabs(fixture.assets, fixture.document.options());
+    const Entity root = scene.createEntity("R");
+    const Entity q = scene.createEntity("Q");
+    const Entity p = scene.createEntity("P");
+    scene.setParent(q, root);
+    scene.setParent(p, q);
+    expect(authoring.create(scene, root, "chain.prefab").success, "the chain prefab should be created");
+    const Entity added = scene.createEntity("A");
+    scene.setParent(added, root);
+    scene.reparent(p, added);
+    scene.reparent(q, p);
+    const SceneEntityId rootId = scene.id(root);
+    const SceneEntityId pId = scene.id(p);
+    const SceneEntityId qId = scene.id(q);
+    const SceneEntityId addedId = scene.id(added);
+    const auto parentOf = [&](SceneEntityId id) {
+        return scene.registry().get<RelationshipComponent>(scene.findEntity(id)).parent;
+    };
+    expect(refreshWithLiveOverrides(prefabs, scene, scene.findEntity(rootId)) &&
+               parentOf(pId) == scene.findEntity(addedId) && parentOf(qId) == scene.findEntity(pId),
+           "a refresh should keep both moves without making a cycle");
+    std::vector<PrefabOverride> live;
+    expect(prefabs.overrides(scene, scene.findEntity(rootId), live).success &&
+               prefabs.refresh(scene, scene.findEntity(rootId), live, PrefabRefreshMode::RemoveAddedObjects).success &&
+               scene.findEntity(addedId) == entt::null &&
+               prefabInstanceRoot(scene, scene.findEntity(pId)) == scene.findEntity(rootId) &&
+               prefabInstanceRoot(scene, scene.findEntity(qId)) == scene.findEntity(rootId),
+           "removing the added parent should put the moved entities back without a cycle");
+}
+
+FollowComponent& followOf(Scene& scene, Entity entity) {
+    return scene.registry().get<FollowComponent>(entity);
+}
+
+void testNestedReferences() {
+    OperatorFixture fixture(freshDirectory("nested-references"));
+    Scene& scene = fixture.scene;
+    PrefabAuthoring authoring(fixture.assets, fixture.document.options());
+    // Scene ids well above the prefab-local ids, so the two cannot match.
+    for (int index = 0; index < 20; ++index) {
+        scene.createEntity("Padding");
+    }
+    const Entity wheel = scene.createEntity("Wheel");
+    const Entity hub = scene.createEntity("Hub");
+    scene.setParent(hub, wheel);
+    expect(authoring.create(scene, wheel, "wheel.prefab").success, "the wheel prefab should be created");
+    const Entity cart = scene.createEntity("Cart");
+    const Entity axle = scene.createEntity("Axle");
+    const Entity outside = scene.createEntity("Outside");
+    scene.setParent(axle, cart);
+    scene.setParent(wheel, cart);
+    // The axle follows the wheel's hub (a reference into a nested instance);
+    // the hub follows the axle (a nested instance referencing its container)
+    // and, in its settings, an entity outside the cart.
+    scene.registry().emplace<FollowComponent>(axle, FollowComponent{.target = scene.id(hub)});
+    scene.registry().emplace<FollowComponent>(
+        hub, FollowComponent{.target = scene.id(axle), .settings = {.target = scene.id(outside)}});
+    const PrefabResult created = authoring.create(scene, cart, "cart.prefab");
+    expect(created.success && std::ranges::any_of(created.diagnostics,
+                                                  [](const std::string& diagnostic) {
+                                                      return diagnostic.find("outside the prefab") != std::string::npos;
+                                                  }),
+           "the cart should be created, reporting the reference outside it");
+
+    PrefabDocument document;
+    expect(loadPrefab(fixture.root / "cart.prefab", document).success && document.nested.size() == 1,
+           "the cart prefab should load with its nested wheel");
+    const auto axleEntity = std::ranges::find(document.entities, std::string("Axle"),
+                                              [](const PrefabEntity& entity) { return entity.name; });
+    const auto follow = axleEntity == document.entities.end()
+                            ? document.entities.front().components.end()
+                            : std::ranges::find(axleEntity->components, std::string("test_follow"),
+                                                &std::pair<std::string, std::string>::first);
+    const uint64_t hubReference = prefabNestedReference(document.nested.front().id, PrefabEntityId{2});
+    expect(axleEntity != document.entities.end() && follow != axleEntity->components.end() &&
+               nlohmann::json::parse(follow->second).value("target", uint64_t{0}) == hubReference,
+           "a reference into a nested instance should be stored as a nested reference");
+    const auto hubFollow =
+        std::ranges::find(document.nested.front().overrides, std::string("test_follow"), &PrefabOverride::component);
+    const nlohmann::json hubValue = hubFollow == document.nested.front().overrides.end()
+                                        ? nlohmann::json()
+                                        : nlohmann::json::parse(hubFollow->jsonValue);
+    expect(hubValue.is_object() && axleEntity != document.entities.end() &&
+               hubValue.value("target", uint64_t{0}) == (axleEntity->id.value | (uint64_t{1} << 63u)) &&
+               hubValue["settings"]["target"].is_null(),
+           "a nested record's reference to the container should name its prefab-local id, and others none");
+    const std::string text = readText(fixture.root / "cart.prefab");
+    for (const Entity entity : {axle, outside, cart}) {
+        expect(text.find(std::to_string(scene.id(entity).value | (uint64_t{1} << 63u))) == std::string::npos,
+               "the prefab file should hold no scene ids");
+    }
+
+    // Instances resolve both kinds to their own entities.
+    Scene other;
+    for (int index = 0; index < 50; ++index) {
+        other.createEntity("Padding");
+    }
+    Entity first = entt::null;
+    Entity second = entt::null;
+    expect(authoring.instantiate(other, "cart.prefab", entt::null, first).success &&
+               authoring.instantiate(other, "cart.prefab", entt::null, second).success,
+           "two carts should instantiate");
+    const auto references = [&](Entity root) {
+        const Entity instanceAxle = childNamed(other, root, "Beam") != entt::null ? childNamed(other, root, "Beam")
+                                                                                  : childNamed(other, root, "Axle");
+        const Entity instanceWheel = childNamed(other, root, "Wheel");
+        const Entity instanceHub = instanceWheel == entt::null ? entt::null : childNamed(other, instanceWheel, "Hub");
+        return instanceAxle != entt::null && instanceHub != entt::null &&
+               followOf(other, instanceAxle).target == other.id(instanceHub) &&
+               followOf(other, instanceHub).target == other.id(instanceAxle) &&
+               !followOf(other, instanceHub).settings.target;
+    };
+    expect(references(first) && references(second), "instances should resolve references into and out of nested ones");
+    PrefabSystem prefabs(fixture.assets, fixture.document.options());
+    std::vector<PrefabOverride> overrides;
+    expect(prefabs.overrides(other, first, overrides).success && overrides.empty(),
+           "resolved nested references should not be overrides");
+
+    // Apply keeps them in the other instance.
+    const SceneEntityId secondId = other.id(second);
+    other.registry().get<NameComponent>(childNamed(other, first, "Axle")).name = "Beam";
+    expect(authoring.apply(other, first).success, "the renamed cart should apply");
+    expect(references(first) && references(other.findEntity(secondId)) &&
+               childNamed(other, other.findEntity(secondId), "Beam") != entt::null,
+           "apply and refresh should keep the references inside each instance");
+    const std::string applied = readText(fixture.root / "cart.prefab");
+    for (const Entity entity : prefabInstanceMembers(other, first)) {
+        expect(applied.find(std::to_string(other.id(entity).value | (uint64_t{1} << 63u))) == std::string::npos,
+               "an applied prefab should hold no scene ids");
+    }
+}
 } // namespace
 
 int main() {
@@ -881,8 +1247,13 @@ int main() {
     testCollectionsStayInScene();
     testEntityReferenceRemap();
     testStructuralOverrides();
-    for (const char* name : {"registry", "v1", "persistence", "overrides", "operators", "nested", "propagation",
-                             "collections", "references", "structure"}) {
+    testNestedInstanceRemoval();
+    testMovesOutOfAndWithinInstances();
+    testMovesUnderAddedWithoutCycles();
+    testNestedReferences();
+    for (const char* name :
+         {"registry", "v1", "persistence", "overrides", "operators", "nested", "propagation", "collections",
+          "references", "structure", "nested-removal", "moves", "move-cycles", "nested-references"}) {
         std::error_code error;
         std::filesystem::remove_all(
             std::filesystem::temp_directory_path() / ("zenith-prefab-tests-" + std::string(name)), error);

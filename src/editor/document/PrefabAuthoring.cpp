@@ -1,8 +1,10 @@
 #include "PrefabAuthoring.hpp"
 
 #include <algorithm>
+#include <span>
 #include <string_view>
 #include <system_error>
+#include <tuple>
 #include <utility>
 
 namespace {
@@ -144,6 +146,23 @@ PrefabResult PrefabAuthoring::apply(Scene& scene, Entity entity) {
     }
     linkCapture(scene, root, reference, capture);
 
+    // Nested records the apply deleted leave the other instances too; record
+    // ids are never reused, so the removals cannot hit a later record.
+    std::vector<PrefabOverride> deletedRecords;
+    for (const NestedPrefab& record : previous.nested) {
+        if (std::ranges::none_of(capture.document.nested,
+                                 [&record](const NestedPrefab& kept) { return kept.id == record.id; })) {
+            deletedRecords.push_back({.field = "/removed", .jsonValue = "true", .nested = record.id});
+        }
+    }
+    for (auto& [id, overrides] : others) {
+        for (const PrefabOverride& removal : deletedRecords) {
+            if (std::ranges::find(overrides, removal) == overrides.end()) {
+                overrides.push_back(removal);
+            }
+        }
+    }
+
     for (const auto& [id, overrides] : others) {
         // An earlier refresh may have removed this instance (it was added to
         // another instance of the same prefab).
@@ -204,43 +223,47 @@ PrefabResult PrefabAuthoring::unpack(Scene& scene, Entity entity) {
     return {.success = true};
 }
 
-PrefabResult PrefabAuthoring::overrides(const Scene& scene, Entity entity, PrefabEntityOverrides& output) const {
+namespace {
+// The entity's link, before its overrides are known: linked, the instance,
+// the prefab, and whether the entity was added in the scene. Returns the
+// instance root, or null when entity is in no instance.
+Entity describeLink(const Scene& scene, Entity entity, PrefabEntityOverrides& output) {
     output = {};
-    if (entity == entt::null || !scene.registry().valid(entity)) {
-        return {.error = "No entity was given"};
-    }
     const Entity root = prefabInstanceRoot(scene, entity);
     if (root == entt::null) {
-        return {.success = true};
+        return root;
     }
     output.linked = true;
     output.instanceRoot = scene.id(root);
     output.prefab = scene.registry().get<PrefabInstanceComponent>(root).prefab;
-    const auto* marker = scene.registry().try_get<PrefabEntityComponent>(entity);
-    if (marker == nullptr) {
-        output.added = true;
-        return {.success = true};
+    output.displayName = std::filesystem::path(output.prefab).stem().generic_string();
+    output.added = !scene.registry().all_of<PrefabEntityComponent>(entity);
+    return root;
+}
+
+// Fills output (already described by describeLink) from the instance's
+// overrides against its prefab document.
+void describeOverrides(const Scene& scene, Entity entity, const PrefabDocument& source,
+                       std::span<const PrefabOverride> all, PrefabEntityOverrides& output) {
+    if (!source.displayName.empty()) {
+        output.displayName = source.displayName;
     }
-    PrefabDocument source;
-    if (PrefabResult loaded = m_prefabs.load(output.prefab, source); !loaded) {
-        return loaded;
+    if (output.added) {
+        return;
     }
-    const auto prefabEntity = std::ranges::find(source.entities, marker->entity, &PrefabEntity::id);
+    const PrefabEntityId local = scene.registry().get<PrefabEntityComponent>(entity).entity;
+    const auto prefabEntity = std::ranges::find(source.entities, local, &PrefabEntity::id);
     if (prefabEntity == source.entities.end()) {
         // The prefab no longer has the entity; the next refresh removes it.
         output.added = true;
-        return {.success = true};
-    }
-    std::vector<PrefabOverride> all;
-    if (PrefabResult compared = m_prefabs.overrides(scene, root, source, all); !compared) {
-        return compared;
+        return;
     }
     output.instanceOverrides = all.size();
     for (const PrefabOverride& value : all) {
         if (value.component.empty() && value.field == "/removed") {
             ++output.removedEntities;
         }
-        if (value.entity != marker->entity) {
+        if (value.nested != 0 || value.entity != local) {
             continue;
         }
         if (value.component.empty()) {
@@ -263,6 +286,36 @@ PrefabResult PrefabAuthoring::overrides(const Scene& scene, Entity entity, Prefa
         }
     }
     // Overrides arrive sorted by component, then field.
+}
+
+// The order PrefabSystem::overrides reports overrides in.
+void sortOverrides(std::vector<PrefabOverride>& overrides) {
+    std::ranges::sort(overrides, {}, [](const PrefabOverride& value) {
+        return std::tie(value.nested, value.entity.value, value.component, value.field);
+    });
+}
+} // namespace
+
+PrefabResult PrefabAuthoring::overrides(const Scene& scene, Entity entity, PrefabEntityOverrides& output) const {
+    output = {};
+    if (entity == entt::null || !scene.registry().valid(entity)) {
+        return {.error = "No entity was given"};
+    }
+    const Entity root = describeLink(scene, entity, output);
+    if (root == entt::null) {
+        return {.success = true};
+    }
+    PrefabDocument source;
+    if (PrefabResult loaded = m_prefabs.load(output.prefab, source); !loaded) {
+        return loaded;
+    }
+    std::vector<PrefabOverride> all;
+    if (!output.added) {
+        if (PrefabResult compared = m_prefabs.overrides(scene, root, source, all); !compared) {
+            return compared;
+        }
+    }
+    describeOverrides(scene, entity, source, all, output);
     return {.success = true};
 }
 
@@ -299,43 +352,130 @@ PrefabResult PrefabAuthoring::resolve(const std::filesystem::path& reference, st
     return m_prefabs.resolve(reference, path);
 }
 
+const std::string& PrefabDisplayNames::get(const std::filesystem::path& file) {
+    std::error_code error;
+    const std::filesystem::file_time_type writeTime = std::filesystem::last_write_time(file, error);
+    const std::string key = file.lexically_normal().generic_string();
+    auto found = m_entries.find(key);
+    if (found != m_entries.end() && found->second.writeTime == writeTime) {
+        return found->second.name;
+    }
+    Entry entry{.writeTime = writeTime, .name = file.stem().generic_string()};
+    PrefabDocument document;
+    if (loadPrefab(file, document) && !document.displayName.empty()) {
+        entry.name = document.displayName;
+    }
+    return m_entries.insert_or_assign(key, std::move(entry)).first->second.name;
+}
+
+PrefabOverrideCache::PrefabOverrideCache(std::chrono::milliseconds settleDelay)
+    : m_settleDelay(settleDelay) {}
+
 const PrefabEntityOverrides& PrefabOverrideCache::get(const PrefabAuthoring& authoring, const Scene& scene,
                                                       SceneEntityId entityId, uint64_t revision) {
     const Entity entity = scene.findEntity(entityId);
-    Key key{.entity = entityId, .revision = revision, .sceneGeneration = scene.contentGeneration()};
-    if (const Entity root = entity == entt::null ? entt::null : prefabInstanceRoot(scene, entity); root != entt::null) {
-        key.prefab = scene.registry().get<PrefabInstanceComponent>(root).prefab;
-        std::filesystem::path path;
-        std::error_code error;
-        if (authoring.resolve(key.prefab, path)) {
-            key.prefabWriteTime = std::filesystem::last_write_time(path, error);
-        }
-    }
-    if (m_key == key) {
+    PrefabEntityOverrides link;
+    const Entity root = entity == entt::null ? entt::null : describeLink(scene, entity, link);
+    if (root == entt::null) {
+        m_result.reset();
+        m_error.clear();
+        m_overrides = std::move(link);
         return m_overrides;
     }
-    m_key = key;
-    m_error.clear();
-    if (entity == entt::null) {
-        m_overrides = {};
+    InstanceKey key{.root = link.instanceRoot,
+                    .revision = revision,
+                    .sceneGeneration = scene.contentGeneration(),
+                    .prefab = link.prefab};
+    std::filesystem::path path;
+    std::error_code ignored;
+    if (authoring.resolve(key.prefab, path)) {
+        key.prefabWriteTime = std::filesystem::last_write_time(path, ignored);
+    }
+    const bool changed = update(authoring, scene, root, entity, link.added, key);
+    if (!changed && m_result && m_result->first == entityId && m_result->second == key) {
         return m_overrides;
     }
-    if (PrefabResult result = authoring.overrides(scene, entity, m_overrides); !result) {
-        m_error = std::move(result.error);
+    m_result.emplace(entityId, key);
+    if (!m_error.empty()) {
         // Keep the link, so the instance header still offers its actions.
-        const bool linked = m_overrides.linked;
-        m_overrides = {};
-        m_overrides.linked = linked || !key.prefab.empty();
-        m_overrides.prefab = key.prefab;
-        if (m_overrides.linked) {
-            m_overrides.instanceRoot = scene.id(prefabInstanceRoot(scene, entity));
-        }
+        m_overrides = std::move(link);
+        return m_overrides;
     }
+    describeOverrides(scene, entity, m_source.document, m_instanceOverrides, link);
+    m_overrides = std::move(link);
     return m_overrides;
 }
 
+bool PrefabOverrideCache::update(const PrefabAuthoring& authoring, const Scene& scene, Entity root, Entity entity,
+                                 bool added, const InstanceKey& key) {
+    const PrefabSystem& prefabs = authoring.prefabs();
+    // The prepared prefab is reused until its file changes.
+    if (const SourceKey sourceKey{.prefab = key.prefab, .writeTime = key.prefabWriteTime}; m_sourceKey != sourceKey) {
+        m_sourceKey = sourceKey;
+        m_instanceKey.reset();
+        m_sourceError.clear();
+        PrefabDocument document;
+        PrefabResult prepared = prefabs.load(key.prefab, document);
+        if (prepared) {
+            prepared = prefabs.prepareComparison(document, m_source);
+        }
+        if (!prepared) {
+            m_sourceError = std::move(prepared.error);
+        }
+    }
+    if (!m_sourceError.empty()) {
+        const bool changed = m_error != m_sourceError;
+        m_error = m_sourceError;
+        return changed;
+    }
+    const bool sameInstance = m_instanceKey && m_error.empty() && m_instanceKey->root == key.root &&
+                              m_instanceKey->sceneGeneration == key.sceneGeneration &&
+                              m_instanceKey->prefab == key.prefab &&
+                              m_instanceKey->prefabWriteTime == key.prefabWriteTime;
+    const auto now = std::chrono::steady_clock::now();
+    if (sameInstance && m_instanceKey->revision != key.revision) {
+        // An edit (every frame of a drag): compare only the entity shown.
+        if (!added) {
+            std::vector<PrefabOverride> entityOverrides;
+            if (PrefabResult compared = prefabs.entityOverrides(scene, root, entity, m_source, entityOverrides);
+                !compared) {
+                m_error = std::move(compared.error);
+                m_instanceKey = key;
+                return true;
+            }
+            const PrefabEntityId local = scene.registry().get<PrefabEntityComponent>(entity).entity;
+            std::erase_if(m_instanceOverrides,
+                          [local](const PrefabOverride& value) { return value.nested == 0 && value.entity == local; });
+            m_instanceOverrides.insert(m_instanceOverrides.end(), entityOverrides.begin(), entityOverrides.end());
+            sortOverrides(m_instanceOverrides);
+        }
+        m_instanceKey = key;
+        m_partial = true;
+        m_lastPartialUpdate = now;
+        return true;
+    }
+    if (sameInstance && (!m_partial || now - m_lastPartialUpdate < m_settleDelay)) {
+        return false;
+    }
+    // A new instance or prefab, or edits have settled: compare everything.
+    m_instanceKey = key;
+    m_partial = false;
+    m_error.clear();
+    if (PrefabResult compared = prefabs.overrides(scene, root, m_source, m_instanceOverrides); !compared) {
+        m_instanceOverrides.clear();
+        m_error = std::move(compared.error);
+    }
+    return true;
+}
+
 void PrefabOverrideCache::clear() {
-    m_key.reset();
+    m_sourceKey.reset();
+    m_source = {};
+    m_sourceError.clear();
+    m_instanceKey.reset();
+    m_instanceOverrides.clear();
+    m_partial = false;
+    m_result.reset();
     m_overrides = {};
     m_error.clear();
 }

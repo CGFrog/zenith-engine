@@ -277,12 +277,25 @@ PrefabResult replaceFile(const std::filesystem::path& temporary, const std::file
 }
 } // namespace
 
+uint64_t prefabNestedReference(uint64_t record, PrefabEntityId local) {
+    constexpr uint64_t nestedReferenceTag = uint64_t{1} << 62u;
+    if (record == 0 || record >= (uint64_t{1} << 30u) || !local || local.value >= (uint64_t{1} << 32u)) {
+        return 0;
+    }
+    return nestedReferenceTag | (record << 32u) | local.value;
+}
+
 Json prefabOverrideToJson(const PrefabOverride& value) {
     Json parsed = Json::parse(value.jsonValue, nullptr, false);
-    return {{"entity", value.entity.value},
-            {"component", value.component},
-            {"field", value.field},
-            {"value", parsed.is_discarded() ? Json(nullptr) : std::move(parsed)}};
+    Json result = {{"component", value.component},
+                   {"field", value.field},
+                   {"value", parsed.is_discarded() ? Json(nullptr) : std::move(parsed)}};
+    if (value.nested != 0) {
+        result["nested"] = value.nested;
+    } else {
+        result["entity"] = value.entity.value;
+    }
+    return result;
 }
 
 PrefabResult prefabOverrideFromJson(const Json& json, PrefabOverride& output) {
@@ -292,7 +305,15 @@ PrefabResult prefabOverrideFromJson(const Json& json, PrefabOverride& output) {
     PrefabOverride parsed{.entity = PrefabEntityId{json.value("entity", uint64_t{0})},
                           .component = json.value("component", std::string{}),
                           .field = json.value("field", std::string{}),
-                          .jsonValue = json.at("value").dump()};
+                          .jsonValue = json.at("value").dump(),
+                          .nested = json.value("nested", uint64_t{0})};
+    if (parsed.nested != 0) {
+        if (parsed.entity || !parsed.component.empty() || parsed.field != "/removed") {
+            return {.error = "Nested record overrides must target /removed and no entity"};
+        }
+        output = std::move(parsed);
+        return {.success = true};
+    }
     if (!parsed.entity) {
         return {.error = "Prefab overrides require an entity ID"};
     }
@@ -360,6 +381,9 @@ PrefabResult serializePrefab(const PrefabDocument& prefab, std::string& output) 
                                       {"parent", nested.parent ? Json(nested.parent->value) : Json(nullptr)},
                                       {"overrides", std::move(overrides)}});
     }
+    if (!prefab.displayName.empty()) {
+        document["metadata"] = {{"display_name", prefab.displayName}};
+    }
     output = document.dump(2);
     return {.success = true};
 }
@@ -406,6 +430,9 @@ PrefabResult deserializePrefab(std::string_view input, PrefabDocument& prefab) {
                 return {.error = "Nested prefab IDs must be unique"};
             }
             loaded.nested.push_back(std::move(nested));
+        }
+        if (const auto metadata = document.find("metadata"); metadata != document.end() && metadata->is_object()) {
+            loaded.displayName = metadata->value("display_name", std::string{});
         }
         prefab = std::move(loaded);
         return result;
