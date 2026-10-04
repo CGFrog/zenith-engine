@@ -356,10 +356,12 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(recastnavigation)
 file(GLOB zenith_recast_sources CONFIGURE_DEPENDS "${recastnavigation_SOURCE_DIR}/Recast/Source/*.cpp"
-     "${recastnavigation_SOURCE_DIR}/Detour/Source/*.cpp")
+     "${recastnavigation_SOURCE_DIR}/Detour/Source/*.cpp"
+     "${recastnavigation_SOURCE_DIR}/DetourCrowd/Source/*.cpp")
 add_library(zenith_recast STATIC ${zenith_recast_sources})
 target_include_directories(zenith_recast SYSTEM PUBLIC "${recastnavigation_SOURCE_DIR}/Recast/Include"
-                                                        "${recastnavigation_SOURCE_DIR}/Detour/Include")
+                                                        "${recastnavigation_SOURCE_DIR}/Detour/Include"
+                                                        "${recastnavigation_SOURCE_DIR}/DetourCrowd/Include")
 set_target_properties(zenith_recast PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(MSVC)
     target_compile_options(zenith_recast PRIVATE /W0)

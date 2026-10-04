@@ -338,6 +338,7 @@ NavigationResult NavigationWorld::bake(const NavigationGeometry& geometry, const
 }
 
 void NavigationWorld::clear() {
+    ++m_generation;
     m_impl->query.reset();
     m_impl->navMesh.reset();
     m_impl->stats = {};
@@ -345,6 +346,14 @@ void NavigationWorld::clear() {
 
 bool NavigationWorld::baked() const {
     return m_impl->query != nullptr;
+}
+
+uint64_t NavigationWorld::generation() const {
+    return m_generation;
+}
+
+const dtNavMesh* NavigationWorld::nativeNavMesh() const {
+    return m_impl->navMesh.get();
 }
 
 const NavMeshStats& NavigationWorld::stats() const {
@@ -355,10 +364,10 @@ const NavMeshBuildSettings& NavigationWorld::settings() const {
     return m_impl->settings;
 }
 
-bool NavigationWorld::findPath(const glm::vec3& start, const glm::vec3& end, std::vector<glm::vec3>& path) const {
+NavPath NavigationWorld::findPath(const glm::vec3& start, const glm::vec3& end, std::vector<glm::vec3>& path) const {
     path.clear();
     if (!baked()) {
-        return false;
+        return NavPath::None;
     }
     dtQueryFilter filter;
     filter.setIncludeFlags(walkableFlag);
@@ -371,26 +380,36 @@ bool NavigationWorld::findPath(const glm::vec3& start, const glm::vec3& end, std
     if (dtStatusFailed(query.findNearestPoly(floats(start), floats(extents), &filter, &startPolygon, &startPoint.x)) ||
         dtStatusFailed(query.findNearestPoly(floats(end), floats(extents), &filter, &endPolygon, &endPoint.x)) ||
         startPolygon == 0 || endPolygon == 0) {
-        return false;
+        return NavPath::None;
     }
     std::array<dtPolyRef, maximumPathPolygons> corridor{};
     int corridorSize = 0;
     const dtStatus status = query.findPath(startPolygon, endPolygon, &startPoint.x, &endPoint.x, &filter,
                                            corridor.data(), &corridorSize, maximumPathPolygons);
-    if (dtStatusFailed(status) || dtStatusDetail(status, DT_PARTIAL_RESULT) || corridorSize == 0 ||
-        corridor[static_cast<size_t>(corridorSize - 1)] != endPolygon) {
-        return false;
+    if (dtStatusFailed(status) || corridorSize == 0) {
+        return NavPath::None;
+    }
+    // A corridor that stops short of the end polygon leads as close to it as
+    // the mesh allows: aim at the point of its last polygon nearest the end.
+    const dtPolyRef last = corridor[static_cast<size_t>(corridorSize - 1)];
+    const bool partial = dtStatusDetail(status, DT_PARTIAL_RESULT) || last != endPolygon;
+    glm::vec3 target = endPoint;
+    if (partial && dtStatusFailed(query.closestPointOnPoly(last, &endPoint.x, &target.x, nullptr))) {
+        return NavPath::None;
     }
     std::array<float, maximumPathPolygons * 3> corners{};
     int cornerCount = 0;
-    if (dtStatusFailed(query.findStraightPath(&startPoint.x, &endPoint.x, corridor.data(), corridorSize, corners.data(),
+    if (dtStatusFailed(query.findStraightPath(&startPoint.x, &target.x, corridor.data(), corridorSize, corners.data(),
                                               nullptr, nullptr, &cornerCount, maximumPathPolygons))) {
-        return false;
+        return NavPath::None;
     }
     for (int index = 0; index < cornerCount; ++index) {
         path.emplace_back(corners[index * 3], corners[index * 3 + 1], corners[index * 3 + 2]);
     }
-    return !path.empty();
+    if (path.empty()) {
+        return NavPath::None;
+    }
+    return partial ? NavPath::Partial : NavPath::Complete;
 }
 
 std::optional<glm::vec3> NavigationWorld::nearestPoint(const glm::vec3& point, const glm::vec3& extents) const {

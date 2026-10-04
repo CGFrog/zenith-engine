@@ -6,9 +6,9 @@ roadmap (reflection, module hot reload, operators, workspaces, prefabs, play
 targets). Each item is sized so that one session, or one `/batch` unit, can
 finish it.
 
-Approved 2026-10-04. Phases A to D are done. Phase E, the foundations for a
-first-person roguelike built as a separate project, was approved the same day
-and is open.
+Approved 2026-10-04. Every phase (A to E) is done. Phase E laid the
+foundations for a first-person roguelike, built as a separate project from
+the FPS template.
 
 ## How to use this document
 
@@ -206,8 +206,8 @@ and is open.
 | E1 | Seeded gameplay random streams | — | done ba6064d |
 | E2 | Run and profile save data | E1 | done b1bb3b5 |
 | E3 | Definition tables | — | done 4174590 |
-| E4 | Building and replacing a floor at runtime | — | done |
-| E5 | Partial paths and crowd avoidance | E4 | open |
+| E4 | Building and replacing a floor at runtime | — | done cc7de80 |
+| E5 | Partial paths and crowd avoidance | E4 | done |
 | E6 | Audio for gameplay | — | done 4bb4465 |
 | E7 | Pause, teardown and one game clock | — | done b26c8ab |
 
@@ -1178,15 +1178,60 @@ Follow-ups:
 
 ### E5. Partial paths and crowd avoidance
 
-- [ ] `findPath` returns the path to the closest reachable point when the
+- [x] `findPath` returns the path to the closest reachable point when the
       goal is unreachable, and says so. It fails on `DT_PARTIAL_RESULT`
       today.
-- [ ] Build DetourCrowd into `zenith_recast` and let `NavAgentComponent`
+- [x] Build DetourCrowd into `zenith_recast` and let `NavAgentComponent`
       agents avoid each other: radius, separation and a maximum agent count
       in the navigation settings.
-- [ ] Rebuild the crowd when E4 rebakes the mesh.
+- [x] Rebuild the crowd when E4 rebakes the mesh.
 
 Several agent sizes and area costs wait for the first enemy that needs them.
+
+Result:
+- `NavigationWorld::findPath` returns `NavPath::{None, Complete, Partial}`.
+  - A partial corridor's straight path aims at the point of its last polygon
+    nearest the end.
+  - Changing the type from `bool` makes every caller fail to compile until
+    it decides how to treat a partial path.
+- `NavigationWorld::generation()` changes on every bake and clear.
+- DetourCrowd is built into `zenith_recast`. `NavigationCrowd` wraps
+  `dtCrowd`:
+  - agents are indices that record their owner;
+  - `requestMove`, `stop`, `placeAgent` and `state` drive them, and
+    `mark`/`sweepUnmarked` remove agents nobody claims;
+  - `NavCrowdSettings` sets the maximum agents, the largest radius and the
+    separation weight.
+- Agents are driven through the crowd.
+  - `updateNavAgents(scene, world, crowd, seconds, settings)` resets the
+    crowd when the world's generation changed.
+  - Idle agents stay in the crowd as obstacles, and agents of destroyed
+    entities leave it.
+  - A copied component takes its own slot.
+  - Characters get the crowd's velocity; other agents get its position.
+- `NavAgentComponent` gains a serialized `radius` (optional, so existing
+  scenes load) and a runtime `partialPath`.
+  - An unreachable destination now makes the agent walk as near as it can
+    and arrive with `partialPath` set. It used to give up.
+  - `pathFailed` now means the destination is off the mesh or the crowd is
+    full.
+- `GameServices::navigationCrowd()` and `setCrowdSettings`. The engine's
+  `zenith.nav_agents` uses both.
+- Coverage in `NavigationTests`:
+  - partial paths;
+  - an agent arriving partially, and one sent off the mesh;
+  - `testAvoidance`: two agents head-on keep more than 0.6 m apart and both
+    arrive;
+  - `testCrowdMembership`: rejoining after a rebake, a destroyed agent
+    leaving, a copied agent's own slot, and a full crowd.
+
+Follow-ups:
+- Crowd agents accelerate almost at once (100 m/s²), leaving smoothing to
+  character controllers. A transform-driven agent that should ease in needs
+  a per-agent acceleration.
+- The test of a full crowd shows the first admitted agent follows the ECS
+  view's order, not creation order. A game that caps its crowd may want a
+  priority.
 
 ### E6. Audio for gameplay
 

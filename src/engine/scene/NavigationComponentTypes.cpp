@@ -19,11 +19,16 @@ ComponentType navAgentComponentType() {
                     .add("stopping_distance", &C::stoppingDistance)
                     .drag(0.01f, 0.0, 10.0)
                     .format("%.2f m")
-                    .tooltip("How close to its destination the agent stops"))
+                    .tooltip("How close to its destination the agent stops")
+                    .add("radius", &C::radius)
+                    .optional()
+                    .drag(0.01f, 0.0, 5.0)
+                    .format("%.2f m")
+                    .tooltip("How much room the agent keeps from other agents"))
         .validate([](const C& agent) -> std::string {
-            return agent.speed >= 0.0f && agent.stoppingDistance >= 0.0f
+            return agent.speed >= 0.0f && agent.stoppingDistance >= 0.0f && agent.radius >= 0.0f
                        ? std::string{}
-                       : "navigation agent speed and stopping distance must not be negative";
+                       : "navigation agent speed, stopping distance, and radius must not be negative";
         })
         .build();
 }

@@ -94,6 +94,18 @@ NavigationResult GameServices::bakeNavigation(const Scene& scene, const NavMeshB
     return m_navigation.bake(scene, m_assets, settings);
 }
 
+NavigationCrowd& GameServices::navigationCrowd() {
+    return m_crowd;
+}
+
+const NavCrowdSettings& GameServices::crowdSettings() const {
+    return m_crowdSettings;
+}
+
+void GameServices::setCrowdSettings(const NavCrowdSettings& settings) {
+    m_crowdSettings = settings;
+}
+
 RandomStream& GameServices::random(std::string_view name) {
     return m_random.stream(name);
 }

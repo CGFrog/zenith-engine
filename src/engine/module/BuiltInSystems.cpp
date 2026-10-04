@@ -50,7 +50,9 @@ SystemDescriptor navAgentSystem() {
                 if (context.services == nullptr || context.scene.registry().view<NavAgentComponent>().empty()) {
                     return;
                 }
-                updateNavAgents(context.scene, context.services->navigation(context.scene), context.deltaSeconds);
+                GameServices& services = *context.services;
+                updateNavAgents(context.scene, services.navigation(context.scene), services.navigationCrowd(),
+                                context.deltaSeconds, services.crowdSettings());
             }};
 }
 

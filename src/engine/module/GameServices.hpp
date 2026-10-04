@@ -9,6 +9,7 @@
 #include "engine/audio/AudioSystem.hpp"
 #include "engine/diagnostics/Logger.hpp"
 #include "engine/gameplay/Random.hpp"
+#include "engine/navigation/NavigationCrowd.hpp"
 #include "engine/navigation/NavigationWorld.hpp"
 #include "engine/physics/PhysicsWorld.hpp"
 #include "engine/scene/Prefab.hpp"
@@ -84,6 +85,12 @@ class GameServices {
     // runtime, after its spawn commands applied (the next phase, or a timer).
     // A failed bake leaves no mesh and is returned, not logged.
     NavigationResult bakeNavigation(const Scene& scene, const NavMeshBuildSettings& settings = {});
+    // The session's crowd of navigation agents (zenith.nav_agents), started
+    // over with crowdSettings() whenever the mesh is baked again.
+    NavigationCrowd& navigationCrowd();
+    const NavCrowdSettings& crowdSettings() const;
+    // Applies from the next time the crowd starts over (the next bake).
+    void setCrowdSettings(const NavCrowdSettings& settings);
     // The game's own pause and time scale, for menus, inventory screens, and
     // slow motion. The host combines them with its own clock (the editor's
     // pause and time scale; simulationClock). While the game is paused,
@@ -158,6 +165,8 @@ class GameServices {
     std::filesystem::path m_savedScene;
     NavigationWorld m_navigation;
     bool m_navigationBaked{false};
+    NavigationCrowd m_crowd;
+    NavCrowdSettings m_crowdSettings;
     bool m_paused{false};
     float m_timeScale{1.0f};
     RandomStreams m_random;

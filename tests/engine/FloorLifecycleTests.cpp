@@ -51,7 +51,8 @@ void testFloorCycles() {
             const std::optional<glm::vec3> onMesh = navigation.nearestPoint(farthestRoom);
             std::vector<glm::vec3> path;
             expect(onMesh && glm::distance(*onMesh, farthestRoom) < 0.5f &&
-                       navigation.findPath(farthestRoom, farthestRoom + glm::vec3(1.0f, 0.0f, 4.0f), path),
+                       navigation.findPath(farthestRoom, farthestRoom + glm::vec3(1.0f, 0.0f, 4.0f), path) ==
+                           NavPath::Complete,
                    name + "the baked mesh covers the farthest room");
 
             session.destroyFloor();

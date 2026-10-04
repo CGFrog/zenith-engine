@@ -139,6 +139,7 @@ add_library(zenith_engine SHARED
     module/SystemScheduler.cpp
     module/Timers.cpp
     navigation/NavAgent.cpp
+    navigation/NavigationCrowd.cpp
     navigation/NavigationWorld.cpp
     physics/PhysicsLayers.cpp
     physics/PhysicsWorld.cpp
