@@ -35,6 +35,9 @@ player input does not drive it. On arrival the destination clears and
 `arrived` is set; an unreachable destination sets `pathFailed`.
 
 The engine's `zenith.nav_agents` system (Update, Play) runs it on the
-session's mesh, `GameServices::navigation(scene)`, which bakes on first use.
+session's mesh, `GameServices::navigation(scene)`, which bakes on first use;
+`GameServices::bakeNavigation(scene)` rebakes it after a game builds or
+replaces its level. A 40-room floor (2,880 input triangles) bakes in about
+26 ms in Release (`tests/engine/FloorBenchmark.cpp`).
 In the editor, `navigation.bake` builds a preview mesh of the edit scene that
 every viewport draws, and `navigation.clear` removes it.

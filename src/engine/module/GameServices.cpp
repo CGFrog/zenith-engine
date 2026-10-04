@@ -88,6 +88,12 @@ AudioLoadResult<AudioClipHandle> GameServices::loadClip(std::string_view assetPa
     return m_audio->loadClip(m_documents.assetRoot / relative, spatial);
 }
 
+NavigationResult GameServices::bakeNavigation(const Scene& scene, const NavMeshBuildSettings& settings) {
+    // A later navigation() call keeps this mesh, or the lack of one.
+    m_navigationBaked = true;
+    return m_navigation.bake(scene, m_assets, settings);
+}
+
 RandomStream& GameServices::random(std::string_view name) {
     return m_random.stream(name);
 }

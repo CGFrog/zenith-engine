@@ -204,9 +204,9 @@ and is open.
 | D6 | Measure prefab compare/refresh cost | — | done d518873 |
 | D7 | Docs hygiene | — | done c5b111b |
 | E1 | Seeded gameplay random streams | — | done ba6064d |
-| E2 | Run and profile save data | E1 | done |
+| E2 | Run and profile save data | E1 | done b1bb3b5 |
 | E3 | Definition tables | — | done 4174590 |
-| E4 | Building and replacing a floor at runtime | — | open |
+| E4 | Building and replacing a floor at runtime | — | done |
 | E5 | Partial paths and crowd avoidance | E4 | open |
 | E6 | Audio for gameplay | — | done 4bb4465 |
 | E7 | Pause, teardown and one game clock | — | done b26c8ab |
@@ -1120,18 +1120,61 @@ Follow-ups:
 
 ### E4. Building and replacing a floor at runtime
 
-- [ ] Measure first. Spawn about 40 room prefabs with static triangle-mesh
+- [x] Measure first. Spawn about 40 room prefabs with static triangle-mesh
       colliders through `EntityCommandBuffer`, then time the spawn, the
       physics bodies' creation and a navmesh bake. Record the numbers here
       and optimize only what shows up.
-- [ ] Let a game rebake navigation on demand after it builds a floor.
+- [x] Let a game rebake navigation on demand after it builds a floor.
       `GameServices::navigation` bakes once, lazily, today.
-- [ ] Replace a floor cleanly: destroying a floor's entities releases their
+- [x] Replace a floor cleanly: destroying a floor's entities releases their
       bodies, navigation and voices, and leaves the player and the game's
       persistent entities alone. Test that repeated build and replace cycles
       leave no bodies or voices behind.
 
 The layout generator, room connectors and spawn tables are the game's.
+
+Result:
+- Measured with `tests/engine/FloorBenchmark.cpp`
+  (`zenith_floor_benchmark_run`).
+  - The floor is 40 room prefabs, each with six static box colliders, a
+    point light and a looping sound: 240 bodies in all, and 2,880 navigation
+    input triangles making 308 polygons.
+  - Release means over five build and replace cycles, in milliseconds:
+
+  | Measure | ms |
+  | --- | --- |
+  | Spawn 40 rooms (commands and flush) | 54.69 |
+  | First physics step (creates 240 bodies) | 2.83 |
+  | Navigation bake | 26.40 |
+  | Destroy the floor | 0.23 |
+  | Physics step after teardown | 0.19 |
+
+  About 84 ms to build a floor fits behind a level transition, so nothing
+  was optimized. Spawning dominates, at about 1.4 ms a room, because
+  `instantiate` builds each prefab twice (D6's follow-up).
+- `GameServices::bakeNavigation(scene, settings)` rebakes on demand, after a
+  floor's spawn commands applied. A failed bake leaves no mesh and is
+  returned.
+- Replacing a floor needed no engine change. Destroying the rooms through
+  the commands removes their bodies at the next step, and their emitters'
+  voices at the next audio sync. A game keeps its player and persistent
+  entities by destroying only its floor's roots.
+- `tests/engine/FloorLifecycleTests.cpp` (`zenith_floor_lifecycle`), with
+  `FloorFixture.hpp` shared with the benchmark, runs three build and replace
+  cycles. Each checks:
+  - every collider's body exists, and every torch sounds;
+  - the navmesh bakes and covers the farthest room;
+  - after teardown the body and voice counts return to the player's, and
+    the player survives;
+  - with no floor, a bake fails and leaves no mesh.
+
+Follow-ups:
+- The rooms use box colliders, not triangle meshes. The engine cannot create
+  a mesh at runtime (`AssetManager::addMesh` is private), so measuring mesh
+  colliders needs a committed model asset. Do that when the game's room kit
+  exists.
+- Halving the spawn cost means building each prefab once in `instantiate`
+  (D6's follow-up).
 
 ### E5. Partial paths and crowd avoidance
 

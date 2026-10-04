@@ -79,6 +79,11 @@ class GameServices {
     // first time it is asked for (a failed bake is logged once and leaves it
     // empty). Bake it again after the static geometry changes.
     NavigationWorld& navigation(const Scene& scene);
+    // Bakes the session's navigation mesh from scene's static colliders now,
+    // replacing the old one; for a game that builds or replaces a level at
+    // runtime, after its spawn commands applied (the next phase, or a timer).
+    // A failed bake leaves no mesh and is returned, not logged.
+    NavigationResult bakeNavigation(const Scene& scene, const NavMeshBuildSettings& settings = {});
     // The game's own pause and time scale, for menus, inventory screens, and
     // slow motion. The host combines them with its own clock (the editor's
     // pause and time scale; simulationClock). While the game is paused,
