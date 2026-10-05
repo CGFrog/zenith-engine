@@ -18,7 +18,7 @@ This is a critical review of the editor workflow, the engine runtime, and differ
 
 **Method.** Three read-only surveys covered the editor, the runtime, and roguelike/procgen readiness. The highest-impact claims were then checked against the source by hand (see [Verification](#verification)). Every finding below cites the code.
 
-**Status.** This document recommends; it implements nothing. Each CRITICAL item gets its own implementation plan and tests.
+**Status (2026-10-05).** Every CRITICAL item is implemented, with tests, on master (merges `10765c0` through `307d354`; module API version 9). Each item's subsystem doc describes what was built, and the remaining follow-ups are listed under [Critical follow-ups](#critical-follow-ups). The other tiers are still open.
 
 ---
 
@@ -309,7 +309,7 @@ These build directly on mechanisms Zenith already has, which is why they're plau
 ## Prioritised recommendations
 
 ### CRITICAL BEFORE GAME DEVELOPMENT
-Ordered by rewrite risk. Each item gets its own implementation plan.
+Ordered by rewrite risk. All seven are done (see Status above).
 
 1. **Runtime content API (E-1).**
    - **Content creation:**
@@ -367,6 +367,17 @@ Ordered by rewrite risk. Each item gets its own implementation plan.
    - the double nav bake;
    - a `GameServices` session resource store plus an asset-root path helper (2.2, last bullet);
    - updating FPS projects generated before E7 to `setPaused` and `zenith_configure_game_module`. Their `FpsGame.cpp` still pauses by clearing action fields, so physics, timers and animation keep running behind the menu.
+
+### Critical follow-ups
+Gaps the critical work left on purpose:
+- **Graceful limits:** the GPU-driven draw-group limit (64 pipeline and geometry-page pairs) is still fatal. `MeshPass`'s older "reported once" flags could move to `OverflowEpisode`.
+- **Fault isolation:** the crash handler does nothing outside Windows. `std::terminate` paths bypass it. A behaviour hook that throws is disabled but doesn't stop Play.
+- **Runtime content:**
+  - A scene that holds a runtime mesh can't be saved, so regenerate floors from their seed.
+  - Material-override overflow is logged but not counted in `RenderStats`.
+- **Spawning:** a prefab refresh still runs its staging validation build. The cache trusts an entry for 500 ms (`PrefabSystem::setFileCheckInterval`).
+- **Transient previews:** a paste or a module reload drops the preview. Debug-draw channel visibility is global and isn't saved. `DemoApplication` draws no debug labels.
+- **Asset collection:** runtime collection skips decoded audio held by emitters, collecting it only down to the audio budget.
 
 ### HIGH-VALUE EDITOR IMPROVEMENTS
 1. **Prefab edit mode.** Open a `.prefab` as its own document, with its own undo, and save with Apply. Also:

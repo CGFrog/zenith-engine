@@ -96,7 +96,7 @@ Besides the scene, mode, and delta, a system gets:
   [Window and input](window-input.md).
 
 Changing `SystemContext`, `ModuleRegistrar`, or a registered descriptor bumps
-`ZENITH_MODULE_API_VERSION` (now 8: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, B1 made `character_controller` an engine component type with engine systems, B2 added behaviours to `ModuleRegistrar` and `SystemContext`, C6 added `BehaviourContext::physics`, and E7 added `unscaledDeltaSeconds` to both contexts and the pause and time scale to `GameServices`).
+`ZENITH_MODULE_API_VERSION` (now 9: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, B1 made `character_controller` an engine component type with engine systems, B2 added behaviours to `ModuleRegistrar` and `SystemContext`, C6 added `BehaviourContext::physics`, and E7 added `unscaledDeltaSeconds` to both contexts and the pause and time scale to `GameServices`; the roguelike readiness review's critical items then changed the layouts of `Scene`, `GameServices`, `SystemContext` (`debugDraw`), `PrefabSystem`, `DebugDraw`, `ContactEvent` and `ApplicationControl`, which made it 9).
 
 ## Behaviours (`src/engine/behaviour/`)
 
