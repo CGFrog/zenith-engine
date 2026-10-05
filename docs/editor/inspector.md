@@ -109,6 +109,29 @@ entity gets the model; node entities of a model have no row.
 `tests/editor/AssetReferenceFieldTests.cpp` covers the widget, undo and redo,
 multi-edit, and the reload; `ModelReplaceTests.cpp` the operator.
 
+Below it, the Mesh row (`interaction/MeshRendererField`, drawn through
+`EntityPropertiesView::drawMeshField`) edits the Mesh Renderer, which is an
+internal component with no section of its own: "Mesh model" names the model
+file the mesh comes from (the same picker and drop target, model kind) and
+the Mesh combo lists that model's meshes by glTF name (or "Mesh <index>"),
+marked "(skinned)" or "(morph)". Either pick runs `object.mesh_assign` (see
+[operators](operators.md)); a new model assigns its first mesh. Below, the
+read-only Material slots list the material each primitive of the mesh draws
+with, by glTF material name, and name the Material Override material that
+replaces them all, so users see what a Material Override affects. Names come
+from `readModelOutline` (engine `assets/ModelImporter`), which reads the
+glTF JSON without buffers; the view keeps outlines in a `ModelOutlineCache`
+until the file's write time changes. A mesh built by code shows "(runtime
+mesh)" read-only. An entity without a Mesh Renderer that neither holds nor
+belongs to a model shows an empty row, and picking or dropping a model there
+adds a Mesh Renderer with its first mesh: that is how an empty object gets a
+single mesh, while the Model row above instantiates the whole model. With
+several objects selected the Inspector draws the row for the active one; a
+differing mesh shows the mixed mark, and a pick assigns every selected object
+that has a Mesh Renderer. Model node entities show the row too; giving one
+another mesh detaches it from its model instance, which a prefab instance
+shows as an override like any other change.
+
 `panels/InspectorPanel` lists those sections in one scrolling column.
 `panels/PropertiesPanel` is the Blender-style alternative: a vertical tab strip
 with Object (name, transform, Add Component), one tab per component category

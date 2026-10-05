@@ -69,6 +69,26 @@ same copies, and drops each onto the surface below a random point of the disc
 (downward rays that skip the originals, `surfaceHitAlongRay`).
 `tests/editor/PlacementTests.cpp` covers them headless.
 
+`ModelOperators` (the `model` family) holds `object.model_replace {entity,
+asset}` (see the [inspector](inspector.md)) and `object.mesh_assign
+{entities, asset, mesh, update_collider}` (Undo, Register; Edit mode only),
+which gives every listed entity (the selection when none are listed) the
+glTF mesh `mesh` of the model `asset` as one undo step, adding a Mesh
+Renderer where there is none. A model node that gets another mesh leaves its
+model instance: its Model Node goes (the model's animation no longer moves
+it, and a later model replace treats it as a user object), with an Info
+diagnostic. A Skin stays only when the skin's model draws the new mesh with
+that skin on some node; otherwise it is removed, so a static mesh is never
+drawn with a stale joint palette. Morph Weights stay when the new mesh has as
+many targets, are reset to the model's defaults when the count differs, and
+go when it has none. A skeleton joint is refused, since removing its Model
+Node would break the skin following it. `update_collider` (off by default,
+since collision shapes are often simpler than the drawn mesh) also points a
+triangle-mesh collider on the entity that used the previous mesh at the new
+one. A scene holding a runtime mesh (`AssetManager::createMesh`) cannot be
+saved, so the runner cannot record the step and the operator is refused.
+`tests/editor/MeshAssignTests.cpp` covers it with the inspector row.
+
 `SelectOperators` (the `select` family) holds `object.select_hierarchy
 {direction, extend}` (`]` children, `[` parent, Shift extends) and
 `object.select_grouped {type, extend}` (Shift+G opens its menu, also in Edit >
