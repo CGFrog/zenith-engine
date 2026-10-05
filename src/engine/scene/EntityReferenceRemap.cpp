@@ -54,6 +54,12 @@ void remapFields(Json& object, std::span<const FieldDescriptor> fields, std::str
         return;
     }
     for (const FieldDescriptor& field : fields) {
+        const bool holdsReferences = field.kind == FieldKind::EntityReference || field.kind == FieldKind::Struct ||
+                                     field.kind == FieldKind::List;
+        // Most fields hold no reference, so their pointer is never built.
+        if (!holdsReferences) {
+            continue;
+        }
         const auto value = object.find(field.key);
         if (value == object.end()) {
             continue;

@@ -3,15 +3,18 @@
 #include "Scene.hpp"
 #include "SceneDocument.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <nlohmann/json_fwd.hpp>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -258,11 +261,31 @@ struct PrefabComparisonSource {
     std::map<uint64_t, std::string> entities;
 };
 
+// How the prefab document cache has been used since the system was created.
+struct PrefabCacheStats {
+    // Lookups served from a cached document whose file was unchanged.
+    uint64_t hits{0};
+    // Lookups that read and parsed the file: first use, a changed file, or an
+    // invalidated entry.
+    uint64_t loads{0};
+    // Documents cached now.
+    size_t entries{0};
+};
+
 // Instantiates prefabs into scenes and compares instances with their prefabs.
 // Runtime code: it needs no editor state. Prefab references are paths
 // relative to options.assetRoot; options.componentTypes decides which
 // components prefabs read and write. The asset manager must outlive the
 // system.
+//
+// Instantiating and refreshing read prefab files through a document cache
+// keyed by resolved path: a document is parsed and checked once per file
+// version (its write time and size) and reused by every instance after that.
+// A stat costs more than building a small prefab, so a file is compared with
+// its cached version at most once per file check interval; code that writes a
+// prefab and spawns it at once (the editor's apply, its asset watcher) calls
+// invalidate(). load() always reads the file. Not thread-safe: use one system
+// per thread.
 class PrefabSystem {
   public:
     PrefabSystem(AssetManager& assets, SceneDocumentOptions options);
@@ -270,7 +293,14 @@ class PrefabSystem {
     // Creates an instance under parent (the scene root when null) with the
     // given overrides, which become its persisted overrides. Nested prefabs
     // become nested instances. Missing sources, nested cycles, and invalid
-    // components fail before the scene changes.
+    // components fail without changing the scene's entities.
+    //
+    // Entities are built straight from the cached documents through the
+    // component codecs. The cached graph (every reachable document loads,
+    // its components read, and nesting has no cycle) is checked before the
+    // scene changes; anything that still fails afterwards (an override
+    // holding an invalid value, say) destroys what the call created. A failed
+    // call may leave Scene::nextEntityId advanced.
     PrefabInstanceResult instantiate(const std::filesystem::path& reference, Scene& scene, Entity parent = entt::null,
                                      std::span<const PrefabOverride> overrides = {});
     // Rebuilds an instance from its (possibly changed) prefab plus overrides,
@@ -328,7 +358,29 @@ class PrefabSystem {
         return m_options;
     }
 
+    // Forgets the cached document of one prefab, named by a project-relative
+    // reference or an absolute file path, so its next use reads the file.
+    void invalidate(const std::filesystem::path& prefab);
+    // Forgets every cached document.
+    void clearCache();
+    // How long a cached document is trusted before its file is compared
+    // again; zero compares on every use.
+    static constexpr std::chrono::milliseconds defaultFileCheckInterval{500};
+    void setFileCheckInterval(std::chrono::milliseconds interval);
+    PrefabCacheStats cacheStats() const;
+
   private:
+    // Immutable once cached, so copies of the system share them.
+    struct CachedPrefab;
+
+    // The cached document of the file at path (resolved), loading it when it
+    // is not cached or its file changed. Never null.
+    std::shared_ptr<const CachedPrefab> cached(const std::filesystem::path& path);
+    // Whether every prefab instantiating reference with overrides reaches
+    // loads and reads, with no nested cycle; nested records the overrides
+    // remove are skipped.
+    bool cachedGraphValid(const std::filesystem::path& reference, std::span<const PrefabOverride> overrides,
+                          std::vector<std::filesystem::path>& stack);
     // Runs change and, when it fails, puts the scene back as it was. change
     // may rebuild root's subtree (none for a new instance) and create
     // entities, and must change nothing else.
@@ -340,4 +392,8 @@ class PrefabSystem {
 
     AssetManager& m_assets;
     SceneDocumentOptions m_options;
+    // Keyed by the resolved path's generic string.
+    std::unordered_map<std::string, std::shared_ptr<const CachedPrefab>> m_cache;
+    PrefabCacheStats m_cacheStats;
+    std::chrono::milliseconds m_fileCheckInterval{defaultFileCheckInterval};
 };

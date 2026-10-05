@@ -119,6 +119,8 @@ void ProjectAssets::dispatchChanges(EditorDiagnostics& diagnostics, const Projec
         const std::string name = utf8PathText(change.asset.absolutePath.filename());
         if (change.asset.kind == EditorAssetKind::Model && actions.reloadModel) {
             actions.reloadModel(change.asset.absolutePath);
+        } else if (change.asset.kind == EditorAssetKind::Prefab && actions.prefabChanged) {
+            actions.prefabChanged(change.asset.absolutePath);
         } else if (change.asset.kind == EditorAssetKind::Texture) {
             // AssetManager has no texture reload; textures load fresh when a
             // scene using them is opened again.

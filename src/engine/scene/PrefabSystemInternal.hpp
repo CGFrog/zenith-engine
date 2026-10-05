@@ -189,6 +189,10 @@ void applyOverrides(std::map<uint64_t, Json>& entities, std::span<const PrefabOv
 bool resolveSceneParents(std::map<uint64_t, Json>& entities, const PrefabDocument& document,
                          const std::unordered_set<uint64_t>& stays, std::vector<std::string>& diagnostics);
 
+// Destroys every entity whose stable id is firstCreated or higher: what a
+// failed instantiation created, since ids only grow.
+void destroyEntitiesFrom(Scene& scene, uint64_t firstCreated);
+
 // Nested instances (PrefabNesting.cpp).
 std::unordered_set<uint64_t> removedRecords(std::span<const PrefabOverride> overrides);
 
@@ -206,3 +210,28 @@ void resolveNestedReferences(Scene& scene, Entity root, std::span<const PendingN
                              AssetManager& assets, const SceneDocumentOptions& options,
                              std::vector<std::string>& diagnostics);
 } // namespace prefab_detail
+
+// One prefab file as builds use it, read once per file version
+// (PrefabCache.cpp).
+struct PrefabSystem::CachedPrefab {
+    // The file version it was read from.
+    std::filesystem::file_time_type writeTime{};
+    std::uintmax_t size{0};
+    // When the file was last compared with that version. Mutable: refreshing
+    // it does not change the cached content.
+    mutable std::chrono::steady_clock::time_point checked{};
+    // What loading the file returned, diagnostics included. On failure
+    // nothing below is set.
+    PrefabResult loaded;
+    PrefabDocument document;
+    uint64_t rootLocal{0};
+    // Each entity in the scene document entity form, with prefab-local ids
+    // and without non-content components, keyed by prefab-local id.
+    std::map<uint64_t, prefab_detail::Json> entities;
+    // Why an entity could not be put in that form; builds fail with it.
+    std::string conversionError;
+    // Whether every entity's components read through the component codecs
+    // (checked once, in a staging scene). Overrides can still make an
+    // instance's components invalid.
+    bool contentValid{false};
+};
