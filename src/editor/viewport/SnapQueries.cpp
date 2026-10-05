@@ -60,18 +60,37 @@ std::vector<Entity> snapExclusions(const Scene& scene, std::span<const SceneEnti
     return excluded;
 }
 
-std::optional<glm::vec3> surfaceSnapPoint(const Scene& scene, const AssetManager& assets, const SnapView& view,
-                                          glm::vec2 viewPoint, std::span<const Entity> excluded) {
-    const glm::vec2 normalized = normalizedPoint(view, viewPoint);
-    const float aspect = aspectRatio(view);
-    const LensRay ray = lensRay(view.lens, normalized, aspect);
+std::optional<SurfaceHit> surfaceHitAlongRay(const Scene& scene, const AssetManager& assets, const LensRay& ray,
+                                             const std::vector<RenderObjectId>* isolatedObjects,
+                                             std::span<const Entity> excluded) {
     // Hits are nearest first; the distance is along the normalized ray.
-    for (const LensHit& hit : pickAllThroughLens(scene, assets, view.lens, normalized, aspect, view.isolatedObjects)) {
+    for (const LensHit& hit : pickAllAlongRay(scene, assets, ray, isolatedObjects)) {
         if (!excludedEntity(excluded, hit.entity)) {
-            return ray.origin + ray.direction * hit.distance;
+            const glm::vec3 normal = glm::dot(hit.normal, ray.direction) > 0.0f ? -hit.normal : hit.normal;
+            return SurfaceHit{.position = ray.origin + ray.direction * hit.distance, .normal = normal};
         }
     }
     return std::nullopt;
+}
+
+std::optional<glm::vec3> surfaceSnapPoint(const Scene& scene, const AssetManager& assets, const SnapView& view,
+                                          glm::vec2 viewPoint, std::span<const Entity> excluded) {
+    const LensRay ray = lensRay(view.lens, normalizedPoint(view, viewPoint), aspectRatio(view));
+    if (const std::optional<SurfaceHit> hit = surfaceHitAlongRay(scene, assets, ray, view.isolatedObjects, excluded)) {
+        return hit->position;
+    }
+    return std::nullopt;
+}
+
+Placement placementUnderMouse(const Scene& scene, const AssetManager& assets, const SnapView& view, glm::vec2 viewPoint,
+                              float fallbackDepth, std::span<const Entity> excluded) {
+    const LensRay ray = lensRay(view.lens, normalizedPoint(view, viewPoint), aspectRatio(view));
+    if (const std::optional<SurfaceHit> hit = surfaceHitAlongRay(scene, assets, ray, view.isolatedObjects, excluded)) {
+        return {.position = hit->position, .normal = hit->normal};
+    }
+    const glm::vec3 forward = glm::normalize(view.lens.forward);
+    const float alongRay = fallbackDepth / std::max(glm::dot(ray.direction, forward), 1e-4f);
+    return {.position = ray.origin + ray.direction * alongRay};
 }
 
 std::optional<glm::vec3> vertexSnapPoint(const Scene& scene, const AssetManager& assets, const SnapView& view,

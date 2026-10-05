@@ -88,6 +88,37 @@ struct ModalTransformPivot {
 // origin for no objects.
 glm::vec3 transformPivotPoint(const ModalTransformPivot& pivot, std::span<const glm::mat4> world);
 
+// The unit-length columns of world's upper 3x3 (its axes without scale); a
+// degenerate column stays the matching world axis.
+glm::mat3 normalizedAxes(const glm::mat4& world);
+
+// One change applied to several objects at once, as the modal transforms
+// and the viewport gizmo do: scaling by `scale` along the columns of the
+// caller's `axes`, then `rotation` (world space), both about the pivot, then
+// `translation` (world space, in metres).
+struct PivotedTransform {
+    glm::vec3 translation{0.0f};
+    glm::mat3 rotation{1.0f};
+    glm::vec3 scale{1.0f};
+};
+
+// change applied to each of startWorld (world matrices): about pivot, or
+// about each object's own origin for IndividualOrigins. axes (orthonormal
+// columns) is the frame scale works in. Each object is scaled along its own
+// axes by how much the scaling stretches them, so rotated objects never
+// shear. Returns the new world matrices in startWorld's order.
+std::vector<glm::mat4> applyPivotedTransform(std::span<const glm::mat4> startWorld, TransformPivot pivotMode,
+                                             const glm::vec3& pivot, const glm::mat3& axes,
+                                             const PivotedTransform& change);
+
+// Splits a gizmo's change, gizmoNow * inverse(gizmoStart), into a
+// PivotedTransform whose scale is along gizmoStart's axes (pass
+// normalizedAxes(gizmoStart) as applyPivotedTransform's axes): the
+// translation of its origin, then the rotation and per-axis scale of its
+// frame (a rotation times a scale in that frame, as ImGuizmo produces).
+// gizmoStart must be invertible; nullopt when either matrix is degenerate.
+std::optional<PivotedTransform> decomposeGizmoChange(const glm::mat4& gizmoStart, const glm::mat4& gizmoNow);
+
 // Snapping for one evaluation. Ctrl inverts `enabled` while held.
 //
 // Translation snaps the selection's reference point (pivot-point snapping:
@@ -164,9 +195,8 @@ class ModalTransform {
     // Restricts a world offset to the active axis or plane constraint.
     glm::vec3 constrain(const glm::vec3& offset) const;
     glm::vec3 snapTranslation(glm::vec3 delta, const TransformSnapping& snapping) const;
-    // turn (a rotation, scaling, or both about the origin) applied to world
-    // about the pivot, or about world's own origin for IndividualOrigins.
-    glm::mat4 aboutPivot(const glm::mat4& turn, const glm::mat4& world) const;
+    // change applied to the start matrices about the pivot (applyPivotedTransform).
+    std::vector<glm::mat4> aboutPivot(const PivotedTransform& change, const glm::mat3& axes) const;
 
     ModalTransformResult translate(const TransformSnapping& snapping) const;
     ModalTransformResult rotate(const TransformSnapping& snapping) const;

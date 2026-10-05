@@ -277,6 +277,19 @@ void testAddMenuContents() {
     for (const char* label : {"Mesh", "Light", "Environment", "Fog", "Empty", "Component"}) {
         expect(findItem(add.items, label) != nullptr, "the Add menu should offer the add-object entries");
     }
+    const MenuItem* light = findItem(add.items, "Light");
+    for (const char* label : {"Sun", "Point Light", "Spot Light"}) {
+        expect(light != nullptr && findItem(light->children, label) != nullptr, "Add > Light offers every light");
+    }
+    for (const auto& [category, label] :
+         {std::pair{"Light Probe", "Reflection Probe"}, std::pair{"Light Probe", "Irradiance Volume"},
+          std::pair{"Audio", "Audio Emitter"}, std::pair{"Audio", "Audio Listener"}, std::pair{"Effects", "Decal"},
+          std::pair{"Effects", "Particle Emitter"}}) {
+        const MenuItem* group = findItem(add.items, category);
+        expect(group != nullptr && findItem(group->children, label) != nullptr,
+               "the Add menu groups probes, audio, and effects");
+    }
+    expect(findItem(add.items, "Camera") != nullptr, "the Add menu offers a camera");
     const MenuItem* component = findItem(add.items, "Component");
     const MenuItem* gameplay = component != nullptr ? findItem(component->children, "Gameplay") : nullptr;
     const MenuItem* other = component != nullptr ? findItem(component->children, "Other") : nullptr;
@@ -313,6 +326,70 @@ void testAddComponentEntries() {
                                                         }),
            "a category request should list only that category's types, without a heading");
     expect(fixture.resolve(addComponentMenuId, "Nothing").items.empty(), "an unknown category should be empty");
+}
+
+// Add menu entries create what they name; a second camera never takes the
+// primary flag from the first.
+void testAddMenuObjects() {
+    MenuFixture fixture;
+    const ResolvedMenu add = fixture.resolve(addMenuId);
+    // The object entries, not the Component group's one-per-type entries.
+    std::vector<const MenuItem*> entries;
+    for (const MenuItem& item : add.items) {
+        if (item.label == "Component") {
+            continue;
+        }
+        entries.push_back(&item);
+        for (const MenuItem& child : item.children) {
+            entries.push_back(&child);
+        }
+    }
+    for (const MenuItem* item : entries) {
+        if (item->operatorId == "object.add_empty_with" || item->operatorId == "object.add_camera") {
+            expect(static_cast<bool>(fixture.invoke(item->operatorId, item->properties)) &&
+                       fixture.selection.size() == 1,
+                   "every component entry of the Add menu adds a selected object");
+        }
+    }
+    const Entity spot = fixture.scene.findEntity(fixture.selection.active().value_or(SceneEntityId{}));
+    expect(spot != entt::null, "the last added object should be selected");
+    std::vector<bool> primaries;
+    for (const auto [entity, camera] : fixture.scene.registry().view<const CameraComponent>().each()) {
+        primaries.push_back(camera.primary);
+    }
+    expect(primaries.size() == 1 && primaries.front(), "the first camera added is primary");
+    expect(static_cast<bool>(fixture.invoke("object.add_camera")), "a second camera should be added");
+    size_t primaryCount = 0;
+    for (const auto [entity, camera] : fixture.scene.registry().view<const CameraComponent>().each()) {
+        primaryCount += camera.primary ? 1 : 0;
+    }
+    expect(primaryCount == 1, "adding a camera keeps the existing primary camera");
+    for (const char* key : {"spot_light", "audio_emitter", "audio_listener", "decal", "particle_emitter",
+                            "reflection_probe", "irradiance_volume", "point_light"}) {
+        const ComponentType* type = componentTypesFor(fixture.document.options()).find(key);
+        bool found = false;
+        for (const Entity entity : fixture.scene.registry().view<const SceneEntityIdComponent>()) {
+            found = found || (type != nullptr && type->has(fixture.scene, entity));
+        }
+        expect(found, "each Add menu component entry creates its component");
+    }
+    fixture.mode = EditorMode::Play;
+    expect(fixture.invoke("object.add_camera").status == OperatorStatus::Cancelled &&
+               fixture.invoke("object.add_empty_with", R"({"component":"point_light"})").status ==
+                   OperatorStatus::Cancelled,
+           "the Add menu's operators follow the menu and refuse in Play");
+    fixture.mode = EditorMode::Edit;
+
+    // The Prefab section lists the project's prefabs when a source is set.
+    MenuRegistry prefabMenus;
+    const std::filesystem::path prefab = fixture.document.options().assetRoot / "props" / "crate.prefab";
+    expect(registerDefaultMenus(prefabMenus, {.projectPrefabs = [prefab] { return std::vector{prefab}; }}).success,
+           "the default menus should register with a prefab source");
+    const std::optional<ResolvedMenu> withPrefabs = prefabMenus.resolve(addMenuId, fixture.operatorContext());
+    const MenuItem* prefabs = withPrefabs ? findItem(withPrefabs->items, "Prefab") : nullptr;
+    expect(prefabs != nullptr && !prefabs->children.empty() &&
+               prefabs->children.front().operatorId == "prefab.instantiate",
+           "Add > Prefab lists the project's prefabs");
 }
 
 void testAddEmptyWith() {
@@ -628,6 +705,7 @@ int main() {
     testSearch();
     testAddMenuContents();
     testAddComponentEntries();
+    testAddMenuObjects();
     testAddEmptyWith();
     testCallMenuOperators();
     testAddMenuPopup();

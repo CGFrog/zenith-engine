@@ -4,6 +4,7 @@
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/PrefabAuthoring.hpp"
 #include "editor/operators/EditorOperatorFamilies.hpp"
+#include "editor/operators/PlacementOperators.hpp"
 
 #include <charconv>
 #include <memory>
@@ -132,16 +133,26 @@ std::filesystem::path projectRelative(const OperatorContext& context, const std:
     return path.lexically_normal().lexically_relative(root);
 }
 
-// Moves an instance root so its origin lands on a world location, keeping
-// its rotation and scale.
-void placeInstanceRoot(Scene& scene, Entity root, const glm::vec3& location) {
+// Moves an instance root so its origin lands on a world location, turned
+// by rotation (world space) from the orientation and scale it has.
+void placeInstanceRoot(Scene& scene, Entity root, const glm::vec3& location, const glm::mat3& rotation) {
     scene.updateWorldTransforms();
     const Entity parent = scene.registry().get<RelationshipComponent>(root).parent;
-    const glm::vec4 local =
-        parent == entt::null
-            ? glm::vec4(location, 1.0f)
-            : glm::inverse(scene.registry().get<TransformComponent>(parent).world) * glm::vec4(location, 1.0f);
-    scene.registry().get<TransformComponent>(root).local[3] = local;
+    glm::mat4 world = scene.registry().get<TransformComponent>(root).world;
+    if (rotation != glm::mat3(1.0f)) {
+        world = glm::mat4(rotation) * world;
+    }
+    world[3] = glm::vec4(location, 1.0f);
+    glm::mat4& local = scene.registry().get<TransformComponent>(root).local;
+    const glm::mat4 placed =
+        parent == entt::null ? world : glm::inverse(scene.registry().get<TransformComponent>(parent).world) * world;
+    // Without a turn only the origin moves, so the root's own orientation
+    // and scale stay exactly as the prefab has them.
+    if (rotation == glm::mat3(1.0f)) {
+        local[3] = placed[3];
+    } else {
+        local = placed;
+    }
     scene.markTransformDirty(root);
     scene.updateWorldTransforms();
 }
@@ -152,11 +163,18 @@ Operator instantiateOperator(PrefabWriteHooks hooks) {
             .description = "Add an instance of a prefab to the scene and select it",
             .flags = OperatorFlags::Undo | OperatorFlags::Register | OperatorFlags::Internal,
             .properties = OperatorProperties::make(
-                InstantiatePrefabProperties{}, std::move(Fields<InstantiatePrefabProperties>()
-                                                             .add("asset", &InstantiatePrefabProperties::asset)
-                                                             .add("parent", &InstantiatePrefabProperties::parent)
-                                                             .add("location", &InstantiatePrefabProperties::location)
-                                                             .drag(0.05f))),
+                InstantiatePrefabProperties{},
+                std::move(Fields<InstantiatePrefabProperties>()
+                              .add("asset", &InstantiatePrefabProperties::asset)
+                              .add("parent", &InstantiatePrefabProperties::parent)
+                              .add("location", &InstantiatePrefabProperties::location)
+                              .drag(0.05f)
+                              .add("rotation", &InstantiatePrefabProperties::rotation)
+                              .drag(0.25f)
+                              .format("%.1f deg")
+                              .add("normal", &InstantiatePrefabProperties::normal)
+                              .drag(0.01f, -1.0, 1.0)
+                              .add("align_to_normal", &InstantiatePrefabProperties::alignToNormal))),
             .poll = [](const OperatorContext& context) { return context.editMode(); },
             .execute = typed<InstantiatePrefabProperties>(
                 [hooks = std::move(hooks)](OperatorContext& context, InstantiatePrefabProperties& values) {
@@ -176,7 +194,8 @@ Operator instantiateOperator(PrefabWriteHooks hooks) {
                     const PrefabResult result =
                         authoring(context).instantiate(scene, projectRelative(context, values.asset), parent, root);
                     if (result) {
-                        placeInstanceRoot(scene, root, values.location);
+                        placeInstanceRoot(scene, root, values.location,
+                                          placementRotation(values.rotation, values.normal, values.alignToNormal));
                         context.selection.selectOnly(scene.id(root));
                         notePrefabFilesRead(scene, context.editing.document().options().assetRoot, hooks, root);
                     }

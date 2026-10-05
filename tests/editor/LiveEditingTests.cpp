@@ -141,8 +141,13 @@ void testRuntimeEditingRecordsNothing() {
 void testRuntimeOperators() {
     LiveFixture fixture;
     fixture.play();
-    expect(static_cast<bool>(fixture.invoke("object.add_empty")) && fixture.selection.size() == 1,
-           "adding an object works in Play");
+    const OperatorResult addEmpty = fixture.invoke("object.add_empty");
+    expect(addEmpty.status == OperatorStatus::Cancelled &&
+               addEmpty.message.find("only in Edit mode") != std::string::npos,
+           "the Add menu's operators refuse in Play, as the menu does");
+    fixture.selection.clear();
+    expect(static_cast<bool>(fixture.invoke("object.create_entity")) && fixture.selection.size() == 1,
+           "creating an object works in Play");
     const SceneEntityId added = *fixture.selection.active();
     expect(static_cast<bool>(fixture.invoke("object.component_add", R"({"component":"point_light"})")) &&
                fixture.scene.registry().all_of<PointLightComponent>(fixture.find(added)),

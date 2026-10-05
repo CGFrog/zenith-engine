@@ -82,6 +82,8 @@ class EditorSessionActions {
 // Everything a panel may use during one frame. The session builds it from the
 // objects it owns, so it holds references only and must not outlive the call
 // it was built for.
+struct Placement;
+
 struct EditorContext {
     ApplicationContext& app;
     SceneEditing editing;
@@ -136,13 +138,16 @@ struct EditorContext {
         return actions.operatorShortcut(operatorId, properties);
     }
 
-    // Places a model asset as an undoable edit; models can only be placed in
-    // Edit mode.
-    void placeModel(const std::filesystem::path& path, Entity parent);
+    // Places a model asset under parent (or at the scene root when parent
+    // is null) by running object.place_model, which works only in Edit mode.
+    // It lands at placement (the surface under the mouse, whose normal the
+    // operator records for Adjust Last Operation's align toggle), or at the
+    // 3D cursor when placement is null.
+    void placeModel(const std::filesystem::path& path, Entity parent, const Placement* placement = nullptr);
     // Instantiates a prefab asset (absolute inside the asset root, or
-    // project-relative) under parent, or at the scene root when parent is
-    // null, by running prefab.instantiate.
-    void placePrefab(const std::filesystem::path& path, Entity parent);
+    // project-relative) as placeModel places a model, by running
+    // prefab.instantiate.
+    void placePrefab(const std::filesystem::path& path, Entity parent, const Placement* placement = nullptr);
 
     // Whether the entity eyedropper is picking for a reference field. While
     // it is, an entity click in a viewport or the outliner goes to

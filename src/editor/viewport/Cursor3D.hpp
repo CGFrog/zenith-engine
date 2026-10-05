@@ -21,6 +21,9 @@ class ViewportRegistry;
 // cursor's current depth from the lens.
 glm::vec3 cursorPlacement(const Scene& scene, const AssetManager& assets, const SnapView& view, glm::vec2 viewPoint,
                           const glm::vec3& currentCursor);
+// The view depth placementUnderMouse falls back to over empty space: the
+// cursor's depth from lens, or a few metres when the cursor is behind it.
+float placementDepth(const RenderView& lens, const glm::vec3& currentCursor);
 
 // On-screen radius of the cursor's ring, in view pixels.
 inline constexpr float cursorRingRadiusPixels = 10.0f;

@@ -8,18 +8,27 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <utility>
 #include <vector>
 
 namespace {
-MenuEntry addEntry(std::string label, std::string operatorId, EditorIcon icon, std::vector<std::string> category = {}) {
+MenuEntry addEntry(std::string label, std::string operatorId, EditorIcon icon, std::vector<std::string> category = {},
+                   std::string properties = {}) {
     return {.label = std::move(label),
             .operatorId = std::move(operatorId),
-            .properties = {},
+            .properties = std::move(properties),
             .submenu = {},
             .icon = icon,
             .category = std::move(category)};
+}
+
+// An Add entry creating an empty with one component (object.add_empty_with).
+MenuEntry addWithComponent(std::string label, const char* component, EditorIcon icon,
+                           std::vector<std::string> category) {
+    return addEntry(std::move(label), "object.add_empty_with", icon, std::move(category),
+                    nlohmann::json{{"component", component}}.dump());
 }
 } // namespace
 
@@ -65,6 +74,17 @@ MenuResult registerDefaultMenus(MenuRegistry& registry, DefaultMenuSources sourc
     std::vector<MenuEntry> objects;
     objects.push_back(addEntry("Cube", "object.add_cube", EditorIcon::Mesh, {"Mesh"}));
     objects.push_back(addEntry("Sun", "object.add_sun", EditorIcon::Sun, {"Light"}));
+    objects.push_back(addWithComponent("Point Light", "point_light", EditorIcon::PointLight, {"Light"}));
+    objects.push_back(addWithComponent("Spot Light", "spot_light", EditorIcon::SpotLight, {"Light"}));
+    objects.push_back(
+        addWithComponent("Reflection Probe", "reflection_probe", EditorIcon::ReflectionProbe, {"Light Probe"}));
+    objects.push_back(
+        addWithComponent("Irradiance Volume", "irradiance_volume", EditorIcon::IrradianceVolume, {"Light Probe"}));
+    objects.push_back(addEntry("Camera", "object.add_camera", EditorIcon::Camera));
+    objects.push_back(addWithComponent("Audio Emitter", "audio_emitter", EditorIcon::AudioEmitter, {"Audio"}));
+    objects.push_back(addWithComponent("Audio Listener", "audio_listener", EditorIcon::AudioListener, {"Audio"}));
+    objects.push_back(addWithComponent("Decal", "decal", EditorIcon::Decal, {"Effects"}));
+    objects.push_back(addWithComponent("Particle Emitter", "particle_emitter", EditorIcon::Particles, {"Effects"}));
     objects.push_back(addEntry("Environment", "object.add_environment", EditorIcon::Environment));
     objects.push_back(addEntry("Fog", "object.add_fog", EditorIcon::Fog));
     objects.push_back(addEntry("Empty", "object.add_empty", EditorIcon::Empty));
@@ -89,7 +109,38 @@ MenuResult registerDefaultMenus(MenuRegistry& registry, DefaultMenuSources sourc
     if (MenuResult result = registry.addSection(editorMenuOwner, addComponentMenuId, addComponentEntries); !result) {
         return result;
     }
+    if (MenuResult result = registerSelectGroupedMenu(registry); !result) {
+        return result;
+    }
     return registerPieMenus(registry);
+}
+
+MenuResult registerSelectGroupedMenu(MenuRegistry& registry) {
+    if (MenuResult result = registry.addMenu(editorMenuOwner, {.id = selectGroupedMenuId, .title = "Select Grouped"});
+        !result) {
+        return result;
+    }
+    constexpr std::array<std::pair<const char*, const char*>, 8> types{{{"Children", "children"},
+                                                                        {"Immediate Children", "immediate_children"},
+                                                                        {"Prefab", "prefab"},
+                                                                        {"Model", "model"},
+                                                                        {"Mesh", "mesh"},
+                                                                        {"Tag", "tag"},
+                                                                        {"Collection", "collection"},
+                                                                        {"Components", "components"}}};
+    for (const auto& [label, type] : types) {
+        if (MenuResult result = registry.addEntry(editorMenuOwner, selectGroupedMenuId,
+                                                  {.label = label,
+                                                   .operatorId = "object.select_grouped",
+                                                   .properties = nlohmann::json{{"type", type}}.dump(),
+                                                   .submenu = {},
+                                                   .icon = std::nullopt,
+                                                   .category = {}});
+            !result) {
+            return result;
+        }
+    }
+    return {.success = true};
 }
 
 MenuResult registerPieMenus(MenuRegistry& registry) {

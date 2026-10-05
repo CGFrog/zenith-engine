@@ -109,3 +109,16 @@ struct SceneGizmoColors {
 };
 
 SceneGizmoColors sceneGizmoColors();
+
+// Where the overlays mark an object: the origin of each light (point, spot,
+// directional, environment), camera, reflection probe, decal, and
+// irradiance volume whose category view would draw (the same scopes,
+// visibility, isolation, and skipped view camera as drawSceneGizmos), in
+// scene order. Viewport picking tests clicks against them, so objects
+// without a mesh can be selected.
+struct SceneGizmoAnchor {
+    SceneEntityId entity;
+    glm::vec3 position{0.0f};
+};
+
+std::vector<SceneGizmoAnchor> sceneGizmoAnchors(const SceneGizmoView& view, const SceneGizmoOverlays& overlays);

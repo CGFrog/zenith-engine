@@ -101,6 +101,8 @@ inline constexpr const char* addComponentMenuId = "OBJECT_MT_add_component";
 inline constexpr const char* shadingPieMenuId = "VIEW3D_MT_shading_pie";
 inline constexpr const char* viewPieMenuId = "VIEW3D_MT_view_pie";
 inline constexpr const char* pivotPieMenuId = "VIEW3D_MT_pivot_pie";
+// Select Grouped (Shift G): one object.select_grouped entry per type.
+inline constexpr const char* selectGroupedMenuId = "VIEW3D_MT_select_grouped";
 
 // wm.call_menu {menu, category}, which opens a registered menu at the mouse,
 // wm.call_pie {menu}, which opens one as a pie (or as the popup menu with

@@ -1,5 +1,7 @@
 #include "ViewportPicker.hpp"
 
+#include "editor/viewport/IconPicking.hpp"
+
 #include "editor/interaction/EditorCamera.hpp"
 #include "editor/interaction/PickQueries.hpp"
 #include "engine/scene/SceneVisibility.hpp"
@@ -176,6 +178,7 @@ std::optional<ViewportPickOutcome> ViewportPicker::poll(ViewportPickProvider& pr
         if (status == PickStatus::Ready) {
             const PickResult result = provider.take(pending.ticket);
             ViewportPickOutcome outcome = resolveGpuPick(pending.query, result, scene, assets);
+            mergeIconPicks(pending.query, scene, assets, outcome);
             m_pending.reset();
             return outcome;
         }
@@ -193,6 +196,7 @@ std::optional<ViewportPickOutcome> ViewportPicker::poll(ViewportPickProvider& pr
         }
     }
     ViewportPickOutcome outcome = resolveCpuPick(pending.query, scene, assets);
+    mergeIconPicks(pending.query, scene, assets, outcome);
     m_pending.reset();
     return outcome;
 }

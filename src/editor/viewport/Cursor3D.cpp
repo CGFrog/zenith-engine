@@ -143,18 +143,12 @@ Operator snapSelectedToCursorOperator(EditorDocument& document) {
 
 glm::vec3 cursorPlacement(const Scene& scene, const AssetManager& assets, const SnapView& view, glm::vec2 viewPoint,
                           const glm::vec3& currentCursor) {
-    if (const std::optional<glm::vec3> surface = surfaceSnapPoint(scene, assets, view, viewPoint)) {
-        return *surface;
-    }
-    const float aspect = view.viewSize.x / std::max(view.viewSize.y, 1.0f);
-    const LensRay ray = lensRay(view.lens, viewPoint / glm::max(view.viewSize, glm::vec2(1.0f)), aspect);
-    const glm::vec3 forward = glm::normalize(view.lens.forward);
-    float depth = glm::dot(currentCursor - view.lens.position, forward);
-    if (depth <= view.lens.nearPlane) {
-        depth = fallbackCursorDepth;
-    }
-    const float alongRay = depth / std::max(glm::dot(ray.direction, forward), 1e-4f);
-    return ray.origin + ray.direction * alongRay;
+    return placementUnderMouse(scene, assets, view, viewPoint, placementDepth(view.lens, currentCursor)).position;
+}
+
+float placementDepth(const RenderView& lens, const glm::vec3& currentCursor) {
+    const float depth = glm::dot(currentCursor - lens.position, glm::normalize(lens.forward));
+    return depth <= lens.nearPlane ? fallbackCursorDepth : depth;
 }
 
 void recordCursor3D(const glm::vec3& location, const RenderView& lens, glm::vec2 viewSize, DebugDraw& output) {

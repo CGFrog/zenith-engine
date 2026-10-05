@@ -23,8 +23,20 @@ to eight leaves, filled left, right, bottom, top, then the diagonals):
 (letting go picks the item the mouse points at; a quick tap waits for a
 click), and Esc or a right click cancels. With the `ui.pie_menus` preference
 off (the default) `wm.call_pie` opens the ordinary searchable popup instead.
-`DefaultMenus` registers the Add menu (add-object entries plus Component >
-category > type running `object.add_empty_with`), the Add Component menu,
+`DefaultMenus` registers the Add menu (Mesh > Cube; Light > Sun, Point
+Light, Spot Light; Light Probe > Reflection Probe, Irradiance Volume; Camera;
+Audio > Audio Emitter, Audio Listener; Effects > Decal, Particle Emitter;
+Environment; Fog; Empty; then Prefab > one entry per project prefab, filled
+from the asset catalog the session hands it as `DefaultMenuSources::
+projectPrefabs`; then Component > category > type running
+`object.add_empty_with`). Lights, probes, audio, and effects are entries
+with properties (`addEntry`'s JSON) running `object.add_empty_with
+{component}`; Camera runs `object.add_camera`, which leaves an existing
+primary camera primary. Every add operator polls Edit mode, as the menu does.
+`DefaultMenus` also registers the Add Component menu,
 whose sections come from the document's component registry in
-`AddComponentMenu`, so game module types appear, and the Shading (Z), View
-(`), and Pivot Point (.) pies. Tests live in `tests/editor/MenuTests.cpp`.
+`AddComponentMenu`, so game module types appear, Select Grouped
+(`VIEW3D_MT_select_grouped`, Shift G and Edit > Select Grouped: one
+`object.select_grouped {type}` entry per type), and the Shading (Z), View
+(`), and Pivot Point (.) pies. The main menu draws registered menus with
+`EditorSession::drawRegisteredMenu` (Edit > Add, Edit > Select Grouped). Tests live in `tests/editor/MenuTests.cpp`.
