@@ -650,3 +650,39 @@ ModelTextureSourcesResult collectModelTextureSources(const std::filesystem::path
     }
     return collected;
 }
+
+ModelOutline readModelOutline(const std::filesystem::path& modelPath) {
+    cgltf_options options{};
+    cgltf_data* raw = nullptr;
+    const cgltf_result result = cgltf_parse_file(&options, modelPath.string().c_str(), &raw);
+    if (result != cgltf_result_success) {
+        return {.error = "Cannot parse " + modelPath.string() + ": " + resultMessage(result)};
+    }
+    std::unique_ptr<cgltf_data, CgltfDeleter> data(raw);
+    ModelOutline outline;
+    outline.materials.reserve(data->materials_count);
+    for (cgltf_size index = 0; index < data->materials_count; ++index) {
+        const char* name = data->materials[index].name;
+        outline.materials.emplace_back(name != nullptr ? name : "");
+    }
+    outline.meshes.resize(data->meshes_count);
+    for (cgltf_size meshIndex = 0; meshIndex < data->meshes_count; ++meshIndex) {
+        const cgltf_mesh& source = data->meshes[meshIndex];
+        ModelOutlineMesh& mesh = outline.meshes[meshIndex];
+        mesh.name = source.name != nullptr ? source.name : "";
+        for (cgltf_size primitiveIndex = 0; primitiveIndex < source.primitives_count; ++primitiveIndex) {
+            const cgltf_primitive& primitive = source.primitives[primitiveIndex];
+            if (primitive.type != cgltf_primitive_type_triangles) {
+                continue;
+            }
+            const int32_t material =
+                primitive.material != nullptr ? static_cast<int32_t>(primitive.material - data->materials) : -1;
+            mesh.primitives.push_back({.material = material});
+            const bool skinned = findAttribute(primitive, cgltf_attribute_type_joints) != nullptr &&
+                                 findAttribute(primitive, cgltf_attribute_type_weights) != nullptr;
+            mesh.skinned = mesh.skinned || skinned;
+            mesh.morphTargetCount = std::max(mesh.morphTargetCount, static_cast<uint32_t>(primitive.targets_count));
+        }
+    }
+    return outline;
+}
