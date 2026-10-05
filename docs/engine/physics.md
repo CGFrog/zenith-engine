@@ -159,7 +159,10 @@ table lacks behaves as Dynamic. In Jolt, each body's object layer is its index
 with a moving bit, so a layer may hold static and moving bodies. `refreshBody` rebuilds a body after collider or body
 settings change. Native Jolt accessors are deliberate advanced escape hatches.
 `drawDebug` records collider wireframes and other body diagnostics into a
-`DebugDraw`. The `layer` fields of `rigid_body` and `character_controller`
+`DebugDraw`, or into one channel of it (the `DebugDrawRecorder` overload).
+Each `ContactEvent` also carries `point`, a world-space point on the first
+body where they touch (the first point of Jolt's manifold; zero for End),
+which orders contacts of one pair after the other keys. The `layer` fields of `rigid_body` and `character_controller`
 carry the `physicsLayerNameList` presentation hint
 (`Fields::nameList`), so the editor's inspector chooses a layer by the
 project's names.

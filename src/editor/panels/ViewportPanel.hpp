@@ -244,6 +244,10 @@ class ViewportPanel final : public EditorPanel {
     void syncRenderView(EditorContext& context);
     void updateSelectionOutline(EditorContext& context);
     void recordSceneGizmos(EditorContext& context);
+    // Play and Simulate: the running game's navigation mesh, physics shapes,
+    // contacts, characters, and agents (editor/viewport/RuntimeDebugDraw), in
+    // game views too and whatever Show in Play Mode says.
+    void recordRuntimeOverlays(EditorContext& context);
     // The name labels the render view projected in its latest frame.
     void drawSceneLabels(EditorContext& context) const;
     void drawViewImage(UiTextureHandle texture, const char* placeholder) const;

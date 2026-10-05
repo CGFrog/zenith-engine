@@ -64,6 +64,9 @@ struct ContactEvent {
     glm::vec3 normal{0.0f};
     SceneEntityId firstId;
     SceneEntityId secondId;
+    // A world-space point where the bodies touch, on the first body's
+    // surface (the first point of Jolt's contact manifold); zero for End.
+    glm::vec3 point{0.0f};
 };
 
 // The order a step reports its contact events in: by the pair's lower, then
@@ -268,6 +271,9 @@ class PhysicsWorld {
     // type, never on the renderer. Fails before init or when a debug renderer
     // that is not a PhysicsWorld's owns Jolt's one per-process slot.
     PhysicsResult drawDebug(DebugDraw& output, const PhysicsDebugDrawOptions& options = {}) const;
+    // The same into one channel and lifetime of a DebugDraw (DebugDraw::
+    // channel), so a tool can show or hide the bodies on their own.
+    PhysicsResult drawDebug(const DebugDrawRecorder& output, const PhysicsDebugDrawOptions& options = {}) const;
     // Triangle-mesh shapes held for reuse, one per (mesh, generation, scale):
     // static mesh colliders with the same mesh and scale share one. Entries
     // for meshes that are no longer live are dropped when the asset revision

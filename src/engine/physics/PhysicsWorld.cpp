@@ -266,6 +266,8 @@ class PhysicsWorld::Impl {
         glm::vec3 normal;
         // Whether either body is a sensor; unknown (false) for End.
         bool sensor{false};
+        // On the first body's surface; zero for End.
+        glm::vec3 point{0.0f};
         // Resolved after the step (orderPendingContacts); zero for a body
         // that is gone or has no scene id.
         SceneEntityId firstId;
@@ -296,23 +298,35 @@ class PhysicsWorld::Impl {
         void OnContactAdded(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold& manifold,
                             JPH::ContactSettings&) override {
             add(ContactEventType::Begin, first.GetID(), second.GetID(), fromJolt(manifold.mWorldSpaceNormal),
-                first.IsSensor() || second.IsSensor());
+                first.IsSensor() || second.IsSensor(), contactPoint(manifold));
         }
 
         void OnContactPersisted(const JPH::Body& first, const JPH::Body& second, const JPH::ContactManifold& manifold,
                                 JPH::ContactSettings&) override {
             add(ContactEventType::Persist, first.GetID(), second.GetID(), fromJolt(manifold.mWorldSpaceNormal),
-                first.IsSensor() || second.IsSensor());
+                first.IsSensor() || second.IsSensor(), contactPoint(manifold));
         }
 
         void OnContactRemoved(const JPH::SubShapeIDPair& pair) override {
-            add(ContactEventType::End, pair.GetBody1ID(), pair.GetBody2ID(), {}, false);
+            add(ContactEventType::End, pair.GetBody1ID(), pair.GetBody2ID(), {}, false, {});
         }
 
       private:
-        void add(ContactEventType type, JPH::BodyID first, JPH::BodyID second, const glm::vec3& normal, bool sensor) {
+        // The manifold's first point on the first body, or its base offset
+        // when it has none.
+        static glm::vec3 contactPoint(const JPH::ContactManifold& manifold) {
+            const JPH::RVec3 point = manifold.mRelativeContactPointsOn1.empty()
+                                         ? manifold.mBaseOffset
+                                         : manifold.GetWorldSpaceContactPointOn1(0);
+            return {static_cast<float>(point.GetX()), static_cast<float>(point.GetY()),
+                    static_cast<float>(point.GetZ())};
+        }
+
+        void add(ContactEventType type, JPH::BodyID first, JPH::BodyID second, const glm::vec3& normal, bool sensor,
+                 const glm::vec3& point) {
             std::scoped_lock lock(m_owner.contactMutex);
-            m_owner.pendingContacts.push_back({type, first, second, normal, sensor});
+            m_owner.pendingContacts.push_back(
+                {.type = type, .first = first, .second = second, .normal = normal, .sensor = sensor, .point = point});
         }
 
         Impl& m_owner;
@@ -384,10 +398,14 @@ class PhysicsWorld::Impl {
             pending.secondId = sceneIdOfBody(pending.second);
         }
         std::ranges::sort(pendingContacts, [](const PendingContact& first, const PendingContact& second) {
+            // The point last, so several manifolds of one pair (sub-shapes)
+            // keep one order too.
             return std::tuple(contactOrderKey(first.type, first.firstId, first.secondId, first.normal),
-                              bodyKey(first.first), bodyKey(first.second)) <
+                              bodyKey(first.first), bodyKey(first.second), first.point.x, first.point.y,
+                              first.point.z) <
                    std::tuple(contactOrderKey(second.type, second.firstId, second.secondId, second.normal),
-                              bodyKey(second.first), bodyKey(second.second));
+                              bodyKey(second.first), bodyKey(second.second), second.point.x, second.point.y,
+                              second.point.z);
         });
     }
 
@@ -1266,7 +1284,8 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
                                              .second = second->second,
                                              .normal = pending.normal,
                                              .firstId = pending.firstId,
-                                             .secondId = pending.secondId});
+                                             .secondId = pending.secondId,
+                                             .point = pending.point});
         }
     }
     m_impl->updateTriggers();
@@ -1583,6 +1602,11 @@ std::span<const TriggerEvent> PhysicsWorld::triggerEvents() const {
 }
 
 PhysicsResult PhysicsWorld::drawDebug(DebugDraw& output, const PhysicsDebugDrawOptions& options) const {
+    // The default channel, as DebugDraw's own shapes record.
+    return drawDebug(output.channel({}), options);
+}
+
+PhysicsResult PhysicsWorld::drawDebug(const DebugDrawRecorder& output, const PhysicsDebugDrawOptions& options) const {
     if (!m_impl->initialized) {
         return {.error = "Physics debug drawing needs an initialized physics world"};
     }
@@ -1599,9 +1623,9 @@ PhysicsResult PhysicsWorld::drawDebug(DebugDraw& output, const PhysicsDebugDrawO
     settings.mDrawBoundingBox = options.boundingBoxes;
     settings.mDrawCenterOfMassTransform = options.centersOfMass;
     settings.mDrawVelocity = options.velocities;
-    renderer->setTarget(&output, options.depth);
+    renderer->setTarget(output, options.depth);
     m_impl->system->DrawBodies(settings, renderer);
-    renderer->setTarget(nullptr, options.depth);
+    renderer->setTarget(std::nullopt, options.depth);
     return {.success = true};
 }
 

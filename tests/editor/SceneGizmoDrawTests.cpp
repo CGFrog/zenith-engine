@@ -1,11 +1,17 @@
 // CPU tests of the viewport's scene gizmos (editor/viewport/SceneGizmoDraw):
 // the geometry each component kind records, the overlay scopes, hidden
 // entities, local-view isolation, selection colours and bounds (collection
-// instances and the cached mesh box), labels, and the Play-mode policy.
+// instances and the cached mesh box), labels, the Play-mode policy, offset
+// colliders agreeing with physics and navigation, and Play's debugging
+// overlays (editor/viewport/RuntimeDebugDraw).
 
 #include "editor/panels/ViewportPanel.hpp"
+#include "editor/viewport/RuntimeDebugDraw.hpp"
 #include "editor/viewport/SceneGizmoDraw.hpp"
+#include "engine/module/GameServices.hpp"
+#include "engine/navigation/NavAgent.hpp"
 #include "engine/navigation/NavigationWorld.hpp"
+#include "engine/physics/CharacterController.hpp"
 #include "engine/physics/PhysicsWorld.hpp"
 #include "engine/resources/ResourceLocator.hpp"
 #include "engine/scene/Collections.hpp"
@@ -332,6 +338,59 @@ void testOffsetCollidersAgree() {
     }
 }
 
+// Play's debugging overlays draw what the running game holds, each only when
+// on, and looking at navigation never bakes it.
+void testRuntimeDebug() {
+    Scene scene;
+    Logger logger(LoggerConfig{.echoToStderr = false});
+    AssetManager assets{&logger};
+    const auto addBody = [&](const glm::vec3& position, const glm::vec3& halfExtents, PhysicsMotionType motion) {
+        const Entity entity = scene.createEntity("Body");
+        scene.registry().get<TransformComponent>(entity).local = glm::translate(glm::mat4(1.0f), position);
+        scene.registry().emplace<ColliderComponent>(entity, ColliderComponent{.shape = BoxCollider{halfExtents}});
+        scene.registry().emplace<RigidBodyComponent>(
+            entity, RigidBodyComponent{.motionType = motion,
+                                       .layer = motion == PhysicsMotionType::Static ? PhysicsLayer::Static
+                                                                                    : PhysicsLayer::Dynamic});
+        return entity;
+    };
+    addBody({0.0f, -0.5f, 0.0f}, {10.0f, 0.5f, 10.0f}, PhysicsMotionType::Static);
+    addBody({3.0f, 0.5f, 3.0f}, glm::vec3(0.5f), PhysicsMotionType::Dynamic);
+    const Entity character = scene.createEntity("Character");
+    scene.registry().get<TransformComponent>(character).local = glm::translate(glm::mat4(1.0f), {-3.0f, 1.0f, 0.0f});
+    scene.registry().emplace<CharacterControllerComponent>(character);
+    const Entity walker = scene.createEntity("Walker");
+    scene.registry().get<TransformComponent>(walker).local = glm::translate(glm::mat4(1.0f), {0.0f, 0.0f, -3.0f});
+    scene.registry().emplace<NavAgentComponent>(walker);
+    scene.updateWorldTransforms();
+
+    PhysicsWorld physics;
+    expect(static_cast<bool>(physics.init()), "the runtime debug world initializes");
+    for (int step = 0; step < 10; ++step) {
+        physics.step(scene, assets, physics.config().fixedTimeStep);
+    }
+    scene.updateWorldTransforms();
+    DebugDraw servicesDraw;
+    GameServices services(assets, {}, servicesDraw, &logger);
+    const RuntimeDebugSources sources{.scene = scene, .physics = &physics, .services = &services};
+    const auto record = [&](const RuntimeDebugOverlays& overlays) {
+        DebugDraw output;
+        recordRuntimeDebug(sources, overlays, output);
+        return output.lineCount();
+    };
+    expect(record({}) == 0, "with every overlay off nothing is drawn");
+    expect(record({.physicsShapes = true}) > 0, "physics shapes draw the bodies the world holds");
+    expect(!physics.contactEvents().empty() && record({.contacts = true}) > 0,
+           "contacts draw the last step's contact points");
+    expect(record({.characters = true}) > 0, "characters draw their capsules");
+    expect(record({.navAgents = true}) > 0, "agents draw even before they join a crowd");
+    expect(record({.navigationMesh = true}) == 0 && services.navigationIfBaked() == nullptr,
+           "drawing the game's navigation mesh never bakes it");
+    expect(services.navigation(scene).baked() && record({.navigationMesh = true}) > 0,
+           "once the game baked its mesh it is drawn");
+    physics.shutdown();
+}
+
 void testVolumes() {
     const glm::mat4 scaled = glm::scale(glm::translate(glm::mat4(1.0f), {1.0f, 0.0f, 0.0f}), glm::vec3(3.0f));
     GizmoScene probeScene;
@@ -536,6 +595,7 @@ int main(int, char** argv) {
     testCameras();
     testCollidersAndVolumes();
     testOffsetCollidersAgree();
+    testRuntimeDebug();
     testVolumes();
     testSelectionBoundsAndHidden();
     testLocalViewIsolation();

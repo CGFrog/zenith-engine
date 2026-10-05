@@ -14,6 +14,7 @@
 #include "editor/viewport/Cursor3D.hpp"
 #include "editor/viewport/GameUiOverlay.hpp"
 #include "editor/viewport/NavigationSidebarTab.hpp"
+#include "editor/viewport/RuntimeDebugDraw.hpp"
 #include "editor/viewport/SceneGizmoDraw.hpp"
 #include "editor/viewport/ViewFraming.hpp"
 #include "engine/graphics/ViewShading.hpp"
@@ -430,6 +431,9 @@ void ViewportPanel::syncRenderView(EditorContext& context) {
     m_appliedViewSettings = viewportViewSettings(rendering.settings(), rendering.capabilities(), m_chrome.shading,
                                                  viewportShadingSource(context.mode, context.simulating));
     rendering.setViewSettings(m_view, m_appliedViewSettings);
+    if (!context.editMode()) {
+        recordRuntimeOverlays(context);
+    }
     if (m_gameView) {
         // The game's own image: no grid, outline, or scene gizmos.
         rendering.setViewGridOverlay(m_view, std::nullopt);
@@ -469,7 +473,8 @@ void ViewportPanel::recordSceneGizmos(EditorContext& context) {
                      .viewCamera = viewCamera,
                      .isolatedObjects = m_localViewObjects ? &*m_localViewObjects : nullptr},
                     m_chrome.overlays.scene, *output);
-    if (m_chrome.overlays.navigationMesh && context.navigationPreview != nullptr) {
+    // In Play the game's own mesh is drawn instead (recordRuntimeOverlays).
+    if (m_chrome.overlays.navigationMesh && context.editMode() && context.navigationPreview != nullptr) {
         context.navigationPreview->drawDebug(*output);
     }
     if (m_chrome.overlays.cursor) {
@@ -1231,4 +1236,21 @@ bool ViewportPanel::updateColliderHandles(EditorContext& context, bool imageHove
     }
     return m_colliderHandles.update(context, lens(context.app.scene), m_size, input, ImGui::GetWindowDrawList(),
                                     m_position);
+}
+
+void ViewportPanel::recordRuntimeOverlays(EditorContext& context) {
+    const ViewportOverlays& overlays = m_chrome.overlays;
+    const RuntimeDebugOverlays runtime{.navigationMesh = overlays.navigationMesh,
+                                       .physicsShapes = overlays.physicsShapes,
+                                       .contacts = overlays.contacts,
+                                       .characters = overlays.characters,
+                                       .navAgents = overlays.navAgents};
+    DebugDraw* output = runtime.any() ? context.app.rendering.viewDebugDraw(m_view) : nullptr;
+    if (output == nullptr) {
+        return;
+    }
+    Scene& scene = context.app.scene;
+    scene.updateWorldTransforms();
+    recordRuntimeDebug({.scene = scene, .physics = &context.app.physics, .services = context.gameServices}, runtime,
+                       *output);
 }

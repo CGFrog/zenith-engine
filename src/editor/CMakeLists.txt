@@ -175,6 +175,7 @@ add_library(zenith_editor_app STATIC
     viewport/LassoSelect.cpp
     viewport/NavigationSidebarTab.cpp
     viewport/RegionSelect.cpp
+    viewport/RuntimeDebugDraw.cpp
     viewport/SnapQueries.cpp
     viewport/ViewFraming.cpp
     viewport/ViewportPickProvider.cpp

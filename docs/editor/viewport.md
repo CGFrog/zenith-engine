@@ -90,6 +90,21 @@ CPU; `tests/editor/SceneGizmoCaptureTests.cpp` is the strict-validation smoke
 test and the `scene_gizmos` reference capture.
 
 
+Play's debugging overlays. In Play and Simulate the Overlays menu's Play
+section (also View > Overlays in the main menu, `debugOverlayItems`) turns
+on overlays that look at the running game rather than the authored
+components: **Physics Shapes** (`PhysicsWorld::drawDebug`), **Contacts** (the
+last step's contact points and normals), **Characters** (character capsules,
+green grounded with the ground normal, blue airborne), and **Nav Agents**
+(each agent's radius, crowd velocity and path end, yellow for a partial path
+and red for a failed one); **Navigation Mesh** then shows the game's own mesh
+(`GameServices::navigationIfBaked`, which never bakes) instead of the
+preview. `viewport/RuntimeDebugDraw` records them without ImGui
+(`recordRuntimeDebug`), `ViewportPanel::recordRuntimeOverlays` calls it every
+Play frame whatever **Show in Play Mode** says, game views included, and the
+flags are saved with the other overlays. They start off; colours are the
+palette's `overlayContact`, `overlayCharacter*`, and `overlayNav*` tokens.
+
 Collider editing. The inspector's collider editor
 (`ComponentEditors::drawCollider`) switches the shape type in a Shape combo,
 keeping its size (`convertColliderShape`: a box's largest half extent becomes

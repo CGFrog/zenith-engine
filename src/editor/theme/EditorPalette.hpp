@@ -134,6 +134,15 @@ inline constexpr ThemeColor cursorRingAlternate = ThemeColor::hex(0xF4F4F4);
 inline constexpr ThemeColor cursorCrosshair = ThemeColor::hex(0x000000);
 // The point a modal move snapped to (surface or vertex snapping).
 inline constexpr ThemeColor snapIndicator = ThemeColor::hex(0xFFE27A);
+// Play-mode debugging overlays (editor/viewport/RuntimeDebugDraw): contacts,
+// character capsules (grounded or airborne), and navigation agents (walking,
+// on a partial path, or failed).
+inline constexpr ThemeColor overlayContact = ThemeColor::hex(0xFF5AC8);
+inline constexpr ThemeColor overlayCharacterGrounded = ThemeColor::hex(0x7CD860);
+inline constexpr ThemeColor overlayCharacterAirborne = ThemeColor::hex(0x6AB0FF);
+inline constexpr ThemeColor overlayNavAgent = ThemeColor::hex(0x7AD8FF);
+inline constexpr ThemeColor overlayNavPartial = ThemeColor::hex(0xFFC857);
+inline constexpr ThemeColor overlayNavFailed = ThemeColor::hex(0xFF5A5A);
 
 // Prefab instances: the bar beside an overridden value and its bold ink.
 inline constexpr ThemeColor prefabOverride = ThemeColor::hex(0x4FA8FF);
