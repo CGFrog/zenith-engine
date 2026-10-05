@@ -2,6 +2,7 @@
 
 #include "engine/scene/Scene.hpp"
 
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -101,6 +102,49 @@ Operator deleteCollectionOperator() {
                 }
                 return OperatorResult::finished();
             })};
+}
+
+std::string trimmed(std::string_view text) {
+    constexpr std::string_view whitespace = " \t\r\n";
+    const size_t first = text.find_first_not_of(whitespace);
+    if (first == std::string_view::npos) {
+        return {};
+    }
+    return std::string(text.substr(first, text.find_last_not_of(whitespace) - first + 1));
+}
+
+Operator renameCollectionOperator() {
+    return {
+        .id = "collection.rename",
+        .label = "Rename Collection",
+        .description = "Rename a collection",
+        .flags = OperatorFlags::Undo | OperatorFlags::Internal,
+        .properties = OperatorProperties::make(RenameCollectionProperties{},
+                                               std::move(Fields<RenameCollectionProperties>()
+                                                             .add("collection", &RenameCollectionProperties::collection)
+                                                             .add("name", &RenameCollectionProperties::name))),
+        .poll = hasCollections,
+        .execute = typed<RenameCollectionProperties>([](OperatorContext& context, RenameCollectionProperties& values) {
+            Scene& scene = context.editing.scene();
+            const SceneCollection* collection = nullptr;
+            if (OperatorResult found = findCollection(scene, values.collection, collection); !found) {
+                return found;
+            }
+            std::string name = trimmed(values.name);
+            if (name.empty()) {
+                return OperatorResult::cancelled("Collections need a name");
+            }
+            if (name == collection->name) {
+                return OperatorResult::cancelled("The collection already has that name");
+            }
+            values.name = name;
+            SceneCollections collections = scene.collections();
+            if (CollectionResult result = collections.rename(collection->id, std::move(name)); !result) {
+                return OperatorResult::failed(result.error);
+            }
+            scene.setCollections(std::move(collections));
+            return OperatorResult::finished();
+        })};
 }
 
 // Links or unlinks every selected object; cancelled when nothing changes.
@@ -207,6 +251,7 @@ OperatorRegistrationResult registerCollectionOperators(OperatorRegistry& registr
     std::vector<Operator> operators;
     operators.push_back(newCollectionOperator());
     operators.push_back(deleteCollectionOperator());
+    operators.push_back(renameCollectionOperator());
     operators.push_back(membershipOperator("collection.link", "Link to Collection",
                                            "Add the selected objects to a collection, keeping their other collections",
                                            true));

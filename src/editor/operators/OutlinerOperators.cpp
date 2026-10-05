@@ -1,6 +1,9 @@
 #include "OutlinerOperators.hpp"
 
+#include "editor/document/EditorDocument.hpp"
+#include "editor/panels/outliner/OutlinerFilter.hpp"
 #include "engine/scene/Collections.hpp"
+#include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/Prefab.hpp"
 #include "engine/scene/Scene.hpp"
 
@@ -162,10 +165,97 @@ Operator parentDropOperator() {
                                : OperatorResult::cancelled("The selection already has that parent");
             })};
 }
+
+// The object's position among its parent's children.
+size_t siblingIndex(const Scene& scene, Entity entity) {
+    const Entity parent = scene.registry().get<RelationshipComponent>(entity).parent;
+    const auto& siblings = scene.registry().get<RelationshipComponent>(parent).children;
+    return static_cast<size_t>(std::ranges::find(siblings, entity) - siblings.begin());
+}
+
+OperatorResult reorder(OperatorContext& context, const ReorderProperties& values) {
+    Scene& scene = context.editing.scene();
+    const Entity entity = scene.findEntity(values.entity);
+    if (entity == entt::null) {
+        return OperatorResult::failed("Unknown object " + std::to_string(values.entity.value));
+    }
+    if (!values.parent) {
+        return OperatorResult::cancelled("Root objects are listed by id and have no order");
+    }
+    const Entity parent = scene.findEntity(values.parent);
+    if (parent == entt::null) {
+        return OperatorResult::failed("Unknown parent " + std::to_string(values.parent.value));
+    }
+    if (isAncestorOrSelf(scene, entity, parent)) {
+        return OperatorResult::cancelled("An object cannot be placed under itself");
+    }
+    const bool moves = scene.registry().get<RelationshipComponent>(entity).parent != parent;
+    if (!moves) {
+        const size_t last = scene.registry().get<RelationshipComponent>(parent).children.size() - 1;
+        if (siblingIndex(scene, entity) == std::min<size_t>(values.index, last)) {
+            return OperatorResult::cancelled("The object is already there");
+        }
+    } else {
+        const ReparentMode mode =
+            values.keepTransform ? ReparentMode::PreserveWorldTransform : ReparentMode::PreserveLocalTransform;
+        if (mode == ReparentMode::PreserveWorldTransform) {
+            scene.updateWorldTransforms();
+            if (std::abs(glm::determinant(scene.registry().get<TransformComponent>(parent).world)) < 1.0e-8f) {
+                return OperatorResult::failed("Cannot preserve world transform under a singular parent transform");
+            }
+        }
+        // Leaving a prefab instance removes the object from it.
+        recordPrefabEntityMove(scene, entity, parent);
+        if (const SceneResult result = scene.reparent(entity, parent, mode); !result) {
+            return OperatorResult::failed(result.error);
+        }
+    }
+    if (const SceneResult result = scene.setSiblingIndex(entity, values.index); !result) {
+        return OperatorResult::failed(result.error);
+    }
+    return OperatorResult::finished();
+}
+
+Operator reorderOperator() {
+    return {.id = "outliner.reorder",
+            .label = "Reorder Object",
+            .description = "Move an object to a position among a parent's children",
+            .flags = OperatorFlags::Undo | OperatorFlags::Internal,
+            .properties = OperatorProperties::make(
+                ReorderProperties{}, std::move(Fields<ReorderProperties>()
+                                                   .add("entity", &ReorderProperties::entity)
+                                                   .add("parent", &ReorderProperties::parent)
+                                                   .add("index", &ReorderProperties::index)
+                                                   .add("keep_transform", &ReorderProperties::keepTransform))),
+            .poll = inEditMode,
+            .execute = typed<ReorderProperties>(reorder)};
+}
+
+Operator selectMatchingOperator() {
+    return {.id = "outliner.select_matching",
+            .label = "Select All Matching",
+            .description = "Select every object the outliner search matches",
+            .properties = OperatorProperties::make(
+                SelectMatchingProperties{},
+                std::move(Fields<SelectMatchingProperties>().add("filter", &SelectMatchingProperties::filter))),
+            .execute = typed<SelectMatchingProperties>([](OperatorContext& context, SelectMatchingProperties& values) {
+                const OutlinerFilter filter = parseOutlinerFilter(values.filter);
+                if (filter.empty()) {
+                    return OperatorResult::cancelled("Type a search to select what it matches");
+                }
+                const ComponentTypeRegistry& types = componentTypesFor(context.editing.document().options());
+                std::vector<SceneEntityId> matches = findOutlinerMatches(context.editing.scene(), filter, types);
+                if (matches.empty()) {
+                    return OperatorResult::cancelled("Nothing matches the search");
+                }
+                context.selection.assign(std::move(matches));
+                return OperatorResult::finished();
+            })};
+}
 } // namespace
 
 OperatorRegistrationResult registerOutlinerOperators(OperatorRegistry& registry) {
-    for (Operator op : {setVisibilityOperator(), parentDropOperator()}) {
+    for (Operator op : {setVisibilityOperator(), parentDropOperator(), reorderOperator(), selectMatchingOperator()}) {
         if (OperatorRegistrationResult result = registry.add(std::move(op)); !result) {
             return result;
         }

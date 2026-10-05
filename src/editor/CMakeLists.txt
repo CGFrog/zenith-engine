@@ -114,7 +114,9 @@ add_library(zenith_editor_app STATIC
     panels/ViewportPanel.cpp
     panels/ViewportRegistry.cpp
     panels/outliner/OrphanData.cpp
+    panels/outliner/OutlinerFilter.cpp
     panels/outliner/OutlinerRowWidgets.cpp
+    panels/outliner/OutlinerRows.cpp
     panels/outliner/OutlinerTree.cpp
     project/AssetCatalog.cpp
     project/AssetRelocation.cpp

@@ -1,21 +1,18 @@
 #include "OutlinerTree.hpp"
 
+#include "OutlinerFilter.hpp"
+
+#include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/Prefab.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <map>
 #include <utility>
 
 namespace {
 // Prefab group scopes have the top bit set so they never equal a collection id.
 constexpr uint64_t prefabScopeBit = uint64_t{1} << 63u;
-
-std::string entityLabel(const Scene& scene, Entity entity) {
-    const auto* name = scene.registry().try_get<NameComponent>(entity);
-    return name == nullptr || name->name.empty() ? std::string("Unnamed Entity") : name->name;
-}
 
 bool memberOf(const Scene& scene, Entity entity, SceneCollectionId collection) {
     const auto* membership = scene.registry().try_get<CollectionMembershipComponent>(entity);
@@ -48,7 +45,7 @@ std::vector<Entity> entitiesById(const Scene& scene) {
 
 OutlinerNode entityLeaf(const Scene& scene, Entity entity, uint64_t scope) {
     return {.kind = OutlinerNodeKind::Entity,
-            .label = entityLabel(scene, entity),
+            .label = outlinerEntityLabel(scene, entity),
             .entity = scene.id(entity),
             .scope = scope,
             .transient = scene.isTransient(entity)};
@@ -161,17 +158,19 @@ std::vector<OutlinerNode> orphanRows(const Scene& scene, std::span<const OrphanA
 }
 
 // Keeps rows that match or have a kept row below them.
-void applyFilter(std::vector<OutlinerNode>& rows, std::string_view filter) {
-    std::erase_if(rows, [filter](OutlinerNode& row) {
-        applyFilter(row.children, filter);
-        const bool matches = outlinerFilterMatches(row.label, filter);
+void applyFilter(const Scene& scene, std::vector<OutlinerNode>& rows, const OutlinerFilterMatcher& matcher) {
+    std::erase_if(rows, [&](OutlinerNode& row) {
+        applyFilter(scene, row.children, matcher);
+        bool matches = false;
+        if (row.kind == OutlinerNodeKind::Entity) {
+            const Entity entity = scene.findEntity(row.entity);
+            matches = entity != entt::null && matcher.matchesEntity(scene, entity, row.label);
+        } else {
+            matches = matcher.matchesLabel(row.label);
+        }
         row.filterContext = !matches;
         return !matches && row.children.empty();
     });
-}
-
-char lower(char character) {
-    return static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
 }
 } // namespace
 
@@ -213,19 +212,7 @@ std::optional<OutlinerDisplayMode> parseOutlinerDisplayMode(std::string_view key
 }
 
 bool outlinerFilterMatches(std::string_view label, std::string_view filter) {
-    if (filter.empty()) {
-        return true;
-    }
-    if (filter.size() > label.size()) {
-        return false;
-    }
-    for (size_t start = 0; start + filter.size() <= label.size(); ++start) {
-        if (std::ranges::equal(label.substr(start, filter.size()), filter,
-                               [](char left, char right) { return lower(left) == lower(right); })) {
-            return true;
-        }
-    }
-    return false;
+    return containsIgnoringCase(label, filter);
 }
 
 std::vector<OutlinerNode> buildOutlinerTree(const Scene& scene, const OutlinerTreeOptions& options) {
@@ -242,8 +229,10 @@ std::vector<OutlinerNode> buildOutlinerTree(const Scene& scene, const OutlinerTr
         rows = orphanRows(scene, options.orphanAssets);
         break;
     }
-    if (!options.filter.empty()) {
-        applyFilter(rows, options.filter);
+    if (const OutlinerFilter filter = parseOutlinerFilter(options.filter); !filter.empty()) {
+        const ComponentTypeRegistry& types =
+            options.componentTypes != nullptr ? *options.componentTypes : *builtInComponentTypes();
+        applyFilter(scene, rows, OutlinerFilterMatcher(filter, types));
     }
     return rows;
 }
