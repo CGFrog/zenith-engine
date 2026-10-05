@@ -83,6 +83,30 @@ CPU; `tests/editor/SceneGizmoCaptureTests.cpp` is the strict-validation smoke
 test and the `scene_gizmos` reference capture.
 
 
+Collider editing. The inspector's collider editor
+(`ComponentEditors::drawCollider`) switches the shape type in a Shape combo,
+keeping its size (`convertColliderShape`: a box's largest half extent becomes
+a sphere's radius, a capsule keeps the box's height and wider side, and so
+on), edits the offset position and rotation (Euler degrees), and gives a
+triangle-mesh collider a combo of the entity's model meshes
+(`colliderMeshChoices`; Triangle Mesh is unavailable without one). While the
+Colliders overlay is not Off, `viewport/ColliderHandles` draws handles on the
+active object's collider: a square on each box face, on a sphere's radius
+along each axis, and on a capsule's radius and the tips of its ends, placed
+with `colliderLocalTransform`. Dragging one moves it along its outward axis
+(the mouse ray's nearest point on that line,
+`colliderHandleAxisParameter`): symmetric by default, so the shape grows on
+both sides and stays centred, and one-sided with Ctrl, which grows it by half
+the distance and moves the offset after the dragged side
+(`dragColliderHandle`; sizes stay at least 1 mm). The drag is one undo step,
+captured at the press and committed at the release like the gizmo; Esc or a
+right click cancels it. The transform gizmo takes the mouse first, a hovered
+or dragged handle blocks picking, and the handles are skipped in game views
+and during modal transforms (which cancel a drag).
+`tests/editor/ColliderToolsTests.cpp` covers the shape switch through the
+inspector, the mesh choices, the handle placement and drag maths, and a drag's
+undo and cancel headless.
+
 `src/editor/viewport/` holds the viewport's selection tools. A left click runs
 `view3d.select` (Shift extends, a miss clears unless extending; Alt runs
 `view3d.select_cycle`, stepping from the active object through the objects

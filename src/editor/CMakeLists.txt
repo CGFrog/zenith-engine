@@ -169,6 +169,7 @@ add_library(zenith_editor_app STATIC
     theme/ThemeChrome.cpp
     viewport/SceneGizmoDraw.cpp
     viewport/BoxSelect.cpp
+    viewport/ColliderHandles.cpp
     viewport/Cursor3D.cpp
     viewport/GameUiOverlay.cpp
     viewport/LassoSelect.cpp

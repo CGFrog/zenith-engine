@@ -613,6 +613,7 @@ void ViewportPanel::draw(EditorContext& context) {
     const ImVec2 mouse = ImGui::GetMousePos();
     m_mouseInView = glm::vec2(mouse.x, mouse.y) - m_position;
     if (modal) {
+        m_colliderHandles.cancel(context);
         // Only the viewport the transform started in advances it.
         context.actions.updateModalTransform(context.app, m_id);
         processPicks(context);
@@ -625,10 +626,12 @@ void ViewportPanel::draw(EditorContext& context) {
         updateSelectTools(imageHovered);
     } else {
         const bool gizmoBlocksPicking = m_chrome.overlays.gizmo && drawGizmo(context);
+        const bool handlesBlockPicking = updateColliderHandles(context, imageHovered, gizmoBlocksPicking);
         if (imageHovered || chromeHovered) {
             context.actions.handleObjectKeys(context.app, KeymapRegion::Viewport);
         }
-        mousePressesAllowed = imageHovered && !gizmoBlocksPicking && !context.actions.modalTransformActive();
+        mousePressesAllowed =
+            imageHovered && !gizmoBlocksPicking && !handlesBlockPicking && !context.actions.modalTransformActive();
     }
     dispatchMouseChords(context, mousePressesAllowed);
     processPicks(context);
@@ -1202,4 +1205,25 @@ glm::vec3 ViewportPanel::snapGizmoTranslation(EditorContext& context, const Tran
         }
     }
     return m_gizmoStartPosition + frame * snapped;
+}
+
+bool ViewportPanel::updateColliderHandles(EditorContext& context, bool imageHovered, bool gizmoTakesMouse) {
+    if (m_chrome.overlays.scene.colliders == OverlayScope::Off) {
+        m_colliderHandles.cancel(context);
+        return false;
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    const ColliderHandleInput input{.mouse = m_mouseInView,
+                                    .available = imageHovered && !gizmoTakesMouse,
+                                    .leftPressed = ImGui::IsMouseClicked(ImGuiMouseButton_Left),
+                                    .leftDown = ImGui::IsMouseDown(ImGuiMouseButton_Left),
+                                    .cancel = ImGui::IsKeyPressed(ImGuiKey_Escape, false) ||
+                                              ImGui::IsMouseClicked(ImGuiMouseButton_Right),
+                                    .ctrl = io.KeyCtrl};
+    if (input.cancel && m_colliderHandles.dragging()) {
+        // The right press cancels the drag; it must not start fly navigation.
+        suppressCameraUntilRightRelease();
+    }
+    return m_colliderHandles.update(context, lens(context.app.scene), m_size, input, ImGui::GetWindowDrawList(),
+                                    m_position);
 }

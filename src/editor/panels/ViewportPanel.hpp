@@ -8,6 +8,7 @@
 #include "editor/panels/ViewportChrome.hpp"
 #include "editor/panels/ViewportRegistry.hpp"
 #include "editor/viewport/BoxSelect.hpp"
+#include "editor/viewport/ColliderHandles.hpp"
 #include "editor/viewport/LassoSelect.hpp"
 #include "editor/viewport/SnapQueries.hpp"
 #include "editor/viewport/ViewportPicker.hpp"
@@ -255,6 +256,10 @@ class ViewportPanel final : public EditorPanel {
     void drawItemTab(EditorContext& context);
     // Returns whether the gizmo is in use or under the mouse.
     bool drawGizmo(EditorContext& context);
+    // The active object's collider handles while the collider overlay is
+    // on; returns whether one is under the mouse or being dragged. The
+    // mouse goes to the transform gizmo first (gizmoTakesMouse).
+    bool updateColliderHandles(EditorContext& context, bool imageHovered, bool gizmoTakesMouse);
     // Runs the keymap's mouse bindings (click select, Alt+click cycle, the
     // Ctrl+RMB lasso, the Shift+RMB 3D cursor...); presses count only when
     // pressesAllowed.
@@ -311,6 +316,7 @@ class ViewportPanel final : public EditorPanel {
     // Scene snapshot from before the current gizmo drag, for undo.
     // The dragged entity before a gizmo drag, recorded when it ends.
     std::optional<SceneEditing::EntitySnapshot> m_gizmoBefore;
+    ColliderHandleTool m_colliderHandles;
     std::vector<RenderObjectId> m_outlinedObjects;
     std::vector<Entity> m_outlineTraversal;
     glm::vec2 m_mouseInView{0.0f};
