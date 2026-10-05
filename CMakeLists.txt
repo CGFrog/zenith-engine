@@ -37,6 +37,7 @@ if(UNIX AND NOT APPLE)
 endif()
 
 include(cmake/CompilerSettings.cmake)
+include(cmake/WindowsExports.cmake)
 include(cmake/Dependencies.cmake)
 
 # The project's static and import libraries also share one directory
@@ -175,7 +176,6 @@ target_include_directories(zenith_engine PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
-set_target_properties(zenith_engine PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
 target_compile_definitions(zenith_engine PRIVATE ZENITH_ENGINE_BUILDING)
 if(WIN32)
     target_compile_definitions(zenith_engine
@@ -229,18 +229,34 @@ endif()
 
 # Relocatable release archives. Runtime code resolves these directories from
 # the executable, so installed artifacts do not retain source/build paths.
-install(TARGETS zenith zenith_asset_build
-    RUNTIME_DEPENDENCIES
-        PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-"
-        POST_EXCLUDE_REGEXES ".*[Ss]ystem32/.*" ".*/lib(c|m|pthread|dl|rt)\\.so.*"
-    RUNTIME DESTINATION .
-    BUNDLE DESTINATION .
-)
-# The engine and SDL shared libraries sit beside the executables. Their import
-# libraries and development symlinks are not part of the runtime package.
+if(APPLE)
+    # The application bundle carries the engine and SDL libraries in its
+    # Frameworks folder, where the bundle's executable, the asset tool beside
+    # the bundle, and the engine itself look for them. They are the only
+    # non-system libraries the executables link, so no dependency scan runs.
+    set(ZENITH_INSTALL_LIBRARY_DIR "Zenith.app/Contents/Frameworks")
+    set_target_properties(zenith PROPERTIES INSTALL_RPATH "@executable_path/../Frameworks")
+    set_target_properties(zenith_asset_build PROPERTIES INSTALL_RPATH "@executable_path/${ZENITH_INSTALL_LIBRARY_DIR}")
+    set_target_properties(zenith_engine PROPERTIES INSTALL_RPATH "@loader_path")
+    install(TARGETS zenith zenith_asset_build
+        RUNTIME DESTINATION .
+        BUNDLE DESTINATION .
+    )
+else()
+    set(ZENITH_INSTALL_LIBRARY_DIR ".")
+    install(TARGETS zenith zenith_asset_build
+        RUNTIME_DEPENDENCIES
+            PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-"
+            POST_EXCLUDE_REGEXES ".*[Ss]ystem32/.*" ".*/lib(c|m|pthread|dl|rt)\\.so.*"
+        RUNTIME DESTINATION .
+    )
+endif()
+# The engine and SDL shared libraries sit beside the executables (in the
+# bundle on macOS). Their import libraries and development symlinks are not
+# part of the runtime package.
 install(TARGETS zenith_engine SDL3-shared
     RUNTIME DESTINATION .
-    LIBRARY DESTINATION . NAMELINK_SKIP
+    LIBRARY DESTINATION "${ZENITH_INSTALL_LIBRARY_DIR}" NAMELINK_SKIP
     ARCHIVE DESTINATION lib COMPONENT development EXCLUDE_FROM_ALL
 )
 install(DIRECTORY "${ZENITH_SHADER_BINARY_DIR}/" DESTINATION shaders FILES_MATCHING PATTERN "*.spv")

@@ -71,8 +71,9 @@ option(ZENITH_USE_PCH "Precompile common standard and third-party headers" ${zen
 # implicitly: every source still includes what it uses, and the tree builds
 # with the option off.
 #
-# A Windows shared library that exports every symbol (WINDOWS_EXPORT_ALL_SYMBOLS)
-# would also export what the header's own object file defines: on MSVC a
+# A Windows shared library that exports the symbols its objects define
+# (zenith_export_defined_symbols, or WINDOWS_EXPORT_ALL_SYMBOLS) would also
+# export what the header's own object file defines: on MSVC a
 # __@@_PchSym_ marker the linker cannot resolve as an export, and template
 # instances from the headers. Such a target instead reuses the header compiled
 # in <target>_pch, a static library with the same compile settings, so only
@@ -86,7 +87,8 @@ function(zenith_target_precompile_headers target header)
 
     get_target_property(target_type ${target} TYPE)
     get_target_property(exports_all_symbols ${target} WINDOWS_EXPORT_ALL_SYMBOLS)
-    if(NOT (WIN32 AND target_type STREQUAL "SHARED_LIBRARY" AND exports_all_symbols))
+    get_target_property(exports_defined_symbols ${target} ZENITH_EXPORT_DEFINED_SYMBOLS)
+    if(NOT (WIN32 AND target_type STREQUAL "SHARED_LIBRARY" AND (exports_all_symbols OR exports_defined_symbols)))
         target_precompile_headers(${target} PRIVATE "${pch_header}")
         return()
     endif()

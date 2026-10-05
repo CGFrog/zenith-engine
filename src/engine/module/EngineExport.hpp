@@ -2,8 +2,8 @@
 
 // zenith_engine is a shared library so that an executable and every game
 // module it loads share one copy of the engine and of its third-party state
-// (SDL, Dear ImGui, Jolt, volk). On Windows the build exports every engine
-// function automatically (WINDOWS_EXPORT_ALL_SYMBOLS), but data is only
+// (SDL, Dear ImGui, Jolt, volk). On Windows the build exports every function
+// the engine defines out of line (zenith_export_defined_symbols), but data is only
 // reachable from another binary through __declspec(dllimport):
 //
 //   ZENITH_ENGINE_API extern int exportedEngineValue;

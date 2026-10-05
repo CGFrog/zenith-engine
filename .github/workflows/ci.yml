@@ -17,7 +17,9 @@ jobs:
         if: runner.os == 'Windows'
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxkbcommon-dev libwayland-dev wayland-protocols libasound2-dev libpulse-dev libudev-dev
+        # SDL's X11 extensions (XScrnSaver, XTest, XFixes) are required unless
+        # SDL is configured without them; see SDL's README-linux.
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libwayland-dev wayland-protocols libegl1-mesa-dev libdrm-dev libgbm-dev libdbus-1-dev libasound2-dev libpulse-dev libudev-dev
       - name: Install macOS Vulkan portability runtime
         if: runner.os == 'macOS'
         run: brew install molten-vk

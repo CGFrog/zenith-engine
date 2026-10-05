@@ -28,12 +28,13 @@ Behaviours, the editor script workflow) is in
 | `shaders/` | GLSL source compiled to SPIR-V during the build. |
 | `src/` | Application composition and reusable engine implementation. |
 | `tests/` | CPU-side subsystem and integration tests registered with CTest. |
+| `tools/export_definitions/` | Build tool that writes the module-definition file exporting a Windows DLL's out-of-line functions and data (`cmake/WindowsExports.cmake`). |
 | `tools/showcase/` | Blender and Python scripts that regenerate the renderer showcase content. |
 | `tools/irradiance_room/` | Standard-library Python script that regenerates the irradiance-volume test interior. |
 | `tools/color_grading/` | Standard-library Python script that regenerates the example `.cube` colour grade. |
 | `projects/` | Project manifests and scene documents (`demo`, the renderer `showcase`, and the `irradiance_room` interior). |
 | `templates/` | Project templates the editor's Project Hub generates projects from, each described by its `template.json`: `cpp_game/` is a C++ game project (CMake game module, example component and system, and the code generators' `snippets/`), and `fps_game/` a playable first-person course. `{{UPPER_CASE}}` tokens are substituted. The build copies them to `build/templates/`. |
-| `cmake/` | `Dependencies.cmake` (FetchContent pins and wrapper targets), `CompilerSettings.cmake` (`zenith_target_warnings`), `ZenithTesting.cmake` (`zenith_add_test`), packaging scripts, and the inputs of the files configuration writes for out-of-tree game modules (`ZenithEngineConfig.cmake`, `ZenithEngineTargets-<config>.cmake`, `zenith-engine.json`). |
+| `cmake/` | `Dependencies.cmake` (FetchContent pins and wrapper targets), `CompilerSettings.cmake` (`zenith_target_warnings`), `WindowsExports.cmake` (`zenith_export_defined_symbols`), `ZenithTesting.cmake` (`zenith_add_test`), packaging scripts, and the inputs of the files configuration writes for out-of-tree game modules (`ZenithEngineConfig.cmake`, `ZenithEngineTargets-<config>.cmake`, `zenith-engine.json`). |
 | `build/` | Generated configuration, dependencies, binaries, copied assets, and compiled shaders. Do not edit generated contents. |
 
 ## Workspace layout
@@ -83,7 +84,7 @@ create these targets (`tests/*/CMakeLists.txt` add the test executables):
 
 | Target | Kind | Responsibility |
 | --- | --- | --- |
-| `zenith_engine` | Shared library | Reusable application lifecycle, scene, asset, audio, input, physics, graphics, window, and game module systems. Exports every function (`WINDOWS_EXPORT_ALL_SYMBOLS`) and Dear ImGui plus ImGuizmo (`IMGUI_API`); links volk, Jolt, shaderc, meshoptimizer, bc7enc, and Recast/Detour privately. |
+| `zenith_engine` | Shared library | Reusable application lifecycle, scene, asset, audio, input, physics, graphics, window, and game module systems. Exports every function it defines out of line (`zenith_export_defined_symbols`, `tools/export_definitions/`) and Dear ImGui plus ImGuizmo (`IMGUI_API`); links volk, Jolt, shaderc, meshoptimizer, bc7enc, and Recast/Detour privately. |
 | `zenith_demo_gameplay` | Static library (PIC) | Demo gameplay registered by `registerDemoGameplay`: item collection components and system, and the demo input bindings. |
 | `zenith_game_demo` | Module | The demo game module (`ZENITH_GAME_MODULE("demo", ...)`) the editor and the game load for the demo project. Each build copies it to the git-ignored `projects/modules/zenith_game_demo.zmodule`, the path `projects/demo.zenith-project` names; `install` places it at `modules/` beside the packaged project. |
 | `zenith_demo` | Static library | Game executable composition: command line (`GameLaunch`), package verification, the gameplay to play (`RuntimeGameplay`: a project's module, or the demo gameplay linked in for runs without one), the project-agnostic `ProjectApplication`, and the demo's application, menus, settings, audio, and scenes. |

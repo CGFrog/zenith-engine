@@ -207,7 +207,7 @@ target_include_directories(zenith_engine PUBLIC
     "${PROJECT_SOURCE_DIR}/src"
 )
 
-set_target_properties(zenith_engine PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+zenith_export_defined_symbols(zenith_engine)
 target_compile_definitions(zenith_engine PRIVATE ZENITH_ENGINE_BUILDING)
 if(WIN32)
     target_compile_definitions(zenith_engine
