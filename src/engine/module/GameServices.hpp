@@ -21,6 +21,21 @@ class AssetManager;
 class BehaviourRegistry;
 class DebugDraw;
 
+// When a session's navigation mesh is baked (GameServices::
+// setNavigationBakePolicy).
+enum class NavigationBakePolicy {
+    // GameServices::navigation bakes the scene's static colliders the first
+    // time it is asked, which zenith.nav_agents does as soon as an agent
+    // exists. Suits hand-authored levels; the default.
+    Lazy,
+    // Only bakeNavigation bakes. Until it has run, navigation returns an
+    // empty mesh and zenith.nav_agents leaves agents waiting with their
+    // destinations (logged once). Suits games that generate their levels at
+    // runtime, so enemies spawned before the bake do not trigger a bake of
+    // a half-built level.
+    Explicit,
+};
+
 // A physics step's sensor entries and exits and the contacts that began
 // between two solid bodies, by scene id, kept for the behaviours' trigger and
 // collision hooks. A collision's normal points from first toward second.
@@ -78,10 +93,20 @@ class GameServices {
     // Saves scene into slot of the session's save games. Loading belongs to
     // the game's flow (it replaces the scene): SaveGameStore::load.
     SaveGameResult saveGame(const Scene& scene, std::string_view slot, std::string title = {});
-    // The session's navigation mesh, baked from scene's static colliders the
-    // first time it is asked for (a failed bake is logged once and leaves it
-    // empty). Bake it again after the static geometry changes.
+    // The session's navigation mesh. Under the Lazy bake policy it is baked
+    // from scene's static colliders the first time it is asked for (a failed
+    // bake is logged once and leaves it empty); under Explicit it stays empty
+    // until bakeNavigation. Bake it again after the static geometry changes.
     NavigationWorld& navigation(const Scene& scene);
+    // The mesh zenith.nav_agents moves agents on: navigation(scene), or null
+    // under Explicit until bakeNavigation has run (logged once), so agents
+    // keep their destinations instead of failing on an empty mesh.
+    NavigationWorld* agentNavigation(const Scene& scene);
+    // Lazy unless the game chooses Explicit; set it before the first
+    // zenith.nav_agents run (Update) that sees an agent, for example from
+    // the system that generates the level.
+    void setNavigationBakePolicy(NavigationBakePolicy policy);
+    NavigationBakePolicy navigationBakePolicy() const;
     // Bakes the session's navigation mesh from scene's static colliders now,
     // replacing the old one; for a game that builds or replaces a level at
     // runtime, after its spawn commands applied (the next phase, or a timer).
@@ -177,7 +202,10 @@ class GameServices {
     std::optional<SaveGameStore> m_saveGames;
     std::filesystem::path m_savedScene;
     NavigationWorld m_navigation;
+    // A bake ran (or failed): navigation() does not bake lazily any more.
     bool m_navigationBaked{false};
+    NavigationBakePolicy m_navigationBakePolicy{NavigationBakePolicy::Lazy};
+    bool m_reportedWaitingAgents{false};
     NavigationCrowd m_crowd;
     NavCrowdSettings m_crowdSettings;
     bool m_paused{false};

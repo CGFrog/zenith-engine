@@ -1,7 +1,7 @@
 // Navigation: baking a mesh from static colliders, paths around obstacles,
 // partial paths to unreachable targets, agents walking through the crowd
 // (avoiding each other, rejoining after a rebake, leaving when destroyed),
-// and the engine's agent system.
+// the engine's agent system, and the session's bake policy.
 
 #include "engine/assets/Assets.hpp"
 #include "engine/graphics/DebugDraw.hpp"
@@ -17,6 +17,7 @@
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
+#include <string>
 #include <vector>
 
 namespace {
@@ -287,6 +288,68 @@ void testEngineSystem() {
     expect(scene.registry().get<TransformComponent>(walker).world[3].x > -3.0f,
            "the engine's agent system moves agents in Play");
 }
+
+// Runs the engine's Update systems (zenith.nav_agents among them) for frames.
+void runAgentFrames(Scene& scene, GameServices& services, Logger& logger, int frames) {
+    const Gameplay gameplay = builtInGameplay();
+    for (int frame = 0; frame < frames; ++frame) {
+        gameplay.systems->run(SystemPhase::Update, {.scene = scene,
+                                                    .mode = SimulationMode::Play,
+                                                    .deltaSeconds = 0.1f,
+                                                    .logger = &logger,
+                                                    .services = &services});
+        scene.updateWorldTransforms();
+    }
+}
+
+size_t waitingWarnings(const Logger& logger) {
+    const std::vector<LogEntry> entries = logger.entries();
+    return static_cast<size_t>(std::ranges::count_if(entries, [](const LogEntry& entry) {
+        return entry.level == LogLevel::Warning && entry.message.find("wait for") != std::string::npos;
+    }));
+}
+
+// A generated level spawns its enemies before it bakes. Under the Lazy policy
+// the agent system bakes the half-built level first, so the game's own bake is
+// a second one; under Explicit only the game's bake runs, and agents wait for
+// it with their destinations.
+void testBakePolicy() {
+    for (const NavigationBakePolicy policy : {NavigationBakePolicy::Lazy, NavigationBakePolicy::Explicit}) {
+        const bool lazy = policy == NavigationBakePolicy::Lazy;
+        Scene scene;
+        buildLevel(scene);
+        Logger logger(LoggerConfig{.echoToStderr = false});
+        AssetManager assets{&logger};
+        DebugDraw debugDraw;
+        GameServices services(assets, {}, debugDraw, &logger);
+        expect(services.navigationBakePolicy() == NavigationBakePolicy::Lazy, "sessions bake lazily by default");
+        services.setNavigationBakePolicy(policy);
+        const Entity walker = addWalker(scene, {-4.0f, 0.0f, -8.0f});
+        setNavDestination(scene.registry().get<NavAgentComponent>(walker), {4.0f, 0.0f, -8.0f});
+        // Asking navigation() would bake under Lazy, so start from a new world.
+        const uint64_t unbaked = NavigationWorld{}.generation();
+
+        runAgentFrames(scene, services, logger, 3);
+        const NavAgentComponent& agent = scene.registry().get<NavAgentComponent>(walker);
+        if (lazy) {
+            expect(services.navigation(scene).generation() == unbaked + 1,
+                   "the Lazy policy bakes as soon as an agent exists");
+        } else {
+            expect(services.navigation(scene).generation() == unbaked && !services.navigation(scene).baked(),
+                   "the Explicit policy never bakes on its own");
+            expect(agent.destination.has_value() && !agent.pathFailed && positionOf(scene, walker).x < -3.9f,
+                   "agents wait for the bake with their destinations");
+            expect(waitingWarnings(logger) == 1, "waiting agents are reported once");
+        }
+
+        expect(services.bakeNavigation(scene).success, "the game bakes its level");
+        expect(services.navigation(scene).generation() == unbaked + (lazy ? 2u : 1u),
+               lazy ? "the Lazy policy bakes a level the game bakes too twice"
+                    : "the Explicit policy bakes a level the game bakes once");
+        runAgentFrames(scene, services, logger, 5);
+        expect(positionOf(scene, walker).x > -3.0f, "agents walk once the mesh is baked");
+    }
+}
 } // namespace
 
 // Geometry gathered right after a move, with no updateWorldTransforms in
@@ -320,5 +383,6 @@ int main() {
     testAvoidance();
     testCrowdMembership();
     testEngineSystem();
+    testBakePolicy();
     return failures == 0 ? 0 : 1;
 }

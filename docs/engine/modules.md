@@ -196,9 +196,13 @@ It holds:
   and `saveGame(scene, slot, title)` against the scene document the session
   plays (see [Scene](scene.md)).
 - `navigation(scene)`: the session's navigation mesh, baked from the scene's
-  static colliders on first use. `bakeNavigation(scene, settings)` bakes it
-  again now, for a game that builds or replaces a level at runtime; call it
-  after the spawn commands applied (the next phase, or a timer).
+  static colliders on first use under the default `Lazy` bake policy.
+  `bakeNavigation(scene, settings)` bakes it again now, for a game that builds
+  or replaces a level at runtime; call it after the spawn commands applied
+  (the next phase, or a timer). Such a game sets
+  `setNavigationBakePolicy(NavigationBakePolicy::Explicit)` so agents wait for
+  that bake instead of triggering an early one (see
+  [Navigation](navigation.md)).
 - `Timers`: one-shot or repeating callbacks on simulated time. They follow the
   clock's time scale and stop while paused. A timer may have an owner entity;
   the timer is dropped when its owner is gone, or when its callback throws.

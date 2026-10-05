@@ -116,13 +116,32 @@ RandomStreams& GameServices::randomStreams() {
 }
 
 NavigationWorld& GameServices::navigation(const Scene& scene) {
-    if (!m_navigationBaked) {
+    if (!m_navigationBaked && m_navigationBakePolicy == NavigationBakePolicy::Lazy) {
         m_navigationBaked = true;
         if (const NavigationResult result = m_navigation.bake(scene, m_assets); !result) {
             m_log.warning("No navigation mesh: " + result.error);
         }
     }
     return m_navigation;
+}
+
+NavigationWorld* GameServices::agentNavigation(const Scene& scene) {
+    if (m_navigationBakePolicy == NavigationBakePolicy::Explicit && !m_navigationBaked) {
+        if (!m_reportedWaitingAgents) {
+            m_reportedWaitingAgents = true;
+            m_log.warning("Navigation agents wait for GameServices::bakeNavigation (the bake policy is Explicit)");
+        }
+        return nullptr;
+    }
+    return &navigation(scene);
+}
+
+void GameServices::setNavigationBakePolicy(NavigationBakePolicy policy) {
+    m_navigationBakePolicy = policy;
+}
+
+NavigationBakePolicy GameServices::navigationBakePolicy() const {
+    return m_navigationBakePolicy;
 }
 
 SaveGameResult GameServices::saveGame(const Scene& scene, std::string_view slot, std::string title) {
