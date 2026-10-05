@@ -230,8 +230,56 @@ void testOcclusion() {
 }
 } // namespace
 
+// With every voice busy, a new sound takes the voice of the lowest-priority
+// sound, then the quietest, then the oldest, and never streamed music or the
+// Music bus; a sound of lower priority than every playing one fails.
+void testVoiceStealing() {
+    Logger logger(LoggerConfig{.minimumLevel = LogLevel::Debug, .echoToStderr = false});
+    AudioSystem audio(&logger);
+    expect(static_cast<bool>(audio.init(AudioConfig{.maxVoices = 3, .outputEnabled = false})),
+           "voice stealing test initializes");
+    const std::vector<float> tone(480, 0.5f);
+    const AudioClipHandle clip = audio.createClip(tone, 1, 48'000).handle;
+    const auto low = audio.play(clip, {.loop = true, .priority = AudioPriority::Low});
+    const auto quiet = audio.play(clip, {.gain = 0.2f, .loop = true});
+    const auto loud = audio.play(clip, {.gain = 1.0f, .loop = true});
+    expect(low && quiet && loud && audio.stolenVoiceCount() == 0, "free voices are used before any is stolen");
+
+    const auto high = audio.play(clip, {.loop = true, .priority = AudioPriority::High});
+    expect(high && !audio.isPlaying(low.handle) && audio.isPlaying(quiet.handle) && audio.isPlaying(loud.handle),
+           "a full system steals the lowest-priority voice");
+    const auto louder = audio.play(clip, {.gain = 1.0f, .loop = true});
+    expect(louder && !audio.isPlaying(quiet.handle) && audio.isPlaying(loud.handle),
+           "among equal priorities the quietest voice is stolen");
+    const auto newest = audio.play(clip, {.gain = 1.0f, .loop = true});
+    expect(newest && !audio.isPlaying(loud.handle) && audio.isPlaying(louder.handle) && audio.isPlaying(high.handle),
+           "among equally loud voices the oldest is stolen");
+    expect(!audio.play(clip, {.priority = AudioPriority::Low}) && audio.isPlaying(newest.handle),
+           "a sound below every playing voice's priority steals nothing");
+    expect(audio.stolenVoiceCount() == 3, "stolen voices are counted");
+    expect(warningsMentioning(logger, "audio voices are busy") == 1, "a run of full voices is logged once");
+
+    audio.stopAll();
+    const auto stream = audio.loadStream(std::filesystem::path{ZENITH_ASSET_DIR} / "audio" / "ambient.ogg");
+    const auto music = audio.playMusic(stream.handle);
+    const auto musicClip = audio.play(clip, {.bus = AudioBus::Music, .loop = true, .priority = AudioPriority::Lowest});
+    const auto effect = audio.play(clip, {.loop = true, .priority = AudioPriority::Highest});
+    const auto urgent = audio.play(clip, {.loop = true, .priority = AudioPriority::Highest});
+    expect(music && musicClip && effect && urgent && !audio.isPlaying(effect.handle) && audio.isPlaying(music.handle) &&
+               audio.isPlaying(musicClip.handle),
+           "streamed music and Music-bus voices are never stolen");
+    audio.stop(urgent.handle);
+    audio.stop(musicClip.handle);
+    audio.play(clip, {.bus = AudioBus::Music, .loop = true});
+    audio.play(clip, {.bus = AudioBus::Music, .loop = true});
+    expect(!audio.play(clip, {.priority = AudioPriority::Highest}),
+           "a system holding only music fails a new sound instead of stealing");
+    audio.shutdown();
+}
+
 int main() {
     testFollowingVoices();
+    testVoiceStealing();
     testOcclusion();
     // Unique per process, so concurrent direct runs of this executable (a
     // stress loop) do not delete each other's files.
@@ -266,7 +314,8 @@ int main() {
     auto first = audio.play(mono.handle, {.gain = 0.5f, .loop = true});
     auto second = audio.play(mono.handle, {.gain = 1.0f, .loop = true});
     expect(first && second, "voices play up to the configured limit");
-    expect(!audio.play(mono.handle), "playback reports voice-limit exhaustion");
+    expect(!audio.play(mono.handle, {.priority = AudioPriority::Low}),
+           "playback below every playing voice's priority reports voice-limit exhaustion");
     std::vector<float> mixed(8);
     audio.mix(mixed.data(), 4);
     expect(near(mixed[0], 0.75f) && near(mixed[1], 0.75f), "2D voices mix into stereo and sum gains");

@@ -103,6 +103,12 @@ class GameUiContext {
     void text(glm::vec2 position, std::string text, float size = 18.0f, glm::vec4 color = glm::vec4(1.0f),
               UiAnchor anchor = UiAnchor::TopLeft, int32_t drawOrder = 1, FontHandle font = {},
               std::optional<UiRect> clip = std::nullopt);
+    // Text placed in the viewport's pixels (top-left origin) with a size in
+    // pixels, outside the design-unit layout, for overlays that follow
+    // projected world positions, such as debug labels. The accessibility
+    // text scale still applies.
+    void pixelText(glm::vec2 position, std::string text, float size, glm::vec4 color = glm::vec4(1.0f),
+                   int32_t drawOrder = 1);
     void image(UiRect rect, TextureHandle texture, glm::vec4 tint = glm::vec4(1.0f),
                UiAnchor anchor = UiAnchor::TopLeft, int32_t drawOrder = 1, std::optional<UiRect> clip = std::nullopt);
     bool button(std::string id, UiRect rect, std::string label, UiAnchor anchor = UiAnchor::TopLeft,

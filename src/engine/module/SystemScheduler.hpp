@@ -13,6 +13,7 @@
 #include <vector>
 
 class BehaviourRegistry;
+class DebugDraw;
 class GameServices;
 class GameUiContext;
 class InputActionState;
@@ -88,6 +89,9 @@ std::string_view systemPhaseName(SystemPhase phase);
 // - ui is set only in the Ui phase.
 // - behaviours is the gameplay's behaviour types, which the engine's
 //   behaviour systems run; null when the host has none.
+// - debugDraw is the host's debug drawing (the same as
+//   GameServices::debugDraw in a gameplay session), set in every mode, so
+//   Edit systems can draw previews too; null only for a host without one.
 struct SystemContext {
     Scene& scene;
     ApplicationContext* application{nullptr};
@@ -107,6 +111,8 @@ struct SystemContext {
     const InputActionState* actions{nullptr};
     GameUiContext* ui{nullptr};
     const BehaviourRegistry* behaviours{nullptr};
+    // Appended last, so modules reading the members before it are unaffected.
+    DebugDraw* debugDraw{nullptr};
 };
 
 // A named per-frame callback over a scene, usually registered by a game
@@ -227,6 +233,37 @@ class SystemProfile {
     std::unordered_map<std::string, size_t> m_index;
 };
 
+// A system that threw while it ran.
+struct SystemFault {
+    std::string name;
+    SystemPhase phase{SystemPhase::Update};
+    // What it threw: the what() of a std::exception, or "an unknown
+    // exception".
+    std::string what;
+};
+
+// The systems that threw during one session of a host (a game's play
+// session; the editor's Play or Simulate run, or its Edit time between
+// runs), which SystemScheduler::run skips from then on. The scheduler is
+// immutable and shared, so the host owns this beside its SystemProfile and
+// clears it when the session ends or the set of systems changes (a module
+// reload), which enables the systems again. Holds names only, never module
+// code. Not thread safe; use from the thread that runs the systems.
+class SystemFaults {
+  public:
+    bool disabled(std::string_view name) const;
+    // Records that system threw what. Returns false, keeping the first
+    // record, when it is already disabled.
+    bool disable(const SystemDescriptor& system, std::string what);
+    // In the order the systems first threw.
+    std::span<const SystemFault> faults() const;
+    bool empty() const;
+    void clear();
+
+  private:
+    std::vector<SystemFault> m_faults;
+};
+
 // Runs a registry's systems for one phase and simulation mode at a time. The
 // scheduler shares ownership of the registry it was built from; that registry
 // must not change afterwards. Build a new scheduler when the set of systems
@@ -239,7 +276,14 @@ class SystemScheduler {
     // Runs every system of phase that runs in context.mode: its RunIn flags
     // admit the mode and, in Simulate, the Simulate mask enables it. When
     // profile is not null each system's run time is recorded into it.
-    void run(SystemPhase phase, const SystemContext& context, SystemProfile* profile = nullptr) const;
+    //
+    // A system that throws does not stop the others: the exception is logged
+    // through context.logger (stderr without one) as an error naming the
+    // system, its phase, and what it threw. With faults, the system is also
+    // disabled there, reported only that once, and skipped from then on;
+    // without, it runs (and is reported) again next time.
+    void run(SystemPhase phase, const SystemContext& context, SystemProfile* profile = nullptr,
+             SystemFaults* faults = nullptr) const;
 
     // Names of the systems run() would invoke, in invocation order.
     std::vector<std::string> schedule(SystemPhase phase, SimulationMode mode) const;

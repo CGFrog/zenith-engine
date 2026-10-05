@@ -7,6 +7,7 @@
 #include "../DeferredUploadTracker.hpp"
 #include "../MeshLodSelection.hpp"
 #include "../MeshPassFramePlan.hpp"
+#include "../RenderItemBudget.hpp"
 #include "../RenderSubmission.hpp"
 #include "../Rendering.hpp"
 #include "../TemporalQuality.hpp"
@@ -31,6 +32,7 @@
 #include "SceneGeometryViews.hpp"
 #include "TransmissionBackground.hpp"
 #include "VolumetricFogPass.hpp"
+#include "engine/diagnostics/OverflowEpisode.hpp"
 #include "engine/resources/DeferredReleaseQueue.hpp"
 #include <array>
 #include <map>
@@ -326,7 +328,10 @@ class MeshPass {
         std::vector<glm::mat4> jointPalette;
         // The palette the previous frame rendered with; empty until one was.
         std::vector<glm::mat4> previousJointPalette;
+        // Where this frame uploaded the palette, and how many joints it holds;
+        // zero joints draw the item unskinned (no palette space was left).
         uint32_t skinPaletteOffset{0};
+        uint32_t skinJointCount{0};
     };
 
     // A directional shadow map, one depth layer per cascade, and what its
@@ -546,7 +551,16 @@ class MeshPass {
     void bindGeometry(VkCommandBuffer commandBuffer, const GpuMesh& mesh, std::optional<uint32_t>& boundPage) const;
     const GpuMesh* ensureMesh(MeshHandle handle, const AssetManager& assets);
     const GpuTexture* ensureTexture(TextureHandle handle, const AssetManager& assets);
+    // Null for an invalid material or when all maximumMaterials slots are taken.
     const GpuMaterial* ensureMaterial(MaterialHandle handle, const AssetManager& assets);
+    // The record drawing material with an entity's override factors, shared
+    // by every item with the same material and factors and kept while a
+    // packet build uses it. Null when the override records or the material
+    // slots are all taken; the item then draws the plain material.
+    const GpuMaterial* ensureOverrideMaterial(MaterialHandle material, const MaterialOverrideComponent& values);
+    // Frees the override records the latest packet build did not use.
+    void releaseUnusedOverrideMaterials();
+    std::optional<uint32_t> allocateMaterialIndex();
     void pruneUnusedAssets(const AssetManager& assets);
     // Closes the frame's deferred-upload bookkeeping: fills the stats counters
     // and logs assets that just stayed deferred past the configured bound.
@@ -616,15 +630,21 @@ class MeshPass {
     bool createWireframeOverlay(MeshPipelineSet& pipelines, VkShaderModule meshVertex);
     bool createShadowResources(VkFormat depthFormat);
     // Builds the items of every entity m_sceneVisibilityMode draws, plus the
-    // draws collection instances expand to.
+    // draws collection instances expand to. Objects beyond the per-frame
+    // object capacity (maximumObjectsPerFrame) are left out in build order and
+    // counted in m_droppedRenderItems.
     bool buildRenderItems(const Scene& scene, const AssetManager& assets,
                           const std::vector<RenderObjectId>& outlinedObjects, std::vector<RenderItem>& items);
-    // Appends one item per primitive of entity's mesh drawn at world. Returns
-    // false when an asset is invalid; a mesh still uploading is skipped.
+    // Appends one item per primitive of entity's mesh drawn at world when the
+    // budget admits the whole mesh. Returns false when an asset is invalid; a
+    // mesh still uploading is skipped, and so is a primitive whose material
+    // finds no slot in the renderer's material capacity.
     bool appendRenderItems(const Scene& scene, const AssetManager& assets,
                            const std::vector<RenderObjectId>& outlinedObjects, Entity entity, Entity instancer,
-                           const glm::mat4& world, std::vector<RenderItem>& items);
+                           const glm::mat4& world, RenderItemBudget& budget, std::vector<RenderItem>& items);
     uint32_t updateRenderItems(const Scene& scene, std::span<const Entity> changedEntities);
+    // Logs the render items the last packet build left out, once per episode.
+    void reportRenderItemOverflow();
     // Who selects the directional shadow casters of each dirty cascade.
     enum class ShadowCulling {
         // Frustum-tests render items on the CPU and draws them instanced.
@@ -823,9 +843,38 @@ class MeshPass {
     bool m_meshUploadsPending{false};
     // Capacity failures retried every frame are logged once per episode.
     bool m_geometryArenaFullReported{false};
+    // Per-frame capacities a large scene can exceed: the excess is left out,
+    // counted in RenderStats, and logged once per episode.
+    // Render items left out by the last packet build: objects beyond
+    // maximumObjectsPerFrame, and primitives whose material found no slot.
+    uint32_t m_droppedRenderItems{0};
+    uint32_t m_droppedMaterialItems{0};
+    OverflowEpisode m_renderItemOverflow;
+    OverflowEpisode m_materialOverflow;
+    OverflowEpisode m_skinPaletteOverflow;
+    OverflowEpisode m_particleEmitterOverflow;
     LogChannel m_log;
     bool m_textureTableFullReported{false};
     std::unordered_map<uint64_t, GpuMaterial> m_materials;
+
+    // Material records derived for MaterialOverrideComponent factors, keyed
+    // by the material and the factors' bit patterns. They share the material
+    // record indices with m_materials.
+    struct OverrideMaterial {
+        GpuMaterial gpu;
+        MaterialHandle material;
+        MaterialOverrideComponent values;
+        uint64_t lastBuild{0};
+    };
+
+    using OverrideMaterialKey = std::pair<uint64_t, std::array<uint32_t, 10>>;
+    std::map<OverrideMaterialKey, OverrideMaterial> m_overrideMaterials;
+    // Counts packet builds, so override records unused by the latest are freed.
+    uint64_t m_renderItemBuild{0};
+    // Overridden primitives drawn with their plain material in the last
+    // packet build because no override record was free.
+    uint32_t m_droppedMaterialOverrides{0};
+    OverflowEpisode m_materialOverrideOverflow;
     std::vector<uint32_t> m_freeMaterialIndices;
     uint32_t m_nextMaterialIndex{0};
     // Native resources a frame in flight may still reference, released once

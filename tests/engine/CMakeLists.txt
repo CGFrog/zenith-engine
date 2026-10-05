@@ -14,6 +14,7 @@ foreach(file_watcher_backend IN ITEMS native polling)
         EXECUTABLE zenith_file_watcher_tests COMMAND_ARGS ${file_watcher_backend} TIMEOUT 60)
 endforeach()
 zenith_add_test(zenith_versioned_json SOURCES VersionedJsonTests.cpp LIBS zenith_engine)
+zenith_add_test(zenith_crash_handler SOURCES CrashHandlerTests.cpp LIBS zenith_engine)
 
 zenith_add_test(zenith_asset_scene EXECUTABLE zenith_asset_tests
     SOURCES AssetSceneTests.cpp LIBS zenith_engine NEEDS_ASSETS)
@@ -28,16 +29,19 @@ zenith_add_test(zenith_animator SOURCES AnimatorTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_physics SOURCES PhysicsTests.cpp LIBS zenith_engine NEEDS_ASSETS)
 zenith_add_test(zenith_character_controller SOURCES CharacterControllerTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_navigation SOURCES NavigationTests.cpp LIBS zenith_engine)
+zenith_add_test(zenith_runtime_content SOURCES RuntimeContentTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_physics_queries SOURCES PhysicsQueryTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_system_scheduler SOURCES SystemSchedulerTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_behaviours SOURCES BehaviourTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_game_services SOURCES GameServicesTests.cpp LIBS zenith_engine)
+zenith_add_test(zenith_asset_collection SOURCES AssetCollectionTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_random SOURCES RandomTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_definition_tables SOURCES DefinitionTableTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_floor_lifecycle SOURCES FloorLifecycleTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_prefab_spawn SOURCES PrefabSpawnTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_save_game SOURCES SaveGameTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_scene_document SOURCES SceneDocumentTests.cpp LIBS zenith_engine NEEDS_ASSETS)
+zenith_add_test(zenith_transient_entities SOURCES TransientEntityTests.cpp LIBS zenith_engine)
 # Reads the asset directory's path only, so it does not build zenith_assets first.
 zenith_add_test(zenith_collections EXECUTABLE zenith_collection_tests
     SOURCES CollectionTests.cpp LIBS zenith_engine
@@ -87,6 +91,8 @@ zenith_add_test(zenith_render_submission SOURCES RenderSubmissionTests.cpp LIBS 
 zenith_add_test(zenith_gpu_resource_table SOURCES GpuResourceTableTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_mesh_lod SOURCES MeshLodTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_mesh_pass_frame_plan SOURCES MeshPassFramePlanTests.cpp LIBS zenith_engine)
+# Per-frame capacity clamps and their once-per-episode reporting.
+zenith_add_test(zenith_runtime_limits SOURCES RuntimeLimitTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_view_shading SOURCES ViewShadingTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_render_views EXECUTABLE zenith_render_view_tests
     SOURCES RenderViewTests.cpp LIBS zenith_engine)
@@ -149,6 +155,24 @@ zenith_add_test(zenith_debug_draw_vulkan_smoke EXECUTABLE zenith_debug_draw_smok
 zenith_add_test(zenith_picking_vulkan_smoke EXECUTABLE zenith_picking_smoke_tests
     SOURCES PickingSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
     ENVIRONMENT ZENITH_SMOKE_FRAMES=80
+    LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
+# More renderables and particle emitters than the per-frame capacities: the
+# excess is clamped, counted and logged once instead of ending the run.
+zenith_add_test(zenith_render_capacity_vulkan_smoke EXECUTABLE zenith_render_capacity_smoke_tests
+    SOURCES RenderCapacitySmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
+    ENVIRONMENT ZENITH_SMOKE_FRAMES=20
+    LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 180 PROCESSORS 2)
+# A runtime-created mesh, material and texture drawn with a material override
+# tint and a replacement material, checked in a captured frame; once on the
+# CPU-submitted path and once on the GPU-driven one.
+zenith_add_test(zenith_runtime_content_vulkan_smoke EXECUTABLE zenith_runtime_content_smoke_tests
+    SOURCES RuntimeContentSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
+    ENVIRONMENT ZENITH_CAPTURE_FRAME=12 ZENITH_WINDOW_SIZE=480x270
+    "ZENITH_CAPTURE_PATH=${PROJECT_BINARY_DIR}/test-temp/runtime_content_cpu.png"
+    LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
+zenith_add_test(zenith_runtime_content_gpu_driven_vulkan_smoke EXECUTABLE zenith_runtime_content_smoke_tests
+    ENVIRONMENT ZENITH_CAPTURE_FRAME=12 ZENITH_WINDOW_SIZE=480x270 ZENITH_FORCE_GPU_DRIVEN=1
+    "ZENITH_CAPTURE_PATH=${PROJECT_BINARY_DIR}/test-temp/runtime_content_gpu_driven.png"
     LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
 
 # The benchmarks are run by hand for numbers; CTest only checks that they

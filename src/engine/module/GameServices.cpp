@@ -1,6 +1,7 @@
 #include "GameServices.hpp"
 
 #include "GameEvents.hpp"
+#include "engine/application/Application.hpp"
 #include "engine/behaviour/BehaviourScheduler.hpp"
 
 #include <utility>
@@ -25,6 +26,20 @@ EntityCommandBuffer& GameServices::commands() {
 
 EventQueue& GameServices::events() {
     return m_events;
+}
+
+SessionResources& GameServices::resources() {
+    return m_resources;
+}
+
+std::filesystem::path GameServices::assetPath(std::string_view assetPath) const {
+    const std::filesystem::path relative =
+        std::filesystem::path(std::u8string(assetPath.begin(), assetPath.end())).lexically_normal();
+    if (relative.empty() || relative.has_root_path() || *relative.begin() == "..") {
+        m_log.warning("'" + std::string(assetPath) + "' is not a path inside the project's assets");
+        return {};
+    }
+    return m_documents.assetRoot / relative;
 }
 
 Timers& GameServices::timers() {
@@ -94,6 +109,12 @@ NavigationResult GameServices::bakeNavigation(const Scene& scene, const NavMeshB
     return m_navigation.bake(scene, m_assets, settings);
 }
 
+NavigationResult GameServices::bakeNavigation(const NavigationGeometry& geometry,
+                                              const NavMeshBuildSettings& settings) {
+    m_navigationBaked = true;
+    return m_navigation.bake(geometry, settings);
+}
+
 NavigationCrowd& GameServices::navigationCrowd() {
     return m_crowd;
 }
@@ -115,13 +136,32 @@ RandomStreams& GameServices::randomStreams() {
 }
 
 NavigationWorld& GameServices::navigation(const Scene& scene) {
-    if (!m_navigationBaked) {
+    if (!m_navigationBaked && m_navigationBakePolicy == NavigationBakePolicy::Lazy) {
         m_navigationBaked = true;
         if (const NavigationResult result = m_navigation.bake(scene, m_assets); !result) {
             m_log.warning("No navigation mesh: " + result.error);
         }
     }
     return m_navigation;
+}
+
+NavigationWorld* GameServices::agentNavigation(const Scene& scene) {
+    if (m_navigationBakePolicy == NavigationBakePolicy::Explicit && !m_navigationBaked) {
+        if (!m_reportedWaitingAgents) {
+            m_reportedWaitingAgents = true;
+            m_log.warning("Navigation agents wait for GameServices::bakeNavigation (the bake policy is Explicit)");
+        }
+        return nullptr;
+    }
+    return &navigation(scene);
+}
+
+void GameServices::setNavigationBakePolicy(NavigationBakePolicy policy) {
+    m_navigationBakePolicy = policy;
+}
+
+NavigationBakePolicy GameServices::navigationBakePolicy() const {
+    return m_navigationBakePolicy;
 }
 
 SaveGameResult GameServices::saveGame(const Scene& scene, std::string_view slot, std::string title) {
@@ -148,7 +188,7 @@ void GameServices::beginFrame() {
 }
 
 void GameServices::advanceTimers(Scene& scene, float simulatedSeconds) {
-    m_timers.advance(scene, simulatedSeconds);
+    m_timers.advance(scene, simulatedSeconds, m_log);
     flush(scene);
 }
 
@@ -191,10 +231,22 @@ GameplayPhysicsEvents GameServices::takePhysicsEvents() {
     return std::exchange(m_physicsEvents, {});
 }
 
+void GameServices::requestAssetCollection() {
+    m_assetCollectionRequested = true;
+}
+
+bool GameServices::takeAssetCollectionRequest() {
+    return std::exchange(m_assetCollectionRequested, false);
+}
+
 void runGameplayPhase(const SystemScheduler& scheduler, SystemPhase phase, const SystemContext& context,
-                      SystemProfile* profile) {
-    scheduler.run(phase, context, profile);
-    if (context.services != nullptr) {
-        context.services->flush(context.scene);
+                      SystemProfile* profile, SystemFaults* faults) {
+    scheduler.run(phase, context, profile, faults);
+    if (context.services == nullptr) {
+        return;
+    }
+    context.services->flush(context.scene);
+    if (context.application != nullptr && context.services->takeAssetCollectionRequest()) {
+        context.application->control.requestAssetCollection();
     }
 }

@@ -88,4 +88,72 @@ default). The game defines `Entry` and its `Fields`, including
   calling it from a system. A broken edit is reported once and retried only
   after the file changes again.
 
-`tests/engine/DefinitionTableTests.cpp` (`zenith_definition_tables`).
+A game keeps its tables in the session's resource store, which outlives
+module reloads' lost statics and scene changes' registries, and loads them
+from asset-relative paths:
+
+```cpp
+struct ItemTable {
+    static constexpr std::string_view resourceKey = "my_game.items";
+    DefinitionTable<ItemDef> table{itemFields()};
+};
+
+ItemTable& items = services.resource<ItemTable>();
+items.table.load(services.assetPath("data/items.json"));
+```
+
+`tests/engine/DefinitionTableTests.cpp` (`zenith_definition_tables`);
+`tests/engine/GameServicesTests.cpp` covers the resource store and
+`assetPath`.
+
+## Procedural geometry
+
+Generated content is built in code with the runtime content API
+([Assets](assets.md#runtime-content)), not imported. A greybox wall that
+renders, collides, is walkable and is tinted per instance:
+
+```cpp
+AssetManager& assets = context.assets;
+MaterialAsset stone;
+stone.baseColor = {0.6f, 0.6f, 0.6f, 1.0f};
+stone.metallic = 0.0f;
+const MaterialHandle material = assets.createMaterial(stone, "greybox stone").handle;
+
+MeshBuilder builder;
+builder.beginPrimitive(material).box({0.0f, 1.5f, 0.0f}, {2.0f, 1.5f, 0.1f});
+const AssetLoadResult<MeshHandle> wall = assets.createMesh(builder.build().mesh, "greybox wall");
+if (!wall) {
+    log.error(wall.error); // validation explains what is wrong
+    return;
+}
+m_wallLease = assets.lease(wall.handle); // keep it until the floor is torn down
+
+for (const glm::mat4& placement : wallPlacements) {
+    const Entity entity = scene.createEntity("Wall");
+    scene.setLocalTransform(entity, placement);
+    scene.attachMesh(entity, wall.handle);
+    // Every wall with this mesh and scale shares one cached Jolt shape.
+    scene.registry().emplace<ColliderComponent>(entity, TriangleMeshCollider{wall.handle});
+    scene.registry().emplace<RigidBodyComponent>(entity);
+    scene.markPhysicsDirty(entity);
+}
+// A "danger" wall: a per-instance tint, one shared derived material record.
+scene.registry().emplace<MaterialOverrideComponent>(dangerWall,
+                                                    MaterialOverrideComponent{.baseColorFactor = {1.0f, 0.2f, 0.2f, 1.0f}});
+scene.markMaterialDirty(dangerWall);
+
+// Walkable floors without colliders can be added to the bake directly.
+NavigationGeometry geometry = gatherNavigationGeometry(scene, assets);
+appendMeshGeometry(geometry, *assets.mesh(floorMesh), floorTransform);
+services.bakeNavigation(geometry);
+```
+
+Runtime assets are immutable and unsaved: rebuild changed geometry as a new
+mesh and reassign it, and regenerate a floor from its seed rather than saving
+its meshes (a scene holding a runtime mesh cannot be serialized; a
+`MaterialOverrideComponent` saves its factors but not a runtime replacement
+material). Release the leases on teardown and call
+`services.requestAssetCollection()` to free the floor's meshes, GPU buffers
+and physics shapes ([Assets](assets.md)).
+`tests/engine/RuntimeContentTests.cpp` (`zenith_runtime_content`) and the
+`zenith_runtime_content_vulkan_smoke` capture test cover it.

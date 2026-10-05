@@ -4,6 +4,8 @@
 #include "editor/menus/MenuRegistry.hpp"
 #include "editor/modules/EditorModuleApi.hpp"
 #include "engine/diagnostics/Logger.hpp"
+#include "engine/gameplay/Random.hpp"
+#include "engine/graphics/DebugDraw.hpp"
 #include "engine/input/InputActions.hpp"
 #include "engine/module/GameModule.hpp"
 #include "engine/module/GameServices.hpp"
@@ -22,7 +24,6 @@
 
 class AssetManager;
 class ComponentEditorOverrides;
-class DebugDraw;
 class GameUiContext;
 class EditorDocument;
 class OperatorRegistry;
@@ -173,11 +174,27 @@ class GameModuleHost {
     // once per editor frame, after the frame's systems ran; the profile
     // starts over whenever the module loads or reloads.
     const SystemProfile& systemProfile() const;
+    // The module systems that threw and no longer run (SystemScheduler::run).
+    // Cleared when gameplay starts or stops and when the module loads or
+    // reloads, so Edit systems disabled between runs and Play systems
+    // disabled during one run get another chance.
+    const SystemFaults& systemFaults() const;
     void finishSystemFrame();
     void resetSystemTimingMaxima();
     // The log systems receive in every mode; it must outlive the host. Until
     // set, systems log to a log of the host's own.
     void setLogger(Logger& logger);
+    // The debug drawing module code reaches in every mode: module operators
+    // (EditorModuleServices::debugDraw) and systems (SystemContext::
+    // debugDraw, Edit systems included). The session gives its
+    // RenderRuntime::debugDraw, which must outlive the host; until set, a
+    // list of the host's own that nothing renders.
+    void setDebugDraw(DebugDraw& debugDraw);
+    DebugDraw& debugDraw();
+    // The random streams module operators get (EditorModuleServices::
+    // random). Kept between operator runs and started over (seed 0)
+    // whenever the module loads, reloads, or unloads.
+    RandomStreams& editRandom();
 
     // Gameplay services for one Play or Simulate session, which runSystems
     // hands to systems outside Edit mode. Prefab references resolve against
@@ -292,11 +309,17 @@ class GameModuleHost {
     InputActionMap m_projectInputActions;
     Logger m_fallbackLogger;
     Logger* m_logger{&m_fallbackLogger};
+    DebugDraw m_fallbackDebugDraw;
+    DebugDraw* m_debugDraw{&m_fallbackDebugDraw};
+    // Data only; holds no module code.
+    RandomStreams m_editRandom;
     // Holds module code (commands, timers, events): released with the module.
     std::unique_ptr<GameServices> m_gameServices;
     float m_editFixedAccumulator{0.0f};
     // Names and timings only; holds no module code.
     SystemProfile m_profile;
+    // Names only; holds no module code.
+    SystemFaults m_systemFaults;
     // Copied into every scheduler the host builds.
     SimulateSystemMask m_simulateMask;
 

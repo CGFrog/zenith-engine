@@ -29,6 +29,17 @@ application's `SimulationClock`) applies to `AudioScope::Scene` voices only:
 a paused or slowed game holds or slows its world's sounds, while
 `Persistent` voices (music, menu sounds) play on in real time.
 
+When all `AudioConfig::maxVoices` voices are busy, `play`, `playAt`, and
+`playMusic` steal one by priority (`AudioPlaybackOptions::priority`, an
+`AudioPriority` from `Lowest` to `Highest`, `Normal` by default): the voice
+with the lowest priority, then the quietest at the listener (gain through its
+bus and the master bus, and distance attenuation), then the oldest. A request
+steals only a voice whose priority is at most its own, and never the streamed
+music voice or a voice on the Music bus; otherwise it fails as before. The
+stolen sound's handle stops being valid. `AudioEmitterComponent` voices play
+at `Normal` priority and only take free voices. A run of plays that find every
+voice busy is logged once, and `stolenVoiceCount()` counts the steals.
+
 ## Audio in scenes and gameplay
 
 `audio_listener` and `audio_emitter` are serialized component types

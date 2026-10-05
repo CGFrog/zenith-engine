@@ -1,19 +1,26 @@
 // CPU-only coverage of the gameplay services systems receive: deferred entity
 // commands and their flush points, double-buffered events, and timers on
-// simulated time, and the game's pause and time scale.
+// simulated time, the game's pause and time scale, session resources, and
+// asset paths.
 
+#include "engine/application/Application.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/gameplay/DefinitionTable.hpp"
 #include "engine/graphics/DebugDraw.hpp"
 #include "engine/module/GameEvents.hpp"
 #include "engine/module/GameServices.hpp"
+#include "engine/module/Gameplay.hpp"
 #include "engine/scene/ParticleEmitter.hpp"
 #include "engine/scene/Prefab.hpp"
 #include "engine/scene/Scene.hpp"
 
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -278,6 +285,7 @@ void testEventsLastOneFrame() {
 void testTimers() {
     Scene scene;
     Timers timers;
+    const LogChannel log;
     std::vector<std::string> fired;
     // Times are exact in binary, so deadlines compare without rounding.
     timers.start(0.75f, TimerRepeat::Once, [&fired](TimerContext&) { fired.push_back("once"); });
@@ -285,15 +293,15 @@ void testTimers() {
         timers.start(0.5f, TimerRepeat::Repeat, [&fired](TimerContext&) { fired.push_back("repeat"); });
     expect(!timers.start(0.0f, TimerRepeat::Repeat, [](TimerContext&) {}), "a repeating timer needs an interval");
 
-    timers.advance(scene, 0.25f);
+    timers.advance(scene, 0.25f, log);
     expect(fired.empty(), "nothing fires before its time");
     // Time scale 2: a 0.25 s frame advances 0.5 s of simulated time.
-    timers.advance(scene, 0.25f * 2.0f);
+    timers.advance(scene, 0.25f * 2.0f, log);
     expect(fired == std::vector<std::string>{"repeat", "once"}, "due timers fire earliest first");
     // Paused: no simulated time passes.
-    timers.advance(scene, 0.0f);
+    timers.advance(scene, 0.0f, log);
     expect(fired.size() == 2, "a paused clock fires nothing");
-    timers.advance(scene, 1.0f);
+    timers.advance(scene, 1.0f, log);
     expect(fired.size() == 4 && fired[2] == "repeat" && fired[3] == "repeat",
            "a repeating timer fires once per elapsed interval");
     expect(timers.cancel(repeating) && !timers.active(repeating) && timers.size() == 0,
@@ -303,7 +311,7 @@ void testTimers() {
     bool ownerFired = false;
     timers.start(1.0f, TimerRepeat::Once, [&ownerFired](TimerContext&) { ownerFired = true; }, scene.id(owner));
     scene.destroyEntity(owner);
-    timers.advance(scene, 2.0f);
+    timers.advance(scene, 2.0f, log);
     expect(!ownerFired && timers.size() == 0, "a timer whose owner is gone is dropped without firing");
 
     // A callback may cancel itself.
@@ -313,8 +321,72 @@ void testTimers() {
         ++selfRuns;
         timers.cancel(context.timer);
     });
-    timers.advance(scene, 1.0f);
+    timers.advance(scene, 1.0f, log);
     expect(selfRuns == 1 && !timers.active(self), "a repeating timer can cancel itself from its callback");
+}
+
+// Errors the fixture's logger received, oldest first.
+std::vector<std::string> loggedErrors(const Logger& logger) {
+    std::vector<std::string> errors;
+    for (const LogEntry& entry : logger.entries()) {
+        if (entry.level == LogLevel::Error) {
+            errors.push_back(entry.message);
+        }
+    }
+    return errors;
+}
+
+bool contains(std::string_view text, std::string_view part) {
+    return text.find(part) != std::string_view::npos;
+}
+
+void testThrowingTimersAreContained() {
+    Logger logger{LoggerConfig{.echoToStderr = false}};
+    const LogChannel log(&logger, "gameplay");
+    Scene scene;
+    Timers timers;
+    int faultyRuns = 0;
+    int healthyRuns = 0;
+    const TimerHandle faulty = timers.start(0.5f, TimerRepeat::Repeat, [&faultyRuns](TimerContext&) {
+        ++faultyRuns;
+        throw std::runtime_error("timer exploded");
+    });
+    const TimerHandle unknown = timers.start(0.5f, TimerRepeat::Once, [](TimerContext&) { throw 42; });
+    timers.start(0.5f, TimerRepeat::Repeat, [&healthyRuns](TimerContext&) { ++healthyRuns; });
+
+    timers.advance(scene, 0.5f, log);
+    timers.advance(scene, 1.0f, log);
+    expect(faultyRuns == 1 && !timers.active(faulty) && !timers.active(unknown),
+           "a throwing timer is dropped, even a repeating one");
+    expect(healthyRuns == 3, "the other timers keep running after one throws");
+    const std::vector<std::string> errors = loggedErrors(logger);
+    expect(errors.size() == 2 && contains(errors[0], "timer exploded") && contains(errors[0], "cancelled") &&
+               contains(errors[1], "an unknown exception"),
+           "each throwing timer is logged once with what it threw");
+}
+
+void testThrowingSpawnCallbacksAreContained() {
+    ServicesFixture fixture;
+    Scene& scene = fixture.scene;
+    EntityCommandBuffer& commands = fixture.services.commands();
+    commands.spawnEmpty("Faulty", {}, [](Scene&, Entity) { throw std::runtime_error("spawn callback exploded"); });
+    bool laterCallbackRan = false;
+    commands.spawnEmpty("Healthy", {}, [&laterCallbackRan](Scene&, Entity) { laterCallbackRan = true; });
+    fixture.services.flush(scene);
+    expect(findNamed(scene, "Faulty") != entt::null && findNamed(scene, "Healthy") != entt::null && laterCallbackRan,
+           "a throwing spawn callback keeps its entity and the commands after it");
+    const std::vector<std::string> errors = loggedErrors(fixture.logger);
+    expect(errors.size() == 1 && contains(errors[0], "spawn callback exploded"),
+           "a throwing spawn callback is logged with what it threw");
+
+    // Through the services: a throwing timer during advanceTimers is logged
+    // and the commands other timers recorded still apply.
+    fixture.services.timers().start(0.1f, TimerRepeat::Once, [](TimerContext&) { throw std::runtime_error("boom"); });
+    fixture.services.timers().start(0.1f, TimerRepeat::Once,
+                                    [&commands](TimerContext&) { commands.spawnEmpty("From timer"); });
+    fixture.services.advanceTimers(scene, 1.0f);
+    expect(findNamed(scene, "From timer") != entt::null && loggedErrors(fixture.logger).size() == 2,
+           "advanceTimers contains a throwing timer and flushes the others' commands");
 }
 } // namespace
 
@@ -355,6 +427,135 @@ void testGameClock() {
            "a running game keeps the host's frame step");
 }
 
+namespace {
+// Records the destruction of the resources below, in order.
+std::vector<std::string>* destroyedResources = nullptr;
+
+struct RunState {
+    static constexpr std::string_view resourceKey = "test.run_state";
+
+    RunState() = default;
+
+    explicit RunState(uint32_t startFloor)
+        : floor(startFloor) {}
+
+    RunState(const RunState&) = delete;
+    RunState& operator=(const RunState&) = delete;
+
+    ~RunState() {
+        if (destroyedResources != nullptr) {
+            destroyedResources->push_back("run state " + std::to_string(floor));
+        }
+    }
+
+    uint32_t floor{1};
+};
+
+struct ScoreBoard {
+    static constexpr std::string_view resourceKey = "test.score_board";
+
+    ~ScoreBoard() {
+        if (destroyedResources != nullptr) {
+            destroyedResources->push_back("score board");
+        }
+    }
+
+    int best{0};
+};
+
+void testSessionResources() {
+    std::vector<std::string> destroyed;
+    destroyedResources = &destroyed;
+    {
+        ServicesFixture fixture;
+        GameServices& services = fixture.services;
+        expect(services.resources().find<RunState>() == nullptr, "a new session has no resources");
+        RunState& state = services.resource<RunState>();
+        expect(state.floor == 1 && &services.resource<RunState>() == &state,
+               "a resource is default-constructed once and found again");
+        state.floor = 3;
+        services.resources().get<ScoreBoard>().best = 40;
+        const RunState& replaced = services.resources().emplace<RunState>(7u);
+        expect(replaced.floor == 7 && destroyed == std::vector<std::string>{"run state 3"},
+               "emplacing a resource replaces (destroys) the previous value");
+        expect(services.resources().erase<ScoreBoard>() && !services.resources().erase<ScoreBoard>() &&
+                   services.resources().find<ScoreBoard>() == nullptr,
+               "erasing a resource destroys it once");
+        services.resources().get<ScoreBoard>();
+        destroyed.clear();
+    }
+    expect((destroyed == std::vector<std::string>{"score board", "run state 7"}),
+           "destroying the services destroys their resources, newest first");
+    destroyedResources = nullptr;
+}
+
+// The session's resources end with the session: stopping gameplay destroys
+// them (the editor stops it before a module unloads or reloads), and the next
+// session starts empty.
+void testResourcesEndWithTheSession() {
+    std::vector<std::string> destroyed;
+    destroyedResources = &destroyed;
+    Logger logger;
+    AssetManager assets(&logger);
+    Scene scene;
+    PhysicsWorld physics;
+    AudioSystem audio;
+    ApplicationControl control;
+    RenderRuntime rendering;
+    GameUiContext gameUi;
+    ApplicationContext application{scene, assets, physics, audio, control, rendering, gameUi, logger};
+    GameplayRunner runner(builtInGameplay());
+    runner.start(application, {});
+    runner.services()->resource<RunState>().floor = 4;
+    runner.stop(application);
+    expect(destroyed == std::vector<std::string>{"run state 4"}, "stopping gameplay destroys the session's resources");
+    runner.start(application, {});
+    expect(runner.services()->resources().find<RunState>() == nullptr, "a new session starts without resources");
+    runner.stop(application);
+    destroyedResources = nullptr;
+}
+
+struct ItemDef {
+    std::string id;
+    float damage{0.0f};
+};
+
+// A definition table kept as a session resource.
+struct ItemTable {
+    static constexpr std::string_view resourceKey = "test.items";
+
+    DefinitionTable<ItemDef> table{Fields<ItemDef>().add("id", &ItemDef::id).add("damage", &ItemDef::damage)};
+};
+
+void testAssetPaths() {
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith_game_services_asset_paths";
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    std::filesystem::create_directories(root / "data");
+    {
+        std::ofstream output(root / "data" / "items.json");
+        output << R"([{"id": "sword", "damage": 4}])";
+    }
+    {
+        ServicesFixture fixture(root);
+        GameServices& services = fixture.services;
+        expect(services.assetPath("data/items.json") == root / "data" / "items.json",
+               "an asset path resolves against the session's asset root");
+        expect(services.assetPath("data/../data/items.json") == root / "data" / "items.json",
+               "an asset path is normalized");
+        expect(services.assetPath("").empty() && services.assetPath("../outside.json").empty() &&
+                   services.assetPath("data/../../outside.json").empty() &&
+                   services.assetPath((root / "data" / "items.json").generic_string()).empty(),
+               "empty, escaping, and absolute asset paths give no path");
+        ItemTable& items = services.resource<ItemTable>();
+        const DefinitionTableResult loaded = items.table.load(services.assetPath("data/items.json"));
+        expect(loaded.success && items.table.find("sword") != nullptr && items.table.find("sword")->damage == 4.0f,
+               "a definition table loads from an asset path into a session resource");
+    }
+    std::filesystem::remove_all(root, error);
+}
+} // namespace
+
 int main() {
     testCommandsApplyAtFlush();
     testCommandsRunInPhases();
@@ -362,8 +563,13 @@ int main() {
     testEffects();
     testEventsLastOneFrame();
     testTimers();
+    testThrowingTimersAreContained();
+    testThrowingSpawnCallbacksAreContained();
     testLogChannels();
     testGameClock();
+    testSessionResources();
+    testResourcesEndWithTheSession();
+    testAssetPaths();
     if (failures == 0) {
         std::cout << "Game services tests passed\n";
     }

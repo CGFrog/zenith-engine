@@ -1,4 +1,5 @@
 #include "engine/Engine.hpp"
+#include "engine/platform/CrashHandler.hpp"
 #include "engine/platform/PlatformServices.hpp"
 #include "engine/project/ProjectConfig.hpp"
 #include "engine/resources/ResourceLocator.hpp"
@@ -17,6 +18,12 @@
 #include <vector>
 
 namespace {
+constexpr const char* productVersion = "0.1.0";
+
+std::filesystem::path diagnosticsDirectory() {
+    return userDataDirectory("Zenith", "Demo") / "diagnostics";
+}
+
 int runApplication(int argc, char** argv) {
     const std::vector<std::string> commandLine = utf8CommandLine(argc, argv);
     initializeResourceLocator(commandLine.empty() ? std::filesystem::path(argv[0]) : pathFromUtf8(commandLine[0]));
@@ -93,12 +100,16 @@ int runApplication(int argc, char** argv) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // A crash (an access violation, or an exception that escapes even the
+    // catch below) leaves a minidump and a report beside the diagnostics.
+    const CrashHandlerScope crashHandler(
+        {.directory = diagnosticsDirectory(), .product = "zenith", .productVersion = productVersion});
     try {
         return runApplication(argc, argv);
     } catch (const std::exception& error) {
         std::filesystem::path reportPath;
-        DiagnosticBundleWriter diagnostics(userDataDirectory("Zenith", "Demo") / "diagnostics");
-        diagnostics.write({"latest", "0.1.0", error.what(), {}}, {}, reportPath);
+        DiagnosticBundleWriter diagnostics(diagnosticsDirectory());
+        diagnostics.write({"latest", productVersion, error.what(), {}}, {}, reportPath);
         std::cerr << "Zenith stopped after an unexpected error: " << error.what() << "\nDiagnostic: " << reportPath
                   << '\n';
         return EXIT_FAILURE;

@@ -54,6 +54,9 @@ struct Gameplay {
 // them once per frame and once per fixed step and hands systems the result
 // as SystemContext::actions: each fixed step sees the presses buffered since
 // the previous step, so a press reaches exactly one fixed step.
+//
+// A system that throws is logged and disabled until the next start or stop
+// (systemFaults), and the game plays on without it.
 class GameplayRunner {
   public:
     GameplayRunner() = default;
@@ -74,6 +77,8 @@ class GameplayRunner {
     void stop(ApplicationContext& context);
     // Null unless started.
     GameServices* services();
+    // The systems that threw since the last start or stop, which no longer run.
+    const SystemFaults& systemFaults() const;
     // The input actions systems receive; the game may change the bindings.
     InputActionMap& actionMap();
     // The game's clock (GameServices::simulationClock), which the scene
@@ -98,6 +103,7 @@ class GameplayRunner {
     Gameplay m_gameplay;
     InputActionMap m_actionMap;
     std::unique_ptr<GameServices> m_services;
+    SystemFaults m_systemFaults;
     // The last update's input, its actions, and its wall-clock duration.
     InputState m_frameInput;
     InputActionState m_frameActions;

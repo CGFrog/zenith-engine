@@ -156,6 +156,11 @@ namespace ViewportChromeWidgets {
 // Header menu bodies, drawn between BeginMenu and EndMenu.
 void drawShadingMenu(ViewportChromeState& state);
 void drawOverlaysMenu(ViewportOverlays& overlays);
+// The Overlays menu's Debug Draw section: a toggle per named channel of
+// debugDraw that holds primitives or is hidden (DebugDraw::channels). The
+// toggles hide a channel in every view, game views too. Draws nothing when
+// no channel qualifies.
+void drawDebugDrawChannelsMenu(DebugDraw& debugDraw);
 void drawGizmosMenu(TransformToolSettings& tools);
 // The vertical tool shelf: Tweak, Move, Rotate, Scale.
 void drawToolShelf(TransformToolSettings& tools, float buttonWidth);

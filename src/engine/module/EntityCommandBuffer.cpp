@@ -2,6 +2,7 @@
 
 #include "EventQueue.hpp"
 #include "GameEvents.hpp"
+#include "GuardedCall.hpp"
 #include "engine/diagnostics/Logger.hpp"
 #include "engine/scene/Prefab.hpp"
 
@@ -142,9 +143,13 @@ void EntityCommandBuffer::apply(Spawn& command, Scene& scene, PrefabSystem& pref
     if (command.placement.localTransform) {
         scene.setLocalTransform(root, *command.placement.localTransform);
     }
-    events.publish(EntitySpawned{scene.id(root)});
+    const SceneEntityId spawned = scene.id(root);
+    events.publish(EntitySpawned{spawned});
     if (command.onSpawned) {
-        command.onSpawned(scene, root);
+        // The entity stays: only the callback's own changes may be missing.
+        if (const std::optional<std::string> failure = callGuarded([&] { command.onSpawned(scene, root); })) {
+            log.error("The spawn callback of " + describe(spawned) + " threw: " + *failure);
+        }
     }
     markBodiesForPhysics(scene, root);
 }

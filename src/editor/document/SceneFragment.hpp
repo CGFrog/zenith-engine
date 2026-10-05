@@ -11,6 +11,11 @@ class AssetManager;
 // entities with fresh ids. Entity references between pasted entities are
 // remapped to the copies (see remapEntityReferences); references to entities
 // outside the fragment keep naming the same entity.
+//
+// Transient entities (Scene::isTransient) are never copied: a copied root
+// that is transient is skipped. Paste rebuilds the scene from its document,
+// so it drops the scene's transient entities (a generator's preview), and it
+// pastes at the top level when parent is transient.
 class SceneFragment {
   public:
     static SceneDocumentResult copy(const Scene& scene, const AssetManager& assets, const SceneDocumentOptions& options,

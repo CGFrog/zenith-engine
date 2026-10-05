@@ -7,6 +7,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 namespace particles {
 namespace {
@@ -117,89 +118,210 @@ void ParticleScheduler::reset() {
     m_sceneGeneration = 0;
 }
 
+namespace {
+// Sorts ranges by first slot and merges overlapping or touching ones.
+std::vector<SlotRange> mergedRanges(std::vector<SlotRange> ranges) {
+    std::erase_if(ranges, [](const SlotRange& range) { return range.count == 0; });
+    std::ranges::sort(ranges, {}, &SlotRange::first);
+    std::vector<SlotRange> merged;
+    for (const SlotRange& range : ranges) {
+        if (!merged.empty() && range.first <= merged.back().first + merged.back().count) {
+            const uint32_t end = std::max(merged.back().first + merged.back().count, range.first + range.count);
+            merged.back().count = end - merged.back().first;
+        } else {
+            merged.push_back(range);
+        }
+    }
+    return merged;
+}
+
+// The gaps of [0, budget) that no range covers, in slot order.
+std::vector<SlotRange> freeRanges(std::vector<SlotRange> used, uint32_t budget) {
+    std::vector<SlotRange> gaps;
+    uint32_t next = 0;
+    for (const SlotRange& range : mergedRanges(std::move(used))) {
+        if (range.first > next) {
+            gaps.push_back({.first = next, .count = range.first - next});
+        }
+        next = std::max(next, range.first + range.count);
+    }
+    if (budget > next) {
+        gaps.push_back({.first = next, .count = budget - next});
+    }
+    return gaps;
+}
+
+// Takes count slots from the first gap that holds them.
+std::optional<uint32_t> allocateFirstFit(std::vector<SlotRange>& gaps, uint32_t count) {
+    for (SlotRange& gap : gaps) {
+        if (gap.count >= count) {
+            const uint32_t first = gap.first;
+            gap.first += count;
+            gap.count -= count;
+            return first;
+        }
+    }
+    return std::nullopt;
+}
+} // namespace
+
+bool ParticleScheduler::updateLayout(std::span<const Placement> placements, std::vector<SlotRange>& clearRanges) {
+    std::vector<EmitterState> states;
+    states.reserve(placements.size());
+    std::vector<bool> kept(m_states.size(), false);
+    std::vector<size_t> added;
+    // Both sequences are in id order.
+    size_t previous = 0;
+    for (const Placement& placement : placements) {
+        while (previous < m_states.size() && m_states[previous].id < placement.snapshot->id) {
+            ++previous;
+        }
+        const bool unchanged = previous < m_states.size() && m_states[previous].id == placement.snapshot->id &&
+                               m_states[previous].capacity == placement.capacity &&
+                               m_states[previous].space == placement.snapshot->emitter.space;
+        if (unchanged) {
+            kept[previous] = true;
+            states.push_back(m_states[previous]);
+        } else {
+            added.push_back(states.size());
+            states.push_back({.id = placement.snapshot->id,
+                              .capacity = placement.capacity,
+                              .space = placement.snapshot->emitter.space,
+                              .restartGeneration = placement.snapshot->emitter.restartGeneration});
+        }
+    }
+    if (added.empty() && states.size() == m_states.size()) {
+        return true;
+    }
+
+    std::vector<SlotRange> used;
+    std::array<bool, maximumEmitters> tableUsed{};
+    for (size_t index = 0; index < m_states.size(); ++index) {
+        const SlotRange range{.first = m_states[index].firstSlot, .count = m_states[index].capacity};
+        if (kept[index]) {
+            used.push_back(range);
+            tableUsed[m_states[index].emitterIndex] = true;
+        } else {
+            clearRanges.push_back(range);
+        }
+    }
+    std::vector<SlotRange> gaps = freeRanges(std::move(used), m_budget);
+    for (const size_t index : added) {
+        EmitterState& state = states[index];
+        const std::optional<uint32_t> first = allocateFirstFit(gaps, state.capacity);
+        if (!first) {
+            return false;
+        }
+        state.firstSlot = *first;
+        clearRanges.push_back({.first = *first, .count = state.capacity});
+        // At most maximumEmitters are scheduled, so a free entry exists.
+        const auto entry = static_cast<uint32_t>(std::ranges::find(tableUsed, false) - tableUsed.begin());
+        tableUsed[entry] = true;
+        state.emitterIndex = entry;
+    }
+    m_states = std::move(states);
+    return true;
+}
+
+void ParticleScheduler::rebuildLayout(std::span<const Placement> placements) {
+    m_states.assign(placements.size(), {});
+    uint32_t nextSlot = 0;
+    for (size_t index = 0; index < placements.size(); ++index) {
+        const EmitterSnapshot& snapshot = *placements[index].snapshot;
+        m_states[index] = {.id = snapshot.id,
+                           .firstSlot = nextSlot,
+                           .capacity = placements[index].capacity,
+                           .emitterIndex = static_cast<uint32_t>(index),
+                           .space = snapshot.emitter.space,
+                           .restartGeneration = snapshot.emitter.restartGeneration};
+        nextSlot += placements[index].capacity;
+    }
+}
+
+void ParticleScheduler::advance(EmitterState& state, const ParticleEmitterComponent& emitter, double step,
+                                ParticleFramePlan& result) {
+    if (state.restartGeneration != emitter.restartGeneration) {
+        state.restartGeneration = emitter.restartGeneration;
+        state.started = false;
+        state.burstTimer = 0.0;
+        state.spawnAccumulator = 0.0;
+    }
+    uint64_t spawns = 0;
+    if (emitter.emitting) {
+        if (!state.started) {
+            spawns += emitter.burstCount;
+            state.started = true;
+        } else if (emitter.burstInterval > 0.0f) {
+            state.burstTimer += step;
+            const double bursts = std::floor(state.burstTimer / emitter.burstInterval);
+            state.burstTimer -= bursts * emitter.burstInterval;
+            spawns += static_cast<uint64_t>(bursts) * emitter.burstCount;
+        }
+        state.spawnAccumulator += static_cast<double>(emitter.spawnRate) * step;
+        const double whole = std::floor(state.spawnAccumulator);
+        state.spawnAccumulator -= whole;
+        spawns += static_cast<uint64_t>(whole);
+    }
+    // More than a full ring in one frame would only overwrite itself.
+    const auto spawnCount = static_cast<uint32_t>(std::min<uint64_t>(spawns, state.capacity));
+    const ScheduledEmitter frame{
+        .id = state.id,
+        .emitterIndex = state.emitterIndex,
+        .firstSlot = state.firstSlot,
+        .capacity = state.capacity,
+        .ringStart = state.cursor,
+        .spawnCount = spawnCount,
+        .spawnOffset = result.totalSpawns,
+        .firstOrdinal = static_cast<uint32_t>(state.spawned),
+        .liveBound = static_cast<uint32_t>(std::min<uint64_t>(state.capacity, state.spawned + spawnCount))};
+    state.cursor = static_cast<uint32_t>((static_cast<uint64_t>(state.cursor) + spawnCount) % state.capacity);
+    state.spawned += spawnCount;
+    result.poolSlots = std::max(result.poolSlots, state.firstSlot + state.capacity);
+    result.emitterTableSize = std::max(result.emitterTableSize, state.emitterIndex + 1);
+    result.totalSpawns += spawnCount;
+    result.liveBound += frame.liveBound;
+    result.emitters.push_back(frame);
+}
+
 ParticleFramePlan ParticleScheduler::plan(std::span<const EmitterSnapshot> snapshots, uint32_t budget,
                                           float deltaSeconds, uint64_t sceneGeneration) {
-    // Layout: which snapshots receive slots, and how many.
-    std::vector<const EmitterSnapshot*> scheduled;
-    std::vector<uint32_t> capacities;
+    // Capacities: which snapshots receive slots, and how many.
+    std::vector<Placement> placements;
     uint32_t remaining = budget;
+    uint32_t droppedEmitters = 0;
     for (const EmitterSnapshot& snapshot : snapshots) {
-        if (scheduled.size() == maximumEmitters || remaining == 0) {
+        if (remaining == 0) {
             break;
+        }
+        if (placements.size() == maximumEmitters) {
+            droppedEmitters += snapshot.emitter.maxParticles > 0 ? 1u : 0u;
+            continue;
         }
         const uint32_t capacity = std::min(snapshot.emitter.maxParticles, remaining);
         if (capacity == 0) {
             continue;
         }
         remaining -= capacity;
-        scheduled.push_back(&snapshot);
-        capacities.push_back(capacity);
+        placements.push_back({.snapshot = &snapshot, .capacity = capacity});
     }
     ParticleFramePlan result;
-    // Live particles store positions in their emitter's simulation space, so
-    // a space change cannot keep them.
-    bool layoutChanged =
-        budget != m_budget || sceneGeneration != m_sceneGeneration || scheduled.size() != m_states.size();
-    for (size_t index = 0; !layoutChanged && index < scheduled.size(); ++index) {
-        layoutChanged = m_states[index].id != scheduled[index]->id || m_states[index].capacity != capacities[index] ||
-                        m_states[index].space != scheduled[index]->emitter.space;
-    }
-    if (layoutChanged) {
-        m_states.assign(scheduled.size(), {});
-        for (size_t index = 0; index < scheduled.size(); ++index) {
-            m_states[index].id = scheduled[index]->id;
-            m_states[index].capacity = capacities[index];
-            m_states[index].space = scheduled[index]->emitter.space;
-            m_states[index].restartGeneration = scheduled[index]->emitter.restartGeneration;
-        }
+    result.droppedEmitters = droppedEmitters;
+    // Starting from no emitters rebuilds too, so the pool forgets particles
+    // whose emitters left while nothing was simulated.
+    const bool rebuild = budget != m_budget || sceneGeneration != m_sceneGeneration || m_states.empty();
+    std::vector<SlotRange> clearRanges;
+    if (rebuild || !updateLayout(placements, clearRanges)) {
+        rebuildLayout(placements);
         m_budget = budget;
         m_sceneGeneration = sceneGeneration;
         result.resetPool = true;
+    } else {
+        result.clearRanges = mergedRanges(std::move(clearRanges));
     }
 
     const double step = clampedDeltaSeconds(deltaSeconds);
-    for (size_t index = 0; index < scheduled.size(); ++index) {
-        const ParticleEmitterComponent& emitter = scheduled[index]->emitter;
-        EmitterState& state = m_states[index];
-        if (state.restartGeneration != emitter.restartGeneration) {
-            state.restartGeneration = emitter.restartGeneration;
-            state.started = false;
-            state.burstTimer = 0.0;
-            state.spawnAccumulator = 0.0;
-        }
-        uint64_t spawns = 0;
-        if (emitter.emitting) {
-            if (!state.started) {
-                spawns += emitter.burstCount;
-                state.started = true;
-            } else if (emitter.burstInterval > 0.0f) {
-                state.burstTimer += step;
-                const double bursts = std::floor(state.burstTimer / emitter.burstInterval);
-                state.burstTimer -= bursts * emitter.burstInterval;
-                spawns += static_cast<uint64_t>(bursts) * emitter.burstCount;
-            }
-            state.spawnAccumulator += static_cast<double>(emitter.spawnRate) * step;
-            const double whole = std::floor(state.spawnAccumulator);
-            state.spawnAccumulator -= whole;
-            spawns += static_cast<uint64_t>(whole);
-        }
-        // More than a full ring in one frame would only overwrite itself.
-        const auto spawnCount = static_cast<uint32_t>(std::min<uint64_t>(spawns, state.capacity));
-        const ScheduledEmitter frame{
-            .id = state.id,
-            .firstSlot = result.poolSlots,
-            .capacity = state.capacity,
-            .ringStart = state.cursor,
-            .spawnCount = spawnCount,
-            .spawnOffset = result.totalSpawns,
-            .firstOrdinal = static_cast<uint32_t>(state.spawned),
-            .liveBound = static_cast<uint32_t>(std::min<uint64_t>(state.capacity, state.spawned + spawnCount))};
-        state.cursor = static_cast<uint32_t>((static_cast<uint64_t>(state.cursor) + spawnCount) % state.capacity);
-        state.spawned += spawnCount;
-        result.poolSlots += state.capacity;
-        result.totalSpawns += spawnCount;
-        result.liveBound += frame.liveBound;
-        result.emitters.push_back(frame);
+    for (size_t index = 0; index < placements.size(); ++index) {
+        advance(m_states[index], placements[index].snapshot->emitter, step, result);
     }
     return result;
 }

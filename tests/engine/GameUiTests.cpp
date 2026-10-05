@@ -109,6 +109,11 @@ int main() {
            "ultrawide layout preserves the design aspect ratio with centered gutters");
     ui.beginFrame({3840, 2160}, {});
     expect(std::abs(ui.scale() - 2.0f) < 0.0001f, "high-DPI viewports scale the design canvas uniformly");
+    ui.pixelText({100.0f, 50.0f}, "label", 18.0f, glm::vec4(1.0f), 7);
+    const auto* pixel = std::get_if<UiTextCommand>(&ui.commands().back().payload);
+    expect(pixel != nullptr && pixel->position == glm::vec2(100.0f, 50.0f) && std::abs(pixel->size - 18.0f) < 1e-4f &&
+               ui.commands().back().drawOrder == 7,
+           "pixel text keeps its pixel position and size whatever the design scale");
 
     InputState pointer;
     pointer.mousePosition = {960.0f, 540.0f};

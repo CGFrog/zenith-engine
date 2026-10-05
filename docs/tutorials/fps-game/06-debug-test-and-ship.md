@@ -22,12 +22,24 @@ shows or hides each category, so noisy parts of the game can be muted.
 
 ## Draw debug shapes
 
-`GameServices::debugDraw()` draws shapes and labels for one frame. Shapes show
-in every viewport and in the game view; labels are drawn only in the editor's
-viewports. For example, draw the weapon's ray:
+`GameServices::debugDraw()` draws shapes and labels for one frame. They show
+in every viewport, in the editor's game view, and in the standalone game
+(`zenith --project`). For example, draw the weapon's ray:
 
 ```cpp
 context.services->debugDraw().line(origin, origin + forward * range, {.color = {1.0f, 0.2f, 0.2f, 1.0f}});
+```
+
+To keep a shape on screen longer, give it a duration in seconds or keep it
+until you clear it, and file it in a named channel. The viewport's
+**Overlays** menu lists the channels under **Debug Draw**, so you can hide
+one while you look at something else:
+
+```cpp
+DebugDraw& draw = context.services->debugDraw();
+draw.channel("weapons.hits").forSeconds(2.0f).sphere(hitPoint, 0.1f);
+draw.channel("weapons.spawns").persistent().label(spawnPoint, "spawn");
+draw.clearChannel("weapons.spawns");
 ```
 
 ## Attach a debugger

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../diagnostics/Logger.hpp"
 #include "../graphics/DebugDraw.hpp"
 #include "../scene/Scene.hpp"
 #include "CharacterController.hpp"
@@ -24,11 +25,18 @@ struct PhysicsWorldConfig {
     glm::vec3 gravity{0.0f, -9.81f, 0.0f};
     float fixedTimeStep{1.0f / 60.0f};
     uint32_t maxSubSteps{4};
-    uint32_t maxBodies{4096};
-    uint32_t maxBodyPairs{16384};
-    uint32_t maxContactConstraints{10240};
+    // Simulation capacities (docs/engine/physics.md lists their memory cost).
+    // Bodies beyond maxBodies are skipped with a warning; a step that runs out
+    // of body pairs or contact constraints leaves the excess contacts
+    // unresolved for that step (bodies may pass through each other) and warns
+    // once per episode. Each contact constraint needs
+    // contactConstraintTemporaryBytes of temporaryAllocatorBytes every step,
+    // which init checks.
+    uint32_t maxBodies{8192};
+    uint32_t maxBodyPairs{32768};
+    uint32_t maxContactConstraints{16384};
     uint32_t workerThreads{0};
-    size_t temporaryAllocatorBytes{10 * 1024 * 1024};
+    size_t temporaryAllocatorBytes{16 * 1024 * 1024};
     // Zero disables the reconciliation audit. It is intentionally frequent in
     // debug builds and may be raised for large benchmark scenes.
     uint32_t debugAuditInterval{300};
@@ -36,18 +44,34 @@ struct PhysicsWorldConfig {
     PhysicsLayerTable layers{PhysicsLayerTable::defaults()};
 };
 
+// Per-step temporary memory Jolt reserves for each contact constraint
+// (480 bytes of constraint plus an index, rounded up).
+inline constexpr size_t contactConstraintTemporaryBytes = 512;
+
 enum class ContactEventType {
     Begin,
     Persist,
     End,
 };
 
+// Two bodies began, kept, or stopped touching. normal points from first
+// toward second (zero for End). Each side also carries its scene id (zero for
+// an entity without one).
 struct ContactEvent {
     ContactEventType type{ContactEventType::Begin};
     Entity first{entt::null};
     Entity second{entt::null};
     glm::vec3 normal{0.0f};
+    SceneEntityId firstId;
+    SceneEntityId secondId;
 };
+
+// The order a step reports its contact events in: by the pair's lower, then
+// higher scene id, then type (Begin, Persist, End), then the first body's
+// scene id and the normal. Jolt reports contacts from its worker threads in
+// any order; this one depends only on the scene, so a replayed run sees the
+// same sequence.
+bool contactEventPrecedes(const ContactEvent& first, const ContactEvent& second);
 
 // A body entered or left a sensor (a rigid body with RigidBodyComponent::
 // sensor set). Exited is also reported when either body is removed, for
@@ -68,6 +92,10 @@ struct TriggerEvent {
     SceneEntityId sensorId;
     SceneEntityId otherId;
 };
+
+// By sensor scene id, then the other body's scene id, then type (Entered
+// before Exited); see PhysicsWorld::triggerEvents.
+bool triggerEventPrecedes(const TriggerEvent& first, const TriggerEvent& second);
 
 // What a query may hit: bodies on the layers in layerMask (bit i is layer i),
 // except the ignored entities (for example a ray's own shooter) and, unless
@@ -149,6 +177,13 @@ struct PhysicsStats {
     uint32_t lifecycleOperations{0};
     uint32_t auditedEntities{0};
     uint32_t transformsReadBack{0};
+    // Entities left without a body or character because theirs could not be
+    // built (an unsupported collider, a degenerate transform, maxBodies
+    // reached); each is logged once and retried when it changes.
+    uint32_t skippedBodies{0};
+    // Jolt ran out of body-pair, manifold, or contact-constraint capacity in
+    // this step, so some contacts were not resolved.
+    bool contactCapacityExceeded{false};
 };
 
 // What PhysicsWorld::drawDebug records. Shapes are collider wireframes in
@@ -170,6 +205,9 @@ struct PhysicsDebugDrawOptions {
 class PhysicsWorld {
   public:
     PhysicsWorld();
+    // logger receives warnings about skipped bodies and exceeded capacities
+    // and must outlive the world; null writes them to stderr.
+    explicit PhysicsWorld(Logger* logger);
     ~PhysicsWorld();
     PhysicsWorld(const PhysicsWorld&) = delete;
     PhysicsWorld& operator=(const PhysicsWorld&) = delete;
@@ -184,8 +222,14 @@ class PhysicsWorld {
     // events.
     void clear();
     void shutdown();
+    // Fails only before init. An entity whose body cannot be built is left
+    // out of the simulation (logged once, counted in PhysicsStats) and the
+    // other bodies keep simulating; exceeded contact capacities are logged
+    // once per episode.
     PhysicsResult step(Scene& scene, const AssetManager& assets, float deltaSeconds);
     void interpolate(Scene& scene, float alpha) const;
+    // Rebuilds the entity's body now; unlike step, reports a body that cannot
+    // be built as an error.
     PhysicsResult refreshBody(Entity entity, Scene& scene, const AssetManager& assets);
 
     bool applyForce(Entity entity, const glm::vec3& force);
@@ -213,15 +257,22 @@ class PhysicsWorld {
     bool closestPoint(const glm::vec3& point, float maxDistance, PhysicsClosestPoint& closest,
                       const PhysicsQueryFilter& filter = {}) const;
 
+    // The contacts of the last step, in contactEventPrecedes order.
     std::span<const ContactEvent> contactEvents() const;
-    // The sensor entries and exits of the last step, exits of removed bodies
-    // first.
+    // The sensor entries and exits of the last step: exits of bodies removed
+    // since the step before first, then the step's own events, each group in
+    // triggerEventPrecedes order. Deterministic like contactEvents.
     std::span<const TriggerEvent> triggerEvents() const;
     // Records the bodies' debug geometry into `output` (for example
     // RenderRuntime::debugDraw()). Physics depends only on the recording
     // type, never on the renderer. Fails before init or when a debug renderer
     // that is not a PhysicsWorld's owns Jolt's one per-process slot.
     PhysicsResult drawDebug(DebugDraw& output, const PhysicsDebugDrawOptions& options = {}) const;
+    // Triangle-mesh shapes held for reuse, one per (mesh, generation, scale):
+    // static mesh colliders with the same mesh and scale share one. Entries
+    // for meshes that are no longer live are dropped when the asset revision
+    // changes; shutdown releases them all.
+    size_t cachedMeshShapes() const;
     const PhysicsWorldConfig& config() const;
 
     const PhysicsStats& stats() const {
@@ -233,9 +284,15 @@ class PhysicsWorld {
 
   private:
     PhysicsResult refreshBodyFromWorld(Entity entity, Scene& scene, const AssetManager& assets);
+    // refreshBodyFromWorld for step: a body that cannot be built is skipped
+    // and reported once instead of failing the step.
+    void refreshOrSkipBody(Entity entity, Scene& scene, const AssetManager& assets);
+    // Builds bodies skipped at maxBodies once removals have made room.
+    void retryBodiesOverCapacity(Scene& scene, const AssetManager& assets);
     // Creates, removes and moves the scene's character controllers for one
-    // step, before the bodies are simulated.
-    PhysicsResult stepCharacters(Scene& scene, float deltaSeconds);
+    // step, before the bodies are simulated. A controller with an invalid
+    // capsule is skipped and reported once.
+    void stepCharacters(Scene& scene, float deltaSeconds);
     // The ground distance CharacterControllerComponent::groundDistance reports.
     float probeGround(Entity entity, const CharacterControllerComponent& controller, const glm::vec3& position,
                       uint32_t layer) const;

@@ -22,6 +22,58 @@ assets under configurable CPU and decoded-audio budgets; recycled slots advance
 their generation so stale handles cannot alias new content. Renderer frame
 leases defer GPU cache pruning until submitted work has retired.
 
+At runtime the engine collects after every scene change and whenever the
+application asks (`ApplicationControl::requestAssetCollection`, or
+`GameServices::requestAssetCollection` from gameplay).
+`DeferredAssetCollection` (`src/engine/application/`) runs the collection
+`Renderer::framesInFlight` frames after the latest request, when the frame
+slots that drew the old content have dropped their leases. It evicts every
+unleased CPU asset and collects decoded audio down to its budget only, since
+idle emitters and gameplay code hold clip handles without leases. Anything
+gameplay keeps across a collection without it being in the scene (a
+preloaded model, for example) needs an `AssetLease`. A roguelike floor
+teardown destroys the floor's entities, then calls
+`services.requestAssetCollection()`, so floors with different tilesets do not
+accumulate.
+
+### Runtime content
+
+`createMesh`, `createMaterial` and `createTexture` add assets built in code
+(procedural walls and floors, merged room geometry, tinted materials). Each
+validates its input and returns `AssetLoadResult` with a descriptive error,
+adding nothing, when it fails:
+
+- a mesh needs vertices, indices and primitives; every index must address a
+  vertex, every primitive range (and simplified LOD range) must be whole
+  triangles inside the index buffer, every primitive needs a live material of
+  the same manager, vertices must be finite, and morph deltas must be one per
+  vertex. Bounds and the local box are recomputed.
+- a material's factors must be finite and its texture slots empty or live.
+- a texture is RGBA8 with `width * height * 4` bytes (or half floats for an
+  environment map), or a valid block-compressed mip chain, at most 16384 on a
+  side.
+
+Runtime assets get fresh generational slots like imported ones, with no
+source path: no load call returns them, `meshSource`/`textureSource` are empty,
+diagnostics show `runtime:<debug name>`, and a scene that references a runtime
+mesh cannot be saved (the codec reports the "unknown runtime handle"). They
+are leased and collected exactly like imports, so a creator leases what it
+keeps until the scene that holds it is leased. They are immutable: to change
+one, create its replacement, point the components at the new handle (marking
+them renderable- or physics-dirty), and let the old asset be collected. The
+renderer and physics key their caches by handle and generation, so a
+replacement is uploaded fresh and the old one's GPU memory and Jolt shapes are
+released after collection.
+
+## `src/engine/assets/MeshBuilder.*`
+
+Assembles a `MeshAsset` in code for `createMesh`: primitives by material,
+vertices, triangles and quads (counter-clockwise from the front), rectangles,
+boxes, and indexed arrays. `build` generates normals for vertices given none,
+tangents from the texture coordinates, and bounds, then (by default) runs
+`optimizeMesh` like an import, so large primitives get LOD ranges. Mistakes
+such as an index past the vertices are reported by `build`. It also hosts the
+normal and tangent generators the glTF importer uses.
 ## `src/engine/assets/AssetStreaming.*`
 
 Owns deterministic derived-asset residency policy without importing Vulkan.

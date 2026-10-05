@@ -1,4 +1,5 @@
 #include "Engine.hpp"
+#include "application/DeferredAssetCollection.hpp"
 #include "diagnostics/Benchmark.hpp"
 #include "diagnostics/RgbaImage.hpp"
 
@@ -73,6 +74,7 @@ Engine::Engine()
     : m_captureConfig(frameCaptureConfigFromEnvironment())
     , m_frameTasks(frameTaskConfiguration())
     , m_assets(&m_logger)
+    , m_physics(&m_logger)
     , m_audio(&m_logger) {
     m_scene.setLogChannel(m_log.withCategory("scene"));
 }
@@ -161,6 +163,7 @@ bool Engine::run(Application& application) {
 
     applicationSession.setFrameTimings(&m_frameTimings);
     m_frameTimings = {};
+    DeferredAssetCollection assetCollection(Renderer::framesInFlight);
     m_input.initialize(m_window, false);
     m_physicsAccumulator = 0.0f;
 
@@ -237,6 +240,8 @@ bool Engine::run(Application& application) {
                     break;
                 }
                 const auto physicsBegin = std::chrono::steady_clock::now();
+                // Fails only for an uninitialized world; skipped bodies and
+                // exceeded capacities are warnings the world logs itself.
                 if (const PhysicsResult result = m_physics.step(m_scene, m_assets, fixedStep); !result) {
                     m_log.error("Physics update failed: " + result.error);
                     runSucceeded = false;
@@ -298,6 +303,13 @@ bool Engine::run(Application& application) {
             runSucceeded = false;
             running = false;
             break;
+        }
+        if (const std::optional<DeferredAssetCollectionResult> collected =
+                assetCollection.frameRendered(m_assets, &m_audio)) {
+            m_log.debug("Collected " + std::to_string(collected->assets.assetsEvicted) + " unused assets (" +
+                        std::to_string(collected->assets.bytesFreed) + " bytes) and " +
+                        std::to_string(collected->audio.clipsEvicted + collected->audio.streamsEvicted) +
+                        " audio clips");
         }
         const double renderMilliseconds = elapsedMilliseconds(renderBegin);
         // Rendering and audio consume the same finalized transform hierarchy.
@@ -369,6 +381,9 @@ bool Engine::run(Application& application) {
             m_log.error("Application scene transition failed: " + frameResult.error);
             applicationSession.shutdown();
             return false;
+        }
+        if (applicationSession.takeAssetCollectionRequest()) {
+            assetCollection.request();
         }
         if (!frameResult.keepRunning) {
             running = false;

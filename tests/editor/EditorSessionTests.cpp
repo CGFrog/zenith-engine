@@ -70,7 +70,11 @@ class EditorHarness {
   public:
     explicit EditorHarness(const fs::path& root, std::optional<EditorProjectHubOptions> projectHub = std::nullopt,
                            EditorPlayServices play = {})
-        : m_application(root / "settings", ZENITH_EDITOR_FONT, testProject(root), std::move(projectHub),
+        : EditorHarness(root, testProject(root), std::move(projectHub), std::move(play)) {}
+
+    EditorHarness(const fs::path& root, ProjectConfig project,
+                  std::optional<EditorProjectHubOptions> projectHub = std::nullopt, EditorPlayServices play = {})
+        : m_application(root / "settings", ZENITH_EDITOR_FONT, std::move(project), std::move(projectHub),
                         std::move(play))
         , m_session(m_application, scene, assets, m_physics, m_audio, m_rendering, m_gameUi, logger) {}
 
@@ -188,6 +192,51 @@ void testPlayModeRestoresTheScene(const fs::path& root) {
     expect(!session.fixedUpdatesEnabled(), "play: Shift F5 returns to Edit mode");
     expect(entityCount(editor.scene) == authored && !hasEntityNamed(editor.scene, "Spawned during play"),
            "play: stopping restores the authored scene");
+}
+
+// A module system that throws during Play stops Play at the end of the frame,
+// restores the edit scene, and leaves the editor running; Play starts again
+// once the cause is gone.
+void testGameplayFaultStopsPlay(const fs::path& root) {
+    ProjectConfig project = testProject(root);
+    project.gameModule = ZENITH_EDITOR_TEST_MODULE_V1;
+    EditorHarness editor(root, std::move(project));
+    if (!editor.start()) {
+        expect(false, "fault: the editor session starts with the test module");
+        return;
+    }
+    editor.frame();
+    // The test module's count_play throws while this entity exists.
+    const SceneEntityId trigger = editor.scene.id(editor.scene.createEntity("editor_test_throw"));
+    const size_t authored = entityCount(editor.scene);
+    ApplicationSession& session = editor.session();
+
+    editor.press(ImGuiKey_F5);
+    const ApplicationFrameResult faulted = editor.frame();
+    expect(faulted.success && faulted.keepRunning, "fault: a throwing system does not end the editor");
+    expect(!session.fixedUpdatesEnabled(), "fault: a throwing system stops Play");
+    expect(entityCount(editor.scene) == authored && hasEntityNamed(editor.scene, "editor_test_throw"),
+           "fault: stopping restores the edit scene");
+    const std::vector<LogEntry> entries = editor.logger.entries();
+    expect(std::ranges::any_of(entries,
+                               [](const LogEntry& entry) {
+                                   return entry.level == LogLevel::Error &&
+                                          entry.message.find("System 'count_play' threw in Update") !=
+                                              std::string::npos;
+                               }),
+           "fault: the throwing system is logged with its name and phase");
+    bool running = true;
+    for (int frame = 0; frame < 3; ++frame) {
+        const ApplicationFrameResult result = editor.frame();
+        running = running && result.success && result.keepRunning;
+    }
+    expect(running && !session.fixedUpdatesEnabled(), "fault: the editor keeps running in Edit mode");
+
+    editor.scene.destroyEntity(editor.scene.findEntity(trigger));
+    editor.press(ImGuiKey_F5);
+    editor.frame();
+    expect(session.fixedUpdatesEnabled(), "fault: Play runs again once the system stops throwing");
+    editor.press(ImGuiMod_Shift | ImGuiKey_F5);
 }
 
 void testNewDocumentAndQuit(const fs::path& root) {
@@ -476,6 +525,7 @@ int main() {
 
     testStartupAndPersistence(root / "persistence");
     testPlayModeRestoresTheScene(root / "play");
+    testGameplayFaultStopsPlay(root / "fault");
     testNewDocumentAndQuit(root / "file");
     testHostQuitRequest(root / "quit");
     testPlayTargets(root / "targets");

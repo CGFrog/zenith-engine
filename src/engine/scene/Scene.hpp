@@ -31,6 +31,15 @@ struct NameComponent {
     std::string name;
 };
 
+// Marks generated content, such as an editor preview a generator built for one
+// seed: the tagged entity and its whole subtree are transient. Transient
+// entities are never written to a scene document, so saves, autosaves, undo
+// snapshots, copies, and Play's snapshot of the edit scene all leave them out,
+// and a saved entity's reference to one is written as none (see
+// SceneDocument). A plain tag, never serialized itself; add it with
+// Scene::markTransient and remove the content with Scene::destroyTransient.
+struct TransientComponent {};
+
 // local is relative to the parent (see Scene::setLocalTransform); world is
 // derived from the hierarchy by Scene::updateWorldTransforms and is stale
 // until then. Code that writes local through registry() must call
@@ -109,6 +118,30 @@ struct MorphWeightsComponent {
 
 struct MeshRendererComponent {
     MeshHandle mesh{};
+};
+
+// Per-instance changes to how an entity's MeshRendererComponent is shaded,
+// applied by the renderer to every primitive without touching the shared
+// material. Factors are linear. The alpha mode, double-sidedness and textures
+// stay the material's, so baseColorFactor's alpha only matters to materials
+// that are masked or blended. Write the component and then call
+// Scene::markMaterialDirty so the renderer rebuilds its draws.
+struct MaterialOverrideComponent {
+    // Multiplies the material's base color factor.
+    glm::vec4 baseColorFactor{1.0f};
+    // Linear radiance added to the material's own emission, scaled by
+    // emissiveStrength (and by the material's emissive texture when it has
+    // one).
+    glm::vec3 emissive{0.0f};
+    float emissiveStrength{1.0f};
+    // Multiply the material's factors; results are clamped to [0, 1].
+    float roughnessFactor{1.0f};
+    float metallicFactor{1.0f};
+    // When live, replaces every primitive's material before the factors
+    // apply, typically a runtime material (AssetManager::createMaterial).
+    // Runtime only: it is not saved, so a saved and reloaded scene keeps
+    // just the factors.
+    MaterialHandle material{};
 };
 
 struct CameraComponent {
@@ -327,6 +360,17 @@ class Scene {
     MeshRendererComponent& attachMesh(Entity entity, MeshHandle mesh);
     void destroyEntity(Entity entity);
     void clear();
+
+    // Generated content (TransientComponent). markTransient tags entity, which
+    // makes it and every descendant transient; it ignores an invalid entity.
+    void markTransient(Entity entity);
+    // Whether entity or one of its ancestors is tagged transient.
+    bool isTransient(Entity entity) const;
+    // Every transient entity, each tagged subtree parents first; empty
+    // (without walking the scene) when nothing is tagged.
+    std::vector<Entity> transientEntities() const;
+    // Destroys every transient entity and returns how many there were.
+    size_t destroyTransient();
     void replaceWith(Scene&& scene);
     void swap(Scene& other) noexcept;
     void updateWorldTransforms();

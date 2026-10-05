@@ -27,8 +27,15 @@ class ApplicationControl {
   public:
     void requestSceneChange(SceneKey scene);
     void requestQuit();
+    // Asks the host to collect the assets nothing leases any more once the
+    // frames in flight have retired (see DeferredAssetCollection); for a game
+    // that tears down part of its scene, such as a roguelike floor. A scene
+    // change requests it itself. It is not a lifecycle action: it does not
+    // count for actionPending.
+    void requestAssetCollection();
 
     bool actionPending() const;
+    bool assetCollectionRequested() const;
 
   private:
     friend class ApplicationSession;
@@ -37,6 +44,7 @@ class ApplicationControl {
 
     std::optional<SceneKey> m_requestedScene;
     bool m_quitRequested{false};
+    bool m_assetCollectionRequested{false};
 };
 
 struct ApplicationContext {
@@ -130,6 +138,10 @@ class ApplicationSession {
     void drawUi();
     ApplicationFrameResult finishFrame();
     bool actionPending() const;
+    // Whether a scene change or the application asked for an asset
+    // collection since the last call; the host then runs one through its
+    // DeferredAssetCollection.
+    bool takeAssetCollectionRequest();
     void requestQuit();
     void shutdown();
 

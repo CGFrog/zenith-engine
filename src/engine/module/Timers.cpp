@@ -1,5 +1,7 @@
 #include "Timers.hpp"
 
+#include "GuardedCall.hpp"
+#include "engine/diagnostics/Logger.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <algorithm>
@@ -27,7 +29,7 @@ bool Timers::active(TimerHandle timer) const {
     return std::ranges::any_of(m_timers, [timer](const Timer& entry) { return entry.handle == timer; });
 }
 
-void Timers::advance(Scene& scene, float simulatedSeconds) {
+void Timers::advance(Scene& scene, float simulatedSeconds, const LogChannel& log) {
     if (simulatedSeconds > 0.0f) {
         m_now += simulatedSeconds;
     }
@@ -50,7 +52,13 @@ void Timers::advance(Scene& scene, float simulatedSeconds) {
             timer.deadline += timer.interval;
         }
         TimerContext context{.scene = scene, .timer = handle, .owner = owner};
-        callback(context);
+        if (const std::optional<std::string> failure = callGuarded([&] { callback(context); })) {
+            // A repeating timer would throw again every interval.
+            const bool cancelled = cancel(handle);
+            log.error("Timer " + std::to_string(handle.value) +
+                      (owner ? " of entity " + std::to_string(owner.value) : std::string()) + " threw: " + *failure +
+                      (cancelled ? "; it is cancelled" : ""));
+        }
     }
 }
 

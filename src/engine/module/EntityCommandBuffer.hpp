@@ -25,7 +25,8 @@ struct SpawnPlacement {
 };
 
 // Runs when the buffer creates the entity, so a system can configure what it
-// spawned. It must not keep the Entity beyond the call.
+// spawned. It must not keep the Entity beyond the call. One that throws is
+// logged and the entity stays spawned.
 using SpawnedCallback = std::function<void(Scene& scene, Entity entity)>;
 
 // Scene changes recorded while systems iterate the scene and applied together

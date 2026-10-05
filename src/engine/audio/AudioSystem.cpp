@@ -1,5 +1,6 @@
 #include "AudioSystem.hpp"
 
+#include "engine/diagnostics/OverflowEpisode.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <SDL3/SDL.h>
@@ -174,6 +175,9 @@ struct AudioSystem::Impl {
     struct Voice {
         uint32_t generation{1};
         bool active{false};
+        AudioPriority priority{AudioPriority::Normal};
+        // When the voice started (Impl::nextStartSequence); orders voice stealing.
+        uint64_t startSequence{0};
         bool paused{false};
         bool spatial{false};
         bool streaming{false};
@@ -249,6 +253,11 @@ struct AudioSystem::Impl {
     std::atomic<uint64_t> streamWrite{0};
     AudioVoiceHandle streamingVoice{};
     std::atomic<bool> streamEof{false};
+    // Voice stealing: the start order of voices, the voices stolen since init,
+    // and the run of plays that found every voice busy (logged once).
+    uint64_t nextStartSequence{0};
+    uint64_t stolenVoices{0};
+    OverflowEpisode voiceLimit;
 
     bool valid(AudioClipHandle handle) const {
         return handle && handle.index < clips.size() && clips[handle.index].occupied &&
@@ -263,6 +272,71 @@ struct AudioSystem::Impl {
     bool valid(AudioVoiceHandle handle) const {
         return handle && handle.index < voices.size() && voices[handle.index].generation == handle.generation &&
                voices[handle.index].active;
+    }
+
+    // How loud the voice reaches the listener: its gain through its bus and
+    // the master bus, and for a spatial voice the distance attenuation. Pan
+    // and occlusion are left out. Requires mutex.
+    float audibility(const Voice& voice) const {
+        const BusState master = buses[busIndex(AudioBus::Master)];
+        const BusState child = voice.bus == AudioBus::Master ? BusState{} : buses[busIndex(voice.bus)];
+        const float gain = voice.gain * child.gain * master.gain * (child.muted || master.muted ? 0.0f : 1.0f);
+        if (!voice.spatial) {
+            return gain;
+        }
+        if (!listener.valid.load(std::memory_order_acquire)) {
+            return 0.0f;
+        }
+        const glm::vec3 listenerPosition{listener.positionX.load(std::memory_order_relaxed),
+                                         listener.positionY.load(std::memory_order_relaxed),
+                                         listener.positionZ.load(std::memory_order_relaxed)};
+        const float distance = glm::length(voice.position - listenerPosition);
+        const float minimum = std::max(voice.minimumDistance, 0.001f);
+        const float maximum = std::max(voice.maximumDistance, minimum);
+        return distance >= maximum ? 0.0f : gain * std::min(1.0f, minimum / std::max(distance, minimum));
+    }
+
+    // A free voice, or the voice a request of the given priority may steal
+    // (see AudioSystem::play); voices.end() when there is neither. Requires
+    // mutex.
+    std::vector<Voice>::iterator acquireVoice(AudioPriority priority, bool& stolen) {
+        stolen = false;
+        const auto free = std::find_if(voices.begin(), voices.end(), [](const Voice& voice) { return !voice.active; });
+        if (free != voices.end()) {
+            return free;
+        }
+        auto victim = voices.end();
+        float victimAudibility = 0.0f;
+        for (auto candidate = voices.begin(); candidate != voices.end(); ++candidate) {
+            if (candidate->streaming || candidate->bus == AudioBus::Music || candidate->priority > priority) {
+                continue;
+            }
+            const float candidateAudibility = audibility(*candidate);
+            if (victim == voices.end() || candidate->priority < victim->priority ||
+                (candidate->priority == victim->priority &&
+                 (candidateAudibility < victimAudibility ||
+                  (candidateAudibility == victimAudibility && candidate->startSequence < victim->startSequence)))) {
+                victim = candidate;
+                victimAudibility = candidateAudibility;
+            }
+        }
+        if (victim != voices.end()) {
+            // Invalidate the stolen sound's handle before the slot is reused.
+            ++victim->generation;
+            ++stolenVoices;
+            stolen = true;
+        }
+        return victim;
+    }
+
+    // Resets a voice acquired by acquireVoice for a new sound.
+    void startVoice(Voice& voice, AudioPriority priority) {
+        const uint32_t generation = voice.generation;
+        voice = {};
+        voice.generation = generation;
+        voice.active = true;
+        voice.priority = priority;
+        voice.startSequence = ++nextStartSequence;
     }
 };
 
@@ -346,6 +420,8 @@ void AudioSystem::shutdown() {
     m_impl->clipCache.clear();
     m_impl->streamCache.clear();
     m_impl->emitters.clear();
+    m_impl->stolenVoices = 0;
+    m_impl->voiceLimit = {};
     m_impl->initialized = false;
 }
 
@@ -453,27 +529,36 @@ AudioLoadResult<AudioStreamHandle> AudioSystem::loadStream(const std::filesystem
 }
 
 AudioLoadResult<AudioVoiceHandle> AudioSystem::play(AudioClipHandle clip, const AudioPlaybackOptions& options) {
-    std::scoped_lock lock(m_impl->mutex);
-    if (!m_impl->valid(clip)) {
-        return {.error = "Cannot play an invalid audio clip handle"};
+    AudioLoadResult<AudioVoiceHandle> result;
+    bool overflowStarted = false;
+    {
+        std::scoped_lock lock(m_impl->mutex);
+        if (!m_impl->valid(clip)) {
+            return {.error = "Cannot play an invalid audio clip handle"};
+        }
+        bool stolen = false;
+        const auto found = m_impl->acquireVoice(options.priority, stolen);
+        overflowStarted = m_impl->voiceLimit.update(stolen || found == m_impl->voices.end());
+        if (found == m_impl->voices.end()) {
+            result.error = "Audio voice limit reached and every voice plays a sound of higher priority";
+        } else {
+            m_impl->startVoice(*found, options.priority);
+            found->assetIndex = clip.index;
+            found->scope = options.scope;
+            found->bus = options.bus;
+            found->gain = std::max(options.gain, 0.0f);
+            found->pitch = std::max(options.pitch, 0.01f);
+            found->loop = options.loop;
+            const uint32_t index = static_cast<uint32_t>(std::distance(m_impl->voices.begin(), found));
+            result = {.success = true, .handle = {index, found->generation}};
+        }
     }
-    auto found = std::find_if(m_impl->voices.begin(), m_impl->voices.end(),
-                              [](const Impl::Voice& voice) { return !voice.active; });
-    if (found == m_impl->voices.end()) {
-        return {.error = "Audio voice limit reached"};
+    // Logged outside the mutex, which the mixer must not wait for.
+    if (overflowStarted) {
+        m_log.warning("All " + std::to_string(m_impl->config.maxVoices) +
+                      " audio voices are busy; new sounds take the voices of lower-priority sounds");
     }
-    const uint32_t generation = found->generation;
-    *found = {};
-    found->generation = generation;
-    found->active = true;
-    found->assetIndex = clip.index;
-    found->scope = options.scope;
-    found->bus = options.bus;
-    found->gain = std::max(options.gain, 0.0f);
-    found->pitch = std::max(options.pitch, 0.01f);
-    found->loop = options.loop;
-    const uint32_t index = static_cast<uint32_t>(std::distance(m_impl->voices.begin(), found));
-    return {.success = true, .handle = {index, generation}};
+    return result;
 }
 
 AudioLoadResult<AudioVoiceHandle> AudioSystem::playAt(AudioClipHandle clip, const AudioSpatialOptions& options) {
@@ -510,15 +595,13 @@ AudioLoadResult<AudioVoiceHandle> AudioSystem::playMusic(AudioStreamHandle strea
         m_impl->decoderThread.join();
         lock.lock();
     }
-    auto found = std::find_if(m_impl->voices.begin(), m_impl->voices.end(),
-                              [](const Impl::Voice& voice) { return !voice.active; });
+    bool stolen = false;
+    const auto found = m_impl->acquireVoice(options.priority, stolen);
     if (found == m_impl->voices.end()) {
-        return {.error = "Audio voice limit reached"};
+        return {.error = "Audio voice limit reached and every voice plays a sound of higher priority"};
     }
+    m_impl->startVoice(*found, options.priority);
     const uint32_t generation = found->generation;
-    *found = {};
-    found->generation = generation;
-    found->active = true;
     found->streaming = true;
     found->assetIndex = stream.index;
     found->scope = options.scope;
@@ -800,10 +883,8 @@ void AudioSystem::syncEmitters(const Scene& scene) {
             if (slot == m_impl->voices.end()) {
                 continue;
             }
+            m_impl->startVoice(*slot, AudioPriority::Normal);
             const uint32_t generation = slot->generation;
-            *slot = {};
-            slot->generation = generation;
-            slot->active = true;
             slot->spatial = true;
             slot->scope = AudioScope::Scene;
             slot->assetIndex = component.clip.index;
@@ -928,6 +1009,11 @@ AudioAssetCollectionResult AudioSystem::collectUnusedAssets(bool force) {
     }
     result.budgetSatisfied = result.bytesRetained <= m_impl->config.decodedAudioBudgetBytes;
     return result;
+}
+
+uint64_t AudioSystem::stolenVoiceCount() const {
+    std::scoped_lock lock(m_impl->mutex);
+    return m_impl->stolenVoices;
 }
 
 uint64_t AudioSystem::decodedAudioBytes() const {

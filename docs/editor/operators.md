@@ -4,7 +4,9 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 
 Blender-style operators: every menu item, button, and key runs an `Operator`
 (stable id, label, description, `poll`, `execute`, properties described by
-reflected `Fields<T>`, and `Undo`/`Register` flags) registered in the
+reflected `Fields<T>`, or by run-time descriptors through
+`OperatorProperties::fromDescriptors` as a game module's are, and
+`Undo`/`Register` flags) registered in the
 `OperatorRegistry`; game modules register their own (see Game module hosting). The
 `OperatorRunner` checks poll, wraps `Undo` operators in one `SceneEditing`
 undo step, reports failures to diagnostics, records every invocation in an

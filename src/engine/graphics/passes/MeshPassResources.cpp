@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cstddef>
 #include <cstring>
@@ -296,14 +297,9 @@ const MeshPass::GpuMaterial* MeshPass::ensureMaterial(MaterialHandle handle, con
     if (!material) {
         return nullptr;
     }
-    uint32_t index = 0;
-    if (!m_freeMaterialIndices.empty()) {
-        index = m_freeMaterialIndices.back();
-        m_freeMaterialIndices.pop_back();
-    } else if (m_nextMaterialIndex < maximumMaterials) {
-        index = m_nextMaterialIndex++;
-    } else {
-        m_log.error("Material count exceeds the renderer capacity (" + std::to_string(maximumMaterials) + ")");
+    const std::optional<uint32_t> index = allocateMaterialIndex();
+    if (!index) {
+        // Every slot is taken; the caller counts and reports the overflow.
         return nullptr;
     }
     // Upload referenced textures now so frame recording only resolves slots.
@@ -312,7 +308,57 @@ const MeshPass::GpuMaterial* MeshPass::ensureMaterial(MaterialHandle handle, con
             ensureTexture(texture, assets);
         }
     }
-    return &m_materials.emplace(key, GpuMaterial{index}).first->second;
+    return &m_materials.emplace(key, GpuMaterial{*index}).first->second;
+}
+
+std::optional<uint32_t> MeshPass::allocateMaterialIndex() {
+    if (!m_freeMaterialIndices.empty()) {
+        const uint32_t index = m_freeMaterialIndices.back();
+        m_freeMaterialIndices.pop_back();
+        return index;
+    }
+    if (m_nextMaterialIndex < maximumMaterials) {
+        return m_nextMaterialIndex++;
+    }
+    return std::nullopt;
+}
+
+const MeshPass::GpuMaterial* MeshPass::ensureOverrideMaterial(MaterialHandle material,
+                                                              const MaterialOverrideComponent& values) {
+    // Bit patterns, so the key orders strictly even for NaN factors.
+    const std::array<float, 10> factors{values.baseColorFactor.r, values.baseColorFactor.g, values.baseColorFactor.b,
+                                        values.baseColorFactor.a, values.emissive.r,        values.emissive.g,
+                                        values.emissive.b,        values.emissiveStrength,  values.roughnessFactor,
+                                        values.metallicFactor};
+    OverrideMaterialKey key{handleKey(material), {}};
+    std::ranges::transform(factors, key.second.begin(), [](float factor) { return std::bit_cast<uint32_t>(factor); });
+    if (const auto found = m_overrideMaterials.find(key); found != m_overrideMaterials.end()) {
+        found->second.lastBuild = m_renderItemBuild;
+        return &found->second.gpu;
+    }
+    if (m_overrideMaterials.size() >= maximumMaterialOverrides) {
+        return nullptr;
+    }
+    const std::optional<uint32_t> index = allocateMaterialIndex();
+    if (!index) {
+        return nullptr;
+    }
+    OverrideMaterial created{.gpu = {*index}, .material = material, .values = values, .lastBuild = m_renderItemBuild};
+    // The replacement handle is not part of the record; material already is it.
+    created.values.material = {};
+    return &m_overrideMaterials.emplace(key, created).first->second.gpu;
+}
+
+void MeshPass::releaseUnusedOverrideMaterials() {
+    std::erase_if(m_overrideMaterials, [&](const auto& entry) {
+        if (entry.second.lastBuild == m_renderItemBuild) {
+            return false;
+        }
+        // Records are rewritten for every frame from the live set, so the
+        // index can serve another material at once.
+        m_freeMaterialIndices.push_back(entry.second.gpu.index);
+        return true;
+    });
 }
 
 void MeshPass::writeMaterialRecords(uint32_t frameIndex, const AssetManager& assets) {
@@ -330,6 +376,22 @@ void MeshPass::writeMaterialRecords(uint32_t frameIndex, const AssetManager& ass
         }
         return srgb ? texture->srgbSlot : texture->linearSlot;
     };
+    const auto pack = [&](const MaterialAsset& material) {
+        return packMaterialRecord(
+            material, {.baseColor = slotFor(material.baseColorTexture, true, m_whiteSrgbSlot),
+                       .normal = slotFor(material.normalTexture, false, m_normalSlot),
+                       .metallicRoughness = slotFor(material.metallicRoughnessTexture, false, m_whiteSlot),
+                       .occlusion = slotFor(material.occlusionTexture, false, m_whiteSlot),
+                       .emissive = slotFor(material.emissiveTexture, true, m_whiteSrgbSlot),
+                       .clearcoat = slotFor(material.clearcoat.texture, false, m_whiteSlot),
+                       .clearcoatRoughness = slotFor(material.clearcoat.roughnessTexture, false, m_whiteSlot),
+                       .clearcoatNormal = slotFor(material.clearcoat.normalTexture, false, m_normalSlot),
+                       .sheenColor = slotFor(material.sheen.colorTexture, true, m_whiteSrgbSlot),
+                       .sheenRoughness = slotFor(material.sheen.roughnessTexture, false, m_whiteSlot),
+                       .specular = slotFor(material.specular.texture, false, m_whiteSlot),
+                       .specularColor = slotFor(material.specular.colorTexture, true, m_whiteSrgbSlot),
+                       .transmission = slotFor(material.transmission.texture, false, m_whiteSlot)});
+    };
     uint32_t highestIndex = 0;
     for (const auto& [key, gpu] : m_materials) {
         const MaterialAsset* material = assets.material(handleFromKey<MaterialHandle>(key));
@@ -338,21 +400,16 @@ void MeshPass::writeMaterialRecords(uint32_t frameIndex, const AssetManager& ass
         }
         // Rewritten every frame so edits to factors or texture bindings apply
         // without invalidating anything the GPU might still be reading.
-        records[gpu.index] = packMaterialRecord(
-            *material, {.baseColor = slotFor(material->baseColorTexture, true, m_whiteSrgbSlot),
-                        .normal = slotFor(material->normalTexture, false, m_normalSlot),
-                        .metallicRoughness = slotFor(material->metallicRoughnessTexture, false, m_whiteSlot),
-                        .occlusion = slotFor(material->occlusionTexture, false, m_whiteSlot),
-                        .emissive = slotFor(material->emissiveTexture, true, m_whiteSrgbSlot),
-                        .clearcoat = slotFor(material->clearcoat.texture, false, m_whiteSlot),
-                        .clearcoatRoughness = slotFor(material->clearcoat.roughnessTexture, false, m_whiteSlot),
-                        .clearcoatNormal = slotFor(material->clearcoat.normalTexture, false, m_normalSlot),
-                        .sheenColor = slotFor(material->sheen.colorTexture, true, m_whiteSrgbSlot),
-                        .sheenRoughness = slotFor(material->sheen.roughnessTexture, false, m_whiteSlot),
-                        .specular = slotFor(material->specular.texture, false, m_whiteSlot),
-                        .specularColor = slotFor(material->specular.colorTexture, true, m_whiteSrgbSlot),
-                        .transmission = slotFor(material->transmission.texture, false, m_whiteSlot)});
+        records[gpu.index] = pack(*material);
         highestIndex = std::max(highestIndex, gpu.index + 1);
+    }
+    for (const auto& [key, entry] : m_overrideMaterials) {
+        // The same, from the material as the override changes it; a record
+        // whose material was collected is freed by the next packet build.
+        if (const MaterialAsset* material = assets.material(entry.material)) {
+            records[entry.gpu.index] = pack(applyMaterialOverride(*material, entry.values));
+            highestIndex = std::max(highestIndex, entry.gpu.index + 1);
+        }
     }
     if (highestIndex > 0) {
         vmaFlushAllocation(m_allocator, m_cameras[frameIndex].materials.allocation, 0,

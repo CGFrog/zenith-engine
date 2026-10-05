@@ -5,6 +5,8 @@
 #include "editor/modules/GameModuleHost.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/panels/SimulateSystemPicker.hpp"
+#include "editor/theme/EditorPalette.hpp"
+#include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
 
 #include <imgui.h>
@@ -13,6 +15,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <string>
+#include <string_view>
 
 namespace {
 constexpr ImGuiTableFlags tableFlags =
@@ -40,6 +44,15 @@ const char* runInName(RunIn runIn) {
         return "Edit, Play";
     }
     return edit ? "Edit" : (play ? "Play" : "None");
+}
+
+// Why a disabled system no longer runs, over its name.
+void drawFaultTooltip(const SystemFaults& faults, std::string_view name) {
+    const auto fault = std::ranges::find(faults.faults(), name, &SystemFault::name);
+    if (fault != faults.faults().end()) {
+        ImGui::SetItemTooltip("Threw in %s and no longer runs until gameplay restarts or the module reloads: %s",
+                              std::string(systemPhaseName(fault->phase)).c_str(), fault->what.c_str());
+    }
 }
 
 void timingCell(double milliseconds) {
@@ -153,7 +166,12 @@ void SystemProfilerPanel::drawSystems(EditorContext& context) const {
                 ImGui::SetItemTooltip("Run %s in Simulate", system->name.c_str());
             }
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(system->name.c_str());
+            if (m_modules.systemFaults().disabled(system->name)) {
+                ImGui::TextColored(toImVec4(palette::error), "%s (disabled)", system->name.c_str());
+                drawFaultTooltip(m_modules.systemFaults(), system->name);
+            } else {
+                ImGui::TextUnformatted(system->name.c_str());
+            }
             ImGui::TableNextColumn();
             const std::string_view phaseName = systemPhaseName(system->phase);
             ImGui::TextUnformatted(phaseName.data(), phaseName.data() + phaseName.size());

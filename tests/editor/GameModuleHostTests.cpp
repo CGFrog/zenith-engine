@@ -41,6 +41,9 @@ size_t moduleSystemCount(std::span<const SystemDescriptor* const> systems) {
 constexpr std::string_view counterKey = "editor_test_counter";
 constexpr std::string_view spinnerKey = "editor_test_spinner";
 constexpr std::string_view addCounterOperator = "editor_test.add_counter";
+constexpr std::string_view generatePreviewOperator = "editor_test.generate_preview";
+constexpr std::string_view previewChannel = "editor_test.preview";
+constexpr std::string_view previewRootName = "Editor Test Preview";
 constexpr std::string_view moduleMenu = "EDITOR_TEST_MT_tools";
 constexpr std::string_view moduleSidebarTab = "Test Tab";
 constexpr int32_t bumpAmount = 1000;
@@ -201,10 +204,13 @@ void testLoadEditAndPlay(HostFixture& fixture, const TestPaths& paths, SceneEnti
            "the host reports the loaded module and its version");
     expect(fixture.counterType() != nullptr && componentTypesFor(fixture.document.options()).find("point_light"),
            "the document reads module components alongside the built-in types");
-    expect(fixture.host.operatorIds().size() == 1 && fixture.operators.find(addCounterOperator) != nullptr,
-           "the module's editor operator is registered");
-    expect(loaded.warnings.size() == 1 && loaded.warnings[0].find("already registered") != std::string::npos,
-           "a rejected editor registration is reported as a warning");
+    expect(fixture.host.operatorIds().size() == 2 && fixture.operators.find(addCounterOperator) != nullptr &&
+               fixture.operators.find(generatePreviewOperator) != nullptr,
+           "the module's editor operators are registered");
+    expect(loaded.warnings.size() == 2 && loaded.warnings[0].find("already registered") != std::string::npos &&
+               loaded.warnings[1].find("declared twice") != std::string::npos &&
+               fixture.operators.find("editor_test.bad_properties") == nullptr,
+           "rejected editor registrations, a duplicate id and a duplicate property key, are reported as warnings");
     expect(fixture.host.panels().size() == 1 && fixture.host.panels()[0].panel.title == "Test Counters",
            "the module's editor panel is registered");
 
@@ -241,10 +247,13 @@ void testGameplaySession(HostFixture& fixture, SceneEntityId counterId) {
     const int32_t value = fixture.counterValue(counterId, "value");
     const int32_t loggerSeen = fixture.counterValue(counterId, "logger_seen");
     const int32_t servicesSeen = fixture.counterValue(counterId, "services_seen");
+    const int32_t debugDrawSeen = fixture.counterValue(counterId, "debug_draw_seen");
     fixture.host.runEditFrame(fixture.scene, 0.016f, 0.0f);
     expect(fixture.counterValue(counterId, "logger_seen") == loggerSeen + 1 &&
                fixture.counterValue(counterId, "services_seen") == servicesSeen,
            "edit systems get a logger and no gameplay services");
+    expect(fixture.counterValue(counterId, "debug_draw_seen") == debugDrawSeen + 1,
+           "edit systems get the host's debug drawing");
 
     DebugDraw debugDraw;
     fixture.host.startGameplay(fixture.assets, fixture.document.options(), debugDraw);
@@ -274,6 +283,37 @@ void testGameplaySession(HostFixture& fixture, SceneEntityId counterId) {
     expect(fixture.counterValue(counterId, "services_seen") == servicesSeen + 1,
            "play systems outside a session get no services");
     *fixture.counterField<int32_t>(counterId, "value") = value;
+}
+
+// A module system that throws in a gameplay session is disabled for the rest
+// of it while the other systems keep running; the next session runs it again.
+void testSystemFaults(HostFixture& fixture, SceneEntityId counterId) {
+    const int32_t value = fixture.counterValue(counterId, "value");
+    const int32_t loggerSeen = fixture.counterValue(counterId, "logger_seen");
+    DebugDraw debugDraw;
+    fixture.host.startGameplay(fixture.assets, fixture.document.options(), debugDraw);
+    // count_play throws while this entity exists.
+    const Entity trigger = fixture.scene.createEntity("editor_test_throw");
+    fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Play, 0.016f);
+    fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Play, 0.016f);
+    const SystemFaults& faults = fixture.host.systemFaults();
+    expect(faults.disabled("count_play") && faults.faults().size() == 1 &&
+               faults.faults()[0].what.find("fault trigger") != std::string::npos,
+           "a throwing module system is disabled with what it threw");
+    expect(fixture.counterValue(counterId, "value") == value &&
+               fixture.counterValue(counterId, "logger_seen") == loggerSeen + 2,
+           "the other systems of the phase keep running every frame");
+
+    fixture.host.stopGameplay(fixture.scene);
+    expect(fixture.host.systemFaults().empty(), "stopping the session enables the system again");
+    fixture.scene.destroyEntity(trigger);
+    fixture.host.startGameplay(fixture.assets, fixture.document.options(), debugDraw);
+    fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Play, 0.016f);
+    expect(fixture.counterValue(counterId, "value") == value + 1 && fixture.host.systemFaults().empty(),
+           "the next session runs the system again");
+    fixture.host.stopGameplay(fixture.scene);
+    *fixture.counterField<int32_t>(counterId, "value") = value;
+    *fixture.counterField<int32_t>(counterId, "logger_seen") = loggerSeen;
 }
 
 // The module's menu entry, sidebar tab, and inspector override, used the way
@@ -357,6 +397,143 @@ void testEditorExtensions(HostFixture& fixture, SceneEntityId counterId) {
     fixture.selection.selectOnly(counterId);
 }
 
+// The preview root the generate operator builds, or null.
+Entity findPreviewRoot(const Scene& scene) {
+    const auto names = scene.registry().view<const NameComponent>();
+    for (const Entity entity : names) {
+        if (names.get<const NameComponent>(entity).name == previewRootName) {
+            return entity;
+        }
+    }
+    return entt::null;
+}
+
+size_t previewRootCount(const Scene& scene) {
+    const auto names = scene.registry().view<const NameComponent>();
+    return static_cast<size_t>(std::ranges::count_if(
+        names, [&names](Entity entity) { return names.get<const NameComponent>(entity).name == previewRootName; }));
+}
+
+// The counter values of the preview's children, in child order; empty without
+// a preview.
+std::vector<int32_t> previewValues(HostFixture& fixture) {
+    std::vector<int32_t> values;
+    const Entity root = findPreviewRoot(fixture.scene);
+    if (root == entt::null) {
+        return values;
+    }
+    for (const Entity child : fixture.scene.registry().get<RelationshipComponent>(root).children) {
+        values.push_back(fixture.counterValue(fixture.scene.id(child), "value"));
+    }
+    return values;
+}
+
+// "Generate (seed)": a module operator with properties builds a transient
+// preview with the edit services; Adjust Last Operation runs it again with
+// another seed, deterministically, without touching the undo history.
+void testGeneratePreview(HostFixture& fixture) {
+    // As the session does: module code draws where the viewports render.
+    DebugDraw& debugDraw = fixture.rendering.debugDraw();
+    fixture.host.setDebugDraw(debugDraw);
+    const Operator* op = fixture.operators.find(generatePreviewOperator);
+    expect(op != nullptr && hasFlag(op->flags, OperatorFlags::Register) && op->properties.fields().size() == 7,
+           "a module operator with properties is registered for Adjust Last Operation");
+    const std::vector<SceneEntityId> selectionBefore = fixture.selection.ids();
+    const size_t historyBefore = fixture.history.size();
+    std::string savedBefore;
+    SceneDocument::serialize(fixture.scene, fixture.assets, fixture.document.options(), savedBefore);
+
+    expect(fixture.invoke(generatePreviewOperator, R"({"seed": 5})").status == OperatorStatus::Finished,
+           "the generate operator runs with a seed from JSON");
+    const Entity root = findPreviewRoot(fixture.scene);
+    const std::vector<int32_t> seedFive = previewValues(fixture);
+    expect(root != entt::null && fixture.scene.isTransient(root) && seedFive.size() == 3,
+           "the operator builds a transient preview with the default count");
+    std::string savedAfter;
+    SceneDocument::serialize(fixture.scene, fixture.assets, fixture.document.options(), savedAfter);
+    expect(savedAfter == savedBefore && fixture.history.size() == historyBefore,
+           "the transient preview is neither saved nor recorded for undo");
+    expect(debugDraw.lineCount() == 3 * 12 && debugDraw.labels().size() == 3 && !debugDraw.channels().empty() &&
+               debugDraw.channels()[0].name == previewChannel,
+           "the operator draws into the host's debug draw channel");
+    debugDraw.endFrame(10.0f);
+    expect(debugDraw.lineCount() == 3 * 12, "the preview outline is persistent");
+    expect(fixture.host.editRandom().seed() == 5, "the operator reseeds the host's random streams");
+
+    const LastOperator* last = fixture.runner.lastOperator();
+    expect(last != nullptr && last->id == generatePreviewOperator &&
+               last->properties.toJson().find("\"spawned\":3") != std::string::npos,
+           "Adjust Last Operation remembers the run with the value the operator wrote back");
+    if (last == nullptr) {
+        return;
+    }
+    OperatorProperties adjusted = last->properties;
+    expect(adjusted.applyJson(R"({"seed": 9})").empty(), "the seed is an editable property");
+    OperatorContext context = fixture.operatorContext();
+    expect(fixture.runner.adjustLast(context, adjusted).status == OperatorStatus::Finished,
+           "Adjust Last Operation runs the operator again with a new seed");
+    const std::vector<int32_t> seedNine = previewValues(fixture);
+    expect(previewRootCount(fixture.scene) == 1 && seedNine.size() == 3 && seedNine != seedFive,
+           "the re-run replaces the preview with the new seed's");
+    expect(debugDraw.lineCount() == 3 * 12, "the re-run clears the channel before drawing again");
+    last = fixture.runner.lastOperator();
+    if (last != nullptr) {
+        adjusted = last->properties;
+        adjusted.applyJson(R"({"seed": 5})");
+        OperatorContext again = fixture.operatorContext();
+        fixture.runner.adjustLast(again, adjusted);
+    }
+    expect(previewValues(fixture) == seedFive, "the same seed generates the same preview");
+    expect(fixture.history.size() == historyBefore, "adjusting a preview records nothing either");
+
+    // Every property type reaches the module.
+    expect(fixture.invoke(generatePreviewOperator, R"({"count": 2, "layout": "ring", "labels": false, "spacing": 4.0,
+                                                       "prefix": "Cell "})")
+                       .status == OperatorStatus::Finished &&
+               previewValues(fixture).size() == 2 && debugDraw.labels().empty(),
+           "int, enum, bool, float, and string properties reach the operator");
+    const Entity ringRoot = findPreviewRoot(fixture.scene);
+    const Entity firstCell = ringRoot != entt::null
+                                 ? fixture.scene.registry().get<RelationshipComponent>(ringRoot).children.front()
+                                 : Entity{entt::null};
+    expect(firstCell != entt::null && fixture.scene.registry().get<NameComponent>(firstCell).name == "Cell 0" &&
+               std::abs(fixture.scene.localPosition(firstCell).x - 4.0f) < 1e-4f,
+           "the ring layout and prefix were used");
+    expect(fixture.invoke(generatePreviewOperator, R"({"layout": "spiral"})").status == OperatorStatus::Failed,
+           "an enum value that is not an option is rejected");
+    expect(fixture.invoke(generatePreviewOperator, R"({"count": -1})").status == OperatorStatus::Failed &&
+               !fixture.diagnostics.entries().empty() &&
+               fixture.diagnostics.entries().back().message.find("count of zero") != std::string::npos,
+           "the module's own failure is reported");
+
+    // A panel invokes the operator with values through the panel context.
+    const std::vector<int32_t> before = previewValues(fixture);
+    debugDraw.endFrame();
+    const size_t linesBefore = debugDraw.lineCount();
+    EditorContext editor = fixture.context();
+    bool invoked = false;
+    drawModulePanelContents(editor, [&invoked](EditorModulePanelContext& panel) {
+        EditorModuleProperties values;
+        values.set("seed", int32_t{9});
+        invoked = panel.invokeOperator(generatePreviewOperator, values);
+        panel.debugDraw.channel("editor_test.panel_probe").line({0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f});
+    });
+    expect(invoked && previewValues(fixture) == seedNine, "a panel invokes a module operator with property values");
+    const std::vector<DebugDrawChannelInfo> channels = debugDraw.channels();
+    expect(debugDraw.lineCount() == 3 * 12 + 1 && linesBefore == 2 * 12 &&
+               std::ranges::any_of(channels,
+                                   [](const DebugDrawChannelInfo& channel) {
+                                       return channel.name == "editor_test.panel_probe" && channel.active;
+                                   }),
+           "a panel draws into the session's debug draw");
+    expect(before.size() == 2, "the previous run's preview was replaced");
+
+    fixture.scene.destroyTransient();
+    debugDraw.clear();
+    fixture.runner.forgetLast();
+    fixture.selection.assign(selectionBefore);
+}
+
 // Simulate runs FixedUpdate systems and the Update systems the user enabled,
 // never passes input, and every run is timed in the host's profile.
 void testSimulate(HostFixture& fixture, SceneEntityId counterId) {
@@ -427,7 +604,18 @@ void testHotReload(HostFixture& fixture, const TestPaths& paths, SceneEntityId c
     const SceneEntityId spinnerId = fixture.scene.id(spinner);
     componentTypesFor(fixture.document.options()).find(spinnerKey)->addDefault(fixture.scene, spinner);
     *fixture.componentField<int32_t>(spinnerKey, spinnerId, "turns") = 7;
+    // A preview and the edit services' state do not outlive the module.
+    expect(fixture.invoke(generatePreviewOperator, R"({"seed": 11})").status == OperatorStatus::Finished &&
+               fixture.host.editRandom().seed() == 11,
+           "a preview exists before the reload");
     const GameModuleHostResult reloaded = fixture.host.reload(fixture.scene, fixture.assets, fixture.document);
+    expect(findPreviewRoot(fixture.scene) == entt::null,
+           "the reload restores the scene from its document, without the transient preview");
+    RandomStreams fresh;
+    expect(fixture.host.editRandom().seed() == 0 &&
+               fixture.host.editRandom().stream("layout").state() == fresh.stream("layout").state(),
+           "the reload starts the module's random streams over");
+    expect(fixture.runner.lastOperator() == nullptr, "the reload forgets the module operator's last run");
     expect(reloaded.success && fixture.host.module() != nullptr && fixture.host.module()->version() == "2.0.0",
            "the rebuilt module hot reloads");
     expect(fixture.host.loadCount() == 2 && !fixture.host.sourceChanged(), "the reload loads the new file");
@@ -447,7 +635,7 @@ void testHotReload(HostFixture& fixture, const TestPaths& paths, SceneEntityId c
            "the reloaded module's behaviour runs its new code");
     expect(fixture.operators.find(addCounterOperator) != nullptr && fixture.host.panels().size() == 1,
            "the reloaded module's editor extensions are registered again");
-    expect(fixture.extensionsRegistered() && reloaded.warnings.size() == 1,
+    expect(fixture.extensionsRegistered() && reloaded.warnings.size() == 2,
            "the reload released every extension, so registering them again succeeds once each");
     expect(!fixture.host.panels().empty() && fixture.host.panels()[0].visible, "an open module panel stays open");
     // The engine's behaviour, navigation, and animator systems, count_play,
@@ -544,7 +732,9 @@ int main() {
         testLoadEditAndPlay(fixture, paths, counterId);
         if (fixture.host.module() != nullptr) {
             testGameplaySession(fixture, counterId);
+            testSystemFaults(fixture, counterId);
             testEditorExtensions(fixture, counterId);
+            testGeneratePreview(fixture);
             testSimulate(fixture, counterId);
             testHotReload(fixture, paths, counterId);
             testFailedReloadPreservesData(fixture, paths, counterId);

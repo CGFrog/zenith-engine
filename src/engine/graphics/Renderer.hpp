@@ -19,6 +19,7 @@
 #include "swapchain/Swapchain.hpp"
 #include "vulkan/VulkanContext.hpp"
 #include <array>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <string>
@@ -104,6 +105,11 @@ struct FrameCaptureResult {
 
 class Renderer {
   public:
+    // Frames recorded ahead of the GPU. Each frame slot leases the assets it
+    // draws until the slot is reused, so an asset released now is unleased
+    // after this many more frames.
+    static constexpr uint32_t framesInFlight = 3;
+
     bool init(const Window& window, RenderRuntime& rendering, FrameTaskExecutor& frameTasks,
               const RendererOptions& options = {});
     bool drawFrame(const Window& window, Scene& scene, const AssetManager& assets);
@@ -195,7 +201,9 @@ class Renderer {
     // Draws this frame's debug lines into every recorded view and publishes
     // each view's projected debug labels. After MeshPass::record.
     bool recordDebugDraw(VkCommandBuffer commandBuffer);
-    // Ends the debug primitives' one-frame lifetime.
+    // Ends the frame for every debug list (DebugDraw::endFrame): one-frame
+    // primitives go, and timed ones age by the wall-clock time since the
+    // previous frame, or by RendererOptions::fixedFrameSeconds when set.
     void clearDebugDraw();
 
     // GPU picking (RenderRuntime::requestPick). A pick recorded into a frame,
@@ -228,6 +236,8 @@ class Renderer {
     DebugDrawPass m_debugDrawPass;
     // Per-frame scratch of recordDebugDraw.
     std::vector<DebugDrawPassView> m_debugDrawViews;
+    // When clearDebugDraw last ended a frame; empty before the first.
+    std::optional<std::chrono::steady_clock::time_point> m_lastDebugDrawFrame;
     UiImageStore m_uiImages;
     ViewportTarget m_viewportTarget;
     // Indexed by view slot; slot 0 is unused (the default view's targets are
@@ -239,7 +249,6 @@ class Renderer {
     std::vector<MeshPassViewRequest> m_viewRequests;
     std::vector<uint32_t> m_renderedViews;
     std::array<RenderSettings, RenderRuntime::maximumViews> m_composedViewSettings;
-    static constexpr uint32_t framesInFlight = 3;
     std::array<FrameResources, framesInFlight> m_frames;
     std::array<AssetLeaseSet, framesInFlight> m_frameAssets;
     AssetLeaseSet m_pendingUiAssets;

@@ -11,9 +11,13 @@
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
 #include "engine/module/GameEvents.hpp"
+#include "engine/module/GuardedCall.hpp"
 
 #include <imgui.h>
 #include <nlohmann/json.hpp>
+
+#include <span>
+#include <utility>
 
 namespace {
 constexpr const char* playDiagnosticSource = "Play";
@@ -339,9 +343,43 @@ void EditorSession::drawGameViewUi(ApplicationContext& context) {
     input.mousePosition -= viewport->position();
     const glm::vec2 size = glm::max(viewport->size(), glm::vec2(1.0f));
     m_gameViewUi.beginFrame({static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y)}, input);
-    m_moduleHost.runSystems(SystemPhase::Ui, context.scene, &context, m_playMode.simulationMode(), m_frameGameSeconds,
-                            &input, &m_gameViewUi);
+    runGameplayStage(systemPhaseName(SystemPhase::Ui), [&] {
+        m_moduleHost.runSystems(SystemPhase::Ui, context.scene, &context, m_playMode.simulationMode(),
+                                m_frameGameSeconds, &input, &m_gameViewUi);
+    });
     viewport->setGameUi(&m_gameViewUi);
+}
+
+void EditorSession::runGameplayStage(std::string_view stage, const std::function<void()>& run) {
+    if (m_gameplayFailure) {
+        return;
+    }
+    const size_t faultsBefore = m_moduleHost.systemFaults().faults().size();
+    if (const std::optional<std::string> failure = callGuarded(run)) {
+        m_gameplayFailure = "Gameplay threw in " + std::string(stage) + ": " + *failure;
+        return;
+    }
+    const std::span<const SystemFault> faults = m_moduleHost.systemFaults().faults();
+    if (faults.size() > faultsBefore) {
+        const SystemFault& fault = faults[faultsBefore];
+        m_gameplayFailure =
+            "System '" + fault.name + "' threw in " + std::string(systemPhaseName(fault.phase)) + ": " + fault.what;
+    }
+}
+
+void EditorSession::stopFailedGameplay(ApplicationContext& context) {
+    if (!m_gameplayFailure) {
+        return;
+    }
+    const std::string failure = *std::exchange(m_gameplayFailure, std::nullopt);
+    if (m_playMode.mode() == EditorMode::Edit) {
+        return;
+    }
+    const char* runtime = m_playMode.simulating() ? "Simulate" : "Play";
+    stopPlayMode(context);
+    m_diagnostics.add(EditorDiagnosticSeverity::Error, playDiagnosticSource,
+                      std::string(runtime) + " stopped and the edit scene was restored. " + failure,
+                      "Fix the gameplay code, rebuild the module, and start again.");
 }
 
 bool EditorSession::enterPlayMode(ApplicationContext& context, EditorRuntime runtime) {
@@ -367,6 +405,7 @@ bool EditorSession::enterPlayMode(ApplicationContext& context, EditorRuntime run
     }
     m_history.crossBoundary(CommandHistoryBoundary::EnterPlayMode);
     m_diagnostics.acknowledgeErrors();
+    m_gameplayFailure.reset();
     return true;
 }
 

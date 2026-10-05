@@ -11,6 +11,8 @@
 #include <memory>
 #include <optional>
 
+class CrashHandlerScope;
+
 // The Project Hub's configuration, for an editor that offers it.
 struct EditorProjectHubOptions {
     // The hub's template, engine, and default folder (its ideCommand is read
@@ -60,6 +62,10 @@ class EditorApplication final : public Application {
 
     const ProjectConfig& project() const;
     const RecentProjects& recentProjects() const;
+    // The process's crash handler, which each session gives its emergency
+    // recovery save while it runs (EditorProjectServices::
+    // crashRecoveryChanged). It must outlive the application's sessions.
+    void setCrashHandler(CrashHandlerScope& handler);
 
   private:
     void recordRecentProject(Logger& logger);
@@ -79,6 +85,8 @@ class EditorApplication final : public Application {
     // Written by the current session (EditorProjectServices::
     // mouseCaptureChanged).
     MouseCapturePolicy m_mouseCapturePolicy{MouseCapturePolicy::WhileRightMouseDown};
+    // Null until setCrashHandler.
+    CrashHandlerScope* m_crashHandler{nullptr};
     RecentProjects m_recentProjects;
     ProjectHubEntry m_hubEntry{ProjectHubEntry::Hub};
 };

@@ -1,5 +1,5 @@
-// EditorSession's autosave and the recovery prompt shown when the previous
-// session left an autosave behind.
+// EditorSession's autosave, its emergency save after a crash, and the
+// recovery prompt shown when the previous session left an autosave behind.
 
 #include "EditorSession.hpp"
 
@@ -21,6 +21,25 @@ void EditorSession::updateAutosave(ApplicationContext& context, float deltaSecon
             !result) {
             m_diagnostics.reportError("Autosave failed: " + result.error);
         }
+    }
+}
+
+void EditorSession::registerCrashRecovery(ApplicationContext& context) {
+    if (m_crashRecoveryRegistered || !m_crashRecoveryChanged) {
+        return;
+    }
+    m_crashRecoveryChanged([this, &context] { saveRecoveryAfterCrash(context); });
+    m_crashRecoveryRegistered = true;
+}
+
+void EditorSession::saveRecoveryAfterCrash(ApplicationContext& context) {
+    if (!m_document.dirty()) {
+        return;
+    }
+    // Play and Simulate run on a copy; the document is the parked edit scene.
+    const Scene* scene = m_playMode.mode() == EditorMode::Edit ? &context.scene : m_playMode.editScene();
+    if (scene != nullptr) {
+        m_recovery.autosave(*scene, context.assets, m_document.options());
     }
 }
 

@@ -31,6 +31,30 @@ type registry and a `SystemScheduler`, from a module (`gameplayFromModule`),
 from registration linked into the executable (`linkGameplay`), or the built-in
 types and systems alone. `GameplayRunner` plays a `Gameplay` in a game's
 `ApplicationScene` (the project application and the demo use it).
+
+## Fault isolation
+
+A gameplay bug must not end the game or the editor, so every call into game
+code is guarded (`GuardedCall.hpp`, `callGuarded`):
+
+- `SystemScheduler::run` catches whatever a system throws, logs it as an
+  error in the `gameplay` category (system name, phase, and `what()`), and
+  goes on with the next system. Given a `SystemFaults`, it also disables the
+  system there and skips it from then on, reporting it only once, like a
+  behaviour hook that throws (`BehaviourScheduler`). The scheduler is shared
+  and immutable, so the disabled set is the host's per-session state beside
+  its `SystemProfile`: `GameplayRunner` clears its own on `start` and `stop`
+  (`systemFaults()`), and the editor's `GameModuleHost` clears its own when
+  gameplay starts or stops and when the module loads or reloads.
+- `Timers::advance` logs a throwing callback to its `LogChannel` and drops
+  its timer, even a repeating one; the other timers run.
+- `EntityCommandBuffer` logs a throwing `onSpawned` callback; the entity
+  stays and the later commands apply. `Effects` runs no game code itself: its
+  spawns and lifetimes go through these two.
+
+Structured exceptions (access violations, stack overflows) are not C++
+exceptions; the process's crash handler records them (see
+[Platform](platform.md#srcengineplatformcrashhandler)).
 `EngineExport.hpp` defines `ZENITH_ENGINE_API` for data that must cross the
 engine library boundary.
 
@@ -62,6 +86,10 @@ Besides the scene, mode, and delta, a system gets:
 - `logger`: always set when a host runs it, in Edit too.
 - `input`: null when no player input reaches the scene (Edit, Simulate).
 - `services`: the session's `GameServices`, null in Edit.
+- `debugDraw`: the host's debug drawing in every mode (in a session, the same
+  as `services->debugDraw()`), so `RunIn::Edit` systems can draw previews;
+  null only for a host without one. It is the last member, so modules built
+  before it read the others unchanged.
 - `ui`: set only in the `Ui` phase.
 - `actions`: the module's input actions (`ModuleRegistrar::addInputActions`)
   evaluated by the host from `input`, and null whenever `input` is. See
@@ -172,12 +200,16 @@ It holds:
   and `saveGame(scene, slot, title)` against the scene document the session
   plays (see [Scene](scene.md)).
 - `navigation(scene)`: the session's navigation mesh, baked from the scene's
-  static colliders on first use. `bakeNavigation(scene, settings)` bakes it
-  again now, for a game that builds or replaces a level at runtime; call it
-  after the spawn commands applied (the next phase, or a timer).
+  static colliders on first use under the default `Lazy` bake policy.
+  `bakeNavigation(scene, settings)` bakes it again now, for a game that builds
+  or replaces a level at runtime; call it after the spawn commands applied
+  (the next phase, or a timer). Such a game sets
+  `setNavigationBakePolicy(NavigationBakePolicy::Explicit)` so agents wait for
+  that bake instead of triggering an early one (see
+  [Navigation](navigation.md)).
 - `Timers`: one-shot or repeating callbacks on simulated time. They follow the
   clock's time scale and stop while paused. A timer may have an owner entity;
-  the timer is dropped when its owner is gone.
+  the timer is dropped when its owner is gone, or when its callback throws.
 - The game's own clock: `setPaused` and `setTimeScale`, for menus, inventory
   screens, and slow motion. `simulationClock(host)` combines them with the
   host's clock (the editor's pause, frame step, and time scale): the scales
@@ -190,10 +222,32 @@ It holds:
   wall-clock frame time, and every phase has it as
   `SystemContext::unscaledDeltaSeconds`. The first-person camera ignores look
   input while the game is paused.
-- `DebugDraw&`: `RenderRuntime::debugDraw()`, drawn in every view this frame.
+- `DebugDraw&`: `RenderRuntime::debugDraw()`, drawn in every view: for one
+  frame by default, or for a duration or until cleared, in named channels
+  ([Graphics](graphics.md#srcenginegraphicsdebugdraw)).
+- `SessionResources` (`resources()`, `resource<T>()`): the session's own
+  data, one value per type, such as definition tables and the current run's
+  state. A type opts in with a unique
+  `static constexpr std::string_view resourceKey`; like events, values are
+  found by that string, not a C++ type id, so the engine and a module agree
+  on them. `get` default-constructs on first use, `emplace` replaces,
+  `find` and `erase` do what they say. Module statics are lost on hot reload
+  and a registry's context goes with its scene; resources live exactly as
+  long as the services, are destroyed newest first before the services' other
+  members, and so are gone before a module unloads or reloads.
+- `assetPath(path)`: a project-relative asset path (as prefab and clip
+  references are written) resolved against the session's asset root, for
+  `DefinitionTable::load` and other files the game reads. An empty, absolute,
+  or escaping path is logged and gives an empty path.
+- `requestAssetCollection()`: frees the CPU assets nothing leases any more,
+  once the frames in flight retired (see [Assets](assets.md)). Call it when
+  tearing down part of the scene, such as a roguelike floor, after its
+  destroy commands are recorded: `runGameplayPhase` hands the request to the
+  application after the phase's flush, and the engine collects
+  `Renderer::framesInFlight` frames later. A scene change collects on its own.
 
-Commands, timer callbacks, and event channels hold module code, so the
-services are destroyed before the module that used them unloads.
+Commands, timer callbacks, event channels, and session resources hold module
+code, so the services are destroyed before the module that used them unloads.
 
 ## Folder contents
 
@@ -201,4 +255,4 @@ services are destroyed before the module that used them unloads.
 unloading, module registration, the system registry and scheduler (Simulate
 mask, per-system CPU profile), `Gameplay` (the component types and systems a
 game plays) with `GameplayRunner`, the engine's built-in systems, and
-`GameServices` (entity commands, events, timers).
+`GameServices` (entity commands, events, timers, session resources).

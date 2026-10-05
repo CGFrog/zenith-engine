@@ -51,8 +51,10 @@ SystemDescriptor navAgentSystem() {
                     return;
                 }
                 GameServices& services = *context.services;
-                updateNavAgents(context.scene, services.navigation(context.scene), services.navigationCrowd(),
-                                context.deltaSeconds, services.crowdSettings());
+                if (NavigationWorld* navigation = services.agentNavigation(context.scene)) {
+                    updateNavAgents(context.scene, *navigation, services.navigationCrowd(), context.deltaSeconds,
+                                    services.crowdSettings());
+                }
             }};
 }
 

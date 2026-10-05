@@ -627,6 +627,17 @@ struct RenderStats {
     // rendered view served (RenderRuntime::requestPick); zero on frames
     // without requests, which skip the pass entirely.
     uint32_t pickPasses{0};
+    // Per-frame capacities a large scene exceeded this submission; the excess
+    // is left out and logged once per episode instead of failing the frame.
+    // Render items not drawn: objects beyond the per-frame object capacity
+    // (the last in build order) and primitives whose material found no slot.
+    uint32_t droppedRenderItems{0};
+    // Skinned render items drawn in their bind pose because the frame's skin
+    // palette capacity was full.
+    uint32_t droppedSkinnedRenderItems{0};
+    // Particle emitters not simulated because particles::maximumEmitters
+    // emitters were already scheduled (the highest scene ids are left out).
+    uint32_t droppedParticleEmitters{0};
 };
 
 // A camera that replaces the scene's primary CameraComponent for one render
@@ -875,10 +886,12 @@ class RenderRuntime {
 
     // Debug drawing (DebugDraw.hpp). Primitives recorded into debugDraw()
     // appear in every view, those in viewDebugDraw(view) only in that view.
-    // Both last one frame: the renderer draws them in the next
-    // Renderer::drawFrame (lines after post-processing, before the UI) and
-    // then clears them, also when the frame is skipped. Record every frame
-    // that should show them, before drawFrame.
+    // The renderer draws them in the next Renderer::drawFrame (lines after
+    // post-processing, before the UI) and then ends their frame
+    // (DebugDraw::endFrame), also when the frame is skipped: one-frame
+    // primitives must be recorded every frame that should show them, before
+    // drawFrame; timed ones age by the wall-clock time between frames, and
+    // persistent ones stay until cleared.
     DebugDraw& debugDraw() {
         return m_debugDraw;
     }

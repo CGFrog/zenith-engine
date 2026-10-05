@@ -1,14 +1,17 @@
 #include "MeshPass.hpp"
 #include "MeshPassInternal.hpp"
 
+#include "engine/graphics/MaterialRecord.hpp"
+
 #include <algorithm>
 #include <cstddef>
+#include <string>
 
 using namespace mesh_pass_detail;
 
 bool MeshPass::appendRenderItems(const Scene& scene, const AssetManager& assets,
                                  const std::vector<RenderObjectId>& outlinedObjects, Entity entity, Entity instancer,
-                                 const glm::mat4& world, std::vector<RenderItem>& items) {
+                                 const glm::mat4& world, RenderItemBudget& budget, std::vector<RenderItem>& items) {
     const Entity renderObject = instancer == entt::null ? entity : instancer;
     const RenderObjectId objectId = static_cast<RenderObjectId>(entt::to_integral(renderObject));
     const bool outlined = std::binary_search(outlinedObjects.begin(), outlinedObjects.end(), objectId);
@@ -26,20 +29,41 @@ bool MeshPass::appendRenderItems(const Scene& scene, const AssetManager& assets,
                                m_deferredUploads.deferredThisFrame(DeferredUploadKind::Mesh, handleKey(meshHandle));
         return true;
     }
+    if (!budget.admit(static_cast<uint32_t>(mesh->primitives.size()))) {
+        return true;
+    }
     const SkinComponent* skin = scene.registry().try_get<SkinComponent>(entity);
+    const MaterialOverrideComponent* materialOverride = scene.registry().try_get<MaterialOverrideComponent>(entity);
+    // A replacement material that is not live is ignored, like a missing one.
+    const bool replacesMaterial = materialOverride != nullptr && assets.material(materialOverride->material) != nullptr;
+    const bool changesFactors = materialOverride != nullptr && materialOverrideChangesFactors(*materialOverride);
     const glm::vec3 center = glm::vec3(world * glm::vec4(mesh->bounds.center, 1.0f));
     const float scale = std::max(
         {glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])), glm::length(glm::vec3(world[2]))});
     for (const MeshPrimitive& primitive : mesh->primitives) {
-        const MaterialAsset* material = assets.material(primitive.material);
-        const GpuMaterial* gpuMaterial = ensureMaterial(primitive.material, assets);
-        if (!material || !gpuMaterial) {
+        const MaterialHandle materialHandle = replacesMaterial ? materialOverride->material : primitive.material;
+        const MaterialAsset* material = assets.material(materialHandle);
+        if (!material) {
             return false;
+        }
+        // Every material slot is taken: the primitive is left out until one frees.
+        const GpuMaterial* gpuMaterial = ensureMaterial(materialHandle, assets);
+        if (!gpuMaterial) {
+            ++m_droppedMaterialItems;
+            continue;
+        }
+        if (changesFactors) {
+            // Without a free override record the plain material is drawn.
+            if (const GpuMaterial* overridden = ensureOverrideMaterial(materialHandle, *materialOverride)) {
+                gpuMaterial = overridden;
+            } else {
+                ++m_droppedMaterialOverrides;
+            }
         }
         items.push_back({.meshHandle = meshHandle,
                          .entity = entity,
                          .instancer = instancer,
-                         .materialHandle = primitive.material,
+                         .materialHandle = materialHandle,
                          .mesh = mesh,
                          .primitive = &primitive,
                          .lod = primitive.lod(0),
@@ -59,6 +83,10 @@ bool MeshPass::appendRenderItems(const Scene& scene, const AssetManager& assets,
 bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
                                 const std::vector<RenderObjectId>& outlinedObjects, std::vector<RenderItem>& items) {
     m_meshUploadsPending = false;
+    m_droppedMaterialItems = 0;
+    m_droppedMaterialOverrides = 0;
+    ++m_renderItemBuild;
+    RenderItemBudget budget(maximumObjectsPerFrame);
     const SceneVisibility visibility(scene, m_sceneVisibilityMode);
     m_builtVisibilityMode = m_sceneVisibilityMode;
     const auto renderables = scene.registry().view<const TransformComponent, const MeshRendererComponent>();
@@ -67,7 +95,7 @@ bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
             continue;
         }
         if (!appendRenderItems(scene, assets, outlinedObjects, entity, entt::null,
-                               renderables.get<const TransformComponent>(entity).world, items)) {
+                               renderables.get<const TransformComponent>(entity).world, budget, items)) {
             return false;
         }
     }
@@ -82,13 +110,16 @@ bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
             continue;
         }
         const size_t first = items.size();
-        if (!appendRenderItems(scene, assets, outlinedObjects, draw.member, draw.instancer, draw.world, items)) {
+        if (!appendRenderItems(scene, assets, outlinedObjects, draw.member, draw.instancer, draw.world, budget,
+                               items)) {
             return false;
         }
         for (size_t index = first; index < items.size(); ++index) {
             items[index].instanceOrdinal = static_cast<uint32_t>(ordinal + 1);
         }
     }
+    m_droppedRenderItems = budget.dropped();
+    releaseUnusedOverrideMaterials();
     std::sort(items.begin(), items.end(), [](const RenderItem& first, const RenderItem& second) {
         if (first.material->alphaMode != second.material->alphaMode) {
             return first.material->alphaMode < second.material->alphaMode;
@@ -144,6 +175,22 @@ bool MeshPass::buildRenderItems(const Scene& scene, const AssetManager& assets,
     }
     m_gpuRecords.swap(nextGpuRecords);
     return true;
+}
+
+void MeshPass::reportRenderItemOverflow() {
+    if (m_renderItemOverflow.update(m_droppedRenderItems > 0)) {
+        m_log.warning("Render items exceed the per-frame capacity of " + std::to_string(maximumObjectsPerFrame) + "; " +
+                      std::to_string(m_droppedRenderItems) + " items are not drawn (the last objects in build order)");
+    }
+    if (m_materialOverflow.update(m_droppedMaterialItems > 0)) {
+        m_log.warning("Materials exceed the renderer capacity of " + std::to_string(maximumMaterials) + "; " +
+                      std::to_string(m_droppedMaterialItems) + " render items without a material slot are not drawn");
+    }
+    if (m_materialOverrideOverflow.update(m_droppedMaterialOverrides > 0)) {
+        m_log.warning("Material overrides exceed the renderer capacity of " + std::to_string(maximumMaterialOverrides) +
+                      " distinct material and factor pairs; " + std::to_string(m_droppedMaterialOverrides) +
+                      " render items draw their plain material");
+    }
 }
 
 uint32_t MeshPass::updateRenderItems(const Scene& scene, std::span<const Entity> changedEntities) {

@@ -269,7 +269,7 @@ void ParticlePass::uploadFrame(uint32_t frameIndex, const particles::ParticleFra
                         frame.localLightCount},
         .counts = {plan.poolSlots, plan.totalSpawns, sortElements, std::min(frame.shadowCascades, 3u)},
         .ambient = {glm::max(frame.ambientRadiance, glm::vec3(0.0f)), std::max(frame.ambientScale, 0.0f)},
-        .flags = {frame.environmentIrradiance ? 1u : 0u, static_cast<uint32_t>(plan.emitters.size()), 0u, 0u},
+        .flags = {frame.environmentIrradiance ? 1u : 0u, plan.emitterTableSize, 0u, 0u},
         .irradianceVolumeMinimum = frame.irradianceVolumeMinimum,
         .irradianceVolumeCellSize = frame.irradianceVolumeCellSize,
         .irradianceVolumeCounts = frame.irradianceVolumeCounts};
@@ -277,18 +277,21 @@ void ParticlePass::uploadFrame(uint32_t frameIndex, const particles::ParticleFra
     std::memcpy(uploads.frame.mapped, &frameData, sizeof(frameData));
     vmaFlushAllocation(m_allocator, uploads.frame.allocation, 0, sizeof(frameData));
 
-    // Scheduled emitters are a subsequence of the snapshots, in the same order.
+    // Each emitter fills its table entry; unoccupied entries have no slots and
+    // spawn nothing. Scheduled emitters are a subsequence of the snapshots,
+    // in the same order.
     auto* packed = static_cast<particles::GpuParticleEmitter*>(uploads.emitters.mapped);
+    const uint32_t tableSize = std::max(plan.emitterTableSize, 1u);
+    std::fill_n(packed, tableSize, particles::GpuParticleEmitter{});
     size_t snapshot = 0;
-    for (size_t index = 0; index < plan.emitters.size(); ++index) {
-        while (emitters.emitters[snapshot].id != plan.emitters[index].id) {
+    for (const particles::ScheduledEmitter& scheduled : plan.emitters) {
+        while (emitters.emitters[snapshot].id != scheduled.id) {
             ++snapshot;
         }
         const uint32_t textureSlot = snapshot < emitters.textureSlots.size() ? emitters.textureSlots[snapshot] : 0u;
-        packed[index] = particles::packEmitter(emitters.emitters[snapshot], plan.emitters[index], textureSlot);
+        packed[scheduled.emitterIndex] = particles::packEmitter(emitters.emitters[snapshot], scheduled, textureSlot);
     }
-    vmaFlushAllocation(m_allocator, uploads.emitters.allocation, 0,
-                       sizeof(particles::GpuParticleEmitter) * std::max<size_t>(plan.emitters.size(), 1));
+    vmaFlushAllocation(m_allocator, uploads.emitters.allocation, 0, sizeof(particles::GpuParticleEmitter) * tableSize);
 }
 
 void ParticlePass::pushSimulationDescriptors(VkCommandBuffer commandBuffer, VkPipelineLayout layout,
@@ -325,6 +328,7 @@ bool ParticlePass::recordSimulation(VkCommandBuffer commandBuffer, uint32_t fram
     m_drawPending = false;
     m_emitterCount = 0;
     m_capacity = 0;
+    m_droppedEmitters = 0;
     if (!preparePool(particles::particleBudget(quality), frameSerial)) {
         return false;
     }
@@ -334,6 +338,7 @@ bool ParticlePass::recordSimulation(VkCommandBuffer commandBuffer, uint32_t fram
     const float step = stepSeconds();
     const particles::ParticleFramePlan plan =
         m_scheduler.plan(emitters.emitters, m_pool.budget, step, emitters.sceneGeneration);
+    m_droppedEmitters = plan.droppedEmitters;
     if (plan.emitters.empty()) {
         return true;
     }
@@ -352,6 +357,13 @@ bool ParticlePass::recordSimulation(VkCommandBuffer commandBuffer, uint32_t fram
         // A zero lifetime marks a free slot.
         vkCmdFillBuffer(commandBuffer, m_pool.particles.buffer, 0, VK_WHOLE_SIZE, 0u);
         m_pool.cleared = true;
+    } else {
+        // Slots of removed emitters and the new slots of added ones; the
+        // other emitters keep their live particles.
+        for (const particles::SlotRange& range : plan.clearRanges) {
+            vkCmdFillBuffer(commandBuffer, m_pool.particles.buffer, sizeof(particles::GpuParticle) * range.first,
+                            sizeof(particles::GpuParticle) * range.count, 0u);
+        }
     }
     vkCmdFillBuffer(commandBuffer, m_pool.sortKeys.buffer, 0, sortKeyBytes(sortElements),
                     std::numeric_limits<uint32_t>::max());

@@ -13,6 +13,7 @@ Wraps an EnTT registry and defines the core ECS components:
 | `RelationshipComponent` | Parent entity plus an owned list of child entities. |
 | `ModelComponent` | Records the model instantiated at a root entity. |
 | `MeshRendererComponent` | Refers to CPU mesh data through a `MeshHandle`. |
+| `MaterialOverrideComponent` | Per-instance tint of a mesh renderer: base color, emission, roughness and metallic factors, and an optional runtime-only replacement material (see [Graphics passes](graphics-passes.md#material-overrides)). |
 | `CameraComponent` | Perspective projection settings and primary-camera selection. |
 | `ParticleEmitterComponent` | GPU particle emitter parameters (`ParticleEmitter.*`, with `validateParticleEmitter`). |
 
@@ -29,6 +30,28 @@ return null when there is none, so gameplay code can find a spawned prefab's
 branches under entities marked with `markTransformDirty`. Its cost follows the
 number of changed entities, not the scene's size: marking is constant time and
 each dirty branch is walked once per call.
+
+### Transient entities
+
+`TransientComponent` is a tag for generated content, such as the preview a
+level generator builds for one seed in the editor. The tagged entity and its
+whole subtree are transient (`Scene::isTransient`); `markTransient` tags an
+entity, `transientEntities` lists every transient entity (each tagged subtree
+parents first), and `destroyTransient` destroys them all and returns how many.
+`duplicateSubtree` copies the tag.
+
+Transient entities never reach a scene document: `SceneDocument::serialize`
+and `save` leave them out, `serializeEntities` reports them as absent, and
+`applyChanges` lets a removal take its transient children with it (documents
+never list them). A saved entity's reference to a transient one is written as
+none rather than as a dangling id: every reflected entity reference field is
+nulled in the document (the scene keeps its value), and `serialize` and `save`
+return a warning per reference in `SceneDocumentResult::warnings`, which the
+editor lists in Info when saving. Instance roots of model nodes and skins are
+never nulled; they always lie in their own (transient) subtree. Save games
+skip transient entities too, so a game that tags its generated level must
+regenerate it from the saved seed. `tests/engine/TransientEntityTests.cpp`
+covers the tag, the helpers, and the documents.
 
 ### Transforms from gameplay code
 

@@ -14,10 +14,12 @@ add_library(zenith_engine SHARED
     audio/StbVorbis.cpp
     Engine.cpp
     application/Application.cpp
+    application/DeferredAssetCollection.cpp
     application/SimulationClock.cpp
     assets/Assets.cpp
     assets/ModelImporter.cpp
     assets/MeshOptimization.cpp
+    assets/MeshBuilder.cpp
     assets/ImageDecoder.cpp
     assets/ProductionAssetPipeline.cpp
     assets/CompressedTexture.cpp
@@ -135,6 +137,7 @@ add_library(zenith_engine SHARED
     module/ModuleApi.cpp
     module/ModuleRegistrar.cpp
     module/ModuleShadowCopy.cpp
+    module/SessionResources.cpp
     module/SharedLibrary.cpp
     module/SystemScheduler.cpp
     module/Timers.cpp
@@ -151,6 +154,7 @@ add_library(zenith_engine SHARED
     platform/FileWatchWin32.cpp
     platform/FileWatchInotify.cpp
     platform/ChildProcess.cpp
+    platform/CrashHandler.cpp
     platform/FileContents.cpp
     platform/PlatformServices.cpp
     platform/VersionedJson.cpp
@@ -241,6 +245,10 @@ target_link_libraries(zenith_engine PUBLIC
 )
 target_link_libraries(zenith_engine PRIVATE volk imgui zenith_imguizmo Jolt shaderc zenith_bc7enc meshoptimizer
     zenith_recast ${CMAKE_DL_LIBS})
+if(WIN32)
+    # MiniDumpWriteDump, for the crash handler.
+    target_link_libraries(zenith_engine PRIVATE dbghelp)
+endif()
 foreach(header_dependency IN ITEMS volk imgui zenith_imguizmo)
     target_include_directories(zenith_engine PUBLIC
         $<TARGET_PROPERTY:${header_dependency},INTERFACE_INCLUDE_DIRECTORIES>)

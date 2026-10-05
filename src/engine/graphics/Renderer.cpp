@@ -302,7 +302,7 @@ void Renderer::destroySwapchainResources() {
 }
 
 bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager& assets) {
-    // Debug primitives last one frame, drawn or not.
+    // One-frame debug primitives last one frame, drawn or not.
     struct DebugDrawLifetime {
         Renderer& renderer;
 
@@ -799,9 +799,17 @@ void Renderer::clearDebugDraw() {
     if (m_rendering == nullptr) {
         return;
     }
-    m_rendering->m_debugDraw.clear();
+    const auto now = std::chrono::steady_clock::now();
+    float elapsedSeconds = 0.0f;
+    if (m_options.fixedFrameSeconds) {
+        elapsedSeconds = *m_options.fixedFrameSeconds;
+    } else if (m_lastDebugDrawFrame) {
+        elapsedSeconds = std::chrono::duration<float>(now - *m_lastDebugDrawFrame).count();
+    }
+    m_lastDebugDrawFrame = now;
+    m_rendering->m_debugDraw.endFrame(elapsedSeconds);
     for (RenderRuntime::ViewSlot& slot : m_rendering->m_views) {
-        slot.debugDraw.clear();
+        slot.debugDraw.endFrame(elapsedSeconds);
     }
 }
 

@@ -32,7 +32,12 @@ package for `--verify-package`. `ProjectApplication` is project-agnostic: it
 applies the project's render settings, loads the startup scene (or the
 `--scene` file) with the module's component types, and runs the module's Play
 systems every frame with the player's input; a capture camera
-(`ZENITH_CAPTURE_CAMERA`) poses the view instead.
+(`ZENITH_CAPTURE_CAMERA`) poses the view instead. After the module's Ui
+systems it draws the debug labels the renderer projected into the default
+view last frame (`DebugLabelOverlay`: `drawDebugLabels` maps
+`RenderRuntime::viewDebugLabels` onto the window as `GameUiContext::pixelText`
+with a drop shadow, above the game's UI), so `zenith --project` shows the
+labels gameplay records, as the editor's viewports do.
 
 `DemoApplication` maps its typed scene enum to engine `SceneKey` values.
 `GameplayScene` loads the room, creates props and the player, and requests a
@@ -53,5 +58,6 @@ persisted in `GameSettings` (version 3 added `masterVolume`). `MenuLeft` and
 `src/game/application/`: The executable's composition: command line
 (`GameLaunch`), what plays (`RuntimeGameplay`: a project's game module, or the
 demo gameplay linked in by `LinkedGameplay` for runs without one), package
-verification, the project-agnostic `ProjectApplication`, and the demo's
+verification, the project-agnostic `ProjectApplication` with its debug
+label overlay (`DebugLabelOverlay`), and the demo's
 application, which selects its scenes and owns demo-wide lifecycle state.

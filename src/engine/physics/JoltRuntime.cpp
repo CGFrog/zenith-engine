@@ -10,6 +10,7 @@
 
 #include <memory>
 #include <mutex>
+#include <string_view>
 
 namespace {
 struct RuntimeState {
@@ -27,7 +28,20 @@ RuntimeState& runtimeState() {
     return state;
 }
 
+#ifdef JPH_ENABLE_ASSERTS
+// Debug builds of Jolt assert when a step runs out of body-pair or contact
+// capacity. PhysicsWorld reports that error (EPhysicsUpdateError) as a
+// warning and keeps simulating, so that one assertion continues; every other
+// assertion still breaks, as Jolt's default handler does.
+bool breakUnlessCapacityError(const char*, const char* message, const char*, JPH::uint) {
+    return message == nullptr || !std::string_view(message).starts_with("An error occurred during the physics update");
+}
+#endif
+
 void createRuntime() {
+#ifdef JPH_ENABLE_ASSERTS
+    JPH::AssertFailed = breakUnlessCapacityError;
+#endif
     JPH::RegisterDefaultAllocator();
     JPH::Factory::sInstance = new JPH::Factory();
     JPH::RegisterTypes();

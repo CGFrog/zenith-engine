@@ -15,6 +15,10 @@ engine).
   ranges. Dynamic and kinematic bodies and sensors are left out. Collider
   poses come from `Scene::worldTransform`, so a bake right after spawning or
   moving entities sees them in place without a transform update first.
+- `appendMeshGeometry` adds a mesh's full-detail triangles placed by a
+  transform (reversing the winding for a mirroring one), so a game can bake
+  generated geometry, such as a runtime floor mesh without a collider, with
+  or without the gathered colliders.
 - `bake` builds one tile covering the scene from `NavMeshBuildSettings`
   (cell size, the agent's height, radius, climb, and steepest slope, region
   and edge tuning) and replaces any previous mesh. It fails, leaving no mesh,
@@ -79,10 +83,24 @@ Arrival and failure:
 
 The engine's `zenith.nav_agents` system (Update, Play) runs it on the
 session's mesh and crowd (`GameServices::navigationCrowd`, with
-`setCrowdSettings` applied when the crowd next starts over),
-`GameServices::navigation(scene)`, which bakes on first use;
-`GameServices::bakeNavigation(scene)` rebakes it after a game builds or
-replaces its level. A 40-room floor (2,880 input triangles) bakes in about
+`setCrowdSettings` applied when the crowd next starts over).
+`GameServices::bakeNavigation(scene)` rebakes the mesh after a game builds or
+replaces its level, and `bakeNavigation(geometry)` bakes it from triangles the
+game assembled itself (`gatherNavigationGeometry` plus `appendMeshGeometry`).
+When the first bake happens is the session's
+`NavigationBakePolicy`:
+- `Lazy` (the default, which hand-authored levels rely on):
+  `GameServices::navigation(scene)` bakes the first time it is asked, and the
+  agent system asks as soon as an agent exists.
+- `Explicit`: only `bakeNavigation` bakes. Until it has run, the agent system
+  skips the agents, which keep their destinations (no `pathFailed`), and logs
+  one warning; `navigation(scene)` returns the empty mesh.
+
+A game that generates its levels sets `Explicit`
+(`services.setNavigationBakePolicy`) before the first Update that sees an
+agent, for example in the system that builds the floor. Under `Lazy`, enemies
+spawned before the game's own bake would make the agent system bake the
+half-built floor first, and the game's bake would be a second one. A 40-room floor (2,880 input triangles) bakes in about
 26 ms in Release (`tests/engine/FloorBenchmark.cpp`).
 In the editor, `navigation.bake` builds a preview mesh of the edit scene that
 every viewport draws, and `navigation.clear` removes it.

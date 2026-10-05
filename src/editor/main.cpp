@@ -3,6 +3,7 @@
 #include "editor/project/ProjectTemplate.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "engine/Engine.hpp"
+#include "engine/platform/CrashHandler.hpp"
 #include "engine/platform/PlatformServices.hpp"
 #include "engine/project/ProjectConfig.hpp"
 #include "engine/resources/ResourceLocator.hpp"
@@ -87,6 +88,12 @@ int bakeIrradianceVolumes(const ProjectConfig& project) {
 
 int main(int argc, char** argv) {
     initializeResourceLocator(argv[0]);
+    // A crash leaves a minidump and a report in the editor's diagnostics
+    // folder; the open session adds an emergency save of its scene to the
+    // recovery file (EditorApplication::setCrashHandler).
+    CrashHandlerScope crashHandler({.directory = userDataDirectory("Zenith", "Editor") / "diagnostics",
+                                    .product = "zenith_editor",
+                                    .productVersion = ZENITH_EDITOR_CONFIGURATION});
     if (argc > 2 && std::string_view(argv[2]) == "--bake-irradiance-volumes") {
         ProjectConfig project;
         if (const ProjectConfigResult result = loadProjectConfig(argv[1], project); !result) {
@@ -138,6 +145,7 @@ int main(int argc, char** argv) {
                                                                  userDataDirectory("Zenith", "Editor")),
                                   resourceRoot() / "editor" / "fonts" / "Inter-Regular.ttf", std::move(project),
                                   std::move(projectHub), std::move(play), codeSnippetDirectory());
+    application.setCrashHandler(crashHandler);
     const bool success = engine.run(application);
     engine.shutdown();
     return validationExitCode(engine.graphicsValidation(), success ? EXIT_SUCCESS : EXIT_FAILURE);

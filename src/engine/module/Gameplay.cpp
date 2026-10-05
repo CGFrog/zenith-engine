@@ -19,6 +19,7 @@ const Gameplay& GameplayRunner::gameplay() const {
 
 void GameplayRunner::start(ApplicationContext& context, std::filesystem::path assetRoot) {
     m_services.reset();
+    m_systemFaults.clear();
     m_services = std::make_unique<GameServices>(
         context.assets,
         SceneDocumentOptions{.assetRoot = std::move(assetRoot), .componentTypes = m_gameplay.componentTypes},
@@ -32,10 +33,15 @@ void GameplayRunner::stop(ApplicationContext& context) {
         destroyAllBehaviours(*m_gameplay.behaviours, context.scene, m_services.get(), &context.logger);
     }
     m_services.reset();
+    m_systemFaults.clear();
 }
 
 GameServices* GameplayRunner::services() {
     return m_services.get();
+}
+
+const SystemFaults& GameplayRunner::systemFaults() const {
+    return m_systemFaults;
 }
 
 InputActionMap& GameplayRunner::actionMap() {
@@ -102,7 +108,9 @@ void GameplayRunner::run(SystemPhase phase, ApplicationContext& context, const I
                       .services = m_services.get(),
                       .actions = actions,
                       .ui = ui,
-                      .behaviours = m_gameplay.behaviours.get()});
+                      .behaviours = m_gameplay.behaviours.get(),
+                      .debugDraw = &context.rendering.debugDraw()},
+                     nullptr, &m_systemFaults);
 }
 
 Gameplay builtInGameplay() {

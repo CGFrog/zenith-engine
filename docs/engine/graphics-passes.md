@@ -136,10 +136,24 @@ CPU side of the particle system: quality budgets, the emitter scheduler (pool
 layout and deterministic spawn counts), GPU struct layouts mirrored by the
 shaders, emitter packing, and the bitonic sort plan with a CPU reference of
 the network; `tests/engine/ParticleTests.cpp` covers it with the emitter
-validation and scene round trip of `engine/scene/ParticleEmitter.*`. An
-emitter fires its first burst when it starts; changing its runtime-only
+validation and scene round trip of `engine/scene/ParticleEmitter.*`. Emitters
+beyond `particles::maximumEmitters` (64, the highest scene ids) are not
+simulated; `ParticleFramePlan::droppedEmitters` counts them, `MeshPass` logs
+the overflow once per episode, and `RenderStats::droppedParticleEmitters`
+reports it. An emitter fires its first burst when it starts; changing its runtime-only
 `restartGeneration` starts it again without a pool reset (pooled effects use
 it).
+
+The pool layout is stable: each emitter keeps its slot range, its GPU emitter
+table entry (which its particles name), its spawn accumulator and burst timer,
+and its live particles while its id, capacity, and simulation space stay the
+same. Adding an emitter places it in the first free range that fits and the
+lowest free table entry; removing one frees its range. The plan lists only
+those slots in `ParticleFramePlan::clearRanges`, which `ParticlePass` zeroes
+before emitting, so an enemy spawning with a torch no longer restarts every
+fire on the floor. When fragmentation leaves no free range large enough, or
+the budget or scene content generation changes, the scheduler compacts:
+emitters are packed in id order, everything restarts, and the pool is reset.
 
 ## `src/engine/graphics/VolumetricFog.*`
 
@@ -206,6 +220,47 @@ bakes available to undo. A scene whose bake file is missing still loads, with
 the volume unbaked (environment lighting) until it is baked again. The inspector's "Bake Irradiance Volume" button bakes
 one volume; `zenith_editor <project> --bake-irradiance-volumes` bakes every
 volume in a project's startup scene without opening a window.
+
+Per-frame capacities that a large scene can exceed degrade instead of failing
+the frame. Each overflow is logged once per episode (until a frame fits again,
+`engine/diagnostics/OverflowEpisode.hpp`) and counted in `RenderStats`:
+
+- Render items beyond `maximumObjectsPerFrame` (16384, sized into the
+  per-frame object buffers): `RenderItemBudget` admits whole objects in build
+  order (scene renderables, then collection instance draws) and drops every
+  later one, so the drawn set is a deterministic prefix that holds while the
+  scene does not change (`droppedRenderItems`).
+- Primitives whose material finds no slot among the `maximumMaterials` (4096)
+  material records are not drawn until a slot frees (also
+  `droppedRenderItems`).
+- Skinned items beyond the `maximumSkinMatricesPerFrame` (65536) joint
+  matrices draw unskinned, in their bind pose (`droppedSkinnedRenderItems`).
+- Material overrides beyond `maximumMaterialOverrides` (1024) distinct
+  material and factor pairs draw their plain material (logged once per
+  episode).
+
+Local lights and local shadow tiles already keep the nearest within their
+limits. The GPU-driven draw-group limit (64 pipeline bucket and geometry page
+pairs) still fails the frame: it is a geometry-arena layout limit, not a
+per-scene count.
+
+### Material overrides
+
+A `MaterialOverrideComponent` on a mesh renderer changes how that entity
+draws without touching the shared material. When its runtime-only `material`
+handle is live it replaces every primitive's material; its factors then
+multiply the base color, add emission, and multiply roughness and metallic
+(`applyMaterialOverride` in `MaterialRecord.*`, CPU-tested). A non-identity
+override draws with a material record derived for that pair of material and
+factors (bit-exact), shared by every item using the same pair, so a thousand
+crates with one "danger red" tint cost one record. Derived records share the
+4096 material record slots, are rewritten every frame from the current
+material (so material edits show through), and are freed when a packet build
+no longer uses them. Overrides change only the per-object material index both
+the CPU-submitted and GPU-driven paths read, so batching and pipelines (which
+follow the material's alpha mode and sidedness) are unchanged. Packets are
+rebuilt when the scene's material revision changes: after writing the
+component, call `Scene::markMaterialDirty` (editor edits do).
 
 `MeshPass` is one class whose member definitions are split by responsibility:
 

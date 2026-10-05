@@ -24,7 +24,7 @@ layout(set = 0, binding = 0) uniform ParticleFrame {
     uvec4 clusterGrid;   // columns, rows, slices, local light count
     uvec4 counts;        // x: pool slots, y: spawns, z: sort keys, w: shadow cascades
     vec4 ambient;        // rgb: hemisphere ambient radiance, w: environment diffuse intensity
-    uvec4 flags;         // x: ambient from the irradiance SH, y: emitter count
+    uvec4 flags;         // x: ambient from the irradiance SH, y: emitter table entries
     vec4 irradianceVolumeMinimum;
     vec4 irradianceVolumeCellSize;
     uvec4 irradianceVolumeCounts;
