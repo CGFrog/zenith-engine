@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -88,6 +89,13 @@ class EntityDiffCommand final : public EditorCommand {
     SceneChanges m_changes;
     std::string m_coalesceKey;
 };
+
+// Builds the undo step for an edit from its scene changes (already applied),
+// for an edit whose step must also undo something outside the scene, such as
+// a prefab file write (PrefabWriteCommand). The step's execute must reproduce
+// the edit on a scene that has the changes undone, and leave anything outside
+// the scene that already matches alone.
+using EditorCommandFactory = std::function<std::unique_ptr<EditorCommand>(std::string name, SceneChanges changes)>;
 
 // Document replacement starts a new history timeline, saving establishes a
 // clean point on the current timeline, and play mode only operates on a

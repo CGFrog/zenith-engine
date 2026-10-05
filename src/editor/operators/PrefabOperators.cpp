@@ -6,6 +6,7 @@
 #include "editor/operators/EditorOperatorFamilies.hpp"
 
 #include <charconv>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -61,7 +62,44 @@ OperatorResult finish(OperatorContext& context, const PrefabResult& result) {
     return result ? OperatorResult::finished() : OperatorResult::failed(result.error);
 }
 
-Operator createOperator() {
+// Runs write, a workflow that writes the prefab at reference, and has the
+// runner record the file's content before and after it together with the
+// scene changes as one PrefabWriteCommand.
+OperatorResult recordFileWrite(OperatorContext& context, const PrefabAuthoring& prefabs,
+                               const std::filesystem::path& reference, const PrefabWriteHooks& hooks,
+                               const std::function<PrefabResult()>& write) {
+    std::filesystem::path file;
+    if (PrefabResult resolved = prefabs.resolve(reference, file); !resolved) {
+        return OperatorResult::failed(resolved.error);
+    }
+    PrefabFileWrite recorded{.file = std::move(file)};
+    std::string error;
+    if (!readPrefabFileBytes(recorded.file, recorded.before, error)) {
+        return OperatorResult::failed(error);
+    }
+    OperatorResult result = finish(context, write());
+    if (!result) {
+        return result;
+    }
+    if (!readPrefabFileBytes(recorded.file, recorded.after, error)) {
+        // The file was written but cannot be read back; the scene change is
+        // still recorded, without the file.
+        context.editing.diagnostics().add(EditorDiagnosticSeverity::Warning, "Prefabs",
+                                          error + "; undo will not restore the prefab file");
+        return result;
+    }
+    if (recorded.after == recorded.before) {
+        // Rewritten with the same content: nothing to undo outside the scene.
+        hooks.notify(recorded.file, recorded.after);
+        return result;
+    }
+    result.undoStep = [recorded = std::move(recorded), hooks](std::string name, SceneChanges changes) {
+        return std::make_unique<PrefabWriteCommand>(std::move(name), recorded, std::move(changes), hooks);
+    };
+    return result;
+}
+
+Operator createOperator(PrefabWriteHooks hooks) {
     return {.id = "prefab.create_from_selection",
             .label = "Create Prefab",
             .description = "Save the active object and its children as a new prefab and link them to it",
@@ -70,14 +108,16 @@ Operator createOperator() {
                 CreatePrefabProperties{},
                 std::move(Fields<CreatePrefabProperties>().add("path", &CreatePrefabProperties::path))),
             .poll = hasActive,
-            .execute = typed<CreatePrefabProperties>([](OperatorContext& context, CreatePrefabProperties& values) {
-                PrefabAuthoring prefabs = authoring(context);
-                Scene& scene = context.editing.scene();
-                if (values.path.empty()) {
-                    values.path = prefabs.suggestPath(scene, activeEntity(context)).generic_string();
-                }
-                return finish(context, prefabs.create(scene, activeEntity(context), values.path));
-            })};
+            .execute = typed<CreatePrefabProperties>(
+                [hooks = std::move(hooks)](OperatorContext& context, CreatePrefabProperties& values) {
+                    PrefabAuthoring prefabs = authoring(context);
+                    Scene& scene = context.editing.scene();
+                    if (values.path.empty()) {
+                        values.path = prefabs.suggestPath(scene, activeEntity(context)).generic_string();
+                    }
+                    return recordFileWrite(context, prefabs, values.path, hooks,
+                                           [&] { return prefabs.create(scene, activeEntity(context), values.path); });
+                })};
 }
 
 // The project-relative form of an asset path; absolute paths must lie under
@@ -150,7 +190,29 @@ Operator instantiateOperator() {
                 }};
 }
 
-// Apply, revert, and unpack differ only in the workflow they run.
+Operator applyOperator(PrefabWriteHooks hooks) {
+    return {.id = "prefab.apply",
+            .label = "Apply Prefab",
+            .description = "Write the instance's changes into its prefab and update its other instances",
+            .flags = OperatorFlags::Undo,
+            .poll = activeInInstance,
+            .execute = [hooks = std::move(hooks)](OperatorContext& context, OperatorProperties&) {
+                PrefabAuthoring prefabs = authoring(context);
+                Scene& scene = context.editing.scene();
+                const Entity entity = activeEntity(context);
+                const Entity root = prefabInstanceRoot(scene, entity);
+                if (root == entt::null) {
+                    return OperatorResult::cancelled("The active object is not part of a prefab instance");
+                }
+                const std::filesystem::path reference = scene.registry().get<PrefabInstanceComponent>(root).prefab;
+                OperatorResult result =
+                    recordFileWrite(context, prefabs, reference, hooks, [&] { return prefabs.apply(scene, entity); });
+                context.selection.removeMissing(scene);
+                return result;
+            }};
+}
+
+// Revert and unpack differ only in the workflow they run.
 Operator instanceOperator(std::string id, std::string label, std::string description,
                           PrefabResult (PrefabAuthoring::*run)(Scene&, Entity)) {
     return {.id = std::move(id),
@@ -221,11 +283,9 @@ Operator selectAssetOperator(std::function<void(const std::filesystem::path&)> r
 
 OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, PrefabOperatorServices services) {
     std::vector<Operator> operators;
-    operators.push_back(createOperator());
+    operators.push_back(createOperator(services.writeHooks));
     operators.push_back(instantiateOperator());
-    operators.push_back(instanceOperator("prefab.apply", "Apply Prefab",
-                                         "Write the instance's changes into its prefab and update its other instances",
-                                         &PrefabAuthoring::apply));
+    operators.push_back(applyOperator(services.writeHooks));
     operators.push_back(instanceOperator("prefab.revert", "Revert Prefab",
                                          "Reset the instance to its prefab, dropping overrides and added objects",
                                          &PrefabAuthoring::revert));
@@ -244,5 +304,6 @@ OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, P
 
 OperatorRegistrationResult registerPrefabOperatorFamily(OperatorRegistry& registry,
                                                         const EditorOperatorServices& services) {
-    return registerPrefabOperators(registry, {.revealAsset = services.revealAsset});
+    return registerPrefabOperators(
+        registry, {.revealAsset = services.revealAsset, .writeHooks = {.fileWritten = services.prefabWritten}});
 }

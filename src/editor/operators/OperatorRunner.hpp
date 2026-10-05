@@ -26,7 +26,9 @@ struct LastOperator {
 
 // Invokes operators: checks poll (explaining when only Edit mode allows the
 // operator), runs execute, wraps Undo operators in one undo step (except on
-// the runtime scene of Play or Simulate, whose edits are never recorded), reports failures to diagnostics, records
+// the runtime scene of Play or Simulate, whose edits are never recorded; the
+// step is the result's undoStep when the operator gives one, so an operator
+// that also writes a file still records one step), reports failures to diagnostics, records
 // every invocation in a bounded history, and remembers the last Register operator so it can be re-run with edited
 // properties. It holds references to the registry and the history the invocation contexts edit; both must outlive it.
 class OperatorRunner {

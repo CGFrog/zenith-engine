@@ -475,6 +475,11 @@ PrefabInstanceResult PrefabSystem::build(const std::filesystem::path& reference,
 
 PrefabResult PrefabSystem::capture(const Scene& scene, Entity root, const std::filesystem::path& reference,
                                    PrefabCapture& output) const {
+    return capture(scene, root, reference, output, PrefabCaptureOptions{});
+}
+
+PrefabResult PrefabSystem::capture(const Scene& scene, Entity root, const std::filesystem::path& reference,
+                                   PrefabCapture& output, const PrefabCaptureOptions& options) const {
     std::filesystem::path path;
     if (PrefabResult resolved = resolve(reference, path); !resolved) {
         return resolved;
@@ -516,10 +521,10 @@ PrefabResult PrefabSystem::capture(const Scene& scene, Entity root, const std::f
         }
     }
 
-    // An apply keeps the prefab's own root placement; a new prefab starts from
-    // the captured root's.
+    // An apply keeps the prefab's own root placement; a new prefab, or one
+    // edited as its own document, takes the captured root's.
     std::optional<glm::mat4> rootTransform;
-    if (hasPrevious) {
+    if (hasPrevious && !options.keepRootTransform) {
         for (const PrefabEntity& entity : previous.entities) {
             if (!entity.parent) {
                 rootTransform = entity.localTransform;

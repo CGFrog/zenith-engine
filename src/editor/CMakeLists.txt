@@ -18,6 +18,7 @@ add_library(zenith_editor_app STATIC
     application/EditorPreferences.cpp
     application/NativeFileDialog.cpp
     application/PlayTargets.cpp
+    application/PrefabInstanceRefresh.cpp
     application/EditorSession.cpp
     application/EditorFileDialogs.cpp
     application/EditorMainMenu.cpp
@@ -38,6 +39,8 @@ add_library(zenith_editor_app STATIC
     document/EditorDocument.cpp
     document/EditorRecovery.cpp
     document/PrefabAuthoring.cpp
+    document/PrefabEditDocument.cpp
+    document/PrefabWriteCommand.cpp
     document/SceneEditorData.cpp
     document/RuntimeApply.cpp
     document/SceneFragment.cpp
