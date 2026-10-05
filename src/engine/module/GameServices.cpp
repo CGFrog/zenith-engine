@@ -103,6 +103,30 @@ AudioLoadResult<AudioClipHandle> GameServices::loadClip(std::string_view assetPa
     return m_audio->loadClip(m_documents.assetRoot / relative, spatial);
 }
 
+NavigationResult GameServices::bakeNavigation(const Scene& scene) {
+    return bakeNavigation(scene, m_defaultNavigationSettings);
+}
+
+NavigationResult GameServices::bakeNavigation(const NavigationGeometry& geometry) {
+    return bakeNavigation(geometry, m_defaultNavigationSettings);
+}
+
+void GameServices::setDefaultNavigationSettings(const NavMeshBuildSettings& settings) {
+    m_defaultNavigationSettings = settings;
+}
+
+const NavMeshBuildSettings& GameServices::defaultNavigationSettings() const {
+    return m_defaultNavigationSettings;
+}
+
+const NavigationWorld* GameServices::navigationIfBaked() const {
+    return m_navigationBaked ? &m_navigation : nullptr;
+}
+
+const NavigationCrowd& GameServices::navigationCrowd() const {
+    return m_crowd;
+}
+
 NavigationResult GameServices::bakeNavigation(const Scene& scene, const NavMeshBuildSettings& settings) {
     // A later navigation() call keeps this mesh, or the lack of one.
     m_navigationBaked = true;
@@ -138,7 +162,7 @@ RandomStreams& GameServices::randomStreams() {
 NavigationWorld& GameServices::navigation(const Scene& scene) {
     if (!m_navigationBaked && m_navigationBakePolicy == NavigationBakePolicy::Lazy) {
         m_navigationBaked = true;
-        if (const NavigationResult result = m_navigation.bake(scene, m_assets); !result) {
+        if (const NavigationResult result = m_navigation.bake(scene, m_assets, m_defaultNavigationSettings); !result) {
             m_log.warning("No navigation mesh: " + result.error);
         }
     }

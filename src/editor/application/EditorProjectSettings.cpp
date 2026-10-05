@@ -5,7 +5,7 @@
 
 #include <utility>
 
-void EditorSession::openProjectSettings(ApplicationContext&) {
+void EditorSession::openProjectSettings(ApplicationContext&, std::string_view tab) {
     ProjectSettingsValues values;
     if (const ProjectConfigResult loaded = loadProjectSettingsValues(m_projectFile, values); !loaded) {
         m_diagnostics.reportError("Could not open Project Settings: " + loaded.error);
@@ -13,6 +13,9 @@ void EditorSession::openProjectSettings(ApplicationContext&) {
     }
     const GameModule* module = m_moduleHost.module();
     m_projectSettings.open(std::move(values), module != nullptr ? *module->inputActions() : InputActionMap{});
+    if (const std::optional<ProjectSettingsTab> shown = projectSettingsTab(tab)) {
+        m_projectSettings.setTab(*shown);
+    }
 }
 
 void EditorSession::drawProjectSettings(ApplicationContext& context) {
@@ -40,6 +43,8 @@ std::string EditorSession::applyProjectSettings(ApplicationContext& context, con
         m_physicsLayers = values.layers;
     }
     m_projectNames = {.physicsLayers = values.layers.names, .tags = values.tags};
+    // The next navigation.bake and Play use them.
+    m_navigationSettings = values.navigation;
     m_moduleHost.setProjectInputActions(values.inputActions);
     return {};
 }

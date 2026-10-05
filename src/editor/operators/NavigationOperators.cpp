@@ -7,15 +7,16 @@
 #include <string>
 
 namespace {
-Operator bakeOperator(NavigationWorld& preview) {
+Operator bakeOperator(NavigationWorld& preview, const NavMeshBuildSettings& settings) {
     return {.id = "navigation.bake",
             .label = "Bake Navigation Mesh",
-            .description = "Build a preview navigation mesh from the scene's static colliders",
+            .description =
+                "Build a preview navigation mesh from the scene's static colliders with the project's settings",
             .poll = [](const OperatorContext& context) { return context.editMode() && context.app != nullptr; },
             .execute =
-                [&preview](OperatorContext& context, OperatorProperties&) {
+                [&preview, &settings](OperatorContext& context, OperatorProperties&) {
                     context.app->scene.updateWorldTransforms();
-                    const NavigationResult result = preview.bake(context.app->scene, context.app->assets);
+                    const NavigationResult result = preview.bake(context.app->scene, context.app->assets, settings);
                     if (!result) {
                         return OperatorResult::failed("Navigation mesh: " + result.error);
                     }
@@ -38,7 +39,7 @@ Operator clearOperator(NavigationWorld& preview) {
 
 OperatorRegistrationResult registerNavigationOperators(OperatorRegistry& registry,
                                                        NavigationOperatorServices services) {
-    for (Operator op : {bakeOperator(services.preview), clearOperator(services.preview)}) {
+    for (Operator op : {bakeOperator(services.preview, services.settings), clearOperator(services.preview)}) {
         if (OperatorRegistrationResult result = registry.add(std::move(op)); !result) {
             return result;
         }
@@ -48,5 +49,6 @@ OperatorRegistrationResult registerNavigationOperators(OperatorRegistry& registr
 
 OperatorRegistrationResult registerNavigationOperatorFamily(OperatorRegistry& registry,
                                                             const EditorOperatorServices& services) {
-    return registerNavigationOperators(registry, {.preview = services.navigationPreview});
+    return registerNavigationOperators(
+        registry, {.preview = services.navigationPreview, .settings = services.navigationSettings});
 }

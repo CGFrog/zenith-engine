@@ -20,7 +20,9 @@ class EditorDiagnostics;
 class EntityEyedropper;
 class EditorMenus;
 class EditorScriptInfo;
+class GameServices;
 class NavigationWorld;
+struct NavMeshBuildSettings;
 class WatchList;
 struct EditorProjectNames;
 struct PrefabEditTarget;
@@ -102,6 +104,13 @@ struct EditorContext {
     // The preview navigation mesh the viewports draw; null where there is
     // none (tests).
     const NavigationWorld* navigationPreview{nullptr};
+    // The project's navigation mesh settings, which navigation.bake and Play
+    // use; null where there are none (tests).
+    const NavMeshBuildSettings* navigationSettings{nullptr};
+    // The running game's services in Play and Simulate, for tools that look
+    // at its navigation mesh and crowd; null in Edit mode and without a
+    // module. Never bake through it (GameServices::navigationIfBaked).
+    const GameServices* gameServices{nullptr};
     // The game module's behaviour sources and build state, for the
     // inspector's Edit Script button and badges; null where there is none.
     const EditorScriptInfo* scripts{nullptr};

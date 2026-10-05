@@ -10,6 +10,13 @@
 #include <utility>
 #include <vector>
 
+namespace {
+// project.settings {tab}: the tab to show (projectSettingsTab), or empty.
+struct ProjectSettingsProperties {
+    std::string tab;
+};
+} // namespace
+
 Operator applicationOperator(std::string id, std::string label, std::string description,
                              std::function<bool(const OperatorContext&)> poll,
                              std::function<void(ApplicationContext&)> run) {
@@ -107,12 +114,23 @@ OperatorRegistrationResult registerOperatorWindowFamily(OperatorRegistry& regist
     operators.push_back(applicationOperator("wm.keymap_editor", "Keymap Editor",
                                             "Change, add, or reset keyboard shortcuts", {},
                                             [&windows](ApplicationContext&) { windows.openKeymapEditor(); }));
-    operators.push_back(applicationOperator(
-        "project.settings", "Project Settings",
-        "Edit the project's physics layers and collision matrix, input actions, and tags",
-        [hasProject = !services.projectFile.empty()](const OperatorContext& context) {
-            return hasProject && context.app != nullptr;
-        },
-        [&windows](ApplicationContext& context) { windows.openProjectSettings(context); }));
+    operators.push_back(
+        {.id = "project.settings",
+         .label = "Project Settings",
+         .description =
+             "Edit the project's physics layers and collision matrix, input actions, tags, and navigation settings",
+         .properties = OperatorProperties::make(
+             ProjectSettingsProperties{},
+             std::move(Fields<ProjectSettingsProperties>()
+                           .add("tab", &ProjectSettingsProperties::tab)
+                           .tooltip("The tab to show: physics_layers, input_actions, tags, or navigation"))),
+         .poll = [hasProject = !services.projectFile.empty()](
+                     const OperatorContext& context) { return hasProject && context.app != nullptr; },
+         .execute =
+             [&windows](OperatorContext& context, OperatorProperties& properties) {
+                 const ProjectSettingsProperties* values = properties.get<ProjectSettingsProperties>();
+                 windows.openProjectSettings(*context.app, values != nullptr ? values->tab : std::string_view{});
+                 return OperatorResult::finished();
+             }});
     return addOperators(registry, std::move(operators));
 }

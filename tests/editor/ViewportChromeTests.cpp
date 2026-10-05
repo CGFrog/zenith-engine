@@ -253,6 +253,11 @@ void testOverlayOperatorsAndAreaState() {
            "Play-mode scene overlays are toggled like any overlay");
     expect(!fixture.history.canUndo(), "overlay operators should not record undo steps");
 
+    expect(overlays.navigationMesh &&
+               static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"navigation_mesh"})")) &&
+               !overlays.navigationMesh,
+           "the navigation mesh preview is shown by default and toggled like any overlay");
+
     // The overlays travel with the area.
     overlays.scene.names = OverlayScope::All;
     overlays.scene.selectionBounds = false;
@@ -262,7 +267,7 @@ void testOverlayOperatorsAndAreaState() {
     restored.restoreAreaState(saved);
     const ViewportOverlays& copy = restored.chrome().overlays;
     expect(copy.scene == overlays.scene && copy.grid == overlays.grid && copy.sceneInPlay == overlays.sceneInPlay &&
-               copy.gizmo == overlays.gizmo,
+               copy.gizmo == overlays.gizmo && copy.navigationMesh == overlays.navigationMesh,
            "a viewport's area state should round-trip its overlays");
     ViewportPanel defaults(otherRegistry);
     defaults.restoreAreaState("not json");

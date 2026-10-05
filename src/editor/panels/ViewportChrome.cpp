@@ -47,7 +47,7 @@ struct OverlayName {
     const char* label;
 };
 
-constexpr std::array<OverlayName, 14> overlayNames{{
+constexpr std::array<OverlayName, 15> overlayNames{{
     {ViewportOverlay::Grid, "grid", "Grid"},
     {ViewportOverlay::SelectionOutline, "selection_outline", "Selection Outline"},
     {ViewportOverlay::ActiveName, "active_name", "Active Object Name"},
@@ -62,6 +62,7 @@ constexpr std::array<OverlayName, 14> overlayNames{{
     {ViewportOverlay::SelectionBounds, "selection_bounds", "Selection Bounds"},
     {ViewportOverlay::SceneInPlay, "scene_in_play", "Scene Overlays in Play"},
     {ViewportOverlay::Cursor3D, "cursor_3d", "3D Cursor"},
+    {ViewportOverlay::NavigationMesh, "navigation_mesh", "Navigation Mesh"},
 }};
 
 struct PivotName {
@@ -355,6 +356,13 @@ float& TransformToolSettings::activeSnap() {
     return gizmo == GizmoMode::Rotate ? rotationSnapDegrees : scaleSnap;
 }
 
+std::span<const DebugOverlayItem> debugOverlayItems() {
+    static constexpr std::array<DebugOverlayItem, 1> items{{
+        {ViewportOverlay::NavigationMesh, "navigation_mesh", "Navigation Mesh"},
+    }};
+    return items;
+}
+
 bool* viewportOverlayFlag(ViewportOverlays& overlays, ViewportOverlay overlay) {
     switch (overlay) {
     case ViewportOverlay::Grid:
@@ -371,6 +379,8 @@ bool* viewportOverlayFlag(ViewportOverlays& overlays, ViewportOverlay overlay) {
         return &overlays.sceneInPlay;
     case ViewportOverlay::Cursor3D:
         return &overlays.cursor;
+    case ViewportOverlay::NavigationMesh:
+        return &overlays.navigationMesh;
     default:
         return nullptr;
     }
@@ -599,6 +609,8 @@ void drawOverlaysMenu(ViewportOverlays& overlays) {
         }
     }
     ImGui::MenuItem("Selection Bounds", nullptr, &overlays.scene.selectionBounds);
+    ImGui::MenuItem("Navigation Mesh", nullptr, &overlays.navigationMesh);
+    ImGui::SetItemTooltip("The preview navigation mesh Bake Navigation Mesh builds");
     ImGui::MenuItem("Show in Play Mode", nullptr, &overlays.sceneInPlay);
     ImGui::SetItemTooltip("Draw the scene overlays while playing, except through a scene camera");
 }

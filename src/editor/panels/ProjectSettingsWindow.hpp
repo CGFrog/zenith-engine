@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Every value the Project Settings window edits: the project's own settings,
@@ -18,6 +19,9 @@ struct ProjectSettingsValues {
     // the same name, and actions of the project's own.
     InputActionMap inputActions;
     std::vector<std::string> tags;
+    // How navigation meshes are built (ProjectConfig::navigation); saved
+    // only once they differ from the defaults or the project names some.
+    NavMeshBuildSettings navigation;
 };
 
 // Reads the values from the project file and the input action file it names
@@ -36,10 +40,15 @@ enum class ProjectSettingsTab : uint8_t {
     PhysicsLayers,
     InputActions,
     Tags,
+    Navigation,
 };
 
+// The tab named key ("physics_layers", "input_actions", "tags",
+// "navigation"), as project.settings {tab} names it; nullopt for any other.
+std::optional<ProjectSettingsTab> projectSettingsTab(std::string_view key);
+
 // Edit > Project Settings: the project's physics layers and collision matrix,
-// its input actions and bindings, and its tags. Edits change a draft; Apply
+// its input actions and bindings, its tags, and its navigation mesh settings. Edits change a draft; Apply
 // returns it for the session to save and apply, and finish() reports how
 // that went. Layers are only added and removed at the end, so the indices
 // bodies store keep their meaning; the built-in Static, Dynamic, and Player
@@ -70,6 +79,7 @@ class ProjectSettingsWindow {
     void drawInputActions();
     void drawActionDetails(const std::string& action);
     void drawTags();
+    void drawNavigation();
 
     bool m_open{false};
     ProjectSettingsTab m_tab{ProjectSettingsTab::PhysicsLayers};

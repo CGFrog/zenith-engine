@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/graphics/Rendering.hpp"
+#include "engine/navigation/NavMeshBuildSettings.hpp"
 #include "engine/physics/PhysicsLayers.hpp"
 
 #include <filesystem>
@@ -15,7 +16,7 @@ class InputActionMap;
 class Scene;
 
 struct ProjectConfig {
-    static constexpr int currentVersion = 6;
+    static constexpr int currentVersion = 7;
 
     std::filesystem::path projectFile;
     std::string displayName;
@@ -41,9 +42,18 @@ struct ProjectConfig {
     // The tag names the project declares for TagsComponent (version 6), in
     // the order the editor lists them; unique and non-empty.
     std::vector<std::string> tags;
+    // How the project's navigation meshes are built (version 7): the editor's
+    // navigation.bake and the game's sessions (GameServices::
+    // setDefaultNavigationSettings). Written as "navigation": an object of
+    // the NavMeshBuildSettings fields by their C++ names ("cellSize",
+    // "agentRadius", ..., "layerMask" as a number); a missing field keeps its
+    // default. Empty uses the defaults.
+    std::optional<NavMeshBuildSettings> navigation;
 
     // physicsLayers, or the defaults.
     PhysicsLayerTable physicsLayerTable() const;
+    // navigation, or the defaults.
+    NavMeshBuildSettings navigationSettings() const;
 };
 
 struct ProjectConfigResult {

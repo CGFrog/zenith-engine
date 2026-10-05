@@ -13,6 +13,7 @@
 #include "editor/theme/ThemeChrome.hpp"
 #include "editor/viewport/Cursor3D.hpp"
 #include "editor/viewport/GameUiOverlay.hpp"
+#include "editor/viewport/NavigationSidebarTab.hpp"
 #include "editor/viewport/SceneGizmoDraw.hpp"
 #include "editor/viewport/ViewFraming.hpp"
 #include "engine/graphics/ViewShading.hpp"
@@ -468,7 +469,7 @@ void ViewportPanel::recordSceneGizmos(EditorContext& context) {
                      .viewCamera = viewCamera,
                      .isolatedObjects = m_localViewObjects ? &*m_localViewObjects : nullptr},
                     m_chrome.overlays.scene, *output);
-    if (context.navigationPreview != nullptr) {
+    if (m_chrome.overlays.navigationMesh && context.navigationPreview != nullptr) {
         context.navigationPreview->drawDebug(*output);
     }
     if (m_chrome.overlays.cursor) {
@@ -817,6 +818,10 @@ bool ViewportPanel::drawSidebar(EditorContext& context, float headerHeight) {
                     ImGui::Separator();
                 }
                 ViewportChromeWidgets::drawViewTab(m_camera);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem(BuiltInViewportSidebarTab::navigation)) {
+                drawNavigationSidebarTab(context, m_chrome.overlays.navigationMesh);
                 ImGui::EndTabItem();
             }
             // By index, drawing a copy: a tab's draw may add or remove tabs.

@@ -44,6 +44,8 @@ class ProjectPlayScene final : public ApplicationScene {
             return {.success = true};
         }
         m_gameplay.start(context, m_project.assetRoot);
+        // Bakes as the editor previews them (navigation.bake).
+        m_gameplay.services()->setDefaultNavigationSettings(m_project.navigationSettings());
         m_gameplay.services()->setSaveGames(SaveGameStore(userDataDirectory("Zenith", m_project.displayName) / "saves",
                                                           m_project.projectFile.parent_path()),
                                             m_project.startupScene);

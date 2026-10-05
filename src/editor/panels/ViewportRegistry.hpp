@@ -39,6 +39,7 @@ namespace BuiltInViewportSidebarTab {
 inline constexpr const char* item = "Item";
 inline constexpr const char* tool = "Tool";
 inline constexpr const char* view = "View";
+inline constexpr const char* navigation = "Navigation";
 } // namespace BuiltInViewportSidebarTab
 
 struct ViewportSidebarTabResult {

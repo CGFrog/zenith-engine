@@ -1,7 +1,8 @@
 // Project Settings: reading and saving the project's layers, input actions,
-// and tags (keeping what other windows saved), validation, the window drawn
-// headless, the render settings no longer overwriting them, and the
-// inspector's physics layer names and tags editor.
+// tags, and navigation settings (keeping what other windows saved),
+// validation, the window drawn headless, the render settings no longer
+// overwriting them, the inspector's physics layer names and tags editor, and
+// navigation.bake baking with the project's settings.
 
 #include "EditorTestFixture.hpp"
 #include "HeadlessImGui.hpp"
@@ -9,9 +10,11 @@
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/ProjectNames.hpp"
 #include "editor/interaction/ReflectedFieldEditor.hpp"
+#include "editor/operators/NavigationOperators.hpp"
 #include "editor/panels/ProjectSettingsWindow.hpp"
 #include "editor/settings/EditorRenderSettings.hpp"
 #include "engine/input/InputActionsJson.hpp"
+#include "engine/navigation/NavigationWorld.hpp"
 #include "engine/physics/PhysicsComponents.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
@@ -103,6 +106,33 @@ void testSaveAndLoad(const fs::path& root) {
     invalid.tags = {"enemy", ""};
     expect(!validateProjectSettings(invalid).empty() && !saveProjectSettingsValues(projectFile, invalid),
            "an empty tag is refused before anything is written");
+
+    // Navigation settings: the defaults are not written until changed;
+    // changed ones are saved after reading the file again, and read back.
+    expect(values.navigation == NavMeshBuildSettings{} && !saved.navigation,
+           "unchanged navigation settings are not written to the project");
+    changed.maximumLocalLights = 79;
+    render.request(changed);
+    render.save();
+    values.navigation.agentRadius = 0.9f;
+    values.navigation.layerMask = 0b1u;
+    expect(static_cast<bool>(saveProjectSettingsValues(projectFile, values)), "navigation settings save");
+    ProjectConfig withNavigation;
+    expect(loadProjectConfig(projectFile, withNavigation) && withNavigation.navigation &&
+               *withNavigation.navigation == values.navigation &&
+               withNavigation.renderSettings.maximumLocalLights == 79,
+           "navigation settings are saved after reading the project again");
+    ProjectSettingsValues navigationReloaded;
+    expect(loadProjectSettingsValues(projectFile, navigationReloaded) &&
+               navigationReloaded.navigation == values.navigation,
+           "navigation settings read back");
+    ProjectSettingsValues invalidNavigation = values;
+    invalidNavigation.navigation.cellSize = 0.0f;
+    expect(!validateProjectSettings(invalidNavigation).empty() &&
+               !saveProjectSettingsValues(projectFile, invalidNavigation),
+           "invalid navigation settings are refused");
+    expect(projectSettingsTab("navigation") == ProjectSettingsTab::Navigation && !projectSettingsTab("nav"),
+           "project.settings names the Navigation tab");
 }
 
 void testWindow() {
@@ -116,8 +146,8 @@ void testWindow() {
         HeadlessImGuiFrame frame;
         return window.drawContents(canApply, canApply ? std::string{} : "Stop to apply");
     };
-    for (const ProjectSettingsTab tab :
-         {ProjectSettingsTab::PhysicsLayers, ProjectSettingsTab::InputActions, ProjectSettingsTab::Tags}) {
+    for (const ProjectSettingsTab tab : {ProjectSettingsTab::PhysicsLayers, ProjectSettingsTab::InputActions,
+                                         ProjectSettingsTab::Tags, ProjectSettingsTab::Navigation}) {
         window.setTab(tab);
         draw(true);
         draw(true);
@@ -189,6 +219,27 @@ void testInspectorNames() {
 }
 } // namespace
 
+// navigation.bake bakes the preview with the project's settings, read at each
+// bake, so an applied change reaches the next one.
+void testNavigationBakeUsesSettings() {
+    EditorTestFixture fixture;
+    NavigationWorld preview;
+    NavMeshBuildSettings settings{.agentRadius = 0.7f};
+    expect(
+        static_cast<bool>(registerNavigationOperators(fixture.operators, {.preview = preview, .settings = settings})),
+        "the navigation operators register");
+    const Entity floor = fixture.scene.createEntity("Floor");
+    fixture.scene.registry().emplace<ColliderComponent>(
+        floor, ColliderComponent{.shape = BoxCollider{.halfExtents = {5.0f, 0.5f, 5.0f}}});
+    fixture.scene.registry().emplace<RigidBodyComponent>(floor);
+    EditorContext editor = fixture.context();
+    expect(static_cast<bool>(editor.invoke("navigation.bake")) && preview.baked() && preview.settings() == settings,
+           "navigation.bake uses the project's settings");
+    settings.agentRadius = 0.3f;
+    expect(static_cast<bool>(editor.invoke("navigation.bake")) && preview.settings().agentRadius == 0.3f,
+           "a settings change applies to the next bake");
+}
+
 int main() {
     const fs::path root = fs::temp_directory_path() / "zenith_project_settings_tests";
     std::error_code error;
@@ -196,6 +247,7 @@ int main() {
     testSaveAndLoad(root);
     testWindow();
     testInspectorNames();
+    testNavigationBakeUsesSettings();
     fs::remove_all(root, error);
     if (failures != 0) {
         std::cerr << failures << " project settings test(s) failed\n";

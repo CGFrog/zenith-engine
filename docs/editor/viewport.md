@@ -8,9 +8,16 @@ render view, and draws Blender-style chrome over its image as ImGui child
 windows, so clicks on it never reach picking, the gizmo, or the camera: a
 header with View (regions, camera view), Shading, Overlays, and Gizmos menus,
 the `T` tool shelf on the left, and the `N` sidebar on the right with Item
-(active transform), Tool (transform tool and snapping), and View (camera field
-of view, clip planes, fly speed) tabs plus the tabs added to every viewport
-with `ViewportRegistry::addSidebarTab`.
+(active transform), Tool (transform tool and snapping), View (camera field
+of view, clip planes, fly speed), and Navigation tabs plus the tabs added to
+every viewport with `ViewportRegistry::addSidebarTab`. The Navigation tab
+(`viewport/NavigationSidebarTab`) bakes and clears the preview navigation
+mesh (`navigation.bake`, `navigation.clear`, also in Object > Navigation),
+shows its stats and the project settings it bakes with, opens them
+(`project.settings {tab: navigation}`), toggles the viewport's **Navigation
+Mesh** overlay (`overlays.navigationMesh`, which gates the preview's drawing
+and is saved with the other overlays), and in Play shows the game's mesh and
+agent count through `GameServices::navigationIfBaked`, which never bakes.
 
 `panels/ViewportRegistry` is the session-owned record of the viewports. A
 viewport registers in its constructor and unregisters in its destructor; it

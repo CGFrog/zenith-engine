@@ -3,6 +3,7 @@
 #include "EditorSession.hpp"
 
 #include "editor/panels/SimulateSystemPicker.hpp"
+#include "editor/panels/ViewportPanel.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
 
@@ -19,6 +20,23 @@ void EditorSession::handleGlobalShortcuts(ApplicationContext& context) {
     // when the mouse has left it.
     updateKeymapGesture(context);
     dispatchKeymap(context, KeymapRegion::Global);
+}
+
+void EditorSession::drawDebugOverlaysMenu(ApplicationContext& context) {
+    // The active viewport's navigation and physics overlays; each item runs
+    // view3d.overlay_toggle, so it is greyed out with no viewport open.
+    const ViewportPanel* viewport = m_viewports.active();
+    if (!ImGui::BeginMenu("Overlays")) {
+        return;
+    }
+    for (const DebugOverlayItem& item : debugOverlayItems()) {
+        ViewportOverlays overlays = viewport != nullptr ? viewport->chrome().overlays : ViewportOverlays{};
+        const bool* shown = viewportOverlayFlag(overlays, item.overlay);
+        const std::string properties = nlohmann::json{{"overlay", item.key}}.dump();
+        operatorMenuItem(context, "view3d.overlay_toggle", item.label, properties,
+                         viewport != nullptr && shown != nullptr && *shown);
+    }
+    ImGui::EndMenu();
 }
 
 void EditorSession::drawMainMenu(ApplicationContext& context) {
@@ -94,6 +112,13 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             operatorMenuItem(context, "prefab.exit_edit", "Back to Scene");
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Navigation")) {
+            operatorMenuItem(context, "navigation.bake", "Bake");
+            operatorMenuItem(context, "navigation.clear", "Clear");
+            ImGui::Separator();
+            operatorMenuItem(context, "project.settings", "Settings...", R"({"tab":"navigation"})");
+            ImGui::EndMenu();
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
@@ -108,6 +133,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             }
             ImGui::EndMenu();
         }
+        drawDebugOverlaysMenu(context);
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Play")) {
