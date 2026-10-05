@@ -553,6 +553,14 @@ class MeshPass {
     const GpuTexture* ensureTexture(TextureHandle handle, const AssetManager& assets);
     // Null for an invalid material or when all maximumMaterials slots are taken.
     const GpuMaterial* ensureMaterial(MaterialHandle handle, const AssetManager& assets);
+    // The record drawing material with an entity's override factors, shared
+    // by every item with the same material and factors and kept while a
+    // packet build uses it. Null when the override records or the material
+    // slots are all taken; the item then draws the plain material.
+    const GpuMaterial* ensureOverrideMaterial(MaterialHandle material, const MaterialOverrideComponent& values);
+    // Frees the override records the latest packet build did not use.
+    void releaseUnusedOverrideMaterials();
+    std::optional<uint32_t> allocateMaterialIndex();
     void pruneUnusedAssets(const AssetManager& assets);
     // Closes the frame's deferred-upload bookkeeping: fills the stats counters
     // and logs assets that just stayed deferred past the configured bound.
@@ -848,6 +856,25 @@ class MeshPass {
     LogChannel m_log;
     bool m_textureTableFullReported{false};
     std::unordered_map<uint64_t, GpuMaterial> m_materials;
+
+    // Material records derived for MaterialOverrideComponent factors, keyed
+    // by the material and the factors' bit patterns. They share the material
+    // record indices with m_materials.
+    struct OverrideMaterial {
+        GpuMaterial gpu;
+        MaterialHandle material;
+        MaterialOverrideComponent values;
+        uint64_t lastBuild{0};
+    };
+
+    using OverrideMaterialKey = std::pair<uint64_t, std::array<uint32_t, 10>>;
+    std::map<OverrideMaterialKey, OverrideMaterial> m_overrideMaterials;
+    // Counts packet builds, so override records unused by the latest are freed.
+    uint64_t m_renderItemBuild{0};
+    // Overridden primitives drawn with their plain material in the last
+    // packet build because no override record was free.
+    uint32_t m_droppedMaterialOverrides{0};
+    OverflowEpisode m_materialOverrideOverflow;
     std::vector<uint32_t> m_freeMaterialIndices;
     uint32_t m_nextMaterialIndex{0};
     // Native resources a frame in flight may still reference, released once

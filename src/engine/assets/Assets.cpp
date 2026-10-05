@@ -1,4 +1,5 @@
 #include "Assets.hpp"
+#include "CompressedTexture.hpp"
 #include "ImageDecoder.hpp"
 #include "ModelImporter.hpp"
 #include "PackedVertexStreams.hpp"
@@ -7,6 +8,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
+#include <iterator>
+#include <limits>
 #include <numeric>
 #include <utility>
 
@@ -110,6 +114,7 @@ Handle insertSlot(std::vector<T>& assets, std::vector<Metadata>& metadata, T ass
             metadata[index].cpuBytes = bytes;
             metadata[index].lastUse = useSerial;
             metadata[index].references = std::make_shared<std::atomic_uint32_t>(0);
+            metadata[index].debugName.clear();
             return {index, metadata[index].generation};
         }
     }
@@ -144,6 +149,129 @@ std::pair<std::filesystem::path, std::string> normalizedPath(const std::filesyst
     const std::filesystem::path normalized = error ? path.lexically_normal() : canonical;
     return {normalized, normalized.generic_string()};
 }
+
+bool finite(const glm::vec3& value) {
+    return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+}
+
+bool finite(const glm::vec4& value) {
+    return finite(glm::vec3(value)) && std::isfinite(value.w);
+}
+
+// Why an index range cannot be drawn, or empty when it can.
+std::string indexRangeError(uint32_t firstIndex, uint32_t indexCount, size_t indexTotal) {
+    if (indexCount == 0 || indexCount % 3 != 0) {
+        return "index count " + std::to_string(indexCount) + " is not a positive multiple of three";
+    }
+    if (static_cast<uint64_t>(firstIndex) + indexCount > indexTotal) {
+        return "indices " + std::to_string(firstIndex) + ".." + std::to_string(uint64_t{firstIndex} + indexCount) +
+               " reach past the " + std::to_string(indexTotal) + " indices";
+    }
+    return {};
+}
+
+std::string primitiveError(const MeshPrimitive& primitive, size_t indexTotal) {
+    if (std::string error = indexRangeError(primitive.firstIndex, primitive.indexCount, indexTotal); !error.empty()) {
+        return error;
+    }
+    if (primitive.simplifiedLodCount > primitive.simplifiedLods.size()) {
+        return "it claims " + std::to_string(primitive.simplifiedLodCount) + " simplified levels";
+    }
+    uint32_t previousCount = primitive.indexCount;
+    for (uint32_t level = 0; level < primitive.simplifiedLodCount; ++level) {
+        const MeshLod& lod = primitive.simplifiedLods[level];
+        if (std::string error = indexRangeError(lod.firstIndex, lod.indexCount, indexTotal); !error.empty()) {
+            return "LOD " + std::to_string(level + 1) + ": " + error;
+        }
+        if (lod.indexCount >= previousCount || !std::isfinite(lod.geometricError) || lod.geometricError < 0.0f) {
+            return "LOD " + std::to_string(level + 1) +
+                   " does not have fewer indices than the level before it and a finite geometric error";
+        }
+        previousCount = lod.indexCount;
+    }
+    return {};
+}
+
+std::string runtimeMeshError(const MeshAsset& mesh, const AssetManager& assets) {
+    if (mesh.vertices.empty() || mesh.indices.empty() || mesh.primitives.empty()) {
+        return "it needs vertices, indices, and at least one primitive";
+    }
+    if (mesh.vertices.size() > std::numeric_limits<uint32_t>::max()) {
+        return "it has more vertices than 32-bit indices address";
+    }
+    for (size_t index = 0; index < mesh.vertices.size(); ++index) {
+        const Vertex& vertex = mesh.vertices[index];
+        if (!finite(vertex.position) || !finite(vertex.normal) || !finite(vertex.tangent) ||
+            !std::isfinite(vertex.texCoord.x) || !std::isfinite(vertex.texCoord.y) || !finite(vertex.weights)) {
+            return "vertex " + std::to_string(index) + " is not finite";
+        }
+    }
+    const auto outOfRange =
+        std::ranges::find_if(mesh.indices, [&](uint32_t index) { return index >= mesh.vertices.size(); });
+    if (outOfRange != mesh.indices.end()) {
+        return "index " + std::to_string(*outOfRange) + " at position " +
+               std::to_string(std::distance(mesh.indices.begin(), outOfRange)) + " addresses no vertex (there are " +
+               std::to_string(mesh.vertices.size()) + ")";
+    }
+    for (size_t index = 0; index < mesh.primitives.size(); ++index) {
+        const MeshPrimitive& primitive = mesh.primitives[index];
+        if (std::string error = primitiveError(primitive, mesh.indices.size()); !error.empty()) {
+            return "primitive " + std::to_string(index) + ": " + error;
+        }
+        if (assets.material(primitive.material) == nullptr) {
+            return "primitive " + std::to_string(index) + " has no live material of this asset manager";
+        }
+    }
+    for (const MorphTarget& target : mesh.morphTargets) {
+        const auto sized = [&](const std::vector<glm::vec3>& deltas) {
+            return deltas.empty() || deltas.size() == mesh.vertices.size();
+        };
+        if (!sized(target.positionDeltas) || !sized(target.normalDeltas) || !sized(target.tangentDeltas)) {
+            return "morph target '" + target.name + "' does not have one delta per vertex";
+        }
+    }
+    return {};
+}
+
+std::string runtimeMaterialError(const MaterialAsset& material, const AssetManager& assets) {
+    const bool finiteFactors =
+        finite(material.baseColor) && finite(material.emissive) && std::isfinite(material.emissiveStrength) &&
+        std::isfinite(material.metallic) && std::isfinite(material.roughness) && std::isfinite(material.normalScale) &&
+        std::isfinite(material.occlusionStrength) && std::isfinite(material.alphaCutoff) && std::isfinite(material.ior);
+    if (!finiteFactors) {
+        return "its factors are not finite";
+    }
+    const std::array<TextureHandle, 13> textures = material.textures();
+    for (size_t slot = 0; slot < textures.size(); ++slot) {
+        if (textures[slot] && assets.texture(textures[slot]) == nullptr) {
+            return "texture slot " + std::to_string(slot) + " names no live texture of this asset manager";
+        }
+    }
+    return {};
+}
+
+std::string runtimeTextureError(const TextureAsset& texture) {
+    constexpr uint32_t maximumExtent = 16384;
+    if (texture.width == 0 || texture.height == 0 || texture.width > maximumExtent || texture.height > maximumExtent) {
+        return "its size " + std::to_string(texture.width) + "x" + std::to_string(texture.height) + " is outside 1.." +
+               std::to_string(maximumExtent);
+    }
+    if (texture.blockCompressed()) {
+        const AssetPipelineResult valid = validateBlockCompressedTexture(texture);
+        return valid ? std::string{} : valid.error;
+    }
+    const size_t texels = static_cast<size_t>(texture.width) * texture.height * 4;
+    const bool eightBit = texture.rgba.size() == texels && texture.rgbaHalf.empty();
+    const bool halfFloat = texture.rgbaHalf.size() == texels && texture.rgba.empty();
+    if (!eightBit && !halfFloat) {
+        return "RGBA8 data needs exactly width * height * 4 values in rgba (or rgbaHalf), not " +
+               std::to_string(texture.rgba.size()) + " and " + std::to_string(texture.rgbaHalf.size());
+    }
+    if (!texture.compressed.empty() || !texture.mips.empty()) {
+        return "an RGBA8 texture carries no compressed mip chain";
+    }
+    return {};
+}
 } // namespace
 
 BoundingBox calculateBoundingBox(std::span<const Vertex> vertices) {
@@ -153,6 +281,20 @@ BoundingBox calculateBoundingBox(std::span<const Vertex> vertices) {
         box.maximum = glm::max(box.maximum, vertex.position);
     }
     return box;
+}
+
+BoundingSphere calculateBoundingSphere(std::span<const Vertex> vertices) {
+    const BoundingBox box = calculateBoundingBox(vertices);
+    if (box.empty()) {
+        return {};
+    }
+    const glm::vec3 center = (box.minimum + box.maximum) * 0.5f;
+    float radiusSquared = 0.0f;
+    for (const Vertex& vertex : vertices) {
+        const glm::vec3 offset = vertex.position - center;
+        radiusSquared = std::max(radiusSquared, glm::dot(offset, offset));
+    }
+    return {.center = center, .radius = std::sqrt(radiusSquared)};
 }
 
 AssetManager::AssetManager(Logger* logger)
@@ -278,6 +420,34 @@ AssetLoadResult<TextureHandle> AssetManager::loadTexture(const std::filesystem::
     return {.handle = handle};
 }
 
+AssetLoadResult<MeshHandle> AssetManager::createMesh(MeshAsset asset, std::string debugName) {
+    if (const std::string error = runtimeMeshError(asset, *this); !error.empty()) {
+        return {.error = "Cannot create mesh '" + debugName + "': " + error};
+    }
+    asset.bounds = calculateBoundingSphere(asset.vertices);
+    const MeshHandle handle = addMesh(std::move(asset), {}, 0);
+    m_meshMetadata[handle.index].debugName = std::move(debugName);
+    return {.handle = handle};
+}
+
+AssetLoadResult<MaterialHandle> AssetManager::createMaterial(MaterialAsset asset, std::string debugName) {
+    if (const std::string error = runtimeMaterialError(asset, *this); !error.empty()) {
+        return {.error = "Cannot create material '" + debugName + "': " + error};
+    }
+    const MaterialHandle handle = addMaterial(std::move(asset));
+    m_materialMetadata[handle.index].debugName = std::move(debugName);
+    return {.handle = handle};
+}
+
+AssetLoadResult<TextureHandle> AssetManager::createTexture(TextureAsset asset, std::string debugName) {
+    if (const std::string error = runtimeTextureError(asset); !error.empty()) {
+        return {.error = "Cannot create texture '" + debugName + "': " + error};
+    }
+    const TextureHandle handle = addTexture(std::move(asset));
+    m_textureMetadata[handle.index].debugName = std::move(debugName);
+    return {.handle = handle};
+}
+
 const ModelAsset* AssetManager::model(ModelHandle handle) const {
     return resolve(m_models, m_modelMetadata, handle);
 }
@@ -322,7 +492,8 @@ std::optional<ModelAssetSource> AssetManager::modelSource(ModelHandle handle) co
 }
 
 std::optional<MeshAssetSource> AssetManager::meshSource(MeshHandle handle) const {
-    return mesh(handle) != nullptr && handle.index < m_meshSources.size()
+    // Runtime meshes have no source path.
+    return mesh(handle) != nullptr && handle.index < m_meshSources.size() && !m_meshSources[handle.index].path.empty()
                ? std::optional<MeshAssetSource>{m_meshSources[handle.index]}
                : std::nullopt;
 }
@@ -374,6 +545,11 @@ TextureHandle AssetManager::addTexture(TextureAsset asset) {
     const TextureHandle handle =
         insertSlot<TextureAsset, TextureHandle>(m_textures, m_textureMetadata, std::move(asset), bytes, ++m_useSerial);
     m_textureMetadata[handle.index].gpuBytes = gpuByteSize(m_textures[handle.index]);
+    // A recycled slot must not keep the path of the texture it held before;
+    // loadTexture sets one afterwards.
+    if (handle.index < m_textureSources.size()) {
+        m_textureSources[handle.index] = {};
+    }
     return handle;
 }
 
@@ -479,6 +655,12 @@ AssetLeaseSet AssetManager::leaseSceneAssets(const Scene& scene) const {
             result.meshes.push_back(std::move(value));
         }
     }
+    const auto overrides = scene.registry().view<const MaterialOverrideComponent>();
+    for (Entity entity : overrides) {
+        if (AssetLease<MaterialHandle> value = lease(overrides.get<const MaterialOverrideComponent>(entity).material)) {
+            result.materials.push_back(std::move(value));
+        }
+    }
     const auto environments = scene.registry().view<const EnvironmentLightComponent>();
     for (Entity entity : environments) {
         if (AssetLease<TextureHandle> value =
@@ -570,8 +752,10 @@ std::vector<AssetDiagnostic> AssetManager::diagnostics() const {
         for (uint32_t index = 0; index < metadata.size(); ++index) {
             const auto& slot = metadata[index];
             if (slot.occupied) {
+                // Runtime content has no source; its debug name stands in.
+                std::string source = slot.debugName.empty() ? sourceFor(index) : "runtime:" + slot.debugName;
                 result.push_back({kind, index, slot.generation, slot.references->load(std::memory_order_relaxed),
-                                  slot.cpuBytes, slot.gpuBytes, sourceFor(index)});
+                                  slot.cpuBytes, slot.gpuBytes, std::move(source)});
             }
         }
     };

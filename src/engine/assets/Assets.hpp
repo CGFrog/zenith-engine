@@ -318,6 +318,10 @@ struct BoundingBox {
 // The box around every vertex position; empty without vertices.
 BoundingBox calculateBoundingBox(std::span<const Vertex> vertices);
 
+// A sphere around every vertex position, centred on their box; zero radius
+// at the origin without vertices.
+BoundingSphere calculateBoundingSphere(std::span<const Vertex> vertices);
+
 struct MeshAsset {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
@@ -395,9 +399,12 @@ struct AssetLeaseSet {
     std::vector<AssetLease<MeshHandle>> meshes;
     std::vector<AssetLease<TextureHandle>> textures;
     std::vector<AssetLease<FontHandle>> fonts;
+    // Materials referenced directly rather than through a mesh, such as a
+    // MaterialOverrideComponent's replacement.
+    std::vector<AssetLease<MaterialHandle>> materials;
 
     bool empty() const {
-        return models.empty() && meshes.empty() && textures.empty() && fonts.empty();
+        return models.empty() && meshes.empty() && textures.empty() && fonts.empty() && materials.empty();
     }
 
     void clear() {
@@ -405,6 +412,7 @@ struct AssetLeaseSet {
         meshes.clear();
         textures.clear();
         fonts.clear();
+        materials.clear();
     }
 };
 
@@ -442,6 +450,30 @@ class AssetManager {
     AssetLoadResult<MeshHandle> loadMesh(const std::filesystem::path& modelPath, uint32_t meshIndex);
     AssetLoadResult<FontHandle> loadFont(const std::filesystem::path& path);
     AssetLoadResult<TextureHandle> loadTexture(const std::filesystem::path& path);
+
+    // Runtime content: assets that code builds instead of importing, such as
+    // procedural geometry or tinted materials (MeshBuilder makes meshes).
+    // Each is validated (a failure returns a descriptive error and adds
+    // nothing) and gets a fresh generational handle with no source path, so
+    // no load call finds it and a scene that references one cannot be saved.
+    // Like imported assets they are leased and collected: collectUnused
+    // evicts one that nothing leases, so a creator leases what it keeps until
+    // a scene that holds it is leased. Runtime assets are immutable; to change
+    // one, create its replacement, point the users at the new handle, and let
+    // the old one be collected. debugName labels it in diagnostics.
+    //
+    // createMesh recomputes bounds and localBox from the vertices. Every
+    // primitive needs a material of this manager and whole triangles inside
+    // the index buffer (simplified LOD ranges too), and every index must
+    // address a vertex.
+    AssetLoadResult<MeshHandle> createMesh(MeshAsset asset, std::string debugName);
+    // Every texture slot must be empty or name a live texture of this manager.
+    AssetLoadResult<MaterialHandle> createMaterial(MaterialAsset asset, std::string debugName);
+    // RGBA8 needs width * height * 4 bytes in rgba (or half floats in
+    // rgbaHalf, for environment maps); block-compressed formats need a
+    // complete, valid mip chain.
+    AssetLoadResult<TextureHandle> createTexture(TextureAsset asset, std::string debugName);
+
     const ModelAsset* model(ModelHandle handle) const;
     const MeshAsset* mesh(MeshHandle handle) const;
     const MaterialAsset* material(MaterialHandle handle) const;
@@ -507,6 +539,8 @@ class AssetManager {
         uint64_t gpuBytes{0};
         uint64_t lastUse{0};
         std::shared_ptr<std::atomic_uint32_t> references{std::make_shared<std::atomic_uint32_t>(0)};
+        // Set for runtime content (createMesh and friends); shown in diagnostics.
+        std::string debugName;
     };
 
     std::vector<ModelAsset> m_models;

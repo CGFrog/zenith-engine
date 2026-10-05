@@ -2,6 +2,7 @@
 #include "ModelImporter.hpp"
 #include "CompressedTexture.hpp"
 #include "ImageDecoder.hpp"
+#include "MeshBuilder.hpp"
 #include "MeshOptimization.hpp"
 
 #include <algorithm>
@@ -63,88 +64,6 @@ constexpr cgltf_size maximumVertices = 4'000'000;
 constexpr cgltf_size maximumIndices = 12'000'000;
 constexpr cgltf_size maximumMorphTargets = 64;
 constexpr cgltf_size maximumTextureBytes = 512ull * 1024ull * 1024ull;
-
-void generateNormals(MeshAsset& mesh, uint32_t firstVertex, uint32_t vertexCount, uint32_t firstIndex) {
-    for (uint32_t i = 0; i < vertexCount; ++i) {
-        mesh.vertices[firstVertex + i].normal = glm::vec3(0.0f);
-    }
-
-    for (uint32_t i = firstIndex; i + 2 < mesh.indices.size(); i += 3) {
-        const uint32_t a = mesh.indices[i];
-        const uint32_t b = mesh.indices[i + 1];
-        const uint32_t c = mesh.indices[i + 2];
-        const glm::vec3 normal = glm::cross(mesh.vertices[b].position - mesh.vertices[a].position,
-                                            mesh.vertices[c].position - mesh.vertices[a].position);
-
-        mesh.vertices[a].normal += normal;
-        mesh.vertices[b].normal += normal;
-        mesh.vertices[c].normal += normal;
-    }
-
-    for (uint32_t i = 0; i < vertexCount; ++i) {
-        glm::vec3& normal = mesh.vertices[firstVertex + i].normal;
-        normal = glm::dot(normal, normal) > 0.0f ? glm::normalize(normal) : glm::vec3(0.0f, 1.0f, 0.0f);
-    }
-}
-
-void generateTangents(MeshAsset& mesh, uint32_t firstVertex, uint32_t vertexCount, uint32_t firstIndex) {
-    std::vector<glm::vec3> tangents(vertexCount);
-    std::vector<glm::vec3> bitangents(vertexCount);
-    for (uint32_t i = firstIndex; i + 2 < mesh.indices.size(); i += 3) {
-        const uint32_t ia = mesh.indices[i];
-        const uint32_t ib = mesh.indices[i + 1];
-        const uint32_t ic = mesh.indices[i + 2];
-        const Vertex& a = mesh.vertices[ia];
-        const Vertex& b = mesh.vertices[ib];
-        const Vertex& c = mesh.vertices[ic];
-        const glm::vec3 edge1 = b.position - a.position;
-        const glm::vec3 edge2 = c.position - a.position;
-        const glm::vec2 uv1 = b.texCoord - a.texCoord;
-        const glm::vec2 uv2 = c.texCoord - a.texCoord;
-        const float determinant = uv1.x * uv2.y - uv1.y * uv2.x;
-        if (std::abs(determinant) < 1.0e-8f) {
-            continue;
-        }
-        const float inverse = 1.0f / determinant;
-        const glm::vec3 tangent = (edge1 * uv2.y - edge2 * uv1.y) * inverse;
-        const glm::vec3 bitangent = (edge2 * uv1.x - edge1 * uv2.x) * inverse;
-        for (uint32_t index : {ia, ib, ic}) {
-            tangents[index - firstVertex] += tangent;
-            bitangents[index - firstVertex] += bitangent;
-        }
-    }
-    for (uint32_t i = 0; i < vertexCount; ++i) {
-        const glm::vec3 normal = mesh.vertices[firstVertex + i].normal;
-        glm::vec3 tangent = tangents[i] - normal * glm::dot(normal, tangents[i]);
-        if (glm::dot(tangent, tangent) < 1.0e-8f) {
-            tangent = std::abs(normal.y) < 0.999f ? glm::normalize(glm::cross({0.0f, 1.0f, 0.0f}, normal))
-                                                  : glm::vec3(1.0f, 0.0f, 0.0f);
-        } else {
-            tangent = glm::normalize(tangent);
-        }
-        const float handedness = glm::dot(glm::cross(normal, tangent), bitangents[i]) < 0.0f ? -1.0f : 1.0f;
-        mesh.vertices[firstVertex + i].tangent = {tangent, handedness};
-    }
-}
-
-BoundingSphere calculateBounds(const std::vector<Vertex>& vertices) {
-    if (vertices.empty()) {
-        return {};
-    }
-    glm::vec3 minimum = vertices.front().position;
-    glm::vec3 maximum = minimum;
-    for (const Vertex& vertex : vertices) {
-        minimum = glm::min(minimum, vertex.position);
-        maximum = glm::max(maximum, vertex.position);
-    }
-    const glm::vec3 center = (minimum + maximum) * 0.5f;
-    float radiusSquared = 0.0f;
-    for (const Vertex& vertex : vertices) {
-        const glm::vec3 offset = vertex.position - center;
-        radiusSquared = std::max(radiusSquared, glm::dot(offset, offset));
-    }
-    return {.center = center, .radius = std::sqrt(radiusSquared)};
-}
 
 struct ImageUsage {
     TextureUsage usage{TextureUsage::Color};
@@ -490,10 +409,10 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
             }
 
             if (!normals) {
-                generateNormals(mesh, firstVertex, vertexCount, firstIndex);
+                generateMeshNormals(mesh, firstVertex, vertexCount, firstIndex);
             }
             if (texCoords && !sourceTangents) {
-                generateTangents(mesh, firstVertex, vertexCount, firstIndex);
+                generateMeshTangents(mesh, firstVertex, vertexCount, firstIndex);
             }
 
             if (mesh.morphTargets.size() < primitive.targets_count) {
@@ -543,7 +462,7 @@ AssetLoadResult<ModelHandle> ModelImporter::load(const std::filesystem::path& pa
 
         if (!mesh.primitives.empty()) {
             optimizeMesh(mesh);
-            mesh.bounds = calculateBounds(mesh.vertices);
+            mesh.bounds = calculateBoundingSphere(mesh.vertices);
             meshes[meshIndex] = m_assets.addMesh(std::move(mesh), path, static_cast<uint32_t>(meshIndex));
         }
     }

@@ -568,6 +568,7 @@ Entity Scene::cloneBranch(Entity source, Entity parent, bool appendCopySuffix) {
     copy.operator()<SkinComponent>();
     copy.operator()<MorphWeightsComponent>();
     copy.operator()<MeshRendererComponent>();
+    copy.operator()<MaterialOverrideComponent>();
     copy.operator()<CameraComponent>();
     copy.operator()<DirectionalLightComponent>();
     copy.operator()<EnvironmentLightComponent>();

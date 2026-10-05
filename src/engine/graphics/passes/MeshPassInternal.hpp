@@ -19,6 +19,9 @@ constexpr uint32_t maximumShadowCascades = 3;
 constexpr uint32_t maximumObjectsPerFrame = 16384;
 constexpr uint32_t maximumSkinMatricesPerFrame = 65536;
 constexpr uint32_t maximumMaterials = 4096;
+// Of maximumMaterials, the most records MaterialOverrideComponent factors may
+// take (one per distinct material and factors drawn).
+constexpr uint32_t maximumMaterialOverrides = 1024;
 constexpr uint32_t maximumLocalLights = 4096;
 
 // Every GPU-driven object reserves an instance slot in each of its LOD batches.

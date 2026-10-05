@@ -192,6 +192,7 @@ void MeshPass::shutdown(const VulkanContext& context) {
     }
     m_textures.clear();
     m_textureTable.reset();
+    m_overrideMaterials.clear();
     m_freeMaterialIndices.clear();
     m_nextMaterialIndex = 0;
     const auto destroyOwnedTexture = [&](GpuTexture& texture) {

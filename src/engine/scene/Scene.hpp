@@ -110,6 +110,30 @@ struct MeshRendererComponent {
     MeshHandle mesh{};
 };
 
+// Per-instance changes to how an entity's MeshRendererComponent is shaded,
+// applied by the renderer to every primitive without touching the shared
+// material. Factors are linear. The alpha mode, double-sidedness and textures
+// stay the material's, so baseColorFactor's alpha only matters to materials
+// that are masked or blended. Write the component and then call
+// Scene::markMaterialDirty so the renderer rebuilds its draws.
+struct MaterialOverrideComponent {
+    // Multiplies the material's base color factor.
+    glm::vec4 baseColorFactor{1.0f};
+    // Linear radiance added to the material's own emission, scaled by
+    // emissiveStrength (and by the material's emissive texture when it has
+    // one).
+    glm::vec3 emissive{0.0f};
+    float emissiveStrength{1.0f};
+    // Multiply the material's factors; results are clamped to [0, 1].
+    float roughnessFactor{1.0f};
+    float metallicFactor{1.0f};
+    // When live, replaces every primitive's material before the factors
+    // apply, typically a runtime material (AssetManager::createMaterial).
+    // Runtime only: it is not saved, so a saved and reloaded scene keeps
+    // just the factors.
+    MaterialHandle material{};
+};
+
 struct CameraComponent {
     float verticalFovRadians{glm::radians(60.0f)};
     float nearPlane{0.1f};

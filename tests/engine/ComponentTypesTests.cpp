@@ -116,8 +116,9 @@ void testBuiltIns() {
     const std::shared_ptr<const ComponentTypeRegistry> builtIns = builtInComponentTypes();
     expect(builtIns == builtInComponentTypes(), "the built-in registry should be created once");
     // 18 engine components, collection membership, collection instance, and
-    // visibility, the two prefab link types, and the two audio types.
-    expect(builtIns->types().size() == 30, "every serialized engine component should be registered");
+    // visibility, the two prefab link types, the two audio types, and the
+    // material override.
+    expect(builtIns->types().size() == 31, "every serialized engine component should be registered");
     const ComponentType* light = builtIns->find("point_light");
     expect(light != nullptr && light->displayName() == "Point Light" && !light->internal(),
            "point lights should be a user-facing type");
@@ -178,7 +179,8 @@ void testBuiltInRegistrationOrder() {
                                                  "nav_agent",
                                                  "tags",
                                                  "audio_listener",
-                                                 "audio_emitter"};
+                                                 "audio_emitter",
+                                                 "material_override"};
     std::vector<std::string_view> actual;
     for (const ComponentType& type : builtInComponentTypes()->types()) {
         actual.push_back(type.key());

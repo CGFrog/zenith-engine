@@ -1,5 +1,7 @@
 #include "engine/graphics/MaterialRecord.hpp"
 
+#include "engine/scene/Scene.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -51,4 +53,20 @@ MaterialRecord packMaterialRecord(const MaterialAsset& material, const MaterialT
         .volume = {attenuationCoefficient(material.transmission), std::max(material.transmission.thickness, 0.0f)},
         .lobeTextures = {slots.clearcoat, slots.clearcoatRoughness, slots.clearcoatNormal, slots.sheenColor},
         .layerTextures = {slots.sheenRoughness, slots.specular, slots.specularColor, 0u}};
+}
+
+bool materialOverrideChangesFactors(const MaterialOverrideComponent& values) {
+    return values.baseColorFactor != glm::vec4(1.0f) || values.emissive != glm::vec3(0.0f) ||
+           values.roughnessFactor != 1.0f || values.metallicFactor != 1.0f;
+}
+
+MaterialAsset applyMaterialOverride(const MaterialAsset& material, const MaterialOverrideComponent& values) {
+    MaterialAsset result = material;
+    result.baseColor = material.baseColor * glm::max(values.baseColorFactor, glm::vec4(0.0f));
+    result.emissive = material.emissive * material.emissiveStrength +
+                      glm::max(values.emissive, glm::vec3(0.0f)) * std::max(values.emissiveStrength, 0.0f);
+    result.emissiveStrength = 1.0f;
+    result.roughness = std::clamp(material.roughness * values.roughnessFactor, 0.0f, 1.0f);
+    result.metallic = std::clamp(material.metallic * values.metallicFactor, 0.0f, 1.0f);
+    return result;
 }
