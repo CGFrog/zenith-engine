@@ -2,11 +2,20 @@
 // edit and one frame of a coalesced gizmo drag (each captured as the whole
 // scene, and as only the edited entity, which the inspector and viewport
 // use), an undoable operator (which the OperatorRunner captures before and
-// after, then commits), and undo and redo. The scene holds 5,000 entities. Run by hand (Release) for numbers; CTest
-// only checks that it completes.
+// after, then commits), and undo and redo; then real operators through the
+// runner (rename, duplicate, delete, array of a 10-entity group, each
+// capturing what its scope declares) and copy and paste of a group
+// (SceneFragment). The scene holds 5,000 entities. Run by hand (Release) for
+// numbers; CTest only checks that it completes. It builds against older
+// revisions too, so before and after numbers come from the same source.
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/SceneEditing.hpp"
 #include "editor/document/EditorDocument.hpp"
+#include "editor/document/SceneFragment.hpp"
+#include "editor/interaction/Selection.hpp"
+#include "editor/operators/ObjectOperators.hpp"
+#include "editor/operators/OperatorRunner.hpp"
+#include "editor/operators/PlacementOperators.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/diagnostics/Benchmark.hpp"
 
@@ -137,6 +146,62 @@ int main() {
             throw std::runtime_error("the benchmark edits were not all recorded");
         }
         report.metadata("history_bytes", std::to_string(history.storedBytes()));
+
+        // Operators through the runner, as a key or menu runs them.
+        OperatorRegistry registry;
+        if (!registerObjectOperators(registry) || !registerPlacementOperators(registry)) {
+            throw std::runtime_error("the operators did not register");
+        }
+        OperatorRunner runner(registry, history);
+        Selection selection;
+        // By id: an older paste rebuilt the scene, which changes every handle.
+        std::vector<SceneEntityId> ids;
+        for (const Entity entity : entities) {
+            ids.push_back(scene.id(entity));
+        }
+        const auto runOperator = [&](std::string_view id, std::string_view properties, const char* sample) {
+            OperatorContext context{.editing = editing, .selection = selection, .mode = EditorMode::Edit};
+            const auto begin = std::chrono::steady_clock::now();
+            if (!runner.invokeWithJson(id, context, properties)) {
+                throw std::runtime_error(std::string(id) + " failed");
+            }
+            report.sample(sample, millisecondsSince(begin));
+        };
+        for (uint32_t edit = 0; edit < edits; ++edit) {
+            selection.selectOnly(ids[(edit * 397 + 2) % ids.size()]);
+            runOperator("object.rename", "{\"name\":\"Operator " + std::to_string(edit) + "\"}", "cpu.op_rename");
+        }
+        for (uint32_t edit = 0; edit < edits; ++edit) {
+            // A group: its root and nine children.
+            selection.selectOnly(ids[(edit + 20) * groupSize]);
+            runOperator("object.duplicate", "{\"offset\":[0,1,0]}", "cpu.op_duplicate_group");
+        }
+        for (uint32_t edit = 0; edit < edits; ++edit) {
+            selection.selectOnly(ids[(edit + 40) * groupSize]);
+            runOperator("object.array", "{\"count\":10}", "cpu.op_array_group_x10");
+        }
+        for (uint32_t edit = 0; edit < edits; ++edit) {
+            selection.selectOnly(ids[(edit + 60) * groupSize]);
+            runOperator("object.delete", "", "cpu.op_delete_group");
+        }
+        for (uint32_t edit = 0; edit < edits; ++edit) {
+            const SceneEntityId group = ids[(edit + 80) * groupSize];
+            auto begin = std::chrono::steady_clock::now();
+            std::string fragment;
+            if (!SceneFragment::copy(scene, assets, document.options(), std::span(&group, 1), fragment)) {
+                throw std::runtime_error("copy failed");
+            }
+            report.sample("cpu.copy_group", millisecondsSince(begin));
+            begin = std::chrono::steady_clock::now();
+            std::vector<SceneEntityId> pasted;
+            if (!SceneFragment::paste(fragment, scene, assets, document.options(), entt::null, pasted)) {
+                throw std::runtime_error("paste failed");
+            }
+            report.sample("cpu.paste_group", millisecondsSince(begin));
+        }
+        if (diagnostics.hasUnacknowledgedError()) {
+            throw std::runtime_error("the operators reported an error");
+        }
         std::cout << report.json(false) << '\n';
     } catch (const std::exception& error) {
         std::cerr << "Scene editing benchmark failed: " << error.what() << '\n';
