@@ -1,6 +1,7 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/PrefabAuthoring.hpp"
+#include "editor/document/PrefabEditDocument.hpp"
 #include "editor/document/SceneFragment.hpp"
 #include "editor/operators/ObjectOperators.hpp"
 #include "editor/operators/OperatorRunner.hpp"
@@ -1273,6 +1274,109 @@ void testNestedReferences() {
                "an applied prefab should hold no scene ids");
     }
 }
+
+// Opens reference into an empty scene and saves it again without edits;
+// returns whether the file kept every byte.
+bool reopenKeepsBytes(const std::filesystem::path& root, AssetManager& assets, const SceneDocumentOptions& options,
+                      const std::filesystem::path& reference) {
+    const std::string written = readText(root / reference);
+    PrefabSystem prefabs(assets, options);
+    Scene document;
+    OpenedPrefabDocument opened;
+    SavedPrefabDocument saved;
+    const bool roundTrip = openPrefabDocument(reference, document, prefabs, opened).success &&
+                           opened.fileBytes == written &&
+                           savePrefabDocument(document, opened.root, reference, prefabs, saved).success &&
+                           saved.before == written && saved.after == written;
+    return roundTrip && readText(root / reference) == written;
+}
+
+void testOpenAndSaveRoundTrip() {
+    OperatorFixture fixture(freshDirectory("round-trip"));
+    Scene& scene = fixture.scene;
+    const SceneDocumentOptions& options = fixture.document.options();
+    PrefabAuthoring authoring(fixture.assets, options);
+    // Module and preserved unknown components, and a child.
+    const Entity lamp = authorLamp(scene);
+    scene.registry().get<TransformComponent>(lamp).local[3] = glm::vec4(3.0f, 0.0f, 0.0f, 1.0f);
+    expect(authoring.create(scene, lamp, "lamp.prefab").success, "the round-trip lamp should be created");
+    // A nested prefab and entity references into and out of it.
+    const Entity wheel = scene.createEntity("Wheel");
+    const Entity hub = scene.createEntity("Hub");
+    scene.setParent(hub, wheel);
+    expect(authoring.create(scene, wheel, "parts/wheel.prefab").success, "the round-trip wheel should be created");
+    const Entity cart = scene.createEntity("Cart");
+    const Entity axle = scene.createEntity("Axle");
+    scene.setParent(axle, cart);
+    scene.setParent(wheel, cart);
+    scene.registry().get<TransformComponent>(wheel).local[3] = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    scene.registry().emplace<FollowComponent>(axle, FollowComponent{.target = scene.id(hub)});
+    scene.registry().emplace<FollowComponent>(
+        hub, FollowComponent{.target = scene.id(axle), .settings = {.target = scene.id(axle), .distance = 3.0f}});
+    expect(authoring.create(scene, cart, "cart.prefab").success, "the round-trip cart should be created");
+
+    for (const char* reference : {"lamp.prefab", "parts/wheel.prefab", "cart.prefab"}) {
+        expect(reopenKeepsBytes(fixture.root, fixture.assets, options, reference),
+               "opening and saving an editor-written prefab without edits should keep every byte");
+    }
+
+    // The engine capture alone, as an editor saving a prefab document calls it.
+    PrefabSystem prefabs(fixture.assets, options);
+    Scene empty;
+    const PrefabInstanceResult cartInstance = prefabs.instantiate("cart.prefab", empty);
+    PrefabCapture capture;
+    std::string serialized;
+    expect(cartInstance.success &&
+               prefabs
+                   .capture(empty, cartInstance.root, "cart.prefab", capture,
+                            PrefabCaptureOptions{.keepRootTransform = true})
+                   .success &&
+               serializePrefab(capture.document, serialized).success &&
+               serialized + '\n' == readText(fixture.root / "cart.prefab"),
+           "capturing an instantiated prefab with keepRootTransform should reproduce its file");
+
+    // An edited root transform is the prefab's content there.
+    Scene document;
+    OpenedPrefabDocument opened;
+    expect(openPrefabDocument("lamp.prefab", document, prefabs, opened).success && opened.displayName == "Lamp",
+           "the lamp should open with its display name");
+    const Entity openedRoot = document.findEntity(opened.root);
+    expect(openedRoot != entt::null && document.registry().get<TransformComponent>(openedRoot).local[3].x == 3.0f,
+           "the opened root should carry the prefab's root transform");
+    document.registry().get<TransformComponent>(openedRoot).local[3] = glm::vec4(0.0f, 5.0f, 0.0f, 1.0f);
+    const Entity extra = document.createEntity("Extra");
+    document.setParent(extra, openedRoot);
+    SavedPrefabDocument saved;
+    expect(savePrefabDocument(document, opened.root, "lamp.prefab", prefabs, saved).success &&
+               saved.before == opened.fileBytes && saved.after != opened.fileBytes,
+           "saving an edited prefab document should report both contents");
+    PrefabDocument reloaded;
+    expect(loadPrefab(fixture.root / "lamp.prefab", reloaded).success && reloaded.entities.size() == 3 &&
+               reloaded.entities.front().localTransform[3].y == 5.0f,
+           "an edited root transform and an added entity should be saved");
+    expect(document.registry().all_of<PrefabEntityComponent>(extra),
+           "saving should link an added entity, so the next save keeps its id");
+    expect(reopenKeepsBytes(fixture.root, fixture.assets, options, "lamp.prefab"),
+           "a saved prefab document should reopen and save unchanged");
+
+    // An apply still keeps the prefab's own root placement.
+    Entity instance = entt::null;
+    expect(authoring.instantiate(scene, "lamp.prefab", entt::null, instance).success, "the lamp should instantiate");
+    scene.registry().get<TransformComponent>(instance).local[3] = glm::vec4(9.0f, 0.0f, 0.0f, 1.0f);
+    expect(authoring.apply(scene, instance).success && loadPrefab(fixture.root / "lamp.prefab", reloaded).success &&
+               reloaded.entities.front().localTransform[3].y == 5.0f &&
+               reloaded.entities.front().localTransform[3].x == 0.0f,
+           "apply should keep the prefab's root transform");
+
+    Scene occupied;
+    occupied.createEntity("Existing");
+    expect(!openPrefabDocument("lamp.prefab", occupied, prefabs, opened),
+           "a prefab should open only into an empty scene");
+    Scene missing;
+    expect(!openPrefabDocument("missing.prefab", missing, prefabs, opened) &&
+               missing.registry().view<const SceneEntityIdComponent>().empty(),
+           "opening a missing prefab should fail without changing the scene");
+}
 } // namespace
 
 int main() {
@@ -1291,9 +1395,10 @@ int main() {
     testMovesOutOfAndWithinInstances();
     testMovesUnderAddedWithoutCycles();
     testNestedReferences();
+    testOpenAndSaveRoundTrip();
     for (const char* name :
          {"registry", "v1", "persistence", "overrides", "operators", "nested", "rollback", "propagation", "collections",
-          "references", "structure", "nested-removal", "moves", "move-cycles", "nested-references"}) {
+          "references", "structure", "nested-removal", "moves", "move-cycles", "nested-references", "round-trip"}) {
         std::error_code error;
         std::filesystem::remove_all(
             std::filesystem::temp_directory_path() / ("zenith-prefab-tests-" + std::string(name)), error);

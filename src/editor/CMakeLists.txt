@@ -38,6 +38,8 @@ add_library(zenith_editor_app STATIC
     document/EditorDocument.cpp
     document/EditorRecovery.cpp
     document/PrefabAuthoring.cpp
+    document/PrefabEditDocument.cpp
+    document/PrefabWriteCommand.cpp
     document/SceneEditorData.cpp
     document/RuntimeApply.cpp
     document/SceneFragment.cpp

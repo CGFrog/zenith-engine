@@ -34,8 +34,10 @@ PrefabResult fromInstance(PrefabInstanceResult result) {
     return {.success = result.success, .error = std::move(result.error), .diagnostics = std::move(result.diagnostics)};
 }
 
-// Links the captured scene entities to the prefab just written at reference.
-void linkCapture(Scene& scene, Entity root, const std::filesystem::path& reference, const PrefabCapture& capture) {
+} // namespace
+
+void linkPrefabCapture(Scene& scene, Entity root, const std::filesystem::path& reference,
+                       const PrefabCapture& capture) {
     entt::registry& registry = scene.registry();
     uint64_t nestedId = 0;
     if (const auto* existing = registry.try_get<PrefabInstanceComponent>(root);
@@ -51,7 +53,6 @@ void linkCapture(Scene& scene, Entity root, const std::filesystem::path& referen
         registry.get<PrefabInstanceComponent>(scene.findEntity(sceneId)).nestedId = recordId;
     }
 }
-} // namespace
 
 bool PrefabEntityOverrides::overridden(std::string_view component, std::string_view field) const {
     if (component.empty()) {
@@ -98,7 +99,7 @@ PrefabResult PrefabAuthoring::create(Scene& scene, Entity root, const std::files
         return saved;
     }
     m_prefabs.invalidate(reference);
-    linkCapture(scene, root, reference, capture);
+    linkPrefabCapture(scene, root, reference, capture);
     return captured;
 }
 
@@ -120,25 +121,11 @@ PrefabResult PrefabAuthoring::apply(Scene& scene, Entity entity) {
         return loaded;
     }
     // Other instances keep what they override relative to the content being
-    // replaced, so their overrides are taken before the file changes. The
-    // previous content is normalized once for all of them.
-    std::vector<std::pair<SceneEntityId, std::vector<PrefabOverride>>> others;
-    std::optional<PrefabComparisonSource> previousSource;
-    for (const Entity other : prefabInstancesOf(scene, reference)) {
-        if (other == root) {
-            continue;
-        }
-        if (!previousSource) {
-            previousSource.emplace();
-            if (PrefabResult prepared = m_prefabs.prepareComparison(previous, *previousSource); !prepared) {
-                return prepared;
-            }
-        }
-        std::vector<PrefabOverride> overrides;
-        if (PrefabResult compared = m_prefabs.overrides(scene, other, *previousSource, overrides); !compared) {
-            return {.error = "Instance '" + scene.registry().get<NameComponent>(other).name + "': " + compared.error};
-        }
-        others.emplace_back(scene.id(other), std::move(overrides));
+    // replaced, so their overrides are taken before the file changes.
+    PrefabRefreshPlan plan;
+    const Entity applied[]{root};
+    if (PrefabResult planned = planRefresh(scene, reference, &previous, applied, plan); !planned) {
+        return planned;
     }
 
     PrefabCapture capture;
@@ -156,34 +143,100 @@ PrefabResult PrefabAuthoring::apply(Scene& scene, Entity entity) {
     // The refreshes below must build from the new content even when the
     // file's timestamp did not visibly change.
     m_prefabs.invalidate(reference);
-    linkCapture(scene, root, reference, capture);
+    linkPrefabCapture(scene, root, reference, capture);
 
-    // Nested records the apply deleted leave the other instances too; record
-    // ids are never reused, so the removals cannot hit a later record.
-    std::vector<PrefabOverride> deletedRecords;
-    for (const NestedPrefab& record : previous.nested) {
-        if (std::ranges::none_of(capture.document.nested,
-                                 [&record](const NestedPrefab& kept) { return kept.id == record.id; })) {
-            deletedRecords.push_back({.field = "/removed", .jsonValue = "true", .nested = record.id});
+    PrefabResult refreshed = refresh(scene, plan);
+    if (!refreshed) {
+        return refreshed;
+    }
+    result.diagnostics.insert(result.diagnostics.end(), refreshed.diagnostics.begin(), refreshed.diagnostics.end());
+    return result;
+}
+
+PrefabResult PrefabAuthoring::refreshInstances(Scene& scene, const std::filesystem::path& reference,
+                                               const PrefabDocument* previous, std::span<const Entity> skip) {
+    PrefabRefreshPlan plan;
+    if (PrefabResult planned = planRefresh(scene, reference, previous, skip, plan); !planned) {
+        return planned;
+    }
+    // The file changed outside this system, which may have cached it.
+    m_prefabs.invalidate(reference);
+    return refresh(scene, plan);
+}
+
+PrefabResult PrefabAuthoring::planRefresh(const Scene& scene, const std::filesystem::path& reference,
+                                          const PrefabDocument* previous, std::span<const Entity> skip,
+                                          PrefabRefreshPlan& output) const {
+    PrefabRefreshPlan plan{.reference = reference};
+    // The previous content is normalized once for all instances.
+    std::optional<PrefabComparisonSource> previousSource;
+    for (const Entity instance : prefabInstancesOf(scene, reference)) {
+        if (std::ranges::find(skip, instance) != skip.end()) {
+            continue;
+        }
+        std::vector<PrefabOverride> overrides;
+        if (previous == nullptr) {
+            overrides = scene.registry().get<PrefabInstanceComponent>(instance).overrides;
+        } else {
+            if (!previousSource) {
+                previousSource.emplace();
+                if (PrefabResult prepared = m_prefabs.prepareComparison(*previous, *previousSource); !prepared) {
+                    return prepared;
+                }
+            }
+            if (PrefabResult compared = m_prefabs.overrides(scene, instance, *previousSource, overrides); !compared) {
+                return {.error =
+                            "Instance '" + scene.registry().get<NameComponent>(instance).name + "': " + compared.error};
+            }
+        }
+        plan.instances.emplace_back(scene.id(instance), std::move(overrides));
+    }
+    if (previous != nullptr) {
+        plan.previousRecords.emplace();
+        for (const NestedPrefab& record : previous->nested) {
+            plan.previousRecords->push_back(record.id);
         }
     }
-    for (auto& [id, overrides] : others) {
+    output = std::move(plan);
+    return {.success = true};
+}
+
+PrefabResult PrefabAuthoring::refresh(Scene& scene, const PrefabRefreshPlan& plan) {
+    PrefabResult result{.success = true};
+    if (plan.instances.empty()) {
+        return result;
+    }
+    // Nested records the new content deleted leave the instances too; record
+    // ids are never reused, so the removals cannot hit a later record.
+    std::vector<PrefabOverride> deletedRecords;
+    if (plan.previousRecords) {
+        PrefabDocument current;
+        if (PrefabResult loaded = m_prefabs.load(plan.reference, current); !loaded) {
+            return loaded;
+        }
+        for (const uint64_t record : *plan.previousRecords) {
+            if (std::ranges::none_of(current.nested,
+                                     [record](const NestedPrefab& kept) { return kept.id == record; })) {
+                deletedRecords.push_back({.field = "/removed", .jsonValue = "true", .nested = record});
+            }
+        }
+    }
+
+    for (const auto& [id, planned] : plan.instances) {
+        // An earlier refresh may have removed this instance (it was added to
+        // another instance of the same prefab).
+        const Entity instance = scene.findEntity(id);
+        if (instance == entt::null || !scene.registry().all_of<PrefabInstanceComponent>(instance)) {
+            continue;
+        }
+        std::vector<PrefabOverride> overrides = planned;
         for (const PrefabOverride& removal : deletedRecords) {
             if (std::ranges::find(overrides, removal) == overrides.end()) {
                 overrides.push_back(removal);
             }
         }
-    }
-
-    for (const auto& [id, overrides] : others) {
-        // An earlier refresh may have removed this instance (it was added to
-        // another instance of the same prefab).
-        const Entity other = scene.findEntity(id);
-        if (other == entt::null || !scene.registry().all_of<PrefabInstanceComponent>(other)) {
-            continue;
-        }
         PrefabInstanceResult refreshed =
-            m_prefabs.refresh(scene, other, overrides, PrefabRefreshMode::KeepAddedObjects);
+            m_prefabs.refresh(scene, instance, overrides, PrefabRefreshMode::KeepAddedObjects);
         if (!refreshed) {
             result.diagnostics.push_back("Could not update instance " + std::to_string(id.value) + ": " +
                                          refreshed.error);

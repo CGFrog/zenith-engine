@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -70,11 +71,23 @@ struct PrefabEntityOverrides {
 // scene unlinked) survive refreshes; revert restores them and apply writes
 // them into the prefab.
 //
+// What refreshing the instances of one prefab keeps: each instance's own
+// overrides, taken before the prefab's content changes, and the nested
+// records the content had (PrefabAuthoring::planRefresh).
+struct PrefabRefreshPlan {
+    std::filesystem::path reference;
+    std::vector<std::pair<SceneEntityId, std::vector<PrefabOverride>>> instances;
+    // Nested record ids of the previous content; nullopt when it is unknown.
+    std::optional<std::vector<uint64_t>> previousRecords;
+};
+
 // Prefab authoring workflows on an open scene. Each call edits the scene
 // directly and records no history: callers (the prefab operators) wrap them in
-// one undo step. Prefab files are written immediately and are not part of
-// undo; see PrefabOperators.hpp. References are project-relative paths under
-// options.assetRoot. Holds references; assets and options must outlive it.
+// one undo step. Files are written immediately; the operators record the
+// write together with the scene change as one PrefabWriteCommand, so undo
+// restores both (see PrefabOperators.hpp). References are project-relative
+// paths under options.assetRoot. Holds references; assets and options must
+// outlive it.
 class PrefabAuthoring {
   public:
     PrefabAuthoring(AssetManager& assets, const SceneDocumentOptions& options);
@@ -100,6 +113,28 @@ class PrefabAuthoring {
     // Keeps the instance's entities but removes their link to the prefab.
     PrefabResult unpack(Scene& scene, Entity entity);
 
+    // Updates every instance of reference in scene to the prefab file's
+    // current content while keeping each instance's own overrides. previous
+    // is the content the instances were built from (the file before it
+    // changed); each instance keeps its differences from it, and nested
+    // records previous had but the file lost are removed from the instances
+    // too. With previous null (content no longer known), each instance keeps
+    // its persisted overrides (those of its last prefab operation), so values
+    // edited since then return to the prefab's. Apply, saving a prefab edited
+    // as its own document, and a file changed outside the editor all refresh
+    // through this. Instance roots in skip are left alone (the instance an
+    // apply wrote). Records no history; problems with single instances are
+    // diagnostics, not failures.
+    PrefabResult refreshInstances(Scene& scene, const std::filesystem::path& reference, const PrefabDocument* previous,
+                                  std::span<const Entity> skip = {});
+    // refreshInstances in two steps, for a caller about to change the file
+    // itself: planRefresh takes the instances' overrides against previous
+    // (which must still describe the scene's instances), refresh applies
+    // them once the file holds the new content.
+    PrefabResult planRefresh(const Scene& scene, const std::filesystem::path& reference, const PrefabDocument* previous,
+                             std::span<const Entity> skip, PrefabRefreshPlan& output) const;
+    PrefabResult refresh(Scene& scene, const PrefabRefreshPlan& plan);
+
     // The overrides of one entity of an instance; reads the prefab file.
     PrefabResult overrides(const Scene& scene, Entity entity, PrefabEntityOverrides& output) const;
 
@@ -116,6 +151,13 @@ class PrefabAuthoring {
   private:
     PrefabSystem m_prefabs;
 };
+
+// Links the scene entities a capture wrote to the prefab at reference: root
+// becomes (or stays) its instance root, each captured entity gets its
+// prefab-local id, and each nested instance root its record id. Create and
+// apply do this after writing; a prefab edited as its own document does too,
+// so entities added there keep their ids on the next save.
+void linkPrefabCapture(Scene& scene, Entity root, const std::filesystem::path& reference, const PrefabCapture& capture);
 
 // Display names of prefab files for lists such as Add > Prefab; each file is
 // read once per write time.
