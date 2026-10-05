@@ -173,6 +173,11 @@ class GameModuleHost {
     // once per editor frame, after the frame's systems ran; the profile
     // starts over whenever the module loads or reloads.
     const SystemProfile& systemProfile() const;
+    // The module systems that threw and no longer run (SystemScheduler::run).
+    // Cleared when gameplay starts or stops and when the module loads or
+    // reloads, so Edit systems disabled between runs and Play systems
+    // disabled during one run get another chance.
+    const SystemFaults& systemFaults() const;
     void finishSystemFrame();
     void resetSystemTimingMaxima();
     // The log systems receive in every mode; it must outlive the host. Until
@@ -297,6 +302,8 @@ class GameModuleHost {
     float m_editFixedAccumulator{0.0f};
     // Names and timings only; holds no module code.
     SystemProfile m_profile;
+    // Names only; holds no module code.
+    SystemFaults m_systemFaults;
     // Copied into every scheduler the host builds.
     SimulateSystemMask m_simulateMask;
 

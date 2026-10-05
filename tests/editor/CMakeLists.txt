@@ -143,7 +143,9 @@ zenith_add_test(zenith_workspaces EXECUTABLE zenith_workspace_tests SOURCES Work
 zenith_add_test(zenith_editor_session SOURCES EditorSessionTests.cpp LIBS zenith_editor_app NEEDS_ASSETS
     DEFINITIONS
         ZENITH_TEMPLATE_DIR="${PROJECT_SOURCE_DIR}/templates"
-        ZENITH_EDITOR_FONT="${inter_SOURCE_DIR}/extras/ttf/Inter-Regular.ttf")
+        ZENITH_EDITOR_FONT="${inter_SOURCE_DIR}/extras/ttf/Inter-Regular.ttf"
+        ZENITH_EDITOR_TEST_MODULE_V1="$<TARGET_FILE:zenith_editor_test_module>"
+    DEPENDS zenith_editor_test_module)
 zenith_add_test(zenith_editor_area_types SOURCES EditorAreaTypesTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_info_panel SOURCES InfoPanelTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_system_profiler SOURCES SystemProfilerTests.cpp LIBS zenith_editor_app

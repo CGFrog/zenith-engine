@@ -6,6 +6,7 @@
 #include <functional>
 #include <vector>
 
+class LogChannel;
 class Scene;
 
 struct TimerHandle {
@@ -53,8 +54,10 @@ class Timers {
     // Advances simulated time and runs every timer that falls due, earliest
     // first (equal deadlines in start order). A repeating timer runs once per
     // elapsed interval. Callbacks may start and cancel timers; a timer started
-    // with a deadline inside this advance also runs in it.
-    void advance(Scene& scene, float simulatedSeconds);
+    // with a deadline inside this advance also runs in it. A callback that
+    // throws is logged as an error to log (stderr when it has no logger) and
+    // its timer is dropped, even a repeating one; the other timers still run.
+    void advance(Scene& scene, float simulatedSeconds, const LogChannel& log);
     void clear();
     size_t size() const;
 

@@ -148,7 +148,7 @@ void GameServices::beginFrame() {
 }
 
 void GameServices::advanceTimers(Scene& scene, float simulatedSeconds) {
-    m_timers.advance(scene, simulatedSeconds);
+    m_timers.advance(scene, simulatedSeconds, m_log);
     flush(scene);
 }
 
@@ -192,8 +192,8 @@ GameplayPhysicsEvents GameServices::takePhysicsEvents() {
 }
 
 void runGameplayPhase(const SystemScheduler& scheduler, SystemPhase phase, const SystemContext& context,
-                      SystemProfile* profile) {
-    scheduler.run(phase, context, profile);
+                      SystemProfile* profile, SystemFaults* faults) {
+    scheduler.run(phase, context, profile, faults);
     if (context.services != nullptr) {
         context.services->flush(context.scene);
     }

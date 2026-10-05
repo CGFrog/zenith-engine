@@ -1,8 +1,32 @@
 #include "SystemScheduler.hpp"
 
+#include "GuardedCall.hpp"
+#include "engine/diagnostics/Logger.hpp"
+
 #include <algorithm>
 #include <numeric>
+#include <optional>
 #include <utility>
+
+namespace {
+// Logs that system threw what and, with faults, disables it there. A system
+// faults already holds is not reported again.
+void reportSystemFault(const SystemDescriptor& system, std::string what, Logger* logger, SystemFaults* faults) {
+    std::string message =
+        "System '" + system.name + "' threw in " + std::string(systemPhaseName(system.phase)) + ": " + what;
+    if (faults != nullptr) {
+        if (!faults->disable(system, std::move(what))) {
+            return;
+        }
+        message += "; it is disabled for the rest of the session";
+    }
+    if (logger != nullptr) {
+        logger->log(LogLevel::Error, "gameplay", message);
+    } else {
+        writeLogToStderr(message);
+    }
+}
+} // namespace
 
 std::string_view systemPhaseName(SystemPhase phase) {
     switch (phase) {
@@ -134,6 +158,30 @@ uint32_t SystemProfile::averageFrames() const {
     return m_averageFrames;
 }
 
+bool SystemFaults::disabled(std::string_view name) const {
+    return std::ranges::any_of(m_faults, [name](const SystemFault& fault) { return fault.name == name; });
+}
+
+bool SystemFaults::disable(const SystemDescriptor& system, std::string what) {
+    if (disabled(system.name)) {
+        return false;
+    }
+    m_faults.push_back({.name = system.name, .phase = system.phase, .what = std::move(what)});
+    return true;
+}
+
+std::span<const SystemFault> SystemFaults::faults() const {
+    return m_faults;
+}
+
+bool SystemFaults::empty() const {
+    return m_faults.empty();
+}
+
+void SystemFaults::clear() {
+    m_faults.clear();
+}
+
 SystemScheduler::SystemScheduler(std::shared_ptr<const SystemRegistry> registry)
     : m_registry(std::move(registry)) {
     if (!m_registry) {
@@ -151,18 +199,20 @@ SystemScheduler::SystemScheduler(std::shared_ptr<const SystemRegistry> registry)
     }
 }
 
-void SystemScheduler::run(SystemPhase phase, const SystemContext& context, SystemProfile* profile) const {
+void SystemScheduler::run(SystemPhase phase, const SystemContext& context, SystemProfile* profile,
+                          SystemFaults* faults) const {
     for (const SystemDescriptor* system : ordered(phase)) {
-        if (!runs(*system, context.mode)) {
+        if (!runs(*system, context.mode) || (faults != nullptr && faults->disabled(system->name))) {
             continue;
         }
-        if (profile == nullptr) {
-            system->run(context);
-            continue;
+        const auto begin = profile != nullptr ? profile->now() : std::chrono::steady_clock::time_point{};
+        std::optional<std::string> failure = callGuarded([&] { system->run(context); });
+        if (profile != nullptr) {
+            profile->record(*system, profile->now() - begin);
         }
-        const auto begin = profile->now();
-        system->run(context);
-        profile->record(*system, profile->now() - begin);
+        if (failure) {
+            reportSystemFault(*system, std::move(*failure), context.logger, faults);
+        }
     }
 }
 

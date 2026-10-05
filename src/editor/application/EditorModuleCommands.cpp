@@ -124,18 +124,20 @@ void EditorSession::updateGameModule(ApplicationContext& context, const InputSta
         // Update systems and timers run on simulated time (a paused frame
         // step's own length, zero while the game pauses itself); the engine
         // scales the fixed steps, animation, and audio by the same clock.
-        GameServices* services = m_moduleHost.gameServices();
-        if (services != nullptr) {
-            services->beginFrame();
-        }
-        m_moduleHost.runSystems(SystemPhase::Update, context.scene, &context, mode,
-                                simulatedSeconds(simulationClock(), deltaSeconds), &m_frameGameInput, nullptr,
-                                deltaSeconds);
-        if (services != nullptr) {
-            // On the clock as the systems left it, so a pause they requested
-            // holds the timers this frame.
-            services->advanceTimers(context.scene, simulatedSeconds(simulationClock(), deltaSeconds));
-        }
+        runGameplayStage(systemPhaseName(SystemPhase::Update), [&] {
+            GameServices* services = m_moduleHost.gameServices();
+            if (services != nullptr) {
+                services->beginFrame();
+            }
+            m_moduleHost.runSystems(SystemPhase::Update, context.scene, &context, mode,
+                                    simulatedSeconds(simulationClock(), deltaSeconds), &m_frameGameInput, nullptr,
+                                    deltaSeconds);
+            if (services != nullptr) {
+                // On the clock as the systems left it, so a pause they
+                // requested holds the timers this frame.
+                services->advanceTimers(context.scene, simulatedSeconds(simulationClock(), deltaSeconds));
+            }
+        });
     }
 }
 

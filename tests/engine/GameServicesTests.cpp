@@ -14,6 +14,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -278,6 +279,7 @@ void testEventsLastOneFrame() {
 void testTimers() {
     Scene scene;
     Timers timers;
+    const LogChannel log;
     std::vector<std::string> fired;
     // Times are exact in binary, so deadlines compare without rounding.
     timers.start(0.75f, TimerRepeat::Once, [&fired](TimerContext&) { fired.push_back("once"); });
@@ -285,15 +287,15 @@ void testTimers() {
         timers.start(0.5f, TimerRepeat::Repeat, [&fired](TimerContext&) { fired.push_back("repeat"); });
     expect(!timers.start(0.0f, TimerRepeat::Repeat, [](TimerContext&) {}), "a repeating timer needs an interval");
 
-    timers.advance(scene, 0.25f);
+    timers.advance(scene, 0.25f, log);
     expect(fired.empty(), "nothing fires before its time");
     // Time scale 2: a 0.25 s frame advances 0.5 s of simulated time.
-    timers.advance(scene, 0.25f * 2.0f);
+    timers.advance(scene, 0.25f * 2.0f, log);
     expect(fired == std::vector<std::string>{"repeat", "once"}, "due timers fire earliest first");
     // Paused: no simulated time passes.
-    timers.advance(scene, 0.0f);
+    timers.advance(scene, 0.0f, log);
     expect(fired.size() == 2, "a paused clock fires nothing");
-    timers.advance(scene, 1.0f);
+    timers.advance(scene, 1.0f, log);
     expect(fired.size() == 4 && fired[2] == "repeat" && fired[3] == "repeat",
            "a repeating timer fires once per elapsed interval");
     expect(timers.cancel(repeating) && !timers.active(repeating) && timers.size() == 0,
@@ -303,7 +305,7 @@ void testTimers() {
     bool ownerFired = false;
     timers.start(1.0f, TimerRepeat::Once, [&ownerFired](TimerContext&) { ownerFired = true; }, scene.id(owner));
     scene.destroyEntity(owner);
-    timers.advance(scene, 2.0f);
+    timers.advance(scene, 2.0f, log);
     expect(!ownerFired && timers.size() == 0, "a timer whose owner is gone is dropped without firing");
 
     // A callback may cancel itself.
@@ -313,8 +315,72 @@ void testTimers() {
         ++selfRuns;
         timers.cancel(context.timer);
     });
-    timers.advance(scene, 1.0f);
+    timers.advance(scene, 1.0f, log);
     expect(selfRuns == 1 && !timers.active(self), "a repeating timer can cancel itself from its callback");
+}
+
+// Errors the fixture's logger received, oldest first.
+std::vector<std::string> loggedErrors(const Logger& logger) {
+    std::vector<std::string> errors;
+    for (const LogEntry& entry : logger.entries()) {
+        if (entry.level == LogLevel::Error) {
+            errors.push_back(entry.message);
+        }
+    }
+    return errors;
+}
+
+bool contains(std::string_view text, std::string_view part) {
+    return text.find(part) != std::string_view::npos;
+}
+
+void testThrowingTimersAreContained() {
+    Logger logger{LoggerConfig{.echoToStderr = false}};
+    const LogChannel log(&logger, "gameplay");
+    Scene scene;
+    Timers timers;
+    int faultyRuns = 0;
+    int healthyRuns = 0;
+    const TimerHandle faulty = timers.start(0.5f, TimerRepeat::Repeat, [&faultyRuns](TimerContext&) {
+        ++faultyRuns;
+        throw std::runtime_error("timer exploded");
+    });
+    const TimerHandle unknown = timers.start(0.5f, TimerRepeat::Once, [](TimerContext&) { throw 42; });
+    timers.start(0.5f, TimerRepeat::Repeat, [&healthyRuns](TimerContext&) { ++healthyRuns; });
+
+    timers.advance(scene, 0.5f, log);
+    timers.advance(scene, 1.0f, log);
+    expect(faultyRuns == 1 && !timers.active(faulty) && !timers.active(unknown),
+           "a throwing timer is dropped, even a repeating one");
+    expect(healthyRuns == 3, "the other timers keep running after one throws");
+    const std::vector<std::string> errors = loggedErrors(logger);
+    expect(errors.size() == 2 && contains(errors[0], "timer exploded") && contains(errors[0], "cancelled") &&
+               contains(errors[1], "an unknown exception"),
+           "each throwing timer is logged once with what it threw");
+}
+
+void testThrowingSpawnCallbacksAreContained() {
+    ServicesFixture fixture;
+    Scene& scene = fixture.scene;
+    EntityCommandBuffer& commands = fixture.services.commands();
+    commands.spawnEmpty("Faulty", {}, [](Scene&, Entity) { throw std::runtime_error("spawn callback exploded"); });
+    bool laterCallbackRan = false;
+    commands.spawnEmpty("Healthy", {}, [&laterCallbackRan](Scene&, Entity) { laterCallbackRan = true; });
+    fixture.services.flush(scene);
+    expect(findNamed(scene, "Faulty") != entt::null && findNamed(scene, "Healthy") != entt::null && laterCallbackRan,
+           "a throwing spawn callback keeps its entity and the commands after it");
+    const std::vector<std::string> errors = loggedErrors(fixture.logger);
+    expect(errors.size() == 1 && contains(errors[0], "spawn callback exploded"),
+           "a throwing spawn callback is logged with what it threw");
+
+    // Through the services: a throwing timer during advanceTimers is logged
+    // and the commands other timers recorded still apply.
+    fixture.services.timers().start(0.1f, TimerRepeat::Once, [](TimerContext&) { throw std::runtime_error("boom"); });
+    fixture.services.timers().start(0.1f, TimerRepeat::Once,
+                                    [&commands](TimerContext&) { commands.spawnEmpty("From timer"); });
+    fixture.services.advanceTimers(scene, 1.0f);
+    expect(findNamed(scene, "From timer") != entt::null && loggedErrors(fixture.logger).size() == 2,
+           "advanceTimers contains a throwing timer and flushes the others' commands");
 }
 } // namespace
 
@@ -362,6 +428,8 @@ int main() {
     testEffects();
     testEventsLastOneFrame();
     testTimers();
+    testThrowingTimersAreContained();
+    testThrowingSpawnCallbacksAreContained();
     testLogChannels();
     testGameClock();
     if (failures == 0) {

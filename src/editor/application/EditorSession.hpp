@@ -50,6 +50,7 @@
 #include "editor/theme/ThemeChrome.hpp"
 #include "engine/application/Application.hpp"
 #include "engine/navigation/NavigationWorld.hpp"
+#include "engine/platform/CrashHandler.hpp"
 
 #include <array>
 #include <cstdint>
@@ -98,6 +99,11 @@ struct EditorProjectServices {
     // answer Application::mouseCapturePolicy (EditorSession::
     // mouseCapturePolicy). May be empty.
     std::function<void(MouseCapturePolicy)> mouseCaptureChanged;
+    // Given the session's emergency recovery save (EditorSession::
+    // saveRecoveryAfterCrash) once it runs, and an empty action when it
+    // unloads, so the application can hand it to the process's crash handler
+    // (CrashHandlerScope::setRecoveryAction). May be empty.
+    std::function<void(CrashRecoveryAction)> crashRecoveryChanged;
 };
 
 // Composes the editor: owns the document, history, selection, camera, the
@@ -279,6 +285,14 @@ class EditorSession final : public ApplicationScene,
 
     // Autosave and the recovery prompt (EditorRecovery.cpp).
     void updateAutosave(ApplicationContext& context, float deltaSeconds);
+    // Gives the crash handler the session's emergency save, once, with the
+    // context the session runs in (the context load gets may be a staging
+    // one).
+    void registerCrashRecovery(ApplicationContext& context);
+    // Writes the open document, the edit scene even during Play, to the
+    // recovery file when it has unsaved changes. Runs in a crashed process
+    // (CrashRecoveryAction): best effort, reporting nothing.
+    void saveRecoveryAfterCrash(ApplicationContext& context);
     void drawRecoveryDialog(ApplicationContext& context);
 
     // The main menu bar (EditorMainMenu.cpp) and the status bar
@@ -305,6 +319,16 @@ class EditorSession final : public ApplicationScene,
     // reporting why) when it could not.
     bool enterPlayMode(ApplicationContext& context, EditorRuntime runtime = EditorRuntime::Play);
     void stopPlayMode(ApplicationContext& context);
+    // Runs one stage of Play's or Simulate's gameplay (stage names it for
+    // the report) unless an earlier stage of the run failed. A stage fails
+    // when an exception escapes it or a module system threw and was
+    // disabled in it; the failure is kept for stopFailedGameplay.
+    void runGameplayStage(std::string_view stage, const std::function<void()>& run);
+    // Leaves Play or Simulate, restoring the edit scene, when a stage failed
+    // since the last call, and reports why in the Info log. The engine calls
+    // the session between stages, so the session stops at the next safe
+    // point (drawUi) rather than inside the engine's fixed-step loop.
+    void stopFailedGameplay(ApplicationContext& context);
     // Runs the module's Ui systems into m_gameViewUi for the game view.
     void drawGameViewUi(ApplicationContext& context);
     OperatorResult startStandalone(ApplicationContext& context);
@@ -381,6 +405,9 @@ class EditorSession final : public ApplicationScene,
     InputState m_frameGameInput;
     // The frame's wall-clock seconds, for the Ui systems.
     float m_frameGameSeconds{0.0f};
+    // Why gameplay failed in the current Play or Simulate run, until
+    // stopFailedGameplay stops it.
+    std::optional<std::string> m_gameplayFailure;
     // What the module's Ui systems draw over the game view, sized to it.
     GameUiContext m_gameViewUi;
     std::filesystem::path m_projectFile;
@@ -391,6 +418,8 @@ class EditorSession final : public ApplicationScene,
     EditorPlayServices m_playServices;
     StandalonePlayer m_standalone;
     std::function<void(MouseCapturePolicy)> m_mouseCaptureChanged;
+    std::function<void(CrashRecoveryAction)> m_crashRecoveryChanged;
+    bool m_crashRecoveryRegistered{false};
     NativeFileDialog m_fileDialog;
     Selection m_selection;
     // Declared before the operator registry, whose eyedropper operators

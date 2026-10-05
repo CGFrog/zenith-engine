@@ -40,6 +40,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_playServices(projectServices.play)
     , m_standalone(m_playServices.makeGameProcess ? m_playServices.makeGameProcess() : makeGameProcess())
     , m_mouseCaptureChanged(projectServices.mouseCaptureChanged)
+    , m_crashRecoveryChanged(projectServices.crashRecoveryChanged)
     , m_fileDialog("Zenith scene", sceneExtension)
     , m_operatorRunner(m_operators, m_history)
     , m_gameModulePath(std::move(gameModule))
@@ -354,6 +355,7 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
     if (m_smokeRunner) {
         updateSmokeScenario(context);
     }
+    registerCrashRecovery(context);
     updateAutosave(context, deltaSeconds);
     updatePackaging();
     m_projectBuild.poll();
@@ -393,14 +395,19 @@ void EditorSession::fixedUpdate(ApplicationContext& context, const InputState& i
     // Simulate passes no input; the host enforces that too.
     if (m_playMode.mode() != EditorMode::Edit) {
         const SimulationMode mode = m_playMode.simulationMode();
-        m_moduleHost.runSystems(SystemPhase::FixedUpdate, context.scene, &context, mode, deltaSeconds,
-                                mode == SimulationMode::Simulate ? nullptr : &gameInput(input));
+        runGameplayStage(systemPhaseName(SystemPhase::FixedUpdate), [&] {
+            m_moduleHost.runSystems(SystemPhase::FixedUpdate, context.scene, &context, mode, deltaSeconds,
+                                    mode == SimulationMode::Simulate ? nullptr : &gameInput(input));
+        });
     }
 }
 
 void EditorSession::afterPhysicsStep(ApplicationContext& context) {
     if (GameServices* services = m_moduleHost.gameServices()) {
-        services->publishPhysicsEvents(context.scene, context.physics.triggerEvents(), context.physics.contactEvents());
+        runGameplayStage("the physics events", [&] {
+            services->publishPhysicsEvents(context.scene, context.physics.triggerEvents(),
+                                           context.physics.contactEvents());
+        });
     }
 }
 
@@ -409,9 +416,11 @@ void EditorSession::lateUpdate(ApplicationContext& context, const InputState&, f
         return;
     }
     const SimulationMode mode = m_playMode.simulationMode();
-    m_moduleHost.runSystems(SystemPhase::LateUpdate, context.scene, &context, mode,
-                            simulatedSeconds(simulationClock(), deltaSeconds), &m_frameGameInput, nullptr,
-                            deltaSeconds);
+    runGameplayStage(systemPhaseName(SystemPhase::LateUpdate), [&] {
+        m_moduleHost.runSystems(SystemPhase::LateUpdate, context.scene, &context, mode,
+                                simulatedSeconds(simulationClock(), deltaSeconds), &m_frameGameInput, nullptr,
+                                deltaSeconds);
+    });
 }
 
 bool EditorSession::fixedUpdatesEnabled() const {
@@ -437,6 +446,9 @@ void EditorSession::drawUi(ApplicationContext& context) {
     // Every system of this frame ran in update and fixedUpdate; publish
     // their timings for the System Profiler areas drawn below.
     m_moduleHost.finishSystemFrame();
+    // Between the frame's gameplay and the game view's UI: a run whose
+    // gameplay failed ends here, so the rest of the frame draws Edit mode.
+    stopFailedGameplay(context);
     // The engine has run this frame's fixed steps, so a frame step is done;
     // play.step below requests the next one.
     m_playMode.finishFrame();
@@ -511,6 +523,11 @@ void EditorSession::unload(ApplicationContext& context) {
     // An unfinished smoke run releases its streaming layers (which share the
     // module's component types) and removes its files.
     m_smokeRunner.reset();
+    // First: the crash handler must not save through a session that is going.
+    if (m_crashRecoveryRegistered && m_crashRecoveryChanged) {
+        m_crashRecoveryChanged({});
+        m_crashRecoveryRegistered = false;
+    }
     stopPlay(context);
     if (m_mouseCaptureChanged) {
         m_mouseCaptureChanged(MouseCapturePolicy::WhileRightMouseDown);

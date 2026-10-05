@@ -14,6 +14,7 @@ foreach(file_watcher_backend IN ITEMS native polling)
         EXECUTABLE zenith_file_watcher_tests COMMAND_ARGS ${file_watcher_backend} TIMEOUT 60)
 endforeach()
 zenith_add_test(zenith_versioned_json SOURCES VersionedJsonTests.cpp LIBS zenith_engine)
+zenith_add_test(zenith_crash_handler SOURCES CrashHandlerTests.cpp LIBS zenith_engine)
 
 zenith_add_test(zenith_asset_scene EXECUTABLE zenith_asset_tests
     SOURCES AssetSceneTests.cpp LIBS zenith_engine NEEDS_ASSETS)

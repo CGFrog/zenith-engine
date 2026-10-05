@@ -8,6 +8,26 @@ Resolves platform writable locations, performs atomic user-data writes and
 backup recovery, writes local-only structured diagnostics, and serializes exact
 release provenance.
 
+## `src/engine/platform/CrashHandler.*`
+
+`CrashHandlerScope` installs the process's crash handler for its lifetime
+(RAII; one at a time, a second scope is inert). On Windows it is an unhandled
+exception filter: a crash on any thread writes
+`<product>-crash-<UTC time>.dmp` (`MiniDumpWriteDump`, dbghelp) and a short
+`.txt` report (exception code and name, faulting module, thread, whether the
+dump was written) into the scope's directory, then runs the optional
+`CrashRecoveryAction`, notes its outcome in the report, prints the report's
+path to stderr, and ends the process with the exception code and no error
+dialog. The work runs on a helper thread, so a stack overflow still gets a
+dump; the recovery action runs in the crashed process, so it must be
+best-effort, and a crash or exception inside it is caught. Elsewhere the scope
+installs nothing yet. `zenith` and `zenith_editor` install one over their
+diagnostics folder (`userDataDirectory(...)/diagnostics`, where the game's
+`DiagnosticBundleWriter` writes too); the editor's session registers an
+emergency save of its scene to the autosave recovery file
+(`EditorApplication::setCrashHandler`), offered by the recovery prompt at the
+next start.
+
 ## `src/engine/platform/VersionedJson.*`
 
 `readVersionedJson` and `writeVersionedJson` handle the outer layer of a settings
