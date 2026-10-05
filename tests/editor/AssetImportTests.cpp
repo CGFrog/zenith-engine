@@ -179,8 +179,7 @@ void testProjectImportAndSettings() {
 
     expect(assets.importSettings(wall) == nlohmann::json::object(), "a new asset should have empty settings");
     expect(assets.setImportSettings(wall, {{"usage", "normal"}}, diagnostics), "settings should be stored");
-    expect(assets.importSettings(wall) == nlohmann::json{{"usage", "normal"}},
-           "stored settings should read back");
+    expect(assets.importSettings(wall) == nlohmann::json{{"usage", "normal"}}, "stored settings should read back");
     AssetMeta meta;
     expect(readAssetMeta(assetMetaPath(wall), meta) && meta.importSettings["usage"] == "normal",
            "the settings should be written to the sidecar");
@@ -240,9 +239,9 @@ void testReferences() {
 
     // A GUID finds a reference whose path is stale.
     const AssetGuid guid = assets.catalog().findAsset(plate)->guid;
-    writeFile(project.content / "materials" / "renamed.zmat",
-              R"({"version": 1, "base_color_texture": {"guid": ")" + guid.toString() +
-                  R"(", "path": "../textures/old.png"}})");
+    writeFile(project.content / "materials" / "renamed.zmat", R"({"version": 1, "base_color_texture": {"guid": ")" +
+                                                                  guid.toString() +
+                                                                  R"(", "path": "../textures/old.png"}})");
     assets.refresh(diagnostics);
     expect(assets.findReferences(plate, diagnostics).size() == 3, "a reference by GUID should be found");
 
@@ -264,9 +263,7 @@ void testDeleteGuardAndFindReferences() {
     const AssetBrowserActions actions{
         .sceneUsers = [](const EditorAssetRecord&) { return std::vector<SceneEntityId>{SceneEntityId{7}}; },
         .selectEntities =
-            [&selected](std::span<const SceneEntityId> entities) {
-                selected.assign(entities.begin(), entities.end());
-            },
+            [&selected](std::span<const SceneEntityId> entities) { selected.assign(entities.begin(), entities.end()); },
     };
 
     panel.requestDelete(project.content / "textures" / "plate.png", diagnostics);
@@ -298,9 +295,8 @@ void testFileDrops() {
     FileDropQueue drops;
     const AssetBrowserActions actions{.fileDrops = &drops};
 
-    const std::array<DroppedFile, 2> dropped{
-        DroppedFile{.path = outside / "crate.gltf", .position = {400.0f, 300.0f}},
-        DroppedFile{.path = outside / "far.png", .position = {1000.0f, 700.0f}}};
+    const std::array<DroppedFile, 2> dropped{DroppedFile{.path = outside / "crate.gltf", .position = {400.0f, 300.0f}},
+                                             DroppedFile{.path = outside / "far.png", .position = {1000.0f, 700.0f}}};
     drops.add(dropped);
     imgui.frame([&] { panel.drawBrowser(diagnostics, actions); });
     expect(std::filesystem::exists(project.content / "crate.gltf"),
@@ -332,15 +328,14 @@ void testDataTables() {
                          AssetCatalogOptions{.watchFiles = false});
     assets.refresh(diagnostics);
     expect(assets.catalog().findAsset(normalizedCatalogPath(enemies)) != nullptr &&
-               assets.catalog().findAsset(normalizedCatalogPath(project.content / "data" / "settings.json")) ==
-                   nullptr,
+               assets.catalog().findAsset(normalizedCatalogPath(project.content / "data" / "settings.json")) == nullptr,
            "the catalog should list only data tables");
 
     DataTableView view;
     view.update(enemies, nullptr, nlohmann::json::object(), 0, diagnostics);
     expect(view.error().empty() && view.schemaName().empty(), "a well-formed table should pass the structure check");
-    expect(view.table().columns == std::vector<std::string>{"id", "health", "speed"} &&
-               view.table().rows.size() == 2 && view.table().rows[1][0] == "bat" && view.table().rows[1][1].empty(),
+    expect(view.table().columns == std::vector<std::string>{"id", "health", "speed"} && view.table().rows.size() == 2 &&
+               view.table().rows[1][0] == "bat" && view.table().rows[1][1].empty(),
            "columns should follow the keys in first-seen order");
 
     view.update(project.content / "data" / "broken.json", nullptr, nlohmann::json::object(), 0, diagnostics);

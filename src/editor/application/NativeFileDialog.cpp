@@ -103,8 +103,7 @@ std::optional<FileDialogOutcome> NativeFileDialog::poll() {
         return std::nullopt;
     }
     m_pending = false;
-    if (outcome->status == FileDialogStatus::Chosen && outcome->kind == FileDialogKind::Save &&
-        !m_extension.empty()) {
+    if (outcome->status == FileDialogStatus::Chosen && outcome->kind == FileDialogKind::Save && !m_extension.empty()) {
         outcome->path = normalizeSavePath(std::move(outcome->path), m_extension);
         outcome->paths = {outcome->path};
     }

@@ -34,5 +34,4 @@ struct AssetImportResult {
 std::filesystem::path uniqueImportPath(const std::filesystem::path& folder, const std::filesystem::path& name);
 
 // Copies every source into folder (see above). folder must exist.
-AssetImportResult importIntoFolder(std::span<const std::filesystem::path> sources,
-                                   const std::filesystem::path& folder);
+AssetImportResult importIntoFolder(std::span<const std::filesystem::path> sources, const std::filesystem::path& folder);

@@ -54,9 +54,8 @@ std::string readDataTable(std::string_view text, std::span<const FieldDescriptor
         output.columns.push_back(field.key);
     }
     // JSON objects keep their keys sorted, so without a schema the id leads.
-    const bool hasId = std::ranges::any_of(document, [](const Json& entry) {
-        return entry.is_object() && entry.contains(idKey);
-    });
+    const bool hasId =
+        std::ranges::any_of(document, [](const Json& entry) { return entry.is_object() && entry.contains(idKey); });
     if (schemaFields.empty() && hasId) {
         output.columns.emplace_back(idKey);
     }
@@ -154,10 +153,10 @@ void DataTableView::update(const std::filesystem::path& file, const DefinitionSc
         m_table = {};
         m_error = source + ": cannot be read";
     } else {
-        const std::string tableError =
-            readDataTable(text, schema != nullptr ? std::span<const FieldDescriptor>(schema->fields)
-                                                  : std::span<const FieldDescriptor>{},
-                          m_table);
+        const std::string tableError = readDataTable(
+            text,
+            schema != nullptr ? std::span<const FieldDescriptor>(schema->fields) : std::span<const FieldDescriptor>{},
+            m_table);
         if (schema != nullptr) {
             const DefinitionTableResult validated = schema->validate(text, source);
             m_error = validated ? std::string{} : validated.error;
@@ -193,8 +192,8 @@ void DataTableView::draw(const std::filesystem::path& file, const DefinitionSche
     }
     const int columnCount = static_cast<int>(std::min(m_table.columns.size(), drawnColumnLimit));
     constexpr ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
-                                      ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
-                                      ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit;
+                                      ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY |
+                                      ImGuiTableFlags_SizingFixedFit;
     if (!ImGui::BeginTable("##DataTable", columnCount, flags, {0.0f, 0.0f})) {
         return;
     }

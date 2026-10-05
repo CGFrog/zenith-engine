@@ -167,8 +167,7 @@ SceneDocumentResult ComponentType::reloadAssets(void* component, AssetManager& a
     return {.success = true};
 }
 
-bool ComponentType::replaceTextures(void* component,
-                                    const std::function<TextureHandle(TextureHandle)>& replace) const {
+bool ComponentType::replaceTextures(void* component, const std::function<TextureHandle(TextureHandle)>& replace) const {
     bool changed = false;
     for (const TextureBinding& binding : m_textures) {
         TextureHandle& handle = binding.handle(component);

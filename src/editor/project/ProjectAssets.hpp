@@ -166,8 +166,7 @@ class ProjectAssets {
     // which gives the copies sidecars and GUIDs. Returns the copies made;
     // failures are reported.
     std::vector<std::filesystem::path> importFiles(std::span<const std::filesystem::path> sources,
-                                                   const std::filesystem::path& folder,
-                                                   EditorDiagnostics& diagnostics);
+                                                   const std::filesystem::path& folder, EditorDiagnostics& diagnostics);
     // Where drops that name no folder (a file dropped on a viewport) are
     // imported: the primary browser's remembered folder when it is a folder
     // of the asset root, else the asset root.
@@ -180,8 +179,7 @@ class ProjectAssets {
     std::optional<nlohmann::json> importSettings(const std::filesystem::path& asset);
     // Rewrites the asset's import settings and queues a reimport. Returns
     // false, reporting why, when they could not be stored.
-    bool setImportSettings(const std::filesystem::path& asset, nlohmann::json settings,
-                           EditorDiagnostics& diagnostics);
+    bool setImportSettings(const std::filesystem::path& asset, nlohmann::json settings, EditorDiagnostics& diagnostics);
     // Treats the asset as modified on disk at the next dispatch, so it is
     // read again (Reimport). Returns false for kinds nothing reloads (scenes,
     // scripts) and for unknown paths.

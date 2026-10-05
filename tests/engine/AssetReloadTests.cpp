@@ -155,8 +155,7 @@ void testTextureReload() {
     expect(unloaded && unloaded.replaced.empty(), "reloading an image nobody loaded should do nothing");
     std::ofstream(image, std::ios::binary | std::ios::trunc) << "not an image";
     const TextureReloadResult broken = assets.reloadTexture(image);
-    expect(!broken && assets.loadTexture(image).handle == newColor,
-           "a failed reload should keep the loaded texture");
+    expect(!broken && assets.loadTexture(image).handle == newColor, "a failed reload should keep the loaded texture");
 }
 
 void testTextureImportSettings() {
@@ -169,8 +168,7 @@ void testTextureImportSettings() {
     expect(json["usage"] == "normal" && json["other"] == 1, "writing settings should keep other keys");
     expect(readTextureImportSettings(json, settings).empty() && settings.usage == TextureUsage::Normal,
            "texture settings should round trip");
-    expect(!readTextureImportSettings({{"usage", "shiny"}}, settings).empty() &&
-               settings.usage == TextureUsage::Color,
+    expect(!readTextureImportSettings({{"usage", "shiny"}}, settings).empty() && settings.usage == TextureUsage::Color,
            "an unknown usage should be an error that keeps the defaults");
 
     TemporaryProject project("zenith_asset_reload_settings");
@@ -247,9 +245,9 @@ void testDefinitionSchemas() {
            "the schema should describe the entry fields");
     expect(enemies != nullptr && enemies->validate(R"([{"id": "rat", "health": 3}])", "enemies.json"),
            "valid entries should pass");
-    const DefinitionTableResult typo =
-        enemies != nullptr ? enemies->validate(R"([{"id": "rat", "helth": 3}])", "enemies.json")
-                           : DefinitionTableResult{};
+    const DefinitionTableResult typo = enemies != nullptr
+                                           ? enemies->validate(R"([{"id": "rat", "helth": 3}])", "enemies.json")
+                                           : DefinitionTableResult{};
     expect(!typo && typo.error.find("enemies.json[0] 'rat': unknown field 'helth'") != std::string::npos,
            "a typo should be reported with the file and entry");
     expect(!schemas.add({.name = "broken", .fields = {}, .validate = enemies->validate}),

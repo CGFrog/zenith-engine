@@ -462,8 +462,7 @@ TextureReloadResult AssetManager::reloadTexture(const std::filesystem::path& pat
     const auto [normalized, key] = normalizedPath(path);
     std::vector<std::pair<TextureUsage, TextureHandle>> loaded;
     for (const TextureUsage usage : {TextureUsage::Color, TextureUsage::Normal, TextureUsage::Data}) {
-        if (const auto found = m_textureCache.find(key + textureUsageKeySuffix(usage));
-            found != m_textureCache.end()) {
+        if (const auto found = m_textureCache.find(key + textureUsageKeySuffix(usage)); found != m_textureCache.end()) {
             loaded.emplace_back(usage, found->second);
         }
     }

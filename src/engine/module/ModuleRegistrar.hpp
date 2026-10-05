@@ -84,7 +84,8 @@ class ModuleRegistrar {
     bool addDefinitionSchema(DefinitionSchema schema);
 
     // addDefinitionSchema for a DefinitionTable<Entry> with these fields.
-    template <typename Entry> bool addDefinitionTable(std::string name, Fields<Entry> fields, std::string idKey = "id") {
+    template <typename Entry>
+    bool addDefinitionTable(std::string name, Fields<Entry> fields, std::string idKey = "id") {
         return addDefinitionSchema(makeDefinitionSchema<Entry>(std::move(name), std::move(fields), std::move(idKey)));
     }
 

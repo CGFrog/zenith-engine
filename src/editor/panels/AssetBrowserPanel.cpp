@@ -410,8 +410,8 @@ void AssetBrowserPanel::revealItem(const std::filesystem::path& item, EditorDiag
     m_project.revealItem(item, diagnostics);
 }
 
-void AssetBrowserPanel::importFiles(std::span<const std::filesystem::path> sources,
-                                    const std::filesystem::path& folder, EditorDiagnostics& diagnostics) {
+void AssetBrowserPanel::importFiles(std::span<const std::filesystem::path> sources, const std::filesystem::path& folder,
+                                    EditorDiagnostics& diagnostics) {
     const std::vector<std::filesystem::path> imported = m_project.importFiles(sources, folder, diagnostics);
     select(imported.empty() ? std::nullopt : std::optional<std::filesystem::path>(imported.back()));
 }
@@ -529,12 +529,11 @@ void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetB
     const EditorAssetRecord* selectedAsset = m_selected.empty() ? nullptr : m_project.catalog().findAsset(m_selected);
     const EditorAssetKind selectedKind = selectedAsset != nullptr ? selectedAsset->kind : EditorAssetKind::Scene;
     const float detailRows =
-        selectedAsset != nullptr &&
-                (selectedKind == EditorAssetKind::Material || selectedKind == EditorAssetKind::Data)
+        selectedAsset != nullptr && (selectedKind == EditorAssetKind::Material || selectedKind == EditorAssetKind::Data)
             ? 14.0f
         : selectedAsset != nullptr && selectedKind == EditorAssetKind::Texture ? 5.0f
-        : m_selected.empty()                                                    ? 0.0f
-                                                                                : 2.5f;
+        : m_selected.empty()                                                   ? 0.0f
+                                                                               : 2.5f;
     const float detailsHeight = ImGui::GetFrameHeightWithSpacing() * detailRows;
     const float paneHeight =
         std::max(ImGui::GetContentRegionAvail().y - detailsHeight, ImGui::GetFrameHeightWithSpacing() * 4.0f);
@@ -1145,9 +1144,8 @@ void AssetBrowserPanel::drawReferencesWindow(const AssetBrowserActions& actions,
     }
     std::optional<std::filesystem::path> reveal;
     for (const AssetReferrer& referrer : m_references.files) {
-        const std::string label =
-            std::string(referrerLabel(referrer.kind)) + "  " + utf8PathText(referrer.file) + "##" +
-            genericUtf8(referrer.file);
+        const std::string label = std::string(referrerLabel(referrer.kind)) + "  " + utf8PathText(referrer.file) +
+                                  "##" + genericUtf8(referrer.file);
         if (ImGui::Selectable(label.c_str())) {
             reveal = referrer.file;
         }

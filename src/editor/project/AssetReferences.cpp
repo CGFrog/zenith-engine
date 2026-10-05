@@ -38,7 +38,7 @@ void addGuid(const Json& value, FileAssetReferences& output) {
 // key `path` is reserved for them, see SceneAssetReferences.hpp) and legacy
 // path strings under keys ending in `_asset`.
 void collectComponentReferences(const Json& value, const std::filesystem::path& assetRoot,
-                                 FileAssetReferences& output) {
+                                FileAssetReferences& output) {
     if (value.is_object()) {
         if (const auto path = value.find("path"); path != value.end() && path->is_string()) {
             addPath(assetRoot, path->get<std::string>(), output);
@@ -74,8 +74,8 @@ std::string collectDocumentReferences(EditorAssetKind kind, std::string_view tex
             }
         }
         // Nested prefabs name their source relative to the containing prefab.
-        if (const auto nested = document.find("nested"); kind == EditorAssetKind::Prefab && nested != document.end() &&
-                                                          nested->is_array()) {
+        if (const auto nested = document.find("nested");
+            kind == EditorAssetKind::Prefab && nested != document.end() && nested->is_array()) {
             for (const Json& entry : *nested) {
                 if (const auto source = entry.find("source"); source != entry.end() && source->is_string()) {
                     addPath(file.parent_path(), source->get<std::string>(), output);
@@ -132,10 +132,8 @@ std::string collectFileAssetReferences(EditorAssetKind kind, std::string_view te
     return {};
 }
 
-bool referencesAsset(const FileAssetReferences& references, const std::filesystem::path& absolutePath,
-                     AssetGuid guid) {
-    return references.paths.contains(normalizedCatalogPath(absolutePath)) ||
-           (guid && references.guids.contains(guid));
+bool referencesAsset(const FileAssetReferences& references, const std::filesystem::path& absolutePath, AssetGuid guid) {
+    return references.paths.contains(normalizedCatalogPath(absolutePath)) || (guid && references.guids.contains(guid));
 }
 
 const AssetReferenceIndex::CachedFile& AssetReferenceIndex::cached(const EditorAssetRecord& record,
