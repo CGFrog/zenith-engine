@@ -73,6 +73,7 @@ Engine::Engine()
     : m_captureConfig(frameCaptureConfigFromEnvironment())
     , m_frameTasks(frameTaskConfiguration())
     , m_assets(&m_logger)
+    , m_physics(&m_logger)
     , m_audio(&m_logger) {}
 
 bool Engine::init(const PhysicsWorldConfig& physicsConfig, const AudioConfig& audioConfig) {
@@ -235,6 +236,8 @@ bool Engine::run(Application& application) {
                     break;
                 }
                 const auto physicsBegin = std::chrono::steady_clock::now();
+                // Fails only for an uninitialized world; skipped bodies and
+                // exceeded capacities are warnings the world logs itself.
                 if (const PhysicsResult result = m_physics.step(m_scene, m_assets, fixedStep); !result) {
                     m_log.error("Physics update failed: " + result.error);
                     runSucceeded = false;
