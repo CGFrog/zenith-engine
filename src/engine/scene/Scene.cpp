@@ -156,9 +156,14 @@ SceneResult Scene::reparent(Entity child, Entity parent, ReparentMode mode) {
     relationship.parent = parent;
 
     if (parent != entt::null && m_registry.valid(parent)) {
+        // A new child goes before the first sibling with a larger stable id,
+        // so siblings stay in id order unless setSiblingIndex moved them.
         auto& children = m_registry.get_or_emplace<RelationshipComponent>(parent).children;
         if (std::find(children.begin(), children.end(), child) == children.end()) {
-            children.push_back(child);
+            const uint64_t childId = id(child).value;
+            const auto position = std::find_if(children.begin(), children.end(),
+                                               [this, childId](Entity sibling) { return id(sibling).value > childId; });
+            children.insert(position, child);
         }
     }
 
@@ -167,6 +172,21 @@ SceneResult Scene::reparent(Entity child, Entity parent, ReparentMode mode) {
     }
     markTransformDirty(child);
     updateWorldTransforms();
+    return {.success = true};
+}
+
+SceneResult Scene::setSiblingIndex(Entity child, size_t index) {
+    if (!m_registry.valid(child)) {
+        return {.error = "Cannot order an invalid entity"};
+    }
+    const Entity parent = m_registry.get<RelationshipComponent>(child).parent;
+    if (parent == entt::null || !m_registry.valid(parent)) {
+        return {.error = "Only children have a sibling order; root entities are listed by id"};
+    }
+    auto& siblings = m_registry.get<RelationshipComponent>(parent).children;
+    std::erase(siblings, child);
+    const auto position = siblings.begin() + static_cast<std::ptrdiff_t>(std::min(index, siblings.size()));
+    siblings.insert(position, child);
     return {.success = true};
 }
 

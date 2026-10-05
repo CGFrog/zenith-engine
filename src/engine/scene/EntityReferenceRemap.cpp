@@ -99,3 +99,24 @@ void remapEntityReferences(Json& components, const ComponentTypeRegistry& types,
         }
     }
 }
+
+void remapChildOrder(nlohmann::json& entity, const std::function<std::optional<uint64_t>(uint64_t id)>& mapping) {
+    const auto children = entity.find("children");
+    if (children == entity.end() || !children->is_array()) {
+        return;
+    }
+    Json remapped = Json::array();
+    for (const Json& child : *children) {
+        if (!child.is_number_unsigned()) {
+            continue;
+        }
+        if (const std::optional<uint64_t> id = mapping(child.get<uint64_t>()); id && *id != 0) {
+            remapped.push_back(*id);
+        }
+    }
+    if (remapped.empty()) {
+        entity.erase(children);
+    } else {
+        *children = std::move(remapped);
+    }
+}

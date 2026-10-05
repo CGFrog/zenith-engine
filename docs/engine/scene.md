@@ -19,7 +19,10 @@ Wraps an EnTT registry and defines the core ECS components:
 
 `createEntity` always installs name, transform, and relationship components.
 `setParent` updates both sides of a relationship and rejects self-parenting and
-cycles. `instantiateModel` expands imported nodes into entities while preserving
+cycles. A new child is placed before the first sibling with a larger stable id,
+so siblings are in id order by default; `setSiblingIndex(child, index)` moves a
+child among its siblings (clamped; root entities have no stored order and are
+refused). `instantiateModel` expands imported nodes into entities while preserving
 their hierarchy. `destroyEntity` recursively destroys descendants.
 `findChild(parent, name)` returns the first direct child with that
 `NameComponent`, and `findDescendant(root, name)` the first strict descendant,
@@ -132,6 +135,15 @@ two serialized documents (plus the collection definitions when they changed,
 as `SceneChanges`), and `SceneDocument::applyChanges` patches those entities
 and collections in place toward either side atomically, leaving every other
 entity, its EnTT handle, and its child order untouched.
+An entity whose saved (non-transient) children are not in ascending id order
+writes their ids in sibling order as an optional `"children"` array. Loads,
+`applyChanges` (for every rebuilt entity), and `createEntities` put listed
+children first in that order and the rest after them by id; ids that are not
+children are ignored, and an entity without the key (every older document)
+lists its children by id. Code that renumbers entity documents (prefab id
+remapping, scene fragment paste and replicate) rewrites the order with
+`remapChildOrder` (`EntityReferenceRemap.hpp`). Prefab files do not store an
+order, so a prefab's instances list children by id.
 `SceneDocument::serializeEntities` writes chosen entities in exactly the form
 a `SceneEntityChange` holds, so a caller that knows which entities an edit
 touches can build `SceneChanges` without serializing the whole scene.

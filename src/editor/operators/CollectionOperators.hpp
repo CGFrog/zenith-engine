@@ -15,6 +15,7 @@
 //
 //   collection.new             create a collection, optionally linking the selection
 //   collection.delete          delete a collection (contents move to its parent)
+//   collection.rename          rename a collection
 //   collection.link            add the selected objects to a collection
 //   collection.unlink          remove the selected objects from a collection
 //   collection.set_flag        set a collection's visible, selectable, or renderable flag
@@ -32,6 +33,13 @@ struct NewCollectionProperties {
 
 struct CollectionProperties {
     uint32_t collection{0};
+};
+
+struct RenameCollectionProperties {
+    uint32_t collection{0};
+    // Leading and trailing whitespace is dropped; the rest must not be
+    // empty. Names need not be unique (collections are named by id).
+    std::string name;
 };
 
 struct CollectionFlagProperties {

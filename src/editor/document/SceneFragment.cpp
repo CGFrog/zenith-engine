@@ -217,6 +217,10 @@ SceneDocumentResult SceneFragment::paste(std::string_view fragment, Scene& scene
                                   });
             const uint64_t oldId = entity.at("id").get<uint64_t>();
             entity["id"] = remap.at(oldId);
+            remapChildOrder(entity, [&remap](uint64_t id) -> std::optional<uint64_t> {
+                const auto found = remap.find(id);
+                return found == remap.end() ? std::nullopt : std::optional(found->second);
+            });
             if (entity.at("parent").is_null()) {
                 entity["parent"] = parentId ? Json(parentId.value) : Json(nullptr);
                 // At the top level a root lands where its original was.
@@ -290,6 +294,10 @@ SceneDocumentResult SceneFragment::replicate(std::string_view fragment, const Sc
                                       });
                 const uint64_t oldId = entity.at("id").get<uint64_t>();
                 entity["id"] = remap.at(oldId);
+                remapChildOrder(entity, [&remap](uint64_t id) -> std::optional<uint64_t> {
+                    const auto found = remap.find(id);
+                    return found == remap.end() ? std::nullopt : std::optional(found->second);
+                });
                 if (!entity.at("parent").is_null()) {
                     entity["parent"] = remap.at(entity.at("parent").get<uint64_t>());
                 }
