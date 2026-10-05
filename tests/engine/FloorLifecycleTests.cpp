@@ -36,13 +36,15 @@ void testFloorCycles() {
         for (uint32_t cycle = 0; cycle < 3; ++cycle) {
             const std::string name = "cycle " + std::to_string(cycle) + ": ";
             session.spawnFloor(rooms, 3);
+            // Baked straight after the spawn, before anything updates world
+            // transforms: the rooms' placements are still only local.
+            const NavigationResult baked = session.services->bakeNavigation(session.scene);
             session.step();
             expect(session.rooms.size() == rooms, name + "every room spawns");
             expect(session.physics.stats().bodies == persistentBodies + rooms * bodiesPerRoom,
                    name + "every room's colliders become bodies");
             expect(session.activeVoices() == rooms, name + "every room's torch sounds");
 
-            const NavigationResult baked = session.services->bakeNavigation(session.scene);
             expect(baked.success && session.services->navigation(session.scene).baked(),
                    name + "the floor's navigation mesh bakes on demand: " + baked.error);
             // The rooms have no doorways, so the mesh is one island per room.

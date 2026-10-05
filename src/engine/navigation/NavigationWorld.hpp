@@ -69,6 +69,8 @@ struct NavigationGeometry {
 // The static, solid colliders on the mask's layers as triangles, shaped the
 // way PhysicsWorld builds their bodies: boxes, spheres and capsules as
 // meshes, triangle-mesh colliders from their MeshAsset's full-detail ranges.
+// Poses come from Scene::worldTransform, so world transforms need not be
+// updated first.
 NavigationGeometry gatherNavigationGeometry(const Scene& scene, const AssetManager& assets, uint32_t layerMask = ~0u);
 
 // A navigation mesh over a scene's static geometry, built with Recast and

@@ -73,7 +73,9 @@ Engine::Engine()
     : m_captureConfig(frameCaptureConfigFromEnvironment())
     , m_frameTasks(frameTaskConfiguration())
     , m_assets(&m_logger)
-    , m_audio(&m_logger) {}
+    , m_audio(&m_logger) {
+    m_scene.setLogChannel(m_log.withCategory("scene"));
+}
 
 bool Engine::init(const PhysicsWorldConfig& physicsConfig, const AudioConfig& audioConfig) {
     // Read before anything can fail so a strict run without a usable Vulkan

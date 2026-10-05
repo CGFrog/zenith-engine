@@ -21,11 +21,44 @@ Wraps an EnTT registry and defines the core ECS components:
 cycles. `instantiateModel` expands imported nodes into entities while preserving
 their hierarchy. `destroyEntity` recursively destroys descendants.
 `updateWorldTransforms` computes `world = parent.world * local` for the
-branches under entities marked with `markTransformDirty` (and, in an audit
-every frame in debug builds and every 300 calls otherwise, any entity whose
-local transform or parent changed without being marked). Its cost follows the
+branches under entities marked with `markTransformDirty`. Its cost follows the
 number of changed entities, not the scene's size: marking is constant time and
 each dirty branch is walked once per call.
+
+### Transforms from gameplay code
+
+EnTT stays public, but `Scene`'s transform helpers are the supported gameplay
+API for moving entities (`Scene.hpp`, implemented in `SceneTransforms.cpp`):
+
+- Setters write `TransformComponent::local` and mark the entity dirty:
+  `setLocalTransform`, `setPosition` (only the translation column changes),
+  `setRotation` and `setScale` (rebuilt from a TRS decomposition, which drops
+  shear), `translate` (an offset in the parent's space), and
+  `setWorldTransform` (converted to parent space through the parent's
+  resolved world transform).
+- Readers: `localTransform`, `localTrs`, `localPosition`, `localRotation`,
+  `localScale`, and `worldTransform`/`worldPosition`. The world readers
+  multiply the local transforms of the entity and its ancestors on demand, so
+  they are correct straight after a setter, before `updateWorldTransforms`,
+  and work on a `const Scene`; they cost one matrix product per ancestor.
+  `TransformComponent::world` is only current after `updateWorldTransforms`.
+- `TransformTrs.hpp` has the decomposition (`decomposeTrs`, `composeTrs`): the
+  translation column exactly, each basis column's length as scale (a mirrored
+  basis negates X), and the Gram-Schmidt orthonormalized basis as rotation.
+
+Writing `TransformComponent::local` through `registry()` is allowed for
+engine internals and bulk code, but it must be followed by
+`markTransformDirty(entity)`. A missed mark is caught by an audit that
+`updateWorldTransforms` runs on its first call and then every
+`transformAuditInterval()` calls (`defaultTransformAuditInterval`, 60, in
+Debug and Release alike; `setTransformAuditInterval(0)` turns it off). The
+audit runs after the marked branches are updated, so anything still out of
+date was changed without a mark: it counts it in
+`lastTransformUpdateStats().unmarked`, logs a warning naming the entity once
+per entity on the scene's log channel (`setLogChannel`; the engine passes its
+logger under the `scene` category, otherwise stderr), and updates the entity.
+A missed mark therefore shows as a warning and a delay of up to one interval
+in every build configuration, rather than being silently repaired in Debug.
 
 `findEntity` is a constant-time lookup in an id index that `Scene` keeps
 itself, since it is the only code that creates or destroys entities or writes

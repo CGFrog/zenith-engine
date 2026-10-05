@@ -50,17 +50,24 @@ and move the entity in `Slider.cpp`:
 #include <cmath>
 
 void Slider::onStart(BehaviourContext& context) {
-    m_start = glm::vec3(context.scene.registry().get<TransformComponent>(context.entity).local[3]);
+    m_start = context.scene.localPosition(context.entity);
 }
 
 void Slider::onUpdate(BehaviourContext& context) {
     m_time += context.deltaSeconds;
-    auto& transform = context.scene.registry().get<TransformComponent>(context.entity);
     const float offset = std::sin(m_time * speed) * distance;
-    transform.local[3] = glm::vec4(m_start + glm::vec3(offset, 0.0f, 0.0f), 1.0f);
-    context.scene.markTransformDirty(context.entity);
+    context.scene.setPosition(context.entity, m_start + glm::vec3(offset, 0.0f, 0.0f));
 }
 ```
+
+Move entities with `Scene`'s transform setters (`setPosition`,
+`setRotation`, `setScale`, `translate`, `setLocalTransform`,
+`setWorldTransform`): they record the change so the hierarchy updates. Read
+with `localPosition`, `localRotation`, `localScale`, and `worldTransform` or
+`worldPosition`, which are current even right after a setter. Writing
+`TransformComponent` through `registry()` instead needs a
+`scene.markTransformDirty(entity)` call afterwards; without one the entity
+moves late and the log warns about it.
 
 Change the targets' rigid bodies to **Kinematic** so physics follows the
 moved transform.

@@ -160,6 +160,8 @@ add_library(zenith_engine SHARED
     resources/ResourceLocator.cpp
     resources/ContentManifest.cpp
     scene/Scene.cpp
+scene/SceneTransforms.cpp
+scene/TransformTrs.cpp
     scene/ParticleEmitter.cpp
     scene/BuiltInComponentTypes.cpp
     scene/RenderComponentTypes.cpp

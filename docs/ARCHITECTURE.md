@@ -362,6 +362,14 @@ Zenith uses GLM column-major matrices and composes a hierarchy as
 `parentWorld * local`. Positions occupy the translation column. Positive Y is
 up; first-person forward maps toward negative Z after yaw is applied.
 
+`TransformComponent::local` is the authored state and `world` a cache that
+`Scene::updateWorldTransforms` refreshes. Gameplay code moves entities through
+`Scene`'s transform setters, which mark them dirty, and reads
+`Scene::worldTransform`, which resolves the parent chain on demand. Direct
+writes to `local` through the registry must call `markTransformDirty`; a
+periodic audit, identical in every build configuration, warns about and
+repairs a missed mark (see [Scene](engine/scene.md)).
+
 Physics decomposes world transforms into translation, rotation, and absolute
 scale. Scale is baked into collision shapes. Dynamic simulation writes
 translation and rotation back while preserving scale, converting the result to

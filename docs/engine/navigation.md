@@ -12,7 +12,9 @@ engine).
   into triangles, shaped as `PhysicsWorld` builds their bodies: boxes, and
   spheres and capsules as coarse meshes, all wound outward so Recast finds the
   upward faces; triangle-mesh colliders use their `MeshAsset`'s full-detail
-  ranges. Dynamic and kinematic bodies and sensors are left out.
+  ranges. Dynamic and kinematic bodies and sensors are left out. Collider
+  poses come from `Scene::worldTransform`, so a bake right after spawning or
+  moving entities sees them in place without a transform update first.
 - `bake` builds one tile covering the scene from `NavMeshBuildSettings`
   (cell size, the agent's height, radius, climb, and steepest slope, region
   and edge tuning) and replaces any previous mesh. It fails, leaving no mesh,

@@ -86,13 +86,7 @@ void Effects::flush(Scene& scene) {
                 reused = scene.findEntity(instance.root);
             }
             if (reused != entt::null) {
-                auto& transform = scene.registry().get<TransformComponent>(reused);
-                const Entity parent = scene.registry().get<RelationshipComponent>(reused).parent;
-                transform.local =
-                    parent != entt::null && scene.registry().valid(parent)
-                        ? glm::inverse(scene.registry().get<TransformComponent>(parent).world) * request.transform
-                        : request.transform;
-                scene.markTransformDirty(reused);
+                scene.setWorldTransform(reused, request.transform);
                 setEmitting(scene, reused, true, true);
                 play(scene, instance.root, pool, request.options.lifetime.value_or(instance.lifetime), true);
                 continue;
