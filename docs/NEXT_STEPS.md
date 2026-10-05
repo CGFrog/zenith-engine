@@ -436,8 +436,11 @@ runtime is planned, so sandboxing and instruction limits no longer apply.
       (`zenith_behaviours`, `zenith_game_module_host`).
 - [ ] Define the gameplay-facing API boundary: which engine types modules may
       use, without exposing EnTT, SDL, Vulkan, Jolt, or editor types.
-- [ ] Isolate a behaviour that throws, so it is disabled with a diagnostic
-      while the rest of the game keeps running.
+- [x] Isolate a behaviour that throws, so it is disabled with a diagnostic
+      while the rest of the game keeps running (`BehaviourScheduler::callHook`,
+      gameplay roadmap E7). Systems, timers, and command-buffer callbacks are
+      still unguarded; see the [roguelike readiness
+      review](ROGUELIKE_READINESS_REVIEW.md), Critical item 3.
 
 Exit criteria:
 
@@ -598,8 +601,12 @@ everything that follows and are small. Then begin Milestone 23 with baked
 irradiance probes, which close the largest visual gap.
 
 Milestone 20 continues in `GAMEPLAY_ROADMAP.md` (C++ Behaviours in game
-modules); its remaining items are the gameplay API boundary and error
-isolation.
+modules); its remaining item is the gameplay API boundary.
+
+Before the roguelike depends on the current design, work through the
+[roguelike readiness review](ROGUELIKE_READINESS_REVIEW.md): its CRITICAL items
+(runtime content creation, fast spawning, fault isolation, graceful limits,
+the transform API, and generation-preview foundations) come first.
 
 Networking, multiplayer prediction, editor collaboration, advanced vehicles
 and soft-body physics, and a stable native binary-plugin ABI remain later work

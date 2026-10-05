@@ -22,8 +22,9 @@ shows or hides each category, so noisy parts of the game can be muted.
 
 ## Draw debug shapes
 
-`GameServices::debugDraw()` draws lines and labels for one frame, in every
-viewport and in the game view. For example, draw the weapon's ray:
+`GameServices::debugDraw()` draws shapes and labels for one frame. Shapes show
+in every viewport and in the game view; labels are drawn only in the editor's
+viewports. For example, draw the weapon's ray:
 
 ```cpp
 context.services->debugDraw().line(origin, origin + forward * range, {.color = {1.0f, 0.2f, 0.2f, 1.0f}});

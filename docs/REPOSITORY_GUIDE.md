@@ -12,7 +12,9 @@ objectives and their measurement gates are in
 editor is in [Editor extensions](EDITOR_EXTENSIONS.md). The phased plan and
 status for end-to-end gameplay programming (engine gameplay services,
 Behaviours, the editor script workflow) is in
-[Gameplay roadmap](GAMEPLAY_ROADMAP.md).
+[Gameplay roadmap](GAMEPLAY_ROADMAP.md). The prioritised engine and editor
+gaps to close before the roguelike are in
+[Roguelike readiness review](ROGUELIKE_READINESS_REVIEW.md).
 
 ## Top level
 
