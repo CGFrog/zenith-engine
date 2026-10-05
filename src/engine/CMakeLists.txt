@@ -18,6 +18,7 @@ add_library(zenith_engine SHARED
     assets/Assets.cpp
     assets/ModelImporter.cpp
     assets/MeshOptimization.cpp
+    assets/MeshBuilder.cpp
     assets/ImageDecoder.cpp
     assets/ProductionAssetPipeline.cpp
     assets/CompressedTexture.cpp

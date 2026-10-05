@@ -29,6 +29,7 @@ zenith_add_test(zenith_animator SOURCES AnimatorTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_physics SOURCES PhysicsTests.cpp LIBS zenith_engine NEEDS_ASSETS)
 zenith_add_test(zenith_character_controller SOURCES CharacterControllerTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_navigation SOURCES NavigationTests.cpp LIBS zenith_engine)
+zenith_add_test(zenith_runtime_content SOURCES RuntimeContentTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_physics_queries SOURCES PhysicsQueryTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_system_scheduler SOURCES SystemSchedulerTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_behaviours SOURCES BehaviourTests.cpp LIBS zenith_engine)
@@ -158,6 +159,18 @@ zenith_add_test(zenith_render_capacity_vulkan_smoke EXECUTABLE zenith_render_cap
     SOURCES RenderCapacitySmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
     ENVIRONMENT ZENITH_SMOKE_FRAMES=20
     LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 180 PROCESSORS 2)
+# A runtime-created mesh, material and texture drawn with a material override
+# tint and a replacement material, checked in a captured frame; once on the
+# CPU-submitted path and once on the GPU-driven one.
+zenith_add_test(zenith_runtime_content_vulkan_smoke EXECUTABLE zenith_runtime_content_smoke_tests
+    SOURCES RuntimeContentSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
+    ENVIRONMENT ZENITH_CAPTURE_FRAME=12 ZENITH_WINDOW_SIZE=480x270
+    "ZENITH_CAPTURE_PATH=${PROJECT_BINARY_DIR}/test-temp/runtime_content_cpu.png"
+    LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
+zenith_add_test(zenith_runtime_content_gpu_driven_vulkan_smoke EXECUTABLE zenith_runtime_content_smoke_tests
+    ENVIRONMENT ZENITH_CAPTURE_FRAME=12 ZENITH_WINDOW_SIZE=480x270 ZENITH_FORCE_GPU_DRIVEN=1
+    "ZENITH_CAPTURE_PATH=${PROJECT_BINARY_DIR}/test-temp/runtime_content_gpu_driven.png"
+    LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
 
 # The benchmarks are run by hand for numbers; CTest only checks that they
 # complete and exit cleanly so they cannot silently rot.

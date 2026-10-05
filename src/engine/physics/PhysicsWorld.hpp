@@ -250,6 +250,11 @@ class PhysicsWorld {
     // type, never on the renderer. Fails before init or when a debug renderer
     // that is not a PhysicsWorld's owns Jolt's one per-process slot.
     PhysicsResult drawDebug(DebugDraw& output, const PhysicsDebugDrawOptions& options = {}) const;
+    // Triangle-mesh shapes held for reuse, one per (mesh, generation, scale):
+    // static mesh colliders with the same mesh and scale share one. Entries
+    // for meshes that are no longer live are dropped when the asset revision
+    // changes; shutdown releases them all.
+    size_t cachedMeshShapes() const;
     const PhysicsWorldConfig& config() const;
 
     const PhysicsStats& stats() const {

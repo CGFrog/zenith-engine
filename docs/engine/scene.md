@@ -13,6 +13,7 @@ Wraps an EnTT registry and defines the core ECS components:
 | `RelationshipComponent` | Parent entity plus an owned list of child entities. |
 | `ModelComponent` | Records the model instantiated at a root entity. |
 | `MeshRendererComponent` | Refers to CPU mesh data through a `MeshHandle`. |
+| `MaterialOverrideComponent` | Per-instance tint of a mesh renderer: base color, emission, roughness and metallic factors, and an optional runtime-only replacement material (see [Graphics passes](graphics-passes.md#material-overrides)). |
 | `CameraComponent` | Perspective projection settings and primary-camera selection. |
 | `ParticleEmitterComponent` | GPU particle emitter parameters (`ParticleEmitter.*`, with `validateParticleEmitter`). |
 

@@ -15,6 +15,7 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
+#include <utility>
 
 namespace {
 constexpr int maximumPathPolygons = 512;
@@ -37,6 +38,38 @@ bool decompose(const glm::mat4& matrix, Pose& pose) {
     pose.rotation = glm::normalize(pose.rotation);
     pose.scale = glm::abs(pose.scale);
     return true;
+}
+
+// The triangles of a mesh's full-detail ranges (as physics collides with),
+// indexing its vertices from firstVertex in geometry. flipWinding reverses
+// each triangle, for a mirroring transform.
+void appendMeshTriangles(NavigationGeometry& geometry, const MeshAsset& asset, uint32_t firstVertex, bool flipWinding) {
+    const auto add = [&](uint32_t a, uint32_t b, uint32_t c) {
+        const auto count = static_cast<uint32_t>(asset.vertices.size());
+        if (a < count && b < count && c < count) {
+            if (flipWinding) {
+                std::swap(b, c);
+            }
+            geometry.indices.insert(geometry.indices.end(), {firstVertex + a, firstVertex + b, firstVertex + c});
+        }
+    };
+    if (asset.indices.empty()) {
+        for (uint32_t index = 0; index + 2 < asset.vertices.size(); index += 3) {
+            add(index, index + 1, index + 2);
+        }
+    } else if (asset.primitives.empty()) {
+        for (size_t index = 0; index + 2 < asset.indices.size(); index += 3) {
+            add(asset.indices[index], asset.indices[index + 1], asset.indices[index + 2]);
+        }
+    } else {
+        for (const MeshPrimitive& primitive : asset.primitives) {
+            const size_t end = std::min<size_t>(static_cast<size_t>(primitive.firstIndex) + primitive.indexCount,
+                                                asset.indices.size());
+            for (size_t index = primitive.firstIndex; index + 2 < end; index += 3) {
+                add(asset.indices[index], asset.indices[index + 1], asset.indices[index + 2]);
+            }
+        }
+    }
 }
 
 class GeometryWriter {
@@ -121,30 +154,7 @@ class GeometryWriter {
         for (const Vertex& source : asset.vertices) {
             vertex(source.position * scale);
         }
-        const auto add = [&](uint32_t a, uint32_t b, uint32_t c) {
-            const auto count = static_cast<uint32_t>(asset.vertices.size());
-            if (a < count && b < count && c < count) {
-                triangle(first + a, first + b, first + c);
-            }
-        };
-        if (asset.indices.empty()) {
-            for (uint32_t index = 0; index + 2 < asset.vertices.size(); index += 3) {
-                add(index, index + 1, index + 2);
-            }
-        } else if (asset.primitives.empty()) {
-            for (size_t index = 0; index + 2 < asset.indices.size(); index += 3) {
-                add(asset.indices[index], asset.indices[index + 1], asset.indices[index + 2]);
-            }
-        } else {
-            // Only full-detail ranges, as for physics.
-            for (const MeshPrimitive& primitive : asset.primitives) {
-                const size_t end = std::min<size_t>(static_cast<size_t>(primitive.firstIndex) + primitive.indexCount,
-                                                    asset.indices.size());
-                for (size_t index = primitive.firstIndex; index + 2 < end; index += 3) {
-                    add(asset.indices[index], asset.indices[index + 1], asset.indices[index + 2]);
-                }
-            }
-        }
+        appendMeshTriangles(m_geometry, asset, first, false);
     }
 
   private:
@@ -199,6 +209,15 @@ NavigationGeometry gatherNavigationGeometry(const Scene& scene, const AssetManag
         }
     }
     return geometry;
+}
+
+void appendMeshGeometry(NavigationGeometry& geometry, const MeshAsset& mesh, const glm::mat4& transform) {
+    const auto first = static_cast<uint32_t>(geometry.vertices.size());
+    geometry.vertices.reserve(geometry.vertices.size() + mesh.vertices.size());
+    for (const Vertex& vertex : mesh.vertices) {
+        geometry.vertices.emplace_back(transform * glm::vec4(vertex.position, 1.0f));
+    }
+    appendMeshTriangles(geometry, mesh, first, glm::determinant(glm::mat3(transform)) < 0.0f);
 }
 
 class NavigationWorld::Impl {

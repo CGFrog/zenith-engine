@@ -85,6 +85,50 @@ ComponentType meshRendererComponentType() {
         .build();
 }
 
+ComponentType materialOverrideComponentType() {
+    using C = MaterialOverrideComponent;
+    // The replacement material handle is runtime-only and never saved; every
+    // saved field is optional and defaults to "no change".
+    return ComponentTypeBuilder<C>("material_override", "Material Override")
+        .category("Rendering")
+        .fields(Fields<C>()
+                    .add("base_color_factor", &C::baseColorFactor)
+                    .optional()
+                    .label("Base color")
+                    .color()
+                    .add("emissive", &C::emissive)
+                    .optional()
+                    .color()
+                    .add("emissive_strength", &C::emissiveStrength)
+                    .optional()
+                    .drag(0.05f, 0.0, 10000.0)
+                    .add("roughness_factor", &C::roughnessFactor)
+                    .optional()
+                    .label("Roughness")
+                    .drag(0.01f, 0.0, 10.0)
+                    .add("metallic_factor", &C::metallicFactor)
+                    .optional()
+                    .label("Metallic")
+                    .drag(0.01f, 0.0, 10.0))
+        .validate([](const C& values) {
+            const bool valid =
+                finiteNonNegative(values.baseColorFactor.r) && finiteNonNegative(values.baseColorFactor.g) &&
+                finiteNonNegative(values.baseColorFactor.b) && finiteNonNegative(values.baseColorFactor.a) &&
+                finiteNonNegative(values.emissive.r) && finiteNonNegative(values.emissive.g) &&
+                finiteNonNegative(values.emissive.b) && finiteNonNegative(values.emissiveStrength) &&
+                finiteNonNegative(values.roughnessFactor) && finiteNonNegative(values.metallicFactor);
+            return valid ? std::string{} : std::string("Material override factors must be finite and non-negative");
+        })
+        .sanitize([](C& values) {
+            values.baseColorFactor = glm::max(values.baseColorFactor, glm::vec4(0.0f));
+            values.emissive = glm::max(values.emissive, glm::vec3(0.0f));
+            values.emissiveStrength = std::max(values.emissiveStrength, 0.0f);
+            values.roughnessFactor = std::max(values.roughnessFactor, 0.0f);
+            values.metallicFactor = std::max(values.metallicFactor, 0.0f);
+        })
+        .build();
+}
+
 ComponentType cameraComponentType() {
     using C = CameraComponent;
     return ComponentTypeBuilder<C>("camera", "Camera")

@@ -29,11 +29,13 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <map>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -106,6 +108,67 @@ bool decomposeTransform(const glm::mat4& matrix, glm::vec3& translation, glm::qu
 glm::mat4 composeTransform(const glm::vec3& translation, const glm::quat& rotation, const glm::vec3& scale) {
     return glm::translate(glm::mat4(1.0f), translation) * glm::mat4_cast(rotation) * glm::scale(glm::mat4(1.0f), scale);
 }
+
+// Triangle-mesh shapes by (mesh, scale), so identical static mesh colliders
+// share one bounding-volume tree. Keys hold the mesh generation, so a
+// collected or recycled mesh never matches; entries for meshes that are no
+// longer live are dropped once the asset revision changes. Bodies keep their
+// own references, so dropping an entry never invalidates a body.
+class MeshShapeCache {
+  public:
+    JPH::RefConst<JPH::Shape> find(MeshHandle mesh, const glm::vec3& scale, const AssetManager& assets) {
+        prune(assets);
+        const auto found = m_shapes.find(key(mesh, scale));
+        return found != m_shapes.end() ? found->second : nullptr;
+    }
+
+    void insert(MeshHandle mesh, const glm::vec3& scale, JPH::RefConst<JPH::Shape> shape) {
+        m_shapes.insert_or_assign(key(mesh, scale), std::move(shape));
+    }
+
+    size_t size() const {
+        return m_shapes.size();
+    }
+
+    void clear() {
+        m_shapes.clear();
+        m_assetRevision = 0;
+    }
+
+    // Drops the entries of meshes that are no longer live; only scans after
+    // the asset revision changed.
+    void prune(const AssetManager& assets) {
+        if (assets.revision() == m_assetRevision) {
+            return;
+        }
+        m_assetRevision = assets.revision();
+        std::erase_if(m_shapes, [&](const auto& entry) {
+            return assets.mesh(MeshHandle{entry.first.index, entry.first.generation}) == nullptr;
+        });
+    }
+
+  private:
+    struct Key {
+        uint32_t index{0};
+        uint32_t generation{0};
+        // The scale in steps of 1e-5, so bodies whose decomposed scales differ
+        // only by rounding (rotated copies) share a shape.
+        std::array<int64_t, 3> scale{};
+
+        auto operator<=>(const Key&) const = default;
+    };
+
+    static int64_t quantize(float scale) {
+        return std::llround(static_cast<double>(scale) * 1.0e5);
+    }
+
+    static Key key(MeshHandle mesh, const glm::vec3& scale) {
+        return {mesh.index, mesh.generation, {quantize(scale.x), quantize(scale.y), quantize(scale.z)}};
+    }
+
+    std::map<Key, JPH::RefConst<JPH::Shape>> m_shapes;
+    uint64_t m_assetRevision{0};
+};
 } // namespace
 
 class PhysicsWorld::Impl {
@@ -437,6 +500,7 @@ class PhysicsWorld::Impl {
     std::unordered_set<Entity> rejectedCharacters;
     OverflowEpisode bodyCapacity;
     OverflowEpisode contactCapacity;
+    MeshShapeCache meshShapes;
 
     void forgetRejectedBody(Entity entity) {
         const auto rejected = rejectedBodies.find(entity);
@@ -509,6 +573,8 @@ void PhysicsWorld::shutdown() {
     }
 
     clear();
+    // Cached shapes are Jolt objects; release them while its runtime lives.
+    m_impl->meshShapes.clear();
     m_impl->system.reset();
     m_impl->jobs.reset();
     m_impl->tempAllocator.reset();
@@ -558,7 +624,7 @@ void PhysicsWorld::clear() {
 
 namespace {
 JPH::RefConst<JPH::Shape> createShape(const ColliderComponent& collider, const glm::vec3& scale,
-                                      const AssetManager& assets, std::string& error) {
+                                      const AssetManager& assets, MeshShapeCache& meshShapes, std::string& error) {
     return std::visit(
         [&](const auto& shape) -> JPH::RefConst<JPH::Shape> {
             using Shape = std::decay_t<decltype(shape)>;
@@ -589,6 +655,9 @@ JPH::RefConst<JPH::Shape> createShape(const ColliderComponent& collider, const g
                 if (!mesh) {
                     error = "Triangle mesh collider references an invalid mesh";
                     return nullptr;
+                }
+                if (JPH::RefConst<JPH::Shape> cached = meshShapes.find(shape.mesh, scale, assets)) {
+                    return cached;
                 }
                 JPH::TriangleList triangles;
                 auto addTriangle = [&](uint32_t a, uint32_t b, uint32_t c) {
@@ -628,6 +697,7 @@ JPH::RefConst<JPH::Shape> createShape(const ColliderComponent& collider, const g
                     error = result.GetError().c_str();
                     return nullptr;
                 }
+                meshShapes.insert(shape.mesh, scale, result.Get());
                 return result.Get();
             }
         },
@@ -721,7 +791,7 @@ PhysicsResult PhysicsWorld::refreshBodyFromWorld(Entity entity, Scene& scene, co
         return {.error = "Physics body transform cannot be decomposed"};
     }
     std::string error;
-    JPH::RefConst<JPH::Shape> shape = createShape(collider, scale, assets, error);
+    JPH::RefConst<JPH::Shape> shape = createShape(collider, scale, assets, m_impl->meshShapes, error);
     if (!shape) {
         return {.error = std::move(error)};
     }
@@ -975,6 +1045,7 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
     if (!m_impl->initialized) {
         return {.error = "Physics world is not initialized"};
     }
+    m_impl->meshShapes.prune(assets);
     scene.updateWorldTransforms();
 
     const auto transformsDone = std::chrono::steady_clock::now();
@@ -1452,6 +1523,10 @@ PhysicsResult PhysicsWorld::drawDebug(DebugDraw& output, const PhysicsDebugDrawO
     m_impl->system->DrawBodies(settings, renderer);
     renderer->setTarget(nullptr, options.depth);
     return {.success = true};
+}
+
+size_t PhysicsWorld::cachedMeshShapes() const {
+    return m_impl->meshShapes.size();
 }
 
 const PhysicsWorldConfig& PhysicsWorld::config() const {

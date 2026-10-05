@@ -63,3 +63,13 @@ struct MaterialTextureSlots {
 
 uint32_t materialLobeFlags(const MaterialAsset& material);
 MaterialRecord packMaterialRecord(const MaterialAsset& material, const MaterialTextureSlots& slots);
+
+struct MaterialOverrideComponent;
+
+// Whether the override's factors change a material at all (its replacement
+// material aside); the renderer gives only such overrides a record of their own.
+bool materialOverrideChangesFactors(const MaterialOverrideComponent& values);
+// The material an override draws: base color multiplied, emission added,
+// roughness and metallic multiplied and clamped to [0, 1]. Textures, alpha
+// mode and every other property stay the material's.
+MaterialAsset applyMaterialOverride(const MaterialAsset& material, const MaterialOverrideComponent& values);

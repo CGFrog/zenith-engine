@@ -38,7 +38,8 @@ SceneDocumentResult registerBuiltInComponentTypes(ComponentTypeRegistry& registr
     }
     for (ComponentType type :
          {characterControllerComponentType(), firstPersonCameraComponentType(), animatorComponentType(),
-          navAgentComponentType(), tagsComponentType(), audioListenerComponentType(), audioEmitterComponentType()}) {
+          navAgentComponentType(), tagsComponentType(), audioListenerComponentType(), audioEmitterComponentType(),
+          materialOverrideComponentType()}) {
         if (SceneDocumentResult result = registry.add(std::move(type)); !result) {
             return result;
         }
