@@ -89,8 +89,9 @@ struct SceneGizmoView {
 // Colliders are drawn from ColliderComponent, not PhysicsWorld::drawDebug:
 // the editor steps physics only in Play, so in Edit the physics world holds
 // no (or stale) bodies, and drawDebug cannot filter by selection or hide.
-// Shapes follow PhysicsWorld's body construction: centred on the entity,
-// rotated by its world rotation, sized by its world scale.
+// Shapes follow PhysicsWorld's body construction: at the entity, rotated by
+// its world rotation, moved and turned by the collider's offset
+// (colliderLocalTransform), sized by its world scale.
 void drawSceneGizmos(const SceneGizmoView& view, const SceneGizmoOverlays& overlays, DebugDraw& output);
 
 // The overlay colours as DebugDraw colours (the palette tokens).

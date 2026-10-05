@@ -19,7 +19,7 @@ constexpr const char* projectActionsFileName = "input_actions.json";
 constexpr uint32_t builtInLayerCount = 3;
 
 bool sameValues(const ProjectSettingsValues& first, const ProjectSettingsValues& second) {
-    return first.layers == second.layers && first.tags == second.tags &&
+    return first.layers == second.layers && first.tags == second.tags && first.navigation == second.navigation &&
            serializeInputActionMap(first.inputActions) == serializeInputActionMap(second.inputActions);
 }
 
@@ -74,7 +74,8 @@ ProjectConfigResult loadProjectSettingsValues(const std::filesystem::path& proje
     if (ProjectConfigResult loaded = loadProjectConfig(projectFile, project); !loaded) {
         return loaded;
     }
-    ProjectSettingsValues read{.layers = project.physicsLayerTable(), .tags = project.tags};
+    ProjectSettingsValues read{
+        .layers = project.physicsLayerTable(), .tags = project.tags, .navigation = project.navigationSettings()};
     if (ProjectConfigResult actions = loadProjectInputActions(project, read.inputActions); !actions) {
         return actions;
     }
@@ -93,6 +94,9 @@ ProjectConfigResult saveProjectSettingsValues(const std::filesystem::path& proje
     }
     project.physicsLayers = values.layers;
     project.tags = values.tags;
+    if (project.navigation || values.navigation != NavMeshBuildSettings{}) {
+        project.navigation = values.navigation;
+    }
     if (project.inputActions.empty() && !values.inputActions.actionNames().empty()) {
         project.inputActions = projectFile.parent_path() / projectActionsFileName;
     }
@@ -112,7 +116,23 @@ std::string validateProjectSettings(const ProjectSettingsValues& values) {
     if (const std::string problem = validateProjectTags(values.tags); !problem.empty()) {
         return "Tags: " + problem;
     }
+    if (const std::string problem = validateNavMeshBuildSettings(values.navigation); !problem.empty()) {
+        return "Navigation: " + problem;
+    }
     return {};
+}
+
+std::optional<ProjectSettingsTab> projectSettingsTab(std::string_view key) {
+    constexpr std::array keys{std::pair{"physics_layers", ProjectSettingsTab::PhysicsLayers},
+                              std::pair{"input_actions", ProjectSettingsTab::InputActions},
+                              std::pair{"tags", ProjectSettingsTab::Tags},
+                              std::pair{"navigation", ProjectSettingsTab::Navigation}};
+    for (const auto& [name, tab] : keys) {
+        if (key == name) {
+            return tab;
+        }
+    }
+    return std::nullopt;
 }
 
 void ProjectSettingsWindow::open(ProjectSettingsValues values, InputActionMap moduleActions) {
@@ -174,7 +194,8 @@ std::optional<ProjectSettingsValues> ProjectSettingsWindow::draw(bool canApply, 
 std::optional<ProjectSettingsValues> ProjectSettingsWindow::drawContents(bool canApply, const std::string& reason) {
     constexpr std::array tabs{std::pair{ProjectSettingsTab::PhysicsLayers, "Physics Layers"},
                               std::pair{ProjectSettingsTab::InputActions, "Input Actions"},
-                              std::pair{ProjectSettingsTab::Tags, "Tags"}};
+                              std::pair{ProjectSettingsTab::Tags, "Tags"},
+                              std::pair{ProjectSettingsTab::Navigation, "Navigation"}};
     if (ImGui::BeginTabBar("##ProjectSettingsTabs")) {
         for (const auto& [tab, label] : tabs) {
             const bool select = m_selectRequestedTab && m_requestedTab == tab;
@@ -189,6 +210,9 @@ std::optional<ProjectSettingsValues> ProjectSettingsWindow::drawContents(bool ca
                     break;
                 case ProjectSettingsTab::Tags:
                     drawTags();
+                    break;
+                case ProjectSettingsTab::Navigation:
+                    drawNavigation();
                     break;
                 }
                 ImGui::EndTabItem();
@@ -433,6 +457,73 @@ void ProjectSettingsWindow::drawActionDetails(const std::string& action) {
     }
     if (changed) {
         setAction(actions, action, type, clamp, std::move(bindings));
+    }
+}
+
+void ProjectSettingsWindow::drawNavigation() {
+    NavMeshBuildSettings& settings = m_draft.navigation;
+    ImGui::TextWrapped("How navigation meshes are built: the editor's Bake Navigation Mesh preview, and the game's "
+                       "own bake when it plays (GameServices::setDefaultNavigationSettings).");
+
+    struct Setting {
+        const char* label;
+        float NavMeshBuildSettings::* value;
+        float speed;
+        float minimum;
+        float maximum;
+        const char* format;
+        const char* tooltip;
+    };
+
+    constexpr std::array agent{Setting{"Agent height", &NavMeshBuildSettings::agentHeight, 0.01f, 0.01f, 100.0f,
+                                       "%.2f m", "The clearance an agent needs overhead"},
+                               Setting{"Agent radius", &NavMeshBuildSettings::agentRadius, 0.01f, 0.0f, 100.0f,
+                                       "%.2f m", "How far the mesh keeps from walls"},
+                               Setting{"Agent max climb", &NavMeshBuildSettings::agentMaxClimb, 0.01f, 0.0f, 100.0f,
+                                       "%.2f m", "The tallest step an agent walks up"},
+                               Setting{"Agent max slope", &NavMeshBuildSettings::agentMaxSlopeDegrees, 0.5f, 0.0f,
+                                       89.9f, "%.1f deg", "The steepest ground an agent walks on"}};
+    constexpr std::array detail{
+        Setting{"Cell size", &NavMeshBuildSettings::cellSize, 0.005f, 0.01f, 10.0f, "%.3f m",
+                "Horizontal voxel size; smaller follows the geometry closer and bakes slower"},
+        Setting{"Cell height", &NavMeshBuildSettings::cellHeight, 0.005f, 0.01f, 10.0f, "%.3f m",
+                "Vertical voxel size"},
+        Setting{"Region minimum area", &NavMeshBuildSettings::regionMinimumArea, 0.5f, 0.0f, 10000.0f, "%.0f cells",
+                "Smaller islands are dropped"},
+        Setting{"Region merge area", &NavMeshBuildSettings::regionMergeArea, 0.5f, 0.0f, 10000.0f, "%.0f cells",
+                "Smaller regions merge into their neighbours"},
+        Setting{"Edge max length", &NavMeshBuildSettings::edgeMaxLength, 0.1f, 0.0f, 1000.0f, "%.1f m", nullptr},
+        Setting{"Edge max error", &NavMeshBuildSettings::edgeMaxError, 0.01f, 0.01f, 100.0f, "%.2f", nullptr},
+        Setting{"Detail sample distance", &NavMeshBuildSettings::detailSampleDistance, 0.1f, 0.0f, 100.0f, "%.1f",
+                nullptr},
+        Setting{"Detail sample max error", &NavMeshBuildSettings::detailSampleMaxError, 0.1f, 0.0f, 100.0f, "%.1f",
+                nullptr}};
+    const auto drawSettings = [&settings](std::span<const Setting> group) {
+        for (const Setting& setting : group) {
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::DragFloat(setting.label, &(settings.*setting.value), setting.speed, setting.minimum, setting.maximum,
+                             setting.format, ImGuiSliderFlags_AlwaysClamp);
+            if (setting.tooltip != nullptr) {
+                ImGui::SetItemTooltip("%s", setting.tooltip);
+            }
+        }
+    };
+    ImGui::SeparatorText("Agent");
+    drawSettings(agent);
+    ImGui::SeparatorText("Walkable Layers");
+    ImGui::TextDisabled("Static colliders on these layers are walked on.");
+    for (uint32_t layer = 0; layer < m_draft.layers.size(); ++layer) {
+        ImGui::PushID(static_cast<int>(layer));
+        bool walkable = (settings.layerMask & (1u << layer)) != 0;
+        if (ImGui::Checkbox(m_draft.layers.names[layer].c_str(), &walkable)) {
+            settings.layerMask = walkable ? settings.layerMask | (1u << layer) : settings.layerMask & ~(1u << layer);
+        }
+        ImGui::PopID();
+    }
+    ImGui::SeparatorText("Mesh Detail");
+    drawSettings(detail);
+    if (widgets::Button("Reset to Defaults")) {
+        settings = NavMeshBuildSettings{};
     }
 }
 

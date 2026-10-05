@@ -8,9 +8,16 @@ render view, and draws Blender-style chrome over its image as ImGui child
 windows, so clicks on it never reach picking, the gizmo, or the camera: a
 header with View (regions, camera view), Shading, Overlays, and Gizmos menus,
 the `T` tool shelf on the left, and the `N` sidebar on the right with Item
-(active transform), Tool (transform tool and snapping), and View (camera field
-of view, clip planes, fly speed) tabs plus the tabs added to every viewport
-with `ViewportRegistry::addSidebarTab`.
+(active transform), Tool (transform tool and snapping), View (camera field
+of view, clip planes, fly speed), and Navigation tabs plus the tabs added to
+every viewport with `ViewportRegistry::addSidebarTab`. The Navigation tab
+(`viewport/NavigationSidebarTab`) bakes and clears the preview navigation
+mesh (`navigation.bake`, `navigation.clear`, also in Object > Navigation),
+shows its stats and the project settings it bakes with, opens them
+(`project.settings {tab: navigation}`), toggles the viewport's **Navigation
+Mesh** overlay (`overlays.navigationMesh`, which gates the preview's drawing
+and is saved with the other overlays), and in Play shows the game's mesh and
+agent count through `GameServices::navigationIfBaked`, which never bakes.
 
 `panels/ViewportRegistry` is the session-owned record of the viewports. A
 viewport registers in its constructor and unregisters in its destructor; it
@@ -58,7 +65,8 @@ aspect (the active primary camera highlighted, a selected one out to its far
 plane, the camera being looked through skipped), collider shapes from
 `ColliderComponent` (physics only steps in Play, so the editor does not use
 `PhysicsWorld::drawDebug`; shapes follow the body construction with world
-scale baked in), reflection probe, decal (oriented, scaled, with a -Y
+scale baked in and the collider's offset applied through
+`colliderLocalTransform`), reflection probe, decal (oriented, scaled, with a -Y
 projection arrow) and irradiance volume (axis-aligned) bounds, world-space
 selection bounds, and name labels. It has no ImGui, takes `SceneGizmoOverlays`
 (each category `Off`, `Selected`, or `All`; colliders and names default to the
@@ -81,6 +89,45 @@ channel hides it in every view, game views included, and is not saved.
 CPU; `tests/editor/SceneGizmoCaptureTests.cpp` is the strict-validation smoke
 test and the `scene_gizmos` reference capture.
 
+
+Play's debugging overlays. In Play and Simulate the Overlays menu's Play
+section (also View > Overlays in the main menu, `debugOverlayItems`) turns
+on overlays that look at the running game rather than the authored
+components: **Physics Shapes** (`PhysicsWorld::drawDebug`), **Contacts** (the
+last step's contact points and normals), **Characters** (character capsules,
+green grounded with the ground normal, blue airborne), and **Nav Agents**
+(each agent's radius, crowd velocity and path end, yellow for a partial path
+and red for a failed one); **Navigation Mesh** then shows the game's own mesh
+(`GameServices::navigationIfBaked`, which never bakes) instead of the
+preview. `viewport/RuntimeDebugDraw` records them without ImGui
+(`recordRuntimeDebug`), `ViewportPanel::recordRuntimeOverlays` calls it every
+Play frame whatever **Show in Play Mode** says, game views included, and the
+flags are saved with the other overlays. They start off; colours are the
+palette's `overlayContact`, `overlayCharacter*`, and `overlayNav*` tokens.
+
+Collider editing. The inspector's collider editor
+(`ComponentEditors::drawCollider`) switches the shape type in a Shape combo,
+keeping its size (`convertColliderShape`: a box's largest half extent becomes
+a sphere's radius, a capsule keeps the box's height and wider side, and so
+on), edits the offset position and rotation (Euler degrees), and gives a
+triangle-mesh collider a combo of the entity's model meshes
+(`colliderMeshChoices`; Triangle Mesh is unavailable without one). While the
+Colliders overlay is not Off, `viewport/ColliderHandles` draws handles on the
+active object's collider: a square on each box face, on a sphere's radius
+along each axis, and on a capsule's radius and the tips of its ends, placed
+with `colliderLocalTransform`. Dragging one moves it along its outward axis
+(the mouse ray's nearest point on that line,
+`colliderHandleAxisParameter`): symmetric by default, so the shape grows on
+both sides and stays centred, and one-sided with Ctrl, which grows it by half
+the distance and moves the offset after the dragged side
+(`dragColliderHandle`; sizes stay at least 1 mm). The drag is one undo step,
+captured at the press and committed at the release like the gizmo; Esc or a
+right click cancels it. The transform gizmo takes the mouse first, a hovered
+or dragged handle blocks picking, and the handles are skipped in game views
+and during modal transforms (which cancel a drag).
+`tests/editor/ColliderToolsTests.cpp` covers the shape switch through the
+inspector, the mesh choices, the handle placement and drag maths, and a drag's
+undo and cancel headless.
 
 `src/editor/viewport/` holds the viewport's selection tools. A left click runs
 `view3d.select` (Shift extends, a miss clears unless extending; Alt runs

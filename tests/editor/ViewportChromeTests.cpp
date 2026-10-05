@@ -253,6 +253,20 @@ void testOverlayOperatorsAndAreaState() {
            "Play-mode scene overlays are toggled like any overlay");
     expect(!fixture.history.canUndo(), "overlay operators should not record undo steps");
 
+    expect(overlays.navigationMesh &&
+               static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"navigation_mesh"})")) &&
+               !overlays.navigationMesh,
+           "the navigation mesh preview is shown by default and toggled like any overlay");
+    expect(!overlays.physicsShapes && !overlays.contacts && !overlays.characters && !overlays.navAgents,
+           "Play's debugging overlays start off");
+    for (const char* overlay : {"physics_shapes", "contacts", "characters", "nav_agents"}) {
+        expect(static_cast<bool>(
+                   fixture.invoke("view3d.overlay_toggle", std::string(R"({"overlay":")") + overlay + R"("})")),
+               "Play's debugging overlays toggle like any overlay");
+    }
+    expect(overlays.physicsShapes && overlays.contacts && overlays.characters && overlays.navAgents,
+           "each debugging overlay turned on");
+
     // The overlays travel with the area.
     overlays.scene.names = OverlayScope::All;
     overlays.scene.selectionBounds = false;
@@ -262,7 +276,8 @@ void testOverlayOperatorsAndAreaState() {
     restored.restoreAreaState(saved);
     const ViewportOverlays& copy = restored.chrome().overlays;
     expect(copy.scene == overlays.scene && copy.grid == overlays.grid && copy.sceneInPlay == overlays.sceneInPlay &&
-               copy.gizmo == overlays.gizmo,
+               copy.gizmo == overlays.gizmo && copy.navigationMesh == overlays.navigationMesh && copy.physicsShapes &&
+               copy.contacts && copy.characters && copy.navAgents,
            "a viewport's area state should round-trip its overlays");
     ViewportPanel defaults(otherRegistry);
     defaults.restoreAreaState("not json");

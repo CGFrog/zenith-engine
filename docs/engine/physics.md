@@ -13,6 +13,20 @@ Jolt shape is created. Triangle meshes reference a `MeshAsset`, imported or
 created at runtime (`AssetManager::createMesh`), and are limited to static
 bodies.
 
+A collider can sit away from its entity's origin: `offsetPosition` (in the
+entity's local axes) and `offsetRotation`. `colliderLocalTransform(collider,
+scale)` is the one convention for where the shape sits in its body (the
+entity's world position and rotation, unscaled): the offset position is
+multiplied by the entity's world scale, then the offset rotation turns the
+shape, whose dimensions are scaled on its own axes as without an offset.
+`PhysicsWorld` wraps such a shape in a Jolt `RotatedTranslatedShape` (outside
+the mesh shape cache, so a cached mesh shape stays shared),
+`gatherNavigationGeometry` places its triangles the same way, and so does the
+editor's collider gizmo; `tests/editor/SceneGizmoDrawTests.cpp` checks that
+the three agree. The `collider` component is schema version 2: it writes
+`"offset": {"position": [x, y, z], "rotation": [x, y, z, w]}` only when the
+shape is moved or turned; version 1 documents have none and load unchanged.
+
 ## `src/engine/physics/PhysicsWorld.*`
 
 Owns Jolt through a private implementation. Each step discovers entities with
@@ -145,7 +159,10 @@ table lacks behaves as Dynamic. In Jolt, each body's object layer is its index
 with a moving bit, so a layer may hold static and moving bodies. `refreshBody` rebuilds a body after collider or body
 settings change. Native Jolt accessors are deliberate advanced escape hatches.
 `drawDebug` records collider wireframes and other body diagnostics into a
-`DebugDraw`. The `layer` fields of `rigid_body` and `character_controller`
+`DebugDraw`, or into one channel of it (the `DebugDrawRecorder` overload).
+Each `ContactEvent` also carries `point`, a world-space point on the first
+body where they touch (the first point of Jolt's manifold; zero for End),
+which orders contacts of one pair after the other keys. The `layer` fields of `rigid_body` and `character_controller`
 carry the `physicsLayerNameList` presentation hint
 (`Fields::nameList`), so the editor's inspector chooses a layer by the
 project's names.

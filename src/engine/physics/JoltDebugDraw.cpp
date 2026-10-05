@@ -13,13 +13,13 @@ glm::vec4 toGlm(JPH::ColorArg color) {
 } // namespace
 
 void JoltDebugDraw::DrawLine(JPH::RVec3Arg from, JPH::RVec3Arg to, JPH::ColorArg color) {
-    if (m_target != nullptr) {
+    if (m_target) {
         m_target->line(toGlm(from), toGlm(to), {.color = toGlm(color), .depth = m_depth});
     }
 }
 
 void JoltDebugDraw::DrawText3D(JPH::RVec3Arg position, const std::string_view& text, JPH::ColorArg color, float) {
-    if (m_target != nullptr) {
+    if (m_target) {
         m_target->label(toGlm(position), std::string(text), toGlm(color));
     }
 }

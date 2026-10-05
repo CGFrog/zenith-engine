@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 struct ApplicationContext;
 class ViewportPanel;
@@ -120,8 +121,10 @@ class EditorWindowCommands {
     // Opens the New Behaviour, Component, or System dialog
     // (module.new_behaviour and the others).
     virtual void openNewCodeDialog(GeneratedCodeKind kind) = 0;
-    // Opens Project Settings on the project file's current values.
-    virtual void openProjectSettings(ApplicationContext& context) = 0;
+    // Opens Project Settings on the project file's current values, showing
+    // the tab named tab ("physics_layers", "input_actions", "tags",
+    // "navigation"); empty or unknown keeps the window's last tab.
+    virtual void openProjectSettings(ApplicationContext& context, std::string_view tab) = 0;
 
   protected:
     ~EditorWindowCommands() = default;

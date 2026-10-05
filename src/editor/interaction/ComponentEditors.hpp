@@ -7,8 +7,10 @@
 
 #include <glm/glm.hpp>
 
+#include <cstdint>
 #include <span>
 #include <string>
+#include <vector>
 
 struct EditableTransform {
     glm::vec3 translation{0.0f};
@@ -33,7 +35,33 @@ glm::mat4 composeTransform(const EditableTransform& transform);
 std::span<const FieldDescriptor> editableTransformFields();
 
 bool drawTransform(TransformComponent& component);
-bool drawCollider(ColliderComponent& component);
+
+// A collider's shape type, in ColliderShape's variant order.
+enum class ColliderShapeKind : uint8_t {
+    Box,
+    Sphere,
+    Capsule,
+    TriangleMesh,
+};
+
+// A mesh a triangle-mesh collider may use, named for the inspector.
+struct ColliderMeshChoice {
+    MeshHandle mesh;
+    std::string name;
+};
+
+// The meshes of the entity's model (its own mesh renderer, and every mesh
+// node of the model it instantiates or belongs to), each once, named after
+// its model node.
+std::vector<ColliderMeshChoice> colliderMeshChoices(const Scene& scene, const AssetManager& assets, Entity entity);
+// shape as another kind of shape, keeping its size: a box's largest half
+// extent becomes a sphere's radius, a capsule keeps the box's height
+// including its caps, and so on. A triangle mesh takes mesh; a shape made
+// from one takes the defaults' size.
+ColliderShape convertColliderShape(const ColliderShape& shape, ColliderShapeKind kind, MeshHandle mesh);
+// The shape type (Triangle Mesh only when meshes is not empty), its size or
+// mesh (one of meshes), and the offset position and rotation (Euler degrees).
+bool drawCollider(ColliderComponent& component, std::span<const ColliderMeshChoice> meshes);
 bool drawAnimation(AnimationComponent& component, const ModelAsset* model);
 bool drawMorphWeights(MorphWeightsComponent& component);
 // Applies requested per-axis probe counts clamped to 1..maximumIrradianceProbesPerAxis;

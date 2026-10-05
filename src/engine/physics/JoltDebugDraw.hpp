@@ -14,6 +14,8 @@
 
 #include "engine/graphics/DebugDraw.hpp"
 
+#include <optional>
+
 // Forwards Jolt's debug rendering (PhysicsSystem::DrawBodies and friends) into
 // a DebugDraw: lines and triangle edges become debug lines and 3D text becomes
 // labels. Jolt colours are treated as display-referred.
@@ -25,8 +27,9 @@
 // PhysicsWorld draws through. Use from one thread at a time.
 class JoltDebugDraw final : public JPH::DebugRendererSimple {
   public:
-    // Primitives go to `target` (null drops them) with the given depth mode.
-    void setTarget(DebugDraw* target, DebugDepth depth) {
+    // Primitives go to `target` (nullopt drops them) with the given depth
+    // mode.
+    void setTarget(std::optional<DebugDrawRecorder> target, DebugDepth depth) {
         m_target = target;
         m_depth = depth;
     }
@@ -35,6 +38,6 @@ class JoltDebugDraw final : public JPH::DebugRendererSimple {
     void DrawText3D(JPH::RVec3Arg position, const std::string_view& text, JPH::ColorArg color, float height) override;
 
   private:
-    DebugDraw* m_target{nullptr};
+    std::optional<DebugDrawRecorder> m_target;
     DebugDepth m_depth{DebugDepth::Tested};
 };

@@ -232,6 +232,7 @@ std::unique_ptr<ApplicationScene> EditorApplication::createSession() {
         .inputActions = std::move(projectActions),
         .inputActionsError = actionsLoaded ? std::string{} : actionsLoaded.error,
         .physicsLayers = m_project.physicsLayerTable(),
+        .navigation = m_project.navigationSettings(),
         .play = m_play,
         // The session publishes its policy every frame and resets it
         // when it unloads, so a session that failed to load or was

@@ -94,6 +94,9 @@ struct EditorProjectServices {
     // The project's collision layers, which the session gives the physics
     // world when it loads.
     PhysicsLayerTable physicsLayers{PhysicsLayerTable::defaults()};
+    // How the project bakes navigation meshes: navigation.bake's preview and
+    // Play's sessions (GameServices::setDefaultNavigationSettings).
+    NavMeshBuildSettings navigation;
     // The game executable and process factory for the Standalone target.
     EditorPlayServices play;
     // Told the session's mouse capture policy every frame, and
@@ -207,7 +210,7 @@ class EditorSession final : public ApplicationScene,
     void resetActiveWorkspace() override;
     void requestModuleReload() override;
     void openNewCodeDialog(GeneratedCodeKind kind) override;
-    void openProjectSettings(ApplicationContext& context) override;
+    void openProjectSettings(ApplicationContext& context, std::string_view tab) override;
 
     // EditorPrefabModeCommands (EditorPrefabMode.cpp)
     bool prefabEditActive() const override;
@@ -353,6 +356,8 @@ class EditorSession final : public ApplicationScene,
     // The main menu bar (EditorMainMenu.cpp) and the status bar
     // (EditorStatusBar.cpp).
     void drawMainMenu(ApplicationContext& context);
+    // View > Overlays: the active viewport's debugging overlays.
+    void drawDebugOverlaysMenu(ApplicationContext& context);
     void handleGlobalShortcuts(ApplicationContext& context);
     void drawStatusBar(const RenderStats& stats);
     void drawPlayModePill() const;
@@ -562,8 +567,10 @@ class EditorSession final : public ApplicationScene,
     // created by their types (EditorAreaTypes.hpp, EditorAreas.cpp).
     // Build and Package; declared before the Build panel, which shows it.
     PackageRunner m_packageRunner{makeProcessPackageStepRunner()};
-    // The preview navigation mesh navigation.bake builds and the viewports draw.
+    // The preview navigation mesh navigation.bake builds and the viewports
+    // draw, and the project's settings it and Play bake with.
     NavigationWorld m_navigationPreview;
+    NavMeshBuildSettings m_navigationSettings;
     BuildPanel m_buildPanel{m_settings.tools(), m_projectBuild, &m_packageRunner};
     // Shows the engine log, diagnostics, and operator history.
     InfoPanel m_infoPanel{m_operatorRunner.history()};

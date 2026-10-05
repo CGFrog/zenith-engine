@@ -119,7 +119,7 @@ class NoSessionCommands final : public EditorDocumentCommands,
 
     void openNewCodeDialog(GeneratedCodeKind) override {}
 
-    void openProjectSettings(ApplicationContext&) override {}
+    void openProjectSettings(ApplicationContext&, std::string_view) override {}
 
     bool prefabEditActive() const override {
         return false;
@@ -148,6 +148,7 @@ struct OperatorFamilyFixture : EditorTestFixture {
     PreferencesWindow preferences;
     PackageRunner packageRunner{makeProcessPackageStepRunner()};
     NavigationWorld navigationPreview;
+    NavMeshBuildSettings navigationSettings;
     EditorToolSettings tools;
     ProjectBuild build{tools, diagnostics};
     WatchList watches;
@@ -172,6 +173,7 @@ struct OperatorFamilyFixture : EditorTestFixture {
                 .build = build,
                 .watches = watches,
                 .navigationPreview = navigationPreview,
+                .navigationSettings = navigationSettings,
                 .tools = tools,
                 .projectFile = {},
                 .revealAsset = {},

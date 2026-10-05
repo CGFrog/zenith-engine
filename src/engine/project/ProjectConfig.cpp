@@ -6,7 +6,9 @@
 #include "engine/scene/SceneDocument.hpp"
 
 #include <algorithm>
+#include <array>
 #include <fstream>
+#include <limits>
 #include <nlohmann/json.hpp>
 #include <system_error>
 
@@ -132,6 +134,67 @@ ProjectConfigResult readTags(const Json& document, std::vector<std::string>& tag
     return {.success = true};
 }
 
+// The navigation settings' JSON keys, in NavMeshBuildSettings order.
+struct NavigationField {
+    const char* key;
+    float NavMeshBuildSettings::* value;
+};
+
+constexpr std::array<NavigationField, 12> navigationFields{{
+    {"cellSize", &NavMeshBuildSettings::cellSize},
+    {"cellHeight", &NavMeshBuildSettings::cellHeight},
+    {"agentHeight", &NavMeshBuildSettings::agentHeight},
+    {"agentRadius", &NavMeshBuildSettings::agentRadius},
+    {"agentMaxClimb", &NavMeshBuildSettings::agentMaxClimb},
+    {"agentMaxSlopeDegrees", &NavMeshBuildSettings::agentMaxSlopeDegrees},
+    {"regionMinimumArea", &NavMeshBuildSettings::regionMinimumArea},
+    {"regionMergeArea", &NavMeshBuildSettings::regionMergeArea},
+    {"edgeMaxLength", &NavMeshBuildSettings::edgeMaxLength},
+    {"edgeMaxError", &NavMeshBuildSettings::edgeMaxError},
+    {"detailSampleDistance", &NavMeshBuildSettings::detailSampleDistance},
+    {"detailSampleMaxError", &NavMeshBuildSettings::detailSampleMaxError},
+}};
+
+ProjectConfigResult readNavigation(const Json& document, std::optional<NavMeshBuildSettings>& navigation) {
+    navigation.reset();
+    const auto found = document.find("navigation");
+    if (found == document.end()) {
+        return {.success = true};
+    }
+    if (!found->is_object()) {
+        return {.error = "Project field 'navigation' must be an object of navigation mesh settings"};
+    }
+    NavMeshBuildSettings settings;
+    for (const NavigationField& field : navigationFields) {
+        if (const auto value = found->find(field.key); value != found->end()) {
+            if (!value->is_number()) {
+                return {.error = "Project navigation setting '" + std::string(field.key) + "' must be a number"};
+            }
+            settings.*field.value = value->get<float>();
+        }
+    }
+    if (const auto mask = found->find("layerMask"); mask != found->end()) {
+        if (!mask->is_number_unsigned() || mask->get<uint64_t>() > std::numeric_limits<uint32_t>::max()) {
+            return {.error = "Project navigation setting 'layerMask' must be a 32-bit unsigned number"};
+        }
+        settings.layerMask = mask->get<uint32_t>();
+    }
+    if (const std::string error = validateNavMeshBuildSettings(settings); !error.empty()) {
+        return {.error = "Invalid project navigation settings: " + error};
+    }
+    navigation = settings;
+    return {.success = true};
+}
+
+Json writeNavigation(const NavMeshBuildSettings& settings) {
+    Json output = Json::object();
+    for (const NavigationField& field : navigationFields) {
+        output[field.key] = settings.*field.value;
+    }
+    output["layerMask"] = settings.layerMask;
+    return output;
+}
+
 Json writePhysicsLayers(const PhysicsLayerTable& table) {
     Json layers = Json::array();
     for (uint32_t index = 0; index < table.size(); ++index) {
@@ -243,6 +306,11 @@ ProjectConfigResult loadProjectConfig(const std::filesystem::path& path, Project
             return result;
         }
     }
+    if (version >= 7) {
+        if (ProjectConfigResult result = readNavigation(document, loaded.navigation); !result) {
+            return result;
+        }
+    }
 
     config = std::move(loaded);
     return {.success = true};
@@ -278,6 +346,10 @@ PhysicsLayerTable ProjectConfig::physicsLayerTable() const {
     return physicsLayers.value_or(PhysicsLayerTable::defaults());
 }
 
+NavMeshBuildSettings ProjectConfig::navigationSettings() const {
+    return navigation.value_or(NavMeshBuildSettings{});
+}
+
 ProjectConfigResult saveProjectConfig(const std::filesystem::path& path, const ProjectConfig& config) {
     if (config.displayName.empty()) {
         return {.error = "Project display name must not be empty"};
@@ -289,6 +361,11 @@ ProjectConfigResult saveProjectConfig(const std::filesystem::path& path, const P
     }
     if (const std::string error = validateProjectTags(config.tags); !error.empty()) {
         return {.error = "Invalid project tags: " + error};
+    }
+    if (config.navigation) {
+        if (const std::string error = validateNavMeshBuildSettings(*config.navigation); !error.empty()) {
+            return {.error = "Invalid project navigation settings: " + error};
+        }
     }
 
     const std::filesystem::path projectPath = std::filesystem::absolute(path).lexically_normal();
@@ -361,6 +438,9 @@ ProjectConfigResult saveProjectConfig(const std::filesystem::path& path, const P
     }
     if (!config.tags.empty()) {
         document["tags"] = config.tags;
+    }
+    if (config.navigation) {
+        document["navigation"] = writeNavigation(*config.navigation);
     }
     output << document.dump(2) << '\n';
     if (!output) {

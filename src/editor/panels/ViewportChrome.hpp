@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -90,6 +91,16 @@ struct ViewportOverlays {
     // Whether the scene gizmos also draw in Play mode. Even then a viewport
     // looking through a scene camera shows the game's image untouched.
     bool sceneInPlay{false};
+    // The editor's preview navigation mesh (navigation.bake) in Edit mode,
+    // drawn with the scene gizmos; the game's own mesh in Play and Simulate.
+    bool navigationMesh{true};
+    // Play and Simulate only (editor/viewport/RuntimeDebugDraw): the running
+    // game's physics bodies, contacts, characters, and navigation agents,
+    // drawn whether or not the scene overlays show in Play.
+    bool physicsShapes{false};
+    bool contacts{false};
+    bool characters{false};
+    bool navAgents{false};
 };
 
 // One overlay of ViewportOverlays, as named by the overlay operators and the
@@ -109,7 +120,23 @@ enum class ViewportOverlay : uint8_t {
     SelectionBounds,
     SceneInPlay,
     Cursor3D,
+    NavigationMesh,
+    PhysicsShapes,
+    Contacts,
+    Characters,
+    NavAgents,
 };
+
+// An on/off debugging overlay as the main View > Overlays menu lists it.
+struct DebugOverlayItem {
+    ViewportOverlay overlay;
+    // The view3d.overlay_toggle option.
+    const char* key;
+    const char* label;
+};
+
+// The navigation and physics overlays, in menu order.
+std::span<const DebugOverlayItem> debugOverlayItems();
 
 // The overlay's on/off flag, or null for a scoped (Off/Selected/All) overlay.
 bool* viewportOverlayFlag(ViewportOverlays& overlays, ViewportOverlay overlay);

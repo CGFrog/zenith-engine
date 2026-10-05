@@ -1,5 +1,6 @@
 #pragma once
 
+#include "NavMeshBuildSettings.hpp"
 #include "engine/graphics/DebugDraw.hpp"
 #include "engine/scene/Scene.hpp"
 
@@ -13,26 +14,6 @@
 class AssetManager;
 class dtNavMesh;
 class NavigationCrowd;
-
-// How a navigation mesh is built, in metres and degrees. The agent values
-// describe the walkers the mesh is for: where they fit, what they climb.
-struct NavMeshBuildSettings {
-    float cellSize{0.2f};
-    float cellHeight{0.1f};
-    float agentHeight{1.8f};
-    float agentRadius{0.4f};
-    float agentMaxClimb{0.35f};
-    float agentMaxSlopeDegrees{45.0f};
-    // Smallest region kept, and size below which regions merge, in cells.
-    float regionMinimumArea{8.0f};
-    float regionMergeArea{20.0f};
-    float edgeMaxLength{12.0f};
-    float edgeMaxError{1.3f};
-    float detailSampleDistance{6.0f};
-    float detailSampleMaxError{1.0f};
-    // The physics layers whose static colliders are walkable geometry.
-    uint32_t layerMask{~0u};
-};
 
 struct NavigationResult {
     bool success{false};

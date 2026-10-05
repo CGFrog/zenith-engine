@@ -14,7 +14,9 @@ engine).
   upward faces; triangle-mesh colliders use their `MeshAsset`'s full-detail
   ranges. Dynamic and kinematic bodies and sensors are left out. Collider
   poses come from `Scene::worldTransform`, so a bake right after spawning or
-  moving entities sees them in place without a transform update first.
+  moving entities sees them in place without a transform update first; a
+  collider's offset places its shape as physics does
+  (`colliderLocalTransform`, see [Physics](physics.md)).
 - `appendMeshGeometry` adds a mesh's full-detail triangles placed by a
   transform (reversing the winding for a mirroring one), so a game can bake
   generated geometry, such as a runtime floor mesh without a collider, with
@@ -22,7 +24,10 @@ engine).
 - `bake` builds one tile covering the scene from `NavMeshBuildSettings`
   (cell size, the agent's height, radius, climb, and steepest slope, region
   and edge tuning) and replaces any previous mesh. It fails, leaving no mesh,
-  when nothing is walkable.
+  when nothing is walkable. The settings live in their own header
+  (`NavMeshBuildSettings.hpp`, with `validateNavMeshBuildSettings`), so a
+  project's manifest can hold them (`ProjectConfig::navigation`, see
+  [Projects](projects.md)).
 - `findPath` returns the corners of the shortest path, start included, and
   says how far it gets (`NavPath`). `Complete` ends at the end point.
   `Partial` means the end cannot be reached (another island, or no way round
@@ -87,6 +92,13 @@ session's mesh and crowd (`GameServices::navigationCrowd`, with
 `GameServices::bakeNavigation(scene)` rebakes the mesh after a game builds or
 replaces its level, and `bakeNavigation(geometry)` bakes it from triangles the
 game assembled itself (`gatherNavigationGeometry` plus `appendMeshGeometry`).
+Without settings, both and the lazy bake use the session's
+`defaultNavigationSettings()`: the project's, which the game's runtime
+(`ProjectApplication`) and the editor's Play set with
+`setDefaultNavigationSettings` when gameplay starts (the defaults until
+then). `navigationIfBaked()` and the const `navigationCrowd()` are for tools
+that only look, such as the editor's overlays: they never bake, and
+`navigationIfBaked` is null until a bake has run.
 When the first bake happens is the session's
 `NavigationBakePolicy`:
 - `Lazy` (the default, which hand-authored levels rely on):
@@ -102,5 +114,8 @@ agent, for example in the system that builds the floor. Under `Lazy`, enemies
 spawned before the game's own bake would make the agent system bake the
 half-built floor first, and the game's bake would be a second one. A 40-room floor (2,880 input triangles) bakes in about
 26 ms in Release (`tests/engine/FloorBenchmark.cpp`).
-In the editor, `navigation.bake` builds a preview mesh of the edit scene that
-every viewport draws, and `navigation.clear` removes it.
+In the editor, `navigation.bake` builds a preview mesh of the edit scene with
+the project's settings (edited in Project Settings > Navigation), which
+viewports draw while their Navigation Mesh overlay is on, and
+`navigation.clear` removes it. Both are in Object > Navigation and the
+viewport sidebar's Navigation tab (see [Viewports](../editor/viewport.md)).
