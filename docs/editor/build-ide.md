@@ -23,6 +23,13 @@ previous build's entries (source `Build`) in `EditorDiagnostics`.
 - A successful build reloads the module once the editor is back in Edit mode
   (see [Game module hosting](modules.md)); while Play or Simulate runs, the
   status bar shows **Reload pending - stop to apply**.
+- When a project opens and its module cannot load, the session starts the
+  project's own build at once (`EditorSession::loadGameModule`), so a new
+  project, or one whose module was built against another engine
+  (`ZENITH_MODULE_API_VERSION`), needs no manual first build before Play.
+  The module may be missing or refused; either way the Info panel says the
+  module is building, and it loads when the build finishes. A
+  user-configured `build.command` is not run automatically.
 `project/CompilerOutputParser` turns MSVC/MSBuild, GCC/Clang, CMake, and linker
 lines into located, deduplicated diagnostics. Clicking a located line in the
 Build or Diagnostics panel runs `ide.command` through `project/ExternalEditor`,

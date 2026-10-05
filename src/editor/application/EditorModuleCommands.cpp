@@ -79,7 +79,17 @@ void EditorSession::loadGameModule() {
     if (m_gameModulePath.empty()) {
         return;
     }
-    reportGameModule(m_moduleHost.load(m_gameModulePath, m_document));
+    const GameModuleHostResult result = m_moduleHost.load(m_gameModulePath, m_document);
+    reportGameModule(result);
+    // A new project's module is not built yet, and one built against another
+    // engine version is refused. Build it now with the project's own build,
+    // so Play works without a manual first build; a successful build reloads
+    // the module. A user-configured build command is left to the user.
+    if (!result && m_projectBuild.usesProjectBuild()) {
+        m_projectBuild.request();
+        m_diagnostics.add(EditorDiagnosticSeverity::Info, gameModuleDiagnosticSource,
+                          "Building the game module; it loads, and Play runs the game, when the build finishes.");
+    }
 }
 
 void EditorSession::updateGameModule(ApplicationContext& context, const InputState& input, float deltaSeconds) {
