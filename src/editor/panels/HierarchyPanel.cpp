@@ -62,6 +62,8 @@ EditorIcon assetIcon(EditorAssetKind kind) {
         return EditorIcon::Scene;
     case EditorAssetKind::Script:
         return EditorIcon::Script;
+    case EditorAssetKind::Material:
+        return EditorIcon::Environment;
     case EditorAssetKind::Model:
         break;
     }

@@ -19,6 +19,8 @@ enum class EditorAssetKind {
     Prefab,
     // C and C++ source and headers: the game module's code.
     Script,
+    // A standalone material file (.zmat, engine/assets/MaterialAssetFile.hpp).
+    Material,
 };
 
 // Paths in records and folders are absolute and lexically normal, so they can
