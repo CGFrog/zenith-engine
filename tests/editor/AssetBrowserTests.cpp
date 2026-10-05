@@ -324,6 +324,84 @@ void testPanel(const std::filesystem::path& content, const std::filesystem::path
     }
 }
 
+// The game's source folder: scripts and folders are listed without .meta
+// sidecars, open through the browser's openScript action, and scenes cannot
+// be created there. A script in the asset root is listed like any asset.
+void testSourceRoot(const std::filesystem::path& directory) {
+    const std::filesystem::path content = directory / "assets";
+    const std::filesystem::path source = directory / "src";
+    std::filesystem::create_directories(content);
+    std::filesystem::create_directories(source / "gameplay");
+    std::filesystem::create_directories(source / ".vs");
+    writeFile(content / "Tool.cpp", "int tool;");
+    writeFile(source / "GameModule.cpp", "int module;");
+    writeFile(source / "gameplay" / "Door.hpp", "#pragma once");
+    writeFile(source / "CMakeLists.txt", "add_library(game MODULE)");
+    writeFile(source / ".vs" / "Hidden.cpp", "int hidden;");
+
+    expect(editorAssetKind("a.CPP") == EditorAssetKind::Script && editorAssetKind("a.h") == EditorAssetKind::Script &&
+               editorAssetKind("a.inl") == EditorAssetKind::Script && !editorAssetKind("CMakeLists.txt"),
+           "C and C++ sources and headers should be scripts");
+
+    AssetCatalog catalog(content, content, {.watchFiles = false, .sourceRoot = source});
+    expect(static_cast<bool>(catalog.refresh()), "a catalog with a source root should scan");
+    expect(catalog.roots().size() == 2 && catalog.roots().back() == normalizedCatalogPath(source),
+           "the source root should be listed after the asset root");
+    const EditorAssetRecord* module = catalog.findAsset(normalizedCatalogPath(source / "GameModule.cpp"));
+    const EditorAssetRecord* door = catalog.findAsset(normalizedCatalogPath(source / "gameplay" / "Door.hpp"));
+    expect(module != nullptr && module->kind == EditorAssetKind::Script && module->byteSize == 11 &&
+               module->guid == AssetGuid{},
+           "source scripts should be listed with their size and no GUID");
+    expect(door != nullptr && door->relativePath == std::filesystem::path("gameplay") / "Door.hpp" &&
+               hasFolder(catalog, source / "gameplay"),
+           "nested scripts and folders should be listed relative to the source root");
+    expect(!catalog.findAsset(normalizedCatalogPath(source / "CMakeLists.txt")) &&
+               !catalog.findAsset(normalizedCatalogPath(source / ".vs" / "Hidden.cpp")),
+           "other files and hidden folders in the source root should not be listed");
+    expect(!pathExists(source / "GameModule.cpp.meta") && !pathExists(source / "gameplay" / "Door.hpp.meta"),
+           "no .meta sidecars should be written beside code");
+    const EditorAssetRecord* tool = catalog.findAsset(normalizedCatalogPath(content / "Tool.cpp"));
+    expect(tool != nullptr && tool->kind == EditorAssetKind::Script && tool->guid != AssetGuid{},
+           "a script in the asset root should be an identified asset");
+    expect(catalog.inSourceRoot(normalizedCatalogPath(source / "gameplay")) &&
+               !catalog.inSourceRoot(normalizedCatalogPath(content)),
+           "inSourceRoot should tell source folders from asset folders");
+    expect(catalog.databaseFor(normalizedCatalogPath(source / "GameModule.cpp")) == nullptr,
+           "the source root should have no asset database");
+
+    AssetCatalog overlapping(directory, directory, {.watchFiles = false, .sourceRoot = source});
+    expect(overlapping.roots().size() == 1 && !overlapping.inSourceRoot(normalizedCatalogPath(source)),
+           "a source root inside the asset root should be ignored");
+
+    writeFile(source / "gameplay" / "Lamp.cpp", "int lamp;");
+    expect(static_cast<bool>(catalog.refresh()) &&
+               catalog.findAsset(normalizedCatalogPath(source / "gameplay" / "Lamp.cpp")) != nullptr,
+           "a rescan should list new scripts");
+
+    EditorDiagnostics diagnostics;
+    ProjectAssets project(content, content, directory / "asset-browser.json",
+                          {.watchFiles = false, .sourceRoot = source});
+    AssetBrowserPanel panel(project);
+    panel.refresh(diagnostics);
+    std::vector<std::filesystem::path> opened;
+    const AssetBrowserActions actions{
+        .openScript = [&opened](const std::filesystem::path& path) { opened.push_back(path); }};
+    expect(panel.openAsset(source / "GameModule.cpp", actions) && opened.size() == 1 &&
+               opened.front() == normalizedCatalogPath(source / "GameModule.cpp"),
+           "opening a script should hand it to openScript");
+    expect(!panel.openAsset(source / "CMakeLists.txt", actions) &&
+               !panel.openAsset(source / "gameplay" / "Door.hpp", {}),
+           "unlisted files and scripts without an action should not open");
+    panel.navigateTo(source / "gameplay", diagnostics);
+    panel.createScene(diagnostics);
+    expect(hasErrorContaining(diagnostics, "source folder") &&
+               !pathExists(source / "gameplay" / "New Scene.zenith-scene"),
+           "scenes should not be created in the source folder");
+    HeadlessImGui imgui;
+    drawAllModes(imgui, panel, diagnostics, actions);
+    expect(opened.size() == 1, "drawing without input should not open scripts");
+}
+
 // Two browsers over one ProjectAssets: each keeps its own view, favourites are
 // shared, only the primary remembers its view, both follow each other's
 // renames, and a change on disk is dispatched exactly once.
@@ -463,6 +541,7 @@ int main() {
     testSettings(directory);
     testPanel(content, scenes, directory / "settings");
     testSharedProject(directory / "shared");
+    testSourceRoot(directory / "source");
 
     std::filesystem::remove_all(directory, error);
     if (failures != 0) {

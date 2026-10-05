@@ -8,6 +8,7 @@
 #include "editor/menus/DefaultMenus.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/EditorOperatorFamilies.hpp"
+#include "editor/project/CodeGenerator.hpp"
 #include "editor/project/FastProjectBuild.hpp"
 #include "editor/settings/SimulateSystemSettings.hpp"
 #include "editor/theme/EditorTheme.hpp"
@@ -46,7 +47,11 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_keymap(defaultEditorKeymap())
     , m_keymapPath(settingsDirectory / "keymap.json")
     , m_appearance(appearance)
-    , m_projectAssets(std::move(assetRoot), sceneRoot, settingsDirectory / "asset-browser.json")
+    // The game module's scripts are listed beside the assets.
+    , m_projectAssets(std::move(assetRoot), sceneRoot, settingsDirectory / "asset-browser.json",
+                      {.sourceRoot = projectServices.projectFile.empty()
+                                         ? std::filesystem::path{}
+                                         : projectSourceDirectory(projectServices.projectFile)})
     , m_renderSettings(std::move(renderSettings))
     , m_componentLayoutPath(settingsDirectory / "component-inspector.json")
     , m_workspacesPath(settingsDirectory / "workspaces.json")

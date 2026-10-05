@@ -19,6 +19,8 @@ struct AssetBrowserActions {
     std::function<void(const std::filesystem::path&)> openScene;
     // Re-imports a model; called by the Reload Model button.
     std::function<void(const std::filesystem::path&)> reloadModel;
+    // Opens a script in the user's IDE.
+    std::function<void(const std::filesystem::path&)> openScript;
 };
 
 // Whether a browser's folder and view mode are remembered across sessions.
@@ -37,7 +39,8 @@ enum class AssetBrowserRole {
 // and file operations (create, rename, move, duplicate, move to trash, show in
 // the OS file browser). Models drag into the viewport or inspector as
 // "ZENITH_MODEL_ASSET" payloads, and any item drags onto a folder to move it;
-// scenes open on double-click.
+// scenes open on double-click, and scripts (from the project's source root
+// too, when the service lists one) open in the IDE.
 //
 // The panel is one view over a shared ProjectAssets service, which owns the
 // catalog, watchers, thumbnails, change dispatch, favourites, and the file
@@ -95,6 +98,9 @@ class AssetBrowserPanel final : public EditorPanel {
     // Search text matches file names in the current folder and below.
     void setSearchText(std::string text);
     void setKindShown(EditorAssetKind kind, bool shown);
+    // Opens a file the way a double-click does: a scene in the editor, a
+    // script in the IDE. Returns whether actions had a way to open it.
+    bool openAsset(const std::filesystem::path& item, const AssetBrowserActions& actions);
 
     // File commands, run through the service. Each reports its outcome
     // through diagnostics and selects what it produced.
@@ -176,7 +182,7 @@ class AssetBrowserPanel final : public EditorPanel {
     std::filesystem::path m_currentFolder;
     std::filesystem::path m_selected;
     std::string m_search;
-    std::array<bool, 5> m_shownKinds{true, true, true, true, true};
+    std::array<bool, 6> m_shownKinds{true, true, true, true, true, true};
     std::optional<DeferredCommand> m_deferred;
     // The last service move this view has followed.
     uint64_t m_followedItemMove{0};

@@ -96,6 +96,10 @@ constexpr std::array<IconBitmap, editorIconCount> bitmaps{{
     {iconPurple,
      {"....oo....", "....o3o...", "....o33o..", "....o1o3o.", "....o1oo3o", "....o1o.oo", ".oooo1o...", "o3331o....",
       "o2211o....", ".oooo....."}},
+    // Script: a page of code with a folded corner.
+    {iconGreen,
+     {".oooooo...", ".o3333oo..", ".o3333o3o.", ".o3333ooo.", ".o1ww111o.", ".o11www1o.", ".o1ww111o.", ".o111ww1o.",
+      ".o222222o.", ".oooooooo."}},
     // Collection: a lidded box.
     {iconWhite,
      {"..........", ".oooooooo.", "o33333333o", "oooooooooo", "o31111113o", "o31oooo13o", "o31111113o", "o21111112o",

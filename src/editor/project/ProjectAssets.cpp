@@ -258,6 +258,10 @@ std::optional<std::filesystem::path> ProjectAssets::createFolder(const std::file
 
 std::optional<std::filesystem::path> ProjectAssets::createScene(const std::filesystem::path& folder,
                                                                 EditorDiagnostics& diagnostics) {
+    if (m_catalog.inSourceRoot(normalizedCatalogPath(folder))) {
+        diagnostics.reportError("Scenes cannot be created in the source folder; use the asset or scene folders.");
+        return std::nullopt;
+    }
     const ProjectFileResult result = createProjectScene(folder, m_catalog.roots().front());
     reportOutcome(diagnostics, result.success,
                   result ? "Created scene '" + utf8PathText(result.path) + "'." : result.error);
@@ -300,7 +304,7 @@ std::optional<std::filesystem::path> ProjectAssets::moveItem(const std::filesyst
     AssetDatabase* database = m_catalog.databaseFor(source);
     if (database != m_catalog.databaseFor(target)) {
         diagnostics.reportError("Cannot move '" + utf8PathText(source) +
-                                "': items cannot move between the asset and scene roots.");
+                                "': items cannot move between the asset, scene, and source roots.");
         return std::nullopt;
     }
     ProjectFileResult result = moveProjectItem(source, target, database);

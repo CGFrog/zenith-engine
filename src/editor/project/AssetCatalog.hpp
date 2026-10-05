@@ -17,6 +17,8 @@ enum class EditorAssetKind {
     Audio,
     Scene,
     Prefab,
+    // C and C++ source and headers: the game module's code.
+    Script,
 };
 
 // Paths in records and folders are absolute and lexically normal, so they can
@@ -80,6 +82,13 @@ struct AssetCatalogOptions {
     FileWatcherOptions watcher;
     // Seeds the asset databases' GUID generation for reproducible tests.
     std::optional<uint64_t> guidSeed;
+    // The game's source folder, listed after the other roots for its scripts
+    // and folders. It is watched but has no asset database, so no `.meta`
+    // sidecars are written beside code and its records have no GUID; its
+    // changes are not reported, only relisted. Empty for none; ignored when
+    // it overlaps the asset or scene root (scripts inside those are listed
+    // like any other asset).
+    std::filesystem::path sourceRoot;
 };
 
 // The project's authored files: supported assets and every folder under the
@@ -110,8 +119,13 @@ class AssetCatalog {
     const std::vector<EditorAssetRecord>& assets() const;
     // Every existing folder, sorted by absolute path; roots included.
     const std::vector<EditorAssetFolder>& folders() const;
-    // The asset root first, then the scene root when it differs.
+    // The asset root first, then the scene root when it differs, then the
+    // source root when there is one.
     const std::vector<std::filesystem::path>& roots() const;
+
+    // Whether absolutePath (normalized) is the source root or lies inside it.
+    // Only scripts are listed there.
+    bool inSourceRoot(const std::filesystem::path& absolutePath) const;
 
     const EditorAssetFolder* findFolder(const std::filesystem::path& absolutePath) const;
     const EditorAssetRecord* findAsset(const std::filesystem::path& absolutePath) const;
@@ -122,7 +136,8 @@ class AssetCatalog {
     // The asset root's database, shared so scene documents can resolve GUIDs.
     // It stays the same object for the catalog's lifetime.
     std::shared_ptr<const AssetDatabase> assetDatabase() const;
-    // The database that tracks absolutePath, or null when no root contains it.
+    // The database that tracks absolutePath, or null when no root with a
+    // database contains it (outside the project, or in the source root).
     AssetDatabase* databaseFor(const std::filesystem::path& absolutePath);
 
     // Folds the outcome of an operation on a database returned by databaseFor
@@ -142,7 +157,11 @@ class AssetCatalog {
 
     AssetCatalogOptions m_options;
     std::vector<std::filesystem::path> m_roots;
-    std::vector<std::unique_ptr<Root>> m_databaseRoots;
+    // Roots that are scanned and watched: one per root not nested in another.
+    // The source root has no database.
+    std::vector<std::unique_ptr<Root>> m_trackedRoots;
+    // Empty when there is no source root or it was ignored.
+    std::filesystem::path m_sourceRoot;
     std::vector<EditorAssetRecord> m_assets;
     std::vector<EditorAssetFolder> m_folders;
 };

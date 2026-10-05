@@ -9,6 +9,7 @@
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -31,9 +32,9 @@ constexpr const char* revealLabel = "Show in File Manager";
 constexpr const char* trashName = "trash";
 #endif
 // In EditorAssetKind order, so a kind's value indexes the type filter.
-constexpr std::array<EditorAssetKind, 5> filterableKinds{EditorAssetKind::Model, EditorAssetKind::Texture,
-                                                         EditorAssetKind::Audio, EditorAssetKind::Scene,
-                                                         EditorAssetKind::Prefab};
+constexpr std::array<EditorAssetKind, 6> filterableKinds{EditorAssetKind::Model,  EditorAssetKind::Texture,
+                                                         EditorAssetKind::Audio,  EditorAssetKind::Scene,
+                                                         EditorAssetKind::Prefab, EditorAssetKind::Script};
 
 EditorIcon assetIcon(const EditorAssetRecord* asset) {
     if (asset == nullptr) {
@@ -50,6 +51,8 @@ EditorIcon assetIcon(const EditorAssetRecord* asset) {
         return EditorIcon::Scene;
     case EditorAssetKind::Prefab:
         return EditorIcon::Components;
+    case EditorAssetKind::Script:
+        return EditorIcon::Script;
     }
     return EditorIcon::Empty;
 }
@@ -66,6 +69,8 @@ const char* kindName(EditorAssetKind kind) {
         return "Scene";
     case EditorAssetKind::Prefab:
         return "Prefab";
+    case EditorAssetKind::Script:
+        return "Script";
     }
     return "Asset";
 }
@@ -291,6 +296,22 @@ void AssetBrowserPanel::setKindShown(EditorAssetKind kind, bool shown) {
     m_shownKinds[static_cast<size_t>(kind)] = shown;
 }
 
+bool AssetBrowserPanel::openAsset(const std::filesystem::path& item, const AssetBrowserActions& actions) {
+    const EditorAssetRecord* asset = m_project.catalog().findAsset(normalizedCatalogPath(item));
+    if (asset == nullptr) {
+        return false;
+    }
+    if (asset->kind == EditorAssetKind::Scene && actions.openScene) {
+        actions.openScene(asset->absolutePath);
+        return true;
+    }
+    if (asset->kind == EditorAssetKind::Script && actions.openScript) {
+        actions.openScript(asset->absolutePath);
+        return true;
+    }
+    return false;
+}
+
 void AssetBrowserPanel::createFolder(EditorDiagnostics& diagnostics) {
     select(m_project.createFolder(m_currentFolder, diagnostics));
 }
@@ -329,6 +350,11 @@ AssetBrowserActions AssetBrowserPanel::sessionActions(EditorContext& context) {
         .reloadModel =
             [&context](const std::filesystem::path& path) {
                 reloadProjectModel(context.app.assets, context.diagnostics, path);
+            },
+        // The runner reports a failed launch.
+        .openScript =
+            [&context](const std::filesystem::path& path) {
+                context.invoke("module.open_source", nlohmann::json{{"file", utf8PathText(path)}}.dump());
             },
     };
 }
@@ -683,8 +709,8 @@ void AssetBrowserPanel::handleEntryInteraction(const BrowserEntry& entry, bool p
         if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
             if (folder) {
                 m_deferred = DeferredCommand{CommandKind::Navigate, entry.path};
-            } else if (entry.asset->kind == EditorAssetKind::Scene && actions.openScene) {
-                actions.openScene(entry.path);
+            } else {
+                openAsset(entry.path, actions);
             }
         }
     }
@@ -704,6 +730,12 @@ void AssetBrowserPanel::handleEntryInteraction(const BrowserEntry& entry, bool p
     }
     if (ImGui::BeginPopupContextItem("##ItemMenu")) {
         m_selected = entry.path;
+        if (!folder && entry.asset->kind == EditorAssetKind::Script && actions.openScript) {
+            if (ImGui::MenuItem("Open in IDE")) {
+                actions.openScript(entry.path);
+            }
+            ImGui::Separator();
+        }
         drawItemMenu(entry.path, folder);
         ImGui::EndPopup();
     }
@@ -752,7 +784,8 @@ void AssetBrowserPanel::drawFolderMenu() {
     if (ImGui::MenuItem("New Folder")) {
         m_deferred = DeferredCommand{CommandKind::CreateFolder, m_currentFolder};
     }
-    if (ImGui::MenuItem("New Scene")) {
+    // The source folder lists only scripts, so a scene there would vanish.
+    if (ImGui::MenuItem("New Scene", nullptr, false, !m_project.catalog().inSourceRoot(m_currentFolder))) {
         m_deferred = DeferredCommand{CommandKind::CreateScene, m_currentFolder};
     }
 }
@@ -767,6 +800,10 @@ void AssetBrowserPanel::drawSelectedAsset(const AssetBrowserActions& actions) {
     if (asset != nullptr && asset->kind == EditorAssetKind::Model && actions.reloadModel &&
         widgets::Button("Reload Model")) {
         actions.reloadModel(asset->absolutePath);
+    }
+    if (asset != nullptr && asset->kind == EditorAssetKind::Script && actions.openScript &&
+        widgets::Button("Open in IDE")) {
+        actions.openScript(asset->absolutePath);
     }
 }
 

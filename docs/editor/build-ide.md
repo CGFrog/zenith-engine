@@ -58,7 +58,9 @@ Build or Diagnostics panel runs `ide.command` through `project/ExternalEditor`,
 which tokenizes the template and substitutes `{file}`, `{line}`, and `{column}`
 into arguments (never a shell); the default is
 `code -g "{file}:{line}:{column}"`. These settings live in the editor's
-`settings.ini` and are editable in the Build panel and **Edit > Preferences**.
+`settings.ini` and are editable in the Build panel and **Edit > Preferences**. The
+same command opens any file through `module.open_source {file, line}`
+("Open in IDE"), which the Asset Browser runs for scripts.
 
 ## Code generators
 

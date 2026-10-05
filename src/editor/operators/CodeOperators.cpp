@@ -7,6 +7,7 @@
 #include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/project/ExternalEditor.hpp"
 #include "editor/project/ProjectBuild.hpp"
+#include "editor/project/ProjectFileOperations.hpp"
 #include "editor/settings/EditorSettings.hpp"
 
 #include <array>
@@ -89,6 +90,31 @@ Operator editScriptOperator(const std::shared_ptr<const CodeOperatorServices>& s
                 }};
 }
 
+Operator openSourceOperator(const std::shared_ptr<const CodeOperatorServices>& services) {
+    return {.id = "module.open_source",
+            .label = "Open in IDE",
+            .description = "Open a source file in the IDE set in Preferences > External IDE",
+            .properties = OperatorProperties::make(OpenSourceProperties{},
+                                                   std::move(Fields<OpenSourceProperties>()
+                                                                 .add("file", &OpenSourceProperties::file)
+                                                                 .add("line", &OpenSourceProperties::line))),
+            .execute = [services](OperatorContext&, OperatorProperties& properties) {
+                const auto* values = properties.get<OpenSourceProperties>();
+                if (values == nullptr) {
+                    return OperatorResult::failed("Operator properties have the wrong type");
+                }
+                if (values->file.empty()) {
+                    return OperatorResult::failed("No file to open");
+                }
+                const EditorSourceLocation location{.file = pathFromUtf8Text(values->file), .line = values->line};
+                if (const ChildProcessResult opened = openInExternalEditor(services->tools.ideCommand, location);
+                    !opened) {
+                    return OperatorResult::failed("Could not open the IDE (ide.command): " + opened.error);
+                }
+                return OperatorResult::finished();
+            }};
+}
+
 Operator dialogOperator(const std::shared_ptr<const CodeOperatorServices>& services, GeneratedCodeKind kind,
                         std::string id, std::string label, std::string description) {
     return {.id = std::move(id),
@@ -130,6 +156,7 @@ OperatorRegistrationResult registerCodeOperators(OperatorRegistry& registry, Cod
                          return generateCode(*shared, context, *values);
                      }},
         editScriptOperator(shared),
+        openSourceOperator(shared),
     };
     for (Operator& op : operators) {
         if (OperatorRegistrationResult result = registry.add(std::move(op)); !result) {

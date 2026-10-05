@@ -376,6 +376,10 @@ bool insertAboveMarker(std::string& text, std::string_view marker, std::string_v
     return false;
 }
 
+std::filesystem::path projectSourceDirectory(const std::filesystem::path& projectFile) {
+    return projectFile.parent_path() / "src";
+}
+
 CodeGenerationResult generateModuleCode(const std::filesystem::path& projectFile,
                                         const std::filesystem::path& snippetDirectory,
                                         const CodeGenerationRequest& request) {
@@ -390,7 +394,7 @@ CodeGenerationResult generateModuleCode(const std::filesystem::path& projectFile
     const std::string_view suffix = kindSuffix(request.kind);
     const std::string baseName = typeName.substr(0, typeName.size() - suffix.size());
     const std::string moduleIdentifier = projectFile.stem().string();
-    const std::filesystem::path sourceDirectory = projectFile.parent_path() / "src";
+    const std::filesystem::path sourceDirectory = projectSourceDirectory(projectFile);
 
     const std::array tokens{
         TemplateToken{.name = "CLASS_NAME", .value = typeName},

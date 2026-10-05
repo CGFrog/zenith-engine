@@ -75,6 +75,10 @@ struct CodeGenerationResult {
     }
 };
 
+// The game module's source folder of the project whose .zenith-project file
+// is projectFile: src/ beside it, where generateModuleCode writes.
+std::filesystem::path projectSourceDirectory(const std::filesystem::path& projectFile);
+
 // Generates request's type in the project whose .zenith-project file is
 // projectFile (its stem is the module identifier systems are prefixed with),
 // from the snippets in snippetDirectory.

@@ -30,8 +30,10 @@ void collectReferences(const Json& value, SceneAssetUsage& usage) {
     }
 }
 
+// Scenes and scripts are never referenced from a scene, so they are never
+// orphans.
 bool referenceable(EditorAssetKind kind) {
-    return kind != EditorAssetKind::Scene;
+    return kind != EditorAssetKind::Scene && kind != EditorAssetKind::Script;
 }
 } // namespace
 

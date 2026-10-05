@@ -8,6 +8,7 @@
 struct AssetCatalog::Root {
     // Absolute and normalized.
     std::filesystem::path path;
+    // Null for the source root, which is listed but not identified.
     std::shared_ptr<AssetDatabase> database;
     std::unique_ptr<FileWatcher> watcher;
     // The last watcher start failure, reported once until it changes.
@@ -76,6 +77,46 @@ std::string rootDescription(const std::filesystem::path& root) {
     const std::u8string text = root.u8string();
     return "'" + std::string(text.begin(), text.end()) + "'";
 }
+
+// Names beginning with '.' (.git, .vs, .vscode) are skipped, as the asset
+// databases skip them.
+bool hiddenName(const std::filesystem::path& path) {
+    const std::filesystem::path::string_type name = path.filename().native();
+    return !name.empty() && name.front() == '.';
+}
+
+// Every script under a root without a database, keyed by absolute path.
+AssetCatalogResult listScripts(const std::filesystem::path& root, std::map<std::string, EditorAssetRecord>& records) {
+    std::error_code error;
+    if (!std::filesystem::is_directory(root, error)) {
+        return {.success = true};
+    }
+    std::filesystem::recursive_directory_iterator iterator(
+        root, std::filesystem::directory_options::skip_permission_denied, error);
+    const std::filesystem::recursive_directory_iterator end;
+    while (!error && iterator != end) {
+        const std::filesystem::directory_entry& entry = *iterator;
+        if (hiddenName(entry.path())) {
+            if (entry.is_directory(error)) {
+                iterator.disable_recursion_pending();
+            }
+        } else if (entry.is_regular_file(error) && editorAssetKind(entry.path()) == EditorAssetKind::Script) {
+            const std::filesystem::path absolute = normalizedCatalogPath(entry.path());
+            records[absolute.generic_string()] = {.relativePath = absolute.lexically_relative(root),
+                                                  .absolutePath = absolute,
+                                                  .kind = EditorAssetKind::Script,
+                                                  .byteSize = entry.file_size(error),
+                                                  .lastWriteTime = entry.last_write_time(error)};
+        }
+        // A file that vanished mid-scan is simply left out.
+        error.clear();
+        iterator.increment(error);
+    }
+    if (error) {
+        return {.error = "Could not scan source root " + rootDescription(root) + ": " + error.message()};
+    }
+    return {.success = true};
+}
 } // namespace
 
 std::filesystem::path normalizedCatalogPath(const std::filesystem::path& path) {
@@ -108,6 +149,10 @@ std::optional<EditorAssetKind> editorAssetKind(const std::filesystem::path& path
     if (extension == ".prefab") {
         return EditorAssetKind::Prefab;
     }
+    if (extension == ".cpp" || extension == ".cc" || extension == ".cxx" || extension == ".c" || extension == ".hpp" ||
+        extension == ".hh" || extension == ".hxx" || extension == ".h" || extension == ".inl") {
+        return EditorAssetKind::Script;
+    }
     return std::nullopt;
 }
 
@@ -130,7 +175,21 @@ AssetCatalog::AssetCatalog(std::filesystem::path assetRoot, std::filesystem::pat
         auto root = std::make_unique<Root>();
         root->path = path;
         root->database = std::make_shared<AssetDatabase>(path, databaseOptions);
-        m_databaseRoots.push_back(std::move(root));
+        m_trackedRoots.push_back(std::move(root));
+    }
+    if (m_options.sourceRoot.empty()) {
+        return;
+    }
+    std::filesystem::path source = normalizedCatalogPath(m_options.sourceRoot);
+    const bool overlaps = std::ranges::any_of(m_roots, [&source](const std::filesystem::path& other) {
+        return isWithin(source, other) || isWithin(other, source);
+    });
+    if (!overlaps) {
+        m_sourceRoot = source;
+        m_roots.push_back(source);
+        auto root = std::make_unique<Root>();
+        root->path = std::move(source);
+        m_trackedRoots.push_back(std::move(root));
     }
 }
 
@@ -138,7 +197,7 @@ AssetCatalog::~AssetCatalog() = default;
 
 AssetCatalogResult AssetCatalog::refresh() {
     AssetCatalogResult result{.success = true};
-    for (const std::unique_ptr<Root>& root : m_databaseRoots) {
+    for (const std::unique_ptr<Root>& root : m_trackedRoots) {
         AssetCatalogResult scanned = rescanRoot(*root);
         if (!scanned) {
             return scanned;
@@ -155,7 +214,7 @@ AssetCatalogResult AssetCatalog::refresh() {
 AssetCatalogResult AssetCatalog::poll() {
     AssetCatalogResult result{.success = true};
     std::vector<Root*> changedRoots;
-    for (const std::unique_ptr<Root>& root : m_databaseRoots) {
+    for (const std::unique_ptr<Root>& root : m_trackedRoots) {
         if (!root->watcher) {
             startWatcher(*root, result.warnings);
             // Changes made before the watcher started would otherwise be
@@ -197,7 +256,7 @@ bool AssetCatalog::watching() const {
     if (!m_options.watchFiles) {
         return false;
     }
-    return std::ranges::all_of(m_databaseRoots, [](const std::unique_ptr<Root>& root) {
+    return std::ranges::all_of(m_trackedRoots, [](const std::unique_ptr<Root>& root) {
         std::error_code error;
         return root->watcher != nullptr || !std::filesystem::is_directory(root->path, error);
     });
@@ -222,7 +281,9 @@ void AssetCatalog::startWatcher(Root& root, std::vector<std::string>& warnings) 
 
 AssetCatalogResult AssetCatalog::rescanRoot(Root& root) {
     std::error_code error;
-    if (!std::filesystem::is_directory(root.path, error)) {
+    // A root without a database has no identities to reconcile; relist()
+    // lists its scripts.
+    if (!root.database || !std::filesystem::is_directory(root.path, error)) {
         // A missing root lists as empty; its database keeps the last known
         // identities in case the folder comes back.
         return {.success = true};
@@ -310,7 +371,13 @@ AssetCatalogResult AssetCatalog::relist() {
     }
 
     std::map<std::string, EditorAssetRecord> records;
-    for (const std::unique_ptr<Root>& root : m_databaseRoots) {
+    for (const std::unique_ptr<Root>& root : m_trackedRoots) {
+        if (!root->database) {
+            if (AssetCatalogResult listed = listScripts(root->path, records); !listed) {
+                return listed;
+            }
+            continue;
+        }
         std::error_code error;
         if (!std::filesystem::is_directory(root->path, error)) {
             continue;
@@ -341,8 +408,8 @@ AssetCatalogResult AssetCatalog::relist() {
 
 AssetCatalog::Root* AssetCatalog::rootOwning(const AssetDatabase& database) {
     const auto found = std::ranges::find_if(
-        m_databaseRoots, [&database](const std::unique_ptr<Root>& root) { return root->database.get() == &database; });
-    return found == m_databaseRoots.end() ? nullptr : found->get();
+        m_trackedRoots, [&database](const std::unique_ptr<Root>& root) { return root->database.get() == &database; });
+    return found == m_trackedRoots.end() ? nullptr : found->get();
 }
 
 AssetCatalogResult AssetCatalog::applyDatabaseChanges(const AssetDatabase& database,
@@ -378,6 +445,10 @@ const std::vector<std::filesystem::path>& AssetCatalog::roots() const {
     return m_roots;
 }
 
+bool AssetCatalog::inSourceRoot(const std::filesystem::path& absolutePath) const {
+    return !m_sourceRoot.empty() && isWithin(absolutePath, m_sourceRoot);
+}
+
 const EditorAssetFolder* AssetCatalog::findFolder(const std::filesystem::path& absolutePath) const {
     const auto found = std::ranges::find(m_folders, absolutePath, &EditorAssetFolder::absolutePath);
     return found == m_folders.end() ? nullptr : &*found;
@@ -410,19 +481,19 @@ std::vector<const EditorAssetRecord*> AssetCatalog::assetsInFolder(const std::fi
 
 std::shared_ptr<const AssetDatabase> AssetCatalog::assetDatabase() const {
     // The asset root is first; the database whose root contains it tracks it.
-    for (const std::unique_ptr<Root>& root : m_databaseRoots) {
-        if (isWithin(m_roots.front(), root->path)) {
+    for (const std::unique_ptr<Root>& root : m_trackedRoots) {
+        if (root->database && isWithin(m_roots.front(), root->path)) {
             return root->database;
         }
     }
-    return m_databaseRoots.front()->database;
+    return m_trackedRoots.front()->database;
 }
 
 AssetDatabase* AssetCatalog::databaseFor(const std::filesystem::path& absolutePath) {
     const std::filesystem::path normalized = normalizedCatalogPath(absolutePath);
     Root* owner = nullptr;
-    for (const std::unique_ptr<Root>& root : m_databaseRoots) {
-        if (isWithin(normalized, root->path) &&
+    for (const std::unique_ptr<Root>& root : m_trackedRoots) {
+        if (root->database && isWithin(normalized, root->path) &&
             (owner == nullptr || root->path.native().size() > owner->path.native().size())) {
             owner = root.get();
         }

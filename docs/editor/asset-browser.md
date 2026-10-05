@@ -7,7 +7,14 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 The Asset Browser shows the project's asset and scene roots as a folder tree
 with favourites, breadcrumbs, a grid or list of the current folder, and search
 and type filters. Models drag out as `ZENITH_MODEL_ASSET` payloads and scenes
-open on double-click. `drawBrowser` draws everything from diagnostics and a
+open on double-click. Scripts (C and C++ sources and headers) open in the
+user's IDE on double-click, from the context menu, or with the details' Open
+in IDE button, through `module.open_source` and `ide.command` (Preferences >
+External IDE). With a project open, the session also lists the game module's
+source folder (`src/` beside the project file, `projectSourceDirectory`) as
+a third root: `AssetCatalogOptions::sourceRoot` is watched and relisted but
+has no asset database, so no `.meta` sidecars are written beside code, its
+scripts have no GUID, and scenes cannot be created there. `drawBrowser` draws everything from diagnostics and a
 small `AssetBrowserActions` set, so tests drive it in a headless ImGui frame.
 The panel holds only view state (current folder, selection, search, filters,
 view mode, dialogs) over a shared `project/ProjectAssets` service, so several

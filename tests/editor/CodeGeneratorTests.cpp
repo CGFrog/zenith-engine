@@ -9,6 +9,8 @@
 #include "editor/project/ProjectTemplate.hpp"
 #include "editor/settings/EditorSettings.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -276,6 +278,22 @@ void testOperators(const fs::path& root) {
         scriptRunner.invokeWithJson("module.edit_script", scriptContext, R"({"component":"transform"})");
     expect(!unknown && contains(unknown.message, "no behaviour"),
            "operators: Edit Script on another type fails with the reason");
+
+    const std::string sourceFile = (project.parent_path() / "src" / "GameModule.cpp").string();
+    expect(static_cast<bool>(scriptRunner.invokeWithJson("module.open_source", scriptContext,
+                                                         nlohmann::json{{"file", sourceFile}, {"line", 3}}.dump())),
+           "operators: Open in IDE opens a file");
+    const OperatorResult noFile = scriptRunner.invokeWithJson("module.open_source", scriptContext, "{}");
+    expect(!noFile && contains(noFile.message, "No file"), "operators: Open in IDE without a file fails");
+    EditorToolSettings noIde;
+    noIde.ideCommand.clear();
+    OperatorRegistry unconfigured;
+    OperatorRunner unconfiguredRunner{unconfigured, fixture.history};
+    registerCodeOperators(unconfigured, {.tools = noIde, .build = build});
+    const OperatorResult noCommand = unconfiguredRunner.invokeWithJson("module.open_source", scriptContext,
+                                                                       nlohmann::json{{"file", sourceFile}}.dump());
+    expect(!noCommand && contains(noCommand.message, "ide.command"),
+           "operators: Open in IDE without an IDE command fails with the setting's name");
 
     OperatorRegistry noProject;
     OperatorRunner runner{noProject, fixture.history};

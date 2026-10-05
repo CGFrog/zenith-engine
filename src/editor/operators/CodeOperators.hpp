@@ -4,6 +4,7 @@
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/project/CodeGenerator.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -48,7 +49,16 @@ struct EditScriptProperties {
     std::string component;
 };
 
-// The code generators:
+// Properties of module.open_source.
+struct OpenSourceProperties {
+    // The file to open: UTF-8, absolute or relative to the editor's working
+    // directory.
+    std::string file;
+    // 1-based; 0 opens at the top.
+    uint32_t line{0};
+};
+
+// The code generators and IDE launchers:
 //
 //   module.new_behaviour, module.new_component, module.new_system
 //       open the dialog for that kind
@@ -57,10 +67,13 @@ struct EditScriptProperties {
 //       its source in the IDE, and builds (build.run's queueing applies)
 //   module.edit_script {component}
 //       opens the IDE where the loaded module registered that behaviour
+//   module.open_source {file, line}
+//       opens any file in the IDE (ide.command); the Asset Browser uses it
+//       for scripts
 //
 // The generators need a project and the template's snippets; edit_script
-// needs a loaded behaviour. generate_code and edit_script need no window,
-// so they run headless.
+// needs a loaded behaviour. generate_code, edit_script, and open_source need
+// no window, so they run headless.
 OperatorRegistrationResult registerCodeOperators(OperatorRegistry& registry, CodeOperatorServices services);
 
 OperatorRegistrationResult registerCodeOperatorFamily(OperatorRegistry& registry,
