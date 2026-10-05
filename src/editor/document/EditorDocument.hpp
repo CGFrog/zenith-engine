@@ -28,6 +28,10 @@ class EditorDocument {
 
     void markDirty();
     void setDirty(bool dirty);
+    // The document's content was saved somewhere other than a scene file (a
+    // prefab edited as its own document): it becomes clean, and the editor
+    // data as it is now counts as saved.
+    void markSaved();
     bool dirty() const;
     const std::optional<std::filesystem::path>& path() const;
     std::string displayName() const;

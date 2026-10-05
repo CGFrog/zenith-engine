@@ -124,6 +124,12 @@ class CommandHistory {
     void clear();
     void markSaved();
     void crossBoundary(CommandHistoryBoundary boundary);
+    // Exchanges the timelines (steps, position, and saved point) of this
+    // history and other, for parking one document while another is edited.
+    // Each keeps its own limit. Both revisions move past either's, so a cache
+    // keyed on the revision, or a marker, never mistakes one timeline for the
+    // other.
+    void exchangeTimeline(CommandHistory& other);
 
     bool canUndo() const;
     bool canRedo() const;
