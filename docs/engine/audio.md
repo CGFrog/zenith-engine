@@ -40,6 +40,17 @@ stolen sound's handle stops being valid. `AudioEmitterComponent` voices play
 at `Normal` priority and only take free voices. A run of plays that find every
 voice busy is logged once, and `stolenVoiceCount()` counts the steals.
 
+`reloadClip(path)` decodes a changed file again for every way it is loaded (as
+is, and mixed to mono for spatial use) into new clip generations and updates
+the cache, so later `loadClip` calls return the new clips. Voices playing a
+previous clip stop under the mixer's lock (their handles become invalid); the
+previous clips stay valid for code still holding them until
+`collectUnusedAssets` evicts them. `replaceAudioEmitterClips(scene,
+replacements)` points `AudioEmitterComponent`s at the new clips, and the next
+`syncScene` restarts their voices. A file nobody loaded reloads nothing; one
+that no longer decodes changes nothing and fails. The editor calls it when a
+sound changes on disk or is reimported (`project/AssetReload`).
+
 ## Audio in scenes and gameplay
 
 `audio_listener` and `audio_emitter` are serialized component types
