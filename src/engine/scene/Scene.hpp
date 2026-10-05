@@ -1,14 +1,17 @@
 #pragma once
 
 #include "../assets/Assets.hpp"
+#include "../diagnostics/Logger.hpp"
 #include "../physics/PhysicsComponents.hpp"
 #include "Collections.hpp"
 #include "ParticleEmitter.hpp"
 #include "SceneEntityId.hpp"
+#include "TransformTrs.hpp"
 #include <compare>
 #include <cstdint>
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <memory>
 #include <optional>
 #include <span>
@@ -27,6 +30,11 @@ struct NameComponent {
     std::string name;
 };
 
+// local is relative to the parent (see Scene::setLocalTransform); world is
+// derived from the hierarchy by Scene::updateWorldTransforms and is stale
+// until then. Code that writes local through registry() must call
+// Scene::markTransformDirty; gameplay code uses Scene's transform setters,
+// which do, and Scene::worldTransform, which is never stale.
 struct TransformComponent {
     glm::mat4 local{1.0f};
     glm::mat4 world{1.0f};
@@ -35,6 +43,9 @@ struct TransformComponent {
 struct SceneTransformUpdateStats {
     uint32_t visited{0};
     uint32_t recomputed{0};
+    // Entities the audit found with a changed local transform or parent that
+    // nothing marked dirty (see Scene::setTransformAuditInterval).
+    uint32_t unmarked{0};
 };
 
 struct SceneRevisions {
@@ -311,7 +322,57 @@ class Scene {
     void replaceWith(Scene&& scene);
     void swap(Scene& other) noexcept;
     void updateWorldTransforms();
+    // Required after writing TransformComponent::local through registry();
+    // the transform setters below call it themselves.
     void markTransformDirty(Entity entity);
+
+    // The supported gameplay transform API. Every setter writes
+    // TransformComponent::local (relative to the parent) and marks the entity
+    // dirty, so the next updateWorldTransforms refreshes its branch. Setters
+    // ignore an invalid entity; readers return identity values for one.
+    void setLocalTransform(Entity entity, const glm::mat4& local);
+    // Sets the local translation, keeping the rest of the matrix unchanged.
+    void setPosition(Entity entity, const glm::vec3& position);
+    // Set rotation or scale while keeping the other two TRS parts. They
+    // rebuild local from decomposeTrs, which drops any shear.
+    void setRotation(Entity entity, const glm::quat& rotation);
+    void setScale(Entity entity, const glm::vec3& scale);
+    // Moves the entity by offset in its parent's space.
+    void translate(Entity entity, const glm::vec3& offset);
+    // Places the entity at a world transform, converting it to the parent's
+    // space with the parent's resolved world transform. A singular parent
+    // transform gives a non-finite local transform.
+    void setWorldTransform(Entity entity, const glm::mat4& world);
+
+    const glm::mat4& localTransform(Entity entity) const;
+    // A TRS view of the local transform (see decomposeTrs for shear and
+    // mirroring). localPosition is exact; the others decompose on each call.
+    TransformTrs localTrs(Entity entity) const;
+    glm::vec3 localPosition(Entity entity) const;
+    glm::quat localRotation(Entity entity) const;
+    glm::vec3 localScale(Entity entity) const;
+    // The world transform from the current local transforms of the entity and
+    // its ancestors, correct even before updateWorldTransforms has run after
+    // a change. It costs one matrix product per ancestor and changes nothing,
+    // so it is safe on a const scene; it may differ from the stored
+    // TransformComponent::world by float rounding.
+    glm::mat4 worldTransform(Entity entity) const;
+    glm::vec3 worldPosition(Entity entity) const;
+
+    // updateWorldTransforms audits every entity on its first call and then
+    // every `updates` calls (0 turns the audit off), in every build
+    // configuration. An entity whose local transform or parent changed
+    // without a mark is counted in lastTransformUpdateStats().unmarked,
+    // reported once per entity as a warning on the log channel, and then
+    // updated, so a missed mark shows as a warning and a delay of up to one
+    // interval in Debug and Release alike.
+    static constexpr uint32_t defaultTransformAuditInterval = 60;
+    void setTransformAuditInterval(uint32_t updates);
+    uint32_t transformAuditInterval() const;
+    // Where audit warnings go (category "scene" by convention). Defaults to
+    // stderr. Belongs to this Scene object, not its contents: swap and
+    // replaceWith keep it.
+    void setLogChannel(LogChannel channel);
     void markRenderableDirty(Entity entity);
     void markLightDirty(Entity entity);
     void markCameraDirty(Entity entity);
@@ -351,9 +412,15 @@ class Scene {
         bool dirty{true};
         // Whether the entity is in m_dirtyTransformRoots.
         bool queued{false};
+        // Whether the audit has warned about a missed mark on this entity.
+        bool unmarkedReported{false};
     };
 
     void queueTransformRoot(Entity entity, TransformCacheComponent& cache);
+    void updateDirtyTransformRoots();
+    // Marks and reports entities changed without a mark; returns their count.
+    uint32_t auditUnmarkedTransforms();
+    TransformComponent* mutableTransform(Entity entity);
 
     void updateBranch(Entity entity, const glm::mat4& parentWorld, bool parentChanged);
 
@@ -372,6 +439,8 @@ class Scene {
     std::unordered_map<uint64_t, Entity> m_entitiesById;
     bool m_collectingTransformChanges{false};
     uint32_t m_transformAuditCountdown{0};
+    uint32_t m_transformAuditInterval{defaultTransformAuditInterval};
+    LogChannel m_log{nullptr, "scene"};
     std::vector<PhysicsLifecycleEvent> m_physicsLifecycleEvents;
     uint64_t m_renderPacketRevision{1};
     uint64_t m_contentGeneration{1};

@@ -369,24 +369,24 @@ void Scene::updateBranch(Entity entity, const glm::mat4& parentWorld, bool paren
 void Scene::updateWorldTransforms() {
     m_lastTransformUpdateStats = {};
     m_collectingTransformChanges = false;
-#ifndef NDEBUG
-    constexpr bool forceAudit = true;
-#else
-    const bool forceAudit = m_transformAuditCountdown == 0;
-    m_transformAuditCountdown = forceAudit ? 299 : m_transformAuditCountdown - 1;
-#endif
-    if (forceAudit) {
-        const auto view = m_registry.view<const TransformComponent, const RelationshipComponent>();
-        for (Entity entity : view) {
-            const auto* cache = m_registry.try_get<TransformCacheComponent>(entity);
-            const auto& transform = view.get<const TransformComponent>(entity);
-            const Entity parent = view.get<const RelationshipComponent>(entity).parent;
-            if (cache == nullptr || !cache->valid || cache->dirty || cache->local != transform.local ||
-                cache->parent != parent) {
-                markTransformDirty(entity);
-            }
-        }
+    updateDirtyTransformRoots();
+    // The audit runs after the marked branches are updated, so whatever it
+    // still finds out of date was changed without a mark.
+    bool audit = false;
+    if (m_transformAuditInterval != 0) {
+        audit = m_transformAuditCountdown == 0;
+        m_transformAuditCountdown = audit ? m_transformAuditInterval - 1 : m_transformAuditCountdown - 1;
     }
+    if (audit && auditUnmarkedTransforms() > 0) {
+        updateDirtyTransformRoots();
+    }
+    if (m_lastTransformUpdateStats.recomputed > 0) {
+        ++m_revisions.transform;
+        ++m_renderPacketRevision;
+    }
+}
+
+void Scene::updateDirtyTransformRoots() {
     // Zero is every cache's initial rootUpdate, so it is never used.
     m_transformUpdate = m_transformUpdate == std::numeric_limits<uint32_t>::max() ? 1 : m_transformUpdate + 1;
     for (Entity entity : m_dirtyTransformRoots) {
@@ -421,10 +421,34 @@ void Scene::updateWorldTransforms() {
         }
     }
     m_dirtyTransformRoots.clear();
-    if (m_lastTransformUpdateStats.recomputed > 0) {
-        ++m_revisions.transform;
-        ++m_renderPacketRevision;
+}
+
+uint32_t Scene::auditUnmarkedTransforms() {
+    uint32_t unmarked = 0;
+    const auto view = m_registry.view<const TransformComponent, const RelationshipComponent>();
+    for (Entity entity : view) {
+        const auto* cache = m_registry.try_get<TransformCacheComponent>(entity);
+        const auto& transform = view.get<const TransformComponent>(entity);
+        const Entity parent = view.get<const RelationshipComponent>(entity).parent;
+        if (cache != nullptr && cache->valid && !cache->dirty && cache->local == transform.local &&
+            cache->parent == parent) {
+            continue;
+        }
+        ++unmarked;
+        markTransformDirty(entity);
+        auto& marked = m_registry.get<TransformCacheComponent>(entity);
+        if (!marked.unmarkedReported) {
+            marked.unmarkedReported = true;
+            const auto* name = m_registry.try_get<NameComponent>(entity);
+            m_log.warning("Entity " + std::to_string(id(entity).value) + " '" +
+                          (name != nullptr ? name->name : std::string()) +
+                          "' changed its transform without Scene::markTransformDirty, so it updated late. Use "
+                          "Scene::setLocalTransform or another transform setter, or mark the entity after writing "
+                          "TransformComponent::local.");
+        }
     }
+    m_lastTransformUpdateStats.unmarked = unmarked;
+    return unmarked;
 }
 
 void Scene::markTransformDirty(Entity entity) {
