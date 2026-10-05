@@ -18,6 +18,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -350,6 +351,34 @@ void testBakePolicy() {
         expect(positionOf(scene, walker).x > -3.0f, "agents walk once the mesh is baked");
     }
 }
+
+// A host's default settings (the project's) are what the lazy bake and
+// bakeNavigation without settings use; navigationIfBaked only looks.
+void testDefaultSettingsAndLooking() {
+    Scene scene;
+    buildLevel(scene);
+    Logger logger(LoggerConfig{.echoToStderr = false});
+    AssetManager assets{&logger};
+    DebugDraw debugDraw;
+    GameServices services(assets, {}, debugDraw, &logger);
+    const NavMeshBuildSettings project{.cellSize = 0.25f, .agentRadius = 0.8f};
+    expect(services.defaultNavigationSettings() == NavMeshBuildSettings{}, "sessions start with the default settings");
+    services.setDefaultNavigationSettings(project);
+
+    expect(services.navigationIfBaked() == nullptr, "nothing is baked before anything asks");
+    expect(services.navigationIfBaked() == nullptr && std::as_const(services).navigationCrowd().agentCount() == 0,
+           "looking at the mesh and crowd never bakes");
+    const NavigationWorld& lazy = services.navigation(scene);
+    expect(lazy.baked() && lazy.settings() == project, "the lazy bake uses the session's default settings");
+    expect(services.navigationIfBaked() == &lazy, "once baked, the mesh can be looked at");
+
+    expect(services.bakeNavigation(scene).success && services.navigation(scene).settings() == project,
+           "bakeNavigation without settings uses the defaults");
+    const NavMeshBuildSettings explicitSettings{.agentRadius = 0.2f};
+    expect(services.bakeNavigation(scene, explicitSettings).success &&
+               services.navigation(scene).settings() == explicitSettings,
+           "settings passed to bakeNavigation win");
+}
 } // namespace
 
 // Geometry gathered right after a move, with no updateWorldTransforms in
@@ -384,5 +413,6 @@ int main() {
     testCrowdMembership();
     testEngineSystem();
     testBakePolicy();
+    testDefaultSettingsAndLooking();
     return failures == 0 ? 0 : 1;
 }

@@ -1,8 +1,11 @@
+#include "engine/physics/PhysicsComponents.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
+#include <glm/gtc/quaternion.hpp>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -336,6 +339,55 @@ void testMigrationsAndRejections() {
         "Lives cannot be negative");
 }
 
+// The collider's "offset" (version 2): written only when the shape is moved
+// or turned, read back, and absent from version 1 documents, which load
+// unchanged with the shape on the entity.
+void testColliderOffset() {
+    AssetManager assets;
+    const SceneDocumentOptions options{.assetRoot = std::filesystem::temp_directory_path()};
+    Scene versionOne;
+    const SceneDocumentResult loaded =
+        SceneDocument::deserialize(documentWith(R"({"collider":{"type":"capsule","half_height":0.75,"radius":0.25}})"),
+                                   assets, options, versionOne);
+    expect(loaded.success, loaded.error);
+    const auto* migrated = versionOne.registry().try_get<ColliderComponent>(versionOne.findEntity({7}));
+    expect(migrated != nullptr && std::holds_alternative<CapsuleCollider>(migrated->shape) &&
+               !hasColliderOffset(*migrated),
+           "a version 1 collider loads with no offset");
+    const nlohmann::json resaved = nlohmann::json::parse(serialize(versionOne, assets, options));
+    const nlohmann::json& plain = resaved.at("entities").at(0).at("components").at("collider");
+    expect(plain.at("$version") == 2 && !plain.contains("offset"), "a collider without an offset writes none");
+
+    Scene scene;
+    const Entity entity = scene.createEntity("Offset");
+    const glm::quat turned = glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    scene.registry().emplace<ColliderComponent>(
+        entity, ColliderComponent{.shape = BoxCollider{.halfExtents = glm::vec3(1.0f, 2.0f, 3.0f)},
+                                  .offsetPosition = {0.0f, 1.5f, -0.5f},
+                                  .offsetRotation = turned});
+    const std::string document = serialize(scene, assets, options);
+    const nlohmann::json parsed = nlohmann::json::parse(document);
+    const nlohmann::json& saved = parsed.at("entities").at(0).at("components").at("collider");
+    expect(saved.at("offset").at("position") == nlohmann::json::array({0.0f, 1.5f, -0.5f}) &&
+               saved.at("offset").at("rotation").size() == 4,
+           "a moved and turned collider writes its offset");
+    Scene restored;
+    const SceneDocumentResult reloaded = SceneDocument::deserialize(document, assets, options, restored);
+    expect(reloaded.success, reloaded.error);
+    const auto* collider = restored.registry().try_get<ColliderComponent>(restored.findEntity(scene.id(entity)));
+    expect(collider != nullptr && collider->offsetPosition == glm::vec3(0.0f, 1.5f, -0.5f) &&
+               std::abs(glm::dot(collider->offsetRotation, turned)) > 0.9999f,
+           "a collider's offset round trips");
+
+    Scene rejected;
+    expect(
+        !SceneDocument::deserialize(
+             documentWith(R"({"collider":{"$version":2,"type":"sphere","radius":1,"offset":{"rotation":[0,0,0,0]}}})"),
+             assets, options, rejected)
+             .success,
+        "a zero offset rotation is rejected");
+}
+
 void testUnknownComponentsArePreserved() {
     AssetManager assets;
     const SceneDocumentOptions options{.assetRoot = std::filesystem::temp_directory_path()};
@@ -398,6 +450,7 @@ int main() {
     testAssetKindHints();
     testGameComponentRoundTrip();
     testMigrationsAndRejections();
+    testColliderOffset();
     testUnknownComponentsArePreserved();
     testRegistryRejectsInvalidTypes();
     if (failures != 0) {

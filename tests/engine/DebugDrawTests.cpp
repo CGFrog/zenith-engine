@@ -279,6 +279,18 @@ void testPhysicsAdapter() {
     expect(lines(boundsOnly, DebugDepth::AlwaysOnTop) == 36 && lines(boundsOnly, DebugDepth::Tested) == 0,
            "three bodies give three on-top boxes");
 
+    // Into one channel, which hides the bodies on its own.
+    DebugDraw channelled;
+    expect(static_cast<bool>(physics.drawDebug(channelled.channel("physics"))) &&
+               lines(channelled, DebugDepth::Tested) == lines(draw, DebugDepth::Tested),
+           "physics draws into a channel");
+    expect(channelled.channels().size() == 1 && channelled.channels().front().name == "physics",
+           "the channel lists the bodies");
+    channelled.endFrame();
+    channelled.setChannelVisible("physics", false);
+    expect(static_cast<bool>(physics.drawDebug(channelled.channel("physics"))) && channelled.empty(),
+           "a hidden channel drops the bodies");
+
     // Jolt allows one debug renderer per process; every world shares it.
     PhysicsWorld second;
     expect(static_cast<bool>(second.init()), "a second world initializes");

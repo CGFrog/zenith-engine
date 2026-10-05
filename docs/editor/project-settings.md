@@ -4,7 +4,9 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 
 **Edit > Project Settings** (`project.settings`) opens
 `panels/ProjectSettingsWindow` on the project file's current values
-(`loadProjectSettingsValues`). It edits a draft in three tabs:
+(`loadProjectSettingsValues`); `project.settings {tab}` (`physics_layers`,
+`input_actions`, `tags`, `navigation`; `projectSettingsTab`) opens it on a
+tab. It edits a draft in four tabs:
 
 - **Physics Layers**: the layer names and a triangular collision matrix
   (`PhysicsLayerTable`). Layers are only added and removed at the end, so the
@@ -16,6 +18,13 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
   so its bindings can be changed; the project's actions replace the module's
   of the same name.
 - **Tags**: the names the inspector offers for `TagsComponent`.
+- **Navigation**: the `NavMeshBuildSettings` the project's navigation meshes
+  are built with (`ProjectConfig::navigation`): the agent's height, radius,
+  climb and slope, the walkable physics layers (checkboxes by the draft's
+  layer names), the cell sizes and region, edge and detail tuning, and
+  **Reset to Defaults**. They are written only once they differ from the
+  defaults (or the project already names some), and invalid values
+  (`validateNavMeshBuildSettings`) are refused like an empty tag.
 
 **Apply** returns the draft, and the session (`EditorProjectSettings.cpp`)
 saves it with `saveProjectSettingsValues`, which reads the project file again
@@ -25,7 +34,9 @@ beside it. The session then applies the values live: it clears the physics
 world and sets the new layers (bodies are rebuilt from the scene), updates
 the names the inspector offers (`interaction/ProjectNames`, through
 `EditorContext::projectNames`), and gives the module host the new action
-overrides. Apply is Edit mode only: a running scene keeps the layers it
+overrides, and keeps the navigation settings, which the next
+`navigation.bake` and Play (`GameServices::setDefaultNavigationSettings`)
+use. Apply is Edit mode only: a running scene keeps the layers it
 started with. `EditorRenderSettings::save` likewise reads the project file
 before writing, so neither window overwrites the other's settings.
 
@@ -35,6 +46,7 @@ nameList`); an index past them shows its number. `TagsComponent` has a
 custom editor (`ComponentEditors::drawTags`) that adds the project's tags or
 any other name and marks a tag the project does not declare.
 
-`tests/editor/ProjectSettingsTests.cpp` covers saving and loading, the kept
-render settings, validation, the window headless, and the inspector's
-names.
+`tests/editor/ProjectSettingsTests.cpp` covers saving and loading (the
+navigation settings too), the kept render settings, validation, the window
+headless, the inspector's names, and `navigation.bake` baking with the
+settings.

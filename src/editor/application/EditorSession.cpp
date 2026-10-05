@@ -66,6 +66,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_initialSceneLoader(std::move(initialSceneLoader))
     , m_leaveForProjectHub(std::move(projectServices.leaveForProjectHub))
     , m_smokeScratchDirectory(settingsDirectory) {
+    m_navigationSettings = projectServices.navigation;
     for (const std::string& problem : m_keymap.defaultProblems()) {
         m_diagnostics.reportError(problem);
     }
@@ -126,6 +127,8 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .simulating = m_playMode.simulating(),
             .componentEditors = &m_componentEditors,
             .navigationPreview = &m_navigationPreview,
+            .navigationSettings = &m_navigationSettings,
+            .gameServices = m_playMode.mode() == EditorMode::Edit ? nullptr : m_moduleHost.gameServices(),
             .scripts = this,
             .watches = &m_watches,
             .projectNames = &m_projectNames,
@@ -158,6 +161,7 @@ EditorOperatorServices EditorSession::operatorServices() {
             .build = m_projectBuild,
             .watches = m_watches,
             .navigationPreview = m_navigationPreview,
+            .navigationSettings = m_navigationSettings,
             .tools = m_settings.tools(),
             .projectFile = m_renderSettings.settings().projectFile(),
             .codeSnippetDirectory = m_codeSnippetDirectory,

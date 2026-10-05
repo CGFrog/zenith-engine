@@ -47,7 +47,7 @@ struct OverlayName {
     const char* label;
 };
 
-constexpr std::array<OverlayName, 14> overlayNames{{
+constexpr std::array<OverlayName, 19> overlayNames{{
     {ViewportOverlay::Grid, "grid", "Grid"},
     {ViewportOverlay::SelectionOutline, "selection_outline", "Selection Outline"},
     {ViewportOverlay::ActiveName, "active_name", "Active Object Name"},
@@ -62,6 +62,11 @@ constexpr std::array<OverlayName, 14> overlayNames{{
     {ViewportOverlay::SelectionBounds, "selection_bounds", "Selection Bounds"},
     {ViewportOverlay::SceneInPlay, "scene_in_play", "Scene Overlays in Play"},
     {ViewportOverlay::Cursor3D, "cursor_3d", "3D Cursor"},
+    {ViewportOverlay::NavigationMesh, "navigation_mesh", "Navigation Mesh"},
+    {ViewportOverlay::PhysicsShapes, "physics_shapes", "Physics Shapes"},
+    {ViewportOverlay::Contacts, "contacts", "Contacts"},
+    {ViewportOverlay::Characters, "characters", "Characters"},
+    {ViewportOverlay::NavAgents, "nav_agents", "Nav Agents"},
 }};
 
 struct PivotName {
@@ -355,6 +360,17 @@ float& TransformToolSettings::activeSnap() {
     return gizmo == GizmoMode::Rotate ? rotationSnapDegrees : scaleSnap;
 }
 
+std::span<const DebugOverlayItem> debugOverlayItems() {
+    static constexpr std::array<DebugOverlayItem, 5> items{{
+        {ViewportOverlay::NavigationMesh, "navigation_mesh", "Navigation Mesh"},
+        {ViewportOverlay::PhysicsShapes, "physics_shapes", "Physics Shapes"},
+        {ViewportOverlay::Contacts, "contacts", "Contacts"},
+        {ViewportOverlay::Characters, "characters", "Characters"},
+        {ViewportOverlay::NavAgents, "nav_agents", "Nav Agents"},
+    }};
+    return items;
+}
+
 bool* viewportOverlayFlag(ViewportOverlays& overlays, ViewportOverlay overlay) {
     switch (overlay) {
     case ViewportOverlay::Grid:
@@ -371,6 +387,16 @@ bool* viewportOverlayFlag(ViewportOverlays& overlays, ViewportOverlay overlay) {
         return &overlays.sceneInPlay;
     case ViewportOverlay::Cursor3D:
         return &overlays.cursor;
+    case ViewportOverlay::NavigationMesh:
+        return &overlays.navigationMesh;
+    case ViewportOverlay::PhysicsShapes:
+        return &overlays.physicsShapes;
+    case ViewportOverlay::Contacts:
+        return &overlays.contacts;
+    case ViewportOverlay::Characters:
+        return &overlays.characters;
+    case ViewportOverlay::NavAgents:
+        return &overlays.navAgents;
     default:
         return nullptr;
     }
@@ -599,8 +625,19 @@ void drawOverlaysMenu(ViewportOverlays& overlays) {
         }
     }
     ImGui::MenuItem("Selection Bounds", nullptr, &overlays.scene.selectionBounds);
+    ImGui::MenuItem("Navigation Mesh", nullptr, &overlays.navigationMesh);
+    ImGui::SetItemTooltip("The preview Bake Navigation Mesh builds; while playing, the game's own mesh");
     ImGui::MenuItem("Show in Play Mode", nullptr, &overlays.sceneInPlay);
     ImGui::SetItemTooltip("Draw the scene overlays while playing, except through a scene camera");
+    ImGui::SeparatorText("Play");
+    ImGui::MenuItem("Physics Shapes", nullptr, &overlays.physicsShapes);
+    ImGui::SetItemTooltip("Every physics body's collision shape, as the running game simulates it");
+    ImGui::MenuItem("Contacts", nullptr, &overlays.contacts);
+    ImGui::SetItemTooltip("Where bodies touched in the last physics step, with the contact normal");
+    ImGui::MenuItem("Characters", nullptr, &overlays.characters);
+    ImGui::SetItemTooltip("Character controller capsules: green on the ground, blue in the air");
+    ImGui::MenuItem("Nav Agents", nullptr, &overlays.navAgents);
+    ImGui::SetItemTooltip("Navigation agents' velocity and path end; yellow for a partial path, red for a failed one");
 }
 
 void drawDebugDrawChannelsMenu(DebugDraw& debugDraw) {

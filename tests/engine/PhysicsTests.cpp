@@ -8,6 +8,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -263,6 +264,34 @@ void testEventOrderIsByScene() {
            "triggers order by sensor id, other id, then Entered before Exited");
 }
 
+// A contact carries a point where the bodies touch: a box landing on a floor
+// touches it at the floor's top.
+void testContactPoints() {
+    PhysicsWorld physics;
+    expect(static_cast<bool>(physics.init()), "the contact point world initializes");
+    Scene scene;
+    AssetManager assets;
+    const Entity floor = scene.createEntity("Floor");
+    scene.registry().get<TransformComponent>(floor).local = glm::translate(glm::mat4(1.0f), {0.0f, -0.5f, 0.0f});
+    scene.registry().emplace<ColliderComponent>(floor, BoxCollider{glm::vec3(5.0f, 0.5f, 5.0f)});
+    scene.registry().emplace<RigidBodyComponent>(floor);
+    addBox(scene, {1.0f, 1.0f, 2.0f});
+    std::optional<ContactEvent> begin;
+    for (int step = 0; step < 120 && !begin; ++step) {
+        expect(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
+               "the contact point world steps");
+        for (const ContactEvent& contact : physics.contactEvents()) {
+            if (contact.type == ContactEventType::Begin) {
+                begin = contact;
+            }
+        }
+    }
+    expect(begin.has_value() && std::abs(begin->point.y) < 0.1f && std::abs(begin->point.x - 1.0f) <= 0.55f &&
+               std::abs(begin->point.z - 2.0f) <= 0.55f,
+           "a contact's point is where the box meets the floor");
+    physics.shutdown();
+}
+
 struct TriggerRecord {
     TriggerEventType type;
     uint64_t sensor;
@@ -412,6 +441,7 @@ int main() {
     testContactCapacityIsAWarning();
     testConfigurationLimitsAreValidated();
     testEventOrderIsByScene();
+    testContactPoints();
     testSimultaneousTriggersArriveInOrder();
     return failures == 0 ? 0 : 1;
 }

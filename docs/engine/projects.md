@@ -5,7 +5,7 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 ## `src/engine/project/ProjectConfig.*`
 
 Defines the shared versioned project manifest used by both game and editor
-applications. Version 6 stores:
+applications. Version 7 stores:
 
 - a display name;
 - project-relative asset and scene roots;
@@ -19,12 +19,21 @@ applications. Version 6 stores:
   [Window and input](window-input.md)), whose actions replace the game
   module's actions of the same name and add new ones
   (`loadProjectInputActions`);
-- optional `tags`: the tag names the editor offers for `TagsComponent`.
+- optional `tags`: the tag names the editor offers for `TagsComponent`;
+- optional `navigation` (version 7): the `NavMeshBuildSettings` the project's
+  navigation meshes are built with, as an object of their fields by their C++
+  names (`cellSize`, `agentRadius`, ..., `layerMask` as a number); a missing
+  field keeps its default, and invalid values
+  (`validateNavMeshBuildSettings`) are rejected on load and save.
+  `navigationSettings()` gives them, or the defaults.
 
 The game and the editor give the table to their `PhysicsWorld`, and apply the
 action file over the module's actions (`ProjectApplication::onStart`, and
 `GameModuleHost::setProjectInputActions` in the editor); a bad action file is
-logged and the module's defaults are used. Versions 1 to 5 remain readable
+logged and the module's defaults are used. Both give the navigation settings
+to the session's `GameServices::setDefaultNavigationSettings` when gameplay
+starts, and the editor's `navigation.bake` uses them too, so the preview is
+the mesh the game bakes. Versions 1 to 6 remain readable
 and are upgraded on save. Scene references are validated against the scene root before
 `SceneDocument` loads them. `loadProjectScene` and `loadProjectStartupScene`
 take an optional component type registry (null means the built-in types) so a

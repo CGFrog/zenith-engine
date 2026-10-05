@@ -8,6 +8,7 @@
 #include "editor/panels/ViewportChrome.hpp"
 #include "editor/panels/ViewportRegistry.hpp"
 #include "editor/viewport/BoxSelect.hpp"
+#include "editor/viewport/ColliderHandles.hpp"
 #include "editor/viewport/LassoSelect.hpp"
 #include "editor/viewport/SnapQueries.hpp"
 #include "editor/viewport/ViewportPicker.hpp"
@@ -243,6 +244,10 @@ class ViewportPanel final : public EditorPanel {
     void syncRenderView(EditorContext& context);
     void updateSelectionOutline(EditorContext& context);
     void recordSceneGizmos(EditorContext& context);
+    // Play and Simulate: the running game's navigation mesh, physics shapes,
+    // contacts, characters, and agents (editor/viewport/RuntimeDebugDraw), in
+    // game views too and whatever Show in Play Mode says.
+    void recordRuntimeOverlays(EditorContext& context);
     // The name labels the render view projected in its latest frame.
     void drawSceneLabels(EditorContext& context) const;
     void drawViewImage(UiTextureHandle texture, const char* placeholder) const;
@@ -255,6 +260,10 @@ class ViewportPanel final : public EditorPanel {
     void drawItemTab(EditorContext& context);
     // Returns whether the gizmo is in use or under the mouse.
     bool drawGizmo(EditorContext& context);
+    // The active object's collider handles while the collider overlay is
+    // on; returns whether one is under the mouse or being dragged. The
+    // mouse goes to the transform gizmo first (gizmoTakesMouse).
+    bool updateColliderHandles(EditorContext& context, bool imageHovered, bool gizmoTakesMouse);
     // Where the gizmo sits for the objects at world, before a drag: on the
     // pivot, oriented by the active object in Local space.
     glm::mat4 currentGizmoFrame(EditorContext& context, std::span<const glm::mat4> world) const;
@@ -331,6 +340,7 @@ class ViewportPanel final : public EditorPanel {
     std::optional<GizmoDrag> m_gizmoDrag;
     // Where the gizmo was when the current drag started.
     glm::vec3 m_gizmoStartPosition{0.0f};
+    ColliderHandleTool m_colliderHandles;
     std::vector<RenderObjectId> m_outlinedObjects;
     std::vector<Entity> m_outlineTraversal;
     glm::vec2 m_mouseInView{0.0f};

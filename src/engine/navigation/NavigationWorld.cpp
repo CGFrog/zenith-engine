@@ -176,6 +176,26 @@ const float* floats(const glm::vec3& value) {
 }
 } // namespace
 
+std::string validateNavMeshBuildSettings(const NavMeshBuildSettings& settings) {
+    const auto positive = [](float value) { return std::isfinite(value) && value > 0.0f; };
+    const auto notNegative = [](float value) { return std::isfinite(value) && value >= 0.0f; };
+    if (!positive(settings.cellSize) || !positive(settings.cellHeight)) {
+        return "the cell size and height must be positive";
+    }
+    if (!positive(settings.agentHeight) || !notNegative(settings.agentRadius) || !notNegative(settings.agentMaxClimb)) {
+        return "the agent's height must be positive, and its radius and climb not negative";
+    }
+    if (!notNegative(settings.agentMaxSlopeDegrees) || settings.agentMaxSlopeDegrees >= 90.0f) {
+        return "the agent's steepest slope must be from 0 to below 90 degrees";
+    }
+    if (!notNegative(settings.regionMinimumArea) || !notNegative(settings.regionMergeArea) ||
+        !notNegative(settings.edgeMaxLength) || !positive(settings.edgeMaxError) ||
+        !notNegative(settings.detailSampleDistance) || !notNegative(settings.detailSampleMaxError)) {
+        return "the region, edge, and detail values must not be negative, and the edge error must be positive";
+    }
+    return {};
+}
+
 NavigationGeometry gatherNavigationGeometry(const Scene& scene, const AssetManager& assets, uint32_t layerMask) {
     NavigationGeometry geometry;
     const entt::registry& registry = scene.registry();
@@ -192,8 +212,13 @@ NavigationGeometry gatherNavigationGeometry(const Scene& scene, const AssetManag
         if (!decompose(scene.worldTransform(entity), pose)) {
             continue;
         }
+        const ColliderComponent& collider = registry.get<const ColliderComponent>(entity);
+        // The shape's own frame, as PhysicsWorld places it in the body.
+        const ColliderPlacement placement = colliderLocalTransform(collider, pose.scale);
+        pose.position += pose.rotation * placement.position;
+        pose.rotation = glm::normalize(pose.rotation * placement.rotation);
         GeometryWriter writer(geometry, pose);
-        const ColliderShape& shape = registry.get<const ColliderComponent>(entity).shape;
+        const ColliderShape& shape = collider.shape;
         if (const auto* box = std::get_if<BoxCollider>(&shape)) {
             writer.box(box->halfExtents * pose.scale);
         } else if (const auto* sphere = std::get_if<SphereCollider>(&shape)) {

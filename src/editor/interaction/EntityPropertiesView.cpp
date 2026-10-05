@@ -64,8 +64,8 @@ std::optional<Json> componentJson(const EditorContext& context, const ComponentT
 
 // Copies a custom editor's edit of targets.front() (from original) to the
 // other targets through the component's document form: only the top-level
-// keys the edit changed are written, so the targets' other differences
-// survive.
+// keys the edit changed, added, or removed are written, so the targets' other
+// differences survive.
 void copyCustomEdit(EditorContext& context, const ComponentType& type, std::span<const Entity> targets,
                     const std::any& original) {
     Scene& scene = context.app.scene;
@@ -88,6 +88,13 @@ void copyCustomEdit(EditorContext& context, const ComponentType& type, std::span
         for (const auto& [key, changed] : after->items()) {
             if (const auto previous = before->find(key); previous == before->end() || *previous != changed) {
                 (*value)[key] = changed;
+            }
+        }
+        // A key the edit dropped (an optional value reset, such as a
+        // collider's offset) is dropped from the others too.
+        for (const auto& [key, previous] : before->items()) {
+            if (!after->contains(key)) {
+                value->erase(key);
             }
         }
         if (const SceneDocumentResult result = type.load(*value, scene, target, load); !result) {
@@ -201,7 +208,11 @@ std::vector<std::string> entityComponentCategories(const ComponentTypeRegistry& 
 
 EntityPropertiesView::EntityPropertiesView(ComponentInspectorLayout& layout)
     : m_layout(layout) {
-    m_customEditors.emplace("collider", typedEditor(ComponentEditors::drawCollider));
+    m_customEditors.emplace("collider", [](EditorContext& context, Entity entity, void* component) {
+        const std::vector<ComponentEditors::ColliderMeshChoice> meshes =
+            ComponentEditors::colliderMeshChoices(context.app.scene, context.app.assets, entity);
+        return ComponentEditors::drawCollider(*static_cast<ColliderComponent*>(component), meshes);
+    });
     m_customEditors.emplace("morph_weights", typedEditor(ComponentEditors::drawMorphWeights));
     m_customEditors.emplace("irradiance_volume", typedEditor(ComponentEditors::drawIrradianceVolume));
     // The tag being typed; shared by copies of the editor.

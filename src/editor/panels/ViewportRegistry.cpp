@@ -133,7 +133,8 @@ ViewportSidebarTabResult ViewportRegistry::addSidebarTab(ViewportSidebarTab tab)
         return {.error = "Viewport sidebar tab '" + tab.title + "' needs a draw function"};
     }
     const bool builtIn = tab.title == BuiltInViewportSidebarTab::item || tab.title == BuiltInViewportSidebarTab::tool ||
-                         tab.title == BuiltInViewportSidebarTab::view;
+                         tab.title == BuiltInViewportSidebarTab::view ||
+                         tab.title == BuiltInViewportSidebarTab::navigation;
     const bool duplicate =
         std::ranges::find(m_sidebarTabs, tab.title, &ViewportSidebarTab::title) != m_sidebarTabs.end();
     if (builtIn || duplicate) {

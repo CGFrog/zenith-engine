@@ -13,7 +13,7 @@ In the Project Hub, under **New from Template**:
 The template is `templates/fps_game/` in the Zenith source tree. Its
 `template.json` names the starter scene, the input action file, and the
 project's tags, which the new project's `.zenith-project` file records
-(manifest version 6, see [Projects](../../engine/projects.md)).
+(manifest version 7, see [Projects](../../engine/projects.md)).
 
 ## Build the game module
 

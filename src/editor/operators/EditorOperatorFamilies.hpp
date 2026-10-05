@@ -36,6 +36,7 @@ class ViewportRegistry;
 class WatchList;
 class WorkspaceSet;
 struct EditorToolSettings;
+struct NavMeshBuildSettings;
 
 // Everything the editor's operator families refer to, built once by the
 // session from what it owns. Every reference must outlive the registered
@@ -61,6 +62,9 @@ struct EditorOperatorServices {
     WatchList& watches;
     // The preview navigation mesh the viewports draw.
     NavigationWorld& navigationPreview;
+    // The project's navigation mesh settings, which navigation.bake uses;
+    // changed by Project Settings.
+    const NavMeshBuildSettings& navigationSettings;
     const EditorToolSettings& tools;
     // The open .zenith-project; empty when the editor runs without one.
     std::filesystem::path projectFile;

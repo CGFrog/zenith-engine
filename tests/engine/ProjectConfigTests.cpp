@@ -167,7 +167,7 @@ int main() {
     expect(saveProjectConfig(moduleProjectPath, withModule).success, "a project with a game module should save");
     const std::string moduleProjectText = readFile(moduleProjectPath);
     expect(moduleProjectText.find(R"("gameModule": "bin/game_module.dll")") != std::string::npos &&
-               moduleProjectText.find(R"("version": 6)") != std::string::npos,
+               moduleProjectText.find(R"("version": 7)") != std::string::npos,
            "the game module is written relative to the project file");
     ProjectConfig loadedWithModule;
     expect(loadProjectConfig(moduleProjectPath, loadedWithModule).success &&
@@ -290,6 +290,50 @@ int main() {
     expect(!badFile && badFile.error.find("Jump") != std::string::npos &&
                std::get<Key>(afterBadFile.bindings("Jump")[0].source) == Key::Space,
            "a bad input action file is reported and changes nothing");
+
+    // Navigation settings (version 7): absent means the defaults and is not
+    // written; saved settings round trip; an older manifest ignores the key.
+    expect(!loaded.navigation && loaded.navigationSettings() == NavMeshBuildSettings{} &&
+               readFile(moduleProjectPath).find("\"navigation\"") == std::string::npos,
+           "a project without navigation settings uses the defaults and writes none");
+    const std::filesystem::path navigationPath = directory / "navigation.zenith-project";
+    ProjectConfig withNavigation = source;
+    withNavigation.navigation = NavMeshBuildSettings{.cellSize = 0.15f, .agentRadius = 0.6f, .layerMask = 0b101u};
+    expect(saveProjectConfig(navigationPath, withNavigation).success, "a project with navigation settings saves");
+    ProjectConfig loadedNavigation;
+    expect(loadProjectConfig(navigationPath, loadedNavigation).success && loadedNavigation.navigation &&
+               *loadedNavigation.navigation == *withNavigation.navigation,
+           "navigation settings round trip");
+    const auto writeNavigation = [&](const std::filesystem::path& path, int version, nlohmann::json navigation) {
+        nlohmann::json document = nlohmann::json::parse(readFile(navigationPath));
+        document["version"] = version;
+        document["navigation"] = std::move(navigation);
+        writeFile(path, document.dump());
+    };
+    const std::filesystem::path partialNavigationPath = directory / "partial-navigation.zenith-project";
+    writeNavigation(partialNavigationPath, 7, {{"agentHeight", 2.5}});
+    ProjectConfig partialNavigation;
+    expect(loadProjectConfig(partialNavigationPath, partialNavigation).success && partialNavigation.navigation &&
+               partialNavigation.navigation->agentHeight == 2.5f &&
+               partialNavigation.navigation->cellSize == NavMeshBuildSettings{}.cellSize,
+           "a missing navigation setting keeps its default");
+    const std::filesystem::path oldNavigationPath = directory / "old-navigation.zenith-project";
+    writeNavigation(oldNavigationPath, 6, "ignored");
+    ProjectConfig oldNavigation;
+    expect(loadProjectConfig(oldNavigationPath, oldNavigation).success && !oldNavigation.navigation,
+           "a version 6 project loads without navigation settings");
+    for (const nlohmann::json& invalid :
+         {nlohmann::json("fast"), nlohmann::json{{"cellSize", 0}}, nlohmann::json{{"agentRadius", "wide"}},
+          nlohmann::json{{"agentMaxSlopeDegrees", 95}}, nlohmann::json{{"layerMask", -1}}}) {
+        const std::filesystem::path invalidPath = directory / "invalid-navigation.zenith-project";
+        writeNavigation(invalidPath, 7, invalid);
+        ProjectConfig rejected;
+        expect(!loadProjectConfig(invalidPath, rejected), "invalid navigation settings are rejected");
+    }
+    ProjectConfig unsaveable = source;
+    unsaveable.navigation = NavMeshBuildSettings{.agentHeight = 0.0f};
+    expect(!saveProjectConfig(directory / "unsaveable.zenith-project", unsaveable),
+           "invalid navigation settings are not saved");
 
     writeFile(projectPath, "{not json");
     ProjectConfig preserved = loaded;

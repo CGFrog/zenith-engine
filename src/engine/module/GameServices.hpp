@@ -120,6 +120,10 @@ class GameServices {
     // bake is logged once and leaves it empty); under Explicit it stays empty
     // until bakeNavigation. Bake it again after the static geometry changes.
     NavigationWorld& navigation(const Scene& scene);
+    // The session's navigation mesh when a bake has run (or failed, leaving
+    // it empty), otherwise null; never bakes. For tools that only look, such
+    // as the editor's overlays.
+    const NavigationWorld* navigationIfBaked() const;
     // The mesh zenith.nav_agents moves agents on: navigation(scene), or null
     // under Explicit until bakeNavigation has run (logged once), so agents
     // keep their destinations instead of failing on an empty mesh.
@@ -132,15 +136,25 @@ class GameServices {
     // Bakes the session's navigation mesh from scene's static colliders now,
     // replacing the old one; for a game that builds or replaces a level at
     // runtime, after its spawn commands applied (the next phase, or a timer).
-    // A failed bake leaves no mesh and is returned, not logged.
-    NavigationResult bakeNavigation(const Scene& scene, const NavMeshBuildSettings& settings = {});
+    // A failed bake leaves no mesh and is returned, not logged. Without
+    // settings it uses defaultNavigationSettings().
+    NavigationResult bakeNavigation(const Scene& scene);
+    NavigationResult bakeNavigation(const Scene& scene, const NavMeshBuildSettings& settings);
     // The same from triangles the game assembled itself (gatherNavigationGeometry,
     // appendMeshGeometry), for example a generated floor; settings.layerMask
     // does not apply.
-    NavigationResult bakeNavigation(const NavigationGeometry& geometry, const NavMeshBuildSettings& settings = {});
+    NavigationResult bakeNavigation(const NavigationGeometry& geometry);
+    NavigationResult bakeNavigation(const NavigationGeometry& geometry, const NavMeshBuildSettings& settings);
+    // The settings the lazy bake and bakeNavigation without settings use:
+    // the project's (ProjectConfig::navigationSettings), which hosts (the
+    // game's runtime, the editor's Play) set when gameplay starts, so a game
+    // bakes what the editor previewed. The defaults until set.
+    void setDefaultNavigationSettings(const NavMeshBuildSettings& settings);
+    const NavMeshBuildSettings& defaultNavigationSettings() const;
     // The session's crowd of navigation agents (zenith.nav_agents), started
     // over with crowdSettings() whenever the mesh is baked again.
     NavigationCrowd& navigationCrowd();
+    const NavigationCrowd& navigationCrowd() const;
     const NavCrowdSettings& crowdSettings() const;
     // Applies from the next time the crowd starts over (the next bake).
     void setCrowdSettings(const NavCrowdSettings& settings);
@@ -228,6 +242,7 @@ class GameServices {
     std::optional<SaveGameStore> m_saveGames;
     std::filesystem::path m_savedScene;
     NavigationWorld m_navigation;
+    NavMeshBuildSettings m_defaultNavigationSettings;
     // A bake ran (or failed): navigation() does not bake lazily any more.
     bool m_navigationBaked{false};
     NavigationBakePolicy m_navigationBakePolicy{NavigationBakePolicy::Lazy};
