@@ -6,6 +6,7 @@
 #include <compare>
 #include <cstdint>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <type_traits>
 #include <variant>
 
@@ -62,9 +63,37 @@ struct TriangleMeshCollider {
 
 using ColliderShape = std::variant<BoxCollider, SphereCollider, CapsuleCollider, TriangleMeshCollider>;
 
+// A collision shape and where it sits on its entity. The body is at the
+// entity's world position and rotation; the offset places the shape in the
+// entity's local axes (colliderLocalTransform).
 struct ColliderComponent {
     ColliderShape shape{BoxCollider{}};
+    // In the entity's local axes, before its world scale (so a scaled
+    // entity moves the shape with its mesh).
+    glm::vec3 offsetPosition{0.0f};
+    glm::quat offsetRotation{1.0f, 0.0f, 0.0f, 0.0f};
 };
+
+// Whether the collider's shape sits away from its entity's origin or is
+// turned relative to it.
+inline bool hasColliderOffset(const ColliderComponent& collider) {
+    return collider.offsetPosition != glm::vec3(0.0f) || collider.offsetRotation != glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+}
+
+// Where a collider's shape sits in its body's space (the entity's world
+// position and rotation, unscaled), given the entity's world scale (absolute,
+// per axis). The one convention physics bodies, navigation geometry, and the
+// editor's gizmos share: the offset position is multiplied by the scale, then
+// the offset rotation turns the shape. The shape's own dimensions are still
+// multiplied by the scale on the shape's axes, as without an offset.
+struct ColliderPlacement {
+    glm::vec3 position{0.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+};
+
+inline ColliderPlacement colliderLocalTransform(const ColliderComponent& collider, const glm::vec3& scale) {
+    return {.position = collider.offsetPosition * scale, .rotation = glm::normalize(collider.offsetRotation)};
+}
 
 struct RigidBodyComponent {
     PhysicsMotionType motionType{PhysicsMotionType::Static};

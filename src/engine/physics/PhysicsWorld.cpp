@@ -24,6 +24,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -846,6 +847,12 @@ PhysicsResult PhysicsWorld::refreshBodyFromWorld(Entity entity, Scene& scene, co
     JPH::RefConst<JPH::Shape> shape = createShape(collider, scale, assets, m_impl->meshShapes, error);
     if (!shape) {
         return {.error = std::move(error)};
+    }
+    if (hasColliderOffset(collider)) {
+        // Outside the mesh shape cache: the cached shape stays shareable by
+        // colliders with other offsets.
+        const ColliderPlacement placement = colliderLocalTransform(collider, scale);
+        shape = new JPH::RotatedTranslatedShape(toJolt(placement.position), toJolt(placement.rotation), shape);
     }
 
     JPH::EMotionType motion = JPH::EMotionType::Static;

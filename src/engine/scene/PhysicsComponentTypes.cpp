@@ -11,6 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <type_traits>
 #include <variant>
 
@@ -30,6 +31,45 @@ bool readVector3(const Json& json, glm::vec3& value) {
     value = {json[0].get<float>(), json[1].get<float>(), json[2].get<float>()};
     return true;
 }
+
+// "offset": {"position": [x, y, z], "rotation": [x, y, z, w]}, written only
+// when the shape is moved or turned (version 2).
+Json colliderOffset(const ColliderComponent& collider) {
+    const glm::quat& rotation = collider.offsetRotation;
+    return {{"position", vector3(collider.offsetPosition)},
+            {"rotation", Json::array({rotation.x, rotation.y, rotation.z, rotation.w})}};
+}
+
+SceneDocumentResult readColliderOffset(const Json& input, ColliderComponent& collider) {
+    const auto offset = input.find("offset");
+    if (offset == input.end()) {
+        collider.offsetPosition = glm::vec3(0.0f);
+        collider.offsetRotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        return {.success = true};
+    }
+    const auto position = offset->is_object() ? offset->find("position") : offset->end();
+    const auto rotation = offset->is_object() ? offset->find("rotation") : offset->end();
+    glm::vec3 offsetPosition{0.0f};
+    if (position != offset->end() && !readVector3(*position, offsetPosition)) {
+        return {.error = "Collider offset position must contain three numbers"};
+    }
+    glm::quat offsetRotation{1.0f, 0.0f, 0.0f, 0.0f};
+    if (rotation != offset->end()) {
+        if (!rotation->is_array() || rotation->size() != 4) {
+            return {.error = "Collider offset rotation must be a quaternion [x, y, z, w]"};
+        }
+        offsetRotation = glm::quat((*rotation)[3].get<float>(), (*rotation)[0].get<float>(),
+                                   (*rotation)[1].get<float>(), (*rotation)[2].get<float>());
+        const float length = glm::length(offsetRotation);
+        if (!(length > 1.0e-6f) || !std::isfinite(length)) {
+            return {.error = "Collider offset rotation must not be zero"};
+        }
+        offsetRotation /= length;
+    }
+    collider.offsetPosition = offsetPosition;
+    collider.offsetRotation = offsetRotation;
+    return {.success = true};
+}
 } // namespace
 
 ComponentType colliderComponentType() {
@@ -45,6 +85,9 @@ ComponentType colliderComponentType() {
                         return result;
                     }
                     output = {{"type", "triangle_mesh"}, {"asset", std::move(reference)}};
+                    if (hasColliderOffset(collider)) {
+                        output["offset"] = colliderOffset(collider);
+                    }
                     return SceneDocumentResult{.success = true};
                 }
                 std::visit(
@@ -59,6 +102,9 @@ ComponentType colliderComponentType() {
                         }
                     },
                     collider.shape);
+                if (hasColliderOffset(collider)) {
+                    output["offset"] = colliderOffset(collider);
+                }
                 return SceneDocumentResult{.success = true};
             },
             [](const Json& input, ColliderComponent& collider, const ComponentLoadContext& context) {
@@ -83,8 +129,12 @@ ComponentType colliderComponentType() {
                 } else {
                     return SceneDocumentResult{.error = "Unsupported collider type: " + type};
                 }
-                return SceneDocumentResult{.success = true};
+                return readColliderOffset(input, collider);
             })
+        // Version 2: an optional "offset" moves and turns the shape on its
+        // entity. Version 1 documents have none, so they need no change.
+        .schemaVersion(2)
+        .migration(1, [](nlohmann::json&) { return SceneDocumentResult{.success = true}; })
         .build();
 }
 

@@ -13,6 +13,20 @@ Jolt shape is created. Triangle meshes reference a `MeshAsset`, imported or
 created at runtime (`AssetManager::createMesh`), and are limited to static
 bodies.
 
+A collider can sit away from its entity's origin: `offsetPosition` (in the
+entity's local axes) and `offsetRotation`. `colliderLocalTransform(collider,
+scale)` is the one convention for where the shape sits in its body (the
+entity's world position and rotation, unscaled): the offset position is
+multiplied by the entity's world scale, then the offset rotation turns the
+shape, whose dimensions are scaled on its own axes as without an offset.
+`PhysicsWorld` wraps such a shape in a Jolt `RotatedTranslatedShape` (outside
+the mesh shape cache, so a cached mesh shape stays shared),
+`gatherNavigationGeometry` places its triangles the same way, and so does the
+editor's collider gizmo; `tests/editor/SceneGizmoDrawTests.cpp` checks that
+the three agree. The `collider` component is schema version 2: it writes
+`"offset": {"position": [x, y, z], "rotation": [x, y, z, w]}` only when the
+shape is moved or turned; version 1 documents have none and load unchanged.
+
 ## `src/engine/physics/PhysicsWorld.*`
 
 Owns Jolt through a private implementation. Each step discovers entities with

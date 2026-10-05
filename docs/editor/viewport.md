@@ -58,7 +58,8 @@ aspect (the active primary camera highlighted, a selected one out to its far
 plane, the camera being looked through skipped), collider shapes from
 `ColliderComponent` (physics only steps in Play, so the editor does not use
 `PhysicsWorld::drawDebug`; shapes follow the body construction with world
-scale baked in), reflection probe, decal (oriented, scaled, with a -Y
+scale baked in and the collider's offset applied through
+`colliderLocalTransform`), reflection probe, decal (oriented, scaled, with a -Y
 projection arrow) and irradiance volume (axis-aligned) bounds, world-space
 selection bounds, and name labels. It has no ImGui, takes `SceneGizmoOverlays`
 (each category `Off`, `Selected`, or `All`; colliders and names default to the

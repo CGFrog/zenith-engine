@@ -266,7 +266,11 @@ void GizmoRecorder::colliders(OverlayScope scope) {
 
 void GizmoRecorder::collider(const ColliderComponent& collider, const glm::mat4& entityWorld,
                              const DebugStyle& lineStyle) {
-    const RigidTransform body = splitTransform(entityWorld);
+    RigidTransform body = splitTransform(entityWorld);
+    // The shape's own frame, as PhysicsWorld places it in the body.
+    const ColliderPlacement placement = colliderLocalTransform(collider, body.scale);
+    body.translation += body.rotation * placement.position;
+    body.rotation = glm::normalize(body.rotation * placement.rotation);
     const glm::vec3& scale = body.scale;
     std::visit(
         [&](const auto& shape) {

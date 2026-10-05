@@ -14,7 +14,9 @@ engine).
   upward faces; triangle-mesh colliders use their `MeshAsset`'s full-detail
   ranges. Dynamic and kinematic bodies and sensors are left out. Collider
   poses come from `Scene::worldTransform`, so a bake right after spawning or
-  moving entities sees them in place without a transform update first.
+  moving entities sees them in place without a transform update first; a
+  collider's offset places its shape as physics does
+  (`colliderLocalTransform`, see [Physics](physics.md)).
 - `appendMeshGeometry` adds a mesh's full-detail triangles placed by a
   transform (reversing the winding for a mirroring one), so a game can bake
   generated geometry, such as a runtime floor mesh without a collider, with
