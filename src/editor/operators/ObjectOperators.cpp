@@ -38,6 +38,13 @@ bool sceneEditable(const OperatorContext&) {
     return true;
 }
 
+// The Add menu's operators create document content, as the menu that
+// offers them (object.add_menu) does: Edit mode only, so Play's rules are
+// the same from a key, the menu, or F3.
+bool addingAllowed(const OperatorContext& context) {
+    return context.editMode();
+}
+
 bool hasSelection(const OperatorContext& context) {
     return !context.selection.empty();
 }
@@ -85,7 +92,7 @@ Operator addObjectOperator(std::string id, std::string label, std::string descri
             .description = std::move(description),
             .flags = OperatorFlags::Undo | OperatorFlags::Register,
             .properties = OperatorProperties::make(AddObjectProperties{}, addObjectFields()),
-            .poll = sceneEditable,
+            .poll = addingAllowed,
             .execute = typed<AddObjectProperties>([create](OperatorContext& context, AddObjectProperties& values) {
                 Scene& scene = context.editing.scene();
                 const Entity entity = create(scene);
@@ -106,7 +113,7 @@ Operator addCubeOperator() {
                                                                  .drag(0.05f)
                                                                  .add("size", &AddCubeProperties::size)
                                                                  .drag(0.01f, 0.001, 1000.0))),
-            .poll = sceneEditable,
+            .poll = addingAllowed,
             .execute = typed<AddCubeProperties>([](OperatorContext& context, AddCubeProperties& values) {
                 Scene& scene = context.editing.scene();
                 Entity cube = entt::null;
@@ -305,7 +312,7 @@ Operator addEmptyWithOperator() {
                                                                  .add("component", &AddEmptyWithProperties::component)
                                                                  .add("location", &AddEmptyWithProperties::location)
                                                                  .drag(0.05f))),
-            .poll = sceneEditable,
+            .poll = addingAllowed,
             .execute = typed<AddEmptyWithProperties>([](OperatorContext& context, AddEmptyWithProperties& values) {
                 const ComponentType* type =
                     componentTypesFor(context.editing.document().options()).find(values.component);
@@ -409,6 +416,9 @@ OperatorRegistrationResult registerObjectOperators(OperatorRegistry& registry) {
         addObjectOperator("object.add_fog", "Add Fog", "Add a volumetric fog medium filling the view", addFog));
     operators.push_back(
         addObjectOperator("object.add_empty", "Add Empty", "Add an entity with only a transform", addEmpty));
+    operators.push_back(addObjectOperator("object.add_camera", "Add Camera",
+                                          "Add a camera, primary only when the scene has no primary camera",
+                                          addCamera));
     operators.push_back(addEmptyWithOperator());
     operators.push_back(createEntityOperator());
     operators.push_back(duplicateOperator());

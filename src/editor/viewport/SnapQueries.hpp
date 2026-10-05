@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/interaction/EditorCamera.hpp"
 #include "editor/interaction/ModalTransform.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/graphics/Rendering.hpp"
@@ -39,6 +40,31 @@ std::vector<Entity> snapExclusions(const Scene& scene, std::span<const SceneEnti
 // (sorted, from snapExclusions), or nullopt when the ray hits nothing else.
 std::optional<glm::vec3> surfaceSnapPoint(const Scene& scene, const AssetManager& assets, const SnapView& view,
                                           glm::vec2 viewPoint, std::span<const Entity> excluded = {});
+
+// A point on a surface: the hit position and its unit normal, facing the
+// ray that found it.
+struct SurfaceHit {
+    glm::vec3 position{0.0f};
+    glm::vec3 normal{0.0f, 1.0f, 0.0f};
+};
+
+// The nearest surface along a world ray (normalized direction), skipping
+// excluded entities (sorted); nullopt when it hits nothing else.
+std::optional<SurfaceHit> surfaceHitAlongRay(const Scene& scene, const AssetManager& assets, const LensRay& ray,
+                                             const std::vector<RenderObjectId>* isolatedObjects,
+                                             std::span<const Entity> excluded = {});
+
+// Where something placed under viewPoint goes (drops, the 3D cursor): the
+// nearest surface under it with that surface's normal, or over empty space
+// the point along the view ray fallbackDepth (metres along the lens's
+// forward axis) from the lens, with no normal.
+struct Placement {
+    glm::vec3 position{0.0f};
+    std::optional<glm::vec3> normal;
+};
+
+Placement placementUnderMouse(const Scene& scene, const AssetManager& assets, const SnapView& view, glm::vec2 viewPoint,
+                              float fallbackDepth, std::span<const Entity> excluded = {});
 
 // The mesh vertex (world position) that projects nearest to viewPoint within
 // radiusPixels, preferring the nearer to the camera on a tie, skipping

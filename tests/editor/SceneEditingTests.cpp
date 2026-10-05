@@ -398,11 +398,6 @@ int main() {
     expect(!diagnostics.hasUnacknowledgedError() && !diagnostics.entries().empty(),
            "acknowledging errors should keep the diagnostic entries");
 
-    EntityCommands::placeModel(editing, selection, std::filesystem::temp_directory_path() / "missing.gltf", entt::null,
-                               glm::vec3(0.0f));
-    expect(diagnostics.hasUnacknowledgedError() && entityCount(scene) == 2,
-           "placing a missing model should report and leave the scene unchanged");
-
     testRandomizedEquivalence(EditCapture::WholeScene);
     testRandomizedEquivalence(EditCapture::Entities);
     testEntityCaptureGuards();

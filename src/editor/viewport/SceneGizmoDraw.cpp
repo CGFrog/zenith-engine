@@ -492,3 +492,41 @@ void drawSceneGizmos(const SceneGizmoView& view, const SceneGizmoOverlays& overl
     }
     recorder.names(overlays.names);
 }
+
+std::vector<SceneGizmoAnchor> sceneGizmoAnchors(const SceneGizmoView& view, const SceneGizmoOverlays& overlays) {
+    const entt::registry& registry = view.scene.registry();
+    const SceneVisibility visibility(view.scene, SceneVisibilityMode::Editor);
+    std::unordered_set<uint64_t> selected;
+    for (const SceneEntityId id : view.selection) {
+        selected.insert(id.value);
+    }
+    std::vector<SceneGizmoAnchor> anchors;
+    std::unordered_set<uint64_t> anchored;
+    // As GizmoRecorder::shown: drawn here, and selected when the scope asks.
+    const auto addAnchors = [&]<typename Component>(OverlayScope scope) {
+        if (scope == OverlayScope::Off) {
+            return;
+        }
+        for (const Entity entity : registry.view<const Component, const TransformComponent>()) {
+            const SceneEntityId id = view.scene.id(entity);
+            const bool isolated = view.isolatedObjects == nullptr ||
+                                  std::ranges::binary_search(*view.isolatedObjects,
+                                                             static_cast<RenderObjectId>(entt::to_integral(entity)));
+            if (!visibility.drawn(entity) || !isolated ||
+                (scope == OverlayScope::Selected && !selected.contains(id.value)) ||
+                (view.viewCamera && *view.viewCamera == id) || !anchored.insert(id.value).second) {
+                continue;
+            }
+            anchors.push_back({.entity = id, .position = glm::vec3(registry.get<TransformComponent>(entity).world[3])});
+        }
+    };
+    addAnchors.operator()<PointLightComponent>(overlays.lights);
+    addAnchors.operator()<SpotLightComponent>(overlays.lights);
+    addAnchors.operator()<DirectionalLightComponent>(overlays.lights);
+    addAnchors.operator()<EnvironmentLightComponent>(overlays.lights);
+    addAnchors.operator()<CameraComponent>(overlays.cameras);
+    addAnchors.operator()<ReflectionProbeComponent>(overlays.reflectionProbes);
+    addAnchors.operator()<DecalComponent>(overlays.decals);
+    addAnchors.operator()<IrradianceVolumeComponent>(overlays.irradianceVolumes);
+    return anchors;
+}

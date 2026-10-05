@@ -34,7 +34,42 @@ registers `CollectionOperators` (`collection.new`, `delete`, `link`, `unlink`,
 viewport hide is editor-only: `EditorSession` renders with
 `SceneVisibilityMode::Editor` while editing and `Runtime` in Play mode, and
 hidden or unselectable entities (or collections) cannot be picked or selected
-with Select All. `ComponentOperators` holds the component value operators (reset, copy, paste, copy
+with Select All. The Add menu's operators (`object.add_*`, including
+`object.add_camera`, primary only when the scene has no primary camera, and
+`object.add_empty_with`) poll Edit mode, as the menu does, so a key, the menu,
+and F3 follow the same Play rules; `object.create_entity`, duplicate, and
+delete still edit the running scene live.
+
+`PlacementOperators` (the `placement` family) holds `object.place_model
+{asset, parent, location, rotation, normal, align_to_normal}` (Undo,
+Register; Edit mode only), which every model placement runs
+(`EditorContext::placeModel`, viewport drops with the surface under the
+mouse), `object.array {count, offset, rotation_deg, scale_step,
+relative_to_bounds}`, and `object.scatter {count, radius, seed,
+align_to_surface, random_yaw, scale_jitter}`. `prefab.instantiate` takes the
+same `rotation`, `normal`, and `align_to_normal`; `placementRotation` turns
++Y onto the normal, then applies the Euler rotation (degrees). Array and
+scatter copy the selection's transform roots into one scene fragment,
+replicate it once per copy (`SceneFragment::replicate`), and paste it once,
+since paste rebuilds the whole scene; each copy joins its original's parent
+(`EntityCommands::pasteBesideSources`), the copies are selected, and both are
+one undo step that Adjust Last Operation re-runs. Array steps each copy from
+the last (turn and scale about the copies' median, then the offset turned
+with them, so a turning array curves; `relative_to_bounds` measures the
+offset in selection bounds). Scatter draws every copy's random values from a
+local `RandomStream(seed)` whatever the options, so the same seed gives the
+same copies, and drops each onto the surface below a random point of the disc
+(downward rays that skip the originals, `surfaceHitAlongRay`).
+`tests/editor/PlacementTests.cpp` covers them headless.
+
+`SelectOperators` (the `select` family) holds `object.select_hierarchy
+{direction, extend}` (`]` children, `[` parent, Shift extends) and
+`object.select_grouped {type, extend}` (Shift+G opens its menu, also in Edit >
+Select Grouped): children, immediate children, prefab, model, mesh, tag,
+collection, or components (every component type the active object has).
+They record no undo step, pick only `SceneVisibility::selectable` entities,
+and cancel without changing the selection when they find nothing;
+`tests/editor/SelectionToolsTests.cpp` covers them. `ComponentOperators` holds the component value operators (reset, copy, paste, copy
 to selected, move), tested in `tests/editor/ComponentOperatorTests.cpp`.
 `EyedropperOperators` arms (`ui.eyedropper_entity`), completes
 (`ui.eyedropper_pick`, one undo step), and cancels (`ui.eyedropper_cancel`) the
@@ -105,7 +140,7 @@ declared in `application/EditorSessionOperators.hpp` and defined beside the
 session code they drive. Non-operator registrations (`registerAreaTypes`,
 `registerDefaultMenus`) stay explicit calls in the session.
 
-The `navigation` family (`NavigationOperators.*`) bakes and clears the
+The `placement` and `select` families are described above. The `navigation` family (`NavigationOperators.*`) bakes and clears the
 preview navigation mesh the session owns (see
 [Navigation](../engine/navigation.md)). The `build` family
 (`BuildOperators.*`) starts and cancels the session's build, and the `code`
@@ -134,8 +169,9 @@ interface rather than passing the session.
 
 `src/editor/operators/`: Operator registry and runner (poll, execute, undo,
 Adjust Last Operation; operators run on the runtime scene without undo in Play
-and Simulate), headless object, component, collection, visibility (hide),
-outliner, and prefab operators, the headless play operators (time scale,
+and Simulate), headless object, placement (place model, array, scatter),
+selection, component, collection, visibility (hide), outliner, and prefab
+operators, the headless play operators (time scale,
 Simulate systems, profiler reset, Apply to Edit Scene), the preferences and
 Build and Package operators, the per-region keymap (key and viewport mouse
 chords, Press/DoubleTap/Hold/Release/Click/Drag triggers) with `keymap.json`

@@ -103,6 +103,13 @@ std::vector<KeymapBinding> defaultEditorKeymap() {
     addObjectKey(bindings, "object.select_all", ImGuiKey_A, R"({"action":"select"})");
     addObjectKey(bindings, "object.select_all", ImGuiMod_Alt | ImGuiKey_A, R"({"action":"deselect"})");
     addObjectKey(bindings, "object.select_all", ImGuiMod_Ctrl | ImGuiKey_I, R"({"action":"invert"})");
+    addObjectKey(bindings, "object.select_hierarchy", ImGuiKey_RightBracket, R"({"direction":"children"})");
+    addObjectKey(bindings, "object.select_hierarchy", ImGuiMod_Shift | ImGuiKey_RightBracket,
+                 R"({"direction":"children","extend":true})");
+    addObjectKey(bindings, "object.select_hierarchy", ImGuiKey_LeftBracket, R"({"direction":"parent"})");
+    addObjectKey(bindings, "object.select_hierarchy", ImGuiMod_Shift | ImGuiKey_LeftBracket,
+                 R"({"direction":"parent","extend":true})");
+    addObjectKey(bindings, "wm.call_menu", ImGuiMod_Shift | ImGuiKey_G, R"({"menu":"VIEW3D_MT_select_grouped"})");
     addObjectKey(bindings, "object.rename_popup", ImGuiKey_F2);
     addObjectKey(bindings, "edit.copy", ImGuiMod_Ctrl | ImGuiKey_C);
     addObjectKey(bindings, "edit.paste", ImGuiMod_Ctrl | ImGuiKey_V);

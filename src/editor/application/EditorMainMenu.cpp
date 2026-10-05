@@ -39,6 +39,21 @@ void EditorSession::drawDebugOverlaysMenu(ApplicationContext& context) {
     ImGui::EndMenu();
 }
 
+void EditorSession::drawRegisteredMenu(ApplicationContext& context, const char* menuId, const char* label,
+                                       bool enabled) {
+    if (!ImGui::BeginMenu(label, enabled)) {
+        return;
+    }
+    if (const std::optional<ResolvedMenu> menu =
+            m_menus.resolve({.menu = menuId, .category = {}}, operatorContext(context, KeymapRegion::Global))) {
+        EditorContext editor = editorContext(context);
+        if (const std::optional<MenuChoice> chosen = drawMenuItems(editor, *menu)) {
+            editor.invoke(chosen->operatorId, chosen->properties);
+        }
+    }
+    ImGui::EndMenu();
+}
+
 void EditorSession::drawMainMenu(ApplicationContext& context) {
     handleGlobalShortcuts(context);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, toImVec4(palette::transparent));
@@ -75,6 +90,9 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         operatorMenuItem(context, "object.select_all", "Select All", R"({"action":"select"})");
         operatorMenuItem(context, "object.select_all", "Deselect All", R"({"action":"deselect"})");
         operatorMenuItem(context, "object.select_all", "Invert Selection", R"({"action":"invert"})");
+        operatorMenuItem(context, "object.select_hierarchy", "Select Children", R"({"direction":"children"})");
+        operatorMenuItem(context, "object.select_hierarchy", "Select Parent", R"({"direction":"parent"})");
+        drawRegisteredMenu(context, selectGroupedMenuId, "Select Grouped", !m_selection.empty());
         ImGui::Separator();
         if (ImGui::BeginMenu("Clear", editing && !m_selection.empty())) {
             operatorMenuItem(context, "object.location_clear", "Location");
@@ -82,16 +100,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             operatorMenuItem(context, "object.scale_clear", "Scale");
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Add", editing)) {
-            if (const std::optional<ResolvedMenu> add = m_menus.resolve(
-                    {.menu = addMenuId, .category = {}}, operatorContext(context, KeymapRegion::Global))) {
-                EditorContext editor = editorContext(context);
-                if (const std::optional<MenuChoice> chosen = drawMenuItems(editor, *add)) {
-                    editor.invoke(chosen->operatorId, chosen->properties);
-                }
-            }
-            ImGui::EndMenu();
-        }
+        drawRegisteredMenu(context, addMenuId, "Add", editing);
         ImGui::Separator();
         operatorMenuItem(context, "wm.search_menu", "Search Operators...");
         operatorMenuItem(context, "wm.keymap_editor", "Keymap...");
@@ -100,6 +109,9 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Object")) {
+        operatorMenuItem(context, "object.array", "Array");
+        operatorMenuItem(context, "object.scatter", "Scatter");
+        ImGui::Separator();
         if (ImGui::BeginMenu("Prefab")) {
             operatorMenuItem(context, "prefab.create_from_selection", "Create from Selection");
             ImGui::Separator();

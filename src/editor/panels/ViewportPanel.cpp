@@ -5,7 +5,6 @@
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/PickQueries.hpp"
 #include "editor/operators/KeymapDispatch.hpp"
-#include "editor/panels/AssetDragPayloads.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
@@ -15,8 +14,11 @@
 #include "editor/viewport/GameUiOverlay.hpp"
 #include "editor/viewport/NavigationSidebarTab.hpp"
 #include "editor/viewport/RuntimeDebugDraw.hpp"
+#include "editor/viewport/IconPicking.hpp"
+#include "editor/viewport/MultiGizmo.hpp"
 #include "editor/viewport/SceneGizmoDraw.hpp"
 #include "editor/viewport/ViewFraming.hpp"
+#include "editor/viewport/ViewportDrop.hpp"
 #include "engine/graphics/ViewShading.hpp"
 #include "engine/navigation/NavigationWorld.hpp"
 
@@ -44,17 +46,6 @@ void paintChildPanel() {
 const char* entityName(const Scene& scene, Entity entity) {
     const auto* name = scene.registry().try_get<NameComponent>(entity);
     return name != nullptr ? name->name.c_str() : "Camera";
-}
-
-glm::mat3 normalizedAxes(const glm::mat4& world) {
-    glm::mat3 axes(1.0f);
-    for (int column = 0; column < 3; ++column) {
-        const glm::vec3 basis(world[column]);
-        if (glm::length(basis) > 1e-8f) {
-            axes[column] = glm::normalize(basis);
-        }
-    }
-    return axes;
 }
 } // namespace
 
@@ -366,7 +357,7 @@ ViewportPanel::DocumentView ViewportPanel::takeDocumentView() {
     m_localViewObjects.reset();
     m_cameraView.reset();
     m_queuedSelect.reset();
-    m_gizmoBefore.reset();
+    m_gizmoDrag.reset();
     cancelSelectTool();
     return view;
 }
@@ -589,14 +580,11 @@ void ViewportPanel::draw(EditorContext& context) {
     if (texture) {
         drawSceneLabels(context);
     }
-    if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ZENITH_MODEL_ASSET")) {
-            context.placeModel(static_cast<const char*>(payload->Data), entt::null);
-        }
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(prefabAssetPayload)) {
-            context.placePrefab(static_cast<const char*>(payload->Data), entt::null);
-        }
-        ImGui::EndDragDropTarget();
+    if (!m_gameView) {
+        // Drops land on the surface under the mouse; a game view takes none.
+        const ImVec2 dropMouse = ImGui::GetMousePos();
+        acceptViewportAssetDrops(context, snapView(context.app.scene),
+                                 glm::vec2(dropMouse.x, dropMouse.y) - m_position);
     }
     // The chrome is drawn in child windows, so the image reports no hover or
     // click while the mouse is over the header, tool shelf, or sidebar.
@@ -942,7 +930,8 @@ void ViewportPanel::processPicks(EditorContext& context) {
                                          .region = std::move(queued.region),
                                          .lens = lens(scene),
                                          .viewSize = m_size,
-                                         .isolatedObjects = m_localViewObjects});
+                                         .isolatedObjects = m_localViewObjects,
+                                         .icons = pickableIconsHere(context)});
     }
     if (!m_picker.pending()) {
         return;
@@ -951,6 +940,21 @@ void ViewportPanel::processPicks(EditorContext& context) {
     if (const std::optional<ViewportPickOutcome> outcome = m_picker.poll(picks, scene, context.app.assets)) {
         applyPick(context, m_pendingIntent, *outcome);
     }
+}
+
+std::vector<SceneGizmoAnchor> ViewportPanel::pickableIconsHere(EditorContext& context) const {
+    // Only the marks the view draws can be clicked.
+    if (!viewportDrawsSceneGizmos(context.mode, m_cameraView.has_value(), m_chrome.overlays)) {
+        return {};
+    }
+    const Scene& scene = context.app.scene;
+    return pickableIcons({.scene = scene,
+                          .assets = context.app.assets,
+                          .selection = context.selection.ids(),
+                          .aspectRatio = m_size.x / std::max(m_size.y, 1.0f),
+                          .viewCamera = m_cameraView,
+                          .isolatedObjects = m_localViewObjects ? &*m_localViewObjects : nullptr},
+                         m_chrome.overlays.scene);
 }
 
 void ViewportPanel::applyPick(EditorContext& context, const SelectIntent& intent, const ViewportPickOutcome& outcome) {
@@ -1086,31 +1090,30 @@ void ViewportPanel::drawGameView(EditorContext& context, bool imageHovered, bool
 }
 
 bool ViewportPanel::drawGizmo(EditorContext& context) {
-    if (m_tools.gizmo == GizmoMode::Select || context.selection.size() != 1) {
-        m_gizmoWasUsing = false;
-        m_gizmoBefore.reset();
+    if (m_tools.gizmo == GizmoMode::Select || context.selection.empty()) {
+        m_gizmoDrag.reset();
         return false;
     }
     Scene& scene = context.app.scene;
-    const Entity entity = scene.findEntity(*context.selection.active());
-    if (entity == entt::null) {
+    scene.updateWorldTransforms();
+    // A drag keeps the entities it started with; otherwise the gizmo follows
+    // the selection's transform roots, so a parent and child move once.
+    std::vector<SceneEntityId> ids = m_gizmoDrag ? m_gizmoDrag->entities : context.selection.transformRoots(scene);
+    std::vector<Entity> entities;
+    std::vector<glm::mat4> currentWorld;
+    for (SceneEntityId id : ids) {
+        const Entity entity = scene.findEntity(id);
+        if (entity == entt::null) {
+            m_gizmoDrag.reset();
+            return false;
+        }
+        entities.push_back(entity);
+        currentWorld.push_back(scene.registry().get<TransformComponent>(entity).world);
+    }
+    if (entities.empty()) {
         return false;
     }
-    entt::registry& registry = scene.registry();
-    scene.updateWorldTransforms();
-    const glm::mat4 startWorld = registry.get<TransformComponent>(entity).world;
-    // The gizmo sits on the pivot: the 3D cursor while rotating or scaling
-    // about it, otherwise the object's origin (with one object selected, the
-    // median, active, and individual origins are all that origin).
-    const bool aboutCursor = m_tools.pivot == TransformPivot::Cursor && m_tools.gizmo != GizmoMode::Translate;
-    glm::mat4 gizmo = startWorld;
-    if (aboutCursor) {
-        gizmo[3] = glm::vec4(context.editing.document().editorData().cursorLocation, 1.0f);
-    }
-    const glm::mat4 gizmoBefore = gizmo;
-    if (!m_gizmoWasUsing) {
-        m_gizmoStartPosition = glm::vec3(gizmo[3]);
-    }
+    glm::mat4 gizmo = m_gizmoDrag ? m_gizmoDrag->gizmo : currentGizmoFrame(context, currentWorld);
     const RenderView currentLens = lens(scene);
     const glm::mat4 view = lensViewMatrix(currentLens);
     const glm::mat4 projection = lensGizmoProjectionMatrix(currentLens, m_size.x / m_size.y);
@@ -1133,53 +1136,65 @@ bool ViewportPanel::drawGizmo(EditorContext& context) {
                                       (snapping.absoluteGrid || snapping.target != SnapTarget::Increment);
     const float snapValue = m_tools.activeSnap();
     const float snap[3]{snapValue, snapValue, snapValue};
-    const glm::mat4 localBeforeManipulation = registry.get<TransformComponent>(entity).local;
     const bool changed = ImGuizmo::Manipulate(&view[0][0], &projection[0][0], operation, mode, &gizmo[0][0], nullptr,
                                               snapping.enabled && !snapsTranslationHere ? snap : nullptr);
     const bool usingGizmo = ImGuizmo::IsUsing();
     const bool overGizmo = ImGuizmo::IsOver();
     ImGuizmo::PopID();
-    if (changed && snapsTranslationHere) {
-        gizmo[3] =
-            glm::vec4(snapGizmoTranslation(context, snapping, glm::vec3(gizmo[3]), normalizedAxes(gizmoBefore)), 1.0f);
+    if ((usingGizmo || changed) && !m_gizmoDrag) {
+        beginGizmoDrag(context, std::move(ids), entities, std::move(currentWorld));
     }
-    // About the cursor the object follows the gizmo's change; otherwise the
-    // gizmo is the object.
-    glm::mat4 world = gizmo;
-    if (aboutCursor) {
-        world = std::abs(glm::determinant(glm::mat3(gizmoBefore))) > 1e-12f
-                    ? gizmo * glm::inverse(gizmoBefore) * startWorld
-                    : startWorld;
-    }
-    if (changed) {
-        const Entity parent = registry.get<RelationshipComponent>(entity).parent;
-        registry.get<TransformComponent>(entity).local =
-            parent == entt::null ? world : glm::inverse(registry.get<TransformComponent>(parent).world) * world;
-        scene.markTransformDirty(entity);
-        scene.updateWorldTransforms();
-    }
-    if (usingGizmo && !m_gizmoWasUsing) {
-        // The first manipulated frame has already moved the entity, so the
-        // undo snapshot is taken with the pre-drag transform restored.
-        const glm::mat4 editedLocal = registry.get<TransformComponent>(entity).local;
-        registry.get<TransformComponent>(entity).local = localBeforeManipulation;
-        scene.markTransformDirty(entity);
-        scene.updateWorldTransforms();
-        m_gizmoBefore.emplace();
-        if (!context.editing.captureEntities(std::span(&entity, 1), *m_gizmoBefore)) {
-            m_gizmoBefore.reset();
+    if (changed && m_gizmoDrag) {
+        if (snapsTranslationHere) {
+            gizmo[3] = glm::vec4(
+                snapGizmoTranslation(context, snapping, glm::vec3(gizmo[3]), normalizedAxes(m_gizmoDrag->gizmoStart)),
+                1.0f);
         }
-        registry.get<TransformComponent>(entity).local = editedLocal;
-        scene.markTransformDirty(entity);
-        scene.updateWorldTransforms();
-    } else if (!usingGizmo && m_gizmoWasUsing && m_gizmoBefore) {
-        // In Play and Simulate the editing is the runtime scene's, which
-        // records nothing: a drag there never reaches the edit history.
-        context.editing.commit("Transform Gizmo", {}, std::move(*m_gizmoBefore));
-        m_gizmoBefore.reset();
+        m_gizmoDrag->gizmo = gizmo;
+        setWorldTransforms(scene, entities,
+                           applyGizmoChange(m_gizmoDrag->startWorld, m_tools.pivot, m_gizmoDrag->gizmoStart, gizmo));
     }
-    m_gizmoWasUsing = usingGizmo;
+    if (!usingGizmo && m_gizmoDrag) {
+        // One undo step for every dragged object. In Play and Simulate the
+        // editing is the runtime scene's, which records nothing: a drag there
+        // never reaches the edit history.
+        if (m_gizmoDrag->before) {
+            context.editing.commit("Transform Gizmo", {}, std::move(*m_gizmoDrag->before));
+        }
+        m_gizmoDrag.reset();
+    }
     return usingGizmo || overGizmo;
+}
+
+void ViewportPanel::beginGizmoDrag(EditorContext& context, std::vector<SceneEntityId> ids,
+                                   std::span<const Entity> entities, std::vector<glm::mat4> startWorld) {
+    // Nothing has moved yet, so the undo snapshot is the pre-drag state.
+    GizmoDrag drag{.entities = std::move(ids), .gizmoStart = currentGizmoFrame(context, startWorld)};
+    drag.startWorld = std::move(startWorld);
+    drag.gizmo = drag.gizmoStart;
+    drag.before.emplace();
+    if (!context.editing.captureEntities(entities, *drag.before)) {
+        drag.before.reset();
+    }
+    m_gizmoStartPosition = glm::vec3(drag.gizmoStart[3]);
+    m_gizmoDrag = std::move(drag);
+}
+
+glm::mat4 ViewportPanel::currentGizmoFrame(EditorContext& context, std::span<const glm::mat4> world) const {
+    const Scene& scene = context.app.scene;
+    GizmoPlacement placement{
+        .pivot = {.mode = m_tools.pivot, .cursor = context.editing.document().editorData().cursorLocation},
+        .translating = m_tools.gizmo == GizmoMode::Translate};
+    if (const std::optional<SceneEntityId> active = context.selection.active()) {
+        if (const Entity entity = scene.findEntity(*active); entity != entt::null) {
+            const glm::mat4& activeWorld = scene.registry().get<TransformComponent>(entity).world;
+            placement.pivot.activeOrigin = glm::vec3(activeWorld[3]);
+            if (m_tools.space == TransformSpace::Local) {
+                placement.orientation = normalizedAxes(activeWorld);
+            }
+        }
+    }
+    return gizmoFrame(world, placement);
 }
 
 glm::vec3 ViewportPanel::snapGizmoTranslation(EditorContext& context, const TransformSnapping& snapping,

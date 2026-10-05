@@ -48,9 +48,14 @@ Entity pickThroughLens(const Scene& scene, const AssetManager& assets, const Ren
                        const std::vector<RenderObjectId>* isolatedObjects = nullptr);
 
 // One entity a lens ray hits; distance is in world units along the ray.
+// normal is the hit triangle's unit world-space face normal on its front
+// side (counter-clockwise winding, as the renderer culls), transformed by the
+// inverse transpose so it stays outward under negative scale. A ray hitting
+// a back face gets a normal pointing away from it.
 struct LensHit {
     Entity entity{entt::null};
     float distance{0.0f};
+    glm::vec3 normal{0.0f, 1.0f, 0.0f};
 };
 
 // Every entity pickThroughLens could return for the ray, nearest first, each
@@ -58,6 +63,10 @@ struct LensHit {
 std::vector<LensHit> pickAllThroughLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
                                         glm::vec2 normalizedViewportPosition, float aspectRatio,
                                         const std::vector<RenderObjectId>* isolatedObjects = nullptr);
+// As pickAllThroughLens for any world ray (a normalized direction), such as
+// the downward rays scattering casts.
+std::vector<LensHit> pickAllAlongRay(const Scene& scene, const AssetManager& assets, const LensRay& ray,
+                                     const std::vector<RenderObjectId>* isolatedObjects = nullptr);
 // Entities pickThroughLens could return whose mesh bounds centre (the origin
 // for a mesh not loaded) projects in front of the lens to a normalized
 // viewport position `contains` accepts, each once, in scene order. The CPU

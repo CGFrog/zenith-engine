@@ -232,9 +232,17 @@ to surface and vertex snapping. Each viewport remembers these choices.
 
 **The 3D cursor** is the red and white ring in every viewport.
 `Shift+Right-click` places it on the surface under the mouse (over empty
-space it keeps its distance from the view). New objects from the Add menu,
-dropped models, and prefabs appear at the cursor; the Adjust Last Operation
-panel still lets you change the location. **View > Snap** moves the cursor to
+space it keeps its distance from the view). New objects from the Add menu
+and prefabs added from it appear at the cursor; the Adjust Last Operation
+panel still lets you change the location. Models and prefabs dragged from the
+Asset Browser land on the surface under the mouse, and **Align to Normal** in
+the Adjust Last Operation panel stands them on that surface's slope. The
+gizmo moves, turns, and scales every selected object about the pivot point.
+**Object > Array** and **Object > Scatter** copy the selection in a row or
+across the surfaces around it; change the count or seed afterwards in the
+Adjust Last Operation panel. `]` and `[` select children and parents, and
+`Shift+G` selects objects sharing a mesh, prefab, tag, or collection with the
+active one. Lights, cameras, and emitters are clicked by their overlay marks. **View > Snap** moves the cursor to
 the selection or back to the world origin, or moves the selection to the
 cursor. The cursor is saved with the scene (in a small
 `<scene>.editor.json` file beside it) and is not affected by undo; hide it

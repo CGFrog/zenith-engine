@@ -14,7 +14,8 @@
 // entity's prefab instance:
 //
 //   prefab.create_from_selection {path}   new prefab from the active entity
-//   prefab.instantiate {asset, parent, location}  new instance, selected
+//   prefab.instantiate {asset, parent, location, rotation, normal, align_to_normal}
+//                                         new instance, selected
 //   prefab.apply                          write the instance into its prefab
 //   prefab.revert                         reset the instance to its prefab
 //   prefab.unpack                         keep the entities, drop the link
@@ -55,6 +56,15 @@ struct InstantiatePrefabProperties {
     // it at the 3D cursor (the root's transform places an instance and is
     // never an override).
     glm::vec3 location{0.0f};
+    // Euler angles in degrees turning the instance root from the prefab's
+    // own orientation, applied in the frame the alignment leaves
+    // (placementRotation, PlacementOperators.hpp).
+    glm::vec3 rotation{0.0f};
+    // World surface normal at location, for alignToNormal; a viewport drop
+    // passes the one under the mouse.
+    glm::vec3 normal{0.0f, 1.0f, 0.0f};
+    // Turns the instance's +Y onto normal.
+    bool alignToNormal{false};
 };
 
 struct EditPrefabProperties {
