@@ -104,6 +104,11 @@ struct FrameCaptureResult {
 
 class Renderer {
   public:
+    // Frames recorded ahead of the GPU. Each frame slot leases the assets it
+    // draws until the slot is reused, so an asset released now is unleased
+    // after this many more frames.
+    static constexpr uint32_t framesInFlight = 3;
+
     bool init(const Window& window, RenderRuntime& rendering, FrameTaskExecutor& frameTasks,
               const RendererOptions& options = {});
     bool drawFrame(const Window& window, Scene& scene, const AssetManager& assets);
@@ -239,7 +244,6 @@ class Renderer {
     std::vector<MeshPassViewRequest> m_viewRequests;
     std::vector<uint32_t> m_renderedViews;
     std::array<RenderSettings, RenderRuntime::maximumViews> m_composedViewSettings;
-    static constexpr uint32_t framesInFlight = 3;
     std::array<FrameResources, framesInFlight> m_frames;
     std::array<AssetLeaseSet, framesInFlight> m_frameAssets;
     AssetLeaseSet m_pendingUiAssets;

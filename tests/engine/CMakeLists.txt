@@ -34,6 +34,7 @@ zenith_add_test(zenith_physics_queries SOURCES PhysicsQueryTests.cpp LIBS zenith
 zenith_add_test(zenith_system_scheduler SOURCES SystemSchedulerTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_behaviours SOURCES BehaviourTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_game_services SOURCES GameServicesTests.cpp LIBS zenith_engine)
+zenith_add_test(zenith_asset_collection SOURCES AssetCollectionTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_random SOURCES RandomTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_definition_tables SOURCES DefinitionTableTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_floor_lifecycle SOURCES FloorLifecycleTests.cpp LIBS zenith_engine)

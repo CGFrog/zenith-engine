@@ -144,6 +144,17 @@ reports it. An emitter fires its first burst when it starts; changing its runtim
 `restartGeneration` starts it again without a pool reset (pooled effects use
 it).
 
+The pool layout is stable: each emitter keeps its slot range, its GPU emitter
+table entry (which its particles name), its spawn accumulator and burst timer,
+and its live particles while its id, capacity, and simulation space stay the
+same. Adding an emitter places it in the first free range that fits and the
+lowest free table entry; removing one frees its range. The plan lists only
+those slots in `ParticleFramePlan::clearRanges`, which `ParticlePass` zeroes
+before emitting, so an enemy spawning with a torch no longer restarts every
+fire on the floor. When fragmentation leaves no free range large enough, or
+the budget or scene content generation changes, the scheduler compacts:
+emitters are packed in id order, everything restarts, and the pool is reset.
+
 ## `src/engine/graphics/VolumetricFog.*`
 
 CPU mirror of the froxel layout (an integer subdivision of the cluster grid

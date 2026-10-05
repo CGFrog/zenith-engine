@@ -24,8 +24,9 @@ struct EffectOptions {
     std::optional<float> lifetime;
     // When the effect ends, park the instance (its emitters stopped) and reuse
     // it for the next pooled spawn of the same prefab instead of destroying
-    // it. Spawning and destroying entities restarts every particle emitter in
-    // the scene, which pooling avoids. Parked instances stay in the scene, so
+    // it. Pooling saves the entity churn and the pool-slot allocation of a
+    // new emitter (other emitters keep their particles either way; see
+    // particles::ParticleScheduler). Parked instances stay in the scene, so
     // pool particle effects rather than effects with meshes.
     bool pooled{false};
 };

@@ -196,9 +196,13 @@ It holds:
   and `saveGame(scene, slot, title)` against the scene document the session
   plays (see [Scene](scene.md)).
 - `navigation(scene)`: the session's navigation mesh, baked from the scene's
-  static colliders on first use. `bakeNavigation(scene, settings)` bakes it
-  again now, for a game that builds or replaces a level at runtime; call it
-  after the spawn commands applied (the next phase, or a timer).
+  static colliders on first use under the default `Lazy` bake policy.
+  `bakeNavigation(scene, settings)` bakes it again now, for a game that builds
+  or replaces a level at runtime; call it after the spawn commands applied
+  (the next phase, or a timer). Such a game sets
+  `setNavigationBakePolicy(NavigationBakePolicy::Explicit)` so agents wait for
+  that bake instead of triggering an early one (see
+  [Navigation](navigation.md)).
 - `Timers`: one-shot or repeating callbacks on simulated time. They follow the
   clock's time scale and stop while paused. A timer may have an owner entity;
   the timer is dropped when its owner is gone, or when its callback throws.
@@ -215,9 +219,29 @@ It holds:
   `SystemContext::unscaledDeltaSeconds`. The first-person camera ignores look
   input while the game is paused.
 - `DebugDraw&`: `RenderRuntime::debugDraw()`, drawn in every view this frame.
+- `SessionResources` (`resources()`, `resource<T>()`): the session's own
+  data, one value per type, such as definition tables and the current run's
+  state. A type opts in with a unique
+  `static constexpr std::string_view resourceKey`; like events, values are
+  found by that string, not a C++ type id, so the engine and a module agree
+  on them. `get` default-constructs on first use, `emplace` replaces,
+  `find` and `erase` do what they say. Module statics are lost on hot reload
+  and a registry's context goes with its scene; resources live exactly as
+  long as the services, are destroyed newest first before the services' other
+  members, and so are gone before a module unloads or reloads.
+- `assetPath(path)`: a project-relative asset path (as prefab and clip
+  references are written) resolved against the session's asset root, for
+  `DefinitionTable::load` and other files the game reads. An empty, absolute,
+  or escaping path is logged and gives an empty path.
+- `requestAssetCollection()`: frees the CPU assets nothing leases any more,
+  once the frames in flight retired (see [Assets](assets.md)). Call it when
+  tearing down part of the scene, such as a roguelike floor, after its
+  destroy commands are recorded: `runGameplayPhase` hands the request to the
+  application after the phase's flush, and the engine collects
+  `Renderer::framesInFlight` frames later. A scene change collects on its own.
 
-Commands, timer callbacks, and event channels hold module code, so the
-services are destroyed before the module that used them unloads.
+Commands, timer callbacks, event channels, and session resources hold module
+code, so the services are destroyed before the module that used them unloads.
 
 ## Folder contents
 
@@ -225,4 +249,4 @@ services are destroyed before the module that used them unloads.
 unloading, module registration, the system registry and scheduler (Simulate
 mask, per-system CPU profile), `Gameplay` (the component types and systems a
 game plays) with `GameplayRunner`, the engine's built-in systems, and
-`GameServices` (entity commands, events, timers).
+`GameServices` (entity commands, events, timers, session resources).

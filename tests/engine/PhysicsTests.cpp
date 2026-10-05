@@ -2,11 +2,13 @@
 #include "engine/physics/PhysicsWorld.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -223,6 +225,105 @@ void testConfigurationLimitsAreValidated() {
            "a temporary allocator too small for the contact constraints is rejected");
     expect(!physics.init({.maxBodies = 0}), "a zero body capacity is rejected");
 }
+
+// Contact and trigger events sort by scene ids and type, whatever order they
+// arrive in.
+void testEventOrderIsByScene() {
+    const auto contact = [](ContactEventType type, uint64_t first, uint64_t second, float normalX = 0.0f) {
+        return ContactEvent{.type = type,
+                            .normal = {normalX, 0.0f, 0.0f},
+                            .firstId = SceneEntityId{first},
+                            .secondId = SceneEntityId{second}};
+    };
+    const std::vector<ContactEvent> expected{
+        contact(ContactEventType::Begin, 1, 4),       contact(ContactEventType::Persist, 4, 1),
+        contact(ContactEventType::End, 1, 4),         contact(ContactEventType::Begin, 2, 3, -1.0f),
+        contact(ContactEventType::Begin, 2, 3, 1.0f), contact(ContactEventType::Begin, 3, 2),
+        contact(ContactEventType::Persist, 7, 2)};
+    std::vector<ContactEvent> shuffled{expected[5], expected[2], expected[6], expected[0],
+                                       expected[4], expected[3], expected[1]};
+    std::ranges::sort(shuffled, contactEventPrecedes);
+    bool contactsMatch = shuffled.size() == expected.size();
+    for (size_t index = 0; contactsMatch && index < expected.size(); ++index) {
+        contactsMatch =
+            shuffled[index].type == expected[index].type && shuffled[index].firstId == expected[index].firstId &&
+            shuffled[index].secondId == expected[index].secondId && shuffled[index].normal == expected[index].normal;
+    }
+    expect(contactsMatch, "contacts order by the pair's lower then higher scene id, type, first id, and normal");
+
+    const auto trigger = [](TriggerEventType type, uint64_t sensor, uint64_t other) {
+        return TriggerEvent{.type = type, .sensorId = SceneEntityId{sensor}, .otherId = SceneEntityId{other}};
+    };
+    std::vector<TriggerEvent> triggers{
+        trigger(TriggerEventType::Exited, 5, 1), trigger(TriggerEventType::Entered, 2, 9),
+        trigger(TriggerEventType::Entered, 5, 1), trigger(TriggerEventType::Entered, 2, 3)};
+    std::ranges::sort(triggers, triggerEventPrecedes);
+    expect(triggers[0].otherId.value == 3 && triggers[1].otherId.value == 9 &&
+               triggers[2].type == TriggerEventType::Entered && triggers[3].type == TriggerEventType::Exited,
+           "triggers order by sensor id, other id, then Entered before Exited");
+}
+
+struct TriggerRecord {
+    TriggerEventType type;
+    uint64_t sensor;
+    uint64_t other;
+
+    bool operator==(const TriggerRecord&) const = default;
+};
+
+// Several sensors, each with a box falling through it, built with their
+// entities created in the given order of zones; scene ids are fixed per zone,
+// so only creation (and so Jolt body) order differs. Returns the trigger
+// events of every step until the boxes leave.
+std::vector<TriggerRecord> simultaneousTriggerEvents(std::span<const uint32_t> zoneOrder) {
+    PhysicsWorld physics;
+    expect(static_cast<bool>(physics.init()), "the trigger order world initializes");
+    Scene scene;
+    AssetManager assets;
+    for (const uint32_t zone : zoneOrder) {
+        const glm::vec3 center(static_cast<float>(zone) * 4.0f, 0.0f, 0.0f);
+        Entity sensor = entt::null;
+        Entity box = entt::null;
+        // Sensor ids descend while box ids ascend, so neither creation order
+        // nor one id order matches the other.
+        expect(scene.createEntityWithId(SceneEntityId{100 - zone}, "Sensor", sensor).success &&
+                   scene.createEntityWithId(SceneEntityId{200 + zone}, "Box", box).success,
+               "trigger order entities are created with their ids");
+        scene.registry().get<TransformComponent>(sensor).local = glm::translate(glm::mat4(1.0f), center);
+        scene.registry().emplace<ColliderComponent>(sensor, BoxCollider{glm::vec3(1.0f)});
+        scene.registry().emplace<RigidBodyComponent>(sensor, RigidBodyComponent{.sensor = true});
+        scene.registry().get<TransformComponent>(box).local = glm::translate(glm::mat4(1.0f), center);
+        scene.registry().emplace<ColliderComponent>(box, BoxCollider{glm::vec3(0.25f)});
+        scene.registry().emplace<RigidBodyComponent>(
+            box, RigidBodyComponent{.motionType = PhysicsMotionType::Dynamic, .layer = PhysicsLayer::Dynamic});
+    }
+    std::vector<TriggerRecord> records;
+    for (int step = 0; step < 90; ++step) {
+        expect(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)),
+               "the trigger order world steps");
+        const std::span<const TriggerEvent> events = physics.triggerEvents();
+        expect(std::ranges::is_sorted(events, triggerEventPrecedes), "a step's trigger events are in order");
+        expect(std::ranges::is_sorted(physics.contactEvents(), contactEventPrecedes),
+               "a step's contact events are in order");
+        for (const TriggerEvent& event : events) {
+            records.push_back({event.type, event.sensorId.value, event.otherId.value});
+        }
+    }
+    physics.shutdown();
+    return records;
+}
+
+void testSimultaneousTriggersArriveInOrder() {
+    const std::array<uint32_t, 5> ascending{0, 1, 2, 3, 4};
+    const std::array<uint32_t, 5> shuffled{3, 0, 4, 1, 2};
+    const std::vector<TriggerRecord> first = simultaneousTriggerEvents(ascending);
+    const std::vector<TriggerRecord> second = simultaneousTriggerEvents(shuffled);
+    expect(first.size() == 10, "every box enters and leaves its sensor");
+    expect(first.size() >= 5 && first[0] == TriggerRecord{TriggerEventType::Entered, 96, 204} &&
+               first[4] == TriggerRecord{TriggerEventType::Entered, 100, 200},
+           "simultaneous entries arrive by sensor scene id");
+    expect(first == second, "the trigger sequence does not depend on creation order");
+}
 } // namespace
 
 int main() {
@@ -310,5 +411,7 @@ int main() {
     testBodyCapacityIsClamped();
     testContactCapacityIsAWarning();
     testConfigurationLimitsAreValidated();
+    testEventOrderIsByScene();
+    testSimultaneousTriggersArriveInOrder();
     return failures == 0 ? 0 : 1;
 }

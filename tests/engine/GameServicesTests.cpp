@@ -1,16 +1,22 @@
 // CPU-only coverage of the gameplay services systems receive: deferred entity
 // commands and their flush points, double-buffered events, and timers on
-// simulated time, and the game's pause and time scale.
+// simulated time, the game's pause and time scale, session resources, and
+// asset paths.
 
+#include "engine/application/Application.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/gameplay/DefinitionTable.hpp"
 #include "engine/graphics/DebugDraw.hpp"
 #include "engine/module/GameEvents.hpp"
 #include "engine/module/GameServices.hpp"
+#include "engine/module/Gameplay.hpp"
 #include "engine/scene/ParticleEmitter.hpp"
 #include "engine/scene/Prefab.hpp"
 #include "engine/scene/Scene.hpp"
 
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <glm/gtc/matrix_transform.hpp>
 #include <iostream>
 #include <limits>
@@ -421,6 +427,135 @@ void testGameClock() {
            "a running game keeps the host's frame step");
 }
 
+namespace {
+// Records the destruction of the resources below, in order.
+std::vector<std::string>* destroyedResources = nullptr;
+
+struct RunState {
+    static constexpr std::string_view resourceKey = "test.run_state";
+
+    RunState() = default;
+
+    explicit RunState(uint32_t startFloor)
+        : floor(startFloor) {}
+
+    RunState(const RunState&) = delete;
+    RunState& operator=(const RunState&) = delete;
+
+    ~RunState() {
+        if (destroyedResources != nullptr) {
+            destroyedResources->push_back("run state " + std::to_string(floor));
+        }
+    }
+
+    uint32_t floor{1};
+};
+
+struct ScoreBoard {
+    static constexpr std::string_view resourceKey = "test.score_board";
+
+    ~ScoreBoard() {
+        if (destroyedResources != nullptr) {
+            destroyedResources->push_back("score board");
+        }
+    }
+
+    int best{0};
+};
+
+void testSessionResources() {
+    std::vector<std::string> destroyed;
+    destroyedResources = &destroyed;
+    {
+        ServicesFixture fixture;
+        GameServices& services = fixture.services;
+        expect(services.resources().find<RunState>() == nullptr, "a new session has no resources");
+        RunState& state = services.resource<RunState>();
+        expect(state.floor == 1 && &services.resource<RunState>() == &state,
+               "a resource is default-constructed once and found again");
+        state.floor = 3;
+        services.resources().get<ScoreBoard>().best = 40;
+        const RunState& replaced = services.resources().emplace<RunState>(7u);
+        expect(replaced.floor == 7 && destroyed == std::vector<std::string>{"run state 3"},
+               "emplacing a resource replaces (destroys) the previous value");
+        expect(services.resources().erase<ScoreBoard>() && !services.resources().erase<ScoreBoard>() &&
+                   services.resources().find<ScoreBoard>() == nullptr,
+               "erasing a resource destroys it once");
+        services.resources().get<ScoreBoard>();
+        destroyed.clear();
+    }
+    expect((destroyed == std::vector<std::string>{"score board", "run state 7"}),
+           "destroying the services destroys their resources, newest first");
+    destroyedResources = nullptr;
+}
+
+// The session's resources end with the session: stopping gameplay destroys
+// them (the editor stops it before a module unloads or reloads), and the next
+// session starts empty.
+void testResourcesEndWithTheSession() {
+    std::vector<std::string> destroyed;
+    destroyedResources = &destroyed;
+    Logger logger;
+    AssetManager assets(&logger);
+    Scene scene;
+    PhysicsWorld physics;
+    AudioSystem audio;
+    ApplicationControl control;
+    RenderRuntime rendering;
+    GameUiContext gameUi;
+    ApplicationContext application{scene, assets, physics, audio, control, rendering, gameUi, logger};
+    GameplayRunner runner(builtInGameplay());
+    runner.start(application, {});
+    runner.services()->resource<RunState>().floor = 4;
+    runner.stop(application);
+    expect(destroyed == std::vector<std::string>{"run state 4"}, "stopping gameplay destroys the session's resources");
+    runner.start(application, {});
+    expect(runner.services()->resources().find<RunState>() == nullptr, "a new session starts without resources");
+    runner.stop(application);
+    destroyedResources = nullptr;
+}
+
+struct ItemDef {
+    std::string id;
+    float damage{0.0f};
+};
+
+// A definition table kept as a session resource.
+struct ItemTable {
+    static constexpr std::string_view resourceKey = "test.items";
+
+    DefinitionTable<ItemDef> table{Fields<ItemDef>().add("id", &ItemDef::id).add("damage", &ItemDef::damage)};
+};
+
+void testAssetPaths() {
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith_game_services_asset_paths";
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+    std::filesystem::create_directories(root / "data");
+    {
+        std::ofstream output(root / "data" / "items.json");
+        output << R"([{"id": "sword", "damage": 4}])";
+    }
+    {
+        ServicesFixture fixture(root);
+        GameServices& services = fixture.services;
+        expect(services.assetPath("data/items.json") == root / "data" / "items.json",
+               "an asset path resolves against the session's asset root");
+        expect(services.assetPath("data/../data/items.json") == root / "data" / "items.json",
+               "an asset path is normalized");
+        expect(services.assetPath("").empty() && services.assetPath("../outside.json").empty() &&
+                   services.assetPath("data/../../outside.json").empty() &&
+                   services.assetPath((root / "data" / "items.json").generic_string()).empty(),
+               "empty, escaping, and absolute asset paths give no path");
+        ItemTable& items = services.resource<ItemTable>();
+        const DefinitionTableResult loaded = items.table.load(services.assetPath("data/items.json"));
+        expect(loaded.success && items.table.find("sword") != nullptr && items.table.find("sword")->damage == 4.0f,
+               "a definition table loads from an asset path into a session resource");
+    }
+    std::filesystem::remove_all(root, error);
+}
+} // namespace
+
 int main() {
     testCommandsApplyAtFlush();
     testCommandsRunInPhases();
@@ -432,6 +567,9 @@ int main() {
     testThrowingSpawnCallbacksAreContained();
     testLogChannels();
     testGameClock();
+    testSessionResources();
+    testResourcesEndWithTheSession();
+    testAssetPaths();
     if (failures == 0) {
         std::cout << "Game services tests passed\n";
     }

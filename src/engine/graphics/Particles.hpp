@@ -20,8 +20,10 @@ class Scene;
 // particle.vert, particle.frag), and the CPU tests.
 //
 // Pool layout: every emitter owns a contiguous ring of slots in one particle
-// pool (see ParticleScheduler). Each frame an emitter spawns into the next
-// slots of its ring, so once the ring is full the oldest particle is replaced.
+// pool and an entry of the GPU emitter table (see ParticleScheduler); both stay
+// put while the emitter lives, so other emitters coming and going leave its
+// live particles alone. Each frame an emitter spawns into the next slots of
+// its ring, so once the ring is full the oldest particle is replaced.
 // Slot assignment, spawn counts, and every random value derive from the
 // emitter's stable scene id, the spawn ordinal, and the frame time step, so a
 // fixed time step (ZENITH_FIXED_FRAME_TIME) renders identical frames.
@@ -71,7 +73,8 @@ struct GpuParticle {
     glm::vec4 radiance{0.0f};
     // x: rotation in radians; y: soft-particle fade distance.
     glm::vec4 render{0.0f};
-    // x: emitter index; y: random seed; z: flags and texture slot.
+    // x: emitter table index (ScheduledEmitter::emitterIndex); y: random
+    // seed; z: flags and texture slot.
     glm::uvec4 info{0u};
 };
 
@@ -127,7 +130,8 @@ struct GpuParticleFrame {
     // rgb: ambient radiance without image-based lighting; w: environment
     // diffuse intensity applied to the irradiance SH.
     glm::vec4 ambient{0.0f};
-    // x: 1 reads ambient from the irradiance SH; y: emitter count.
+    // x: 1 reads ambient from the irradiance SH; y: emitter table entries
+    // (ParticleFramePlan::emitterTableSize).
     glm::uvec4 flags{0u};
     // Irradiance volume; mirrors the camera data of the same name.
     glm::vec4 irradianceVolumeMinimum{0.0f};
@@ -195,9 +199,20 @@ struct EmitterSnapshot {
     glm::mat4 world{1.0f};
 };
 
+// A run of consecutive pool slots.
+struct SlotRange {
+    uint32_t first{0};
+    uint32_t count{0};
+
+    bool operator==(const SlotRange&) const = default;
+};
+
 // One scheduled emitter of a frame.
 struct ScheduledEmitter {
     uint64_t id{0};
+    // Entry of the GPU emitter table this emitter occupies; its particles
+    // name it in GpuParticle::info.x. Stable while the emitter keeps its slots.
+    uint32_t emitterIndex{0};
     uint32_t firstSlot{0};
     uint32_t capacity{0};
     uint32_t ringStart{0};
@@ -213,23 +228,43 @@ struct ScheduledEmitter {
 struct ParticleFramePlan {
     // In scene id order; emitters that got no pool slots are left out.
     std::vector<ScheduledEmitter> emitters;
-    // Pool slots owned by the scheduled emitters (a prefix of the pool).
+    // Entries of the GPU emitter table: one past the highest emitterIndex.
+    // Entries no emitter occupies must be uploaded zeroed (they spawn nothing).
+    uint32_t emitterTableSize{0};
+    // Pool slots to simulate: a prefix of the pool covering every scheduled
+    // emitter's slots (it may contain free, cleared slots).
     uint32_t poolSlots{0};
     uint32_t totalSpawns{0};
     uint32_t liveBound{0};
-    // The emitter layout changed: every slot must be freed before emitting.
+    // The whole layout was rebuilt: every slot must be freed before emitting.
     bool resetPool{false};
+    // Without resetPool: slots that must be freed (zeroed) before emitting,
+    // sorted and disjoint. They cover the slots of removed emitters and the
+    // new slots of added or changed ones.
+    std::vector<SlotRange> clearRanges;
     // Emitters left out because maximumEmitters were already scheduled.
     uint32_t droppedEmitters{0};
 };
 
-// Decides each frame's pool layout and spawns. Layout: emitters in scene id
-// order receive min(maxParticles, remaining budget) consecutive slots; a
-// change of ids, capacities, simulation spaces, budget, or scene content
-// generation (see Scene::contentGeneration) restarts every emitter and asks
-// for a pool reset. Spawns: spawnRate accumulates fractional particles across
-// frames; bursts fire when an emitter starts emitting and then every
-// burstInterval.
+// Decides each frame's pool layout and spawns.
+//
+// Capacities: emitters in scene id order receive min(maxParticles, remaining
+// budget) slots, up to maximumEmitters emitters.
+//
+// Layout: an emitter keeps its slot range, emitter table entry, spawn
+// accumulator, burst timer, and live particles for as long as its id,
+// capacity, and simulation space stay the same. A new or changed emitter
+// takes the first free range that fits (first fit in slot order) and the
+// lowest free table entry, and its slots are cleared; a removed emitter's
+// slots are cleared and freed. When no free range fits, the layout is
+// compacted: emitters take consecutive slots in id order, every emitter
+// restarts, and the pool is reset. A change of budget or scene content
+// generation (see Scene::contentGeneration), or a plan that starts from no
+// emitters, rebuilds the layout the same way. The layout depends only on the
+// sequence of plans, so it is deterministic.
+//
+// Spawns: spawnRate accumulates fractional particles across frames; bursts
+// fire when an emitter starts emitting and then every burstInterval.
 class ParticleScheduler {
   public:
     // snapshots must be sorted by id with unique ids.
@@ -240,7 +275,9 @@ class ParticleScheduler {
   private:
     struct EmitterState {
         uint64_t id{0};
+        uint32_t firstSlot{0};
         uint32_t capacity{0};
+        uint32_t emitterIndex{0};
         ParticleSimulationSpace space{ParticleSimulationSpace::World};
         double spawnAccumulator{0.0};
         double burstTimer{0.0};
@@ -251,6 +288,21 @@ class ParticleScheduler {
         uint32_t restartGeneration{0};
     };
 
+    // A snapshot that receives slots this frame, with its capacity.
+    struct Placement {
+        const EmitterSnapshot* snapshot{nullptr};
+        uint32_t capacity{0};
+    };
+
+    // Keeps unchanged emitters in place and fits the others into free slots;
+    // false when one does not fit (the caller then compacts).
+    bool updateLayout(std::span<const Placement> placements, std::vector<SlotRange>& clearRanges);
+    void rebuildLayout(std::span<const Placement> placements);
+    // Spawns of one emitter this frame, appended to result.
+    static void advance(EmitterState& state, const ParticleEmitterComponent& emitter, double step,
+                        ParticleFramePlan& result);
+
+    // In scene id order.
     std::vector<EmitterState> m_states;
     uint32_t m_budget{0};
     uint64_t m_sceneGeneration{0};

@@ -25,7 +25,10 @@ requested transitions after presentation.
 The engine loop polls input once per rendered frame, applies view input, runs
 zero or more fixed physics steps, interpolates visible transforms, renders, and
 presents. It also implements bounded smoke runs and rendering benchmarks via
-environment variables.
+environment variables. After each presented frame it reports to a
+`DeferredAssetCollection`, which runs the asset collections that scene
+changes and `ApplicationControl::requestAssetCollection` asked for once the
+frames in flight retired (see [Assets](assets.md)).
 
 ## `src/engine/diagnostics/Logger.*`
 
@@ -51,7 +54,7 @@ lines on stdout.
 ## `src/engine/application/Application.*`
 
 Defines `Application`, `ApplicationScene`, contexts, deferred scene/quit
-requests, and `ApplicationSession`. The session guarantees load/update/fixed
+and asset-collection requests, and `ApplicationSession`. The session guarantees load/update/fixed
 update/unload ordering and clears ECS/physics state between scenes while assets
 remain cached.
 

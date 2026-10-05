@@ -88,7 +88,23 @@ default). The game defines `Entry` and its `Fields`, including
   calling it from a system. A broken edit is reported once and retried only
   after the file changes again.
 
-`tests/engine/DefinitionTableTests.cpp` (`zenith_definition_tables`).
+A game keeps its tables in the session's resource store, which outlives
+module reloads' lost statics and scene changes' registries, and loads them
+from asset-relative paths:
+
+```cpp
+struct ItemTable {
+    static constexpr std::string_view resourceKey = "my_game.items";
+    DefinitionTable<ItemDef> table{itemFields()};
+};
+
+ItemTable& items = services.resource<ItemTable>();
+items.table.load(services.assetPath("data/items.json"));
+```
+
+`tests/engine/DefinitionTableTests.cpp` (`zenith_definition_tables`);
+`tests/engine/GameServicesTests.cpp` covers the resource store and
+`assetPath`.
 
 ## Procedural geometry
 
@@ -136,7 +152,8 @@ Runtime assets are immutable and unsaved: rebuild changed geometry as a new
 mesh and reassign it, and regenerate a floor from its seed rather than saving
 its meshes (a scene holding a runtime mesh cannot be serialized; a
 `MaterialOverrideComponent` saves its factors but not a runtime replacement
-material). Release the leases on teardown and collect (`collectUnused`) to
-free the floor's meshes, GPU buffers and physics shapes.
+material). Release the leases on teardown and call
+`services.requestAssetCollection()` to free the floor's meshes, GPU buffers
+and physics shapes ([Assets](assets.md)).
 `tests/engine/RuntimeContentTests.cpp` (`zenith_runtime_content`) and the
 `zenith_runtime_content_vulkan_smoke` capture test cover it.
