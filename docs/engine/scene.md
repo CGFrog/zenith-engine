@@ -20,6 +20,11 @@ Wraps an EnTT registry and defines the core ECS components:
 `setParent` updates both sides of a relationship and rejects self-parenting and
 cycles. `instantiateModel` expands imported nodes into entities while preserving
 their hierarchy. `destroyEntity` recursively destroys descendants.
+`findChild(parent, name)` returns the first direct child with that
+`NameComponent`, and `findDescendant(root, name)` the first strict descendant,
+depth first in child order (a child's subtree before its next sibling); both
+return null when there is none, so gameplay code can find a spawned prefab's
+"Door" or "SpawnPoint" without walking the hierarchy itself.
 `updateWorldTransforms` computes `world = parent.world * local` for the
 branches under entities marked with `markTransformDirty`. Its cost follows the
 number of changed entities, not the scene's size: marking is constant time and
@@ -204,6 +209,7 @@ source collection can be hidden while its instances show.
 `Prefab.hpp` declares the whole prefab API. `Prefab.cpp` reads and writes the
 documents. `PrefabSystem` is split by domain:
 - `PrefabSystem.cpp`: instantiate, refresh and capture;
+- `PrefabCache.cpp`: the prefab document cache;
 - `PrefabOverrides.cpp`: comparison and applying overrides, and recording
   removals and moves;
 - `PrefabNesting.cpp`: nested instances;
@@ -260,21 +266,70 @@ prefab operation, and the nested record it came from) and every entity created
 from the prefab holds `prefab_entity` (its prefab-local id); both are internal
 types registered from `PrefabComponentTypes.cpp`. An instance is its root and
 descendants up to the next instance root, so nested prefabs instantiate as
-separate instances. `PrefabSystem` instantiates (validating the whole nested
-graph in a staging scene first and rejecting cycles), refreshes an instance
-from its prefab through `SceneDocument::applyChanges` (stable ids kept, added
-objects kept or removed), reports live overrides by diffing the instance's
+separate instances. `PrefabSystem` instantiates (checking the whole nested
+graph first and rejecting cycles), refreshes an instance from its prefab
+through `SceneDocument::applyChanges` (stable ids kept, added objects kept or
+removed), reports live overrides by diffing the instance's
 serialized entities against the prefab's normalized entities, and captures a
 scene subtree as a document. It is runtime code, so primary and additive
 scenes share definitions without editor state. Entity references inside
 component JSON are remapped by `EntityReferenceRemap` (below): capture clears
 references outside the prefab with a diagnostic.
 
-A failure after the staging check (a nested instance that no longer matches
-its prefab) puts the scene back. Only the instance's own subtree is saved
-first, and the entities the change created are found through
-`Scene::nextEntityId`, so instantiating and refreshing cost what the prefab
-costs, whatever the size of the scene.
+A refresh failing after its staging check (a nested instance that no longer
+matches its prefab) puts the scene back. Only the instance's own subtree is
+saved first, and the entities the change created are found through
+`Scene::nextEntityId`, so refreshing costs what the prefab costs, whatever the
+size of the scene.
+
+### Fast spawning
+
+Instantiating is the runtime hot path (rooms, props, and enemies mid-fight),
+so it avoids files, text, and staging scenes:
+
+- **Document cache.** `PrefabSystem` keeps each prefab file it builds from,
+  keyed by resolved path: the parsed `PrefabDocument`, its entities already in
+  the scene document entity form, the load diagnostics, and whether the
+  entities' components read through the codecs (checked once in a staging
+  scene). A changed write time or size reads the file again; as a stat costs
+  more than building a small room, an entry is compared with its file at most
+  once per `setFileCheckInterval` (500 ms by default; zero compares on every
+  use). `invalidate(reference or absolute path)` and
+  `clearCache()` drop entries; the editor's prefab create and apply
+  invalidate after writing, and the asset watcher's modified prefabs
+  invalidate the game's `GameServices::prefabs()`. `load()` always reads the
+  file. `cacheStats()` counts hits and loads. A system is single-threaded;
+  copies share the immutable entries.
+- **Validate once.** `instantiate` first walks the cached graph (every
+  reachable document loaded and read, no cycle, nested records the overrides
+  remove skipped), which costs a lookup per document. Only when that walk
+  fails does it build into a staging scene, as before, so the error is the
+  same descriptive one and the scene is untouched.
+- **Direct build.** A new instance's entities are created with
+  `SceneDocument::createEntities` from their remapped entity objects: the
+  component codecs read straight into the scene, with the same id order,
+  sibling placement, preserved unknown components, and dirty marks as
+  `applyChanges`. Overrides, stable id remapping, link components, nested
+  instances, and nested references are computed as before. Refresh keeps the
+  `applyChanges` path.
+- **Rollback.** A new instance only creates entities, so a failure while
+  building (an override holding an invalid value, a model that will not
+  instantiate) destroys every entity with an id from the call's first
+  `nextEntityId` on. The scene's entities are then as before; the consumed
+  ids are not reused.
+
+`EntityCommandBuffer::spawn(prefab, placement, overrides, onSpawned)` passes
+overrides through, which become the instance's persisted overrides.
+
+On the floor benchmark (`zenith_floor_benchmark`, Release, 40 rooms of seven
+entities with six box colliders, a light, and a looping sound), spawning the
+floor took a mean of 54.69 ms (about 1.4 ms per room; GAMEPLAY_ROADMAP E4).
+With the cache and direct build it takes 3.2 to 3.9 ms (medians 3.0 to 3.6 ms
+over five runs), about 0.08 ms per room; the navigation bake (26 to 29 ms)
+matched E4's in those runs, so the machine was comparable. Profiling put
+what remains in the component codecs (about 40%) and copying and remapping
+the entity objects (about 25%). Before the per-entry check interval, the two
+file stats per spawn alone cost more than the whole budget.
 
 ## `src/engine/scene/EntityReferenceRemap.*`
 
