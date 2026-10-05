@@ -224,11 +224,32 @@ the frame. Each overflow is logged once per episode (until a frame fits again,
   `droppedRenderItems`).
 - Skinned items beyond the `maximumSkinMatricesPerFrame` (65536) joint
   matrices draw unskinned, in their bind pose (`droppedSkinnedRenderItems`).
+- Material overrides beyond `maximumMaterialOverrides` (1024) distinct
+  material and factor pairs draw their plain material (logged once per
+  episode).
 
 Local lights and local shadow tiles already keep the nearest within their
 limits. The GPU-driven draw-group limit (64 pipeline bucket and geometry page
 pairs) still fails the frame: it is a geometry-arena layout limit, not a
 per-scene count.
+
+### Material overrides
+
+A `MaterialOverrideComponent` on a mesh renderer changes how that entity
+draws without touching the shared material. When its runtime-only `material`
+handle is live it replaces every primitive's material; its factors then
+multiply the base color, add emission, and multiply roughness and metallic
+(`applyMaterialOverride` in `MaterialRecord.*`, CPU-tested). A non-identity
+override draws with a material record derived for that pair of material and
+factors (bit-exact), shared by every item using the same pair, so a thousand
+crates with one "danger red" tint cost one record. Derived records share the
+4096 material record slots, are rewritten every frame from the current
+material (so material edits show through), and are freed when a packet build
+no longer uses them. Overrides change only the per-object material index both
+the CPU-submitted and GPU-driven paths read, so batching and pipelines (which
+follow the material's alpha mode and sidedness) are unchanged. Packets are
+rebuilt when the scene's material revision changes: after writing the
+component, call `Scene::markMaterialDirty` (editor edits do).
 
 `MeshPass` is one class whose member definitions are split by responsibility:
 

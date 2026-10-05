@@ -15,6 +15,10 @@ engine).
   ranges. Dynamic and kinematic bodies and sensors are left out. Collider
   poses come from `Scene::worldTransform`, so a bake right after spawning or
   moving entities sees them in place without a transform update first.
+- `appendMeshGeometry` adds a mesh's full-detail triangles placed by a
+  transform (reversing the winding for a mirroring one), so a game can bake
+  generated geometry, such as a runtime floor mesh without a collider, with
+  or without the gathered colliders.
 - `bake` builds one tile covering the scene from `NavMeshBuildSettings`
   (cell size, the agent's height, radius, climb, and steepest slope, region
   and edge tuning) and replaces any previous mesh. It fails, leaving no mesh,
@@ -82,7 +86,8 @@ session's mesh and crowd (`GameServices::navigationCrowd`, with
 `setCrowdSettings` applied when the crowd next starts over),
 `GameServices::navigation(scene)`, which bakes on first use;
 `GameServices::bakeNavigation(scene)` rebakes it after a game builds or
-replaces its level. A 40-room floor (2,880 input triangles) bakes in about
+replaces its level, and `bakeNavigation(geometry)` bakes it from triangles the
+game assembled itself (`gatherNavigationGeometry` plus `appendMeshGeometry`). A 40-room floor (2,880 input triangles) bakes in about
 26 ms in Release (`tests/engine/FloorBenchmark.cpp`).
 In the editor, `navigation.bake` builds a preview mesh of the edit scene that
 every viewport draws, and `navigation.clear` removes it.

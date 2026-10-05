@@ -9,8 +9,9 @@ the project's layer table); box, sphere, capsule, and triangle-mesh shapes; and
 rigid-body tuning. The rigid body's `layer` field is schema version 2: any
 index below `maxPhysicsLayers` (32), where version 1 allowed only the
 built-in Static (0), Dynamic (1), and Player (2), which keep their indices. Primitive dimensions are multiplied by transform scale when the
-Jolt shape is created. Triangle meshes reference a `MeshAsset` and are limited
-to static bodies.
+Jolt shape is created. Triangle meshes reference a `MeshAsset`, imported or
+created at runtime (`AssetManager::createMesh`), and are limited to static
+bodies.
 
 ## `src/engine/physics/PhysicsWorld.*`
 
@@ -58,6 +59,19 @@ the run, so an outlier generated level keeps playing:
   the contacts that did not fit (bodies may pass through each other) and warns
   once per episode. Debug builds of Jolt assert on that error; the runtime's
   assert handler lets only that assertion continue.
+
+Triangle-mesh shapes are cached per world by (mesh index, generation, scale
+in steps of 1e-5), so static colliders that share a mesh and scale, such as
+hundreds of identical generated walls, share one Jolt bounding-volume tree;
+rotated copies share too, since rotation is not part of the shape.
+Building the tree is the expensive part of a mesh body; a cache hit costs a
+map lookup. A generation in the key means a collected or recycled mesh never
+matches; the entries of meshes that are no longer live are dropped at the
+first step (or body build) after the asset revision changes, and shutdown
+releases the rest. Bodies hold their own shape references, so dropping an
+entry never affects one. To change a generated mesh, create its replacement,
+point the colliders at it and mark them with `markPhysicsDirty`.
+`cachedMeshShapes()` reports the cache's size.
 
 `PhysicsStats::skippedBodies` and `contactCapacityExceeded` report both. The
 capacities are `PhysicsWorldConfig` fields (`Engine::init` takes the config).
