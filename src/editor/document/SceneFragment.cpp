@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -68,6 +69,20 @@ void remapCollections(const SceneCollections& destination, const std::unordered_
     }
 }
 
+// Adds the collections entity (a document entity object) is a member of or
+// instances.
+void addCollectionReferences(const Json& entity, std::set<uint64_t>& collections) {
+    const Json& components = entity.at("components");
+    if (const auto membership = components.find("collection_membership"); membership != components.end()) {
+        for (const Json& id : membership->at("collections")) {
+            collections.insert(id.get<uint64_t>());
+        }
+    }
+    if (const auto instance = components.find("collection_instance"); instance != components.end()) {
+        collections.insert(instance->at("collection").get<uint64_t>());
+    }
+}
+
 Json matrixJson(const glm::mat4& matrix) {
     Json values = Json::array();
     for (int column = 0; column < 4; ++column) {
@@ -93,80 +108,77 @@ glm::mat4 worldFromLocals(const Scene& scene, Entity entity) {
 SceneDocumentResult SceneFragment::copy(const Scene& scene, const AssetManager& assets,
                                         const SceneDocumentOptions& options, std::span<const SceneEntityId> roots,
                                         std::string& fragment) {
-    std::string serialized;
-    if (SceneDocumentResult result = SceneDocument::serialize(scene, assets, options, serialized); !result) {
-        return result;
-    }
     try {
-        Json document = Json::parse(serialized);
-        std::unordered_map<uint64_t, Json> entities;
-        for (const Json& entity : document.at("entities")) {
-            entities.emplace(entity.at("id").get<uint64_t>(), entity);
-        }
-        std::unordered_set<uint64_t> included;
+        const entt::registry& registry = scene.registry();
         std::unordered_set<uint64_t> selected;
         for (SceneEntityId root : roots) {
             selected.emplace(root.value);
         }
-        std::vector<uint64_t> effectiveRoots;
+        // A selected entity below another selected one is copied with it.
+        std::vector<Entity> effectiveRoots;
         for (SceneEntityId root : roots) {
-            auto entity = entities.find(root.value);
-            if (entity == entities.end()) {
+            const Entity entity = scene.findEntity(root);
+            if (entity == entt::null || scene.isTransient(entity) ||
+                std::ranges::find(effectiveRoots, entity) != effectiveRoots.end()) {
                 continue;
             }
             bool nested = false;
-            Json parent = entity->second.at("parent");
-            while (!parent.is_null()) {
-                const uint64_t parentId = parent.get<uint64_t>();
-                if (selected.contains(parentId)) {
-                    nested = true;
-                    break;
-                }
-                const auto ancestor = entities.find(parentId);
-                parent = ancestor == entities.end() ? Json(nullptr) : ancestor->second.at("parent");
+            for (Entity parent = registry.get<RelationshipComponent>(entity).parent; parent != entt::null && !nested;
+                 parent = registry.get<RelationshipComponent>(parent).parent) {
+                nested = selected.contains(scene.id(parent).value);
             }
             if (!nested) {
-                effectiveRoots.push_back(root.value);
+                effectiveRoots.push_back(entity);
             }
         }
-        const auto includeChildren = [&](const auto& self, uint64_t parent) -> void {
-            if (!included.emplace(parent).second) {
-                return;
-            }
-            for (const auto& [id, entity] : entities) {
-                if (!entity.at("parent").is_null() && entity.at("parent").get<uint64_t>() == parent) {
-                    self(self, id);
+        // Only the copied subtrees are serialized, never the rest of the scene.
+        std::vector<SceneEntityId> included;
+        std::vector<Entity> pending(effectiveRoots.rbegin(), effectiveRoots.rend());
+        while (!pending.empty()) {
+            const Entity entity = pending.back();
+            pending.pop_back();
+            included.push_back(scene.id(entity));
+            for (const Entity child : registry.get<RelationshipComponent>(entity).children) {
+                if (!scene.isTransient(child)) {
+                    pending.push_back(child);
                 }
-            }
-        };
-        for (uint64_t root : effectiveRoots) {
-            if (entities.contains(root)) {
-                includeChildren(includeChildren, root);
             }
         }
         if (included.empty()) {
             return {.error = "Copy requires at least one valid entity"};
         }
+        std::ranges::sort(included, {}, &SceneEntityId::value);
+        std::vector<std::optional<std::string>> serialized;
+        if (SceneDocumentResult result = SceneDocument::serializeEntities(scene, assets, options, included, serialized);
+            !result) {
+            return result;
+        }
         Json output{{"version", SceneDocument::currentVersion},
-                    {"collections", document.at("collections")},
+                    {"collections", Json::array()},
                     {"entities", Json::array()},
                     {"roots", Json::array()}};
-        for (uint64_t root : effectiveRoots) {
-            if (included.contains(root)) {
-                output["roots"].push_back(root);
-            }
+        for (const Entity root : effectiveRoots) {
+            output["roots"].push_back(scene.id(root).value);
         }
-        for (const Json& entity : document.at("entities")) {
-            if (included.contains(entity.at("id").get<uint64_t>())) {
-                Json fragmentEntity = entity;
-                const uint64_t id = fragmentEntity.at("id").get<uint64_t>();
-                if (std::ranges::find(effectiveRoots, id) != effectiveRoots.end()) {
-                    fragmentEntity["parent"] = nullptr;
-                    if (const Entity root = scene.findEntity(SceneEntityId{id}); root != entt::null) {
-                        fragmentEntity[worldTransformKey] = matrixJson(worldFromLocals(scene, root));
-                    }
-                }
-                output["entities"].push_back(std::move(fragmentEntity));
+        std::set<uint64_t> collections;
+        for (size_t index = 0; index < included.size(); ++index) {
+            if (!serialized[index]) {
+                continue;
+            }
+            Json entity = Json::parse(*serialized[index]);
+            const Entity source = scene.findEntity(included[index]);
+            if (std::ranges::find(effectiveRoots, source) != effectiveRoots.end()) {
+                entity["parent"] = nullptr;
+                entity[worldTransformKey] = matrixJson(worldFromLocals(scene, source));
+            }
+            addCollectionReferences(entity, collections);
+            output["entities"].push_back(std::move(entity));
+        }
+        // Paste matches collections by name, so the fragment carries the
+        // names of those its entities reference.
+        for (const uint64_t id : collections) {
+            if (const SceneCollection* collection = scene.collections().find(SceneCollectionId{id})) {
+                output["collections"].push_back({{"id", id}, {"name", collection->name}});
             }
         }
         fragment = output.dump(2) + '\n';
@@ -184,21 +196,14 @@ SceneDocumentResult SceneFragment::paste(std::string_view fragment, Scene& scene
         if (!source.contains("entities") || !source.contains("roots")) {
             return {.error = "Clipboard does not contain a Zenith scene fragment"};
         }
-        std::string destinationText;
-        if (SceneDocumentResult result = SceneDocument::serialize(scene, assets, options, destinationText); !result) {
-            return result;
-        }
-        Json destination = Json::parse(destinationText);
-        uint64_t nextId = 1;
-        for (const Json& entity : destination.at("entities")) {
-            nextId = std::max(nextId, entity.at("id").get<uint64_t>() + 1);
-        }
         std::unordered_map<uint64_t, uint64_t> remap;
         for (const Json& entity : source.at("entities")) {
-            remap.emplace(entity.at("id").get<uint64_t>(), nextId++);
+            if (const uint64_t id = entity.at("id").get<uint64_t>(); !remap.contains(id)) {
+                remap.emplace(id, scene.reserveEntityId().value);
+            }
         }
-        // A transient parent is not in the document the paste rebuilds from,
-        // so pasting under one pastes at the top level instead.
+        // Pasting under a transient parent would make the copies transient
+        // (never saved), so it pastes at the top level instead.
         const SceneEntityId parentId =
             parent == entt::null || scene.isTransient(parent) ? SceneEntityId{} : scene.id(parent);
         std::unordered_map<uint64_t, std::string> sourceCollections;
@@ -206,6 +211,8 @@ SceneDocumentResult SceneFragment::paste(std::string_view fragment, Scene& scene
             sourceCollections.emplace(collection.at("id").get<uint64_t>(), collection.at("name").get<std::string>());
         }
         const ComponentTypeRegistry& types = componentTypesFor(options);
+        std::vector<Json> entities;
+        entities.reserve(source.at("entities").size());
         for (Json entity : source.at("entities")) {
             remapCollections(scene.collections(), sourceCollections, entity);
             // References between pasted entities follow to the copies;
@@ -215,8 +222,8 @@ SceneDocumentResult SceneFragment::paste(std::string_view fragment, Scene& scene
                                       const auto found = remap.find(id);
                                       return found == remap.end() ? std::nullopt : std::optional(found->second);
                                   });
-            const uint64_t oldId = entity.at("id").get<uint64_t>();
-            entity["id"] = remap.at(oldId);
+            entity["id"] = remap.at(entity.at("id").get<uint64_t>());
+            // A parent's sibling order names its copied children.
             remapChildOrder(entity, [&remap](uint64_t id) -> std::optional<uint64_t> {
                 const auto found = remap.find(id);
                 return found == remap.end() ? std::nullopt : std::optional(found->second);
@@ -232,18 +239,23 @@ SceneDocumentResult SceneFragment::paste(std::string_view fragment, Scene& scene
                 entity["parent"] = remap.contains(oldParent) ? Json(remap.at(oldParent)) : Json(nullptr);
             }
             entity.erase(worldTransformKey);
-            destination["entities"].push_back(std::move(entity));
+            entities.push_back(std::move(entity));
         }
-        Scene staged;
-        const std::string merged = destination.dump();
-        if (SceneDocumentResult result = SceneDocument::deserialize(merged, assets, options, staged); !result) {
+        std::vector<SceneEntityId> roots;
+        for (const Json& root : source.at("roots")) {
+            roots.push_back({remap.at(root.get<uint64_t>())});
+        }
+        // The copies are created in place: every other entity keeps its EnTT
+        // handle and runtime state.
+        std::vector<SceneEntityDocument> documents;
+        documents.reserve(entities.size());
+        for (const Json& entity : entities) {
+            documents.push_back({.id = {entity.at("id").get<uint64_t>()}, .entity = &entity});
+        }
+        if (SceneDocumentResult result = SceneDocument::createEntities(documents, assets, options, scene); !result) {
             return result;
         }
-        pastedRoots.clear();
-        for (const Json& root : source.at("roots")) {
-            pastedRoots.push_back({remap.at(root.get<uint64_t>())});
-        }
-        scene.replaceWith(std::move(staged));
+        pastedRoots = std::move(roots);
         return {.success = true};
     } catch (const std::exception& exception) {
         return {.error = std::string("Could not paste scene fragment: ") + exception.what()};

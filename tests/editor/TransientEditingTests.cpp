@@ -126,8 +126,10 @@ void testCopyPasteAndOutliner(EditorTestFixture& fixture) {
            "pasting under a transient parent succeeds");
     const Entity copy = pasted.empty() ? Entity{entt::null} : scene.findEntity(pasted.front());
     expect(copy != entt::null && scene.registry().get<RelationshipComponent>(copy).parent == entt::null &&
-               scene.transientEntities().empty(),
-           "it pastes at the top level, and the rebuilt scene drops the preview");
+               !scene.isTransient(copy),
+           "it pastes at the top level, where the copy is saved");
+    expect(scene.findEntity(previewId) == preview && scene.isTransient(preview),
+           "paste creates the copies in place, so the preview stays as it was");
 }
 
 void testSaveAndPlay(EditorTestFixture& fixture) {
