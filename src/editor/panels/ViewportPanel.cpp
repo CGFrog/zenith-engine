@@ -668,6 +668,7 @@ bool ViewportPanel::drawHeader(EditorContext& context) {
             }
             if (ImGui::BeginMenu("Overlays")) {
                 ViewportChromeWidgets::drawOverlaysMenu(m_chrome.overlays);
+                ViewportChromeWidgets::drawDebugDrawChannelsMenu(context.app.rendering.debugDraw());
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Gizmos")) {

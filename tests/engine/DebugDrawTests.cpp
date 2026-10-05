@@ -1,7 +1,8 @@
 // CPU tests of debug drawing: primitive tessellation (segment counts, depth
-// lists, geometry), colour packing, frustum corners, label projection with
-// behind-camera and off-screen culling, the RenderRuntime lists, and the Jolt
-// adapter behind PhysicsWorld::drawDebug.
+// lists, geometry), colour packing, lifetimes (one frame, timed, persistent)
+// and named channels, frustum corners, label projection with behind-camera
+// and off-screen culling, the RenderRuntime lists, and the Jolt adapter behind
+// PhysicsWorld::drawDebug.
 
 #include "engine/graphics/DebugDraw.hpp"
 #include "engine/graphics/Rendering.hpp"
@@ -290,11 +291,77 @@ void testPhysicsAdapter() {
     expect(static_cast<bool>(second.drawDebug(secondDraw)), "a world draws after the first world shut down");
     second.shutdown();
 }
+
+// One-frame primitives end with the frame, timed ones after their duration of
+// endFrame time (and never before they were drawn once), persistent ones when
+// cleared; channels hide and clear as a group.
+void testLifetimesAndChannels() {
+    DebugDraw draw;
+    draw.line({0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f});
+    draw.forSeconds(1.0f).line({0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+    draw.forSeconds(0.0f).label({0.0f, 0.0f, 0.0f}, "instant");
+    draw.persistent().line({0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f});
+    expect(draw.lineCount() == 3 && draw.labels().size() == 1, "every lifetime draws in the frame it is recorded");
+    draw.endFrame(0.4f);
+    expect(draw.lineCount() == 2 && draw.labels().empty(),
+           "the frame ends one-frame primitives and a zero duration, which still drew once");
+    draw.endFrame(0.4f);
+    expect(draw.lineCount() == 2, "a timed primitive stays within its duration");
+    draw.endFrame(0.4f);
+    expect(draw.lineCount() == 1 && !draw.empty(), "a timed primitive ends when its time is up");
+    draw.endFrame(100.0f);
+    expect(draw.lineCount() == 1, "a persistent primitive outlives any time");
+    draw.endFrame(std::numeric_limits<float>::quiet_NaN());
+    expect(draw.lineCount() == 1, "a non-finite frame time ages nothing");
+
+    // Channels: recorded through recorders, listed by name, toggled and
+    // cleared as a group.
+    const DebugDrawRecorder rooms = draw.channel("gen.rooms").persistent();
+    rooms.aabb({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f});
+    rooms.label({0.5f, 0.5f, 0.5f}, "room 0");
+    draw.channel("gen.paths").forSeconds(5.0f).arrow({0.0f, 0.0f, 0.0f}, {2.0f, 0.0f, 0.0f});
+    draw.channel("gen.spawns").sphere({0.0f, 0.0f, 0.0f}, 1.0f, {}, 8);
+    expect(draw.lineCount() == 1 + 12 + 5 + 24 && draw.labels().size() == 1, "every channel draws");
+    const std::vector<DebugDrawChannelInfo> channels = draw.channels();
+    expect(channels.size() == 3 && channels[0].name == "gen.paths" && channels[1].name == "gen.rooms" &&
+               channels[2].name == "gen.spawns" &&
+               std::ranges::all_of(channels, [](const auto& channel) { return channel.visible && channel.active; }),
+           "named channels are listed sorted, visible, and active");
+
+    draw.setChannelVisible("gen.rooms", false);
+    expect(!draw.channelVisible("gen.rooms") && draw.channelVisible("never.named") && draw.lineCount() == 1 + 5 + 24 &&
+               draw.labels().empty(),
+           "a hidden channel's primitives and labels are not drawn");
+    draw.channel("gen.rooms").line({0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f});
+    draw.setChannelVisible("gen.rooms", true);
+    expect(draw.lineCount() == 1 + 12 + 5 + 24 && draw.labels().size() == 1,
+           "showing a channel again shows what it kept; one-frame shapes recorded while hidden were dropped");
+
+    draw.endFrame(0.016f);
+    const std::vector<DebugDrawChannelInfo> afterFrame = draw.channels();
+    expect(afterFrame.size() == 3 && afterFrame[2].name == "gen.spawns" && afterFrame[2].active,
+           "a channel that drew last frame stays active between frames");
+    draw.endFrame(0.016f);
+    expect(!draw.channels()[2].active, "a channel that stopped drawing becomes inactive but stays listed");
+
+    draw.clearChannel("gen.rooms");
+    draw.clearChannel("gen.paths");
+    expect(draw.lineCount() == 1 && draw.labels().empty() && !draw.channels()[0].active,
+           "clearing channels discards their timed and persistent primitives");
+    draw.clearChannel("never.named");
+    expect(draw.channels().size() == 3, "clearing an unknown channel creates nothing");
+
+    draw.setChannelVisible("gen.rooms", false);
+    draw.clear();
+    expect(draw.empty() && draw.lineCount() == 0 && !draw.channelVisible("gen.rooms"),
+           "clear discards every lifetime and keeps the channels' visibility");
+}
 } // namespace
 
 int main() {
     testSegmentCounts();
     testDepthListsAndColors();
+    testLifetimesAndChannels();
     testGeometry();
     testFrustumCorners();
     testProjection();

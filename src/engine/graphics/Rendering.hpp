@@ -886,10 +886,12 @@ class RenderRuntime {
 
     // Debug drawing (DebugDraw.hpp). Primitives recorded into debugDraw()
     // appear in every view, those in viewDebugDraw(view) only in that view.
-    // Both last one frame: the renderer draws them in the next
-    // Renderer::drawFrame (lines after post-processing, before the UI) and
-    // then clears them, also when the frame is skipped. Record every frame
-    // that should show them, before drawFrame.
+    // The renderer draws them in the next Renderer::drawFrame (lines after
+    // post-processing, before the UI) and then ends their frame
+    // (DebugDraw::endFrame), also when the frame is skipped: one-frame
+    // primitives must be recorded every frame that should show them, before
+    // drawFrame; timed ones age by the wall-clock time between frames, and
+    // persistent ones stay until cleared.
     DebugDraw& debugDraw() {
         return m_debugDraw;
     }

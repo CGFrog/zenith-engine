@@ -2,6 +2,7 @@
 
 #include "engine/graphics/RenderConfiguration.hpp"
 #include "engine/platform/PlatformServices.hpp"
+#include "game/application/DebugLabelOverlay.hpp"
 #include "game/application/GameLaunch.hpp"
 
 #include <string>
@@ -85,6 +86,7 @@ class ProjectPlayScene final : public ApplicationScene {
     void drawUi(ApplicationContext& context) override {
         if (!m_captureCamera) {
             m_gameplay.drawUi(context);
+            drawDebugLabels(context.rendering, context.rendering.defaultView(), context.gameUi);
         }
     }
 
