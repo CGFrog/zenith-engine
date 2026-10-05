@@ -273,6 +273,9 @@ class ViewportPanel final : public EditorPanel {
     void updateSelectTools(bool imageHovered);
     // Starts a queued pick and applies a resolved one.
     void processPicks(EditorContext& context);
+    // The overlay marks a pick in this view tests (IconPicking); none when
+    // the view draws no scene overlays.
+    std::vector<SceneGizmoAnchor> pickableIconsHere(EditorContext& context) const;
     void applyPick(EditorContext& context, const SelectIntent& intent, const ViewportPickOutcome& outcome);
     // Recomputes the isolated objects and hands them to the render view.
     void syncLocalView(EditorContext& context);

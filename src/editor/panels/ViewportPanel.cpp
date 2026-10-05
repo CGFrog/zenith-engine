@@ -12,6 +12,7 @@
 #include "editor/theme/ThemeChrome.hpp"
 #include "editor/viewport/Cursor3D.hpp"
 #include "editor/viewport/GameUiOverlay.hpp"
+#include "editor/viewport/IconPicking.hpp"
 #include "editor/viewport/MultiGizmo.hpp"
 #include "editor/viewport/SceneGizmoDraw.hpp"
 #include "editor/viewport/ViewFraming.hpp"
@@ -916,7 +917,8 @@ void ViewportPanel::processPicks(EditorContext& context) {
                                          .region = std::move(queued.region),
                                          .lens = lens(scene),
                                          .viewSize = m_size,
-                                         .isolatedObjects = m_localViewObjects});
+                                         .isolatedObjects = m_localViewObjects,
+                                         .icons = pickableIconsHere(context)});
     }
     if (!m_picker.pending()) {
         return;
@@ -925,6 +927,21 @@ void ViewportPanel::processPicks(EditorContext& context) {
     if (const std::optional<ViewportPickOutcome> outcome = m_picker.poll(picks, scene, context.app.assets)) {
         applyPick(context, m_pendingIntent, *outcome);
     }
+}
+
+std::vector<SceneGizmoAnchor> ViewportPanel::pickableIconsHere(EditorContext& context) const {
+    // Only the marks the view draws can be clicked.
+    if (!viewportDrawsSceneGizmos(context.mode, m_cameraView.has_value(), m_chrome.overlays)) {
+        return {};
+    }
+    const Scene& scene = context.app.scene;
+    return pickableIcons({.scene = scene,
+                          .assets = context.app.assets,
+                          .selection = context.selection.ids(),
+                          .aspectRatio = m_size.x / std::max(m_size.y, 1.0f),
+                          .viewCamera = m_cameraView,
+                          .isolatedObjects = m_localViewObjects ? &*m_localViewObjects : nullptr},
+                         m_chrome.overlays.scene);
 }
 
 void ViewportPanel::applyPick(EditorContext& context, const SelectIntent& intent, const ViewportPickOutcome& outcome) {

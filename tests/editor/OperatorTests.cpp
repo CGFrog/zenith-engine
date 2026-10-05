@@ -10,6 +10,7 @@
 #include "editor/operators/OperatorRunner.hpp"
 #include "editor/operators/OperatorSearch.hpp"
 #include "editor/operators/PlacementOperators.hpp"
+#include "editor/operators/SelectOperators.hpp"
 #include "engine/assets/Assets.hpp"
 
 #include <imgui.h>
@@ -412,6 +413,7 @@ void testDefaultKeymap() {
     OperatorRegistry registry;
     registerObjectOperators(registry);
     registerPlacementOperators(registry);
+    registerSelectOperators(registry);
     for (const KeymapBinding& binding : keymap.bindings()) {
         if (binding.operatorId.starts_with("object.") && binding.operatorId != "object.duplicate_move" &&
             binding.operatorId != "object.delete_menu" && binding.operatorId != "object.add_menu" &&

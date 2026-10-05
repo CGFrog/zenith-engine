@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/viewport/RegionSelect.hpp"
+#include "editor/viewport/SceneGizmoDraw.hpp"
 #include "editor/viewport/ViewportPickProvider.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/scene/Scene.hpp"
@@ -36,11 +37,16 @@ struct ViewportPickQuery {
     // Sorted render objects the view is isolated to (local view); nullopt
     // picks everything.
     std::optional<std::vector<RenderObjectId>> isolatedObjects;
+    // Objects without a mesh the view marks (IconPicking: pickableIcons),
+    // tested before the meshes; empty when the view draws no overlays.
+    std::vector<SceneGizmoAnchor> icons;
 };
 
 // A resolved pick, in the same order the query defines: Click holds at most
 // one entity, Cycle the candidates front to back (visible ones first, then
-// ones a ray hits behind them), Region every entity inside. Only entities the
+// ones a ray hits behind them), Region every entity inside. Icons the query
+// lists come first (mergeIconPicks): a click on one picks it over the mesh
+// behind it. Only entities the
 // editor may select (SceneVisibility::selectable in Editor mode) inside the
 // isolation appear; a collection instance appears as its instancing entity.
 struct ViewportPickOutcome {

@@ -235,6 +235,9 @@ class EditorSession final : public ApplicationScene,
     // A menu item showing the operator's shortcut, disabled when its poll fails.
     void operatorMenuItem(ApplicationContext& context, std::string_view operatorId, const char* label,
                           std::string_view properties = {}, bool selected = false);
+    // A submenu listing a registered menu's items (the Add menu, Select
+    // Grouped), running the chosen operator.
+    void drawRegisteredMenu(ApplicationContext& context, const char* menuId, const char* label, bool enabled);
     void drawOperatorWindows(ApplicationContext& context);
     void saveKeymap();
     void saveSettings();
