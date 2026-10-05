@@ -19,6 +19,10 @@ void remapIds(Json& entity, const IdMap& map, const ComponentTypeRegistry& types
     };
     remap(entity["id"]);
     remap(entity["parent"]);
+    remapChildOrder(entity, [&map](uint64_t id) -> std::optional<uint64_t> {
+        const auto found = map.find(id);
+        return found == map.end() ? std::nullopt : std::optional<uint64_t>(found->second);
+    });
     // Read only for a diagnostic, so the common case copies no string.
     const auto name = [&entity] { return entity.value("name", std::string{}); };
     remapEntityReferences(

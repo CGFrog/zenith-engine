@@ -114,6 +114,10 @@ SceneDocumentResult runtimeChangesForEditScene(const Scene& runtimeScene, const 
                 if (editEntity != nullptr) {
                     // Hierarchy changes made while running stay behind.
                     after["parent"] = editEntity->at("parent");
+                    after.erase("children");
+                    if (const auto order = editEntity->find("children"); order != editEntity->end()) {
+                        after["children"] = *order;
+                    }
                 } else if (!runtimeParent.is_null() && !editEntities.contains(runtimeParent.get<uint64_t>()) &&
                            !requested.contains(runtimeParent.get<uint64_t>())) {
                     after["parent"] = nullptr;
