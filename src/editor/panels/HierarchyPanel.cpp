@@ -144,6 +144,13 @@ ImGuiID HierarchyPanel::uniqueRowId(ImGuiID id) {
 void HierarchyPanel::draw(EditorContext& context) {
     Scene& scene = context.app.scene;
     context.selection.removeMissing(scene);
+    if (scene.contentGeneration() != m_sceneGeneration) {
+        // Another document (prefab mode, a scene opened): its ids name other
+        // entities, so a range or a pending click must not carry over.
+        m_sceneGeneration = scene.contentGeneration();
+        m_rangeAnchor.reset();
+        m_pendingPlainClick.reset();
+    }
     m_setAllOpen = std::exchange(m_requestedAllOpen, std::nullopt);
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
         context.actions.handleObjectKeys(context.app, KeymapRegion::Outliner);
@@ -526,6 +533,7 @@ void HierarchyPanel::drawEntityContextMenu(EditorContext& context, SceneEntityId
     operatorMenuItem(context, "Apply to Prefab", "prefab.apply");
     operatorMenuItem(context, "Revert to Prefab", "prefab.revert");
     operatorMenuItem(context, "Unpack Prefab", "prefab.unpack");
+    operatorMenuItem(context, "Edit Prefab", "prefab.edit");
     ImGui::Separator();
     drawExpandItems();
     ImGui::EndPopup();

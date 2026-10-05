@@ -41,10 +41,17 @@ OperatorRegistrationResult registerDocumentOperatorFamily(OperatorRegistry& regi
                                             [&commands](ApplicationContext& app) { commands.requestNew(app); }));
     operators.push_back(applicationOperator("file.open", "Open", "Open a scene file", documentCommands,
                                             [&commands](ApplicationContext& app) { commands.requestOpen(app); }));
-    operators.push_back(applicationOperator("file.save", "Save", "Save the scene to its file", documentCommands,
-                                            [&commands](ApplicationContext& app) { commands.saveDocument(app); }));
-    operators.push_back(applicationOperator("file.save_as", "Save As", "Save the scene to a new file", documentCommands,
-                                            [&commands](ApplicationContext&) { commands.requestSaveAs(); }));
+    operators.push_back(
+        applicationOperator("file.save", "Save", "Save the scene to its file, or the prefab open in prefab mode",
+                            documentCommands, [&commands](ApplicationContext& app) { commands.saveDocument(app); }));
+    // A prefab open as its own document saves only to its own file.
+    const EditorPrefabModeCommands& prefabMode = services.prefabModeCommands;
+    operators.push_back(applicationOperator(
+        "file.save_as", "Save As", "Save the scene to a new file",
+        [&commands, &prefabMode](const OperatorContext& context) {
+            return commands.documentCommandsAvailable(context) && !prefabMode.prefabEditActive();
+        },
+        [&commands](ApplicationContext&) { commands.requestSaveAs(); }));
     operators.push_back(applicationOperator(
         "wm.open_project", "Open Project", "Close this project and choose another .zenith-project file to open",
         projectHubAvailable,

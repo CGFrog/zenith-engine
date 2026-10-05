@@ -62,6 +62,10 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
         return m_session.m_document;
     }
 
+    const DocumentStack& documents() const override {
+        return m_session.m_documents;
+    }
+
     EditorMenus& menus() override {
         return m_session.m_menus;
     }

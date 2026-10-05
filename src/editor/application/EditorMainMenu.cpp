@@ -89,6 +89,9 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             operatorMenuItem(context, "prefab.revert", "Revert");
             operatorMenuItem(context, "prefab.unpack", "Unpack");
             operatorMenuItem(context, "prefab.select_asset", "Select Prefab Asset");
+            ImGui::Separator();
+            operatorMenuItem(context, "prefab.edit", "Edit Prefab");
+            operatorMenuItem(context, "prefab.exit_edit", "Back to Scene");
             ImGui::EndMenu();
         }
         ImGui::EndMenu();
@@ -129,6 +132,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         ImGui::EndMenu();
     }
     drawModuleMenu(context);
+    drawPrefabBreadcrumbs(context);
     drawPlaybackToolbar(context);
     drawWorkspaceTabs(context);
     ImGui::EndMainMenuBar();

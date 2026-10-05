@@ -40,6 +40,9 @@ std::unique_ptr<SmokeStep> makeHideSmokeStep();
 // Prefab create, instantiate, overrides, apply, and nesting on a staging
 // scene, with prefabs written under assetRoot (removed again).
 std::unique_ptr<SmokeStep> makePrefabSmokeStep(std::filesystem::path assetRoot);
+// Prefab mode: open a prefab placed in the scene, edit and save it, go back,
+// see the instance refreshed, and undo the file and the instance.
+std::unique_ptr<SmokeStep> makePrefabEditSmokeStep();
 // Two viewports with their own cameras, shading, and render views.
 std::unique_ptr<SmokeStep> makeMultiViewportSmokeStep();
 // Multi-entity component operators and their undo.

@@ -23,6 +23,7 @@ class EditorMenus;
 class EditorObjectModeCommands;
 class EditorPlayCommands;
 class EditorPlayMode;
+class EditorPrefabModeCommands;
 class EditorWindowCommands;
 class EntityEyedropper;
 class GameModuleHost;
@@ -75,6 +76,9 @@ struct EditorOperatorServices {
     // the content in its PrefabWriteLedger (PrefabWriteHooks::fileWritten).
     // May be empty.
     std::function<void(const std::filesystem::path&, const std::optional<std::string>&)> prefabWritten;
+    // An operator built instances from a prefab file that held this content
+    // (PrefabWriteHooks::fileRead). May be empty.
+    std::function<void(const std::filesystem::path&, const std::optional<std::string>&)> prefabRead;
 
     // The running session's workflows (editor/application/
     // EditorSessionCommands.hpp), for the operators that start them.
@@ -82,6 +86,7 @@ struct EditorOperatorServices {
     EditorPlayCommands& playCommands;
     EditorObjectModeCommands& objectModeCommands;
     EditorWindowCommands& windowCommands;
+    EditorPrefabModeCommands& prefabModeCommands;
 };
 
 using OperatorFamilyRegistration = OperatorRegistrationResult (*)(OperatorRegistry& registry,

@@ -2,6 +2,7 @@
 
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/EditorDocument.hpp"
+#include "editor/document/PrefabEditDocument.hpp"
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/EntityReferenceField.hpp"
 #include "editor/interaction/ProjectNames.hpp"
@@ -305,6 +306,11 @@ void EntityPropertiesView::drawPrefabHeader(EditorContext& context, SceneEntityI
     if (!overrides.linked) {
         return;
     }
+    // In prefab mode the document root's instance is the prefab itself:
+    // Apply would be Save, and Revert would discard the document's edits.
+    if (context.prefabEdit != nullptr && overrides.instanceRoot == context.prefabEdit->root) {
+        return;
+    }
     ImGui::PushID("##PrefabHeader");
     ImGui::SeparatorText("Prefab");
     widgets::CaptionText(overrides.displayName.c_str(), palette::prefabOverrideInk);
@@ -350,6 +356,15 @@ void EntityPropertiesView::drawPrefabHeader(EditorContext& context, SceneEntityI
     }
     ImGui::EndDisabled();
     ImGui::EndDisabled();
+    // Edits the prefab this header shows, so any member of the instance may
+    // start it.
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!context.canInvoke("prefab.edit"));
+    if (widgets::Button("Edit Prefab")) {
+        action.emplace("prefab.edit", nlohmann::json{{"asset", overrides.prefab}}.dump());
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Open the prefab as a document of its own");
     ImGui::PopID();
     if (action) {
         context.invoke(action->first, action->second);

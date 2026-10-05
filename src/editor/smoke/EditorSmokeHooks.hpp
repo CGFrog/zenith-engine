@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 
+class DocumentStack;
 class EditorDocument;
 class EditorMenus;
 class EditorPlayMode;
@@ -48,6 +49,8 @@ class EditorSmokeHooks {
     virtual Selection& selection() = 0;
     virtual EditorPlayMode& playMode() = 0;
     virtual EditorDocument& document() = 0;
+    // The documents parked under prefab edits (prefab mode).
+    virtual const DocumentStack& documents() const = 0;
     virtual EditorMenus& menus() = 0;
     virtual ViewportRegistry& viewports() = 0;
     virtual Workspace& activeWorkspace() = 0;

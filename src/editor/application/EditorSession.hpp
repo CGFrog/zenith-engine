@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/application/DocumentStack.hpp"
 #include "editor/application/EditorAppearance.hpp"
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/EditorPlayMode.hpp"
@@ -120,6 +121,7 @@ class EditorSession final : public ApplicationScene,
                             private EditorPlayCommands,
                             private EditorObjectModeCommands,
                             private EditorWindowCommands,
+                            private EditorPrefabModeCommands,
                             private EditorScriptInfo {
   public:
     // gameModule is the project's module library, or empty for none.
@@ -206,6 +208,12 @@ class EditorSession final : public ApplicationScene,
     void requestModuleReload() override;
     void openNewCodeDialog(GeneratedCodeKind kind) override;
     void openProjectSettings(ApplicationContext& context) override;
+
+    // EditorPrefabModeCommands (EditorPrefabMode.cpp)
+    bool prefabEditActive() const override;
+    bool prefabEditAvailable(const OperatorContext& context) const override;
+    OperatorResult editPrefab(ApplicationContext& context, const std::filesystem::path& reference) override;
+    void requestLeavePrefabEdit(ApplicationContext& context) override;
 
     // EditorScriptInfo (EditorModuleCommands.cpp)
     std::optional<EditorSourceLocation> behaviourSource(std::string_view componentKey) const override;
@@ -302,6 +310,31 @@ class EditorSession final : public ApplicationScene,
     // marker before editing undoes exactly its own steps.
     void undoSince(ApplicationContext& context, CommandHistoryMarker marker);
 
+    // Prefab mode (EditorPrefabMode.cpp): the document stack over the
+    // session's active document, history, and selection.
+    ActiveDocument activeDocument(ApplicationContext& context);
+    // Pops the active prefab (its unsaved changes are dropped) and restores
+    // the viewports' views of the document underneath.
+    void leavePrefabEdit(ApplicationContext& context);
+    // Writes the active prefab to its file; false after reporting why not.
+    bool savePrefabEdit(ApplicationContext& context);
+    // The active document's name for the status bar and prompts: the scene's
+    // file name or the prefab's display name, with '*' when it has unsaved
+    // changes.
+    std::string activeDocumentName() const;
+    // The main menu bar's breadcrumbs (Level > room_07*) with Save and Back,
+    // while a prefab is open.
+    void drawPrefabBreadcrumbs(ApplicationContext& context);
+    // A prefab file changed outside the editor: refreshes instances in the
+    // parked documents too, and warns when it is the open prefab's own file.
+    void reconcileParkedDocuments(ApplicationContext& context, const PrefabFileChange& change);
+    // Autosave and the crash save in prefab mode: the parked scene to the
+    // scene's recovery file and the active prefab to m_prefabRecovery, each
+    // when it has unsaved changes. Best effort; returns the first error.
+    std::string autosavePrefabEdit(ApplicationContext& context);
+    // Recover: reopens the autosaved prefab edit over the current scene.
+    void recoverPrefabEdit(ApplicationContext& context);
+
     // Autosave and the recovery prompt (EditorRecovery.cpp).
     void updateAutosave(ApplicationContext& context, float deltaSeconds);
     // Gives the crash handler the session's emergency save, once, with the
@@ -330,6 +363,12 @@ class EditorSession final : public ApplicationScene,
     bool completeOpen(ApplicationContext& context, const std::filesystem::path& path);
     bool completeSaveAs(ApplicationContext& context, const std::filesystem::path& path);
     void onDocumentPathCommitted();
+    // Runs the pending action once nothing in its way has unsaved changes:
+    // New, Open, Close, and leaving for the Project Hub first leave every open
+    // prefab, top down, asking about each one with unsaved changes (and then
+    // the scene); LeavePrefab leaves only the active one. Cancelling any
+    // prompt cancels the action.
+    void continuePendingAction(ApplicationContext& context);
     // Lists a save's warnings (references to generated entities saved as
     // none) in the Info log.
     void reportSaveWarnings(const SceneDocumentResult& result);
@@ -393,12 +432,16 @@ class EditorSession final : public ApplicationScene,
         NewDocument,
         OpenDocument,
         CloseEditor,
-        LeaveForProjectHub
+        LeaveForProjectHub,
+        // Back from the active prefab to the document under it.
+        LeavePrefab
     };
 
     EditorSettings m_settings;
     EditorDocument m_document;
     EditorRecovery m_recovery;
+    // The autosave of a prefab open in prefab mode, beside m_recovery.
+    PrefabEditRecovery m_prefabRecovery;
     EditorDiagnostics m_diagnostics;
     // The game module's build: started by build.run (Ctrl B), the Build
     // panel, or build on save, and polled every frame. Declared before the
@@ -412,6 +455,10 @@ class EditorSession final : public ApplicationScene,
     // file, so the asset watcher's reports of the editor's own writes are
     // ignored and an outside change knows what the file held before.
     PrefabWriteLedger m_prefabWrites;
+    // Prefab mode: the documents parked under the prefabs being edited. The
+    // active one stays in m_document, m_history, m_selection, and the
+    // engine's scene.
+    DocumentStack m_documents;
     // Prefab files the asset watcher reported changed, until
     // reconcileChangedPrefabs handles them.
     std::vector<std::filesystem::path> m_changedPrefabFiles;

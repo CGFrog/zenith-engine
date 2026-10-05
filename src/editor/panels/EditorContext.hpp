@@ -23,6 +23,7 @@ class EditorScriptInfo;
 class NavigationWorld;
 class WatchList;
 struct EditorProjectNames;
+struct PrefabEditTarget;
 
 // Session-level workflows a panel can trigger but does not own: running
 // operators, the region keymaps, document replacement, and modal transforms.
@@ -110,6 +111,9 @@ struct EditorContext {
     // The project's physics layer and tag names, which inspectors offer as
     // choices; null where there is none.
     const EditorProjectNames* projectNames{nullptr};
+    // The prefab open as its own document (prefab mode,
+    // application/DocumentStack.hpp); null while a scene is edited.
+    const PrefabEditTarget* prefabEdit{nullptr};
 
     bool editMode() const {
         return mode == EditorMode::Edit;

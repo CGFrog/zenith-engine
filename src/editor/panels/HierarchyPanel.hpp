@@ -96,6 +96,8 @@ class HierarchyPanel final : public EditorPanel {
     // pressed without modifiers; it selects the entity alone on release
     // unless the press became a drag.
     std::optional<ImGuiID> m_pendingPlainClick;
+    // The scene content generation the two above belong to.
+    uint64_t m_sceneGeneration{0};
 
     struct OrphanCache {
         bool valid{false};

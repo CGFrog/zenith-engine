@@ -1,6 +1,7 @@
 #include "ViewportPanel.hpp"
 
 #include "editor/document/EditorDocument.hpp"
+#include "editor/document/PrefabEditDocument.hpp"
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/PickQueries.hpp"
 #include "editor/operators/KeymapDispatch.hpp"
@@ -357,6 +358,24 @@ void ViewportPanel::exitLocalView() {
     m_localViewObjects.reset();
 }
 
+ViewportPanel::DocumentView ViewportPanel::takeDocumentView() {
+    DocumentView view{.camera = m_camera, .cameraView = m_cameraView, .localView = std::move(m_localView)};
+    m_localView.reset();
+    m_localViewObjects.reset();
+    m_cameraView.reset();
+    m_queuedSelect.reset();
+    m_gizmoBefore.reset();
+    cancelSelectTool();
+    return view;
+}
+
+void ViewportPanel::restoreDocumentView(DocumentView view) {
+    m_camera = view.camera;
+    m_cameraView = view.cameraView;
+    m_localView = std::move(view.localView);
+    m_localViewObjects.reset();
+}
+
 bool ViewportPanel::localViewActive() const {
     return m_localView.has_value();
 }
@@ -676,6 +695,10 @@ bool ViewportPanel::drawHeader(EditorContext& context) {
                 ImGui::EndMenu();
             }
             ImGui::TextDisabled("%s", viewportShadingLabel(m_chrome.shading));
+            if (context.prefabEdit != nullptr) {
+                ImGui::TextColored(toImVec4(palette::prefabOverrideInk), "| Prefab: %s",
+                                   context.prefabEdit->displayName.c_str());
+            }
             if (m_gameView) {
                 ImGui::TextDisabled("| Game camera");
             } else if (m_cameraView) {

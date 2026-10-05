@@ -157,6 +157,8 @@ inline constexpr ThemeColor iconWhite = ThemeColor::hex(0xF4F4F4);
 // are told apart at a glance. The play viewport's banner uses the Play hue.
 inline constexpr ThemeColor playTint = ThemeColor::hex(0xFF7A2E, 0.2f);
 inline constexpr ThemeColor simulateTint = ThemeColor::hex(0x8A5CFF, 0.2f);
+// Prefab mode (a prefab open as its own document) washes in the prefab blue.
+inline constexpr ThemeColor prefabTint = prefabOverride.withAlpha(0.2f);
 inline constexpr ThemeColor playBanner = ThemeColor::hex(0x7A2A08, 0.9f);
 inline constexpr ThemeColor playBannerInk = ThemeColor::hex(0xFFE6C8);
 

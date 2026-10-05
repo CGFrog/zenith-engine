@@ -146,7 +146,7 @@ void placeInstanceRoot(Scene& scene, Entity root, const glm::vec3& location) {
     scene.updateWorldTransforms();
 }
 
-Operator instantiateOperator() {
+Operator instantiateOperator(PrefabWriteHooks hooks) {
     return {.id = "prefab.instantiate",
             .label = "Instantiate Prefab",
             .description = "Add an instance of a prefab to the scene and select it",
@@ -158,8 +158,8 @@ Operator instantiateOperator() {
                                                              .add("location", &InstantiatePrefabProperties::location)
                                                              .drag(0.05f))),
             .poll = [](const OperatorContext& context) { return context.editMode(); },
-            .execute =
-                typed<InstantiatePrefabProperties>([](OperatorContext& context, InstantiatePrefabProperties& values) {
+            .execute = typed<InstantiatePrefabProperties>(
+                [hooks = std::move(hooks)](OperatorContext& context, InstantiatePrefabProperties& values) {
                     if (values.asset.empty()) {
                         return OperatorResult::cancelled("Choose a prefab to instantiate");
                     }
@@ -178,6 +178,7 @@ Operator instantiateOperator() {
                     if (result) {
                         placeInstanceRoot(scene, root, values.location);
                         context.selection.selectOnly(scene.id(root));
+                        notePrefabFilesRead(scene, context.editing.document().options().assetRoot, hooks, root);
                     }
                     return finish(context, result);
                 }),
@@ -279,12 +280,59 @@ Operator selectAssetOperator(std::function<void(const std::filesystem::path&)> r
                     return OperatorResult::finished();
                 }};
 }
+
+// The prefab of the active entity's nearest instance, project-relative; empty
+// when the active entity is in none.
+std::string activeInstancePrefab(const OperatorContext& context) {
+    const Scene& scene = context.editing.scene();
+    const Entity root = prefabInstanceRoot(scene, activeEntity(context));
+    return root == entt::null ? std::string{} : scene.registry().get<PrefabInstanceComponent>(root).prefab;
+}
+
+Operator editOperator(EditorPrefabModeCommands* prefabMode) {
+    return {.id = "prefab.edit",
+            .label = "Edit Prefab",
+            .description = "Open a prefab as a document of its own, with its own undo history; the scene waits "
+                           "underneath until you go back",
+            .properties = OperatorProperties::make(EditPrefabProperties{}, std::move(Fields<EditPrefabProperties>().add(
+                                                                               "asset", &EditPrefabProperties::asset))),
+            .poll =
+                [prefabMode](const OperatorContext& context) {
+                    return prefabMode != nullptr && context.app != nullptr && prefabMode->prefabEditAvailable(context);
+                },
+            .execute =
+                typed<EditPrefabProperties>([prefabMode](OperatorContext& context, EditPrefabProperties& values) {
+                    if (values.asset.empty()) {
+                        values.asset = activeInstancePrefab(context);
+                    }
+                    if (values.asset.empty()) {
+                        return OperatorResult::cancelled("Select a prefab instance, or choose a prefab asset to edit");
+                    }
+                    return prefabMode->editPrefab(*context.app, projectRelative(context, values.asset));
+                })};
+}
+
+Operator exitEditOperator(EditorPrefabModeCommands* prefabMode) {
+    return {.id = "prefab.exit_edit",
+            .label = "Back to Scene",
+            .description = "Leave the prefab and return to the document under it, asking about unsaved changes",
+            .poll =
+                [prefabMode](const OperatorContext& context) {
+                    return prefabMode != nullptr && context.app != nullptr && prefabMode->prefabEditActive() &&
+                           prefabMode->prefabEditAvailable(context);
+                },
+            .execute =
+                [prefabMode](OperatorContext& context, OperatorProperties&) {
+                    prefabMode->requestLeavePrefabEdit(*context.app);
+                    return OperatorResult::finished();
+                }};
+}
 } // namespace
 
 OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, PrefabOperatorServices services) {
     std::vector<Operator> operators;
     operators.push_back(createOperator(services.writeHooks));
-    operators.push_back(instantiateOperator());
+    operators.push_back(instantiateOperator(services.writeHooks));
     operators.push_back(applyOperator(services.writeHooks));
     operators.push_back(instanceOperator("prefab.revert", "Revert Prefab",
                                          "Reset the instance to its prefab, dropping overrides and added objects",
@@ -294,6 +342,8 @@ OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, P
                                          &PrefabAuthoring::unpack));
     operators.push_back(revertFieldOperator());
     operators.push_back(selectAssetOperator(std::move(services.revealAsset)));
+    operators.push_back(editOperator(services.prefabMode));
+    operators.push_back(exitEditOperator(services.prefabMode));
     for (Operator& op : operators) {
         if (OperatorRegistrationResult result = registry.add(std::move(op)); !result) {
             return result;
@@ -305,5 +355,7 @@ OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, P
 OperatorRegistrationResult registerPrefabOperatorFamily(OperatorRegistry& registry,
                                                         const EditorOperatorServices& services) {
     return registerPrefabOperators(
-        registry, {.revealAsset = services.revealAsset, .writeHooks = {.fileWritten = services.prefabWritten}});
+        registry, {.revealAsset = services.revealAsset,
+                   .writeHooks = {.fileWritten = services.prefabWritten, .fileRead = services.prefabRead},
+                   .prefabMode = &services.prefabModeCommands});
 }

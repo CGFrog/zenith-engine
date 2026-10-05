@@ -196,6 +196,30 @@ class ViewportPanel final : public EditorPanel {
     // their descendants that still exist); nullopt outside local view.
     const std::optional<std::vector<RenderObjectId>>& localViewObjects() const;
 
+    struct LocalView {
+        std::vector<SceneEntityId> entities;
+        EditorCamera previousCamera;
+        std::optional<SceneEntityId> previousCameraView;
+    };
+
+    // How the viewport looks at one document, kept while another document
+    // is edited in its place (prefab mode, DocumentStack): the editor camera,
+    // the scene camera it looks through, and local view.
+    struct DocumentView {
+        EditorCamera camera;
+        std::optional<SceneEntityId> cameraView;
+        std::optional<LocalView> localView;
+    };
+
+    // Hands over the view of the document being replaced and leaves its
+    // camera view and local view (the camera stays where it was); a box or
+    // lasso and a click waiting to pick are cancelled, since their entities
+    // belong to that document.
+    DocumentView takeDocumentView();
+    // Puts back a view takeDocumentView returned, once its document is the
+    // edited one again.
+    void restoreDocumentView(DocumentView view);
+
   private:
     // A click or region pick waiting for the next draw to start it.
     struct QueuedSelect {
@@ -212,12 +236,6 @@ class ViewportPanel final : public EditorPanel {
         SelectionSetMode mode{SelectionSetMode::Set};
         // The eyedropper was armed when the click started.
         bool eyedropper{false};
-    };
-
-    struct LocalView {
-        std::vector<SceneEntityId> entities;
-        EditorCamera previousCamera;
-        std::optional<SceneEntityId> previousCameraView;
     };
 
     // Pushes the camera, shading, grid, outline, and scene gizmos to the

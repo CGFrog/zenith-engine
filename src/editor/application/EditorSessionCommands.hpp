@@ -13,6 +13,7 @@
 #include "editor/project/ProjectHub.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 struct ApplicationContext;
@@ -62,6 +63,27 @@ class EditorPlayCommands {
 
   protected:
     ~EditorPlayCommands() = default;
+};
+
+// Prefab mode: a prefab open as a document of its own over the parked scene
+// (prefab.edit, prefab.exit_edit; application/DocumentStack.hpp).
+class EditorPrefabModeCommands {
+  public:
+    // Whether a prefab is open as the active document.
+    virtual bool prefabEditActive() const = 0;
+    // Whether prefab mode can be entered or left now: Edit mode, with no
+    // file dialog pending and no modal tool running.
+    virtual bool prefabEditAvailable(const OperatorContext& context) const = 0;
+    // Opens the prefab at reference (project-relative) as the active
+    // document, parking the current one; fails, changing nothing, when it
+    // cannot be opened or is already open in the stack.
+    virtual OperatorResult editPrefab(ApplicationContext& context, const std::filesystem::path& reference) = 0;
+    // Returns to the document under the active prefab, asking about unsaved
+    // changes first (Save, Discard, or Cancel).
+    virtual void requestLeavePrefabEdit(ApplicationContext& context) = 0;
+
+  protected:
+    ~EditorPrefabModeCommands() = default;
 };
 
 // Blender object-mode tools that follow the mouse or open a popup.
