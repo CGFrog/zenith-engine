@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/application/EditorSessionCommands.hpp"
 #include "editor/document/PrefabWriteCommand.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 
@@ -19,6 +20,13 @@
 //   prefab.unpack                         keep the entities, drop the link
 //   prefab.revert_field {entity, component, field}
 //   prefab.select_asset                   show the prefab in the Asset Browser
+//   prefab.edit {asset}                   open a prefab as its own document
+//   prefab.exit_edit                      back to the document under it
+//
+// prefab.edit and prefab.exit_edit switch documents (prefab mode, see
+// application/DocumentStack.hpp) and record nothing themselves: edits made in
+// prefab mode go to the prefab's own history, and returning after saving
+// records one "Edit <name>" step on the document below.
 //
 // Undo: every operator is one undo step covering its scene changes (links,
 // instance entities, other instances an apply refreshed). create_from_selection
@@ -49,6 +57,13 @@ struct InstantiatePrefabProperties {
     glm::vec3 location{0.0f};
 };
 
+struct EditPrefabProperties {
+    // Path of the prefab asset: project-relative, or absolute inside the
+    // project asset root. Empty edits the prefab of the active entity's
+    // instance.
+    std::string asset;
+};
+
 struct RevertPrefabFieldProperties {
     // Stable id of the instance entity, in decimal; empty uses the active entity.
     std::string entity;
@@ -68,8 +83,12 @@ struct PrefabOperatorServices {
     // prefab.select_asset; the session routes it through ProjectAssets.
     std::function<void(const std::filesystem::path&)> revealAsset;
     // Told about every prefab file write (and its undo and redo), so the
-    // session drops cached copies and notes the write in its ledger.
+    // session drops cached copies and notes the write in its ledger, and
+    // about the files an instantiate read.
     PrefabWriteHooks writeHooks;
+    // Prefab mode, for prefab.edit and prefab.exit_edit; null leaves them
+    // unavailable.
+    EditorPrefabModeCommands* prefabMode{nullptr};
 };
 
 OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, PrefabOperatorServices services = {});

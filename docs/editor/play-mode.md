@@ -25,6 +25,12 @@ systemProfile()`, published by `finishSystemFrame` at the start of `drawUi`),
 the engine's CPU phases, and the GPU pass table; `profiler.reset_max` restarts
 the maxima. The headless play operators live in `operators/PlayOperators`.
 
+While a prefab is open in prefab mode (see
+[Scene editing](scene-editing.md#prefab-mode-the-document-stack)) Play and
+Simulate are disabled, their toolbar buttons saying "Return to the scene to
+play", and prefab mode cannot be entered during Play: the runtime scene is
+always built from a scene document.
+
 Play targets (`application/PlayTargets`, wired in `application/
 EditorPlayback.cpp`): `play.start {target}` runs Play in `viewport` (the
 active viewport), `floating` (a new Viewport area undocked through

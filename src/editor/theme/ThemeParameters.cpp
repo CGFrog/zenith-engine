@@ -50,6 +50,8 @@ std::optional<ThemeColor> themeModeTintColor(ThemeModeTint tint) {
         return palette::playTint;
     case ThemeModeTint::Simulate:
         return palette::simulateTint;
+    case ThemeModeTint::Prefab:
+        return palette::prefabTint;
     }
     return std::nullopt;
 }

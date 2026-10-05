@@ -13,6 +13,15 @@ Every edit is recorded through `SceneEditing` with a coalesce key naming the
 edited entities, and component add runs `object.component_add` (active
 entity).
 
+A prefab instance's entities show the instance header (`drawPrefabHeader`):
+the prefab's name, its override count, Apply, Revert, Unpack, Select Prefab
+Asset, and **Edit Prefab**, which opens the prefab as a document of its own
+(`prefab.edit {asset}`). In prefab mode the header is hidden for the
+document's own root instance (`EditorContext::prefabEdit`), where Apply would
+be Save and Revert would discard the edits; nested instances keep theirs, and
+their Apply writes the nested prefab as an undoable step of the open prefab's
+history.
+
 Components are listed in the display order of
 `settings/ComponentInspectorLayout`, which also remembers collapsed sections
 per component type and is saved by the session to `component-inspector.json`.

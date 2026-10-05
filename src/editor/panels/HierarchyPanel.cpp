@@ -2,6 +2,7 @@
 
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/EditorDocument.hpp"
+#include "editor/document/PrefabEditDocument.hpp"
 #include "editor/interaction/EntityReferenceField.hpp"
 #include "editor/operators/OutlinerOperators.hpp"
 #include "editor/panels/AssetDragPayloads.hpp"
@@ -144,6 +145,13 @@ ImGuiID HierarchyPanel::uniqueRowId(ImGuiID id) {
 void HierarchyPanel::draw(EditorContext& context) {
     Scene& scene = context.app.scene;
     context.selection.removeMissing(scene);
+    if (scene.contentGeneration() != m_sceneGeneration) {
+        // Another document (prefab mode, a scene opened): its ids name other
+        // entities, so a range or a pending click must not carry over.
+        m_sceneGeneration = scene.contentGeneration();
+        m_rangeAnchor.reset();
+        m_pendingPlainClick.reset();
+    }
     m_setAllOpen = std::exchange(m_requestedAllOpen, std::nullopt);
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
         context.actions.handleObjectKeys(context.app, KeymapRegion::Outliner);
@@ -294,7 +302,10 @@ void HierarchyPanel::drawEntity(EditorContext& context, const OutlinerNode& node
         treeRow(rowId, node, ImGuiTreeNodeFlags_AllowOverlap | (selected ? ImGuiTreeNodeFlags_Selected : 0));
     const ImVec2 rowMin = ImGui::GetItemRectMin();
     const ImVec2 rowMax = ImGui::GetItemRectMax();
-    decorateOutlinerRow(entityIcon(scene.registry(), entity), selected, node.children.empty());
+    // In prefab mode the document's root is the prefab itself.
+    const bool prefabRoot = context.prefabEdit != nullptr && context.prefabEdit->root == node.entity;
+    decorateOutlinerRow(prefabRoot ? EditorIcon::Prefab : entityIcon(scene.registry(), entity), selected,
+                        node.children.empty());
     m_displayed.push_back(node.entity);
     // Where a dotted guide joins this row's children to it.
     const float guideX = rowMin.x + ImGui::GetTreeNodeToLabelSpacing() / 2.0f;
@@ -526,6 +537,7 @@ void HierarchyPanel::drawEntityContextMenu(EditorContext& context, SceneEntityId
     operatorMenuItem(context, "Apply to Prefab", "prefab.apply");
     operatorMenuItem(context, "Revert to Prefab", "prefab.revert");
     operatorMenuItem(context, "Unpack Prefab", "prefab.unpack");
+    operatorMenuItem(context, "Edit Prefab", "prefab.edit");
     ImGui::Separator();
     drawExpandItems();
     ImGui::EndPopup();

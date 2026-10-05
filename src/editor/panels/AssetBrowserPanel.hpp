@@ -21,6 +21,8 @@ struct AssetBrowserActions {
     std::function<void(const std::filesystem::path&)> reloadModel;
     // Opens a script in the user's IDE.
     std::function<void(const std::filesystem::path&)> openScript;
+    // Opens a prefab as a document of its own (prefab.edit).
+    std::function<void(const std::filesystem::path&)> openPrefab;
 };
 
 // Whether a browser's folder and view mode are remembered across sessions.
@@ -39,7 +41,7 @@ enum class AssetBrowserRole {
 // and file operations (create, rename, move, duplicate, move to trash, show in
 // the OS file browser). Models drag into the viewport or inspector as
 // "ZENITH_MODEL_ASSET" payloads, and any item drags onto a folder to move it;
-// scenes open on double-click, and scripts (from the project's source root
+// scenes open on double-click, prefabs open in prefab mode, and scripts (from the project's source root
 // too, when the service lists one) open in the IDE.
 //
 // The panel is one view over a shared ProjectAssets service, which owns the

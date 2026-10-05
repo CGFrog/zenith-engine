@@ -216,6 +216,18 @@ size_t CommandHistory::stepsSince(CommandHistoryMarker marker) const {
     return steps;
 }
 
+void CommandHistory::exchangeTimeline(CommandHistory& other) {
+    std::swap(m_commands, other.m_commands);
+    std::swap(m_recordedAt, other.m_recordedAt);
+    std::swap(m_position, other.m_position);
+    std::swap(m_savedPosition, other.m_savedPosition);
+    const uint64_t revision = std::max(m_revision, other.m_revision) + 1;
+    m_revision = revision;
+    other.m_revision = revision;
+    enforceLimit();
+    other.enforceLimit();
+}
+
 void CommandHistory::markSaved() {
     m_savedPosition = m_position;
 }

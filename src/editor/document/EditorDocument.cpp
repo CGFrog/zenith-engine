@@ -87,6 +87,11 @@ void EditorDocument::setDirty(bool dirty) {
     m_dirty = dirty;
 }
 
+void EditorDocument::markSaved() {
+    m_dirty = false;
+    m_savedEditorData = m_editorData;
+}
+
 bool EditorDocument::dirty() const {
     // A moved 3D cursor is an unsaved change too, though it is not undone.
     return m_dirty || m_editorData != m_savedEditorData;

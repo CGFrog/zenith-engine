@@ -3,9 +3,11 @@
 #include "engine/platform/FileContents.hpp"
 #include "engine/platform/PlatformServices.hpp"
 
+#include <algorithm>
 #include <span>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 namespace {
 std::string fileLabel(const std::filesystem::path& file) {
@@ -49,6 +51,42 @@ bool readPrefabFileBytes(const std::filesystem::path& file, std::optional<std::s
     }
     bytes = std::move(content);
     return true;
+}
+
+void notePrefabFilesRead(const Scene& scene, const std::filesystem::path& assetRoot, const PrefabWriteHooks& hooks,
+                         Entity subtree) {
+    if (!hooks.fileRead) {
+        return;
+    }
+    const entt::registry& registry = scene.registry();
+    std::vector<Entity> entities;
+    if (subtree == entt::null) {
+        for (const Entity entity : registry.view<const PrefabInstanceComponent>()) {
+            entities.push_back(entity);
+        }
+    } else {
+        for (std::vector<Entity> pending{subtree}; !pending.empty();) {
+            const Entity entity = pending.back();
+            pending.pop_back();
+            entities.push_back(entity);
+            if (const auto* relationship = registry.try_get<RelationshipComponent>(entity)) {
+                pending.insert(pending.end(), relationship->children.begin(), relationship->children.end());
+            }
+        }
+    }
+    std::vector<std::string> noted;
+    for (const Entity entity : entities) {
+        const auto* instance = registry.try_get<PrefabInstanceComponent>(entity);
+        if (instance == nullptr || std::ranges::find(noted, instance->prefab) != noted.end()) {
+            continue;
+        }
+        noted.push_back(instance->prefab);
+        const std::filesystem::path file = (assetRoot / instance->prefab).lexically_normal();
+        std::optional<std::string> bytes;
+        if (std::string error; readPrefabFileBytes(file, bytes, error)) {
+            hooks.notifyRead(file, bytes);
+        }
+    }
 }
 
 PrefabWriteCommand::PrefabWriteCommand(std::string name, PrefabFileWrite write, SceneChanges changes,

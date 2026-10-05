@@ -270,6 +270,19 @@ selected rows onto an object to parent them, or onto a collection to link
 them; right-click a row for the collection and prefab commands. Search
 ignores case and shows matches inside closed parents.
 
+**Edit a prefab** on its own, away from any level: double-click a `.prefab`
+in the Asset Browser (or choose **Edit Prefab** in its context menu, the
+inspector's prefab header, the Hierarchy's context menu, or **Object >
+Prefab**). The level is put aside, the prefab's objects fill the viewports,
+the window takes a blue tint, and the main menu bar shows where you are, for
+example `Level > room_07*`, with **Save** and **Back**. Edit it like any
+scene; undo stays inside the prefab. `Ctrl+S` writes the `.prefab` file.
+**Back** asks about unsaved changes, returns to the level exactly as you left
+it, and updates every instance of the prefab there; `Ctrl+Z` in the level then
+puts back both the old file and the old instances. Open a nested prefab from
+inside the room (select it and choose **Edit Prefab**) to go one level deeper:
+`Level > room_07 > door_frame`. Play waits until you are back in the scene.
+
 With the mouse over the viewport or Hierarchy, `H` hides the selected objects,
 `Shift+H` hides everything else, and `Alt+H` reveals and selects every hidden
 object. Hiding is an editor aid: hidden objects are saved as hidden, cannot be

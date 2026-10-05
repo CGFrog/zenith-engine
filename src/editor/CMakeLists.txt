@@ -5,6 +5,7 @@ add_library(zenith_editor_app STATIC
     application/EditorApplication.cpp
     application/EditorAreaTypes.cpp
     application/EditorAppearance.cpp
+    application/DocumentStack.cpp
     application/EditorAreas.cpp
     application/EditorDiagnostics.cpp
     application/EditorModuleCommands.cpp
@@ -14,6 +15,7 @@ add_library(zenith_editor_app STATIC
     interaction/WatchList.cpp
     application/EditorViewports.cpp
     application/EditorPlayMode.cpp
+    application/EditorPrefabMode.cpp
     application/EditorPlayback.cpp
     application/EditorPreferences.cpp
     application/NativeFileDialog.cpp
@@ -149,6 +151,7 @@ add_library(zenith_editor_app STATIC
     smoke/PickingSmokeStep.cpp
     smoke/PieMenuSmokeStep.cpp
     smoke/PlayTargetSmokeStep.cpp
+    smoke/PrefabEditSmokeStep.cpp
     smoke/PrefabSmokeStep.cpp
     smoke/SimulateSmokeStep.cpp
     smoke/SmokeRunner.cpp

@@ -1,6 +1,6 @@
 // EditorSession's document workflow: native and typed-path file dialogs, the
 // unsaved-changes prompt, and the actions (New, Open, Close, leaving for the
-// Project Hub) that wait on it.
+// Project Hub, leaving a prefab) that wait on it.
 
 #include "EditorSession.hpp"
 
@@ -101,6 +101,7 @@ bool EditorSession::completeOpen(ApplicationContext& context, const std::filesys
     }
     m_history.crossBoundary(CommandHistoryBoundary::OpenDocument);
     m_selection.clear();
+    notePrefabFilesRead(context.scene, m_document.options().assetRoot, prefabWriteHooks());
     onDocumentPathCommitted();
     if (const std::string warning = m_document.takeEditorDataWarning(); !warning.empty()) {
         m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Editor", warning);
@@ -143,12 +144,12 @@ void EditorSession::drawUnsavedChangesDialog(ApplicationContext& context) {
     if (!ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
-    ImGui::TextWrapped("%s has unsaved changes.", m_document.displayName().c_str());
+    ImGui::TextWrapped("%s has unsaved changes.", activeDocumentName().c_str());
     if (widgets::Button("Save")) {
-        if (m_document.path()) {
+        if (!m_documents.empty() || m_document.path()) {
             if (saveDocument(context)) {
                 ImGui::CloseCurrentPopup();
-                finishPendingAction(context);
+                continuePendingAction(context);
             }
         } else {
             m_continuePendingAfterSaveAs = true;
@@ -158,10 +159,21 @@ void EditorSession::drawUnsavedChangesDialog(ApplicationContext& context) {
     }
     ImGui::SameLine();
     if (widgets::Button("Discard")) {
-        std::string ignored;
-        m_recovery.discard(ignored);
         ImGui::CloseCurrentPopup();
-        finishPendingAction(context);
+        if (!m_documents.empty()) {
+            // Only the prefab's changes go; the documents under it may still
+            // ask about theirs.
+            leavePrefabEdit(context);
+            if (m_pendingAction == PendingAction::LeavePrefab) {
+                m_pendingAction = PendingAction::None;
+            } else {
+                continuePendingAction(context);
+            }
+        } else {
+            std::string ignored;
+            m_recovery.discard(ignored);
+            finishPendingAction(context);
+        }
     }
     ImGui::SameLine();
     if (widgets::Button("Cancel")) {
@@ -190,42 +202,26 @@ void EditorSession::openPathDialog(FileDialogKind kind) {
 void EditorSession::requestNew(ApplicationContext& context) {
     m_pendingOpenPath.reset();
     m_pendingAction = PendingAction::NewDocument;
-    if (m_document.dirty()) {
-        m_openUnsavedDialog = true;
-    } else {
-        finishPendingAction(context);
-    }
+    continuePendingAction(context);
 }
 
 void EditorSession::requestOpen(ApplicationContext& context) {
     m_pendingOpenPath.reset();
     m_pendingAction = PendingAction::OpenDocument;
-    if (m_document.dirty()) {
-        m_openUnsavedDialog = true;
-    } else {
-        finishPendingAction(context);
-    }
+    continuePendingAction(context);
 }
 
 void EditorSession::requestOpenScene(ApplicationContext& context, std::filesystem::path path) {
     m_pendingOpenPath = std::move(path);
     m_pendingAction = PendingAction::OpenDocument;
-    if (m_document.dirty()) {
-        m_openUnsavedDialog = true;
-    } else {
-        finishPendingAction(context);
-    }
+    continuePendingAction(context);
 }
 
 void EditorSession::requestClose(ApplicationContext& context) {
     m_pendingOpenPath.reset();
     stopPlay(context);
     m_pendingAction = PendingAction::CloseEditor;
-    if (m_document.dirty()) {
-        m_openUnsavedDialog = true;
-    } else {
-        finishPendingAction(context);
-    }
+    continuePendingAction(context);
 }
 
 void EditorSession::requestProjectHub(ApplicationContext& context, ProjectHubEntry entry) {
@@ -233,11 +229,31 @@ void EditorSession::requestProjectHub(ApplicationContext& context, ProjectHubEnt
     stopPlay(context);
     m_pendingAction = PendingAction::LeaveForProjectHub;
     m_pendingHubEntry = entry;
+    continuePendingAction(context);
+}
+
+void EditorSession::requestLeavePrefabEdit(ApplicationContext& context) {
+    if (m_documents.empty()) {
+        return;
+    }
+    m_pendingOpenPath.reset();
+    m_pendingAction = PendingAction::LeavePrefab;
+    continuePendingAction(context);
+}
+
+void EditorSession::continuePendingAction(ApplicationContext& context) {
+    if (m_pendingAction != PendingAction::LeavePrefab) {
+        // Every other action replaces or closes the scene, so the prefabs
+        // open over it are left first, top down.
+        while (!m_documents.empty() && !m_document.dirty()) {
+            leavePrefabEdit(context);
+        }
+    }
     if (m_document.dirty()) {
         m_openUnsavedDialog = true;
-    } else {
-        finishPendingAction(context);
+        return;
     }
+    finishPendingAction(context);
 }
 
 void EditorSession::finishPendingAction(ApplicationContext& context) {
@@ -267,10 +283,15 @@ void EditorSession::finishPendingAction(ApplicationContext& context) {
         context.control.requestQuit();
     } else if (action == PendingAction::LeaveForProjectHub && m_leaveForProjectHub) {
         m_leaveForProjectHub(context, m_pendingHubEntry);
+    } else if (action == PendingAction::LeavePrefab) {
+        leavePrefabEdit(context);
     }
 }
 
 bool EditorSession::saveDocument(ApplicationContext& context) {
+    if (!m_documents.empty()) {
+        return savePrefabEdit(context);
+    }
     if (!m_document.path()) {
         requestFileDialog(FileDialogKind::Save);
         return false;

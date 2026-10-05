@@ -52,7 +52,9 @@ process; wired in `EditorPlayback.cpp`). `EditorSession` is one class
 implemented across several files, one per domain: `EditorSession.cpp` (the
 frame loop, operators and keymaps), `EditorFileDialogs.cpp`,
 `EditorRecovery.cpp` (autosave), `EditorMainMenu.cpp`, `EditorStatusBar.cpp`,
-`EditorPlayback.cpp`, `EditorAreas.cpp`, `EditorObjectCommands.cpp`,
+`EditorPlayback.cpp`, `EditorPrefabMode.cpp` (prefab mode over
+`DocumentStack`, see [Scene editing](scene-editing.md#prefab-mode-the-document-stack)),
+`EditorAreas.cpp`, `EditorObjectCommands.cpp`,
 `EditorModuleCommands.cpp`, `EditorPreferences.cpp`,
 `EditorProjectSettings.cpp`, `EditorViewports.cpp` and `EditorSessionSmoke.cpp`.
 The header tags each member group with its file.

@@ -28,10 +28,21 @@ struct PrefabWriteHooks {
     // file is absolute; bytes is its new content, or nullopt when the write
     // removed it.
     std::function<void(const std::filesystem::path& file, const std::optional<std::string>& bytes)> fileWritten;
+    // The editor built instances from file, which held bytes (nullopt: it
+    // did not exist): the session notes the content in its ledger unless it
+    // already knows the file, so an outside change made later still knows
+    // what the file held before it (notePrefabFilesRead).
+    std::function<void(const std::filesystem::path& file, const std::optional<std::string>& bytes)> fileRead;
 
     void notify(const std::filesystem::path& file, const std::optional<std::string>& bytes) const {
         if (fileWritten) {
             fileWritten(file, bytes);
+        }
+    }
+
+    void notifyRead(const std::filesystem::path& file, const std::optional<std::string>& bytes) const {
+        if (fileRead) {
+            fileRead(file, bytes);
         }
     }
 };
@@ -44,6 +55,15 @@ struct PrefabFileWrite {
     std::optional<std::string> before;
     std::optional<std::string> after;
 };
+
+// Reports through hooks.fileRead the current content of every prefab file the
+// instances in scene name (nested instances included), or with subtree set
+// only those under subtree (an instance just placed), each file once. Call it
+// whenever a document's scene is opened or instances are added to it, so the
+// session's PrefabWriteLedger knows each file's content before any outside
+// change. References resolve under assetRoot; unreadable files are skipped.
+void notePrefabFilesRead(const Scene& scene, const std::filesystem::path& assetRoot, const PrefabWriteHooks& hooks,
+                         Entity subtree = entt::null);
 
 // The file's whole content, or nullopt when it does not exist. Fails (returns
 // false with error set) when the file exists but cannot be read.

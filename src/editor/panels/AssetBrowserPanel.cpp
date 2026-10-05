@@ -309,6 +309,10 @@ bool AssetBrowserPanel::openAsset(const std::filesystem::path& item, const Asset
         actions.openScript(asset->absolutePath);
         return true;
     }
+    if (asset->kind == EditorAssetKind::Prefab && actions.openPrefab) {
+        actions.openPrefab(asset->absolutePath);
+        return true;
+    }
     return false;
 }
 
@@ -355,6 +359,11 @@ AssetBrowserActions AssetBrowserPanel::sessionActions(EditorContext& context) {
         .openScript =
             [&context](const std::filesystem::path& path) {
                 context.invoke("module.open_source", nlohmann::json{{"file", utf8PathText(path)}}.dump());
+            },
+        // The runner reports why a prefab could not open.
+        .openPrefab =
+            [&context](const std::filesystem::path& path) {
+                context.invoke("prefab.edit", nlohmann::json{{"asset", utf8PathText(path)}}.dump());
             },
     };
 }
@@ -733,6 +742,12 @@ void AssetBrowserPanel::handleEntryInteraction(const BrowserEntry& entry, bool p
         if (!folder && entry.asset->kind == EditorAssetKind::Script && actions.openScript) {
             if (ImGui::MenuItem("Open in IDE")) {
                 actions.openScript(entry.path);
+            }
+            ImGui::Separator();
+        }
+        if (!folder && entry.asset->kind == EditorAssetKind::Prefab && actions.openPrefab) {
+            if (ImGui::MenuItem("Edit Prefab")) {
+                actions.openPrefab(entry.asset->absolutePath);
             }
             ImGui::Separator();
         }
