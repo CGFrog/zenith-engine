@@ -156,6 +156,10 @@ class SceneDocument {
                                                  const SceneDocumentOptions& options,
                                                  std::span<const SceneEntityId> ids,
                                                  std::vector<std::optional<std::string>>& output);
+    // The scene's collection definitions exactly as a SceneCollectionsChange
+    // holds them (the compact JSON collections array diff writes), without
+    // serializing any entity.
+    static SceneDocumentResult serializeCollections(const Scene& scene, std::string& output);
 
     // Lists, sorted by id, the entities whose document form differs between
     // two serialized documents, and the collection definitions when they
