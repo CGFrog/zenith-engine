@@ -10,6 +10,7 @@
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/project/CodeGenerator.hpp"
+#include "editor/project/AssetReload.hpp"
 #include "editor/project/FastProjectBuild.hpp"
 #include "editor/settings/SimulateSystemSettings.hpp"
 #include "editor/theme/EditorTheme.hpp"
@@ -133,7 +134,10 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .watches = &m_watches,
             .projectNames = &m_projectNames,
             .prefabEdit = m_documents.activePrefab(),
-            .projectAssets = &m_projectAssets};
+            .projectAssets = &m_projectAssets,
+            .fileDrops = &m_fileDrops,
+            .definitionSchemas =
+                m_moduleHost.module() != nullptr ? m_moduleHost.module()->definitionSchemas().get() : nullptr};
 }
 
 OperatorContext EditorSession::operatorContext(ApplicationContext& context, KeymapRegion region) {
@@ -378,11 +382,23 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
     updateStandalone(context);
     // Once per frame, however many asset browsers are open.
     m_projectAssets.pollChanges(m_diagnostics, projectAssetActions(context), deltaSeconds);
+    takeFileDrops(input);
     reconcileChangedPrefabs(context);
     updateAreas(context, input, deltaSeconds);
     updateGameModule(context, input, deltaSeconds);
     syncAreaTypes();
     saveComponentLayoutIfChanged();
+}
+
+void EditorSession::takeFileDrops(const InputState& input) {
+    // The windows drawn last frame claimed the drops inside them.
+    if (!m_fileDrops.empty()) {
+        m_fileDrops.takeAll();
+        m_diagnostics.add(EditorDiagnosticSeverity::Info, "Asset Browser",
+                          "Drop files on an Asset Browser folder to import them, or a model on a viewport to "
+                          "import and place it.");
+    }
+    m_fileDrops.add(input.droppedFiles);
 }
 
 void EditorSession::saveComponentLayoutIfChanged() {
@@ -406,6 +422,17 @@ ProjectAssetActions EditorSession::projectAssetActions(ApplicationContext& conte
             [this, &context](const std::filesystem::path& path) {
                 const std::array<Scene*, 2> scenes{&context.scene, m_playMode.editScene()};
                 reloadProjectMaterial(context.assets, scenes, m_diagnostics, path);
+            },
+        .reloadTexture =
+            [this, &context](const std::filesystem::path& path) {
+                const std::array<Scene*, 2> scenes{&context.scene, m_playMode.editScene()};
+                reloadProjectTexture(context.assets, scenes, componentTypesFor(m_document.options()),
+                                     m_projectAssets.assetDatabase().get(), m_diagnostics, path);
+            },
+        .reloadAudio =
+            [this, &context](const std::filesystem::path& path) {
+                const std::array<Scene*, 2> scenes{&context.scene, m_playMode.editScene()};
+                reloadProjectAudio(context.audio, scenes, m_diagnostics, path);
             },
         .prefabChanged =
             [this](const std::filesystem::path& path) {

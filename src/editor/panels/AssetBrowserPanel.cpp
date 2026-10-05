@@ -1,6 +1,8 @@
 #include "AssetBrowserPanel.hpp"
 
 #include "editor/application/EditorDiagnostics.hpp"
+#include "editor/application/FileDropQueue.hpp"
+#include "editor/document/EditorDocument.hpp"
 #include "editor/interaction/AssetReferenceField.hpp"
 #include "editor/interaction/ReflectedFieldEditor.hpp"
 #include "editor/panels/AssetDragPayloads.hpp"
@@ -8,6 +10,7 @@
 #include "editor/project/ProjectFileOperations.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
+#include "engine/assets/TextureImportSettings.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -35,9 +38,10 @@ constexpr const char* revealLabel = "Show in File Manager";
 constexpr const char* trashName = "trash";
 #endif
 // In EditorAssetKind order, so a kind's value indexes the type filter.
-constexpr std::array<EditorAssetKind, 7> filterableKinds{
-    EditorAssetKind::Model,  EditorAssetKind::Texture, EditorAssetKind::Audio,   EditorAssetKind::Scene,
-    EditorAssetKind::Prefab, EditorAssetKind::Script,  EditorAssetKind::Material};
+constexpr std::array<EditorAssetKind, 8> filterableKinds{
+    EditorAssetKind::Model,  EditorAssetKind::Texture, EditorAssetKind::Audio,    EditorAssetKind::Scene,
+    EditorAssetKind::Prefab, EditorAssetKind::Script,  EditorAssetKind::Material, EditorAssetKind::Data};
+constexpr std::array<TextureUsage, 3> textureUsages{TextureUsage::Color, TextureUsage::Normal, TextureUsage::Data};
 
 // Every payload a folder accepts to move the dragged item, with whether its
 // path is UTF-8 (the others use the narrow encoding).
@@ -72,6 +76,8 @@ EditorIcon assetIcon(const EditorAssetRecord* asset) {
         return EditorIcon::Script;
     case EditorAssetKind::Material:
         return EditorIcon::Environment;
+    case EditorAssetKind::Data:
+        return EditorIcon::Statistics;
     }
     return EditorIcon::Empty;
 }
@@ -92,8 +98,40 @@ const char* kindName(EditorAssetKind kind) {
         return "Script";
     case EditorAssetKind::Material:
         return "Material";
+    case EditorAssetKind::Data:
+        return "Data";
     }
     return "Asset";
+}
+
+const char* textureUsageLabel(TextureUsage usage) {
+    switch (usage) {
+    case TextureUsage::Color:
+        return "Color (sRGB)";
+    case TextureUsage::Normal:
+        return "Normal map (linear)";
+    case TextureUsage::Data:
+        return "Data (linear)";
+    }
+    return "Color (sRGB)";
+}
+
+// Scenes are opened and scripts compiled; nothing reads them again.
+bool reimportable(EditorAssetKind kind) {
+    return kind != EditorAssetKind::Scene && kind != EditorAssetKind::Script;
+}
+
+const char* referrerLabel(EditorAssetKind kind) {
+    switch (kind) {
+    case EditorAssetKind::Scene:
+        return "Scene";
+    case EditorAssetKind::Prefab:
+        return "Prefab";
+    case EditorAssetKind::Material:
+        return "Material";
+    default:
+        return "File";
+    }
 }
 
 std::string lowercase(std::string text) {
@@ -372,6 +410,46 @@ void AssetBrowserPanel::revealItem(const std::filesystem::path& item, EditorDiag
     m_project.revealItem(item, diagnostics);
 }
 
+void AssetBrowserPanel::importFiles(std::span<const std::filesystem::path> sources,
+                                    const std::filesystem::path& folder, EditorDiagnostics& diagnostics) {
+    const std::vector<std::filesystem::path> imported = m_project.importFiles(sources, folder, diagnostics);
+    select(imported.empty() ? std::nullopt : std::optional<std::filesystem::path>(imported.back()));
+}
+
+void AssetBrowserPanel::reimport(const std::filesystem::path& item, EditorDiagnostics& diagnostics) {
+    if (!m_project.queueReimport(item)) {
+        diagnostics.add(EditorDiagnosticSeverity::Info, "Asset Browser",
+                        "'" + utf8PathText(item.filename()) + "' has nothing to reimport.");
+    }
+}
+
+void AssetBrowserPanel::findReferences(const std::filesystem::path& item, const AssetBrowserActions& actions,
+                                       EditorDiagnostics& diagnostics) {
+    m_references = {.item = normalizedCatalogPath(item), .files = m_project.findReferences(item, diagnostics)};
+    if (const EditorAssetRecord* asset = m_project.catalog().findAsset(m_references.item);
+        asset != nullptr && actions.sceneUsers) {
+        m_references.sceneEntities = actions.sceneUsers(*asset);
+    }
+    m_openModal = OpenModal::References;
+    m_modalNeedsOpening = true;
+    m_modalTarget = m_references.item;
+}
+
+void AssetBrowserPanel::requestDelete(const std::filesystem::path& item, EditorDiagnostics& diagnostics) {
+    m_deleteReferrers = m_project.findReferences(item, diagnostics);
+    m_openModal = OpenModal::Delete;
+    m_modalNeedsOpening = true;
+    m_modalTarget = normalizedCatalogPath(item);
+}
+
+const AssetBrowserReferences& AssetBrowserPanel::references() const {
+    return m_references;
+}
+
+std::span<const AssetReferrer> AssetBrowserPanel::deleteReferrers() const {
+    return m_deleteReferrers;
+}
+
 AssetBrowserActions AssetBrowserPanel::sessionActions(EditorContext& context) {
     return {
         .openScene =
@@ -399,6 +477,21 @@ AssetBrowserActions AssetBrowserPanel::sessionActions(EditorContext& context) {
             [this, &context](const std::filesystem::path& image) {
                 return m_project.thumbnailTexture(context.app.rendering, image).value;
             },
+        .sceneUsers =
+            [&context](const EditorAssetRecord& asset) {
+                std::string document;
+                if (!context.editing.capture(document)) {
+                    return std::vector<SceneEntityId>{};
+                }
+                return sceneEntitiesReferencing(document, context.editing.document().options().assetRoot,
+                                                asset.absolutePath, asset.guid);
+            },
+        .selectEntities =
+            [&context](std::span<const SceneEntityId> entities) {
+                context.selection.assign({entities.begin(), entities.end()});
+            },
+        .fileDrops = context.fileDrops,
+        .definitionSchemas = context.definitionSchemas,
     };
 }
 
@@ -422,6 +515,9 @@ void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetB
     if (const std::optional<std::filesystem::path> reveal = m_project.takeRevealRequest(m_viewId)) {
         revealAsset(*reveal, diagnostics);
     }
+    m_frameDrops = actions.fileDrops;
+    m_dropFolder.reset();
+    pollImportDialog(diagnostics);
     if (widgets::Button("Refresh")) {
         refresh(diagnostics);
     }
@@ -431,9 +527,14 @@ void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetB
     ImGui::Separator();
 
     const EditorAssetRecord* selectedAsset = m_selected.empty() ? nullptr : m_project.catalog().findAsset(m_selected);
-    const float detailRows = selectedAsset != nullptr && selectedAsset->kind == EditorAssetKind::Material ? 14.0f
-                             : m_selected.empty()                                                         ? 0.0f
-                                                                                                          : 2.5f;
+    const EditorAssetKind selectedKind = selectedAsset != nullptr ? selectedAsset->kind : EditorAssetKind::Scene;
+    const float detailRows =
+        selectedAsset != nullptr &&
+                (selectedKind == EditorAssetKind::Material || selectedKind == EditorAssetKind::Data)
+            ? 14.0f
+        : selectedAsset != nullptr && selectedKind == EditorAssetKind::Texture ? 5.0f
+        : m_selected.empty()                                                    ? 0.0f
+                                                                                : 2.5f;
     const float detailsHeight = ImGui::GetFrameHeightWithSpacing() * detailRows;
     const float paneHeight =
         std::max(ImGui::GetContentRegionAvail().y - detailsHeight, ImGui::GetFrameHeightWithSpacing() * 4.0f);
@@ -453,8 +554,50 @@ void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetB
         ImGui::EndTable();
     }
     drawSelectedAsset(actions, diagnostics);
-    runDeferredCommand(diagnostics);
+    importDroppedFiles(diagnostics);
+    runDeferredCommand(actions, diagnostics);
     drawModals(diagnostics);
+    drawReferencesWindow(actions, diagnostics);
+}
+
+void AssetBrowserPanel::noteDropTarget(const std::filesystem::path& folder) {
+    if (m_frameDrops == nullptr || m_dropFolder) {
+        return;
+    }
+    const ImVec2 minimum = ImGui::GetItemRectMin();
+    const ImVec2 maximum = ImGui::GetItemRectMax();
+    for (const DroppedFile& drop : m_frameDrops->pending()) {
+        if (drop.position.x >= minimum.x && drop.position.y >= minimum.y && drop.position.x < maximum.x &&
+            drop.position.y < maximum.y) {
+            m_dropFolder = folder;
+            return;
+        }
+    }
+}
+
+void AssetBrowserPanel::importDroppedFiles(EditorDiagnostics& diagnostics) {
+    if (m_frameDrops == nullptr || m_frameDrops->empty()) {
+        return;
+    }
+    const ImVec2 position = ImGui::GetWindowPos();
+    const ImVec2 size = ImGui::GetWindowSize();
+    const std::vector<std::filesystem::path> dropped =
+        m_frameDrops->claimWithin({position.x, position.y}, {position.x + size.x, position.y + size.y});
+    if (!dropped.empty()) {
+        importFiles(dropped, m_dropFolder.value_or(m_currentFolder), diagnostics);
+    }
+}
+
+void AssetBrowserPanel::pollImportDialog(EditorDiagnostics& diagnostics) {
+    const std::optional<FileDialogOutcome> outcome = m_importDialog.poll();
+    if (!outcome) {
+        return;
+    }
+    if (outcome->status == FileDialogStatus::Failed) {
+        diagnostics.reportError(outcome->error);
+    } else if (outcome->status == FileDialogStatus::Chosen) {
+        importFiles(outcome->paths, m_importFolder, diagnostics);
+    }
 }
 
 void AssetBrowserPanel::drawToolbar(EditorDiagnostics& diagnostics) {
@@ -464,6 +607,13 @@ void AssetBrowserPanel::drawToolbar(EditorDiagnostics& diagnostics) {
     if (ImGui::BeginPopup("##NewMenu")) {
         drawFolderMenu();
         ImGui::EndPopup();
+    }
+    ImGui::SameLine();
+    if (widgets::Button("Import...")) {
+        m_deferred = DeferredCommand{CommandKind::Import, m_currentFolder};
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+        ImGui::SetTooltip("Copy files into the current folder. You can also drop them here from Explorer.");
     }
     ImGui::SameLine();
     if (ImGui::RadioButton("Grid", m_viewMode == AssetBrowserViewMode::Grid)) {
@@ -587,6 +737,7 @@ void AssetBrowserPanel::drawFolderNode(const EditorAssetFolder& folder, const st
         m_deferred = DeferredCommand{CommandKind::Navigate, folder.absolutePath};
     }
     acceptItemDrop(folder.absolutePath);
+    noteDropTarget(folder.absolutePath);
     if (ImGui::BeginPopupContextItem()) {
         drawItemMenu(folder.absolutePath, true);
         ImGui::EndPopup();
@@ -760,6 +911,9 @@ void AssetBrowserPanel::drawGrid(const std::vector<BrowserEntry>& entries, const
 void AssetBrowserPanel::handleEntryInteraction(const BrowserEntry& entry, bool pressed,
                                                const AssetBrowserActions& actions) {
     const bool folder = entry.asset == nullptr;
+    if (folder) {
+        noteDropTarget(entry.path);
+    }
     if (pressed) {
         m_selected = entry.path;
         if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
@@ -855,6 +1009,13 @@ void AssetBrowserPanel::drawItemMenu(const std::filesystem::path& item, bool fol
         m_deferred = DeferredCommand{CommandKind::BeginDelete, item};
     }
     ImGui::Separator();
+    const EditorAssetRecord* asset = folder ? nullptr : m_project.catalog().findAsset(item);
+    if (asset != nullptr && reimportable(asset->kind) && ImGui::MenuItem("Reimport")) {
+        m_deferred = DeferredCommand{CommandKind::Reimport, item};
+    }
+    if (ImGui::MenuItem("Find References", nullptr, false, !root)) {
+        m_deferred = DeferredCommand{CommandKind::FindReferences, item};
+    }
     if (ImGui::MenuItem(revealLabel)) {
         m_deferred = DeferredCommand{CommandKind::Reveal, item};
     }
@@ -870,6 +1031,10 @@ void AssetBrowserPanel::drawFolderMenu() {
     }
     if (ImGui::MenuItem("New Material", nullptr, false, !m_project.catalog().inSourceRoot(m_currentFolder))) {
         m_deferred = DeferredCommand{CommandKind::CreateMaterial, m_currentFolder};
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Import...", nullptr, false, !m_project.catalog().inSourceRoot(m_currentFolder))) {
+        m_deferred = DeferredCommand{CommandKind::Import, m_currentFolder};
     }
 }
 
@@ -891,9 +1056,125 @@ void AssetBrowserPanel::drawSelectedAsset(const AssetBrowserActions& actions, Ed
         widgets::Button("Open in IDE")) {
         actions.openScript(asset->absolutePath);
     }
+    if (asset != nullptr && (asset->kind == EditorAssetKind::Audio || asset->kind == EditorAssetKind::Texture ||
+                             asset->kind == EditorAssetKind::Data)) {
+        drawImportSettings(*asset, actions, diagnostics);
+    }
 }
 
-void AssetBrowserPanel::runDeferredCommand(EditorDiagnostics& diagnostics) {
+void AssetBrowserPanel::drawImportSettings(const EditorAssetRecord& asset, const AssetBrowserActions& actions,
+                                           EditorDiagnostics& diagnostics) {
+    // The settings are edited in place until Apply stores them; selecting
+    // another asset reads its own.
+    if (m_settingsPath != asset.absolutePath) {
+        m_settingsPath = asset.absolutePath;
+        m_settings = m_project.importSettings(asset.absolutePath).value_or(nlohmann::json::object());
+    }
+    const nlohmann::json stored = m_project.importSettings(asset.absolutePath).value_or(nlohmann::json::object());
+    if (asset.kind == EditorAssetKind::Texture) {
+        TextureImportSettings texture;
+        if (const std::string problem = readTextureImportSettings(m_settings, texture); !problem.empty()) {
+            ImGui::TextColored(toImVec4(palette::error), "Import settings: %s", problem.c_str());
+        }
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::BeginCombo("Usage##ImportUsage", textureUsageLabel(texture.usage))) {
+            for (const TextureUsage usage : textureUsages) {
+                if (ImGui::Selectable(textureUsageLabel(usage), usage == texture.usage)) {
+                    texture.usage = usage;
+                    writeTextureImportSettings(texture, m_settings);
+                }
+            }
+            ImGui::EndCombo();
+        }
+    } else if (asset.kind == EditorAssetKind::Data) {
+        const std::string schema = definitionSchemaSetting(m_settings);
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::BeginCombo("Schema##ImportSchema", schema.empty() ? "(by file name)" : schema.c_str())) {
+            if (ImGui::Selectable("(by file name)", schema.empty())) {
+                m_settings.erase("schema");
+            }
+            if (actions.definitionSchemas != nullptr) {
+                for (const DefinitionSchema& candidate : actions.definitionSchemas->schemas()) {
+                    if (ImGui::Selectable(candidate.name.c_str(), candidate.name == schema)) {
+                        m_settings["schema"] = candidate.name;
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+    // Sounds have no import settings yet, only a reimport.
+    if (asset.kind != EditorAssetKind::Audio) {
+        const bool edited = m_settings != stored;
+        ImGui::BeginDisabled(!edited);
+        if (widgets::Button("Apply")) {
+            m_project.setImportSettings(asset.absolutePath, m_settings, diagnostics);
+        }
+        ImGui::SameLine();
+        if (widgets::Button("Revert")) {
+            m_settings = stored;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+    }
+    if (widgets::Button("Reimport")) {
+        reimport(asset.absolutePath, diagnostics);
+    }
+    if (asset.kind == EditorAssetKind::Data) {
+        if (ImGui::BeginChild("##DataTable", {0.0f, 0.0f})) {
+            m_dataTable.draw(asset.absolutePath, actions.definitionSchemas, stored, m_project.dataRevision(),
+                             diagnostics);
+        }
+        ImGui::EndChild();
+    }
+}
+
+void AssetBrowserPanel::drawReferencesWindow(const AssetBrowserActions& actions, EditorDiagnostics& diagnostics) {
+    constexpr const char* referencesTitle = "References##AssetBrowser";
+    if (m_openModal == OpenModal::References && m_modalNeedsOpening) {
+        ImGui::OpenPopup(referencesTitle);
+        m_modalNeedsOpening = false;
+    }
+    if (!ImGui::BeginPopupModal(referencesTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+    ImGui::Text("What uses '%s'", utf8PathText(m_references.item.filename()).c_str());
+    ImGui::Separator();
+    if (m_references.files.empty()) {
+        ImGui::TextDisabled("No scene, prefab, or material in the project references it.");
+    }
+    std::optional<std::filesystem::path> reveal;
+    for (const AssetReferrer& referrer : m_references.files) {
+        const std::string label =
+            std::string(referrerLabel(referrer.kind)) + "  " + utf8PathText(referrer.file) + "##" +
+            genericUtf8(referrer.file);
+        if (ImGui::Selectable(label.c_str())) {
+            reveal = referrer.file;
+        }
+    }
+    ImGui::Separator();
+    if (m_references.sceneEntities.empty()) {
+        ImGui::TextDisabled("No entity of the open scene uses it.");
+    } else {
+        ImGui::Text("%zu entities of the open scene use it.", m_references.sceneEntities.size());
+        if (actions.selectEntities) {
+            ImGui::SameLine();
+            if (widgets::Button("Select")) {
+                actions.selectEntities(m_references.sceneEntities);
+            }
+        }
+    }
+    if (reveal || widgets::Button("Close") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        m_openModal = OpenModal::None;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+    if (reveal) {
+        revealAsset(*reveal, diagnostics);
+    }
+}
+
+void AssetBrowserPanel::runDeferredCommand(const AssetBrowserActions& actions, EditorDiagnostics& diagnostics) {
     if (!m_deferred) {
         return;
     }
@@ -928,15 +1209,23 @@ void AssetBrowserPanel::runDeferredCommand(EditorDiagnostics& diagnostics) {
         duplicateItem(command.path, diagnostics);
         break;
     case CommandKind::BeginDelete:
-        m_openModal = OpenModal::Delete;
-        m_modalNeedsOpening = true;
-        m_modalTarget = command.path;
+        requestDelete(command.path, diagnostics);
         break;
     case CommandKind::Reveal:
         revealItem(command.path, diagnostics);
         break;
     case CommandKind::ToggleFavourite:
         toggleFavourite(command.path, diagnostics);
+        break;
+    case CommandKind::Import:
+        m_importFolder = command.path;
+        m_importDialog.request(FileDialogKind::Open, command.path, true);
+        break;
+    case CommandKind::Reimport:
+        reimport(command.path, diagnostics);
+        break;
+    case CommandKind::FindReferences:
+        findReferences(command.path, actions, diagnostics);
         break;
     }
 }
@@ -953,7 +1242,7 @@ void AssetBrowserPanel::beginRename(const std::filesystem::path& item) {
 void AssetBrowserPanel::drawModals(EditorDiagnostics& diagnostics) {
     constexpr const char* renameTitle = "Rename##AssetBrowser";
     constexpr const char* deleteTitle = "Move to Trash##AssetBrowser";
-    if (m_modalNeedsOpening) {
+    if (m_modalNeedsOpening && (m_openModal == OpenModal::Rename || m_openModal == OpenModal::Delete)) {
         ImGui::OpenPopup(m_openModal == OpenModal::Rename ? renameTitle : deleteTitle);
         m_modalNeedsOpening = false;
     }
@@ -984,6 +1273,13 @@ void AssetBrowserPanel::drawModals(EditorDiagnostics& diagnostics) {
     if (ImGui::BeginPopupModal(deleteTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("Move '%s' to the %s?", name.c_str(), trashName);
         ImGui::TextDisabled("It can be restored from there.");
+        if (!m_deleteReferrers.empty()) {
+            ImGui::TextColored(toImVec4(palette::error), "Still used by %zu files:", m_deleteReferrers.size());
+            for (const AssetReferrer& referrer : m_deleteReferrers) {
+                ImGui::BulletText("%s %s", referrerLabel(referrer.kind), utf8PathText(referrer.file).c_str());
+            }
+            ImGui::TextDisabled("Their references will be missing.");
+        }
         if (widgets::Button("Move to Trash")) {
             moveItemToTrash(m_modalTarget, diagnostics);
             m_openModal = OpenModal::None;

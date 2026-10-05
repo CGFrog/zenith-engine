@@ -13,3 +13,10 @@ struct EditorContext;
 // and the surface normal as properties, so Adjust Last Operation can still
 // move it or toggle align_to_normal. Game views must not call it.
 void acceptViewportAssetDrops(EditorContext& context, const SnapView& view, glm::vec2 viewPoint);
+
+// Files dropped from the operating system onto the viewport image (at
+// imageMin, imageSize, in window coordinates; EditorContext::fileDrops): each
+// is imported into the project (ProjectAssets::defaultImportFolder) unless it
+// already lies in it, and models and prefabs are then placed on the surface
+// under the drop like an Asset Browser drop. Game views must not call it.
+void acceptViewportFileDrops(EditorContext& context, const SnapView& view, glm::vec2 imageMin, glm::vec2 imageSize);

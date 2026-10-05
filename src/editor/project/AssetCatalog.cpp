@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
 #include <iterator>
 #include <map>
 
@@ -145,6 +146,9 @@ std::optional<EditorAssetKind> editorAssetKind(const std::filesystem::path& path
     if (extension == ".zmat") {
         return EditorAssetKind::Material;
     }
+    if (extension == ".json" && isDefinitionTableFile(path)) {
+        return EditorAssetKind::Data;
+    }
     if (extension == ".wav" || extension == ".ogg") {
         return EditorAssetKind::Audio;
     }
@@ -159,6 +163,29 @@ std::optional<EditorAssetKind> editorAssetKind(const std::filesystem::path& path
         return EditorAssetKind::Script;
     }
     return std::nullopt;
+}
+
+bool isDefinitionTableFile(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    char character = 0;
+    bool first = true;
+    while (file.get(character)) {
+        // A UTF-8 byte order mark may precede the document.
+        if (first && static_cast<unsigned char>(character) == 0xEF) {
+            char mark[2]{};
+            if (!file.read(mark, 2) || static_cast<unsigned char>(mark[0]) != 0xBB ||
+                static_cast<unsigned char>(mark[1]) != 0xBF) {
+                return false;
+            }
+            first = false;
+            continue;
+        }
+        first = false;
+        if (std::isspace(static_cast<unsigned char>(character)) == 0) {
+            return character == '[';
+        }
+    }
+    return false;
 }
 
 AssetCatalog::AssetCatalog(std::filesystem::path assetRoot, std::filesystem::path sceneRoot,

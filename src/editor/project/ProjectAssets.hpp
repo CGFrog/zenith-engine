@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/project/AssetCatalog.hpp"
+#include "editor/project/AssetReferences.hpp"
 #include "editor/project/ProjectFileOperations.hpp"
 #include "editor/project/ThumbnailCache.hpp"
 #include "editor/project/ThumbnailTextures.hpp"
@@ -10,6 +11,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <span>
 #include <string>
@@ -26,6 +28,12 @@ struct ProjectAssetActions {
     std::function<void(const std::filesystem::path&)> reloadModel;
     // Re-reads a material file (.zmat) that changed on disk.
     std::function<void(const std::filesystem::path&)> reloadMaterial;
+    // Re-reads an image that changed on disk or was reimported, applying its
+    // import settings (reloadProjectTexture).
+    std::function<void(const std::filesystem::path&)> reloadTexture;
+    // Re-reads a sound that changed on disk or was reimported
+    // (reloadProjectAudio).
+    std::function<void(const std::filesystem::path&)> reloadAudio;
     // A prefab file changed on disk (absolute path), so cached copies of it
     // are stale.
     std::function<void(const std::filesystem::path&)> prefabChanged;
@@ -77,8 +85,10 @@ class ProjectAssets {
     // project cannot be watched; the first call scans at once), then
     // dispatches every queued change.
     void pollChanges(EditorDiagnostics& diagnostics, const ProjectAssetActions& actions, float deltaSeconds = 0.0f);
-    // Acts on queued changes once: modified models are reloaded, modified
-    // textures are reported, and moves and removals are passed on.
+    // Acts on queued changes once: modified models, textures, sounds, and
+    // materials are reloaded, changed prefabs reported, and moves and
+    // removals passed on. Without a reloadTexture action a modified texture
+    // is only reported.
     void dispatchChanges(EditorDiagnostics& diagnostics, const ProjectAssetActions& actions);
 
     // Whether a scan has listed the project yet.
@@ -151,8 +161,39 @@ class ProjectAssets {
                                                   const std::filesystem::path& folder, EditorDiagnostics& diagnostics);
     std::optional<std::filesystem::path> duplicateItem(const std::filesystem::path& item,
                                                        EditorDiagnostics& diagnostics);
+    // Copies files and folders from outside the project into folder (a
+    // folder of the asset or scene root; see AssetImport.hpp), then rescans,
+    // which gives the copies sidecars and GUIDs. Returns the copies made;
+    // failures are reported.
+    std::vector<std::filesystem::path> importFiles(std::span<const std::filesystem::path> sources,
+                                                   const std::filesystem::path& folder,
+                                                   EditorDiagnostics& diagnostics);
+    // Where drops that name no folder (a file dropped on a viewport) are
+    // imported: the primary browser's remembered folder when it is a folder
+    // of the asset root, else the asset root.
+    std::filesystem::path defaultImportFolder() const;
     bool moveItemToTrash(const std::filesystem::path& item, EditorDiagnostics& diagnostics);
     void revealItem(const std::filesystem::path& item, EditorDiagnostics& diagnostics);
+
+    // An asset's import settings (the importSettings object of its .meta
+    // sidecar), or nullopt when no asset database tracks it.
+    std::optional<nlohmann::json> importSettings(const std::filesystem::path& asset);
+    // Rewrites the asset's import settings and queues a reimport. Returns
+    // false, reporting why, when they could not be stored.
+    bool setImportSettings(const std::filesystem::path& asset, nlohmann::json settings,
+                           EditorDiagnostics& diagnostics);
+    // Treats the asset as modified on disk at the next dispatch, so it is
+    // read again (Reimport). Returns false for kinds nothing reloads (scenes,
+    // scripts) and for unknown paths.
+    bool queueReimport(const std::filesystem::path& asset);
+    // Counts reimports and on-disk changes of definition tables, so views of
+    // them know to read the file again.
+    uint64_t dataRevision() const;
+
+    // Scenes, prefabs, and materials of the project referencing item (an
+    // asset, or a folder for everything in it), from a cached scan; files
+    // that cannot be read are reported as warnings.
+    std::vector<AssetReferrer> findReferences(const std::filesystem::path& item, EditorDiagnostics& diagnostics);
 
     // Recent renames and moves made through this service, oldest first. Only
     // the most recent ones are kept; a view that falls further behind simply
@@ -171,6 +212,7 @@ class ProjectAssets {
     void saveSettings(EditorDiagnostics& diagnostics);
 
     AssetCatalog m_catalog;
+    AssetReferenceIndex m_references;
     ThumbnailCache m_thumbnails;
     ThumbnailTextures m_thumbnailTextures{m_thumbnails};
     std::filesystem::path m_settingsPath;
@@ -180,6 +222,7 @@ class ProjectAssets {
     AssetCatalogResult m_pending{.success = true};
     std::vector<ProjectItemMove> m_itemMoves;
     uint64_t m_latestItemMove{0};
+    uint64_t m_dataRevision{0};
     float m_refreshElapsed{0.0f};
     uint64_t m_lastViewId{0};
     std::optional<uint64_t> m_primaryView;

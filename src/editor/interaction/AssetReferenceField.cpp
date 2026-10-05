@@ -20,9 +20,9 @@
 #include <span>
 
 namespace {
-constexpr std::array<EditorAssetKind, 7> everyKind{
-    EditorAssetKind::Model,  EditorAssetKind::Texture, EditorAssetKind::Audio,   EditorAssetKind::Scene,
-    EditorAssetKind::Prefab, EditorAssetKind::Script,  EditorAssetKind::Material};
+constexpr std::array<EditorAssetKind, 8> everyKind{
+    EditorAssetKind::Model,  EditorAssetKind::Texture, EditorAssetKind::Audio,    EditorAssetKind::Scene,
+    EditorAssetKind::Prefab, EditorAssetKind::Script,  EditorAssetKind::Material, EditorAssetKind::Data};
 constexpr const char* pickerPopup = "##AssetPicker";
 constexpr int pickerVisibleRows = 10;
 
@@ -220,6 +220,7 @@ const char* assetDragPayloadFor(EditorAssetKind kind) {
         return materialAssetPayload;
     case EditorAssetKind::Scene:
     case EditorAssetKind::Script:
+    case EditorAssetKind::Data:
         break;
     }
     return nullptr;

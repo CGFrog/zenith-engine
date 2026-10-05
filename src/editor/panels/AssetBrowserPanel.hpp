@@ -1,18 +1,24 @@
 #pragma once
 
+#include "editor/application/NativeFileDialog.hpp"
+#include "editor/panels/DataTableView.hpp"
 #include "editor/panels/EditorPanel.hpp"
 #include "editor/project/MaterialDocument.hpp"
 #include "editor/project/ProjectAssets.hpp"
+#include "engine/scene/SceneEntityId.hpp"
 
 #include <array>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
+class DefinitionSchemaRegistry;
 class EditorDiagnostics;
+class FileDropQueue;
 
 // What the browser asks of the editor when the user acts on an asset. Unset
 // actions are simply not offered.
@@ -30,6 +36,25 @@ struct AssetBrowserActions {
     // The ImGui texture id of an image's thumbnail (ProjectAssets::
     // thumbnailTexture), or 0 while there is none; unset shows kind icons.
     std::function<uint64_t(const std::filesystem::path&)> thumbnailTexture;
+    // The entities of the open scene whose components reference an asset,
+    // for Find References; unset lists project files only.
+    std::function<std::vector<SceneEntityId>(const EditorAssetRecord&)> sceneUsers;
+    // Selects entities of the open scene (Find References' Select button).
+    std::function<void(std::span<const SceneEntityId>)> selectEntities;
+    // OS file drops of this frame; the browser imports those dropped on it.
+    // Null takes none.
+    FileDropQueue* fileDrops{nullptr};
+    // The game module's definition table schemas, which data tables are
+    // validated against; null without a module. Valid for this frame only.
+    const DefinitionSchemaRegistry* definitionSchemas{nullptr};
+};
+
+// The result of the browser's last Find References: the project files and
+// open-scene entities using an asset (or anything in a folder).
+struct AssetBrowserReferences {
+    std::filesystem::path item;
+    std::vector<AssetReferrer> files;
+    std::vector<SceneEntityId> sceneEntities;
 };
 
 // Whether a browser's folder and view mode are remembered across sessions.
@@ -53,7 +78,12 @@ enum class AssetBrowserRole {
 // prefabs open in prefab mode, and scripts (from the project's source root
 // too, when the service lists one) open in the IDE. Image tiles show
 // thumbnails, and a selected material (.zmat) is edited below the listing and
-// saved as it changes.
+// saved as it changes. Files dropped from the OS on a browser (or picked with
+// Import...) are copied into the folder under the drop, or the current one.
+// The selected texture or data table shows its import settings, applied with
+// a reimport; a data table also shows its entries and validation (see
+// DataTableView). Find References lists the scenes, prefabs, and materials
+// using an asset, and deleting one still in use names them first.
 //
 // The panel is one view over a shared ProjectAssets service, which owns the
 // catalog, watchers, thumbnails, change dispatch, favourites, and the file
@@ -128,6 +158,23 @@ class AssetBrowserPanel final : public EditorPanel {
     void duplicateItem(const std::filesystem::path& item, EditorDiagnostics& diagnostics);
     void moveItemToTrash(const std::filesystem::path& item, EditorDiagnostics& diagnostics);
     void revealItem(const std::filesystem::path& item, EditorDiagnostics& diagnostics);
+    // Copies files from outside the project into folder and selects the
+    // last copy.
+    void importFiles(std::span<const std::filesystem::path> sources, const std::filesystem::path& folder,
+                     EditorDiagnostics& diagnostics);
+    // Reads the asset again at the next dispatch (ProjectAssets::queueReimport).
+    void reimport(const std::filesystem::path& item, EditorDiagnostics& diagnostics);
+    // Lists what uses item (see AssetBrowserReferences) and opens the
+    // References window.
+    void findReferences(const std::filesystem::path& item, const AssetBrowserActions& actions,
+                        EditorDiagnostics& diagnostics);
+    // Asks to move item to the trash; the confirmation names the files that
+    // still reference it.
+    void requestDelete(const std::filesystem::path& item, EditorDiagnostics& diagnostics);
+    // The last Find References result.
+    const AssetBrowserReferences& references() const;
+    // The files referencing the item the delete confirmation is open for.
+    std::span<const AssetReferrer> deleteReferrers() const;
 
   private:
     struct BrowserEntry {
@@ -147,6 +194,9 @@ class AssetBrowserPanel final : public EditorPanel {
         BeginDelete,
         Reveal,
         ToggleFavourite,
+        Import,
+        Reimport,
+        FindReferences,
     };
 
     // Commands chosen while drawing run after the catalog is no longer being
@@ -162,6 +212,7 @@ class AssetBrowserPanel final : public EditorPanel {
         None,
         Rename,
         Delete,
+        References,
     };
 
     void followItemMoves();
@@ -175,6 +226,12 @@ class AssetBrowserPanel final : public EditorPanel {
     bool isRoot(const std::filesystem::path& path) const;
 
     void drawToolbar(EditorDiagnostics& diagnostics);
+    // OS drops: the folder item under a pending drop becomes the target, and
+    // the drops inside this browser's window are imported there (or into
+    // the current folder).
+    void noteDropTarget(const std::filesystem::path& folder);
+    void importDroppedFiles(EditorDiagnostics& diagnostics);
+    void pollImportDialog(EditorDiagnostics& diagnostics);
     void drawBreadcrumbs();
     void drawFolderPane();
     void drawFolderNode(const EditorAssetFolder& folder, const std::string& label);
@@ -186,13 +243,17 @@ class AssetBrowserPanel final : public EditorPanel {
     void drawItemMenu(const std::filesystem::path& item, bool folder);
     void drawFolderMenu();
     void drawSelectedAsset(const AssetBrowserActions& actions, EditorDiagnostics& diagnostics);
+    // A texture's usage or a data table's schema, applied with a reimport.
+    void drawImportSettings(const EditorAssetRecord& asset, const AssetBrowserActions& actions,
+                            EditorDiagnostics& diagnostics);
+    void drawReferencesWindow(const AssetBrowserActions& actions, EditorDiagnostics& diagnostics);
     // The selected material's fields; saved once no widget is active.
     void drawMaterialInspector(const EditorAssetRecord& asset, const AssetBrowserActions& actions,
                                EditorDiagnostics& diagnostics);
     // The drag tooltip's verb: "Move" over a folder, "Assign" over a field
     // taking the asset, else "Place" for models and prefabs.
     const char* dragVerb(bool placeable) const;
-    void runDeferredCommand(EditorDiagnostics& diagnostics);
+    void runDeferredCommand(const AssetBrowserActions& actions, EditorDiagnostics& diagnostics);
     void beginRename(const std::filesystem::path& item);
     void drawModals(EditorDiagnostics& diagnostics);
     std::string textureDetail(const EditorAssetRecord& asset);
@@ -204,7 +265,7 @@ class AssetBrowserPanel final : public EditorPanel {
     std::filesystem::path m_currentFolder;
     std::filesystem::path m_selected;
     std::string m_search;
-    std::array<bool, 7> m_shownKinds{true, true, true, true, true, true, true};
+    std::array<bool, 8> m_shownKinds{true, true, true, true, true, true, true, true};
     // The material the inspector edits: its file, the values shown, and
     // whether they changed since the last save.
     std::filesystem::path m_materialPath;
@@ -222,4 +283,15 @@ class AssetBrowserPanel final : public EditorPanel {
     std::filesystem::path m_modalTarget;
     std::string m_renameText;
     bool m_revealCurrentInTree{true};
+    // This frame's OS drops and the folder item under them, if any.
+    FileDropQueue* m_frameDrops{nullptr};
+    std::optional<std::filesystem::path> m_dropFolder;
+    NativeFileDialog m_importDialog{"All files", {}};
+    std::filesystem::path m_importFolder;
+    // The import settings shown for the selected asset, edited until Apply.
+    std::filesystem::path m_settingsPath;
+    nlohmann::json m_settings = nlohmann::json::object();
+    DataTableView m_dataTable;
+    AssetBrowserReferences m_references;
+    std::vector<AssetReferrer> m_deleteReferrers;
 };
