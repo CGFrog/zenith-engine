@@ -41,6 +41,9 @@ struct SceneDocumentOptions {
 struct SceneDocumentResult {
     bool success{false};
     std::string error;
+    // Problems that did not stop the operation, for example a saved
+    // reference to a transient entity written as none.
+    std::vector<std::string> warnings;
 
     explicit operator bool() const {
         return success;
@@ -112,6 +115,14 @@ enum class SceneChangeDirection {
 //      through the `collection_membership` component and instance them
 //      through `collection_instance`; both must name collections the
 //      document defines. Version 2 documents migrate with no collections.
+//
+// Transient entities (TransientComponent, Scene::isTransient) are never
+// written: serialize and save leave them out, serializeEntities reports them
+// as absent, and a written entity's nullable reference to one (a reflected
+// entity reference field) is written as none, with a warning from serialize
+// and save, so a saved document never names an entity it does not contain.
+// applyChanges leaves transient entities alone and lets a removal take its
+// transient children with it.
 class SceneDocument {
   public:
     static constexpr uint32_t currentVersion = 3;

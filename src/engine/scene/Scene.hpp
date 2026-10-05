@@ -30,6 +30,15 @@ struct NameComponent {
     std::string name;
 };
 
+// Marks generated content, such as an editor preview a generator built for one
+// seed: the tagged entity and its whole subtree are transient. Transient
+// entities are never written to a scene document, so saves, autosaves, undo
+// snapshots, copies, and Play's snapshot of the edit scene all leave them out,
+// and a saved entity's reference to one is written as none (see
+// SceneDocument). A plain tag, never serialized itself; add it with
+// Scene::markTransient and remove the content with Scene::destroyTransient.
+struct TransientComponent {};
+
 // local is relative to the parent (see Scene::setLocalTransform); world is
 // derived from the hierarchy by Scene::updateWorldTransforms and is stale
 // until then. Code that writes local through registry() must call
@@ -343,6 +352,17 @@ class Scene {
     MeshRendererComponent& attachMesh(Entity entity, MeshHandle mesh);
     void destroyEntity(Entity entity);
     void clear();
+
+    // Generated content (TransientComponent). markTransient tags entity, which
+    // makes it and every descendant transient; it ignores an invalid entity.
+    void markTransient(Entity entity);
+    // Whether entity or one of its ancestors is tagged transient.
+    bool isTransient(Entity entity) const;
+    // Every transient entity, each tagged subtree parents first; empty
+    // (without walking the scene) when nothing is tagged.
+    std::vector<Entity> transientEntities() const;
+    // Destroys every transient entity and returns how many there were.
+    size_t destroyTransient();
     void replaceWith(Scene&& scene);
     void swap(Scene& other) noexcept;
     void updateWorldTransforms();

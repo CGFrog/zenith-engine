@@ -62,6 +62,9 @@ struct OutlinerNode {
     // rows at the top level. Unique among the rows of one tree that show the
     // same entity.
     uint64_t scope{0};
+    // Entity rows: generated content (Scene::isTransient), which is never
+    // saved; the row is dimmed and says so in its tooltip.
+    bool transient{false};
     // Prefab rows: the prefab's project-relative path. Asset rows: the
     // asset's path.
     std::string path;

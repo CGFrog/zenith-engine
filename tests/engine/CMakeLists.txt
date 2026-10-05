@@ -40,6 +40,7 @@ zenith_add_test(zenith_definition_tables SOURCES DefinitionTableTests.cpp LIBS z
 zenith_add_test(zenith_floor_lifecycle SOURCES FloorLifecycleTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_save_game SOURCES SaveGameTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_scene_document SOURCES SceneDocumentTests.cpp LIBS zenith_engine NEEDS_ASSETS)
+zenith_add_test(zenith_transient_entities SOURCES TransientEntityTests.cpp LIBS zenith_engine)
 # Reads the asset directory's path only, so it does not build zenith_assets first.
 zenith_add_test(zenith_collections EXECUTABLE zenith_collection_tests
     SOURCES CollectionTests.cpp LIBS zenith_engine

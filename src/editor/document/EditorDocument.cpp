@@ -33,8 +33,9 @@ SceneDocumentResult EditorDocument::save(const Scene& scene, const AssetManager&
     if (!m_path) {
         return {.error = "The untitled scene requires Save As"};
     }
-    if (SceneDocumentResult result = SceneDocument::save(*m_path, scene, assets, m_options); !result) {
-        return result;
+    SceneDocumentResult saved = SceneDocument::save(*m_path, scene, assets, m_options);
+    if (!saved) {
+        return saved;
     }
     if (const SceneEditorDataResult result = writeSceneEditorData(*m_path, m_editorData); !result) {
         // The scene itself was saved; the document stays dirty so saving
@@ -43,7 +44,7 @@ SceneDocumentResult EditorDocument::save(const Scene& scene, const AssetManager&
     }
     m_dirty = false;
     m_savedEditorData = m_editorData;
-    return {.success = true};
+    return saved;
 }
 
 SceneDocumentResult EditorDocument::saveAs(const std::filesystem::path& path, const Scene& scene,
@@ -51,8 +52,9 @@ SceneDocumentResult EditorDocument::saveAs(const std::filesystem::path& path, co
     if (path.empty()) {
         return {.error = "A scene path is required"};
     }
-    if (SceneDocumentResult result = SceneDocument::save(path, scene, assets, m_options); !result) {
-        return result;
+    SceneDocumentResult saved = SceneDocument::save(path, scene, assets, m_options);
+    if (!saved) {
+        return saved;
     }
     // The document moves to the new path only once both files are written.
     if (const SceneEditorDataResult result = writeSceneEditorData(path, m_editorData); !result) {
@@ -61,7 +63,7 @@ SceneDocumentResult EditorDocument::saveAs(const std::filesystem::path& path, co
     m_path = path;
     m_dirty = false;
     m_savedEditorData = m_editorData;
-    return {.success = true};
+    return saved;
 }
 
 void EditorDocument::relocate(std::filesystem::path path) {

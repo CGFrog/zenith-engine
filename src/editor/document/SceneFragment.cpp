@@ -169,7 +169,10 @@ SceneDocumentResult SceneFragment::paste(std::string_view fragment, Scene& scene
         for (const Json& entity : source.at("entities")) {
             remap.emplace(entity.at("id").get<uint64_t>(), nextId++);
         }
-        const SceneEntityId parentId = parent == entt::null ? SceneEntityId{} : scene.id(parent);
+        // A transient parent is not in the document the paste rebuilds from,
+        // so pasting under one pastes at the top level instead.
+        const SceneEntityId parentId =
+            parent == entt::null || scene.isTransient(parent) ? SceneEntityId{} : scene.id(parent);
         std::unordered_map<uint64_t, std::string> sourceCollections;
         for (const Json& collection : source.value("collections", Json::array())) {
             sourceCollections.emplace(collection.at("id").get<uint64_t>(), collection.at("name").get<std::string>());

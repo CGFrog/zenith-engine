@@ -47,6 +47,18 @@ the edit history that patches the parked edit scene immediately: Stop restores
 the patched scene, so undo and redo after Stop act on it like any edit, and the
 runtime scene is never changed. Equal values record nothing.
 
+Transient entities (generated previews, `Scene::isTransient`, see
+[Scene](../engine/scene.md#transient-entities)) stay out of the history:
+captures serialize the scene without them, so an edit that only builds or
+changes a preview records nothing, a mixed edit records only its saved
+entities, and undo and redo leave a preview in place (removing a saved entity
+removes its transient children, as deleting it did). Copy skips them, paste
+(which rebuilds the scene from its document) drops them and pastes at the top
+level under a transient parent, saves and autosaves leave them out, and Play
+enters without them (the parked edit scene keeps them for Stop). The
+Hierarchy dims their rows with a "generated, not saved" tooltip.
+`zenith_transient_editing` covers it.
+
 ## Folder contents
 
 `src/editor/document/`: Scene document state, persistence workflow, undo/redo

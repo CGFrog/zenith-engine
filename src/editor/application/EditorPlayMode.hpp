@@ -35,6 +35,10 @@ class EditorPlayMode {
   public:
     // Runtime changes are intentionally discarded on stop; Apply to Edit
     // Scene carries selected runtime state back by patching editScene().
+    // The runtime scene is built from the edit scene's document, so
+    // transient entities (a generator's editor preview) do not enter Play:
+    // the game's own generator builds its content there. They stay in the
+    // parked edit scene and are back after Stop.
     SceneDocumentResult enter(Scene& activeScene, AssetManager& assets, const SceneDocumentOptions& options,
                               std::span<const SceneEntityId> selection, EditorRuntime runtime = EditorRuntime::Play);
     void pause();
