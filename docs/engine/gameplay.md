@@ -88,4 +88,20 @@ default). The game defines `Entry` and its `Fields`, including
   calling it from a system. A broken edit is reported once and retried only
   after the file changes again.
 
-`tests/engine/DefinitionTableTests.cpp` (`zenith_definition_tables`).
+A game keeps its tables in the session's resource store, which outlives
+module reloads' lost statics and scene changes' registries, and loads them
+from asset-relative paths:
+
+```cpp
+struct ItemTable {
+    static constexpr std::string_view resourceKey = "my_game.items";
+    DefinitionTable<ItemDef> table{itemFields()};
+};
+
+ItemTable& items = services.resource<ItemTable>();
+items.table.load(services.assetPath("data/items.json"));
+```
+
+`tests/engine/DefinitionTableTests.cpp` (`zenith_definition_tables`);
+`tests/engine/GameServicesTests.cpp` covers the resource store and
+`assetPath`.

@@ -136,6 +136,7 @@ add_library(zenith_engine SHARED
     module/ModuleApi.cpp
     module/ModuleRegistrar.cpp
     module/ModuleShadowCopy.cpp
+    module/SessionResources.cpp
     module/SharedLibrary.cpp
     module/SystemScheduler.cpp
     module/Timers.cpp

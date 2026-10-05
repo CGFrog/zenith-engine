@@ -3,6 +3,7 @@
 #include "Effects.hpp"
 #include "EntityCommandBuffer.hpp"
 #include "EventQueue.hpp"
+#include "SessionResources.hpp"
 #include "SystemScheduler.hpp"
 #include "Timers.hpp"
 #include "engine/application/SimulationClock.hpp"
@@ -15,7 +16,9 @@
 #include "engine/scene/Prefab.hpp"
 #include "engine/scene/SaveGame.hpp"
 
+#include <filesystem>
 #include <optional>
+#include <string_view>
 
 class AssetManager;
 class BehaviourRegistry;
@@ -65,8 +68,9 @@ struct GameplayPhysicsEvents {
 // Play or Simulate) and destroy it when gameplay ends. Systems reach it
 // through SystemContext::services, which is null in Edit mode.
 //
-// Lifetime: commands, timers, and event channels hold game module code, so
-// the services must be destroyed before the module that ran in them unloads.
+// Lifetime: commands, timers, event channels, and session resources hold
+// game module code, so the services must be destroyed before the module that
+// ran in them unloads.
 class GameServices {
   public:
     // documents names the gameplay's component types and asset root, for
@@ -82,6 +86,24 @@ class GameServices {
     PrefabSystem& prefabs();
     EntityCommandBuffer& commands();
     EventQueue& events();
+    // The session's own data (definition tables, run state), one value per
+    // SessionResource type, destroyed with the services: when gameplay
+    // stops, and before a module reload.
+    SessionResources& resources();
+
+    // resources().get<Resource>(): the session's Resource, default-
+    // constructed on first use.
+    template <SessionResource Resource>
+        requires std::default_initializable<Resource>
+    Resource& resource() {
+        return m_resources.get<Resource>();
+    }
+
+    // assetPath (for example "data/items.json", as prefab and clip
+    // references are written) resolved against the session's asset root,
+    // for loading files such as a DefinitionTable. A path that is empty,
+    // absolute, or leaves the asset root is logged and gives an empty path.
+    std::filesystem::path assetPath(std::string_view assetPath) const;
     Timers& timers();
     // Short-lived effects that remove themselves when they end.
     Effects& effects();
@@ -213,6 +235,8 @@ class GameServices {
     RandomStreams m_random;
     AudioSystem* m_audio{nullptr};
     bool m_assetCollectionRequested{false};
+    // Last, so it is destroyed first: resources may refer to the rest.
+    SessionResources m_resources;
 };
 
 // Runs one phase of systems and then, when context.services is set, flushes

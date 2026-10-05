@@ -28,6 +28,20 @@ EventQueue& GameServices::events() {
     return m_events;
 }
 
+SessionResources& GameServices::resources() {
+    return m_resources;
+}
+
+std::filesystem::path GameServices::assetPath(std::string_view assetPath) const {
+    const std::filesystem::path relative =
+        std::filesystem::path(std::u8string(assetPath.begin(), assetPath.end())).lexically_normal();
+    if (relative.empty() || relative.has_root_path() || *relative.begin() == "..") {
+        m_log.warning("'" + std::string(assetPath) + "' is not a path inside the project's assets");
+        return {};
+    }
+    return m_documents.assetRoot / relative;
+}
+
 Timers& GameServices::timers() {
     return m_timers;
 }
