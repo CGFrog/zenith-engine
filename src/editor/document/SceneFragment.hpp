@@ -19,10 +19,16 @@ class AssetManager;
 // its original was, and one pasted under a parent keeps its local transform
 // (a duplicate beside its original lands on it).
 //
+// Both cost what the fragment holds, not the scene: copy serializes only the
+// copied subtrees (and names the collections they reference, which paste
+// matches by name), and paste creates the copies in the scene with fresh ids
+// (SceneDocument::createEntities), so every other entity keeps its EnTT
+// handle, components, and runtime state (physics bodies in Play).
+//
 // Transient entities (Scene::isTransient) are never copied: a copied root
-// that is transient is skipped. Paste rebuilds the scene from its document,
-// so it drops the scene's transient entities (a generator's preview), and it
-// pastes at the top level when parent is transient.
+// that is transient is skipped, as is a transient child. Paste pastes at the
+// top level when parent is transient, since copies under it would be
+// transient too.
 class SceneFragment {
   public:
     static SceneDocumentResult copy(const Scene& scene, const AssetManager& assets, const SceneDocumentOptions& options,
@@ -33,8 +39,8 @@ class SceneFragment {
     // The ids the fragment's roots had in the copied scene, in the order
     // paste returns their copies.
     static SceneDocumentResult roots(std::string_view fragment, std::vector<SceneEntityId>& sourceRoots);
-    // One fragment holding rootWorlds.size() copies of fragment, so pasting
-    // it rebuilds the scene once however many copies there are. Copy c gives
+    // One fragment holding rootWorlds.size() copies of fragment, so one
+    // paste creates them all. Copy c gives
     // root r the world transform rootWorlds[c][r] (each element lists one
     // matrix per root, in roots order) when pasted at the top level, and
     // keeps its local transform under a parent; entity references inside a copy

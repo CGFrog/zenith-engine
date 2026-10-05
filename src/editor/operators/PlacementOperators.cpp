@@ -197,6 +197,14 @@ Operator placeModelOperator() {
                     if (PlaceModelProperties* values = properties.get<PlaceModelProperties>()) {
                         values->location = context.editing.document().editorData().cursorLocation;
                     }
+                },
+            // New entities, under the parent named, if any.
+            .scope =
+                [](const OperatorContext&, const OperatorProperties& properties) {
+                    const auto* values = properties.get<PlaceModelProperties>();
+                    const std::optional<SceneEntityId> parent =
+                        values != nullptr ? parseEntityId(values->parent) : std::nullopt;
+                    return OperatorScope::of(parent ? std::vector{*parent} : std::vector<SceneEntityId>{});
                 }};
 }
 
@@ -238,7 +246,9 @@ Operator arrayOperator() {
                 return pasteCopies(
                     context, *copied,
                     arrayCopyTransforms(copied->world, values.count, offset, values.rotationDegrees, values.scaleStep));
-            })};
+            }),
+            // The copies join the originals' parents (captured with them).
+            .scope = selectionScope()};
 }
 
 // Where one scattered copy goes: a random point of the disc, dropped onto
@@ -313,7 +323,8 @@ Operator scatterOperator() {
                     return OperatorResult::failed("Scatter failed: " + error);
                 }
                 return pasteCopies(context, *copied, scatterCopyTransforms(context, *copied, values));
-            })};
+            }),
+            .scope = selectionScope()};
 }
 } // namespace
 

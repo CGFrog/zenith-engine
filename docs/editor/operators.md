@@ -57,8 +57,8 @@ align_to_surface, random_yaw, scale_jitter}`. `prefab.instantiate` takes the
 same `rotation`, `normal`, and `align_to_normal`; `placementRotation` turns
 +Y onto the normal, then applies the Euler rotation (degrees). Array and
 scatter copy the selection's transform roots into one scene fragment,
-replicate it once per copy (`SceneFragment::replicate`), and paste it once,
-since paste rebuilds the whole scene; each copy joins its original's parent
+replicate it once per copy (`SceneFragment::replicate`), and paste it once;
+each copy joins its original's parent
 (`EntityCommands::pasteBesideSources`), the copies are selected, and both are
 one undo step that Adjust Last Operation re-runs. Array steps each copy from
 the last (turn and scale about the copies' median, then the offset turned
@@ -143,6 +143,41 @@ file dialog or modal tool; they record nothing themselves. In prefab mode
 [Scene editing](scene-editing.md#prefab-mode-the-document-stack)).
 `prefab.instantiate` also reports the files it read
 (`PrefabWriteHooks::fileRead`), which seeds the session's write ledger.
+
+## Declaring what an operator changes
+
+An `Undo` operator's undo step is the difference between the scene before
+and after it runs. Without more information the runner must serialize the
+whole scene twice for that (and once more for Adjust Last Operation's check),
+which costs hundreds of milliseconds in a 5,000-entity scene and fails when
+anything in the scene cannot be serialized (a runtime mesh). An operator that
+knows what it touches declares it in `Operator::scope`, an
+`OperatorScopeFunction` the runner calls with the context and the properties
+it is about to run with, before `execute`:
+
+| Scope | Use for | Examples |
+| --- | --- | --- |
+| `newEntitiesScope()` (`OperatorScope::newEntities()`) | creating entities at the top level only | `object.add_*`, `edit.paste`, `object.collection_instance_add` |
+| `selectionScope()` | changing the selected entities, or adding copies beside them (a copy joins its original's parent, which is captured as the parent of a listed entity) | clear transform, component add/remove/reset/paste, `object.hide`, `object.duplicate`, `object.array`, `object.scatter`, `collection.link`/`unlink` |
+| `selectionScope(CaptureReach::SubtreesAndAncestors)` | destroying, unlinking, or moving subtrees (a prefab entity's removal is recorded on its instance root) | `object.delete` |
+| `activeEntityScope()` | the active entity, or adding a child or sibling to it | `object.rename`, `object.create_entity` |
+| `collectionsScope()`, or `CaptureCollections::Include` with entities | changing collection definitions | `collection.set_flag`, `collection.rename`, `collection.new` |
+| a lambda returning `OperatorScope::of(ids, reach, collections)` | entities named by properties | `object.set_visibility`, `outliner.parent_drop`/`reorder` (moved subtrees, ancestors, and the new parent), `prefab.instantiate`/`object.place_model` (the `parent` property), `object.mesh_assign`, `prefab.unpack`, `object.unhide`, `ui.eyedropper_pick` |
+
+Entities the operator creates are always found (ids from
+`SceneEditing::EntitySnapshot::firstNewId` up) and recorded, and each listed
+entity's parent is captured too. Everything else is the operator's promise:
+a change to an entity outside its scope is not undone, and destroying one is
+reported as an error. An operator whose reach is unclear leaves `scope` empty
+and keeps the whole-scene capture (`prefab.create_from_selection`,
+`prefab.apply`, `prefab.revert`, `prefab.revert_field`, `collection.delete`,
+`object.isolate`, `object.model_replace`, and game module operators).
+`tests/editor/ScopedCaptureTests.cpp` runs every scoped operator with and
+without its scope and requires the same scene after the run, undo, and redo;
+add a case there when you declare a scope. In Play and Simulate nothing is
+recorded, so the runner captures only the scope (to tell the renderer and
+physics what changed), and Adjust Last Operation compares only the scope's
+entities with what the operator left (`SceneEditing::unchangedSince`).
 
 ## Operator families
 

@@ -107,7 +107,8 @@ Operator resetOperator() {
                     return OperatorResult::cancelled("No selected object has a " + type->displayName() + " component");
                 }
                 return OperatorResult::finished();
-            })};
+            }),
+            .scope = selectionScope()};
 }
 
 Operator copyOperator(TextClipboard& clipboard) {
@@ -184,7 +185,8 @@ Operator pasteOperator(TextClipboard& clipboard) {
                     return OperatorResult::cancelled("No selected object has a " + type->displayName() + " component");
                 }
                 return loadInto(context, *type, copied->second, targets);
-            })};
+            }),
+            .scope = selectionScope()};
 }
 
 Operator copyToSelectedOperator() {
@@ -212,7 +214,8 @@ Operator copyToSelectedOperator() {
                 }
                 targets.erase(targets.begin());
                 return loadInto(context, *type, value, targets);
-            })};
+            }),
+            .scope = selectionScope()};
 }
 
 Operator moveOperator(ComponentInspectorLayout& layout) {

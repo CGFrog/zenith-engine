@@ -1018,6 +1018,11 @@ SceneDocumentResult SceneDocument::serializeEntities(const Scene& scene, const A
     return {.success = true};
 }
 
+SceneDocumentResult SceneDocument::serializeCollections(const Scene& scene, std::string& output) {
+    output = collectionsJson(scene.collections()).dump();
+    return {.success = true};
+}
+
 SceneDocumentResult SceneDocument::diff(std::string_view before, std::string_view after, SceneChanges& changes) {
     try {
         Json beforeDocument;

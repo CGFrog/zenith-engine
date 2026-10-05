@@ -88,6 +88,7 @@ zenith_add_test(zenith_outliner SOURCES OutlinerTests.cpp LIBS zenith_editor_app
 zenith_add_test(zenith_outliner_scale_benchmark_run EXECUTABLE zenith_outliner_scale_benchmark
     SOURCES OutlinerScaleBenchmark.cpp LIBS zenith_editor_app LABELS benchmark TIMEOUT 600)
 zenith_add_test(zenith_scene_editing SOURCES SceneEditingTests.cpp LIBS zenith_editor_app)
+zenith_add_test(zenith_scoped_capture SOURCES ScopedCaptureTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_transient_editing SOURCES TransientEditingTests.cpp LIBS zenith_editor_app)
 # Run by hand for numbers; CTest only checks that it completes.
 zenith_add_test(zenith_scene_editing_benchmark_run EXECUTABLE zenith_scene_editing_benchmark

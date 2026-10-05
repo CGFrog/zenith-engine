@@ -137,7 +137,8 @@ Operator snapSelectedToCursorOperator(EditorDocument& document) {
                     }
                     scene.updateWorldTransforms();
                     return OperatorResult::finished();
-                }};
+                },
+            .scope = selectionScope()};
 }
 } // namespace
 

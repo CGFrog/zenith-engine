@@ -99,7 +99,8 @@ Operator addObjectOperator(std::string id, std::string label, std::string descri
                 placeEntity(scene, entity, values.location, 1.0f);
                 return selectCreated(context, entity);
             }),
-            .invokeDefaults = startAtCursor<AddObjectProperties>};
+            .invokeDefaults = startAtCursor<AddObjectProperties>,
+            .scope = newEntitiesScope()};
 }
 
 Operator addCubeOperator() {
@@ -125,7 +126,8 @@ Operator addCubeOperator() {
                 placeEntity(scene, cube, values.location, values.size);
                 return selectCreated(context, cube);
             }),
-            .invokeDefaults = startAtCursor<AddCubeProperties>};
+            .invokeDefaults = startAtCursor<AddCubeProperties>,
+            .scope = newEntitiesScope()};
 }
 
 Operator createEntityOperator() {
@@ -158,7 +160,10 @@ Operator createEntityOperator() {
                     }
                 }
                 return selectCreated(context, created);
-            })};
+            }),
+            // A new child or sibling joins the active entity or its parent,
+            // whose child order may change.
+            .scope = activeEntityScope()};
 }
 
 Operator duplicateOperator() {
@@ -171,8 +176,7 @@ Operator duplicateOperator() {
                 std::move(Fields<DuplicateProperties>().add("offset", &DuplicateProperties::offset).drag(0.05f))),
             .poll = hasSelection,
             .execute = typed<DuplicateProperties>([](OperatorContext& context, DuplicateProperties& values) {
-                std::string ignoredBefore;
-                if (!EntityCommands::duplicateSelectionUncommitted(context.editing, context.selection, ignoredBefore)) {
+                if (!EntityCommands::duplicateSelectionUnrecorded(context.editing, context.selection)) {
                     // The failure was already reported.
                     return OperatorResult::cancelled("Nothing was duplicated");
                 }
@@ -185,7 +189,10 @@ Operator duplicateOperator() {
                 }
                 scene.updateWorldTransforms();
                 return OperatorResult::finished();
-            })};
+            }),
+            // Each copy joins its original's parent, whose child order may
+            // change; the copies themselves are new.
+            .scope = selectionScope()};
 }
 
 Operator deleteOperator() {
@@ -194,19 +201,23 @@ Operator deleteOperator() {
             .description = "Delete the selected objects and their children",
             .flags = OperatorFlags::Undo,
             .poll = hasSelection,
-            .execute = [](OperatorContext& context, OperatorProperties&) {
-                Scene& scene = context.editing.scene();
-                for (SceneEntityId id : context.selection.ids()) {
-                    // Deleting a parent removes its children, so look each one up again.
-                    if (const Entity entity = scene.findEntity(id); entity != entt::null) {
-                        // A prefab entity deleted from an instance stays deleted.
-                        recordPrefabEntityRemoval(scene, entity);
-                        scene.destroyEntity(entity);
+            .execute =
+                [](OperatorContext& context, OperatorProperties&) {
+                    Scene& scene = context.editing.scene();
+                    for (SceneEntityId id : context.selection.ids()) {
+                        // Deleting a parent removes its children, so look each one up again.
+                        if (const Entity entity = scene.findEntity(id); entity != entt::null) {
+                            // A prefab entity deleted from an instance stays deleted.
+                            recordPrefabEntityRemoval(scene, entity);
+                            scene.destroyEntity(entity);
+                        }
                     }
-                }
-                context.selection.clear();
-                return OperatorResult::finished();
-            }};
+                    context.selection.clear();
+                    return OperatorResult::finished();
+                },
+            // Children go with their parent, and deleting a prefab entity
+            // records the removal on its instance root.
+            .scope = selectionScope(SceneEditing::CaptureReach::SubtreesAndAncestors)};
 }
 
 Operator selectAllOperator() {
@@ -243,18 +254,20 @@ Operator clearTransformOperator(std::string id, std::string label, TransformPart
             .description = "Reset this part of the selected objects' local transforms",
             .flags = OperatorFlags::Undo,
             .poll = hasSelection,
-            .execute = [part](OperatorContext& context, OperatorProperties&) {
-                Scene& scene = context.editing.scene();
-                for (SceneEntityId id : context.selection.ids()) {
-                    if (const Entity entity = scene.findEntity(id); entity != entt::null) {
-                        glm::mat4& local = scene.registry().get<TransformComponent>(entity).local;
-                        local = clearTransformPart(local, part);
-                        scene.markTransformDirty(entity);
+            .execute =
+                [part](OperatorContext& context, OperatorProperties&) {
+                    Scene& scene = context.editing.scene();
+                    for (SceneEntityId id : context.selection.ids()) {
+                        if (const Entity entity = scene.findEntity(id); entity != entt::null) {
+                            glm::mat4& local = scene.registry().get<TransformComponent>(entity).local;
+                            local = clearTransformPart(local, part);
+                            scene.markTransformDirty(entity);
+                        }
                     }
-                }
-                scene.updateWorldTransforms();
-                return OperatorResult::finished();
-            }};
+                    scene.updateWorldTransforms();
+                    return OperatorResult::finished();
+                },
+            .scope = selectionScope()};
 }
 
 Operator renameOperator() {
@@ -271,7 +284,8 @@ Operator renameOperator() {
                 }
                 context.editing.scene().registry().get<NameComponent>(activeEntity(context)).name = values.name;
                 return OperatorResult::finished();
-            })};
+            }),
+            .scope = activeEntityScope()};
 }
 
 Fields<ComponentProperties> componentFields() {
@@ -298,7 +312,8 @@ Operator addComponentOperator() {
                 }
                 type->addDefault(scene, entity);
                 return OperatorResult::finished();
-            })};
+            }),
+            .scope = activeEntityScope()};
 }
 
 // "Create Empty with Component X": an entity named after the component.
@@ -325,7 +340,8 @@ Operator addEmptyWithOperator() {
                 placeEntity(scene, entity, values.location, 1.0f);
                 return selectCreated(context, entity);
             }),
-            .invokeDefaults = startAtCursor<AddEmptyWithProperties>};
+            .invokeDefaults = startAtCursor<AddEmptyWithProperties>,
+            .scope = newEntitiesScope()};
 }
 
 // Removes a registered component, or the preserved data of a component type
@@ -368,7 +384,8 @@ Operator removeComponentOperator() {
                     return OperatorResult::cancelled("No selected object has a '" + values.component + "' component");
                 }
                 return OperatorResult::finished();
-            })};
+            }),
+            .scope = selectionScope()};
 }
 
 Operator bakeIrradianceVolumeOperator() {
@@ -402,7 +419,8 @@ Operator bakeIrradianceVolumeOperator() {
                     component.bakeAsset = written.lexically_relative(assetRoot).generic_string();
                     component.bakedData = std::move(baked);
                     return OperatorResult::finished();
-                }};
+                },
+            .scope = activeEntityScope()};
 }
 } // namespace
 

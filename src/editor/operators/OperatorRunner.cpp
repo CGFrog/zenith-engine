@@ -24,6 +24,44 @@ OperatorProperties OperatorRunner::invocationDefaults(const Operator& op, const 
     return values;
 }
 
+bool OperatorRunner::captureBefore(const Operator& op, const OperatorContext& context, const OperatorProperties& values,
+                                   OperatorSnapshot& before) {
+    const OperatorScope scope = op.scope ? op.scope(context, values) : OperatorScope::whole();
+    if (scope.wholeScene) {
+        return context.editing.capture(before.scene);
+    }
+    before.entities.emplace();
+    return context.editing.captureEntities(scope.entities, scope.reach, scope.collections, *before.entities);
+}
+
+bool OperatorRunner::changesSince(const Operator& op, const OperatorContext& context, OperatorSnapshot before,
+                                  SceneChanges& changes, OperatorSnapshot& after) {
+    if (before.entities) {
+        after.entities.emplace();
+        return context.editing.changesSince(op.label, std::move(*before.entities), changes, &*after.entities);
+    }
+    if (!context.editing.capture(after.scene)) {
+        return false;
+    }
+    changes = {};
+    if (after.scene == before.scene) {
+        return true;
+    }
+    if (const SceneDocumentResult result = SceneDocument::diff(before.scene, after.scene, changes); !result) {
+        context.editing.diagnostics().reportError("Could not record " + op.label + ": " + result.error);
+        return false;
+    }
+    return true;
+}
+
+bool OperatorRunner::unchangedSince(const OperatorContext& context, const OperatorSnapshot& after) {
+    if (after.entities) {
+        return context.editing.unchangedSince(*after.entities);
+    }
+    std::string current;
+    return context.editing.capture(current) && current == after.scene;
+}
+
 OperatorHistoryEntry OperatorRunner::pendingInvocation(std::string_view id, const Operator* op,
                                                        std::string propertiesJson) {
     return {.id = std::string(id),
@@ -74,8 +112,8 @@ OperatorResult OperatorRunner::run(const Operator* op, std::string_view id, Oper
 
     const bool undoable = hasFlag(op->flags, OperatorFlags::Undo);
     std::vector<SceneEntityId> selectionBefore = context.selection.ids();
-    std::string before;
-    if (undoable && !context.editing.capture(before)) {
+    OperatorSnapshot before;
+    if (undoable && !captureBefore(*op, context, values, before)) {
         return OperatorResult::failed("Could not record " + op->label + " for undo");
     }
     OperatorResult result = op->execute(context, values);
@@ -87,20 +125,19 @@ OperatorResult OperatorRunner::run(const Operator* op, std::string_view id, Oper
     }
 
     bool recorded = false;
-    std::string after;
+    OperatorSnapshot after;
     if (undoable) {
-        if (!context.editing.capture(after)) {
+        SceneChanges changes;
+        if (!changesSince(*op, context, std::move(before), changes, after)) {
             return OperatorResult::failed("Could not record " + op->label + " for undo");
         }
-        // The runner keeps after for Adjust Last Operation, so it is passed
-        // rather than captured again.
         if (result.undoStep) {
             // One step for the scene change and what the operator did
-            // outside the scene.
-            context.editing.commit(op->label, before, after, std::exchange(result.undoStep, {}));
+            // outside the scene, recorded even when the scene is unchanged.
+            context.editing.record(op->label, {}, std::move(changes), std::exchange(result.undoStep, {}));
             recorded = true;
-        } else if (after != before) {
-            context.editing.commit(op->label, {}, before, after);
+        } else if (!changes.empty()) {
+            context.editing.record(op->label, {}, std::move(changes));
             recorded = true;
         }
     }
@@ -111,7 +148,7 @@ OperatorResult OperatorRunner::run(const Operator* op, std::string_view id, Oper
                               .selectionBefore = std::move(selectionBefore),
                               .recordedUndoStep = recorded,
                               .historyRevision = m_history.revision(),
-                              .sceneAfter = std::move(after)};
+                              .after = std::move(after)};
     } else if (recorded) {
         // A newer undo step sits above the remembered operator.
         m_last.reset();
@@ -134,11 +171,12 @@ std::string OperatorRunner::unavailableMessage(const Operator& op, const Operato
 
 OperatorResult OperatorRunner::runOnRuntimeScene(const Operator& op, OperatorContext& context,
                                                  OperatorProperties& values) {
-    // The snapshot only tells the runtime commit what to mark changed for
-    // the renderer and physics; nothing is recorded.
+    // The snapshot only tells the runtime record what to mark changed for
+    // the renderer and physics; nothing is recorded, so an operator with a
+    // scope captures only that.
     const bool changesScene = hasFlag(op.flags, OperatorFlags::Undo);
-    std::string before;
-    if (changesScene && !context.editing.capture(before)) {
+    OperatorSnapshot before;
+    if (changesScene && !captureBefore(op, context, values, before)) {
         return OperatorResult::failed("Could not run " + op.label + " on the running scene");
     }
     OperatorResult result = op.execute(context, values);
@@ -151,7 +189,11 @@ OperatorResult OperatorRunner::runOnRuntimeScene(const Operator& op, OperatorCon
     // Nothing is recorded, so nothing can be adjusted afterwards either.
     m_last.reset();
     if (changesScene) {
-        context.editing.commit(op.label, {}, std::move(before));
+        SceneChanges changes;
+        OperatorSnapshot after;
+        if (changesSince(op, context, std::move(before), changes, after) && !changes.empty()) {
+            context.editing.record(op.label, {}, std::move(changes));
+        }
         context.editing.diagnostics().add(EditorDiagnosticSeverity::Info, "Play",
                                           op.label + " changed the running scene only; Stop discards it.");
     }
@@ -195,11 +237,7 @@ OperatorResult OperatorRunner::adjustLast(OperatorContext& context, const Operat
     LastOperator previous = std::move(*m_last);
     m_last.reset();
     if (previous.recordedUndoStep) {
-        std::string current;
-        if (!context.editing.capture(current)) {
-            return OperatorResult::failed("Could not adjust " + previous.label);
-        }
-        if (current != previous.sceneAfter) {
+        if (!unchangedSince(context, previous.after)) {
             return reportFailure(context, OperatorResult::failed("The scene changed after " + previous.label +
                                                                  ", so it can no longer be adjusted"));
         }

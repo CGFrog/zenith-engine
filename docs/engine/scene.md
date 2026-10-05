@@ -146,7 +146,9 @@ remapping, scene fragment paste and replicate) rewrites the order with
 order, so a prefab's instances list children by id.
 `SceneDocument::serializeEntities` writes chosen entities in exactly the form
 a `SceneEntityChange` holds, so a caller that knows which entities an edit
-touches can build `SceneChanges` without serializing the whole scene.
+touches can build `SceneChanges` without serializing the whole scene;
+`serializeCollections` writes the collection definitions in the form a
+`SceneCollectionsChange` holds.
 `SceneAssetReferences.*` converts project-relative asset references for codecs.
 
 Scene documents are versioned (`SceneDocument::currentVersion`, now 3).

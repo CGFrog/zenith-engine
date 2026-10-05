@@ -326,6 +326,18 @@ Operator meshAssignOperator() {
                             values->entities.push_back({.entity = id});
                         }
                     }
+                },
+            // Only the targets change, so a runtime mesh elsewhere in the
+            // scene does not stop the assignment from being recorded.
+            .scope =
+                [](const OperatorContext&, const OperatorProperties& properties) {
+                    std::vector<SceneEntityId> targets;
+                    if (const auto* values = properties.get<P>()) {
+                        for (const MeshAssignTarget& target : values->entities) {
+                            targets.push_back(target.entity);
+                        }
+                    }
+                    return OperatorScope::of(std::move(targets));
                 }};
 }
 } // namespace

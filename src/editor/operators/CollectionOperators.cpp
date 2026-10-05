@@ -84,7 +84,8 @@ Operator newCollectionOperator() {
                     }
                 }
                 return OperatorResult::finished();
-            })};
+            }),
+            .scope = selectionScope(SceneEditing::CaptureReach::Entities, SceneEditing::CaptureCollections::Include)};
 }
 
 Operator deleteCollectionOperator() {
@@ -144,7 +145,8 @@ Operator renameCollectionOperator() {
             }
             scene.setCollections(std::move(collections));
             return OperatorResult::finished();
-        })};
+        }),
+        .scope = collectionsScope()};
 }
 
 // Links or unlinks every selected object; cancelled when nothing changes.
@@ -182,7 +184,8 @@ Operator membershipOperator(std::string id, std::string label, std::string descr
                 return changed ? OperatorResult::finished()
                                : OperatorResult::cancelled(link ? "The selection is already in the collection"
                                                                 : "The selection is not in the collection");
-            })};
+            }),
+            .scope = selectionScope()};
 }
 
 Operator setFlagOperator() {
@@ -213,7 +216,8 @@ Operator setFlagOperator() {
                 collections.setFlag(collection->id, values.flag, values.value);
                 scene.setCollections(std::move(collections));
                 return OperatorResult::finished();
-            })};
+            }),
+            .scope = collectionsScope()};
 }
 
 Operator addCollectionInstanceOperator() {
@@ -243,7 +247,8 @@ Operator addCollectionInstanceOperator() {
                     scene.updateWorldTransforms();
                     context.selection.selectOnly(scene.id(instance));
                     return OperatorResult::finished();
-                })};
+                }),
+            .scope = newEntitiesScope()};
 }
 } // namespace
 

@@ -200,7 +200,7 @@ class EditorSession final : public ApplicationScene,
     // EditorObjectModeCommands (EditorObjectCommands.cpp)
     bool modalTransformRunning() const override;
     bool beginModalTransform(ApplicationContext& context, TransformOperation operation, std::string commandName,
-                             std::string before, bool commitOnCancel) override;
+                             std::optional<SceneEditing::EntitySnapshot> before, bool commitOnCancel) override;
     void openDeleteMenu() override;
     void openRenamePopup(ApplicationContext& context) override;
 
@@ -623,8 +623,9 @@ class EditorSession final : public ApplicationScene,
         ViewportId viewport;
         std::vector<SceneEntityId> entities;
         std::vector<glm::mat4> startLocal;
-        // Scene snapshot from before the command, for undo.
-        std::string before;
+        // The moved entities (or the new copies) from before the command,
+        // for undo.
+        SceneEditing::EntitySnapshot before;
         std::string commandName;
         // Shift D keeps the duplicate even when its move is cancelled.
         bool commitOnCancel{false};

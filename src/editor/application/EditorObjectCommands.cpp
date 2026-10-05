@@ -102,12 +102,12 @@ OperatorRegistrationResult registerObjectModeOperatorFamily(OperatorRegistry& re
          .description = "Duplicate the selection and move the copies with the mouse",
          .poll = canTransform,
          .execute = [&objectMode](OperatorContext& context, OperatorProperties&) {
-             std::string before;
+             SceneEditing::EntitySnapshot before;
              if (!EntityCommands::duplicateSelectionUncommitted(context.editing, context.selection, before)) {
                  return OperatorResult::cancelled("Nothing was duplicated");
              }
              if (!objectMode.beginModalTransform(*context.app, TransformOperation::Translate, "Duplicate Objects",
-                                                 before, true)) {
+                                                 std::optional(before), true)) {
                  context.editing.commit("Duplicate Objects", {}, std::move(before));
              }
              return OperatorResult::finished();
@@ -183,7 +183,8 @@ void EditorSession::drawObjectPopups(ApplicationContext& context) {
 }
 
 bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOperation operation,
-                                        std::string commandName, std::string before, bool commitOnCancel) {
+                                        std::string commandName, std::optional<SceneEditing::EntitySnapshot> before,
+                                        bool commitOnCancel) {
     const ViewportPanel* viewport = m_viewports.active();
     if (m_playMode.mode() != EditorMode::Edit || m_selection.empty() || viewport == nullptr) {
         return false;
@@ -193,8 +194,13 @@ bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOp
     if (roots.empty()) {
         return false;
     }
-    if (before.empty() && !editing(context).capture(before)) {
-        return false;
+    // Only the transform roots' local transforms change.
+    if (!before) {
+        before.emplace();
+        if (!editing(context).captureEntities(roots, SceneEditing::CaptureReach::Entities,
+                                              SceneEditing::CaptureCollections::Exclude, *before)) {
+            return false;
+        }
     }
     std::vector<glm::mat4> startWorld;
     std::vector<glm::mat4> startLocal;
@@ -225,7 +231,7 @@ bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOp
         .viewport = viewport->id(),
         .entities = std::move(roots),
         .startLocal = std::move(startLocal),
-        .before = std::move(before),
+        .before = std::move(*before),
         .commandName = std::move(commandName),
         .commitOnCancel = commitOnCancel});
     return true;

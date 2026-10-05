@@ -99,7 +99,8 @@ class NoSessionCommands final : public EditorDocumentCommands,
         return false;
     }
 
-    bool beginModalTransform(ApplicationContext&, TransformOperation, std::string, std::string, bool) override {
+    bool beginModalTransform(ApplicationContext&, TransformOperation, std::string,
+                             std::optional<SceneEditing::EntitySnapshot>, bool) override {
         return false;
     }
 

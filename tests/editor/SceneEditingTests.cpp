@@ -267,10 +267,10 @@ void testLargeSceneHistory() {
     const SceneEditing editing(scene, assets, document, history, diagnostics);
     const SceneDocumentOptions& options = document.options();
 
-    // Large enough that one full snapshot dwarfs the per-entity diffs; every
-    // edit recorded with perform serializes the whole scene twice, so this
-    // sets the cost.
-    constexpr uint32_t entityCount = 1'000;
+    // Large enough that one full snapshot dwarfs the per-entity diffs. The
+    // edits capture only what they change (as the inspector and operators
+    // do), so only the test's own full serializations grow with the scene.
+    constexpr uint32_t entityCount = 5'000;
     constexpr uint32_t groupSize = 10;
     std::vector<Entity> entities;
     for (uint32_t index = 0; index < entityCount; ++index) {
@@ -292,16 +292,16 @@ void testLargeSceneHistory() {
     constexpr uint32_t editStride = entityCount / editCount;
     for (int edit = 0; edit < editCount; ++edit) {
         const Entity target = entities[100 + static_cast<size_t>(edit) * editStride];
-        editing.perform("Edit", {}, [&] {
-            if (edit % 3 == 0) {
-                scene.registry().get<NameComponent>(target).name = "Edited " + std::to_string(edit);
-            } else if (edit % 3 == 1) {
-                scene.registry().get<TransformComponent>(target).local[3] = glm::vec4(1.0f, 2.0f, 3.0f, 1.0f);
-            } else {
-                scene.registry().emplace_or_replace<PointLightComponent>(target).range = 5.0f;
-            }
-            return SceneResult{.success = true};
-        });
+        SceneEditing::EntitySnapshot before;
+        expect(editing.captureEntities(std::span(&target, 1), before), "the edited entity should be captured");
+        if (edit % 3 == 0) {
+            scene.registry().get<NameComponent>(target).name = "Edited " + std::to_string(edit);
+        } else if (edit % 3 == 1) {
+            scene.registry().get<TransformComponent>(target).local[3] = glm::vec4(1.0f, 2.0f, 3.0f, 1.0f);
+        } else {
+            scene.registry().emplace_or_replace<PointLightComponent>(target).range = 5.0f;
+        }
+        editing.commit("Edit", {}, std::move(before));
     }
     // Deleting a whole group and creating an entity are larger edits.
     const std::array groupRoot{scene.id(entities[groupSize * 3])};

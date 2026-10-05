@@ -69,20 +69,22 @@ Operator hideOperator() {
             .description = "Hide the selected objects in the editor viewports (the game still shows them)",
             .flags = OperatorFlags::Undo,
             .poll = hasSelection,
-            .execute = [](OperatorContext& context, OperatorProperties&) {
-                Scene& scene = context.editing.scene();
-                std::vector<Entity> selected;
-                for (const SceneEntityId id : context.selection.ids()) {
-                    if (const Entity entity = scene.findEntity(id); entity != entt::null) {
-                        selected.push_back(entity);
+            .execute =
+                [](OperatorContext& context, OperatorProperties&) {
+                    Scene& scene = context.editing.scene();
+                    std::vector<Entity> selected;
+                    for (const SceneEntityId id : context.selection.ids()) {
+                        if (const Entity entity = scene.findEntity(id); entity != entt::null) {
+                            selected.push_back(entity);
+                        }
                     }
-                }
-                if (hideEntities(scene, selected) == 0) {
-                    return OperatorResult::cancelled("The selected objects are already hidden");
-                }
-                deselectHidden(context);
-                return OperatorResult::finished();
-            }};
+                    if (hideEntities(scene, selected) == 0) {
+                        return OperatorResult::cancelled("The selected objects are already hidden");
+                    }
+                    deselectHidden(context);
+                    return OperatorResult::finished();
+                },
+            .scope = selectionScope()};
 }
 
 Operator isolateOperator() {
@@ -114,32 +116,45 @@ Operator unhideOperator() {
             .properties = OperatorProperties::make(
                 UnhideProperties{}, std::move(Fields<UnhideProperties>().add("select", &UnhideProperties::select))),
             .poll = anyHidden,
-            .execute = [](OperatorContext& context, OperatorProperties& properties) {
-                const UnhideProperties* values = properties.get<UnhideProperties>();
-                if (values == nullptr) {
-                    return OperatorResult::failed("Operator properties have the wrong type");
-                }
-                Scene& scene = context.editing.scene();
-                std::vector<Entity> revealed;
-                for (const Entity entity : scene.registry().view<const VisibilityComponent>()) {
-                    if (hidden(scene, entity)) {
-                        revealed.push_back(entity);
+            .execute =
+                [](OperatorContext& context, OperatorProperties& properties) {
+                    const UnhideProperties* values = properties.get<UnhideProperties>();
+                    if (values == nullptr) {
+                        return OperatorResult::failed("Operator properties have the wrong type");
                     }
-                }
-                if (revealed.empty()) {
-                    return OperatorResult::cancelled("Nothing is hidden");
-                }
-                std::vector<SceneEntityId> ids;
-                for (const Entity entity : revealed) {
-                    setHidden(scene, entity, false);
-                    ids.push_back(scene.id(entity));
-                }
-                if (values->select) {
-                    std::ranges::sort(ids);
-                    context.selection.assign(std::move(ids));
-                }
-                return OperatorResult::finished();
-            }};
+                    Scene& scene = context.editing.scene();
+                    std::vector<Entity> revealed;
+                    for (const Entity entity : scene.registry().view<const VisibilityComponent>()) {
+                        if (hidden(scene, entity)) {
+                            revealed.push_back(entity);
+                        }
+                    }
+                    if (revealed.empty()) {
+                        return OperatorResult::cancelled("Nothing is hidden");
+                    }
+                    std::vector<SceneEntityId> ids;
+                    for (const Entity entity : revealed) {
+                        setHidden(scene, entity, false);
+                        ids.push_back(scene.id(entity));
+                    }
+                    if (values->select) {
+                        std::ranges::sort(ids);
+                        context.selection.assign(std::move(ids));
+                    }
+                    return OperatorResult::finished();
+                },
+            // The hidden entities, found without serializing the scene.
+            .scope =
+                [](const OperatorContext& context, const OperatorProperties&) {
+                    const Scene& scene = context.editing.scene();
+                    std::vector<SceneEntityId> hiddenIds;
+                    for (const Entity entity : scene.registry().view<const VisibilityComponent>()) {
+                        if (hidden(scene, entity)) {
+                            hiddenIds.push_back(scene.id(entity));
+                        }
+                    }
+                    return OperatorScope::of(std::move(hiddenIds));
+                }};
 }
 } // namespace
 

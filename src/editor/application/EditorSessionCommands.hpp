@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -94,9 +95,10 @@ class EditorObjectModeCommands {
     virtual bool modalTransformRunning() const = 0;
     // Starts a modal transform in the active viewport; false when there is
     // none, nothing to transform, or the scene cannot be captured. before is
-    // the scene snapshot to undo to, or empty to capture one now.
+    // the snapshot to undo to (taken before the copies a duplicate made), or
+    // empty to capture the transformed entities now.
     virtual bool beginModalTransform(ApplicationContext& context, TransformOperation operation, std::string commandName,
-                                     std::string before, bool commitOnCancel) = 0;
+                                     std::optional<SceneEditing::EntitySnapshot> before, bool commitOnCancel) = 0;
     virtual void openDeleteMenu() = 0;
     // Opens the rename popup for the selection's active object.
     virtual void openRenamePopup(ApplicationContext& context) = 0;

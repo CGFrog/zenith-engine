@@ -207,6 +207,14 @@ Operator instantiateOperator(PrefabWriteHooks hooks) {
                     if (InstantiatePrefabProperties* values = properties.get<InstantiatePrefabProperties>()) {
                         values->location = context.editing.document().editorData().cursorLocation;
                     }
+                },
+            // New entities, under the parent named, if any.
+            .scope =
+                [](const OperatorContext&, const OperatorProperties& properties) {
+                    const auto* values = properties.get<InstantiatePrefabProperties>();
+                    const std::optional<SceneEntityId> parent =
+                        values != nullptr ? parseEntityId(values->parent) : std::nullopt;
+                    return OperatorScope::of(parent ? std::vector{*parent} : std::vector<SceneEntityId>{});
                 }};
 }
 
@@ -232,20 +240,34 @@ Operator applyOperator(PrefabWriteHooks hooks) {
             }};
 }
 
-// Revert and unpack differ only in the workflow they run.
+// The active entity's instance: its root, every entity below it, and the
+// instances enclosing it.
+OperatorScope activeInstanceScope(const OperatorContext& context, const OperatorProperties&) {
+    const Scene& scene = context.editing.scene();
+    const Entity root = prefabInstanceRoot(scene, activeEntity(context));
+    return OperatorScope::of(root == entt::null ? std::vector<SceneEntityId>{} : std::vector{scene.id(root)},
+                             SceneEditing::CaptureReach::SubtreesAndAncestors);
+}
+
+// Revert and unpack differ only in the workflow they run. Unpack changes
+// only the instance's entities; revert refreshes the instance from its
+// prefab, which may recreate entities under ids it chooses, so it keeps
+// capturing the whole scene (scope empty).
 Operator instanceOperator(std::string id, std::string label, std::string description,
-                          PrefabResult (PrefabAuthoring::*run)(Scene&, Entity)) {
+                          PrefabResult (PrefabAuthoring::*run)(Scene&, Entity), OperatorScopeFunction scope) {
     return {.id = std::move(id),
             .label = std::move(label),
             .description = std::move(description),
             .flags = OperatorFlags::Undo,
             .poll = activeInInstance,
-            .execute = [run](OperatorContext& context, OperatorProperties&) {
-                PrefabAuthoring prefabs = authoring(context);
-                const PrefabResult result = (prefabs.*run)(context.editing.scene(), activeEntity(context));
-                context.selection.removeMissing(context.editing.scene());
-                return finish(context, result);
-            }};
+            .execute =
+                [run](OperatorContext& context, OperatorProperties&) {
+                    PrefabAuthoring prefabs = authoring(context);
+                    const PrefabResult result = (prefabs.*run)(context.editing.scene(), activeEntity(context));
+                    context.selection.removeMissing(context.editing.scene());
+                    return finish(context, result);
+                },
+            .scope = std::move(scope)};
 }
 
 Operator revertFieldOperator() {
@@ -355,10 +377,10 @@ OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, P
     operators.push_back(applyOperator(services.writeHooks));
     operators.push_back(instanceOperator("prefab.revert", "Revert Prefab",
                                          "Reset the instance to its prefab, dropping overrides and added objects",
-                                         &PrefabAuthoring::revert));
+                                         &PrefabAuthoring::revert, {}));
     operators.push_back(instanceOperator("prefab.unpack", "Unpack Prefab",
                                          "Keep the instance's objects but remove their link to the prefab",
-                                         &PrefabAuthoring::unpack));
+                                         &PrefabAuthoring::unpack, activeInstanceScope));
     operators.push_back(revertFieldOperator());
     operators.push_back(selectAssetOperator(std::move(services.revealAsset)));
     operators.push_back(editOperator(services.prefabMode));

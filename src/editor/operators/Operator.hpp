@@ -164,6 +164,54 @@ struct OperatorContext {
     }
 };
 
+// What an Undo operator may change, so the runner captures only that for its
+// undo step (and for the runtime scene's change marks) instead of
+// serializing the whole scene before and after. Entities the operator
+// creates are always found and recorded. An operator that changes or destroys
+// an existing entity outside its scope loses that change from undo, so a
+// scope must cover everything the operator can touch; when that is unclear,
+// keep the whole scene.
+struct OperatorScope {
+    // The whole scene: what an operator that declares no scope gets.
+    bool wholeScene{true};
+    // Existing entities the operator may change or destroy.
+    std::vector<SceneEntityId> entities;
+    // Which of their relatives it may change too.
+    SceneEditing::CaptureReach reach{SceneEditing::CaptureReach::Entities};
+    // Whether it may change the collection definitions.
+    SceneEditing::CaptureCollections collections{SceneEditing::CaptureCollections::Exclude};
+
+    static OperatorScope whole() {
+        return {};
+    }
+
+    // Only creates entities (add, paste, instantiate).
+    static OperatorScope newEntities() {
+        return {.wholeScene = false};
+    }
+
+    static OperatorScope of(std::vector<SceneEntityId> entities,
+                            SceneEditing::CaptureReach reach = SceneEditing::CaptureReach::Entities,
+                            SceneEditing::CaptureCollections collections = SceneEditing::CaptureCollections::Exclude) {
+        return {.wholeScene = false, .entities = std::move(entities), .reach = reach, .collections = collections};
+    }
+};
+
+// Resolves an operator's scope from the context and the properties it will
+// run with, before it runs.
+using OperatorScopeFunction = std::function<OperatorScope(const OperatorContext&, const OperatorProperties&)>;
+
+// The selected entities (with the relatives reach names).
+OperatorScopeFunction
+selectionScope(SceneEditing::CaptureReach reach = SceneEditing::CaptureReach::Entities,
+               SceneEditing::CaptureCollections collections = SceneEditing::CaptureCollections::Exclude);
+// The active entity only.
+OperatorScopeFunction activeEntityScope();
+// No existing entity: the operator only creates entities.
+OperatorScopeFunction newEntitiesScope();
+// The collection definitions only.
+OperatorScopeFunction collectionsScope();
+
 struct Operator {
     // Stable id used by menus, the keymap, and keymap.json, for example
     // "object.duplicate". Changing it breaks saved user keymaps.
@@ -186,6 +234,10 @@ struct Operator {
     // caller's JSON values are applied, and not when a caller passes complete
     // properties (Adjust Last Operation's re-run), so edited values stick.
     std::function<void(const OperatorContext&, OperatorProperties&)> invokeDefaults;
+    // For an Undo operator: what it may change (OperatorScope). Empty means
+    // the whole scene, which is always correct but costs two serializations
+    // of the scene per run.
+    OperatorScopeFunction scope;
 
     bool canRun(const OperatorContext& context) const {
         return !poll || poll(context);
