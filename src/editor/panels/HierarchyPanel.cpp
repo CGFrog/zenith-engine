@@ -2,6 +2,7 @@
 
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/EditorDocument.hpp"
+#include "editor/document/PrefabEditDocument.hpp"
 #include "editor/interaction/EntityReferenceField.hpp"
 #include "editor/operators/OutlinerOperators.hpp"
 #include "editor/panels/AssetDragPayloads.hpp"
@@ -301,7 +302,10 @@ void HierarchyPanel::drawEntity(EditorContext& context, const OutlinerNode& node
         treeRow(rowId, node, ImGuiTreeNodeFlags_AllowOverlap | (selected ? ImGuiTreeNodeFlags_Selected : 0));
     const ImVec2 rowMin = ImGui::GetItemRectMin();
     const ImVec2 rowMax = ImGui::GetItemRectMax();
-    decorateOutlinerRow(entityIcon(scene.registry(), entity), selected, node.children.empty());
+    // In prefab mode the document's root is the prefab itself.
+    const bool prefabRoot = context.prefabEdit != nullptr && context.prefabEdit->root == node.entity;
+    decorateOutlinerRow(prefabRoot ? EditorIcon::Prefab : entityIcon(scene.registry(), entity), selected,
+                        node.children.empty());
     m_displayed.push_back(node.entity);
     // Where a dotted guide joins this row's children to it.
     const float guideX = rowMin.x + ImGui::GetTreeNodeToLabelSpacing() / 2.0f;

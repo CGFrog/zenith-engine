@@ -457,7 +457,8 @@ void EditorSession::reconcileChangedPrefab(ApplicationContext& context, const st
     }
     reconcileParkedDocuments(context, change);
     const PrefabEditTarget* openPrefab = m_documents.activePrefab();
-    if (openPrefab != nullptr && openPrefab->reference == change.reference) {
+    if (openPrefab != nullptr &&
+        openPrefab->reference.generic_string() == change.reference.lexically_normal().generic_string()) {
         // The open prefab's own file: its document is the user's to save or
         // discard (reconcileParkedDocuments warned).
         return;

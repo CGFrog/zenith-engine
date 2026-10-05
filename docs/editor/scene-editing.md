@@ -198,6 +198,7 @@ several:
 `src/editor/document/`: Scene document state, persistence workflow, undo/redo
 history, prefab authoring (`PrefabAuthoring`), undoable prefab file writes and
 the write ledger (`PrefabWriteCommand`), prefabs opened as documents
-(`PrefabEditDocument`), per-scene editor data such as
+(`PrefabEditDocument`), the scene's and a prefab edit's autosaves
+(`EditorRecovery`, `PrefabEditRecovery`), per-scene editor data such as
 the 3D cursor (`SceneEditorData`, a sidecar beside the scene file), and the
 runtime-to-edit diff behind Apply to Edit Scene (`RuntimeApply`).
