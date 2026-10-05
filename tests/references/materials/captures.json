@@ -1,0 +1,18 @@
+{
+  "project": "../../../projects/material_assets.zenith-project",
+  "windowSize": "640x360",
+  "tolerance": {
+    "channelTolerance": 3,
+    "maximumChannelDifference": 255,
+    "maximumRootMeanSquareError": 1.5,
+    "maximumDifferingPixelFraction": 0.001
+  },
+  "views": [
+    {
+      "name": "zmat_override",
+      "covers": "a .zmat material asset (base color and normal maps) replacing a cube's material, alone and under material override factors, beside the cube's own material",
+      "frame": 120,
+      "camera": "0,1.4,3.6,0,-14"
+    }
+  ]
+}
