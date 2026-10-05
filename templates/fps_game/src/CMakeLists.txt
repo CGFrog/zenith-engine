@@ -12,6 +12,8 @@ add_library({{PROJECT_IDENTIFIER}} MODULE
 target_include_directories({{PROJECT_IDENTIFIER}} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 # Only the engine: a module shares the editor's (or game's) engine library.
 target_link_libraries({{PROJECT_IDENTIFIER}} PRIVATE Zenith::Engine)
+# Parallel compile and the engine's iteration settings (ZenithEngineConfig.cmake).
+zenith_configure_game_module({{PROJECT_IDENTIFIER}})
 if(MSVC)
     target_compile_options({{PROJECT_IDENTIFIER}} PRIVATE /W4 /permissive-)
 else()

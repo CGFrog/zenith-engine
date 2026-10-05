@@ -226,13 +226,28 @@ and each reload's phases in the Game Module ones.
 
 Debug, seconds:
 
-| Measure | Baseline (configure on every build, Visual Studio generator, no module PCH) |
-| --- | --- |
-| First build | 25.30 |
-| Nothing changed | 1.17 |
-| One source edited | 5.75 |
-| Shared header edited | 19.89 |
-| Module load (shadow copy, register) | 0.16 |
+| Measure | Baseline | Module PCH |
+| --- | --- | --- |
+| First build | 25.30 | 10.26 |
+| Nothing changed | 1.17 | 1.20 |
+| One source edited | 5.75 | 2.61 |
+| Shared header edited | 19.89 | 2.67 |
+| Module load (shadow copy, register) | 0.16 | 0.11 |
+
+- **Baseline:** the build configures every time, uses the Visual Studio
+  generator, and has no module PCH.
+- **Module PCH:** `ZenithEngineConfig.cmake` gives `Zenith::Engine` these
+  usage requirements, so a project gets them the next time it configures,
+  with no edits:
+  - `INTERFACE_PRECOMPILE_HEADERS` set to
+    `src/engine/module/ZenithModulePch.hpp`, which holds the engine's
+    gameplay headers and the standard and third-party ones they use.
+    `-DZENITH_MODULE_PCH=OFF` turns it off, and every module source must
+    still build without it.
+  - `/DEBUG:FASTLINK` for Debug.
+
+  `zenith_configure_game_module(<target>)`, which the templates call, adds
+  parallel compilation under the Visual Studio generator.
 
 ## Game projects outside the repository
 

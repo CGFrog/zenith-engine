@@ -37,3 +37,34 @@ file(GLOB _zenith_engine_configurations "${CMAKE_CURRENT_LIST_DIR}/ZenithEngineT
 foreach(_zenith_engine_configuration IN LISTS _zenith_engine_configurations)
     include("${_zenith_engine_configuration}")
 endforeach()
+
+# Iteration speed for game modules, which the editor rebuilds and hot reloads
+# whenever gameplay code changes (docs/DEVELOPMENT.md, Game module iteration).
+#
+# The engine's gameplay headers, precompiled: a module never edits them, so
+# a gameplay source no longer parses EnTT, SDL, and the engine API itself.
+option(ZENITH_MODULE_PCH "Precompile the engine's gameplay headers for game modules" ON)
+if(ZENITH_MODULE_PCH)
+    set_property(TARGET Zenith::Engine PROPERTY
+        INTERFACE_PRECOMPILE_HEADERS "${ZENITH_ENGINE_SOURCE_DIR}/src/engine/module/ZenithModulePch.hpp")
+endif()
+# A Debug module links a small PDB that points into its objects' debug
+# information, which links faster and makes the editor's shadow copy cheaper.
+# Built from a variable: this file passes through file(GENERATE), which would
+# otherwise evaluate the expression for the engine instead of the module.
+if(MSVC)
+    set(_zenith_dollar "$")
+    set_property(TARGET Zenith::Engine PROPERTY
+        INTERFACE_LINK_OPTIONS "${_zenith_dollar}<${_zenith_dollar}<CONFIG:Debug>:/DEBUG:FASTLINK>")
+endif()
+
+# Builds target's sources in parallel under the Visual Studio generator,
+# which otherwise compiles one project's sources one at a time (Ninja always
+# runs them in parallel). A game project calls it for its module.
+function(zenith_configure_game_module target)
+    if(CMAKE_GENERATOR MATCHES "Visual Studio")
+        set_target_properties(${target} PROPERTIES
+            VS_GLOBAL_UseMultiToolTask "true"
+            VS_GLOBAL_EnforceProcessCountAcrossBuilds "true")
+    endif()
+endfunction()
