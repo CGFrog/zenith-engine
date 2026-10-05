@@ -390,7 +390,7 @@ Gaps the critical work left on purpose:
    - an asset picker popup plus drop targets on every asset-typed reflected field, replacing `drawReadOnlyText` (`ReflectedFieldEditor.cpp:476`);
    - make Mesh Renderer's mesh assignable;
    - a material asset (`.zmat`: a glTF material override or a new PBR material) with an inspector, backed by Critical #1.
-3. **Undo/duplicate/paste cost:**
+3. **Undo/duplicate/paste cost.** *Done:* operators declare an `OperatorScope` and the runner captures only that; Play captures nothing for history; copy and paste work on the selected subtrees and create copies in place (a group duplicate on a 5,000-entity scene went from 585 ms to 3 ms). Some prefab, collection and module operators still capture the whole scene. The original list:
    - operators declare the entities they touch and use `captureEntities`;
    - `SceneFragment` copies and pastes only the selection, with no `replaceWith` (`SceneFragment.cpp:72-76,160-206`, `OperatorRunner.cpp:76-99`);
    - skip capture in Play.
@@ -405,12 +405,12 @@ Gaps the critical work left on purpose:
    - nav bake settings UI and menu entries;
    - overlay toggles (physics, nav, crowd, contacts) that also work in Play, through `PhysicsWorld::drawDebug` and `NavigationWorld::drawDebug`.
 6. **Animator inspector.** Edit states, transitions, parameters and events through reflected lists, not a node graph, with a "preview state" button (`AnimationComponentTypes.cpp:216`).
-7. **Outliner scale and search:**
+7. **Outliner scale and search.** *Done:* cached, clipped rows (an unchanged frame takes about 1.2 ms with 10,000 entities), `c:`/`t:`/`p:` filters with Select All Matching, saved sibling order with drag reordering, and collection rename. The original list:
    - `ImGuiListClipper` and incremental rebuild (`HierarchyPanel.cpp:164`);
    - filter by component and tag;
    - manual sibling order;
    - collection rename.
-8. **Assets:**
+8. **Assets.** *Done:* import by OS drop and dialog, texture import settings, texture and audio reload, Find References with a delete guard, and definition tables as data assets with module-registered schemas; thumbnails were done with item 2, and the mesh row with `object.mesh_assign`. The original list:
    - OS drag-and-drop import;
    - import-settings panel;
    - texture and audio reload;
