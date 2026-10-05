@@ -109,13 +109,21 @@ bool EditorSession::completeOpen(ApplicationContext& context, const std::filesys
 }
 
 bool EditorSession::completeSaveAs(ApplicationContext& context, const std::filesystem::path& path) {
-    if (const SceneDocumentResult result = m_document.saveAs(path, context.scene, context.assets); !result) {
+    const SceneDocumentResult result = m_document.saveAs(path, context.scene, context.assets);
+    if (!result) {
         m_diagnostics.reportError(result.error);
         return false;
     }
+    reportSaveWarnings(result);
     m_history.crossBoundary(CommandHistoryBoundary::SaveDocument);
     onDocumentPathCommitted();
     return true;
+}
+
+void EditorSession::reportSaveWarnings(const SceneDocumentResult& result) {
+    for (const std::string& warning : result.warnings) {
+        m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Editor", warning);
+    }
 }
 
 void EditorSession::onDocumentPathCommitted() {
@@ -267,10 +275,12 @@ bool EditorSession::saveDocument(ApplicationContext& context) {
         requestFileDialog(FileDialogKind::Save);
         return false;
     }
-    if (const SceneDocumentResult result = m_document.save(context.scene, context.assets); !result) {
+    const SceneDocumentResult result = m_document.save(context.scene, context.assets);
+    if (!result) {
         m_diagnostics.reportError("Save failed: " + result.error);
         return false;
     }
+    reportSaveWarnings(result);
     m_history.crossBoundary(CommandHistoryBoundary::SaveDocument);
     std::string recoveryError;
     if (!m_recovery.discard(recoveryError)) {

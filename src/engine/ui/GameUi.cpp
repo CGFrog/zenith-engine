@@ -95,6 +95,12 @@ void GameUiContext::text(glm::vec2 position, std::string value, float size, glm:
                                                    size * m_scale * m_accessibility.textScale, color}});
 }
 
+void GameUiContext::pixelText(glm::vec2 position, std::string value, float size, glm::vec4 color, int32_t drawOrder) {
+    m_commands.push_back(
+        {.drawOrder = drawOrder,
+         .payload = UiTextCommand{position, std::move(value), FontHandle{}, size * m_accessibility.textScale, color}});
+}
+
 void GameUiContext::image(UiRect rect, TextureHandle texture, glm::vec4 tint, UiAnchor anchor, int32_t drawOrder,
                           std::optional<UiRect> clip) {
     if (clip) {

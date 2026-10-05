@@ -37,6 +37,7 @@ endif()
 # the demo gameplay linked in for runs without one), the project-agnostic
 # ProjectApplication, and the demo's menus, settings, audio, and scenes.
 add_library(zenith_demo STATIC
+    application/DebugLabelOverlay.cpp
     application/DemoApplication.cpp
     application/GameLaunch.cpp
     application/GameSettings.cpp

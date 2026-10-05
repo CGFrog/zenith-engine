@@ -9,14 +9,20 @@
 // the engine exports. It uses every editor extension point.
 
 #include "editor/modules/EditorModuleApi.hpp"
+#include "engine/gameplay/Random.hpp"
+#include "engine/graphics/DebugDraw.hpp"
 #include "engine/module/ModuleApi.hpp"
 #include "engine/module/ModuleRegistrar.hpp"
+#include "engine/scene/ComponentTypes.hpp"
+#include "engine/scene/Prefab.hpp"
 #include "engine/scene/Scene.hpp"
 #include "engine/ui/GameUi.hpp"
 
 #include <imgui.h>
 
+#include <cmath>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -43,6 +49,8 @@ struct EditorTestCounter {
     // services. Optional, so documents written before them still load.
     int32_t loggerSeen{0};
     int32_t servicesSeen{0};
+    // Update runs (in any mode) that had debug drawing. Optional.
+    int32_t debugDrawSeen{0};
 };
 
 // A behaviour: each Play update adds playIncrement to turns, and onStart
@@ -76,6 +84,56 @@ void throwOnFaultTrigger(const Scene& scene) {
         }
     }
 }
+
+// The "generate a preview for a seed" workflow (docs/EDITOR_EXTENSIONS.md):
+// clears the previous preview, then builds a transient root with count
+// children placed and valued by the seed's random stream, each with a
+// counter, and outlines them in a persistent debug draw channel.
+constexpr const char* previewChannel = "editor_test.preview";
+
+EditorModuleResult generatePreview(EditorModuleContext& context) {
+    const EditorModuleProperties& properties = context.properties;
+    const int32_t count = properties.getInt("count");
+    if (count < 0) {
+        return {.error = "The preview needs a count of zero or more"};
+    }
+    // The module's component types reach edit mode through the prefab
+    // system's document options.
+    const std::shared_ptr<const ComponentTypeRegistry> types = context.services.prefabs.options().componentTypes;
+    const ComponentType* counterType = types != nullptr ? types->find("editor_test_counter") : nullptr;
+    if (counterType == nullptr || context.services.assetRoot.empty()) {
+        return {.error = "The edit services lack the module's component types or the asset root"};
+    }
+
+    context.scene.destroyTransient();
+    context.services.debugDraw.clearChannel(previewChannel);
+    context.services.random.reseed(static_cast<uint64_t>(properties.getInt("seed")));
+    RandomStream& layout = context.services.random.stream("layout");
+
+    const Entity root = context.scene.createEntity("Editor Test Preview");
+    context.scene.markTransient(root);
+    const float spacing = properties.getFloat("spacing");
+    const bool ring = properties.getString("layout") == "ring";
+    const DebugDrawRecorder outline = context.services.debugDraw.channel(previewChannel).persistent();
+    for (int32_t index = 0; index < count; ++index) {
+        const Entity child = context.scene.createEntity(properties.getString("prefix") + std::to_string(index));
+        context.scene.setParent(child, root);
+        const float offset = layout.range(-1.0f, 1.0f);
+        const glm::vec3 position = ring ? glm::vec3(std::cos(static_cast<float>(index)) * spacing, offset,
+                                                    std::sin(static_cast<float>(index)) * spacing)
+                                        : glm::vec3(static_cast<float>(index) * spacing, offset, 0.0f);
+        context.scene.setPosition(child, position);
+        counterType->addDefault(context.scene, child);
+        context.scene.registry().get<EditorTestCounter>(child).value = layout.range(0, 999);
+        outline.aabb(position - glm::vec3(0.4f), position + glm::vec3(0.4f), {.color = {0.3f, 0.9f, 0.4f, 1.0f}});
+        if (properties.getBool("labels")) {
+            outline.label(position, "room " + std::to_string(index));
+        }
+    }
+    // Written back, so Adjust Last Operation shows what was built.
+    context.properties.set("spawned", count);
+    return {.success = true};
+}
 } // namespace
 
 ZENITH_GAME_MODULE("zenith_editor_test_game", moduleVersion);
@@ -92,6 +150,8 @@ void zenith_module_register(ModuleRegistrar& registrar) {
                                                .add("logger_seen", &EditorTestCounter::loggerSeen)
                                                .optional()
                                                .add("services_seen", &EditorTestCounter::servicesSeen)
+                                               .optional()
+                                               .add("debug_draw_seen", &EditorTestCounter::debugDrawSeen)
                                                .optional())
                                    .build());
     registrar.addBehaviour<EditorTestSpinner>(
@@ -123,6 +183,7 @@ void zenith_module_register(ModuleRegistrar& registrar) {
                              forEachCounter(context.scene, [&context](EditorTestCounter& counter) {
                                  counter.loggerSeen += context.logger != nullptr ? 1 : 0;
                                  counter.servicesSeen += context.services != nullptr ? 1 : 0;
+                                 counter.debugDrawSeen += context.debugDraw != nullptr ? 1 : 0;
                              });
                          }});
     // The game's HUD: the counter's value.
@@ -166,7 +227,35 @@ ZENITH_EDITOR_MODULE_REGISTER {
     registrar.addOperator({.id = "editor_test.add_counter", .label = "Duplicate", .execute = [](EditorModuleContext&) {
                                return EditorModuleResult{.success = true};
                            }});
-    registrar.addPanel({.title = "Test Counters", .draw = [](EditorModulePanelContext&) {}});
+    // Builds a transient preview from a seed; its properties appear in
+    // Adjust Last Operation, which runs it again with new values.
+    registrar.addOperator(
+        {.id = "editor_test.generate_preview",
+         .label = "Generate Test Preview",
+         .description = "Build a generated preview of test rooms for a seed",
+         .execute = generatePreview,
+         .properties = {{.key = "seed", .description = "Random seed", .defaultValue = int32_t{1}},
+                        {.key = "count", .defaultValue = int32_t{3}, .minimum = 0.0, .maximum = 64.0},
+                        {.key = "spacing", .defaultValue = 2.0f},
+                        {.key = "labels", .defaultValue = true},
+                        {.key = "layout", .defaultValue = std::string("row"), .options = {"row", "ring"}},
+                        {.key = "prefix", .defaultValue = std::string("Room ")},
+                        {.key = "spawned", .label = "Spawned", .defaultValue = int32_t{0}}}});
+    // Rejected: two properties share a key.
+    registrar.addOperator({.id = "editor_test.bad_properties",
+                           .label = "Bad Properties",
+                           .execute = [](EditorModuleContext&) { return EditorModuleResult{.success = true}; },
+                           .properties = {{.key = "seed"}, {.key = "seed"}}});
+    // Draws in edit mode from a panel button, through the panel's debug draw
+    // and the operator overload taking values.
+    registrar.addPanel({.title = "Test Counters", .draw = [](EditorModulePanelContext& context) {
+                            context.debugDraw.channel("editor_test.panel").line({0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+                            if (ImGui::Button("Generate Seed 7")) {
+                                EditorModuleProperties values;
+                                values.set("seed", int32_t{7});
+                                context.invokeOperator("editor_test.generate_preview", values);
+                            }
+                        }});
     registrar.addSidebarTab({.title = "Test Tab", .draw = [](EditorModulePanelContext& context) {
                                  ImGui::Text("Editor test sidebar tab: %zu selected", context.selection.size());
                              }});

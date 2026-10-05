@@ -136,6 +136,7 @@ add_library(zenith_editor_app STATIC
     smoke/ComponentSmokeStep.cpp
     smoke/CursorSmokeStep.cpp
     smoke/EditorSmokeScenario.cpp
+    smoke/GeneratedPreviewSmokeStep.cpp
     smoke/HideSmokeStep.cpp
     smoke/LiveEditSmokeStep.cpp
     smoke/MenuSmokeStep.cpp

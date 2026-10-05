@@ -603,6 +603,23 @@ void drawOverlaysMenu(ViewportOverlays& overlays) {
     ImGui::SetItemTooltip("Draw the scene overlays while playing, except through a scene camera");
 }
 
+void drawDebugDrawChannelsMenu(DebugDraw& debugDraw) {
+    std::vector<DebugDrawChannelInfo> channels = debugDraw.channels();
+    // A hidden channel stays listed so it can be shown again.
+    std::erase_if(channels, [](const DebugDrawChannelInfo& channel) { return !channel.active && channel.visible; });
+    if (channels.empty()) {
+        return;
+    }
+    ImGui::SeparatorText("Debug Draw");
+    for (const DebugDrawChannelInfo& channel : channels) {
+        bool visible = channel.visible;
+        if (ImGui::MenuItem(channel.name.c_str(), nullptr, &visible)) {
+            debugDraw.setChannelVisible(channel.name, visible);
+        }
+        ImGui::SetItemTooltip("A debug draw channel of the game or its editor tools; hiding it hides it in every view");
+    }
+}
+
 void drawGizmosMenu(TransformToolSettings& tools) {
     if (ImGui::MenuItem("Global", nullptr, tools.space == TransformSpace::Global)) {
         tools.space = TransformSpace::Global;

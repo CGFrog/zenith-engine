@@ -311,6 +311,9 @@ class EditorSession final : public ApplicationScene,
     bool completeOpen(ApplicationContext& context, const std::filesystem::path& path);
     bool completeSaveAs(ApplicationContext& context, const std::filesystem::path& path);
     void onDocumentPathCommitted();
+    // Lists a save's warnings (references to generated entities saved as
+    // none) in the Info log.
+    void reportSaveWarnings(const SceneDocumentResult& result);
     void finishPendingAction(ApplicationContext& context);
 
     // Play targets, entering and leaving Play mode, game views, the

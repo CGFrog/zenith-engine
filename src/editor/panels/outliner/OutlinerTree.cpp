@@ -50,7 +50,8 @@ OutlinerNode entityLeaf(const Scene& scene, Entity entity, uint64_t scope) {
     return {.kind = OutlinerNodeKind::Entity,
             .label = entityLabel(scene, entity),
             .entity = scene.id(entity),
-            .scope = scope};
+            .scope = scope,
+            .transient = scene.isTransient(entity)};
 }
 
 // entity and its descendants, in the scene's child order.

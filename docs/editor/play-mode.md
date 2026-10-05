@@ -78,7 +78,10 @@ document to the recovery file before the process ends
 
 - **Debug draw.** Gameplay `DebugDraw` (`GameServices`) lines and labels show
   in every view, game views included; editor gizmos and their labels only
-  where `viewportDrawsSceneGizmos` allows.
+  where `viewportDrawsSceneGizmos` allows. Timed and persistent primitives
+  outlive their frame, and the Overlays menu's **Debug Draw** section hides
+  named channels ([Viewports](viewport.md)). Transient preview entities
+  built in Edit mode do not enter Play ([Scene editing](scene-editing.md)).
 - **Watched fields.** A reflected field's context menu (right click) has
   **Watch Field** (`debug.watch_field {entity, component, field, label}`,
   `operators/DebugOperators`), which adds it to the session's

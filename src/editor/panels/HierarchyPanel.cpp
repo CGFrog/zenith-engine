@@ -256,14 +256,20 @@ bool HierarchyPanel::treeRow(ImGuiID id, const OutlinerNode& node, ImGuiTreeNode
     } else if (m_setAllOpen) {
         ImGui::SetNextItemOpen(*m_setAllOpen);
     }
-    if (node.filterContext) {
+    // Context rows of a search and generated entities are dimmed.
+    const bool muted = node.filterContext || node.transient;
+    if (muted) {
         ImGui::PushStyleColor(ImGuiCol_Text, widgets::color(palette::inkMuted));
     }
     // The label starts with room for the row's icon.
     const std::string label = std::string(widgets::IconLabelPadding()) + node.label;
     const bool open = ImGui::TreeNodeBehavior(id, flags, label.c_str(), label.c_str() + label.size());
-    if (node.filterContext) {
+    if (muted) {
         ImGui::PopStyleColor();
+    }
+    if (node.transient) {
+        ImGui::SetItemTooltip("Generated, not saved: a preview a generator built, left out of saves, undo, "
+                              "copies, and Play");
     }
     return open;
 }

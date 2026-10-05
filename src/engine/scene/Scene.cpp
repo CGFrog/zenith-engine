@@ -253,6 +253,57 @@ void Scene::destroyEntity(Entity entity) {
     ++m_renderPacketRevision;
 }
 
+void Scene::markTransient(Entity entity) {
+    if (m_registry.valid(entity)) {
+        m_registry.emplace_or_replace<TransientComponent>(entity);
+    }
+}
+
+bool Scene::isTransient(Entity entity) const {
+    if (m_registry.view<const TransientComponent>().empty()) {
+        return false;
+    }
+    for (Entity current = entity; m_registry.valid(current);) {
+        if (m_registry.all_of<TransientComponent>(current)) {
+            return true;
+        }
+        const auto* relationship = m_registry.try_get<RelationshipComponent>(current);
+        current = relationship != nullptr ? relationship->parent : Entity{entt::null};
+    }
+    return false;
+}
+
+std::vector<Entity> Scene::transientEntities() const {
+    std::vector<Entity> entities;
+    const auto tagged = m_registry.view<const TransientComponent>();
+    for (const Entity root : tagged) {
+        // A tagged entity under a tagged ancestor is listed with that subtree.
+        const auto* relationship = m_registry.try_get<RelationshipComponent>(root);
+        if (relationship != nullptr && isTransient(relationship->parent)) {
+            continue;
+        }
+        const size_t first = entities.size();
+        entities.push_back(root);
+        for (size_t index = first; index < entities.size(); ++index) {
+            if (const auto* node = m_registry.try_get<RelationshipComponent>(entities[index])) {
+                entities.insert(entities.end(), node->children.begin(), node->children.end());
+            }
+        }
+    }
+    return entities;
+}
+
+size_t Scene::destroyTransient() {
+    const std::vector<Entity> entities = transientEntities();
+    // Destroying a subtree root destroys its descendants with it.
+    for (const Entity entity : entities) {
+        if (m_registry.valid(entity) && m_registry.all_of<TransientComponent>(entity)) {
+            destroyEntity(entity);
+        }
+    }
+    return entities.size();
+}
+
 void Scene::clear() {
     m_registry.clear();
     m_nextEntityId = 1;
@@ -587,6 +638,10 @@ Entity Scene::cloneBranch(Entity source, Entity parent, bool appendCopySuffix) {
     copy.operator()<CollectionMembershipComponent>();
     copy.operator()<CollectionInstanceComponent>();
     copy.operator()<VisibilityComponent>();
+    // A tag type has no value to copy.
+    if (m_registry.all_of<TransientComponent>(source)) {
+        m_registry.emplace<TransientComponent>(duplicate);
+    }
 
     reparent(duplicate, parent);
     const std::vector<Entity> children = m_registry.get<RelationshipComponent>(source).children;

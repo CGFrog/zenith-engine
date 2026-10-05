@@ -310,6 +310,7 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     }
     m_moduleHost.setSimulateMask(std::move(simulateMask));
     m_moduleHost.setLogger(context.logger);
+    m_moduleHost.setDebugDraw(context.rendering.debugDraw());
     // A previous project's bodies may still be in the world.
     context.physics.clear();
     if (const PhysicsResult result = context.physics.setLayers(m_physicsLayers); !result) {

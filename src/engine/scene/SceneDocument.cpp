@@ -2,6 +2,7 @@
 
 #include "../assets/Assets.hpp"
 #include "ComponentTypes.hpp"
+#include "EntityReferenceRemap.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
 #include <nlohmann/json.hpp>
@@ -244,6 +245,35 @@ SceneDocumentResult serializeEntity(const Scene& scene, Entity entity, const Ass
     return {.success = true};
 }
 
+// The stable ids of the scene's transient entities; empty when there are none.
+std::unordered_set<uint64_t> transientEntityIds(const Scene& scene) {
+    std::unordered_set<uint64_t> ids;
+    for (const Entity entity : scene.transientEntities()) {
+        ids.insert(scene.id(entity).value);
+    }
+    return ids;
+}
+
+// Writes the nullable references a serialized entity holds to transient
+// entities as none, reporting each to warnings when given. Non-nullable
+// references (instance roots) cannot point outside their transient subtree.
+void dropTransientReferences(Json& entity, const ComponentTypeRegistry& types,
+                             const std::unordered_set<uint64_t>& transient, std::vector<std::string>* warnings) {
+    const uint64_t id = entity.at("id").get<uint64_t>();
+    remapEntityReferences(
+        entity["components"], types, [&](uint64_t target, const EntityReferenceSite& site) -> std::optional<uint64_t> {
+            if (!site.nullable || !transient.contains(target)) {
+                return std::nullopt;
+            }
+            if (warnings != nullptr) {
+                warnings->push_back("Entity " + std::to_string(id) + " " + std::string(site.component) +
+                                    std::string(site.field) + " referred to generated entity " +
+                                    std::to_string(target) + ", which is not saved; it was saved as none");
+            }
+            return uint64_t{0};
+        });
+}
+
 SceneDocumentResult deserializeComponents(const Json& components, Entity entity, AssetManager& assets,
                                           const SceneDocumentOptions& options, Scene& scene) {
     if (!components.is_object()) {
@@ -398,7 +428,9 @@ SceneDocumentResult validateHierarchy(const PatchPlan& plan, const Scene& scene)
         }
         for (const Entity child : scene.registry().get<RelationshipComponent>(found->second).children) {
             const uint64_t childId = scene.id(child).value;
-            if (!plan.removals.contains(childId) && !plan.upsertIndices.contains(childId)) {
+            // Documents never list transient children; they go with the parent.
+            if (!plan.removals.contains(childId) && !plan.upsertIndices.contains(childId) &&
+                !scene.isTransient(child)) {
                 return {.error = "Removing entity " + std::to_string(removed) + " would also remove unchanged child " +
                                  std::to_string(childId)};
             }
@@ -565,15 +597,23 @@ SceneDocumentResult SceneDocument::serialize(const Scene& scene, const AssetMana
     entities.assign(view.begin(), view.end());
     std::ranges::sort(entities, {}, [&scene](Entity entity) { return scene.id(entity).value; });
 
+    const std::unordered_set<uint64_t> transient = transientEntityIds(scene);
+    std::vector<std::string> warnings;
     for (Entity entity : entities) {
+        if (transient.contains(scene.id(entity).value)) {
+            continue;
+        }
         Json serialized;
         if (SceneDocumentResult result = serializeEntity(scene, entity, assets, options, serialized); !result) {
             return result;
         }
+        if (!transient.empty()) {
+            dropTransientReferences(serialized, componentTypesFor(options), transient, &warnings);
+        }
         document["entities"].push_back(std::move(serialized));
     }
     output = document.dump(2) + '\n';
-    return {.success = true};
+    return {.success = true, .warnings = std::move(warnings)};
 }
 
 SceneDocumentResult SceneDocument::deserialize(std::string_view input, AssetManager& assets,
@@ -699,8 +739,9 @@ SceneDocumentResult SceneDocument::commit(const ParsedSceneDocument& parsed, Ass
 SceneDocumentResult SceneDocument::save(const std::filesystem::path& path, const Scene& scene,
                                         const AssetManager& assets, const SceneDocumentOptions& options) {
     std::string serialized;
-    if (SceneDocumentResult result = serialize(scene, assets, options, serialized); !result) {
-        return result;
+    SceneDocumentResult serializedResult = serialize(scene, assets, options, serialized);
+    if (!serializedResult) {
+        return serializedResult;
     }
 
     std::error_code error;
@@ -725,7 +766,7 @@ SceneDocumentResult SceneDocument::save(const std::filesystem::path& path, const
         std::filesystem::remove(temporary, error);
         return result;
     }
-    return {.success = true};
+    return {.success = true, .warnings = std::move(serializedResult.warnings)};
 }
 
 SceneDocumentResult SceneDocument::load(const std::filesystem::path& path, AssetManager& assets,
@@ -748,15 +789,19 @@ SceneDocumentResult SceneDocument::serializeEntities(const Scene& scene, const A
                                                      std::vector<std::optional<std::string>>& output) {
     std::vector<std::optional<std::string>> serialized;
     serialized.reserve(ids.size());
+    const std::unordered_set<uint64_t> transient = transientEntityIds(scene);
     for (const SceneEntityId id : ids) {
         const Entity entity = scene.findEntity(id);
-        if (entity == entt::null) {
+        if (entity == entt::null || transient.contains(id.value)) {
             serialized.emplace_back();
             continue;
         }
         Json json;
         if (SceneDocumentResult result = serializeEntity(scene, entity, assets, options, json); !result) {
             return result;
+        }
+        if (!transient.empty()) {
+            dropTransientReferences(json, componentTypesFor(options), transient, nullptr);
         }
         serialized.emplace_back(json.dump());
     }

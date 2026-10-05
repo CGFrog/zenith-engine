@@ -903,9 +903,13 @@ display-referred RGBA; each primitive is depth tested or drawn always on top.
 `RenderRuntime::debugDraw()` holds the primitives every view draws and
 `viewDebugDraw(view)` those of one view; there is no global instance.
 
-Lifetime is one frame: primitives recorded during update and UI building are
-drawn by the next `Renderer::drawFrame`, which clears every list when it
-returns, also when the frame is skipped. `DebugDrawPass` draws them as a
+Primitives recorded during update and UI building are drawn by the next
+`Renderer::drawFrame`, which ends every list's frame (`DebugDraw::endFrame`)
+when it returns, also when the frame is skipped. By default a primitive lasts
+that one frame; a recorder can give it a duration in wall-clock seconds or
+keep it until cleared, and file it in a named channel that is hidden or
+cleared as a group (the editor's viewport Overlays menu lists the channels).
+`DebugDrawPass` draws them as a
 LINE_LIST in every recorded view after the post chain (tone mapping, FSR,
 colour grade) and before the UI, into the view's display-referred output:
 
@@ -925,7 +929,10 @@ offscreen view to the UI comes from it. Labels are not rasterized by the
 engine: after recording, the renderer projects each view's labels with the
 camera it rendered (`projectDebugLabels`) and publishes them through
 `viewDebugLabels(view)` in view pixels for the editor or game UI to draw;
-labels behind the camera or outside the view are dropped.
+labels behind the camera or outside the view are dropped. The editor draws
+them over each viewport; `zenith --project` draws the default view's as game
+UI text (`src/game/application/DebugLabelOverlay`, through
+`GameUiContext::pixelText`), a frame after they were recorded.
 `tests/engine/DebugDrawTests.cpp` covers tessellation, projection, and the
 Jolt adapter on the CPU; `tests/engine/DebugDrawSmokeTests.cpp` draws in three
 views under strict validation and renders the `debug_draw` reference set.

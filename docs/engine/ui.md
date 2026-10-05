@@ -27,6 +27,10 @@ the renderer and the editor's game-view overlay draw them unchanged:
 - `progressBar(rect, fraction)`: a background filled to the clamped fraction.
 - `UiLayout::column`/`row` hand out consecutive rects with spacing, in design
   units before anchoring.
+- `pixelText(position, text, size)`: text at a viewport pixel position and
+  pixel size, outside the design canvas, for overlays that follow projected
+  world points (the game's debug labels); the accessibility text scale still
+  applies.
 
 Font files are cached as CPU assets through `AssetManager::loadFont`, while UI
 images reuse normal `TextureHandle` values and the renderer's texture cache.

@@ -13,6 +13,7 @@
 #include <vector>
 
 class BehaviourRegistry;
+class DebugDraw;
 class GameServices;
 class GameUiContext;
 class InputActionState;
@@ -88,6 +89,9 @@ std::string_view systemPhaseName(SystemPhase phase);
 // - ui is set only in the Ui phase.
 // - behaviours is the gameplay's behaviour types, which the engine's
 //   behaviour systems run; null when the host has none.
+// - debugDraw is the host's debug drawing (the same as
+//   GameServices::debugDraw in a gameplay session), set in every mode, so
+//   Edit systems can draw previews too; null only for a host without one.
 struct SystemContext {
     Scene& scene;
     ApplicationContext* application{nullptr};
@@ -107,6 +111,8 @@ struct SystemContext {
     const InputActionState* actions{nullptr};
     GameUiContext* ui{nullptr};
     const BehaviourRegistry* behaviours{nullptr};
+    // Appended last, so modules reading the members before it are unaffected.
+    DebugDraw* debugDraw{nullptr};
 };
 
 // A named per-frame callback over a scene, usually registered by a game

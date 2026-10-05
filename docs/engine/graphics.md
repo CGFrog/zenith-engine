@@ -60,7 +60,24 @@ Renderer-independent immediate-mode recording of debug lines, wire shapes
 (arrow, AABB and oriented box, sphere, circle, frustum, cone, capsule) and
 text labels, plus `frustumCorners` and the label projection
 (`projectDebugPoint`, `projectDebugLabels`). No graphics types, so physics and
-gameplay can record into it. `tests/engine/DebugDrawTests.cpp` covers it.
+gameplay can record into it.
+
+Lifetimes and channels: `DebugDraw`'s own shape functions record one-frame
+primitives into the default channel, unchanged from before. A
+`DebugDrawRecorder` records into a named channel (`channel("gen.rooms")`),
+for a duration (`forSeconds(2.0f)`, drawn in at least one frame), or until
+cleared (`persistent()`), and they combine:
+`debugDraw.channel("gen.rooms").persistent().aabb(...)`. Channels can be
+hidden (`setChannelVisible`, kept but not drawn; one-frame shapes recorded
+into a hidden channel are dropped) and cleared as a group (`clearChannel`);
+`channels()` lists the named ones with whether they are active.
+`endFrame(elapsedSeconds)` ends a frame: the renderer calls it after every
+frame with the wall-clock time since the previous one
+(`RendererOptions::fixedFrameSeconds` when set), so durations are real time
+and also elapse while the game is paused and in the editor's Edit mode.
+`lineVertices`, `lineCount`, and `labels` return what is visible now, composed
+from every lifetime of every visible channel. `tests/engine/DebugDrawTests.cpp`
+covers it.
 
 ## `src/engine/graphics/passes/DebugDrawPass.*`
 
