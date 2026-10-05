@@ -54,6 +54,9 @@ std::unique_ptr<SmokeStep> makeOutlinerSmokeStep();
 std::unique_ptr<SmokeStep> makePickingSmokeStep();
 // An Empty spawns at the 3D cursor placed in the viewport.
 std::unique_ptr<SmokeStep> makeCursorSmokeStep();
+// A transient preview and a persistent debug draw channel, whose label the
+// active viewport projects until the channel is hidden.
+std::unique_ptr<SmokeStep> makeGeneratedPreviewSmokeStep();
 // The Shading pie through wm.call_pie.
 std::unique_ptr<SmokeStep> makePieMenuSmokeStep();
 // Play in the active viewport, then the standalone game when it is built.

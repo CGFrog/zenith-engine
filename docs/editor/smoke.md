@@ -37,6 +37,12 @@ The scenario is a list of steps in `src/editor/smoke/`:
   console shows, and to diagnostics) and requests an invalid scene, so the
   editor exits with an error.
 
+The `generated preview` step (`GeneratedPreviewSmokeStep.cpp`) builds a
+transient entity in front of the active viewport and checks that the scene
+document leaves it out, that the viewport keeps projecting a label from a
+persistent debug draw channel for frames after it was recorded, and that
+hiding the channel removes the label.
+
 ## Adding a step
 
 1. Write the step in its own file under `src/editor/smoke/` (or beside the

@@ -32,6 +32,7 @@ EditorSmokeScenario buildEditorSmokeScenario(ApplicationContext& app, const Scen
     runner->add(makeOutlinerSmokeStep());
     runner->add(makePickingSmokeStep());
     runner->add(makeCursorSmokeStep());
+    runner->add(makeGeneratedPreviewSmokeStep());
     runner->add(makePieMenuSmokeStep());
     runner->add(makePlayTargetSmokeStep());
     runner->add(makeLiveEditSmokeStep());
