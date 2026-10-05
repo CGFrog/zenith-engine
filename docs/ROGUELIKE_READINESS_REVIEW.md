@@ -386,7 +386,7 @@ Gaps the critical work left on purpose:
    - connector gizmos (Part 3 #2).
 
    Do this before authoring room content (`src/editor/document/PrefabAuthoring.*`, a new document context, not more `EditorSession` members).
-2. **Asset fields and materials:**
+2. **Asset fields and materials.** *Done:* asset fields use a picker and drop target (`interaction/AssetReferenceField`), models are replaced with `object.model_replace`, and `.zmat` material assets are applied through `MaterialOverrideComponent::material_asset`. The original list:
    - an asset picker popup plus drop targets on every asset-typed reflected field, replacing `drawReadOnlyText` (`ReflectedFieldEditor.cpp:476`);
    - make Mesh Renderer's mesh assignable;
    - a material asset (`.zmat`: a glTF material override or a new PBR material) with an inspector, backed by Critical #1.
@@ -394,13 +394,13 @@ Gaps the critical work left on purpose:
    - operators declare the entities they touch and use `captureEntities`;
    - `SceneFragment` copies and pastes only the selection, with no `replaceWith` (`SceneFragment.cpp:72-76,160-206`, `OperatorRunner.cpp:76-99`);
    - skip capture in Play.
-4. **Placement:**
+4. **Placement.** *Done:* the gizmo moves whole selections, drops land under the mouse with align-to-normal, the Add menu is complete, mesh-less objects can be picked, and there are select hierarchy/grouped, array and scatter operators. Not built: the drag ghost. The original list:
    - multi-selection gizmo (`ViewportPanel.cpp:1052`);
    - drop under the mouse with surface snap and align-to-normal;
    - full Add menu (point, spot, camera, audio emitter, prefab);
    - select children and select similar;
    - an array/scatter operator.
-5. **Collision and navigation:**
+5. **Collision and navigation.** *Done:* colliders switch shape and take an offset, with resize handles; navmesh settings live in Project Settings and the game uses them too; Play overlays show physics shapes, contacts, characters, nav agents and the game's navmesh. The original list:
    - collider shape-type switch, offset, and drag handles;
    - nav bake settings UI and menu entries;
    - overlay toggles (physics, nav, crowd, contacts) that also work in Play, through `PhysicsWorld::drawDebug` and `NavigationWorld::drawDebug`.
