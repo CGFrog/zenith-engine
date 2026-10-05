@@ -3,6 +3,7 @@
 #include "editor/document/CommandHistory.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <span>
@@ -43,9 +44,36 @@ class SceneEditing {
     struct EntitySnapshot {
         std::vector<SceneEntityId> ids;
         std::vector<std::optional<std::string>> entities;
+        // The collection definitions (SceneDocument::serializeCollections),
+        // when the edit may change them.
+        std::optional<std::string> collections;
         // Entities the edit creates have this id or a higher one.
         SceneEntityId firstNewId;
+        // Entities in the scene, and how many of ids name one, when captured.
         size_t entityCount{0};
+        size_t existingCount{0};
+    };
+
+    // Which relatives of the listed entities a capture includes too. Each
+    // listed entity's parent is always included: its document form holds
+    // its children's order, which an edit that removes, moves, or adds a
+    // child changes. An edit that adds a child under an entity therefore
+    // lists that entity (or one of its children).
+    enum class CaptureReach : uint8_t {
+        // Only the listed entities (and their parents).
+        Entities,
+        // Their whole subtrees: an edit that destroys, unlinks, or rebuilds
+        // them.
+        Subtrees,
+        // Their subtrees and ancestors: deleting or moving a prefab
+        // instance's entity also records the removal on the instance root.
+        SubtreesAndAncestors,
+    };
+
+    // Whether a capture includes the collection definitions.
+    enum class CaptureCollections : uint8_t {
+        Exclude,
+        Include,
     };
 
     // editScene is null in Edit mode; otherwise scene is the runtime scene and
@@ -81,6 +109,15 @@ class SceneEditing {
     // create entities, but must not change or destroy any it does not list,
     // nor collection definitions. Returns false after reporting.
     bool captureEntities(std::span<const Entity> entities, EntitySnapshot& snapshot) const;
+    // The same by stable id, adding the relatives reach names and, when
+    // collections is Include, the collection definitions (which the edit may
+    // then change). Ids no entity has are captured as absent. An empty list
+    // captures an edit that only creates entities at the top level.
+    bool captureEntities(std::span<const SceneEntityId> ids, CaptureReach reach, CaptureCollections collections,
+                         EntitySnapshot& snapshot) const;
+    // ids with the relatives reach names, each once, in a stable order.
+    static std::vector<SceneEntityId> withRelatives(const Scene& scene, std::span<const SceneEntityId> ids,
+                                                    CaptureReach reach);
     // Records the change since before as one command. Edits sharing a
     // non-empty coalesceKey (for example a continuous drag) merge into one
     // undo step. A change that left the scene unchanged records nothing.
@@ -101,6 +138,23 @@ class SceneEditing {
     // entities and the ones the edit created are serialized again. An edit
     // that changed other entities is reported, and only those are recorded.
     void commit(std::string name, std::string coalesceKey, EntitySnapshot before) const;
+    // The changes since before (captureEntities) without recording them:
+    // the listed entities, the ones the edit created, and the collection
+    // definitions when captured. after, when given, receives the same
+    // entities' current form for a later unchangedSince. Returns false after
+    // reporting a failure; an edit that destroyed entities it did not capture
+    // is reported, and only what was captured is in changes.
+    bool changesSince(std::string_view name, EntitySnapshot before, SceneChanges& changes,
+                      EntitySnapshot* after = nullptr) const;
+    // Whether the entities and collections in snapshot (an after side from
+    // changesSince) still have that form and no entity was created since.
+    bool unchangedSince(const EntitySnapshot& snapshot) const;
+    // Records changes the scene already shows as one command (built by
+    // makeStep when given, even when changes is empty), or in the runtime
+    // scene only marks them for the renderer and physics
+    // (markRuntimeChanges).
+    void record(std::string name, std::string coalesceKey, SceneChanges changes,
+                const EditorCommandFactory& makeStep = {}) const;
     // Captures, runs mutation, and commits when it succeeds.
     void perform(std::string name, std::string coalesceKey, const std::function<SceneResult()>& mutation) const;
     // Records changes, whose before side must be the edit scene's current
@@ -125,11 +179,6 @@ class SceneEditing {
     EditorCommandContext commandContext() const;
 
   private:
-    // Records changes the scene already shows as one command (built by
-    // makeStep when given), or in the runtime scene marks them
-    // (markRuntimeChanges).
-    void record(std::string name, std::string coalesceKey, SceneChanges changes,
-                const EditorCommandFactory& makeStep = {}) const;
     // After a runtime edit: tells the scene's renderer, physics, and
     // transform caches what changed, as a recorded edit's
     // SceneDocument::applyChanges would, without rebuilding entities.

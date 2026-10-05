@@ -5,6 +5,8 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <optional>
+#include <vector>
 
 std::string OperatorProperties::applyJson(std::string_view json) {
     if (json.empty()) {
@@ -43,4 +45,27 @@ std::string OperatorProperties::toJson() const {
         writeReflectedFields(object(), fields(), output);
     }
     return output.dump();
+}
+
+OperatorScopeFunction selectionScope(SceneEditing::CaptureReach reach, SceneEditing::CaptureCollections collections) {
+    return [reach, collections](const OperatorContext& context, const OperatorProperties&) {
+        return OperatorScope::of(context.selection.ids(), reach, collections);
+    };
+}
+
+OperatorScopeFunction activeEntityScope() {
+    return [](const OperatorContext& context, const OperatorProperties&) {
+        const std::optional<SceneEntityId> active = context.selection.active();
+        return OperatorScope::of(active ? std::vector<SceneEntityId>{*active} : std::vector<SceneEntityId>{});
+    };
+}
+
+OperatorScopeFunction newEntitiesScope() {
+    return [](const OperatorContext&, const OperatorProperties&) { return OperatorScope::newEntities(); };
+}
+
+OperatorScopeFunction collectionsScope() {
+    return [](const OperatorContext&, const OperatorProperties&) {
+        return OperatorScope::of({}, SceneEditing::CaptureReach::Entities, SceneEditing::CaptureCollections::Include);
+    };
 }

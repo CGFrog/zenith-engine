@@ -6,7 +6,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <memory>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -49,11 +51,21 @@ bool SceneEditing::capture(std::string& snapshot) const {
 }
 
 bool SceneEditing::captureEntities(std::span<const Entity> entities, EntitySnapshot& snapshot) const {
-    EntitySnapshot captured{.firstNewId = m_scene.nextEntityId(),
-                            .entityCount = m_scene.registry().view<const SceneEntityIdComponent>().size()};
-    captured.ids.reserve(entities.size());
+    std::vector<SceneEntityId> ids;
+    ids.reserve(entities.size());
     for (const Entity entity : entities) {
-        captured.ids.push_back(m_scene.id(entity));
+        ids.push_back(m_scene.id(entity));
+    }
+    return captureEntities(ids, CaptureReach::Entities, CaptureCollections::Exclude, snapshot);
+}
+
+bool SceneEditing::captureEntities(std::span<const SceneEntityId> ids, CaptureReach reach,
+                                   CaptureCollections collections, EntitySnapshot& snapshot) const {
+    EntitySnapshot captured{.ids = withRelatives(m_scene, ids, reach),
+                            .firstNewId = m_scene.nextEntityId(),
+                            .entityCount = m_scene.registry().view<const SceneEntityIdComponent>().size()};
+    for (const SceneEntityId id : captured.ids) {
+        captured.existingCount += m_scene.findEntity(id) != entt::null ? 1 : 0;
     }
     if (const SceneDocumentResult result =
             SceneDocument::serializeEntities(m_scene, m_assets, m_document.options(), captured.ids, captured.entities);
@@ -61,8 +73,55 @@ bool SceneEditing::captureEntities(std::span<const Entity> entities, EntitySnaps
         m_diagnostics.reportError(result.error);
         return false;
     }
+    if (collections == CaptureCollections::Include) {
+        captured.collections.emplace();
+        SceneDocument::serializeCollections(m_scene, *captured.collections);
+    }
     snapshot = std::move(captured);
     return true;
+}
+
+std::vector<SceneEntityId> SceneEditing::withRelatives(const Scene& scene, std::span<const SceneEntityId> ids,
+                                                       CaptureReach reach) {
+    std::vector<SceneEntityId> result;
+    std::unordered_set<uint64_t> listed;
+    const auto add = [&](SceneEntityId id) {
+        if (id && listed.insert(id.value).second) {
+            result.push_back(id);
+        }
+    };
+    const entt::registry& registry = scene.registry();
+    for (const SceneEntityId id : ids) {
+        add(id);
+        const Entity entity = scene.findEntity(id);
+        if (entity == entt::null) {
+            continue;
+        }
+        // A parent's document form holds its children's order, which
+        // changes when a listed entity is removed, moved, or given a
+        // sibling.
+        if (const Entity parent = registry.get<RelationshipComponent>(entity).parent; parent != entt::null) {
+            add(scene.id(parent));
+        }
+        if (reach == CaptureReach::Entities) {
+            continue;
+        }
+        std::vector<Entity> pending(registry.get<RelationshipComponent>(entity).children);
+        while (!pending.empty()) {
+            const Entity child = pending.back();
+            pending.pop_back();
+            add(scene.id(child));
+            const auto& children = registry.get<RelationshipComponent>(child).children;
+            pending.insert(pending.end(), children.begin(), children.end());
+        }
+        if (reach == CaptureReach::SubtreesAndAncestors) {
+            for (Entity parent = registry.get<RelationshipComponent>(entity).parent; parent != entt::null;
+                 parent = registry.get<RelationshipComponent>(parent).parent) {
+                add(scene.id(parent));
+            }
+        }
+    }
+    return result;
 }
 
 void SceneEditing::commit(std::string name, std::string coalesceKey, std::string before) const {
@@ -102,6 +161,18 @@ void SceneEditing::commit(std::string name, std::string_view before, std::string
 }
 
 void SceneEditing::commit(std::string name, std::string coalesceKey, EntitySnapshot before) const {
+    SceneChanges changes;
+    if (changesSince(name, std::move(before), changes)) {
+        record(std::move(name), std::move(coalesceKey), std::move(changes));
+    }
+}
+
+bool SceneEditing::changesSince(std::string_view name, EntitySnapshot before, SceneChanges& changes,
+                                EntitySnapshot* after) const {
+    size_t stillExisting = 0;
+    for (const SceneEntityId id : before.ids) {
+        stillExisting += m_scene.findEntity(id) != entt::null ? 1 : 0;
+    }
     // Entities the edit created are new on the after side.
     size_t created = 0;
     if (m_scene.nextEntityId().value != before.firstNewId.value) {
@@ -113,28 +184,67 @@ void SceneEditing::commit(std::string name, std::string coalesceKey, EntitySnaps
             }
         }
     }
-    std::vector<std::optional<std::string>> after;
+    std::vector<std::optional<std::string>> current;
     if (const SceneDocumentResult result =
-            SceneDocument::serializeEntities(m_scene, m_assets, m_document.options(), before.ids, after);
+            SceneDocument::serializeEntities(m_scene, m_assets, m_document.options(), before.ids, current);
         !result) {
         m_diagnostics.reportError("Could not record editor command: " + result.error);
-        return;
+        return false;
     }
-    SceneChanges changes;
-    size_t destroyed = 0;
+    std::optional<std::string> collections;
+    if (before.collections) {
+        collections.emplace();
+        SceneDocument::serializeCollections(m_scene, *collections);
+    }
+    // Counted by entity rather than document form, so a captured entity's
+    // transient children (never serialized) count as captured when listed.
+    if (m_scene.registry().view<const SceneEntityIdComponent>().size() + before.existingCount !=
+        before.entityCount + created + stillExisting) {
+        m_diagnostics.reportError(std::string(name) +
+                                  " destroyed entities it did not capture; undo cannot bring them back");
+    }
+    if (after != nullptr) {
+        *after = EntitySnapshot{.ids = before.ids,
+                                .entities = current,
+                                .collections = collections,
+                                .firstNewId = m_scene.nextEntityId(),
+                                .entityCount = m_scene.registry().view<const SceneEntityIdComponent>().size(),
+                                .existingCount = stillExisting + created};
+    }
+    SceneChanges result;
     for (size_t index = 0; index < before.ids.size(); ++index) {
-        destroyed += before.entities[index] && !after[index] ? 1 : 0;
-        if (before.entities[index] != after[index]) {
-            changes.entities.push_back({.id = before.ids[index],
-                                        .before = std::move(before.entities[index]),
-                                        .after = std::move(after[index])});
+        if (before.entities[index] != current[index]) {
+            result.entities.push_back({.id = before.ids[index],
+                                       .before = std::move(before.entities[index]),
+                                       .after = std::move(current[index])});
         }
     }
-    if (m_scene.registry().view<const SceneEntityIdComponent>().size() + destroyed != before.entityCount + created) {
-        m_diagnostics.reportError(name + " destroyed entities it did not capture; undo cannot bring them back");
+    std::ranges::sort(result.entities, {}, [](const SceneEntityChange& change) { return change.id.value; });
+    if (before.collections && *before.collections != *collections) {
+        result.collections =
+            SceneCollectionsChange{.before = std::move(*before.collections), .after = std::move(*collections)};
     }
-    std::ranges::sort(changes.entities, {}, [](const SceneEntityChange& change) { return change.id.value; });
-    record(std::move(name), std::move(coalesceKey), std::move(changes));
+    changes = std::move(result);
+    return true;
+}
+
+bool SceneEditing::unchangedSince(const EntitySnapshot& snapshot) const {
+    if (m_scene.nextEntityId().value != snapshot.firstNewId.value) {
+        return false;
+    }
+    std::vector<std::optional<std::string>> current;
+    if (!SceneDocument::serializeEntities(m_scene, m_assets, m_document.options(), snapshot.ids, current)) {
+        return false;
+    }
+    if (current != snapshot.entities) {
+        return false;
+    }
+    if (snapshot.collections) {
+        std::string collections;
+        SceneDocument::serializeCollections(m_scene, collections);
+        return collections == *snapshot.collections;
+    }
+    return true;
 }
 
 void SceneEditing::record(std::string name, std::string coalesceKey, SceneChanges changes,

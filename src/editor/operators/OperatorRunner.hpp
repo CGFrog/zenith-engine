@@ -10,6 +10,14 @@
 
 class CommandHistory;
 
+// The scene as the runner captured it around an Undo operator: only the
+// operator's scope (OperatorScope) when it declares one, otherwise the whole
+// serialized scene.
+struct OperatorSnapshot {
+    std::optional<SceneEditing::EntitySnapshot> entities;
+    std::string scene;
+};
+
 // The most recent Register operator, kept for the Adjust Last Operation panel.
 struct LastOperator {
     std::string id;
@@ -18,14 +26,16 @@ struct LastOperator {
     // Restored before a re-run so the operator sees the selection it first saw.
     std::vector<SceneEntityId> selectionBefore;
     bool recordedUndoStep{false};
-    // History state and scene snapshot right after the operator, used to make
-    // sure undoing the newest step really undoes this operator.
+    // History state and the operator's scope of the scene right after it,
+    // used to make sure undoing the newest step really undoes this operator.
     uint64_t historyRevision{0};
-    std::string sceneAfter;
+    OperatorSnapshot after;
 };
 
 // Invokes operators: checks poll (explaining when only Edit mode allows the
-// operator), runs execute, wraps Undo operators in one undo step (except on
+// operator), runs execute, wraps Undo operators in one undo step capturing
+// only the operator's declared scope (Operator::scope; the whole scene
+// without one) (except on
 // the runtime scene of Play or Simulate, whose edits are never recorded; the
 // step is the result's undoStep when the operator gives one, so an operator
 // that also writes a file still records one step), reports failures to diagnostics, records
@@ -77,6 +87,14 @@ class OperatorRunner {
     // no undo step and no Adjust Last Operation, and an Undo operator's change
     // is noted in Info as discarded on Stop.
     OperatorResult runOnRuntimeScene(const Operator& op, OperatorContext& context, OperatorProperties& values);
+    // Captures what op's scope covers (the whole scene without one).
+    static bool captureBefore(const Operator& op, const OperatorContext& context, const OperatorProperties& values,
+                              OperatorSnapshot& before);
+    // The changes since before; after receives the scope's current state.
+    static bool changesSince(const Operator& op, const OperatorContext& context, OperatorSnapshot before,
+                             SceneChanges& changes, OperatorSnapshot& after);
+    // Whether the scene still matches an operator's after snapshot.
+    static bool unchangedSince(const OperatorContext& context, const OperatorSnapshot& after);
     static OperatorHistoryEntry pendingInvocation(std::string_view id, const Operator* op, std::string propertiesJson);
     void recordInvocation(OperatorHistoryEntry entry, const OperatorResult& result);
 
