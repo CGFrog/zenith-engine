@@ -95,20 +95,17 @@ void updateFirstPersonCameras(Scene& scene, const InputActionState* actions, flo
         view.pitchRadians = std::clamp(view.pitchRadians, view.minimumPitchRadians,
                                        std::max(view.minimumPitchRadians, view.maximumPitchRadians));
 
-        auto& transform = registry.get<TransformComponent>(entity);
-        const glm::vec3 eye(transform.local[3]);
-        transform.local = glm::translate(glm::mat4(1.0f), eye) *
-                          glm::rotate(glm::mat4(1.0f), view.yawRadians, worldUp) *
-                          glm::rotate(glm::mat4(1.0f), view.pitchRadians, glm::vec3(1.0f, 0.0f, 0.0f));
-        scene.markTransformDirty(entity);
+        scene.setLocalTransform(entity,
+                                glm::translate(glm::mat4(1.0f), scene.localPosition(entity)) *
+                                    glm::rotate(glm::mat4(1.0f), view.yawRadians, worldUp) *
+                                    glm::rotate(glm::mat4(1.0f), view.pitchRadians, glm::vec3(1.0f, 0.0f, 0.0f)));
     }
 }
 
 Entity spawnFirstPersonPlayer(Scene& scene, const glm::vec3& position, const CharacterControllerComponent& controller) {
     entt::registry& registry = scene.registry();
     const Entity player = scene.createEntity("Player");
-    registry.get<TransformComponent>(player).local = glm::translate(glm::mat4(1.0f), position);
-    scene.markTransformDirty(player);
+    scene.setPosition(player, position);
     registry.emplace<CharacterControllerComponent>(player, controller);
 
     const Entity camera = scene.createEntity("Player Camera");
@@ -117,8 +114,6 @@ Entity spawnFirstPersonPlayer(Scene& scene, const glm::vec3& position, const Cha
     registry.emplace<AudioListenerComponent>(camera);
     scene.setParent(camera, player);
     // The eye sits at the top of the capsule.
-    registry.get<TransformComponent>(camera).local =
-        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, controller.halfHeight + controller.radius, 0.0f));
-    scene.markTransformDirty(camera);
+    scene.setPosition(camera, glm::vec3(0.0f, controller.halfHeight + controller.radius, 0.0f));
     return player;
 }

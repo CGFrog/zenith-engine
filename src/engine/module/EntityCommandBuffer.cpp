@@ -131,8 +131,7 @@ void EntityCommandBuffer::apply(Spawn& command, Scene& scene, PrefabSystem& pref
         return;
     }
     if (command.placement.localTransform) {
-        scene.registry().get<TransformComponent>(root).local = *command.placement.localTransform;
-        scene.markTransformDirty(root);
+        scene.setLocalTransform(root, *command.placement.localTransform);
     }
     events.publish(EntitySpawned{scene.id(root)});
     if (command.onSpawned) {
