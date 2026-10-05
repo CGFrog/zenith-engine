@@ -7,7 +7,9 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 The Asset Browser shows the project's asset and scene roots as a folder tree
 with favourites, breadcrumbs, a grid or list of the current folder, and search
 and type filters. Models drag out as `ZENITH_MODEL_ASSET` payloads and scenes
-open on double-click. Scripts (C and C++ sources and headers) open in the
+open on double-click. Prefabs open as documents of their own (prefab mode,
+`prefab.edit`) on double-click or with the context menu's **Edit Prefab**
+(`AssetBrowserActions::openPrefab`). Scripts (C and C++ sources and headers) open in the
 user's IDE on double-click, from the context menu, or with the details' Open
 in IDE button, through `module.open_source` and `ide.command` (Preferences >
 External IDE). With a project open, the session also lists the game module's

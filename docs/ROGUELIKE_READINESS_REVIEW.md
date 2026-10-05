@@ -380,7 +380,7 @@ Gaps the critical work left on purpose:
 - **Asset collection:** runtime collection skips decoded audio held by emitters, collecting it only down to the audio budget.
 
 ### HIGH-VALUE EDITOR IMPROVEMENTS
-1. **Prefab edit mode.** Open a `.prefab` as its own document, with its own undo, and save with Apply. Also:
+1. **Prefab edit mode.** *Done:* prefabs open as their own documents over a parked scene (`application/DocumentStack`), with their own undo, undoable saves and Apply, and instance refreshes on return, Apply, and outside changes; connector gizmos remain with Part 3 #2. Open a `.prefab` as its own document, with its own undo, and save with Apply. Also:
    - Apply becomes undoable through a file-backup command;
    - Apply refreshes every scene that uses the prefab;
    - connector gizmos (Part 3 #2).
