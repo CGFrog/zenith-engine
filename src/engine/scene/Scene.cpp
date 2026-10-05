@@ -73,6 +73,40 @@ Entity Scene::findEntity(SceneEntityId id) const {
     return found->second;
 }
 
+Entity Scene::findChild(Entity parent, std::string_view name) const {
+    const auto* relationship = m_registry.valid(parent) ? m_registry.try_get<RelationshipComponent>(parent) : nullptr;
+    if (relationship == nullptr) {
+        return entt::null;
+    }
+    for (const Entity child : relationship->children) {
+        const auto* childName = m_registry.try_get<NameComponent>(child);
+        if (childName != nullptr && childName->name == name) {
+            return child;
+        }
+    }
+    return entt::null;
+}
+
+Entity Scene::findDescendant(Entity root, std::string_view name) const {
+    const auto* relationship = m_registry.valid(root) ? m_registry.try_get<RelationshipComponent>(root) : nullptr;
+    if (relationship == nullptr) {
+        return entt::null;
+    }
+    std::vector<Entity> pending(relationship->children.rbegin(), relationship->children.rend());
+    while (!pending.empty()) {
+        const Entity entity = pending.back();
+        pending.pop_back();
+        if (const auto* entityName = m_registry.try_get<NameComponent>(entity);
+            entityName != nullptr && entityName->name == name) {
+            return entity;
+        }
+        if (const auto* children = m_registry.try_get<RelationshipComponent>(entity)) {
+            pending.insert(pending.end(), children->children.rbegin(), children->children.rend());
+        }
+    }
+    return entt::null;
+}
+
 void Scene::setParent(Entity child, Entity parent) {
     reparent(child, parent);
 }

@@ -176,19 +176,30 @@ PrefabResult PrefabSystem::load(const std::filesystem::path& reference, PrefabDo
 
 PrefabInstanceResult PrefabSystem::instantiate(const std::filesystem::path& reference, Scene& scene, Entity parent,
                                                std::span<const PrefabOverride> overrides) {
-    // Resolve the complete nested graph in isolation first, so a missing
-    // source, cycle, or invalid component cannot partially change the scene.
-    Scene validation;
-    std::vector<std::filesystem::path> validationStack;
-    if (PrefabInstanceResult checked = build(reference, validation, entt::null, entt::null, overrides, 0,
-                                             PrefabRefreshMode::RemoveAddedObjects, validationStack);
-        !checked) {
-        return checked;
+    // The cached graph was checked when its documents were cached, so this
+    // costs a lookup per document. When some part of it does not load or
+    // read on its own, a build into a staging scene decides, as it reports
+    // exactly what fails (an override may remove the failing part).
+    std::vector<std::filesystem::path> stack;
+    if (!cachedGraphValid(reference, overrides, stack)) {
+        Scene validation;
+        std::vector<std::filesystem::path> validationStack;
+        if (PrefabInstanceResult checked = build(reference, validation, entt::null, entt::null, overrides, 0,
+                                                 PrefabRefreshMode::RemoveAddedObjects, validationStack);
+            !checked) {
+            return checked;
+        }
     }
-    return transact(scene, entt::null, [&] {
-        std::vector<std::filesystem::path> stack;
-        return build(reference, scene, entt::null, parent, overrides, 0, PrefabRefreshMode::RemoveAddedObjects, stack);
-    });
+    // A new instance only creates entities, so undoing a failure (an
+    // override holding an invalid value, say) is destroying them.
+    const uint64_t firstCreated = scene.nextEntityId().value;
+    stack.clear();
+    PrefabInstanceResult result =
+        build(reference, scene, entt::null, parent, overrides, 0, PrefabRefreshMode::RemoveAddedObjects, stack);
+    if (!result) {
+        destroyEntitiesFrom(scene, firstCreated);
+    }
+    return result;
 }
 
 PrefabInstanceResult PrefabSystem::refresh(Scene& scene, Entity root, std::span<const PrefabOverride> overrides,
@@ -237,24 +248,27 @@ PrefabInstanceResult PrefabSystem::build(const std::filesystem::path& reference,
     if (std::ranges::find(stack, path) != stack.end()) {
         return {.error = "Nested prefab cycle detected at: " + normalizedReference(reference)};
     }
-    PrefabDocument document;
-    PrefabResult loaded = loadPrefab(path, document);
-    if (!loaded) {
-        return {.error = loaded.error};
+    // Held for the whole build: a nested build may replace the cache entry.
+    const std::shared_ptr<const CachedPrefab> source = cached(path);
+    if (!source->loaded) {
+        return {.error = source->loaded.error};
     }
-    PrefabInstanceResult result{.success = true, .diagnostics = std::move(loaded.diagnostics)};
-    const uint64_t rootLocal = *rootId(document);
+    if (!source->conversionError.empty()) {
+        return {.error = source->conversionError};
+    }
+    const PrefabDocument& document = source->document;
+    PrefabInstanceResult result{.success = true, .diagnostics = source->loaded.diagnostics};
+    const uint64_t rootLocal = source->rootLocal;
 
-    std::map<uint64_t, Json> entities;
-    for (const PrefabEntity& entity : document.entities) {
-        Json& json = entities[entity.id.value];
-        if (PrefabResult encoded = prefabEntityToJson(entity, json); !encoded) {
-            return {.error = encoded.error};
-        }
-        // Older prefabs may hold collection ids of the scene they came from.
-        stripNonContentComponents(json);
+    // Only overrides and a rebuild's scene parents change the entities, so a
+    // plain new instance reads the cached ones.
+    const bool adjusted = !overrides.empty() || existingRoot != entt::null;
+    std::map<uint64_t, Json> adjustedEntities;
+    if (adjusted) {
+        adjustedEntities = source->entities;
+        applyOverrides(adjustedEntities, overrides, rootLocal, result.diagnostics);
     }
-    applyOverrides(entities, overrides, rootLocal, result.diagnostics);
+    const std::map<uint64_t, Json>& entities = adjusted ? adjustedEntities : source->entities;
     const bool rootTransformOverridden = std::ranges::any_of(overrides, [rootLocal](const PrefabOverride& value) {
         return value.entity.value == rootLocal && value.component.empty() && value.field == "/local_transform";
     });
@@ -331,7 +345,7 @@ PrefabInstanceResult PrefabSystem::build(const std::filesystem::path& reference,
     // repeat until nothing changes.
     do {
         findStays();
-    } while (resolveSceneParents(entities, document, stays, result.diagnostics));
+    } while (adjusted && resolveSceneParents(adjustedEntities, document, stays, result.diagnostics));
     SceneChanges changes;
     if (existingRoot != entt::null) {
         for (const Entity entity : subtree(scene, existingRoot)) {
@@ -359,6 +373,11 @@ PrefabInstanceResult PrefabSystem::build(const std::filesystem::path& reference,
 
     const ComponentTypeRegistry& types = componentTypesFor(m_options);
     std::vector<PendingNestedReference> pending;
+    // A new instance only adds entities, so it is built straight from the
+    // entity objects; a rebuild patches the existing ones.
+    const bool creating = existingRoot == entt::null;
+    std::vector<Json> created;
+    created.reserve(creating ? entities.size() : 0);
     for (const auto& [local, json] : entities) {
         Json target = json;
         remapIds(target, localToScene, types, UnmappedReferences::Resolve, nullptr, &pending);
@@ -387,11 +406,25 @@ PrefabInstanceResult PrefabSystem::build(const std::filesystem::path& reference,
                 target["components"][instanceKey]["nested_id"] = nestedId;
             }
         }
-        changes.entities.push_back({.id = {localToScene.at(local)}, .after = target.dump()});
+        if (creating) {
+            created.push_back(std::move(target));
+        } else {
+            changes.entities.push_back({.id = {localToScene.at(local)}, .after = target.dump()});
+        }
     }
-    if (SceneDocumentResult applied =
-            SceneDocument::applyChanges(changes, SceneChangeDirection::Forward, m_assets, m_options, scene);
-        !applied) {
+    SceneDocumentResult applied;
+    if (creating) {
+        std::vector<SceneEntityDocument> documents;
+        documents.reserve(created.size());
+        auto target = created.begin();
+        for (const auto& [local, json] : entities) {
+            documents.push_back({.id = {localToScene.at(local)}, .entity = &*target++});
+        }
+        applied = SceneDocument::createEntities(documents, m_assets, m_options, scene);
+    } else {
+        applied = SceneDocument::applyChanges(changes, SceneChangeDirection::Forward, m_assets, m_options, scene);
+    }
+    if (!applied) {
         return {.error = normalizedReference(reference) + ": " + applied.error};
     }
     if (PrefabResult expanded = expandModels(entities, localToScene, m_assets, scene); !expanded) {

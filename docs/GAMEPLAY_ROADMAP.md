@@ -1167,6 +1167,10 @@ Result:
   - after teardown the body and voice counts return to the player's, and
     the player survives;
   - with no floor, a bake fails and leaves no mesh.
+- Follow-up (readiness review critical #2): the prefab document cache and
+  direct instance build (`docs/engine/scene.md`, Fast spawning) brought
+  spawning the 40 rooms to a mean of 3.2 to 3.9 ms in Release, about 0.08 ms
+  a room. The other measures were unchanged.
 
 Follow-ups:
 - The rooms use box colliders, not triangle meshes. The engine cannot create

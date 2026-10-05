@@ -40,6 +40,15 @@ void EntityCommandBuffer::spawn(std::filesystem::path prefab, SpawnPlacement pla
         .prefab = std::move(prefab), .name = {}, .placement = std::move(placement), .onSpawned = std::move(onSpawned)});
 }
 
+void EntityCommandBuffer::spawn(std::filesystem::path prefab, SpawnPlacement placement,
+                                std::vector<PrefabOverride> overrides, SpawnedCallback onSpawned) {
+    m_commands.emplace_back(Spawn{.prefab = std::move(prefab),
+                                  .name = {},
+                                  .placement = std::move(placement),
+                                  .onSpawned = std::move(onSpawned),
+                                  .overrides = std::move(overrides)});
+}
+
 void EntityCommandBuffer::spawnEmpty(std::string name, SpawnPlacement placement, SpawnedCallback onSpawned) {
     m_commands.emplace_back(Spawn{
         .prefab = {}, .name = std::move(name), .placement = std::move(placement), .onSpawned = std::move(onSpawned)});
@@ -120,7 +129,7 @@ void EntityCommandBuffer::apply(Spawn& command, Scene& scene, PrefabSystem& pref
             scene.setParent(root, parent);
         }
     } else {
-        const PrefabInstanceResult result = prefabs.instantiate(command.prefab, scene, parent);
+        const PrefabInstanceResult result = prefabs.instantiate(command.prefab, scene, parent, command.overrides);
         if (!result) {
             log.warning("Cannot spawn prefab '" + command.prefab.generic_string() + "': " + result.error);
             return;

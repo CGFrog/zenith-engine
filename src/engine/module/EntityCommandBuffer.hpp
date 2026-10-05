@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/scene/Prefab.hpp"
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneEntityId.hpp"
 
@@ -14,7 +15,6 @@
 
 class EventQueue;
 class LogChannel;
-class PrefabSystem;
 
 // Where a spawned entity goes. parent zero (or one that no longer exists when
 // the buffer flushes) means the scene root.
@@ -41,6 +41,12 @@ class EntityCommandBuffer {
   public:
     // Instantiates the prefab at a project-relative reference.
     void spawn(std::filesystem::path prefab, SpawnPlacement placement = {}, SpawnedCallback onSpawned = {});
+    // The same, with overrides that become the instance's persisted
+    // overrides (see PrefabSystem::instantiate), for example a spawned
+    // enemy's health or a room's light colour. placement's transform still
+    // replaces the root's local transform afterwards.
+    void spawn(std::filesystem::path prefab, SpawnPlacement placement, std::vector<PrefabOverride> overrides,
+               SpawnedCallback onSpawned = {});
     // Creates an entity with only a name, transform, and relationship.
     void spawnEmpty(std::string name, SpawnPlacement placement = {}, SpawnedCallback onSpawned = {});
     // Destroys the entity and its descendants.
@@ -67,6 +73,7 @@ class EntityCommandBuffer {
         std::string name;
         SpawnPlacement placement;
         SpawnedCallback onSpawned;
+        std::vector<PrefabOverride> overrides;
     };
 
     struct Destroy {

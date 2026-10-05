@@ -187,6 +187,7 @@ scene/TransformTrs.cpp
     scene/Tags.cpp
     scene/AdditiveSceneManager.cpp
     scene/Prefab.cpp
+    scene/PrefabCache.cpp
     scene/PrefabComponentTypes.cpp
     scene/PrefabIdRemap.cpp
     scene/PrefabNesting.cpp

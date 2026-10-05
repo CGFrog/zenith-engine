@@ -2,6 +2,8 @@
 
 #include "Scene.hpp"
 
+#include <nlohmann/json_fwd.hpp>
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -92,6 +94,14 @@ struct SceneChanges {
     }
 };
 
+// One entity SceneDocument::createEntities adds: its stable id and its parsed
+// document entity object (name, local_transform, parent, components; any id
+// field is ignored). The object must outlive the call.
+struct SceneEntityDocument {
+    SceneEntityId id;
+    const nlohmann::json* entity{nullptr};
+};
+
 enum class SceneChangeDirection {
     // Moves each changed entity to its after state.
     Forward,
@@ -175,4 +185,19 @@ class SceneDocument {
     static SceneDocumentResult applyChanges(const SceneChanges& changes, SceneChangeDirection direction,
                                             AssetManager& assets, const SceneDocumentOptions& options,
                                             Scene& destination);
+
+    // Adds new entities from parsed document entity objects, reading their
+    // components through the component codecs straight into destination, so
+    // it skips the text round trip and staging scene applyChanges uses. The
+    // result matches an applyChanges that creates the same entities: each is
+    // attached to its parent (another new entity or an existing one, or the
+    // root when null) before the first sibling with a larger stable id.
+    //
+    // Ids, parents, and hierarchy cycles are checked before the scene
+    // changes; a component that fails to read, or a collection reference the
+    // scene does not define, destroys every entity the call created before it
+    // returns the error. The scene's entities are then as before, though ids
+    // the call used are not handed out again (Scene::nextEntityId).
+    static SceneDocumentResult createEntities(std::span<const SceneEntityDocument> entities, AssetManager& assets,
+                                              const SceneDocumentOptions& options, Scene& destination);
 };

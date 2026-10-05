@@ -22,6 +22,9 @@ class EditorDiagnostics;
 struct ProjectAssetActions {
     // Re-imports a model that changed on disk.
     std::function<void(const std::filesystem::path&)> reloadModel;
+    // A prefab file changed on disk (absolute path), so cached copies of it
+    // are stale.
+    std::function<void(const std::filesystem::path&)> prefabChanged;
     // Project files moved or were renamed, in the editor or outside it.
     std::function<void(std::span<const ProjectFileMove>)> filesMoved;
     // Project files were moved to the trash or deleted.

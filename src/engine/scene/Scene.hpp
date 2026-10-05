@@ -16,6 +16,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -345,6 +346,13 @@ class Scene {
     SceneEntityId nextEntityId() const;
     SceneEntityId id(Entity entity) const;
     Entity findEntity(SceneEntityId id) const;
+    // The first direct child of parent (in child order) whose NameComponent
+    // is name, or null when there is none or parent is invalid.
+    Entity findChild(Entity parent, std::string_view name) const;
+    // The first strict descendant of root whose NameComponent is name,
+    // searched depth first in child order (a child's subtree before its next
+    // sibling), or null when there is none or root is invalid.
+    Entity findDescendant(Entity root, std::string_view name) const;
     void setParent(Entity child, Entity parent);
     SceneResult reparent(Entity child, Entity parent, ReparentMode mode = ReparentMode::PreserveLocalTransform);
     SceneResult duplicateSubtree(Entity source, Entity parent, Entity& duplicate);

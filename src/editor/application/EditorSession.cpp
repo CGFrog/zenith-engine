@@ -384,6 +384,14 @@ ProjectAssetActions EditorSession::projectAssetActions(ApplicationContext& conte
             [this, &context](const std::filesystem::path& path) {
                 reloadProjectModel(context.assets, m_diagnostics, path);
             },
+        // Editor prefab operations build a fresh PrefabSystem each time; the
+        // game's lives as long as the module host.
+        .prefabChanged =
+            [this](const std::filesystem::path& path) {
+                if (GameServices* services = m_moduleHost.gameServices()) {
+                    services->prefabs().invalidate(path);
+                }
+            },
         .filesMoved = [this, &context](std::span<const ProjectFileMove> moves) { projectFilesMoved(context, moves); },
         .filesRemoved =
             [this, &context](std::span<const std::filesystem::path> removed) { projectFilesRemoved(context, removed); },

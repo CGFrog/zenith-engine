@@ -19,7 +19,8 @@ void remapIds(Json& entity, const IdMap& map, const ComponentTypeRegistry& types
     };
     remap(entity["id"]);
     remap(entity["parent"]);
-    const std::string name = entity.value("name", std::string{});
+    // Read only for a diagnostic, so the common case copies no string.
+    const auto name = [&entity] { return entity.value("name", std::string{}); };
     remapEntityReferences(
         entity["components"], types, [&](uint64_t id, const EntityReferenceSite& site) -> std::optional<uint64_t> {
             if (unmapped == UnmappedReferences::Resolve && isSceneReference(id)) {
@@ -45,7 +46,7 @@ void remapIds(Json& entity, const IdMap& map, const ComponentTypeRegistry& types
                 return uint64_t{0};
             }
             if (diagnostics != nullptr) {
-                diagnostics->push_back("'" + name + "' " + std::string(site.component) + std::string(site.field) +
+                diagnostics->push_back("'" + name() + "' " + std::string(site.component) + std::string(site.field) +
                                        " referenced an entity outside the prefab; the prefab "
                                        "stores no reference there");
             }

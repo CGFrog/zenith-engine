@@ -97,6 +97,7 @@ PrefabResult PrefabAuthoring::create(Scene& scene, Entity root, const std::files
     if (PrefabResult saved = savePrefab(path, capture.document); !saved) {
         return saved;
     }
+    m_prefabs.invalidate(reference);
     linkCapture(scene, root, reference, capture);
     return captured;
 }
@@ -152,6 +153,9 @@ PrefabResult PrefabAuthoring::apply(Scene& scene, Entity entity) {
     if (PrefabResult saved = savePrefab(path, capture.document); !saved) {
         return saved;
     }
+    // The refreshes below must build from the new content even when the
+    // file's timestamp did not visibly change.
+    m_prefabs.invalidate(reference);
     linkCapture(scene, root, reference, capture);
 
     // Nested records the apply deleted leave the other instances too; record

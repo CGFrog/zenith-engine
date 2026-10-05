@@ -581,6 +581,125 @@ void applyPlan(const PatchPlan& plan, const Scene& staging, const SceneDocumentO
     }
     scene.updateWorldTransforms();
 }
+
+// An entity createEntities adds, read from its document object. Sorted by id.
+struct NewEntity {
+    SceneEntityId id;
+    const Json* json{nullptr};
+    std::string name;
+    glm::mat4 local{1.0f};
+    SceneEntityId parent;
+    Entity entity{entt::null};
+};
+
+// Reads the entities and checks their ids, parents, and hierarchy against
+// scene, which is not changed.
+SceneDocumentResult planNewEntities(std::span<const SceneEntityDocument> documents, const Scene& scene,
+                                    std::vector<NewEntity>& output) {
+    std::vector<NewEntity> planned;
+    planned.reserve(documents.size());
+    for (const SceneEntityDocument& document : documents) {
+        const auto label = [&document] { return "Entity " + std::to_string(document.id.value); };
+        if (!document.id || document.entity == nullptr || !document.entity->is_object()) {
+            return {.error = label() + " is not a valid new entity"};
+        }
+        if (scene.findEntity(document.id) != entt::null) {
+            return {.error = "Duplicate scene entity ID " + std::to_string(document.id.value)};
+        }
+        NewEntity entity{.id = document.id, .json = document.entity};
+        entity.name = document.entity->at("name").get<std::string>();
+        if (!readMatrix4(document.entity->at("local_transform"), entity.local)) {
+            return {.error = label() + " has an invalid local transform"};
+        }
+        const Json& parent = document.entity->at("parent");
+        entity.parent = parent.is_null() ? SceneEntityId{} : SceneEntityId{parent.get<uint64_t>()};
+        if (!parent.is_null() && !entity.parent) {
+            return {.error = label() + " references invalid parent ID 0"};
+        }
+        planned.push_back(std::move(entity));
+    }
+    // Ascending ids make sibling insertion deterministic, as in applyChanges.
+    std::ranges::sort(planned, {}, [](const NewEntity& entity) { return entity.id.value; });
+    std::unordered_map<uint64_t, size_t> indices;
+    for (size_t index = 0; index < planned.size(); ++index) {
+        if (!indices.emplace(planned[index].id.value, index).second) {
+            return {.error = "Scene change lists entity " + std::to_string(planned[index].id.value) + " twice"};
+        }
+    }
+    for (const NewEntity& entity : planned) {
+        if (entity.parent && !indices.contains(entity.parent.value) && scene.findEntity(entity.parent) == entt::null) {
+            return {.error = "Entity " + std::to_string(entity.id.value) + " references missing parent " +
+                             std::to_string(entity.parent.value)};
+        }
+    }
+    // Existing entities never have a new entity as parent, so only chains
+    // through new entities can cycle.
+    std::unordered_set<uint64_t> rooted;
+    for (const NewEntity& entity : planned) {
+        std::unordered_set<uint64_t> path{entity.id.value};
+        for (auto ancestor = indices.find(entity.parent.value);
+             ancestor != indices.end() && !rooted.contains(ancestor->first);
+             ancestor = indices.find(planned[ancestor->second].parent.value)) {
+            if (!path.insert(ancestor->first).second) {
+                return {.error = "Scene hierarchy contains a cycle at entity " + std::to_string(ancestor->first)};
+            }
+        }
+        rooted.insert(path.begin(), path.end());
+    }
+    output = std::move(planned);
+    return {.success = true};
+}
+
+// Why entity names a collection the scene does not define, or empty.
+std::string missingCollectionReference(const Scene& scene, Entity entity) {
+    const auto label = [&scene, entity] { return "Entity " + std::to_string(scene.id(entity).value); };
+    if (const auto* membership = scene.registry().try_get<CollectionMembershipComponent>(entity)) {
+        for (const SceneCollectionId collection : membership->collections) {
+            if (scene.collections().find(collection) == nullptr) {
+                return label() + " is a member of missing collection " + std::to_string(collection.value);
+            }
+        }
+    }
+    if (const auto* instance = scene.registry().try_get<CollectionInstanceComponent>(entity);
+        instance != nullptr && scene.collections().find(instance->collection) == nullptr) {
+        return label() + " instances missing collection " + std::to_string(instance->collection.value);
+    }
+    return {};
+}
+
+// Creates the planned entities in scene with their components; on failure
+// the caller destroys what was created.
+SceneDocumentResult createPlanned(std::vector<NewEntity>& planned, AssetManager& assets,
+                                  const SceneDocumentOptions& options, Scene& scene) {
+    for (NewEntity& entity : planned) {
+        if (SceneResult result = scene.createEntityWithId(entity.id, entity.name, entity.entity); !result) {
+            return {.error = result.error};
+        }
+        scene.registry().get<TransformComponent>(entity.entity).local = entity.local;
+    }
+    std::unordered_map<uint64_t, Entity> created;
+    for (const NewEntity& entity : planned) {
+        created.emplace(entity.id.value, entity.entity);
+    }
+    for (const NewEntity& entity : planned) {
+        if (entity.parent) {
+            const auto parent = created.find(entity.parent.value);
+            attachInIdOrder(scene, entity.entity,
+                            parent != created.end() ? parent->second : scene.findEntity(entity.parent));
+        }
+    }
+    for (const NewEntity& entity : planned) {
+        if (SceneDocumentResult result =
+                deserializeComponents(entity.json->at("components"), entity.entity, assets, options, scene);
+            !result) {
+            return {.error = "Entity " + std::to_string(entity.id.value) + ": " + result.error};
+        }
+        if (std::string missing = missingCollectionReference(scene, entity.entity); !missing.empty()) {
+            return {.error = std::move(missing)};
+        }
+    }
+    return {.success = true};
+}
 } // namespace
 
 struct ParsedSceneDocument::Impl {
@@ -921,4 +1040,53 @@ SceneDocumentResult SceneDocument::applyChanges(const SceneChanges& changes, Sce
     } catch (const std::exception& error) {
         return {.error = "Could not apply scene change: " + std::string(error.what())};
     }
+}
+
+SceneDocumentResult SceneDocument::createEntities(std::span<const SceneEntityDocument> entities, AssetManager& assets,
+                                                  const SceneDocumentOptions& options, Scene& destination) {
+    std::vector<NewEntity> planned;
+    try {
+        if (SceneDocumentResult result = planNewEntities(entities, destination, planned); !result) {
+            return result;
+        }
+    } catch (const nlohmann::json::exception& error) {
+        return {.error = "Invalid scene change: " + std::string(error.what())};
+    }
+    SceneDocumentResult created;
+    try {
+        created = createPlanned(planned, assets, options, destination);
+    } catch (const nlohmann::json::exception& error) {
+        created = {.error = "Invalid scene change: " + std::string(error.what())};
+    } catch (const std::exception& error) {
+        created = {.error = "Could not apply scene change: " + std::string(error.what())};
+    }
+    if (!created) {
+        // A new entity's children are new too, so this never reaches an
+        // existing entity.
+        for (const NewEntity& entity : std::views::reverse(planned)) {
+            if (entity.entity != entt::null && destination.registry().valid(entity.entity)) {
+                destination.destroyEntity(entity.entity);
+            }
+        }
+        return created;
+    }
+
+    for (const NewEntity& entity : planned) {
+        destination.markTransformDirty(entity.entity);
+        if (hasPhysics(destination, entity.entity)) {
+            destination.markPhysicsDirty(entity.entity);
+        }
+    }
+    if (!planned.empty()) {
+        // As applyPlan: revisions are scene-wide, so one bump covers every
+        // new entity.
+        const Entity first = planned.front().entity;
+        destination.markRenderableDirty(first);
+        destination.markLightDirty(first);
+        destination.markCameraDirty(first);
+        destination.markSkinDirty(first);
+        destination.markMaterialDirty(first);
+    }
+    destination.updateWorldTransforms();
+    return {.success = true};
 }
