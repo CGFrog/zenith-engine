@@ -167,6 +167,11 @@ imported mesh then passes through `MeshOptimization`. Materials also take the
 `KHR_materials_clearcoat`, `sheen`, `specular`, `transmission`, `volume`, and
 `ior` extensions (see `docs/RENDERER_VALIDATION.md`), whose texture slots join
 the color/normal/data usage classification.
+`readModelOutline` reads only a model's glTF JSON (no buffers or images) and
+returns its meshes by glTF index (the `loadMesh` index) with their names,
+triangle primitives in `MeshAsset::primitives` order and the material each
+uses, whether they are skinned, and their morph target counts, plus the
+material names, so tools can name a model's contents cheaply.
 
 ## `src/engine/assets/MeshOptimization.*`
 

@@ -864,11 +864,19 @@ void EntityPropertiesView::drawAssetWarnings(EditorContext& context, SceneEntity
     }
 }
 
+void EntityPropertiesView::drawMeshField(EditorContext& context, std::span<const SceneEntityId> entities) const {
+    drawMeshRendererField(context, entities, m_modelOutlines);
+}
+
 void EntityPropertiesView::drawModelField(EditorContext& context, SceneEntityId entityId) const {
     const Scene& scene = context.app.scene;
     const Entity entity = scene.findEntity(entityId);
     const std::optional<AssetReferenceFieldContext> assets = assetReferenceFieldContext(context);
-    if (entity == entt::null || !assets || scene.registry().all_of<ModelNodeComponent>(entity)) {
+    if (entity == entt::null || !assets) {
+        return;
+    }
+    if (scene.registry().all_of<ModelNodeComponent>(entity)) {
+        drawMeshField(context, std::span<const SceneEntityId>(&entityId, 1));
         return;
     }
     std::string value;
@@ -888,4 +896,5 @@ void EntityPropertiesView::drawModelField(EditorContext& context, SceneEntityId 
     }
     ImGui::EndDisabled();
     ImGui::PopID();
+    drawMeshField(context, std::span<const SceneEntityId>(&entityId, 1));
 }

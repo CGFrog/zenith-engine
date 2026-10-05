@@ -26,6 +26,7 @@ void InspectorPanel::draw(EditorContext& context) {
         m_view.drawFilter("##InspectorFilter", m_filter);
         m_view.drawTransform(context, context.selection.ids(), m_filter);
         m_view.drawComponents(context, context.selection.ids(), m_filter);
+        m_view.drawMeshField(context, context.selection.ids());
         return;
     }
     const SceneEntityId entityId = *context.selection.active();

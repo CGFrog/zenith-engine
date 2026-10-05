@@ -2,6 +2,7 @@
 
 #include "editor/document/PrefabAuthoring.hpp"
 #include "editor/interaction/ComponentEditorOverrides.hpp"
+#include "editor/interaction/MeshRendererField.hpp"
 #include "editor/modules/EditorScriptInfo.hpp"
 #include "engine/scene/Scene.hpp"
 
@@ -126,8 +127,13 @@ class EntityPropertiesView {
     // The entity's Model row: the model asset it instantiates, which a pick
     // or a model dropped from the Asset Browser replaces through
     // object.model_replace (an empty entity gets the model). Nothing for the
-    // node entities inside a model instance.
+    // node entities inside a model instance. Below it, the Mesh row
+    // (drawMeshField).
     void drawModelField(EditorContext& context, SceneEntityId entityId) const;
+    // The Mesh row and material slots of entities[0]'s Mesh Renderer, whose
+    // picks run object.mesh_assign on every listed entity with a renderer
+    // (see drawMeshRendererField).
+    void drawMeshField(EditorContext& context, std::span<const SceneEntityId> entities) const;
     // For an entity of a prefab instance: the prefab asset's name, the
     // instance's override summary, and Apply, Revert, Unpack, and Select
     // Prefab Asset (the prefab operators, acting on the active entity's
@@ -175,4 +181,6 @@ class EntityPropertiesView {
     std::unordered_map<std::string, CustomEditor> m_customEditors;
     // Override highlighting reads the prefab; kept between frames.
     mutable PrefabOverrideCache m_prefabOverrides;
+    // The Mesh row names a model's meshes and materials; kept between frames.
+    mutable ModelOutlineCache m_modelOutlines;
 };
