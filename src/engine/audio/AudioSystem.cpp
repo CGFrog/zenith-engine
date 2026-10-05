@@ -149,6 +149,19 @@ DecodedAudio decode(const std::filesystem::path& path) {
     return {.error = "Unsupported audio file extension: " + path.string()};
 }
 
+// Spatial clips play mono: a stereo clip is averaged into one channel.
+void mixDownToMono(DecodedAudio& decoded) {
+    if (decoded.channels != 2) {
+        return;
+    }
+    std::vector<float> mono(decoded.samples.size() / 2);
+    for (size_t i = 0; i < mono.size(); ++i) {
+        mono[i] = (decoded.samples[i * 2] + decoded.samples[i * 2 + 1]) * 0.5f;
+    }
+    decoded.samples = std::move(mono);
+    decoded.channels = 1;
+}
+
 size_t busIndex(AudioBus bus) {
     return static_cast<size_t>(bus);
 }
@@ -258,6 +271,18 @@ struct AudioSystem::Impl {
     uint64_t nextStartSequence{0};
     uint64_t stolenVoices{0};
     OverflowEpisode voiceLimit;
+
+    // Stores a decoded clip in a free slot (or a new one). Requires mutex.
+    AudioClipHandle addClip(const std::filesystem::path& path, DecodedAudio decoded) {
+        auto slot = std::find_if(clips.begin(), clips.end(), [](const Clip& clip) { return !clip.occupied; });
+        if (slot == clips.end()) {
+            clips.emplace_back();
+            slot = std::prev(clips.end());
+        }
+        const uint32_t generation = slot->generation;
+        *slot = {path, std::move(decoded.samples), decoded.channels, decoded.sampleRate, generation, true};
+        return {static_cast<uint32_t>(std::distance(clips.begin(), slot)), generation};
+    }
 
     bool valid(AudioClipHandle handle) const {
         return handle && handle.index < clips.size() && clips[handle.index].occupied &&
@@ -444,27 +469,59 @@ AudioLoadResult<AudioClipHandle> AudioSystem::loadClip(const std::filesystem::pa
     if (!decoded.error.empty()) {
         return {.error = std::move(decoded.error)};
     }
-    if (spatial && decoded.channels == 2) {
-        std::vector<float> mono(decoded.samples.size() / 2);
-        for (size_t i = 0; i < mono.size(); ++i) {
-            mono[i] = (decoded.samples[i * 2] + decoded.samples[i * 2 + 1]) * 0.5f;
-        }
-        decoded.samples = std::move(mono);
-        decoded.channels = 1;
+    if (spatial) {
+        mixDownToMono(decoded);
     }
     std::scoped_lock lock(m_impl->mutex);
-    auto slot =
-        std::find_if(m_impl->clips.begin(), m_impl->clips.end(), [](const Impl::Clip& clip) { return !clip.occupied; });
-    if (slot == m_impl->clips.end()) {
-        m_impl->clips.emplace_back();
-        slot = std::prev(m_impl->clips.end());
-    }
-    const uint32_t generation = slot->generation;
-    *slot = {resolved, std::move(decoded.samples), decoded.channels, decoded.sampleRate, generation, true};
-    const uint32_t index = static_cast<uint32_t>(std::distance(m_impl->clips.begin(), slot));
-    const AudioClipHandle handle{index, generation};
+    const AudioClipHandle handle = m_impl->addClip(resolved, std::move(decoded));
     m_impl->clipCache.emplace(key, handle);
     return {.success = true, .handle = handle};
+}
+
+AudioClipReloadResult AudioSystem::reloadClip(const std::filesystem::path& path) {
+    if (!m_impl->initialized) {
+        return {.success = true};
+    }
+    const auto resolved = canonicalPath(path);
+    const std::string native = resolved.generic_string() + "#native";
+    const std::string mono = resolved.generic_string() + "#mono";
+    std::vector<std::pair<std::string, AudioClipHandle>> loaded;
+    {
+        std::scoped_lock lock(m_impl->mutex);
+        for (const std::string& key : {native, mono}) {
+            if (const auto found = m_impl->clipCache.find(key);
+                found != m_impl->clipCache.end() && m_impl->valid(found->second)) {
+                loaded.emplace_back(key, found->second);
+            }
+        }
+    }
+    if (loaded.empty()) {
+        return {.success = true};
+    }
+    const DecodedAudio decoded = decode(resolved);
+    if (!decoded.error.empty()) {
+        return {.error = decoded.error};
+    }
+    AudioClipReloadResult result{.success = true};
+    std::scoped_lock lock(m_impl->mutex);
+    for (const auto& [key, previous] : loaded) {
+        DecodedAudio copy = decoded;
+        if (key == mono) {
+            mixDownToMono(copy);
+        }
+        const AudioClipHandle current = m_impl->addClip(resolved, std::move(copy));
+        m_impl->clipCache.insert_or_assign(key, current);
+        result.replaced.push_back({.previous = previous, .current = current});
+        // The mixer reads voices under the mutex, so stopping them here is
+        // safe; emitters start again on the clip they are pointed at.
+        for (Impl::Voice& voice : m_impl->voices) {
+            if (voice.active && !voice.streaming && voice.assetIndex == previous.index) {
+                voice.active = false;
+                ++voice.generation;
+            }
+        }
+    }
+    return result;
 }
 
 AudioLoadResult<AudioClipHandle> AudioSystem::createClip(std::span<const float> samples, uint32_t channels,
@@ -1204,3 +1261,19 @@ void mixImpl(AudioSystem::Impl& impl, float* output, size_t frameCount) {
     }
 }
 } // namespace
+
+size_t replaceAudioEmitterClips(Scene& scene, std::span<const AudioClipReplacement> replacements) {
+    size_t changed = 0;
+    auto emitters = scene.registry().view<AudioEmitterComponent>();
+    for (const Entity entity : emitters) {
+        AudioEmitterComponent& emitter = emitters.get<AudioEmitterComponent>(entity);
+        for (const AudioClipReplacement& replacement : replacements) {
+            if (emitter.clip == replacement.previous) {
+                emitter.clip = replacement.current;
+                ++changed;
+                break;
+            }
+        }
+    }
+    return changed;
+}

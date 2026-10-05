@@ -150,6 +150,30 @@ struct AudioEmitterComponent {
     std::string loadedClipAsset;
 };
 
+// A clip decoded again from its file: users of previous should move to
+// current (see AudioSystem::reloadClip).
+struct AudioClipReplacement {
+    AudioClipHandle previous;
+    AudioClipHandle current;
+};
+
+struct AudioClipReloadResult {
+    bool success{false};
+    std::string error;
+    // One entry per way the file was loaded (as is, and mixed to mono for
+    // spatial use).
+    std::vector<AudioClipReplacement> replaced;
+
+    explicit operator bool() const {
+        return success;
+    }
+};
+
+// Points every AudioEmitterComponent of scene playing a replaced clip at its
+// replacement; the emitter's voice restarts on the next syncScene. Returns the
+// number of emitters changed.
+size_t replaceAudioEmitterClips(Scene& scene, std::span<const AudioClipReplacement> replacements);
+
 // How blocked the path from the listener to a source is, from 0 (clear) to 1
 // (fully blocked). The engine answers it with a physics raycast; audio itself
 // knows nothing of physics.
@@ -168,6 +192,14 @@ class AudioSystem {
     AudioResult init(const AudioConfig& config = {});
     void shutdown();
     AudioLoadResult<AudioClipHandle> loadClip(const std::filesystem::path& path, bool spatial = false);
+    // Decodes the file again for every way it is loaded into fresh clips and
+    // updates future lookups. Voices playing a previous clip stop (their
+    // handles become invalid); the previous clips stay valid for code still
+    // holding them until collectUnusedAssets evicts them. Point emitters at
+    // the replacements with replaceAudioEmitterClips. A file that is not
+    // loaded (or an uninitialized system) reloads nothing and succeeds; a file
+    // that no longer decodes changes nothing and fails.
+    AudioClipReloadResult reloadClip(const std::filesystem::path& path);
     AudioLoadResult<AudioClipHandle> createClip(std::span<const float> samples, uint32_t channels, uint32_t sampleRate);
     AudioLoadResult<AudioStreamHandle> loadStream(const std::filesystem::path& path);
     // Plays clip on a free voice. When every voice is busy, the new sound

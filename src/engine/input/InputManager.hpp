@@ -5,8 +5,10 @@
 #include <bitset>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <glm/glm.hpp>
+#include <vector>
 
 struct SDL_Gamepad;
 
@@ -83,6 +85,14 @@ enum class InputDevice : uint8_t {
     Gamepad,
 };
 
+// A file or folder dropped onto the window from the operating system (for
+// example from Explorer). position is where it was dropped, in window
+// coordinates (the same space as InputState::mousePosition).
+struct DroppedFile {
+    std::filesystem::path path;
+    glm::vec2 position{0.0f};
+};
+
 struct InputState {
     bool keyDown(Key key) const;
     bool keyPressed(Key key) const;
@@ -116,6 +126,9 @@ struct InputState {
     bool mouseCaptured{false};
     bool gamepadConnected{false};
     InputDevice activeDevice{InputDevice::KeyboardMouse};
+    // Files and folders dropped onto the window this frame, in drop order.
+    // Only the frame's state carries them; fixed-step states never do.
+    std::vector<DroppedFile> droppedFiles;
 
   private:
     friend class InputManager;

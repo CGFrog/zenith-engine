@@ -34,6 +34,7 @@ add_library(zenith_engine SHARED
     assets/AssetMeta.cpp
     assets/AssetDatabase.cpp
     assets/MaterialAssetFile.cpp
+    assets/TextureImportSettings.cpp
     graphics/Renderer.cpp
     graphics/GraphicsValidation.cpp
     graphics/Lighting.cpp
@@ -126,6 +127,7 @@ add_library(zenith_engine SHARED
     behaviour/BehaviourRegistry.cpp
     behaviour/BehaviourScheduler.cpp
     gameplay/DefinitionTable.cpp
+    gameplay/DefinitionSchemas.cpp
     gameplay/FirstPerson.cpp
     gameplay/Random.cpp
     module/BuiltInSystems.cpp
@@ -181,6 +183,7 @@ scene/TransformTrs.cpp
     scene/Collections.cpp
     scene/ComponentTypes.cpp
     scene/SceneAssetReferences.cpp
+    scene/SceneAssetReplacement.cpp
     scene/SaveGame.cpp
     scene/SceneDocument.cpp
     scene/EntityReferenceRemap.cpp

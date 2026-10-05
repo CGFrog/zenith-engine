@@ -167,6 +167,19 @@ SceneDocumentResult ComponentType::reloadAssets(void* component, AssetManager& a
     return {.success = true};
 }
 
+bool ComponentType::replaceTextures(void* component,
+                                    const std::function<TextureHandle(TextureHandle)>& replace) const {
+    bool changed = false;
+    for (const TextureBinding& binding : m_textures) {
+        TextureHandle& handle = binding.handle(component);
+        if (const TextureHandle replacement = replace(handle); replacement != handle) {
+            handle = replacement;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 SceneDocumentResult ComponentType::save(const Scene& scene, Entity entity, const ComponentSaveContext& context,
                                         Json& output) const {
     const void* component = find(scene, entity);

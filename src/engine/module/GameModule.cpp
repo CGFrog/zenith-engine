@@ -36,6 +36,7 @@ GameModule::~GameModule() {
         m_shadowCopy.keep();
     }
     // Release the module's functions while its code is still mapped.
+    m_definitionSchemas.reset();
     m_behaviours.reset();
     m_systems.reset();
     m_componentTypes.reset();
@@ -98,17 +99,20 @@ GameModuleResult GameModule::load(const std::filesystem::path& path, const GameM
     auto systems = std::make_shared<SystemRegistry>(*builtInSystems());
     auto inputActions = std::make_shared<InputActionMap>();
     auto behaviours = std::make_shared<BehaviourRegistry>();
+    auto definitionSchemas = std::make_shared<DefinitionSchemaRegistry>();
     // Owned by the module before registration runs, so a failure releases the
     // module's functions before the library unloads.
     module->m_componentTypes = componentTypes;
     module->m_systems = systems;
     module->m_inputActions = inputActions;
     module->m_behaviours = behaviours;
-    ModuleRegistrar registrar(*componentTypes, *systems, *inputActions, *behaviours);
+    module->m_definitionSchemas = definitionSchemas;
+    ModuleRegistrar registrar(*componentTypes, *systems, *inputActions, *behaviours, definitionSchemas.get());
     registerModule(registrar);
     componentTypes.reset();
     systems.reset();
     behaviours.reset();
+    definitionSchemas.reset();
     if (!registrar.firstError().empty()) {
         return {.error = "Game module '" + module->m_name + "' failed to register: " + registrar.firstError()};
     }
@@ -154,8 +158,13 @@ std::shared_ptr<const BehaviourRegistry> GameModule::behaviours() const {
     return m_behaviours;
 }
 
+std::shared_ptr<const DefinitionSchemaRegistry> GameModule::definitionSchemas() const {
+    return m_definitionSchemas;
+}
+
 bool GameModule::registriesShared() const {
-    return m_componentTypes.use_count() > 1 || m_systems.use_count() > 1 || m_behaviours.use_count() > 1;
+    return m_componentTypes.use_count() > 1 || m_systems.use_count() > 1 || m_behaviours.use_count() > 1 ||
+           m_definitionSchemas.use_count() > 1;
 }
 
 void* GameModule::findSymbol(const char* name) const {
