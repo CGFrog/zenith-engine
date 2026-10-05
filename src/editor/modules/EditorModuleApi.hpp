@@ -4,13 +4,20 @@
 #include "engine/scene/Scene.hpp"
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <variant>
 #include <vector>
 
 class AssetManager;
+class DebugDraw;
+class PrefabSystem;
+class RandomStreams;
 
 // The optional editor half of a game module. Besides zenith_module_register
 // (engine/module/ModuleApi.hpp), a module may write
@@ -36,8 +43,9 @@ class AssetManager;
 // Bump whenever EditorModuleRegistrar or a type it passes changes, so the
 // editor refuses (with a warning) the editor extensions of a module built
 // against other editor headers. 1: operators and panels. 2: inspector
-// overrides, sidebar tabs, and menus.
-#define ZENITH_EDITOR_MODULE_API_VERSION 2
+// overrides, sidebar tabs, and menus. 3: operator properties, edit-mode
+// services, and debug drawing in panels.
+#define ZENITH_EDITOR_MODULE_API_VERSION 3
 inline constexpr uint32_t editorModuleApiVersion = ZENITH_EDITOR_MODULE_API_VERSION;
 
 inline constexpr const char* editorModuleRegisterSymbol = "zenith_module_register_editor";
@@ -61,6 +69,110 @@ struct EditorModuleResult {
     }
 };
 
+// A module operator property's value. An enum property holds the key of one
+// of its options as a string.
+using EditorModulePropertyValue = std::variant<bool, int32_t, float, std::string>;
+
+// One property of a module operator, shown in Adjust Last Operation (which
+// runs the operator again with edited values) and settable by menu entries,
+// key bindings, and panels by key. Its type is its default value's: bool,
+// int32_t, float, or std::string, which options turns into an enum.
+struct EditorModuleProperty {
+    // Stable key, for example "seed"; key bindings and menu entries save it.
+    std::string key;
+    // Empty derives the label from the key ("seed" shows as "Seed").
+    std::string label;
+    // Tooltip.
+    std::string description;
+    EditorModulePropertyValue defaultValue{int32_t{0}};
+    // String properties only: makes the property an enum whose value is one
+    // of these keys; the default must be one of them.
+    std::vector<std::string> options;
+    // Int and float properties: the widget's range, a hint that does not
+    // reject other values given by a key binding or panel.
+    std::optional<double> minimum;
+    std::optional<double> maximum;
+};
+
+// Property values by key, as an operator receives them and as a panel passes
+// them to invokeOperator.
+class EditorModuleProperties {
+  public:
+    // The value of key, or null when there is none.
+    const EditorModulePropertyValue* find(std::string_view key) const {
+        for (const auto& [name, value] : m_values) {
+            if (name == key) {
+                return &value;
+            }
+        }
+        return nullptr;
+    }
+
+    // The value of key when it holds a Value, otherwise fallback.
+    template <typename Value> Value get(std::string_view key, Value fallback = {}) const {
+        const EditorModulePropertyValue* value = find(key);
+        const Value* held = value != nullptr ? std::get_if<Value>(value) : nullptr;
+        return held != nullptr ? *held : fallback;
+    }
+
+    bool getBool(std::string_view key, bool fallback = false) const {
+        return get<bool>(key, fallback);
+    }
+
+    int32_t getInt(std::string_view key, int32_t fallback = 0) const {
+        return get<int32_t>(key, fallback);
+    }
+
+    float getFloat(std::string_view key, float fallback = 0.0f) const {
+        return get<float>(key, fallback);
+    }
+
+    // A string or enum property.
+    std::string getString(std::string_view key, std::string fallback = {}) const {
+        return get<std::string>(key, std::move(fallback));
+    }
+
+    // Sets key, replacing its value. An operator writing a property back
+    // must keep its type; the editor ignores a value of another type.
+    void set(std::string key, EditorModulePropertyValue value) {
+        for (auto& [name, held] : m_values) {
+            if (name == key) {
+                held = std::move(value);
+                return;
+            }
+        }
+        m_values.emplace_back(std::move(key), std::move(value));
+    }
+
+    std::span<const std::pair<std::string, EditorModulePropertyValue>> values() const {
+        return m_values;
+    }
+
+  private:
+    std::vector<std::pair<std::string, EditorModulePropertyValue>> m_values;
+};
+
+// Edit-mode services for module operators, which have no GameServices: they
+// build and preview content in the edited scene. Owned by the editor; valid
+// for the one call they are handed to.
+struct EditorModuleServices {
+    // Named random streams (engine/gameplay/Random.hpp) the editor keeps for
+    // the module between operator runs; reseed them from a seed property so
+    // a run is deterministic. Started over (seed 0) whenever the module
+    // loads or reloads.
+    RandomStreams& random;
+    // Instantiates prefabs with the module's component types and the
+    // project's asset root (the document's options); built for the call.
+    PrefabSystem& prefabs;
+    // Debug drawing shown in every viewport and game view. One-frame
+    // primitives vanish after the next frame; a preview draws into a named
+    // channel with persistent() and clears that channel when it regenerates.
+    DebugDraw& debugDraw;
+    // The project's asset root, against which prefab and asset references
+    // ("prefabs/room.prefab") resolve.
+    const std::filesystem::path& assetRoot;
+};
+
 // What a module operator may touch while it polls or runs. It holds
 // references only, valid for the one call it is built for.
 struct EditorModuleContext {
@@ -69,11 +181,19 @@ struct EditorModuleContext {
     // Stable ids of the selected entities, the active one first. An operator
     // may replace them; the editor selects the result.
     std::vector<SceneEntityId>& selection;
+    // New in editor module API 3.
+    EditorModuleServices& services;
+    // The run's property values, every declared property present. execute
+    // may write resolved values back (keeping their types); Adjust Last
+    // Operation then shows them. The defaults while polling.
+    EditorModuleProperties properties;
 };
 
 // A module command, offered in the F3 search, bindable in the keymap, and
 // run by id like the editor's own operators. Module operators run only in
-// Edit mode.
+// Edit mode. One with properties is remembered for Adjust Last Operation,
+// which undoes its step (when it recorded one) and runs it again with the
+// edited values.
 struct EditorModuleOperator {
     // Stable id; prefix it with the module's name, for example
     // "my_game.reset_spinners".
@@ -87,6 +207,8 @@ struct EditorModuleOperator {
     // in Edit mode.
     std::function<bool(const EditorModuleContext&)> poll;
     std::function<EditorModuleResult(EditorModuleContext&)> execute;
+    // New in editor module API 3. Keys must be unique and non-empty.
+    std::vector<EditorModuleProperty> properties;
 };
 
 // What a module panel or sidebar tab may use while it draws. The scene is
@@ -97,9 +219,22 @@ struct EditorModulePanelContext {
     const AssetManager& assets;
     std::span<const SceneEntityId> selection;
     bool editMode{true};
+    // Debug drawing shown in every viewport and game view (new in editor
+    // module API 3), for overlays a panel draws while it is open.
+    DebugDraw& debugDraw;
+    // How invokeOperator reaches the editor; set by the editor.
+    std::function<bool(std::string_view operatorId, const EditorModuleProperties* values)> invoke;
+
     // Runs an operator (the module's or the editor's) by id, as a button
-    // does. Returns whether it finished.
-    std::function<bool(std::string_view operatorId)> invokeOperator;
+    // does, with its default properties, or with values overriding the
+    // properties they name. Returns whether it finished.
+    bool invokeOperator(std::string_view operatorId) const {
+        return invoke && invoke(operatorId, nullptr);
+    }
+
+    bool invokeOperator(std::string_view operatorId, const EditorModuleProperties& values) const {
+        return invoke && invoke(operatorId, &values);
+    }
 };
 
 // A dockable editor window drawn by the module with Dear ImGui (the engine

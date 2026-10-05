@@ -17,9 +17,22 @@ Component menu all see module components. Module systems run through a
 
 `RunIn::Edit` systems run every Edit-mode frame, with fixed updates on an
 editor-side fixed clock. Edit-mode systems change the scene directly, outside
-undo. Systems get the engine's log in every mode. In Play and Simulate they
-also get the host's `GameServices`, which `enterPlayMode` starts and
-`stopPlayMode` (or any module unload) stops.
+undo. What module code gets in each mode:
+
+| | Edit | Play and Simulate |
+| --- | --- | --- |
+| Systems (`SystemContext`) | `logger`, `debugDraw` | `logger`, `debugDraw`, `services` (`GameServices`), `application`; `input` in Play |
+| Module operators (`EditorModuleContext`) | scene, assets, selection, properties, `services`: `random`, `prefabs`, `debugDraw`, `assetRoot` | not run |
+| Panels and sidebar tabs | read-only scene, selection, `debugDraw`, `invokeOperator` | the same, on the running scene |
+
+`debugDraw` is the session's `RenderRuntime::debugDraw` in every mode
+(`GameModuleHost::setDebugDraw`); `GameServices`, which `enterPlayMode` starts
+and `stopPlayMode` (or any module unload) stops, hands out the same list. The
+operators' `random` streams are the host's (`GameModuleHost::editRandom`),
+kept between runs and started over whenever the module loads, reloads, or
+unloads; their `PrefabSystem` is built per call from the document's options,
+so it knows the module's component types and holds no module code past the
+call.
 
 Hot reload (`module.reload` in the Module menu, a change to the library file
 that has stayed unchanged for `GameModuleHostOptions::settleTime`, 250 ms,
@@ -36,7 +49,10 @@ JSON until a later reload succeeds.
 A module may also export `zenith_module_register_editor`
 (`ZENITH_EDITOR_MODULE_REGISTER` in `modules/EditorModuleApi.hpp`, which also
 exports `zenith_module_editor_api_version`) to add operators (undoable, Edit
-mode only, bindable like any operator), ImGui panels (area types toggled in
+mode only, bindable like any operator, with properties that Adjust Last
+Operation edits: `editorOperator` describes them to the editor's reflected
+property widgets as `FieldDescriptor`s over a `ModuleOperatorValues` object
+and hands the module an `EditorModuleProperties` per run), ImGui panels (area types toggled in
 the Module menu), viewport sidebar tabs (`ViewportRegistry::addSidebarTab`),
 inspector overrides (custom component editors in
 `interaction/ComponentEditorOverrides`, which `EntityPropertiesView` prefers
@@ -52,3 +68,7 @@ Play or Simulate to stop also gets its own status-bar pill.
 `zenith_editor_module_smoke` runs the editor smoke on a generated project
 naming `zenith_editor_test_module`, hot reloads it once, and checks its
 editor extensions are registered before and after the reload.
+`zenith_game_module_host` runs the test module's `editor_test.generate_preview`
+operator through the runner and Adjust Last Operation (seeds, every property
+type, panel invocation with values, and the reload releasing the preview and
+the random streams).

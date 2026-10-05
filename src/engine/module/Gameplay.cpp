@@ -108,7 +108,8 @@ void GameplayRunner::run(SystemPhase phase, ApplicationContext& context, const I
                       .services = m_services.get(),
                       .actions = actions,
                       .ui = ui,
-                      .behaviours = m_gameplay.behaviours.get()},
+                      .behaviours = m_gameplay.behaviours.get(),
+                      .debugDraw = &context.rendering.debugDraw()},
                      nullptr, &m_systemFaults);
 }
 

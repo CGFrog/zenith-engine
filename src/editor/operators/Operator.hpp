@@ -83,10 +83,17 @@ class OperatorProperties {
     OperatorProperties() = default;
 
     template <typename Properties> static OperatorProperties make(Properties defaults, Fields<Properties> fields) {
+        return fromDescriptors(std::move(defaults), std::move(fields).build());
+    }
+
+    // The same for descriptors built at run time (a game module's operator
+    // properties), whose addresses resolve inside a Properties object.
+    template <typename Properties>
+    static OperatorProperties fromDescriptors(Properties defaults, std::vector<FieldDescriptor> fields) {
         OperatorProperties properties;
         properties.m_value = std::move(defaults);
         properties.m_address = [](std::any& value) -> void* { return std::any_cast<Properties>(&value); };
-        properties.m_fields = std::make_shared<const std::vector<FieldDescriptor>>(std::move(fields).build());
+        properties.m_fields = std::make_shared<const std::vector<FieldDescriptor>>(std::move(fields));
         return properties;
     }
 

@@ -11,17 +11,32 @@
 #include "engine/behaviour/BehaviourRegistry.hpp"
 #include "engine/behaviour/BehaviourScheduler.hpp"
 #include "engine/scene/ComponentTypes.hpp"
+#include "engine/scene/Prefab.hpp"
 #include "engine/scene/SceneDocument.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <string_view>
 #include <system_error>
+#include <unordered_set>
 #include <utility>
 
 // Modules name the editor's menus through EditorModuleApi, which cannot
 // include the editor's headers.
 static_assert(std::string_view(EditorModuleMenus::add) == addMenuId);
 static_assert(std::string_view(EditorModuleMenus::addComponent) == addComponentMenuId);
+
+namespace {
+// Property values as the JSON object operator invocations take.
+std::string propertiesJson(const EditorModuleProperties& values) {
+    nlohmann::json object = nlohmann::json::object();
+    for (const auto& [key, value] : values.values()) {
+        std::visit([&object, &key](const auto& held) { object[key] = held; }, value);
+    }
+    return object.dump();
+}
+} // namespace
 
 void drawModulePanelContents(EditorContext& context, const std::function<void(EditorModulePanelContext&)>& draw) {
     // Copied: an operator the panel invokes may change the selection.
@@ -31,47 +46,200 @@ void drawModulePanelContents(EditorContext& context, const std::function<void(Ed
         .assets = context.app.assets,
         .selection = selection,
         .editMode = context.editMode(),
-        .invokeOperator = [&context](std::string_view operatorId) {
-            return static_cast<bool>(context.actions.invokeOperator(context.app, operatorId, {}, KeymapRegion::Global));
+        .debugDraw = context.app.rendering.debugDraw(),
+        .invoke = [&context](std::string_view operatorId, const EditorModuleProperties* values) {
+            const std::string properties = values != nullptr ? propertiesJson(*values) : std::string();
+            return static_cast<bool>(
+                context.actions.invokeOperator(context.app, operatorId, properties, KeymapRegion::Global));
         }};
     draw(panelContext);
 }
 
 namespace {
+// The values of a module operator's properties in declaration order: the
+// object its OperatorProperties hold, which Adjust Last Operation and JSON
+// invocations edit through the descriptors moduleField builds.
+struct ModuleOperatorValues {
+    std::vector<EditorModulePropertyValue> values;
+};
+
+// Empty when the module's property declarations are usable, otherwise why not.
+std::string validateModuleProperties(const std::vector<EditorModuleProperty>& properties) {
+    std::unordered_set<std::string> keys;
+    for (const EditorModuleProperty& property : properties) {
+        if (property.key.empty()) {
+            return "a property has no key";
+        }
+        if (!keys.insert(property.key).second) {
+            return "property '" + property.key + "' is declared twice";
+        }
+        const auto* text = std::get_if<std::string>(&property.defaultValue);
+        if (!property.options.empty()) {
+            if (text == nullptr) {
+                return "property '" + property.key + "' has options but no string default";
+            }
+            if (std::ranges::find(property.options, *text) == property.options.end()) {
+                return "the default of enum property '" + property.key + "' is not one of its options";
+            }
+        }
+    }
+    return {};
+}
+
+FieldDescriptor moduleField(const EditorModuleProperty& property, size_t index) {
+    FieldDescriptor field;
+    field.key = property.key;
+    field.presentation.label = property.label.empty() ? labelFromKey(property.key) : property.label;
+    field.presentation.tooltip = property.description;
+    field.presentation.minimum = property.minimum;
+    field.presentation.maximum = property.maximum;
+    field.address = [index](void* object) -> void* {
+        EditorModulePropertyValue& value = static_cast<ModuleOperatorValues*>(object)->values[index];
+        return std::visit([](auto& held) -> void* { return &held; }, value);
+    };
+    switch (property.defaultValue.index()) {
+    case 0:
+        field.kind = FieldKind::Bool;
+        break;
+    case 1:
+        field.kind = FieldKind::Int32;
+        field.presentation.speed = 0.2f;
+        break;
+    case 2:
+        field.kind = FieldKind::Float;
+        break;
+    default:
+        field.kind = FieldKind::String;
+        break;
+    }
+    if (!property.options.empty()) {
+        field.kind = FieldKind::Enum;
+        for (size_t option = 0; option < property.options.size(); ++option) {
+            field.options.push_back({.key = property.options[option],
+                                     .label = labelFromKey(property.options[option]),
+                                     .value = static_cast<int64_t>(option)});
+        }
+        field.readEnum = [options = property.options](const void* value) {
+            const auto found = std::ranges::find(options, *static_cast<const std::string*>(value));
+            return static_cast<int64_t>(found == options.end() ? 0 : found - options.begin());
+        };
+        field.writeEnum = [options = property.options](void* value, int64_t raw) {
+            if (raw >= 0 && static_cast<size_t>(raw) < options.size()) {
+                *static_cast<std::string*>(value) = options[static_cast<size_t>(raw)];
+            }
+        };
+    }
+    return field;
+}
+
+OperatorProperties moduleOperatorProperties(const std::vector<EditorModuleProperty>& properties) {
+    if (properties.empty()) {
+        return {};
+    }
+    ModuleOperatorValues defaults;
+    std::vector<FieldDescriptor> fields;
+    for (size_t index = 0; index < properties.size(); ++index) {
+        defaults.values.push_back(properties[index].defaultValue);
+        fields.push_back(moduleField(properties[index], index));
+    }
+    return OperatorProperties::fromDescriptors(std::move(defaults), std::move(fields));
+}
+
+// The values an invocation runs with, every declared property present.
+EditorModuleProperties moduleValues(const EditorModuleOperator& op, const OperatorProperties& properties) {
+    const auto* held = properties.get<ModuleOperatorValues>();
+    EditorModuleProperties values;
+    for (size_t index = 0; index < op.properties.size(); ++index) {
+        const bool given = held != nullptr && index < held->values.size();
+        values.set(op.properties[index].key, given ? held->values[index] : op.properties[index].defaultValue);
+    }
+    return values;
+}
+
+// Keeps the values execute wrote back that have their property's type (and,
+// for an enum, name one of its options).
+void writeBackValues(const EditorModuleOperator& op, const EditorModuleProperties& values,
+                     OperatorProperties& properties) {
+    auto* held = properties.get<ModuleOperatorValues>();
+    if (held == nullptr) {
+        return;
+    }
+    for (size_t index = 0; index < op.properties.size() && index < held->values.size(); ++index) {
+        const EditorModuleProperty& property = op.properties[index];
+        const EditorModulePropertyValue* value = values.find(property.key);
+        if (value == nullptr || value->index() != held->values[index].index()) {
+            continue;
+        }
+        const auto* text = std::get_if<std::string>(value);
+        if (!property.options.empty() && std::ranges::find(property.options, *text) == property.options.end()) {
+            continue;
+        }
+        held->values[index] = *value;
+    }
+}
+
+// Runs function with a module context for context: a copy of the selection,
+// the host's edit services, a prefab system for the document's component
+// types, and values.
+template <typename Function>
+auto withModuleContext(GameModuleHost& host, const OperatorContext& context, EditorModuleProperties values,
+                       Function function) {
+    std::vector<SceneEntityId> selection = context.selection.ids();
+    const SceneDocumentOptions& options = context.editing.document().options();
+    PrefabSystem prefabs(context.editing.assets(), options);
+    EditorModuleServices services{
+        .random = host.editRandom(), .prefabs = prefabs, .debugDraw = host.debugDraw(), .assetRoot = options.assetRoot};
+    EditorModuleContext moduleContext{.scene = context.editing.scene(),
+                                      .assets = context.editing.assets(),
+                                      .selection = selection,
+                                      .services = services,
+                                      .properties = std::move(values)};
+    return function(moduleContext, selection);
+}
+
 // Wraps a module operator as an editor operator. The wrapper shares the
-// module's functions, so it must be removed from the registry before the
-// module unloads.
-Operator editorOperator(EditorModuleOperator source) {
+// module's functions and refers to host, so it must be removed from the
+// registry before the module unloads, and the host must outlive it.
+Operator editorOperator(EditorModuleOperator source, GameModuleHost& host) {
     const auto moduleOperator = std::make_shared<const EditorModuleOperator>(std::move(source));
+    OperatorFlags flags = moduleOperator->undoable ? OperatorFlags::Undo : OperatorFlags::None;
+    if (!moduleOperator->properties.empty()) {
+        // Adjust Last Operation offers its properties.
+        flags = flags | OperatorFlags::Register;
+    }
     Operator op{.id = moduleOperator->id,
                 .label = moduleOperator->label,
                 .description = moduleOperator->description,
-                .flags = moduleOperator->undoable ? OperatorFlags::Undo : OperatorFlags::None};
-    op.poll = [moduleOperator](const OperatorContext& context) {
+                .flags = flags,
+                .properties = moduleOperatorProperties(moduleOperator->properties)};
+    op.poll = [moduleOperator, &host, defaults = op.properties](const OperatorContext& context) {
         if (!context.editMode()) {
             return false;
         }
         if (!moduleOperator->poll) {
             return true;
         }
-        std::vector<SceneEntityId> selection = context.selection.ids();
-        const EditorModuleContext moduleContext{
-            .scene = context.editing.scene(), .assets = context.editing.assets(), .selection = selection};
-        return moduleOperator->poll(moduleContext);
+        return withModuleContext(
+            host, context, moduleValues(*moduleOperator, defaults),
+            [&moduleOperator](const EditorModuleContext& moduleContext, std::vector<SceneEntityId>&) {
+                return moduleOperator->poll(moduleContext);
+            });
     };
-    op.execute = [moduleOperator](OperatorContext& context, OperatorProperties&) {
-        std::vector<SceneEntityId> selection = context.selection.ids();
-        EditorModuleContext moduleContext{
-            .scene = context.editing.scene(), .assets = context.editing.assets(), .selection = selection};
-        const EditorModuleResult result = moduleOperator->execute(moduleContext);
-        if (!result) {
-            return OperatorResult::failed(result.error.empty() ? moduleOperator->label + " failed" : result.error);
-        }
-        if (selection != context.selection.ids()) {
-            context.selection.assign(std::move(selection));
-            context.selection.removeMissing(context.editing.scene());
-        }
-        return OperatorResult::finished();
+    op.execute = [moduleOperator, &host](OperatorContext& context, OperatorProperties& properties) {
+        return withModuleContext(host, context, moduleValues(*moduleOperator, properties),
+                                 [&](EditorModuleContext& moduleContext, std::vector<SceneEntityId>& selection) {
+                                     const EditorModuleResult result = moduleOperator->execute(moduleContext);
+                                     if (!result) {
+                                         return OperatorResult::failed(
+                                             result.error.empty() ? moduleOperator->label + " failed" : result.error);
+                                     }
+                                     writeBackValues(*moduleOperator, moduleContext.properties, properties);
+                                     if (selection != context.selection.ids()) {
+                                         context.selection.assign(std::move(selection));
+                                         context.selection.removeMissing(context.editing.scene());
+                                     }
+                                     return OperatorResult::finished();
+                                 });
     };
     return op;
 }
@@ -111,8 +279,12 @@ class GameModuleHost::Registrar final : public EditorModuleRegistrar {
         if (!op.execute) {
             return fail("Module operator '" + op.id + "' needs an execute function");
         }
+        if (const std::string error = validateModuleProperties(op.properties); !error.empty()) {
+            return fail("Module operator '" + op.id + "': " + error);
+        }
         const std::string id = op.id;
-        if (const OperatorRegistrationResult result = m_host.m_services.operators.add(editorOperator(std::move(op)));
+        if (const OperatorRegistrationResult result =
+                m_host.m_services.operators.add(editorOperator(std::move(op), m_host));
             !result) {
             return fail(result.error);
         }
@@ -267,6 +439,7 @@ GameModuleHostResult GameModuleHost::loadSource(EditorDocument& document) {
     m_inputActions.overrideWith(m_projectInputActions);
     m_profile.clear();
     m_systemFaults.clear();
+    m_editRandom = RandomStreams{};
     document.setComponentTypes(m_module->componentTypes());
 
     GameModuleHostResult result{.success = true};
@@ -365,6 +538,7 @@ void GameModuleHost::releaseModule(Scene& scene, EditorDocument& document, std::
     m_inputActions = {};
     m_profile.clear();
     m_systemFaults.clear();
+    m_editRandom = RandomStreams{};
     document.setComponentTypes(nullptr);
     // Replacing the registry destroys the storage module code created while
     // that code is still loaded.
@@ -430,12 +604,25 @@ void GameModuleHost::runSystems(SystemPhase phase, Scene& scene, ApplicationCont
                       .services = mode == SimulationMode::Edit ? nullptr : m_gameServices.get(),
                       .actions = actions ? &*actions : nullptr,
                       .ui = phase == SystemPhase::Ui ? ui : nullptr,
-                      .behaviours = m_module->behaviours().get()},
+                      .behaviours = m_module->behaviours().get(),
+                      .debugDraw = m_debugDraw},
                      &m_profile, &m_systemFaults);
 }
 
 void GameModuleHost::setLogger(Logger& logger) {
     m_logger = &logger;
+}
+
+void GameModuleHost::setDebugDraw(DebugDraw& debugDraw) {
+    m_debugDraw = &debugDraw;
+}
+
+DebugDraw& GameModuleHost::debugDraw() {
+    return *m_debugDraw;
+}
+
+RandomStreams& GameModuleHost::editRandom() {
+    return m_editRandom;
 }
 
 void GameModuleHost::startGameplay(AssetManager& assets, SceneDocumentOptions documents, DebugDraw& debugDraw) {

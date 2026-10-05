@@ -86,6 +86,10 @@ Besides the scene, mode, and delta, a system gets:
 - `logger`: always set when a host runs it, in Edit too.
 - `input`: null when no player input reaches the scene (Edit, Simulate).
 - `services`: the session's `GameServices`, null in Edit.
+- `debugDraw`: the host's debug drawing in every mode (in a session, the same
+  as `services->debugDraw()`), so `RunIn::Edit` systems can draw previews;
+  null only for a host without one. It is the last member, so modules built
+  before it read the others unchanged.
 - `ui`: set only in the `Ui` phase.
 - `actions`: the module's input actions (`ModuleRegistrar::addInputActions`)
   evaluated by the host from `input`, and null whenever `input` is. See
@@ -218,7 +222,9 @@ It holds:
   wall-clock frame time, and every phase has it as
   `SystemContext::unscaledDeltaSeconds`. The first-person camera ignores look
   input while the game is paused.
-- `DebugDraw&`: `RenderRuntime::debugDraw()`, drawn in every view this frame.
+- `DebugDraw&`: `RenderRuntime::debugDraw()`, drawn in every view: for one
+  frame by default, or for a duration or until cleared, in named channels
+  ([Graphics](graphics.md#srcenginegraphicsdebugdraw)).
 - `SessionResources` (`resources()`, `resource<T>()`): the session's own
   data, one value per type, such as definition tables and the current run's
   state. A type opts in with a unique
