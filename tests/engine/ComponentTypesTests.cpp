@@ -2,9 +2,11 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -144,6 +146,72 @@ void testBuiltIns() {
            "assigning a copied value should restore it");
     spot->remove(scene, entity);
     expect(!spot->has(scene, entity), "a component should be removable");
+}
+
+const FieldDescriptor* fieldOf(const ComponentType& type, std::string_view key) {
+    const auto fields = type.fields();
+    const auto found = std::ranges::find(fields, key, &FieldDescriptor::key);
+    return found == fields.end() ? nullptr : &*found;
+}
+
+struct SkinnedSign {
+    std::string picture;
+    std::string backdrop;
+    std::string notes;
+    TextureHandle pictureTexture;
+};
+
+void testAssetKindHints() {
+    const std::shared_ptr<const ComponentTypeRegistry> builtIns = builtInComponentTypes();
+    const auto kindOf = [&](std::string_view type, std::string_view key) {
+        const FieldDescriptor* field = fieldOf(*builtIns->find(type), key);
+        return field == nullptr ? std::string("<missing>") : field->presentation.assetKind;
+    };
+    const auto editable = [&](std::string_view type, std::string_view key) {
+        const FieldDescriptor* field = fieldOf(*builtIns->find(type), key);
+        return field != nullptr && !field->presentation.readOnly;
+    };
+    expect(kindOf("decal", "albedo_asset") == "texture" && kindOf("decal", "normal_asset") == "texture" &&
+               editable("decal", "albedo_asset") && editable("decal", "normal_asset"),
+           "decal maps should be editable texture fields");
+    expect(kindOf("particle_emitter", "texture_asset") == "texture" && editable("particle_emitter", "texture_asset"),
+           "a particle sprite should be an editable texture field");
+    expect(kindOf("environment_light", "environment_asset") == "environment" &&
+               kindOf("reflection_probe", "environment_asset") == "environment" &&
+               editable("environment_light", "environment_asset"),
+           "environment maps should be editable environment fields");
+    expect(kindOf("audio_emitter", "clip_asset") == "audio", "an audio clip should be an audio field");
+    expect(kindOf("irradiance_volume", "bake_asset") == "bake" && !editable("irradiance_volume", "bake_asset"),
+           "an irradiance bake should stay a read-only bake field");
+    expect(kindOf("material_override", "material_asset") == "material" &&
+               builtIns->find("material_override")->schemaVersion() == 2,
+           "a material override should take a material file at schema version 2");
+
+    // texture() and assetReference() fill in a kind the descriptor leaves
+    // empty, and keep one it names.
+    ComponentTypeRegistry registry;
+    expect(registry
+               .add(ComponentTypeBuilder<SkinnedSign>("skinned_sign", "Skinned Sign")
+                        .fields(std::move(Fields<SkinnedSign>()
+                                              .add("picture", &SkinnedSign::picture)
+                                              .add("backdrop", &SkinnedSign::backdrop)
+                                              .asset("environment")
+                                              .add("notes", &SkinnedSign::notes)))
+                        .texture(&SkinnedSign::picture, &SkinnedSign::pictureTexture)
+                        .assetReference(&SkinnedSign::backdrop)
+                        .assetReference(&SkinnedSign::notes)
+                        .build())
+               .success,
+           "a type with asset fields should register");
+    const ComponentType& sign = *registry.find("skinned_sign");
+    expect(fieldOf(sign, "picture")->presentation.assetKind == "texture", "texture() should default to texture");
+    expect(fieldOf(sign, "backdrop")->presentation.assetKind == "environment",
+           "an explicit asset kind should win over the builder's default");
+    expect(fieldOf(sign, "notes")->presentation.assetKind == "asset",
+           "assetReference() should default to any asset");
+    SkinnedSign value;
+    expect(sign.assetLoaded(&value, "picture") == false && !sign.assetLoaded(&value, "notes"),
+           "only loaded bindings should report a load state");
 }
 
 void testBuiltInRegistrationOrder() {
@@ -328,6 +396,7 @@ int main() {
     expect(labelFromKey("shadow_resolution") == "Shadow resolution", "labels should be derived from keys");
     testBuiltIns();
     testBuiltInRegistrationOrder();
+    testAssetKindHints();
     testGameComponentRoundTrip();
     testMigrationsAndRejections();
     testUnknownComponentsArePreserved();

@@ -62,3 +62,16 @@ SceneDocumentResult projectTextureReference(const AssetManager& assets, TextureH
 // Loads the texture a reference names; an empty reference leaves output empty.
 SceneDocumentResult loadProjectTexture(const std::string& reference, AssetManager& assets,
                                        const SceneDocumentOptions& options, TextureHandle& output);
+
+// Loads the material file (.zmat, see MaterialAssetFile.hpp) a reference
+// names; an empty reference leaves output empty.
+SceneDocumentResult loadProjectMaterial(const std::string& reference, AssetManager& assets,
+                                        const SceneDocumentOptions& options, MaterialHandle& output);
+
+// Whether a loaded handle still matches a path field after an edit:
+// loadedSource is the handle's source file (empty for none or for a runtime
+// asset) and loaded whether there is a live handle. An empty reference
+// matches no handle, and a runtime asset (loaded without a source) so code
+// keeps it; any other reference matches only the loaded file it resolves to.
+bool projectAssetStillNamed(const std::string& reference, const std::filesystem::path& loadedSource, bool loaded,
+                            const SceneDocumentOptions& options);

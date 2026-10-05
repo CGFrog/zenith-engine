@@ -87,11 +87,19 @@ ComponentType meshRendererComponentType() {
 
 ComponentType materialOverrideComponentType() {
     using C = MaterialOverrideComponent;
-    // The replacement material handle is runtime-only and never saved; every
-    // saved field is optional and defaults to "no change".
+    // The replacement material handle is never saved; material_asset names
+    // the file it loads from. Every saved field is optional and defaults to
+    // "no change". Version 2 added material_asset; version 1 documents read
+    // unchanged.
     return ComponentTypeBuilder<C>("material_override", "Material Override")
         .category("Rendering")
+        .schemaVersion(2)
+        .migration(1, [](Json&) { return SceneDocumentResult{.success = true}; })
         .fields(Fields<C>()
+                    .add("material_asset", &C::materialAsset)
+                    .optional()
+                    .label("Material")
+                    .tooltip("A .zmat material that replaces the mesh's materials; the factors below apply on top")
                     .add("base_color_factor", &C::baseColorFactor)
                     .optional()
                     .label("Base color")
@@ -110,6 +118,7 @@ ComponentType materialOverrideComponentType() {
                     .optional()
                     .label("Metallic")
                     .drag(0.01f, 0.0, 10.0))
+        .material(&C::materialAsset, &C::material)
         .validate([](const C& values) {
             const bool valid =
                 finiteNonNegative(values.baseColorFactor.r) && finiteNonNegative(values.baseColorFactor.g) &&
@@ -228,8 +237,7 @@ ComponentType particleEmitterComponentType() {
                     .drag(0.01f, 0.0, 100.0)
                     .add("texture_asset", &C::textureAsset)
                     .optional()
-                    .label("Sprite")
-                    .readOnly())
+                    .label("Sprite"))
         .texture(&C::textureAsset, &C::texture)
         .validate([](const C& emitter) { return validateParticleEmitter(emitter); })
         .sanitize([](C& emitter) {
@@ -288,11 +296,9 @@ ComponentType decalComponentType() {
                     .add("albedo_asset", &C::albedoAsset)
                     .optional()
                     .label("Albedo")
-                    .readOnly()
                     .add("normal_asset", &C::normalAsset)
                     .optional()
-                    .label("Normal")
-                    .readOnly())
+                    .label("Normal"))
         .texture(&C::albedoAsset, &C::albedoTexture)
         .texture(&C::normalAsset, &C::normalTexture)
         .validate([](const C& decal) {

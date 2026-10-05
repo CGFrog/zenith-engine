@@ -137,10 +137,15 @@ struct MaterialOverrideComponent {
     // Multiply the material's factors; results are clamped to [0, 1].
     float roughnessFactor{1.0f};
     float metallicFactor{1.0f};
+    // A material file (.zmat), project-relative like other asset paths. When
+    // set, loading the component loads it into material, so it replaces every
+    // primitive's material on the entity; the factors above still apply on
+    // top. Empty keeps the mesh's own materials (or a runtime material).
+    std::string materialAsset;
     // When live, replaces every primitive's material before the factors
-    // apply, typically a runtime material (AssetManager::createMaterial).
-    // Runtime only: it is not saved, so a saved and reloaded scene keeps
-    // just the factors.
+    // apply: the materialAsset's material, or a runtime material code
+    // assigned (AssetManager::createMaterial). The handle is not saved; a
+    // runtime material is lost when the scene is saved and reloaded.
     MaterialHandle material{};
 };
 

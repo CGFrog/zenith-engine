@@ -427,6 +427,11 @@ struct TextureAssetSource {
     std::filesystem::path path;
 };
 
+// The material file (.zmat) a material was loaded from.
+struct MaterialAssetSource {
+    std::filesystem::path path;
+};
+
 template <typename Handle> struct AssetLoadResult {
     Handle handle{};
     std::string error;
@@ -450,6 +455,18 @@ class AssetManager {
     AssetLoadResult<MeshHandle> loadMesh(const std::filesystem::path& modelPath, uint32_t meshIndex);
     AssetLoadResult<FontHandle> loadFont(const std::filesystem::path& path);
     AssetLoadResult<TextureHandle> loadTexture(const std::filesystem::path& path);
+    // Loads a material file (.zmat, see MaterialAssetFile.hpp) and the images
+    // its texture slots name, relative to the file's folder; base color and
+    // emissive images load as color, normal and metallic-roughness and
+    // occlusion as linear RGBA8 data with their TextureUsage. A slot whose
+    // image fails to load is left empty with a warning. Loads are cached by
+    // path, like models.
+    AssetLoadResult<MaterialHandle> loadMaterial(const std::filesystem::path& path);
+    // Reads the file again into a fresh material and updates future lookups.
+    // Materials are immutable, so the previous handle stays valid for those
+    // still using it: point them at the new handle (MaterialOverrideComponent
+    // users), and collectUnused frees the old one once nothing leases it.
+    AssetLoadResult<MaterialHandle> reloadMaterial(const std::filesystem::path& path);
 
     // Runtime content: assets that code builds instead of importing, such as
     // procedural geometry or tinted materials (MeshBuilder makes meshes).
@@ -484,6 +501,9 @@ class AssetManager {
     std::optional<ModelAssetSource> modelSource(ModelHandle handle) const;
     std::optional<MeshAssetSource> meshSource(MeshHandle handle) const;
     std::optional<TextureAssetSource> textureSource(TextureHandle handle) const;
+    // The file a loadMaterial material came from; nullopt for model and
+    // runtime materials.
+    std::optional<MaterialAssetSource> materialSource(MaterialHandle handle) const;
     uint64_t revision() const;
     AssetLease<ModelHandle> lease(ModelHandle handle) const;
     AssetLease<MeshHandle> lease(MeshHandle handle) const;
@@ -531,6 +551,10 @@ class AssetManager {
     MaterialHandle addMaterial(MaterialAsset asset);
     TextureHandle addTexture(TextureAsset asset);
     AssetLoadResult<ModelHandle> importModel(const std::filesystem::path& path, const std::string& cacheKey);
+    AssetLoadResult<MaterialHandle> importMaterial(const std::filesystem::path& path, const std::string& cacheKey);
+    // A standalone RGBA8 texture read with usage; color textures share
+    // loadTexture's cache entry.
+    AssetLoadResult<TextureHandle> loadTextureWithUsage(const std::filesystem::path& path, TextureUsage usage);
 
     struct SlotMetadata {
         uint32_t generation{1};
@@ -548,6 +572,7 @@ class AssetManager {
     std::vector<MeshAsset> m_meshes;
     std::vector<MeshAssetSource> m_meshSources;
     std::vector<MaterialAsset> m_materials;
+    std::vector<MaterialAssetSource> m_materialSources;
     std::vector<TextureAsset> m_textures;
     std::vector<TextureAssetSource> m_textureSources;
     std::vector<FontAsset> m_fonts;
@@ -559,6 +584,7 @@ class AssetManager {
     std::unordered_map<std::string, ModelHandle> m_modelCache;
     std::unordered_map<std::string, FontHandle> m_fontCache;
     std::unordered_map<std::string, TextureHandle> m_textureCache;
+    std::unordered_map<std::string, MaterialHandle> m_materialCache;
     uint64_t m_revision{1};
     uint64_t m_useSerial{1};
     AssetMemoryBudget m_budget;

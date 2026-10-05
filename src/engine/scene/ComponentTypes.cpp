@@ -23,14 +23,21 @@ const FieldDescriptor* findStringFieldAt(std::span<const FieldDescriptor> fields
     return nullptr;
 }
 
-std::string addAssetReferenceFields(ComponentType& type, void* probe, std::span<const std::ptrdiff_t> offsets) {
-    for (const std::ptrdiff_t offset : offsets) {
-        const FieldDescriptor* field = findStringFieldAt(type.m_fields, probe, static_cast<char*>(probe) + offset);
-        if (field == nullptr) {
+std::string addAssetReferenceFields(ComponentType& type, void* probe,
+                                    std::span<const ComponentAssetReferenceOffset> offsets) {
+    for (const ComponentAssetReferenceOffset& reference : offsets) {
+        const FieldDescriptor* found =
+            findStringFieldAt(type.m_fields, probe, static_cast<char*>(probe) + reference.offset);
+        if (found == nullptr) {
             return "An asset reference of '" + type.m_key + "' is not a reflected string field";
         }
-        if (std::ranges::find(type.m_assetReferenceFields, field->key) == type.m_assetReferenceFields.end()) {
-            type.m_assetReferenceFields.push_back(field->key);
+        // The builder owns the descriptors; found points into them.
+        auto& field = const_cast<FieldDescriptor&>(*found);
+        if (field.presentation.assetKind.empty()) {
+            field.presentation.assetKind = reference.kind;
+        }
+        if (std::ranges::find(type.m_assetReferenceFields, field.key) == type.m_assetReferenceFields.end()) {
+            type.m_assetReferenceFields.push_back(field.key);
         }
     }
     return {};
@@ -115,13 +122,49 @@ std::string ComponentType::validate(const void* component) const {
     return m_validate ? m_validate(component) : std::string{};
 }
 
-std::optional<bool> ComponentType::textureLoaded(const void* component, std::string_view pathField) const {
+std::optional<bool> ComponentType::assetLoaded(const void* component, std::string_view pathField) const {
+    // Bindings only read through the accessors.
+    void* mutableComponent = const_cast<void*>(component);
     for (const TextureBinding& binding : m_textures) {
         if (binding.pathField == pathField) {
-            return static_cast<bool>(binding.handle(const_cast<void*>(component)));
+            return static_cast<bool>(binding.handle(mutableComponent));
+        }
+    }
+    for (const MaterialBinding& binding : m_materials) {
+        if (binding.pathField == pathField) {
+            return static_cast<bool>(binding.handle(mutableComponent));
         }
     }
     return std::nullopt;
+}
+
+SceneDocumentResult ComponentType::reloadAssets(void* component, AssetManager& assets,
+                                                const SceneDocumentOptions& options) const {
+    for (const TextureBinding& binding : m_textures) {
+        const std::optional<TextureAssetSource> source = assets.textureSource(binding.handle(component));
+        if (projectAssetStillNamed(binding.path(component), source ? source->path : std::filesystem::path{},
+                                   static_cast<bool>(binding.handle(component)), options)) {
+            continue;
+        }
+        if (SceneDocumentResult result =
+                loadProjectTexture(binding.path(component), assets, options, binding.handle(component));
+            !result) {
+            return {.error = m_displayName + " " + binding.pathField + ": " + result.error};
+        }
+    }
+    for (const MaterialBinding& binding : m_materials) {
+        const std::optional<MaterialAssetSource> source = assets.materialSource(binding.handle(component));
+        if (projectAssetStillNamed(binding.path(component), source ? source->path : std::filesystem::path{},
+                                   static_cast<bool>(binding.handle(component)), options)) {
+            continue;
+        }
+        if (SceneDocumentResult result =
+                loadProjectMaterial(binding.path(component), assets, options, binding.handle(component));
+            !result) {
+            return {.error = m_displayName + " " + binding.pathField + ": " + result.error};
+        }
+    }
+    return {.success = true};
 }
 
 SceneDocumentResult ComponentType::save(const Scene& scene, Entity entity, const ComponentSaveContext& context,
@@ -224,6 +267,13 @@ SceneDocumentResult ComponentType::load(const Json& input, Scene& scene, Entity 
     for (const TextureBinding& binding : m_textures) {
         if (SceneDocumentResult result =
                 loadProjectTexture(binding.path(component), context.assets, context.options, binding.handle(component));
+            !result) {
+            return result;
+        }
+    }
+    for (const MaterialBinding& binding : m_materials) {
+        if (SceneDocumentResult result = loadProjectMaterial(binding.path(component), context.assets,
+                                                             context.options, binding.handle(component));
             !result) {
             return result;
         }
