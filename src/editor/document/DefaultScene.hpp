@@ -14,6 +14,9 @@ Entity addSun(Scene& scene);
 Entity addEnvironment(Scene& scene);
 Entity addFog(Scene& scene);
 Entity addEmpty(Scene& scene);
+// A camera that is primary only when no camera in the scene already is, so
+// adding one never steals the game's view.
+Entity addCamera(Scene& scene);
 // Loads assetRoot/defaultCubeModel; cube is set only on success.
 SceneResult addCube(Scene& scene, AssetManager& assets, const std::filesystem::path& assetRoot, Entity& cube);
 

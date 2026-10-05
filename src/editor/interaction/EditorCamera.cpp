@@ -80,9 +80,11 @@ bool intersectTriangle(glm::vec3 origin, glm::vec3 direction, glm::vec3 a, glm::
 
 // The nearest triangle of mesh drawn at world hit by the ray, when it is
 // closer than maximumDistance. Distances are along the mesh-local ray, as
-// the picker has always compared them.
+// the picker has always compared them, which for a normalized world
+// direction are world distances. normal is the hit face's world normal
+// (LensHit::normal).
 bool intersectMesh(const MeshAsset& mesh, const glm::mat4& world, glm::vec3 origin, glm::vec3 direction,
-                   float maximumDistance, float& distance) {
+                   float maximumDistance, float& distance, glm::vec3& normal) {
     const glm::vec3 center = glm::vec3(world * glm::vec4(mesh.bounds.center, 1.0f));
     const float scale = std::max(
         {glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1])), glm::length(glm::vec3(world[2]))});
@@ -104,6 +106,7 @@ bool intersectMesh(const MeshAsset& mesh, const glm::mat4& world, glm::vec3 orig
     }
     bool hit = false;
     distance = maximumDistance;
+    glm::vec3 localNormal(0.0f, 1.0f, 0.0f);
     // Pick against full-detail ranges only; simplified LOD ranges follow
     // them in the same index buffer.
     for (const MeshPrimitive& primitive : mesh.primitives) {
@@ -117,13 +120,24 @@ bool intersectMesh(const MeshAsset& mesh, const glm::mat4& world, glm::vec3 orig
                 continue;
             }
             float triangleDistance = 0.0f;
-            if (intersectTriangle(localOrigin, localDirection, mesh.vertices[a].position, mesh.vertices[b].position,
-                                  mesh.vertices[c].position, triangleDistance) &&
+            const glm::vec3& pointA = mesh.vertices[a].position;
+            const glm::vec3& pointB = mesh.vertices[b].position;
+            const glm::vec3& pointC = mesh.vertices[c].position;
+            if (intersectTriangle(localOrigin, localDirection, pointA, pointB, pointC, triangleDistance) &&
                 triangleDistance < distance) {
                 distance = triangleDistance;
+                localNormal = glm::cross(pointB - pointA, pointC - pointA);
                 hit = true;
             }
         }
+    }
+    if (hit) {
+        // Normals transform by the inverse transpose, which keeps the
+        // front side outward even under a mirroring (negative) scale, where
+        // the world-space winding flips.
+        const glm::vec3 worldNormal = glm::transpose(glm::mat3(inverseWorld)) * localNormal;
+        const float length = glm::length(worldNormal);
+        normal = length > 1e-12f ? worldNormal / length : glm::vec3(0.0f, 1.0f, 0.0f);
     }
     return hit;
 }
@@ -198,7 +212,9 @@ Entity pickThroughLens(const Scene& scene, const AssetManager& assets, const Ren
     forEachPickableDraw(scene, isolatedObjects, [&](Entity meshEntity, const glm::mat4& world, Entity picked) {
         const MeshAsset* mesh = assets.mesh(scene.registry().get<MeshRendererComponent>(meshEntity).mesh);
         float distance = 0.0f;
-        if (mesh != nullptr && intersectMesh(*mesh, world, ray.origin, ray.direction, closestDistance, distance)) {
+        glm::vec3 normal(0.0f);
+        if (mesh != nullptr &&
+            intersectMesh(*mesh, world, ray.origin, ray.direction, closestDistance, distance, normal)) {
             closest = picked;
             closestDistance = distance;
         }
@@ -206,28 +222,34 @@ Entity pickThroughLens(const Scene& scene, const AssetManager& assets, const Ren
     return closest;
 }
 
-std::vector<LensHit> pickAllThroughLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
-                                        glm::vec2 normalizedViewportPosition, float aspectRatio,
-                                        const std::vector<RenderObjectId>* isolatedObjects) {
-    const LensRay ray = lensRay(lens, normalizedViewportPosition, aspectRatio);
+std::vector<LensHit> pickAllAlongRay(const Scene& scene, const AssetManager& assets, const LensRay& ray,
+                                     const std::vector<RenderObjectId>* isolatedObjects) {
     std::vector<LensHit> hits;
     forEachPickableDraw(scene, isolatedObjects, [&](Entity meshEntity, const glm::mat4& world, Entity picked) {
         const MeshAsset* mesh = assets.mesh(scene.registry().get<MeshRendererComponent>(meshEntity).mesh);
         float distance = 0.0f;
-        if (mesh == nullptr ||
-            !intersectMesh(*mesh, world, ray.origin, ray.direction, std::numeric_limits<float>::max(), distance)) {
+        glm::vec3 normal(0.0f);
+        if (mesh == nullptr || !intersectMesh(*mesh, world, ray.origin, ray.direction,
+                                              std::numeric_limits<float>::max(), distance, normal)) {
             return;
         }
         // An instancer drawing several members keeps its nearest hit.
         const auto found = std::ranges::find(hits, picked, &LensHit::entity);
         if (found == hits.end()) {
-            hits.push_back({.entity = picked, .distance = distance});
-        } else {
-            found->distance = std::min(found->distance, distance);
+            hits.push_back({.entity = picked, .distance = distance, .normal = normal});
+        } else if (distance < found->distance) {
+            found->distance = distance;
+            found->normal = normal;
         }
     });
     std::ranges::stable_sort(hits, {}, &LensHit::distance);
     return hits;
+}
+
+std::vector<LensHit> pickAllThroughLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,
+                                        glm::vec2 normalizedViewportPosition, float aspectRatio,
+                                        const std::vector<RenderObjectId>* isolatedObjects) {
+    return pickAllAlongRay(scene, assets, lensRay(lens, normalizedViewportPosition, aspectRatio), isolatedObjects);
 }
 
 std::vector<Entity> pickInsideLens(const Scene& scene, const AssetManager& assets, const RenderView& lens,

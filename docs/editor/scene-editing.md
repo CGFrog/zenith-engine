@@ -59,6 +59,19 @@ enters without them (the parked edit scene keeps them for Stop). The
 Hierarchy dims their rows with a "generated, not saved" tooltip.
 `zenith_transient_editing` covers it.
 
+Copies keep their place. `SceneFragment::copy` writes each copied root
+without a parent but with its `world_transform` beside its local transform;
+`paste` at the top level puts a root on that world transform (pasting a
+copied child no longer moves it by its parent's offset), while under a parent
+it keeps the local transform. Duplicating (`object.duplicate`,
+`EntityCommands::pasteBesideSources`) pastes at the top level and then gives
+each copy its original's parent and local transform, so duplicating several
+children of different parents keeps every copy beside its original.
+`SceneFragment::replicate` turns one fragment into N copies with their own
+root transforms (entity references inside each copy follow to that copy), so
+`object.array` and `object.scatter` paste once, however many copies they
+make: paste rebuilds the whole scene from its document.
+
 ## Prefab file writes
 
 Prefab files are shared project content, so the editor writes them at once

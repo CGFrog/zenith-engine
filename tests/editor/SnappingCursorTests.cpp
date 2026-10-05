@@ -11,6 +11,7 @@
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/KeymapDispatch.hpp"
 #include "editor/operators/ObjectOperators.hpp"
+#include "editor/operators/PlacementOperators.hpp"
 #include "editor/operators/PrefabOperators.hpp"
 #include "editor/panels/ViewportOperators.hpp"
 #include "editor/panels/ViewportPanel.hpp"
@@ -246,8 +247,9 @@ struct Fixture : EditorTestFixture {
         for (Operator& op : cursorOperators(viewports, document)) {
             expect(static_cast<bool>(operators.add(std::move(op))), "the cursor operators should register");
         }
-        expect(registerObjectOperators(operators).success && registerPrefabOperators(operators).success,
-               "the object and prefab operators should register");
+        expect(registerObjectOperators(operators).success && registerPrefabOperators(operators).success &&
+                   registerPlacementOperators(operators).success,
+               "the object, prefab, and placement operators should register");
         panel = std::make_unique<ViewportPanel>(viewports);
         front = cube({0.0f, 0.0f, 0.0f});
         behind = cube({0.0f, 0.0f, -5.0f});

@@ -93,7 +93,18 @@ release), `set`, `extend`, or `subtract`; Esc or a right click cancels them.
 `ViewportPicker` resolves every pick through the GPU id buffer when it can and
 the CPU otherwise; hidden and unselectable objects are never picked, a
 collection instance picks its instancer, and an armed eyedropper takes a click
-instead of the selection. Numpad / (`view3d.localview`) toggles local view per
+instead of the selection. Objects without a mesh (lights, cameras, probes,
+decals, irradiance volumes, audio emitters and listeners, particle emitters,
+fog) are clicked by their overlay marks: `IconPicking::pickableIcons` lists
+the origins `SceneGizmoDraw::sceneGizmoAnchors` marks (same scopes,
+visibility, and isolation as the drawn overlays) plus the emitters', the
+query carries them (`ViewportPickQuery::icons`, empty when the view draws no
+overlays), and `mergeIconPicks` tests them in screen space before the mesh
+result: a click within `iconPickRadiusPixels` picks the nearest icon over the
+mesh behind it unless a pickable surface along the click's ray is nearer
+than the icon (the default scene's sun inside the cube does not steal the
+cube's clicks), Alt+click cycling lists the visible icons first and hidden
+ones after the meshes, and box and lasso add the icons inside. Numpad / (`view3d.localview`) toggles local view per
 viewport: the selection and its descendants are isolated in that viewport's
 render view (and its picks) and framed, and toggling again restores the
 previous camera. `RegionSelect` holds the shared modes and outline drawing,
@@ -116,8 +127,18 @@ scale turn about the pivot (Individual Origins turns each object in place);
 translation snaps the selection's median (or active origin) in increments
 from the start, onto the absolute grid, or onto the surface or vertex under
 the mouse, projected onto an axis or plane constraint; Ctrl inverts snapping
-while held. The gizmo sits on the cursor while rotating or scaling about it,
-and snaps its translation along the axes being dragged. `viewport/SnapQueries`
+while held. The gizmo (`viewport/MultiGizmo`) moves every selected object
+(the selection's transform roots, so a parent and child move once): it is a
+frame with unit axes on the pivot point (translation uses the median, or the
+active origin, whatever the pivot), oriented by the active object in Local
+space and by the world in World space. Each frame `decomposeGizmoChange`
+splits the change since the drag began into a translation, a world rotation,
+and a per-axis scale along the gizmo's axes, and `applyPivotedTransform`
+(shared with the modal transforms) applies it to the objects' start matrices,
+scaling each along its own axes so rotated objects never shear. A drag is one
+undo step (`captureEntities` of the dragged roots, committed on release); in
+Play it edits the running scene unrecorded. The gizmo snaps its translation
+along the axes being dragged. `viewport/SnapQueries`
 finds targets on the CPU against pickable meshes, skipping the moved objects
 and their descendants (the id buffer holds only the front-most surface, which
 during a snapping drag is the moved object, and arrives frames late; physics
@@ -134,8 +155,21 @@ the sidecar while the cursor is at the origin), and resets it for a new scene;
 it is not part of undo. New objects spawn at the cursor: the add operators and
 `prefab.instantiate` fill their `location` from it through
 `Operator::invokeDefaults` (so Adjust Last Operation shows and edits it, and
-an explicit location wins), and dropped models go to it
-(`EntityCommands::placeModel`). `tests/editor/SnappingCursorTests.cpp` covers
+an explicit location wins). Models and prefabs dropped from the Asset
+Browser land under the mouse instead (`viewport/ViewportDrop`):
+`placementUnderMouse` (`SnapQueries`) casts the mouse ray against the
+pickable meshes and returns the hit and its surface normal, or over empty
+space the point at the cursor's depth (`placementDepth`), and the drop runs
+`object.place_model` or `prefab.instantiate` with that `location` and
+`normal`, so Adjust Last Operation can move it or toggle `align_to_normal`.
+A game view takes no drops. `LensHit::normal` is the hit face's world normal
+on its front side (counter-clockwise winding), transformed by the inverse
+transpose so it stays outward under negative scale; `SurfaceHit` turns it to
+face the ray. `tests/editor/MultiGizmoTests.cpp` covers the
+pivot maths and a multi-object drag's single undo step,
+`tests/editor/PlacementTests.cpp` hit normals and placing under the mouse,
+`tests/editor/SelectionToolsTests.cpp` icon picking, and
+`tests/editor/SnappingCursorTests.cpp`
 the pivot and snap math, the queries against real cube meshes, the operators,
 spawning, drawing, area state, and the sidecar headless; the editor smoke's
 `3D cursor` step places the cursor, adds an Empty at it, and undoes.
@@ -155,7 +189,9 @@ documents how a viewport turns clicks and drags into `requestPick` regions
 light, camera, collider, volume, and selection gizmos and name labels recorded
 into a view's debug list, free of ImGui so they also run in engine-hosted
 tests) and selection (GPU-first picking with CPU fallback through
-`ViewportPicker`/`ViewportPickProvider`, the modal box and lasso tools, view
-framing, and the select and local view operators), snap target queries
-(`SnapQueries`), and the 3D cursor (`Cursor3D`: placement, drawing, and its
-operators).
+`ViewportPicker`/`ViewportPickProvider`, clicking mesh-less objects by their
+marks in `IconPicking`, the modal box and lasso tools, view framing, and the
+select and local view operators), the multi-object gizmo maths
+(`MultiGizmo`), snap target and placement queries (`SnapQueries`), asset
+drops (`ViewportDrop`), and the 3D cursor (`Cursor3D`: placement, drawing,
+and its operators).

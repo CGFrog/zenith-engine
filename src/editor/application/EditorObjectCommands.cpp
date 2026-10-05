@@ -53,17 +53,6 @@ std::optional<char> pressedNumericCharacter() {
     }
     return std::nullopt;
 }
-
-glm::mat3 normalizedAxes(const glm::mat4& world) {
-    glm::mat3 axes(1.0f);
-    for (int column = 0; column < 3; ++column) {
-        const glm::vec3 basis(world[column]);
-        if (glm::length(basis) > 1e-8f) {
-            axes[column] = glm::normalize(basis);
-        }
-    }
-    return axes;
-}
 } // namespace
 
 void EditorSession::handleObjectKeys(ApplicationContext& context, KeymapRegion region) {

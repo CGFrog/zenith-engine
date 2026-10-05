@@ -58,25 +58,75 @@ bool duplicateSelectionUncommitted(const SceneEditing& editing, Selection& selec
         editing.diagnostics().reportError("Duplicate failed: " + result.error);
         return false;
     }
+    std::vector<SceneEntityId> sources;
+    if (const SceneDocumentResult result = SceneFragment::roots(fragment, sources); !result) {
+        editing.diagnostics().reportError("Duplicate failed: " + result.error);
+        return false;
+    }
     if (!editing.capture(before)) {
         return false;
     }
     std::vector<SceneEntityId> duplicates;
-    Entity duplicateParent = entt::null;
-    if (selection.size() == 1) {
-        const Entity source = scene.findEntity(*selection.active());
-        if (source != entt::null) {
-            duplicateParent = scene.registry().get<RelationshipComponent>(source).parent;
-        }
-    }
     if (const SceneDocumentResult result =
-            SceneFragment::paste(fragment, scene, editing.assets(), options, duplicateParent, duplicates);
+            pasteBesideSources(editing, fragment, sources, PastedTransform::KeepSourceLocal, duplicates);
         !result) {
         editing.diagnostics().reportError("Duplicate failed: " + result.error);
         return false;
     }
     selection.assign(std::move(duplicates));
     return true;
+}
+
+SceneDocumentResult pasteBesideSources(const SceneEditing& editing, std::string_view fragment,
+                                       std::span<const SceneEntityId> sources, PastedTransform transform,
+                                       std::vector<SceneEntityId>& pasted) {
+    Scene& scene = editing.scene();
+
+    // Each source's parent and local transform, by id: paste rebuilds the
+    // scene, so entity handles do not survive it.
+    struct Placement {
+        SceneEntityId parent;
+        glm::mat4 local{1.0f};
+    };
+
+    std::vector<Placement> placements;
+    for (SceneEntityId id : sources) {
+        Placement placement;
+        if (const Entity source = scene.findEntity(id); source != entt::null) {
+            const Entity parent = scene.registry().get<RelationshipComponent>(source).parent;
+            if (parent != entt::null && !scene.isTransient(parent)) {
+                placement.parent = scene.id(parent);
+            }
+            placement.local = scene.registry().get<TransformComponent>(source).local;
+        }
+        placements.push_back(placement);
+    }
+    // Pasted at the top level every copy lands on its fragment world
+    // transform; each then joins its source's parent.
+    if (const SceneDocumentResult result =
+            SceneFragment::paste(fragment, scene, editing.assets(), editing.document().options(), entt::null, pasted);
+        !result) {
+        return result;
+    }
+    for (size_t index = 0; index < pasted.size() && !placements.empty(); ++index) {
+        const Placement& placement = placements[index % placements.size()];
+        const Entity copy = scene.findEntity(pasted[index]);
+        const Entity parent = placement.parent ? scene.findEntity(placement.parent) : entt::null;
+        if (copy == entt::null || parent == entt::null) {
+            continue;
+        }
+        // A copy its source's parent cannot take stays at the top level.
+        const SceneResult joined =
+            scene.reparent(copy, parent,
+                           transform == PastedTransform::KeepWorld ? ReparentMode::PreserveWorldTransform
+                                                                   : ReparentMode::PreserveLocalTransform);
+        if (joined && transform == PastedTransform::KeepSourceLocal) {
+            scene.registry().get<TransformComponent>(copy).local = placement.local;
+            scene.markTransformDirty(copy);
+        }
+    }
+    scene.updateWorldTransforms();
+    return {.success = true};
 }
 
 void duplicateSelection(const SceneEditing& editing, Selection& selection) {
@@ -86,36 +136,4 @@ void duplicateSelection(const SceneEditing& editing, Selection& selection) {
     }
 }
 
-void placeModel(const SceneEditing& editing, Selection& selection, const std::filesystem::path& path, Entity parent,
-                const glm::vec3& location) {
-    Scene& scene = editing.scene();
-    const AssetLoadResult<ModelHandle> loaded = editing.assets().loadModel(path);
-    if (!loaded) {
-        editing.diagnostics().reportError("Could not place model: " + loaded.error);
-        return;
-    }
-    std::string before;
-    if (!editing.capture(before)) {
-        return;
-    }
-    const Entity root = scene.createEntity(path.stem().string());
-    glm::vec4 local(location, 1.0f);
-    if (parent != entt::null) {
-        scene.setParent(root, parent);
-        scene.updateWorldTransforms();
-        local = glm::inverse(scene.registry().get<TransformComponent>(parent).world) * local;
-    }
-    scene.registry().get<TransformComponent>(root).local[3] = local;
-    scene.markTransformDirty(root);
-    if (const SceneResult result = scene.instantiateModel(root, loaded.handle, editing.assets()); !result) {
-        scene.destroyEntity(root);
-        editing.diagnostics().reportError("Could not place model: " + result.error);
-        return;
-    }
-    const SceneEntityId id = scene.id(root);
-    editing.commit("Place Model", {}, std::move(before));
-    if (scene.findEntity(id) != entt::null) {
-        selection.selectOnly(id);
-    }
-}
 } // namespace EntityCommands
