@@ -47,6 +47,9 @@ std::string validateFieldDescriptors(const std::vector<FieldDescriptor>& fields)
         if (field.kind == FieldKind::EntityReference && (field.presentation.angle || field.presentation.color)) {
             return "Entity reference field '" + field.key + "' cannot be shown as an angle or a color";
         }
+        if (!field.presentation.assetKind.empty() && field.kind != FieldKind::String) {
+            return "Field '" + field.key + "' names an asset kind but is not a string";
+        }
         if (field.kind == FieldKind::List && (!field.listSize || !field.resizeList || !field.listElement)) {
             return "List field '" + field.key + "' cannot reach its elements";
         }
