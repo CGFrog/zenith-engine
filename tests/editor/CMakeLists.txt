@@ -94,6 +94,7 @@ zenith_add_test(zenith_properties_panel SOURCES PropertiesPanelTests.cpp LIBS ze
 zenith_add_test(zenith_entity_reference_field SOURCES EntityReferenceFieldTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_asset_reference_field SOURCES AssetReferenceFieldTests.cpp LIBS zenith_editor_app NEEDS_ASSETS)
 zenith_add_test(zenith_model_replace SOURCES ModelReplaceTests.cpp LIBS zenith_editor_app NEEDS_ASSETS)
+zenith_add_test(zenith_mesh_assign SOURCES MeshAssignTests.cpp LIBS zenith_editor_app NEEDS_ASSETS)
 # Collider shape switching, offsets, mesh choices, and viewport handles.
 zenith_add_test(zenith_collider_tools SOURCES ColliderToolsTests.cpp LIBS zenith_editor_app DEPENDS zenith_assets)
 zenith_add_test(zenith_component_operators EXECUTABLE zenith_component_operator_tests
