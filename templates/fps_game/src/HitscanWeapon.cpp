@@ -26,7 +26,7 @@ void HitscanWeapon::onUpdate(BehaviourContext& context) {
 
     // The camera looks down its -Z axis. The ray ignores the camera and the
     // character carrying it.
-    const glm::mat4& world = scene.registry().get<TransformComponent>(context.entity).world;
+    const glm::mat4 world = scene.worldTransform(context.entity);
     const glm::vec3 origin(world[3]);
     const glm::vec3 forward = -glm::normalize(glm::vec3(world[2]));
     const auto* relationship = scene.registry().try_get<RelationshipComponent>(context.entity);

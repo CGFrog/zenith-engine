@@ -3,7 +3,7 @@
 #include "engine/module/ModuleRegistrar.hpp"
 #include "engine/scene/Scene.hpp"
 
-#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <string>
 
@@ -21,12 +21,13 @@ ComponentType spinnerComponentType() {
 
 void spin(const SystemContext& context) {
     Scene& scene = context.scene;
-    const auto spinners = scene.registry().view<const SpinnerComponent, TransformComponent>();
+    const auto spinners = scene.registry().view<const SpinnerComponent>();
     for (const Entity entity : spinners) {
         const float degrees = spinners.get<const SpinnerComponent>(entity).degreesPerSecond * context.deltaSeconds;
-        glm::mat4& local = spinners.get<TransformComponent>(entity).local;
-        local = glm::rotate(local, glm::radians(degrees), glm::vec3(0.0f, 1.0f, 0.0f));
-        scene.markTransformDirty(entity);
+        // The setters mark the entity's transform dirty; writing
+        // TransformComponent through registry() would not.
+        const glm::quat turn = glm::angleAxis(glm::radians(degrees), glm::vec3(0.0f, 1.0f, 0.0f));
+        scene.setRotation(entity, scene.localRotation(entity) * turn);
     }
 }
 } // namespace
