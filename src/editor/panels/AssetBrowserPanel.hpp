@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/panels/EditorPanel.hpp"
+#include "editor/project/MaterialDocument.hpp"
 #include "editor/project/ProjectAssets.hpp"
 
 #include <array>
@@ -23,6 +24,12 @@ struct AssetBrowserActions {
     std::function<void(const std::filesystem::path&)> openScript;
     // Opens a prefab as a document of its own (prefab.edit).
     std::function<void(const std::filesystem::path&)> openPrefab;
+    // Reloads a material file the browser's material inspector saved, so
+    // scenes using it update at once.
+    std::function<void(const std::filesystem::path&)> reloadMaterial;
+    // The ImGui texture id of an image's thumbnail (ProjectAssets::
+    // thumbnailTexture), or 0 while there is none; unset shows kind icons.
+    std::function<uint64_t(const std::filesystem::path&)> thumbnailTexture;
 };
 
 // Whether a browser's folder and view mode are remembered across sessions.
@@ -40,9 +47,13 @@ enum class AssetBrowserRole {
 // breadcrumbs, a grid or list of the current folder, search and type filters,
 // and file operations (create, rename, move, duplicate, move to trash, show in
 // the OS file browser). Models drag into the viewport or inspector as
-// "ZENITH_MODEL_ASSET" payloads, and any item drags onto a folder to move it;
-// scenes open on double-click, prefabs open in prefab mode, and scripts (from the project's source root
-// too, when the service lists one) open in the IDE.
+// "ZENITH_MODEL_ASSET" payloads, textures, sounds, and materials onto
+// inspector asset fields with their own payloads (AssetDragPayloads.hpp), and
+// any item drags onto a folder to move it; scenes open on double-click,
+// prefabs open in prefab mode, and scripts (from the project's source root
+// too, when the service lists one) open in the IDE. Image tiles show
+// thumbnails, and a selected material (.zmat) is edited below the listing and
+// saved as it changes.
 //
 // The panel is one view over a shared ProjectAssets service, which owns the
 // catalog, watchers, thumbnails, change dispatch, favourites, and the file
@@ -108,6 +119,8 @@ class AssetBrowserPanel final : public EditorPanel {
     // through diagnostics and selects what it produced.
     void createFolder(EditorDiagnostics& diagnostics);
     void createScene(EditorDiagnostics& diagnostics);
+    // Writes "New Material.zmat" into the current folder.
+    void createMaterial(EditorDiagnostics& diagnostics);
     void renameItem(const std::filesystem::path& item, const std::string& utf8NewName, EditorDiagnostics& diagnostics);
     // Moves an item into another folder of the same root.
     void moveItem(const std::filesystem::path& item, const std::filesystem::path& folder,
@@ -127,6 +140,7 @@ class AssetBrowserPanel final : public EditorPanel {
         Navigate,
         CreateFolder,
         CreateScene,
+        CreateMaterial,
         BeginRename,
         Move,
         Duplicate,
@@ -171,7 +185,13 @@ class AssetBrowserPanel final : public EditorPanel {
     void handleEntryInteraction(const BrowserEntry& entry, bool pressed, const AssetBrowserActions& actions);
     void drawItemMenu(const std::filesystem::path& item, bool folder);
     void drawFolderMenu();
-    void drawSelectedAsset(const AssetBrowserActions& actions);
+    void drawSelectedAsset(const AssetBrowserActions& actions, EditorDiagnostics& diagnostics);
+    // The selected material's fields; saved once no widget is active.
+    void drawMaterialInspector(const EditorAssetRecord& asset, const AssetBrowserActions& actions,
+                               EditorDiagnostics& diagnostics);
+    // The drag tooltip's verb: "Move" over a folder, "Assign" over a field
+    // taking the asset, else "Place" for models and prefabs.
+    const char* dragVerb(bool placeable) const;
     void runDeferredCommand(EditorDiagnostics& diagnostics);
     void beginRename(const std::filesystem::path& item);
     void drawModals(EditorDiagnostics& diagnostics);
@@ -184,7 +204,16 @@ class AssetBrowserPanel final : public EditorPanel {
     std::filesystem::path m_currentFolder;
     std::filesystem::path m_selected;
     std::string m_search;
-    std::array<bool, 6> m_shownKinds{true, true, true, true, true, true};
+    std::array<bool, 7> m_shownKinds{true, true, true, true, true, true, true};
+    // The material the inspector edits: its file, the values shown, and
+    // whether they changed since the last save.
+    std::filesystem::path m_materialPath;
+    std::filesystem::file_time_type m_materialWriteTime{};
+    std::optional<MaterialDocument> m_material;
+    std::string m_materialError;
+    bool m_materialUnsaved{false};
+    // The ImGui frame a dragged item last hovered a folder of this browser.
+    int m_folderDropHoverFrame{-1};
     std::optional<DeferredCommand> m_deferred;
     // The last service move this view has followed.
     uint64_t m_followedItemMove{0};

@@ -1,6 +1,7 @@
 #include "ProjectFileOperations.hpp"
 
 #include "engine/assets/AssetMeta.hpp"
+#include "engine/assets/MaterialAssetFile.hpp"
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
@@ -490,6 +491,17 @@ ProjectFileResult createProjectScene(const std::filesystem::path& folder, const 
     if (const SceneDocumentResult saved = SceneDocument::save(target.path, scene, assets, {.assetRoot = assetRoot});
         !saved) {
         return failure("Could not create scene " + quoted(target.path) + ": " + saved.error);
+    }
+    return target;
+}
+
+ProjectFileResult createProjectMaterial(const std::filesystem::path& folder) {
+    ProjectFileResult target = uniqueChildPath(folder, "New Material", materialFileExtension);
+    if (!target) {
+        return target;
+    }
+    if (const MaterialFileResult written = writeMaterialFile(target.path, MaterialFile{}); !written) {
+        return failure("Could not create material " + quoted(target.path) + ": " + written.error);
     }
     return target;
 }

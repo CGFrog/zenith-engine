@@ -3,6 +3,7 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/PrefabEditDocument.hpp"
+#include "editor/interaction/AssetReferenceField.hpp"
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/EntityReferenceField.hpp"
 #include "editor/interaction/ProjectNames.hpp"
@@ -692,12 +693,14 @@ EntityPropertiesView::drawComponentValues(EditorContext& context, const Componen
         const EntityReferenceFieldContext entityReferences = entityReferenceFieldContext(context, shownId, type);
         // Copied: an edit below changes the revision the cache keys on.
         const PrefabEntityOverrides overrides = prefabOverrides(context, shownId);
+        const std::optional<AssetReferenceFieldContext> assets = assetReferenceFieldContext(context);
         ReflectedFieldEditorOptions fieldOptions{
             .filter = filter,
             .assetLoaded =
                 [&type, &scene, entity = targets.front()](std::string_view fieldKey) {
-                    return type.textureLoaded(type.find(scene, entity), fieldKey);
+                    return type.assetLoaded(type.find(scene, entity), fieldKey);
                 },
+            .assets = assets ? &*assets : nullptr,
             .entityReferences = &entityReferences,
             .nameList =
                 [&context](std::string_view listName) {
@@ -727,16 +730,26 @@ EntityPropertiesView::drawComponentValues(EditorContext& context, const Componen
     }
     if (changed) {
         // Copying a custom edit may have replaced the components, so look
-        // each one up again.
+        // each one up again. A changed asset path loads its asset first:
+        // saving writes a loaded texture's own path, so a stale handle would
+        // hide the edit from the undo step. In Play the edited value, handle
+        // included, is what stays live.
         std::vector<std::any> edited;
+        bool assetsLoaded = true;
         for (size_t index = 0; index < targets.size(); ++index) {
             void* component = type.find(scene, targets[index]);
             type.sanitize(component);
+            if (const SceneDocumentResult reloaded =
+                    type.reloadAssets(component, context.editing.assets(), context.editing.document().options());
+                !reloaded && assetsLoaded) {
+                context.diagnostics.reportError("Could not assign the asset: " + reloaded.error);
+                assetsLoaded = false;
+            }
             edited.push_back(type.copy(component));
             type.assign(component, originals[index]);
         }
         SceneEditing::EntitySnapshot before;
-        if (context.editing.captureEntities(targets, before)) {
+        if (assetsLoaded && context.editing.captureEntities(targets, before)) {
             for (size_t index = 0; index < targets.size(); ++index) {
                 type.assign(type.find(scene, targets[index]), edited[index]);
             }
@@ -840,12 +853,28 @@ void EntityPropertiesView::drawAssetWarnings(EditorContext& context, SceneEntity
     }
 }
 
-void EntityPropertiesView::drawModelDropTarget(EditorContext& context, SceneEntityId entityId) const {
-    widgets::Button("Drop Model Asset to Add Child", {-1.0f, 0.0f});
-    if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ZENITH_MODEL_ASSET")) {
-            context.placeModel(static_cast<const char*>(payload->Data), context.app.scene.findEntity(entityId));
-        }
-        ImGui::EndDragDropTarget();
+void EntityPropertiesView::drawModelField(EditorContext& context, SceneEntityId entityId) const {
+    const Scene& scene = context.app.scene;
+    const Entity entity = scene.findEntity(entityId);
+    const std::optional<AssetReferenceFieldContext> assets = assetReferenceFieldContext(context);
+    if (entity == entt::null || !assets || scene.registry().all_of<ModelNodeComponent>(entity)) {
+        return;
     }
+    std::string value;
+    std::optional<bool> loaded;
+    if (const auto* model = scene.registry().try_get<ModelComponent>(entity)) {
+        loaded = context.app.assets.model(model->model) != nullptr;
+        if (const std::optional<ModelAssetSource> source = context.app.assets.modelSource(model->model)) {
+            value = projectAssetValue(assets->assetRoot, source->path).value_or(utf8PathText(source->path));
+        }
+    }
+    const std::string shown = value;
+    ImGui::PushID("##ModelField");
+    ImGui::BeginDisabled(!context.canInvoke("object.model_replace"));
+    if (drawAssetReferenceField("Model", value, "model", *assets, {.loaded = loaded, .clearable = false}) &&
+        !value.empty() && value != shown) {
+        context.invoke("object.model_replace", Json{{"entity", entityId.value}, {"asset", value}}.dump());
+    }
+    ImGui::EndDisabled();
+    ImGui::PopID();
 }

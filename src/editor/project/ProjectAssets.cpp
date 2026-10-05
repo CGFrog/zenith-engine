@@ -2,6 +2,7 @@
 
 #include "editor/application/EditorDiagnostics.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/scene/Scene.hpp"
 
 #include <algorithm>
 #include <iterator>
@@ -119,6 +120,8 @@ void ProjectAssets::dispatchChanges(EditorDiagnostics& diagnostics, const Projec
         const std::string name = utf8PathText(change.asset.absolutePath.filename());
         if (change.asset.kind == EditorAssetKind::Model && actions.reloadModel) {
             actions.reloadModel(change.asset.absolutePath);
+        } else if (change.asset.kind == EditorAssetKind::Material && actions.reloadMaterial) {
+            actions.reloadMaterial(change.asset.absolutePath);
         } else if (change.asset.kind == EditorAssetKind::Prefab && actions.prefabChanged) {
             actions.prefabChanged(change.asset.absolutePath);
         } else if (change.asset.kind == EditorAssetKind::Texture) {
@@ -144,6 +147,14 @@ std::shared_ptr<const AssetDatabase> ProjectAssets::assetDatabase() const {
 
 ThumbnailCache& ProjectAssets::thumbnails() {
     return m_thumbnails;
+}
+
+UiTextureHandle ProjectAssets::thumbnailTexture(RenderRuntime& rendering, const std::filesystem::path& image) {
+    return m_thumbnailTextures.texture(rendering, image);
+}
+
+void ProjectAssets::releaseThumbnailTextures(RenderRuntime& rendering) {
+    m_thumbnailTextures.release(rendering);
 }
 
 bool ProjectAssets::isRoot(const std::filesystem::path& path) const {
@@ -267,6 +278,22 @@ std::optional<std::filesystem::path> ProjectAssets::createScene(const std::files
     const ProjectFileResult result = createProjectScene(folder, m_catalog.roots().front());
     reportOutcome(diagnostics, result.success,
                   result ? "Created scene '" + utf8PathText(result.path) + "'." : result.error);
+    if (!result) {
+        return std::nullopt;
+    }
+    refresh(diagnostics);
+    return normalizedCatalogPath(result.path);
+}
+
+std::optional<std::filesystem::path> ProjectAssets::createMaterial(const std::filesystem::path& folder,
+                                                                   EditorDiagnostics& diagnostics) {
+    if (m_catalog.inSourceRoot(normalizedCatalogPath(folder))) {
+        diagnostics.reportError("Materials cannot be created in the source folder; use the asset folders.");
+        return std::nullopt;
+    }
+    const ProjectFileResult result = createProjectMaterial(folder);
+    reportOutcome(diagnostics, result.success,
+                  result ? "Created material '" + utf8PathText(result.path) + "'." : result.error);
     if (!result) {
         return std::nullopt;
     }
@@ -441,4 +468,37 @@ void reloadProjectModel(AssetManager& assets, EditorDiagnostics& diagnostics, co
                     "Reloaded model '" + name +
                         "'. Existing instances keep their previous resources; new placements and reopened scenes "
                         "use the refreshed model.");
+}
+
+
+size_t reloadProjectMaterial(AssetManager& assets, std::span<Scene* const> scenes, EditorDiagnostics& diagnostics,
+                             const std::filesystem::path& material) {
+    const std::string name = utf8PathText(material.filename());
+    const AssetLoadResult<MaterialHandle> result = assets.reloadMaterial(material);
+    if (!result) {
+        diagnostics.reportError("Material reload of '" + name + "' failed: " + result.error);
+        return 0;
+    }
+    // The reloaded material's source names the file as the asset manager
+    // normalized it, which identifies the users of earlier loads.
+    const std::filesystem::path source = assets.materialSource(result.handle)->path;
+    size_t repointed = 0;
+    for (Scene* scene : scenes) {
+        if (scene == nullptr) {
+            continue;
+        }
+        auto users = scene->registry().view<MaterialOverrideComponent>();
+        for (const Entity entity : users) {
+            MaterialOverrideComponent& user = users.get<MaterialOverrideComponent>(entity);
+            const std::optional<MaterialAssetSource> used = assets.materialSource(user.material);
+            if (user.material == result.handle || !used || used->path != source) {
+                continue;
+            }
+            user.material = result.handle;
+            scene->markMaterialDirty(entity);
+            ++repointed;
+        }
+    }
+    diagnostics.add(EditorDiagnosticSeverity::Info, diagnosticSource, "Reloaded material '" + name + "'.");
+    return repointed;
 }

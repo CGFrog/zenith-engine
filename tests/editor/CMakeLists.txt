@@ -89,6 +89,8 @@ zenith_add_test(zenith_live_editing SOURCES LiveEditingTests.cpp LIBS zenith_edi
 zenith_add_test(zenith_reflected_field_editor SOURCES ReflectedFieldEditorTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_properties_panel SOURCES PropertiesPanelTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_entity_reference_field SOURCES EntityReferenceFieldTests.cpp LIBS zenith_editor_app)
+zenith_add_test(zenith_asset_reference_field SOURCES AssetReferenceFieldTests.cpp LIBS zenith_editor_app NEEDS_ASSETS)
+zenith_add_test(zenith_model_replace SOURCES ModelReplaceTests.cpp LIBS zenith_editor_app NEEDS_ASSETS)
 zenith_add_test(zenith_component_operators EXECUTABLE zenith_component_operator_tests
     SOURCES ComponentOperatorTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_build_workflow SOURCES BuildWorkflowTests.cpp LIBS zenith_editor_app

@@ -41,7 +41,7 @@ void InspectorPanel::draw(EditorContext& context) {
     m_view.drawPreservedComponents(context, entityId);
     m_view.drawIrradianceBakeButton(context, entityId);
     m_view.drawAssetWarnings(context, entityId);
-    m_view.drawModelDropTarget(context, entityId);
+    m_view.drawModelField(context, entityId);
     ImGui::Separator();
     drawAddComponentButton(context, entityId);
 }

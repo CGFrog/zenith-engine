@@ -123,8 +123,11 @@ class EntityPropertiesView {
     // Bakes the entity's irradiance volume when it has one.
     void drawIrradianceBakeButton(EditorContext& context, SceneEntityId entityId) const;
     void drawAssetWarnings(EditorContext& context, SceneEntityId entityId) const;
-    // A drop target placing a dragged model asset as a child of the entity.
-    void drawModelDropTarget(EditorContext& context, SceneEntityId entityId) const;
+    // The entity's Model row: the model asset it instantiates, which a pick
+    // or a model dropped from the Asset Browser replaces through
+    // object.model_replace (an empty entity gets the model). Nothing for the
+    // node entities inside a model instance.
+    void drawModelField(EditorContext& context, SceneEntityId entityId) const;
     // For an entity of a prefab instance: the prefab asset's name, the
     // instance's override summary, and Apply, Revert, Unpack, and Select
     // Prefab Asset (the prefab operators, acting on the active entity's

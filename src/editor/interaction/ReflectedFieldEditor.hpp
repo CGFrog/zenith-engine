@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+struct AssetReferenceFieldContext;
 struct EntityReferenceFieldContext;
 
 // Shown in place of a value that differs between the objects being edited.
@@ -17,9 +18,13 @@ inline constexpr const char* mixedValueText = "\xE2\x80\x94";
 struct ReflectedFieldEditorOptions {
     // Case-insensitive label filter; empty shows every field.
     std::string_view filter;
-    // For read-only path fields: whether the asset they name loaded, so a
-    // missing file can be flagged. nullopt means the field is not an asset.
+    // For path fields: whether the asset they name loaded, so a missing file
+    // can be flagged. nullopt means the field has no loaded asset.
     std::function<std::optional<bool>(std::string_view fieldKey)> assetLoaded;
+    // Offers project assets to String fields with FieldPresentation::
+    // assetKind (an asset picker, thumbnails, and drops from the Asset
+    // Browser); without it they are edited as text.
+    const AssetReferenceFieldContext* assets{nullptr};
     // Names referenced entities and offers the eyedropper; without it entity
     // reference fields show their id only.
     const EntityReferenceFieldContext* entityReferences{nullptr};

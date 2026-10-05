@@ -174,6 +174,8 @@ struct EditorTestFixture {
     const WatchList* watches{nullptr};
     // The project's names inspectors offer; none by default.
     const EditorProjectNames* projectNames{nullptr};
+    // The project's assets asset fields offer; none by default.
+    ProjectAssets* projectAssets{nullptr};
     TestSessionActions defaultActions{operators, runner, sessionContextSource()};
 
     // The context the session runs an operator in: operatorContext() with
@@ -237,7 +239,8 @@ struct EditorTestFixture {
                 .componentEditors = &componentEditors,
                 .scripts = scripts,
                 .watches = watches,
-                .projectNames = projectNames};
+                .projectNames = projectNames,
+                .projectAssets = projectAssets};
     }
 
   private:
