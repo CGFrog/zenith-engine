@@ -5,6 +5,7 @@
 #include "editor/project/ProjectTemplate.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "editor/theme/ThemeChrome.hpp"
+#include "engine/platform/CrashHandler.hpp"
 
 #include <imgui.h>
 
@@ -203,6 +204,10 @@ const RecentProjects& EditorApplication::recentProjects() const {
     return m_recentProjects;
 }
 
+void EditorApplication::setCrashHandler(CrashHandlerScope& handler) {
+    m_crashHandler = &handler;
+}
+
 void EditorApplication::recordRecentProject(Logger& logger) {
     if (m_project.projectFile.empty()) {
         return;
@@ -231,7 +236,13 @@ std::unique_ptr<ApplicationScene> EditorApplication::createSession() {
         // The session publishes its policy every frame and resets it
         // when it unloads, so a session that failed to load or was
         // replaced never leaves the cursor captured.
-        .mouseCaptureChanged = [this](MouseCapturePolicy policy) { m_mouseCapturePolicy = policy; }};
+        .mouseCaptureChanged = [this](MouseCapturePolicy policy) { m_mouseCapturePolicy = policy; },
+        .crashRecoveryChanged =
+            [this](CrashRecoveryAction action) {
+                if (m_crashHandler != nullptr) {
+                    m_crashHandler->setRecoveryAction(std::move(action));
+                }
+            }};
     if (m_projectHub) {
         services.leaveForProjectHub = [this](ApplicationContext& context, ProjectHubEntry entry) {
             showProjectHub(context, entry);

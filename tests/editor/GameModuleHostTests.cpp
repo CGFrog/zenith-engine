@@ -276,6 +276,37 @@ void testGameplaySession(HostFixture& fixture, SceneEntityId counterId) {
     *fixture.counterField<int32_t>(counterId, "value") = value;
 }
 
+// A module system that throws in a gameplay session is disabled for the rest
+// of it while the other systems keep running; the next session runs it again.
+void testSystemFaults(HostFixture& fixture, SceneEntityId counterId) {
+    const int32_t value = fixture.counterValue(counterId, "value");
+    const int32_t loggerSeen = fixture.counterValue(counterId, "logger_seen");
+    DebugDraw debugDraw;
+    fixture.host.startGameplay(fixture.assets, fixture.document.options(), debugDraw);
+    // count_play throws while this entity exists.
+    const Entity trigger = fixture.scene.createEntity("editor_test_throw");
+    fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Play, 0.016f);
+    fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Play, 0.016f);
+    const SystemFaults& faults = fixture.host.systemFaults();
+    expect(faults.disabled("count_play") && faults.faults().size() == 1 &&
+               faults.faults()[0].what.find("fault trigger") != std::string::npos,
+           "a throwing module system is disabled with what it threw");
+    expect(fixture.counterValue(counterId, "value") == value &&
+               fixture.counterValue(counterId, "logger_seen") == loggerSeen + 2,
+           "the other systems of the phase keep running every frame");
+
+    fixture.host.stopGameplay(fixture.scene);
+    expect(fixture.host.systemFaults().empty(), "stopping the session enables the system again");
+    fixture.scene.destroyEntity(trigger);
+    fixture.host.startGameplay(fixture.assets, fixture.document.options(), debugDraw);
+    fixture.host.runSystems(SystemPhase::Update, fixture.scene, nullptr, SimulationMode::Play, 0.016f);
+    expect(fixture.counterValue(counterId, "value") == value + 1 && fixture.host.systemFaults().empty(),
+           "the next session runs the system again");
+    fixture.host.stopGameplay(fixture.scene);
+    *fixture.counterField<int32_t>(counterId, "value") = value;
+    *fixture.counterField<int32_t>(counterId, "logger_seen") = loggerSeen;
+}
+
 // The module's menu entry, sidebar tab, and inspector override, used the way
 // the editor uses them. Leaves the scene, selection, and undo history as it
 // found them (two extra entities without counters aside).
@@ -544,6 +575,7 @@ int main() {
         testLoadEditAndPlay(fixture, paths, counterId);
         if (fixture.host.module() != nullptr) {
             testGameplaySession(fixture, counterId);
+            testSystemFaults(fixture, counterId);
             testEditorExtensions(fixture, counterId);
             testSimulate(fixture, counterId);
             testHotReload(fixture, paths, counterId);

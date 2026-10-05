@@ -266,6 +266,7 @@ GameModuleHostResult GameModuleHost::loadSource(EditorDocument& document) {
     m_inputActions = *m_module->inputActions();
     m_inputActions.overrideWith(m_projectInputActions);
     m_profile.clear();
+    m_systemFaults.clear();
     document.setComponentTypes(m_module->componentTypes());
 
     GameModuleHostResult result{.success = true};
@@ -363,6 +364,7 @@ void GameModuleHost::releaseModule(Scene& scene, EditorDocument& document, std::
     m_scheduler = SystemScheduler{};
     m_inputActions = {};
     m_profile.clear();
+    m_systemFaults.clear();
     document.setComponentTypes(nullptr);
     // Replacing the registry destroys the storage module code created while
     // that code is still loaded.
@@ -429,7 +431,7 @@ void GameModuleHost::runSystems(SystemPhase phase, Scene& scene, ApplicationCont
                       .actions = actions ? &*actions : nullptr,
                       .ui = phase == SystemPhase::Ui ? ui : nullptr,
                       .behaviours = m_module->behaviours().get()},
-                     &m_profile);
+                     &m_profile, &m_systemFaults);
 }
 
 void GameModuleHost::setLogger(Logger& logger) {
@@ -438,6 +440,7 @@ void GameModuleHost::setLogger(Logger& logger) {
 
 void GameModuleHost::startGameplay(AssetManager& assets, SceneDocumentOptions documents, DebugDraw& debugDraw) {
     m_gameServices.reset();
+    m_systemFaults.clear();
     m_gameServices = std::make_unique<GameServices>(assets, std::move(documents), debugDraw, m_logger,
                                                     m_module ? m_module->behaviours() : nullptr);
 }
@@ -447,6 +450,7 @@ void GameModuleHost::stopGameplay(Scene& scene) {
         destroyAllBehaviours(*m_module->behaviours(), scene, m_gameServices.get(), m_logger);
     }
     m_gameServices.reset();
+    m_systemFaults.clear();
 }
 
 GameServices* GameModuleHost::gameServices() {
@@ -463,6 +467,10 @@ std::span<const SystemDescriptor* const> GameModuleHost::systems(SystemPhase pha
 
 const SystemProfile& GameModuleHost::systemProfile() const {
     return m_profile;
+}
+
+const SystemFaults& GameModuleHost::systemFaults() const {
+    return m_systemFaults;
 }
 
 void GameModuleHost::finishSystemFrame() {

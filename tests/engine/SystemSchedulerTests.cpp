@@ -3,6 +3,7 @@
 // to fixed steps, animation, and audio.
 
 #include "engine/application/SimulationClock.hpp"
+#include "engine/diagnostics/Logger.hpp"
 #include "engine/input/InputManager.hpp"
 #include "engine/module/SystemScheduler.hpp"
 #include "engine/scene/Scene.hpp"
@@ -12,6 +13,7 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -215,6 +217,68 @@ void testPhases() {
            "phases have readable names");
 }
 
+// A system that throws is reported once and, with SystemFaults, skipped from
+// then on; the systems around it keep running, and clearing the faults lets
+// it run again.
+void testThrowingSystemIsDisabled() {
+    std::vector<std::string> calls;
+    bool fail = true;
+    auto registry = std::make_shared<SystemRegistry>();
+    registry->add(
+        {.name = "before", .order = -1, .run = [&calls](const SystemContext&) { calls.push_back("before"); }});
+    registry->add({.name = "faulty", .run = [&calls, &fail](const SystemContext&) {
+                       calls.push_back("faulty");
+                       if (fail) {
+                           throw std::runtime_error("faulty system exploded");
+                       }
+                   }});
+    registry->add({.name = "after", .order = 1, .run = [&calls](const SystemContext&) { calls.push_back("after"); }});
+    registry->add({.name = "unknown", .phase = SystemPhase::LateUpdate, .run = [](const SystemContext&) { throw 7; }});
+    const SystemScheduler scheduler(registry);
+    Scene scene;
+    Logger logger{LoggerConfig{.echoToStderr = false}};
+    const SystemContext context{.scene = scene, .mode = SimulationMode::Play, .logger = &logger};
+    SystemFaults faults;
+    SystemProfile profile;
+
+    scheduler.run(SystemPhase::Update, context, &profile, &faults);
+    expect(calls == std::vector<std::string>{"before", "faulty", "after"},
+           "the systems after a throwing system still run");
+    expect(faults.disabled("faulty") && faults.faults().size() == 1 &&
+               faults.faults()[0].phase == SystemPhase::Update && faults.faults()[0].what == "faulty system exploded",
+           "a throwing system is recorded with its phase and what it threw");
+    expect(profile.find("faulty") != nullptr, "a throwing system's run time is still recorded");
+    const std::vector<LogEntry> logged = logger.entries();
+    expect(logged.size() == 1 && logged[0].level == LogLevel::Error && logged[0].category == "gameplay" &&
+               logged[0].message.find("'faulty'") != std::string::npos &&
+               logged[0].message.find("Update") != std::string::npos &&
+               logged[0].message.find("faulty system exploded") != std::string::npos &&
+               logged[0].message.find("disabled") != std::string::npos,
+           "the fault is logged as an error naming the system, its phase, and what it threw");
+
+    calls.clear();
+    scheduler.run(SystemPhase::Update, context, &profile, &faults);
+    expect(calls == std::vector<std::string>{"before", "after"}, "a disabled system is skipped");
+    expect(logger.entries().size() == 1, "a disabled system is reported only once");
+
+    scheduler.run(SystemPhase::LateUpdate, context, nullptr, &faults);
+    expect(faults.disabled("unknown") && faults.faults()[1].what == "an unknown exception",
+           "a system throwing something other than a std::exception is disabled too");
+
+    faults.clear();
+    fail = false;
+    calls.clear();
+    scheduler.run(SystemPhase::Update, context, &profile, &faults);
+    expect(calls == std::vector<std::string>{"before", "faulty", "after"} && faults.empty(),
+           "clearing the faults runs the system again");
+
+    // Without faults a throwing system is contained and reported every run.
+    fail = true;
+    scheduler.run(SystemPhase::Update, context);
+    scheduler.run(SystemPhase::Update, context);
+    expect(logger.entries().size() == 4, "without faults the system is reported each time it throws");
+}
+
 void testSimulationClock() {
     const SimulationClock realTime;
     expect(simulatedSeconds(realTime, 0.02f) == 0.02f && fixedStepAccumulation(realTime, 0.02f) == 0.02f &&
@@ -277,6 +341,7 @@ int main() {
     testSimulateScheduling();
     testProfile();
     testInputReachesSystemsUnchanged();
+    testThrowingSystemIsDisabled();
     testSimulationClock();
     return failures == 0 ? 0 : 1;
 }

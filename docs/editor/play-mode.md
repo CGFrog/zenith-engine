@@ -54,6 +54,26 @@ the time-scale field. `tests/editor/PlayTargetsTests.cpp` and
 startup scene in the active viewport and, when `zenith` is built, launches it
 standalone for a moment (its `play targets` step, see [Editor smoke](smoke.md)).
 
+## Gameplay failures
+
+A module system that throws is logged and disabled (see
+[Fault isolation](../engine/modules.md#fault-isolation)); in Play and
+Simulate the session also stops the run. Each gameplay stage it drives
+(Update with the timers, FixedUpdate, the physics events, LateUpdate, Ui)
+goes through `EditorSession::runGameplayStage`, which records a failure when
+an exception escapes the stage or a system was disabled in it, and skips the
+later stages of that frame. `drawUi` then calls `stopFailedGameplay`: Play
+stops, the edit scene is restored, and an error from `Play` in the Info log
+says which system threw and what. The System Profiler shows a disabled system
+as `<name> (disabled)` with the reason in its tooltip; an Edit system that
+throws stays disabled until gameplay starts or stops or the module reloads.
+`EditorSessionTests` (`testGameplayFaultStopsPlay`) and
+`GameModuleHostTests` cover it with the test module's `count_play`, which
+throws while the scene has an entity named `editor_test_throw`. A crash that
+is not a C++ exception goes to the crash handler, which saves the open
+document to the recovery file before the process ends
+([Platform](../engine/platform.md#srcengineplatformcrashhandler)).
+
 ## Debugging the game
 
 - **Debug draw.** Gameplay `DebugDraw` (`GameServices`) lines and labels show

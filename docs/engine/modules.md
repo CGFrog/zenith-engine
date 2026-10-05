@@ -31,6 +31,30 @@ type registry and a `SystemScheduler`, from a module (`gameplayFromModule`),
 from registration linked into the executable (`linkGameplay`), or the built-in
 types and systems alone. `GameplayRunner` plays a `Gameplay` in a game's
 `ApplicationScene` (the project application and the demo use it).
+
+## Fault isolation
+
+A gameplay bug must not end the game or the editor, so every call into game
+code is guarded (`GuardedCall.hpp`, `callGuarded`):
+
+- `SystemScheduler::run` catches whatever a system throws, logs it as an
+  error in the `gameplay` category (system name, phase, and `what()`), and
+  goes on with the next system. Given a `SystemFaults`, it also disables the
+  system there and skips it from then on, reporting it only once, like a
+  behaviour hook that throws (`BehaviourScheduler`). The scheduler is shared
+  and immutable, so the disabled set is the host's per-session state beside
+  its `SystemProfile`: `GameplayRunner` clears its own on `start` and `stop`
+  (`systemFaults()`), and the editor's `GameModuleHost` clears its own when
+  gameplay starts or stops and when the module loads or reloads.
+- `Timers::advance` logs a throwing callback to its `LogChannel` and drops
+  its timer, even a repeating one; the other timers run.
+- `EntityCommandBuffer` logs a throwing `onSpawned` callback; the entity
+  stays and the later commands apply. `Effects` runs no game code itself: its
+  spawns and lifetimes go through these two.
+
+Structured exceptions (access violations, stack overflows) are not C++
+exceptions; the process's crash handler records them (see
+[Platform](platform.md#srcengineplatformcrashhandler)).
 `EngineExport.hpp` defines `ZENITH_ENGINE_API` for data that must cross the
 engine library boundary.
 
@@ -177,7 +201,7 @@ It holds:
   after the spawn commands applied (the next phase, or a timer).
 - `Timers`: one-shot or repeating callbacks on simulated time. They follow the
   clock's time scale and stop while paused. A timer may have an owner entity;
-  the timer is dropped when its owner is gone.
+  the timer is dropped when its owner is gone, or when its callback throws.
 - The game's own clock: `setPaused` and `setTimeScale`, for menus, inventory
   screens, and slow motion. `simulationClock(host)` combines them with the
   host's clock (the editor's pause, frame step, and time scale): the scales

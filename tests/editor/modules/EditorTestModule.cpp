@@ -17,6 +17,7 @@
 #include <imgui.h>
 
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -63,6 +64,18 @@ class EditorTestSpinner : public Behaviour {
 template <typename Function> void forEachCounter(Scene& scene, Function function) {
     scene.registry().view<EditorTestCounter>().each([&](EditorTestCounter& counter) { function(counter); });
 }
+
+// The name of an entity that makes count_play throw.
+constexpr const char* faultTrigger = "editor_test_throw";
+
+void throwOnFaultTrigger(const Scene& scene) {
+    const auto names = scene.registry().view<const NameComponent>();
+    for (const Entity entity : names) {
+        if (names.get<const NameComponent>(entity).name == faultTrigger) {
+            throw std::runtime_error("count_play found the fault trigger");
+        }
+    }
+}
 } // namespace
 
 ZENITH_GAME_MODULE("zenith_editor_test_game", moduleVersion);
@@ -84,10 +97,13 @@ void zenith_module_register(ModuleRegistrar& registrar) {
     registrar.addBehaviour<EditorTestSpinner>(
         "editor_test_spinner", "Editor Test Spinner",
         Fields<EditorTestSpinner>().add("turns", &EditorTestSpinner::turns).add("starts", &EditorTestSpinner::starts));
+    // Throws while the scene has an entity named faultTrigger, for the fault
+    // isolation tests.
     registrar.addSystem({.name = "count_play",
                          .phase = SystemPhase::Update,
                          .runIn = RunIn::Play,
                          .run = [](const SystemContext& context) {
+                             throwOnFaultTrigger(context.scene);
                              forEachCounter(context.scene, [&context](EditorTestCounter& counter) {
                                  counter.value += playIncrement;
                                  counter.inputTicks += context.input != nullptr ? 1 : 0;
