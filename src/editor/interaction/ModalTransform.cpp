@@ -103,6 +103,68 @@ glm::vec3 transformPivotPoint(const ModalTransformPivot& pivot, std::span<const 
     return median;
 }
 
+glm::mat3 normalizedAxes(const glm::mat4& world) {
+    glm::mat3 axes(1.0f);
+    for (int column = 0; column < 3; ++column) {
+        const glm::vec3 basis(world[column]);
+        if (glm::length(basis) > 1e-8f) {
+            axes[column] = glm::normalize(basis);
+        }
+    }
+    return axes;
+}
+
+std::vector<glm::mat4> applyPivotedTransform(std::span<const glm::mat4> startWorld, TransformPivot pivotMode,
+                                             const glm::vec3& pivot, const glm::mat3& axes,
+                                             const PivotedTransform& change) {
+    const glm::mat3 scaling = axes * glm::mat3(glm::scale(glm::mat4(1.0f), change.scale)) * glm::transpose(axes);
+    std::vector<glm::mat4> result;
+    result.reserve(startWorld.size());
+    for (const glm::mat4& world : startWorld) {
+        const glm::vec3 origin(world[3]);
+        const glm::vec3 center = pivotMode == TransformPivot::IndividualOrigins ? origin : pivot;
+        glm::mat4 changed = world;
+        changed[3] = glm::vec4(center + change.rotation * (scaling * (origin - center)) + change.translation, 1.0f);
+        // Each object scales along its own axes by how much the scaling
+        // stretches them, then turns; rotated objects never shear.
+        for (int column = 0; column < 3; ++column) {
+            glm::vec3 basis(world[column]);
+            const float length = glm::length(basis);
+            if (length > 1e-8f) {
+                const glm::vec3 direction = basis / length;
+                basis *= glm::dot(direction, scaling * direction);
+            }
+            changed[column] = glm::vec4(change.rotation * basis, 0.0f);
+        }
+        result.push_back(changed);
+    }
+    return result;
+}
+
+std::optional<PivotedTransform> decomposeGizmoChange(const glm::mat4& gizmoStart, const glm::mat4& gizmoNow) {
+    const glm::mat3 start(gizmoStart);
+    if (std::abs(glm::determinant(start)) <= 1e-12f) {
+        return std::nullopt;
+    }
+    const glm::mat3 axes = normalizedAxes(gizmoStart);
+    // The change of the frame expressed in the start's own axes: a rotation
+    // times a per-axis scale.
+    const glm::mat3 inFrame = glm::transpose(axes) * glm::mat3(gizmoNow) * glm::inverse(start) * axes;
+    PivotedTransform change;
+    glm::mat3 turn(1.0f);
+    for (int column = 0; column < 3; ++column) {
+        const float length = glm::length(inFrame[column]);
+        if (length <= 1e-8f) {
+            return std::nullopt;
+        }
+        change.scale[column] = length;
+        turn[column] = inFrame[column] / length;
+    }
+    change.rotation = axes * turn * glm::transpose(axes);
+    change.translation = glm::vec3(gizmoNow[3]) - glm::vec3(gizmoStart[3]);
+    return change;
+}
+
 ModalTransform::ModalTransform(TransformOperation operation, std::vector<glm::mat4> startWorld, glm::mat3 localAxes,
                                glm::vec2 mouse, ModalTransformView view, ModalTransformPivot pivot)
     : m_operation(operation)
@@ -299,9 +361,8 @@ glm::vec3 ModalTransform::snapTranslation(glm::vec3 delta, const TransformSnappi
     return frame * components;
 }
 
-glm::mat4 ModalTransform::aboutPivot(const glm::mat4& turn, const glm::mat4& world) const {
-    const glm::vec3 center = m_pivotMode == TransformPivot::IndividualOrigins ? glm::vec3(world[3]) : m_pivot;
-    return glm::translate(glm::mat4(1.0f), center) * turn * glm::translate(glm::mat4(1.0f), -center) * world;
+std::vector<glm::mat4> ModalTransform::aboutPivot(const PivotedTransform& change, const glm::mat3& axes) const {
+    return applyPivotedTransform(m_startWorld, m_pivotMode, m_pivot, axes, change);
 }
 
 void ModalTransform::resetMouseOrigin() {
@@ -391,10 +452,7 @@ ModalTransformResult ModalTransform::rotate(const TransformSnapping& snapping) c
     }
 
     ModalTransformResult result;
-    const glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), angle, axis);
-    for (const glm::mat4& world : m_startWorld) {
-        result.world.push_back(aboutPivot(rotation, world));
-    }
+    result.world = aboutPivot({.rotation = glm::mat3(glm::rotate(glm::mat4(1.0f), angle, axis))}, glm::mat3(1.0f));
     const std::string value = numericInputActive()
                                   ? "[" + std::string(m_numericNegated ? "-" : "") + m_numericText + "|]"
                                   : format("%.2f", glm::degrees(angle));
@@ -419,9 +477,7 @@ ModalTransformResult ModalTransform::trackball(const TransformSnapping& snapping
         glm::rotate(glm::mat4(1.0f), yaw, camera.up) * glm::rotate(glm::mat4(1.0f), pitch, camera.right);
 
     ModalTransformResult result;
-    for (const glm::mat4& world : m_startWorld) {
-        result.world.push_back(aboutPivot(rotation, world));
-    }
+    result.world = aboutPivot({.rotation = glm::mat3(rotation)}, glm::mat3(1.0f));
     result.description = format("Trackball: %.2f %.2f", glm::degrees(yaw), glm::degrees(pitch));
     return result;
 }
@@ -448,26 +504,8 @@ ModalTransformResult ModalTransform::scale(const TransformSnapping& snapping) co
     } else if (m_constraint == TransformConstraint::Plane) {
         factors[static_cast<int>(m_axis)] = 1.0f;
     }
-    const glm::mat3 frame = constraintFrame();
-    const glm::mat3 scaling = frame * glm::mat3(glm::scale(glm::mat4(1.0f), factors)) * glm::transpose(frame);
-
     ModalTransformResult result;
-    for (const glm::mat4& world : m_startWorld) {
-        glm::mat4 scaled = world;
-        // Individual origins scale each object in place.
-        const glm::vec3 center = m_pivotMode == TransformPivot::IndividualOrigins ? glm::vec3(world[3]) : m_pivot;
-        scaled[3] = glm::vec4(center + scaling * (glm::vec3(world[3]) - center), 1.0f);
-        // Scale each object along its own axes so rotated objects never shear.
-        for (int column = 0; column < 3; ++column) {
-            const glm::vec3 basis(world[column]);
-            const float length = glm::length(basis);
-            if (length > 1e-8f) {
-                const glm::vec3 direction = basis / length;
-                scaled[column] = glm::vec4(basis * glm::dot(direction, scaling * direction), 0.0f);
-            }
-        }
-        result.world.push_back(scaled);
-    }
+    result.world = aboutPivot({.scale = factors}, constraintFrame());
 
     if (numericInputActive()) {
         result.description = "Scale: [" + std::string(m_numericNegated ? "-" : "") + m_numericText + "|]";

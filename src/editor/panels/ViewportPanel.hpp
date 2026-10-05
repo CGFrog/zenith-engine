@@ -255,6 +255,13 @@ class ViewportPanel final : public EditorPanel {
     void drawItemTab(EditorContext& context);
     // Returns whether the gizmo is in use or under the mouse.
     bool drawGizmo(EditorContext& context);
+    // Where the gizmo sits for the objects at world, before a drag: on the
+    // pivot, oriented by the active object in Local space.
+    glm::mat4 currentGizmoFrame(EditorContext& context, std::span<const glm::mat4> world) const;
+    // Starts a drag of entities (whose ids are ids) from startWorld,
+    // capturing them for undo.
+    void beginGizmoDrag(EditorContext& context, std::vector<SceneEntityId> ids, std::span<const Entity> entities,
+                        std::vector<glm::mat4> startWorld);
     // Runs the keymap's mouse bindings (click select, Alt+click cycle, the
     // Ctrl+RMB lasso, the Shift+RMB 3D cursor...); presses count only when
     // pressesAllowed.
@@ -305,12 +312,22 @@ class ViewportPanel final : public EditorPanel {
     glm::vec2 m_size{1.0f};
     // Where the chrome leaves the image uncovered, for the name label.
     glm::vec2 m_labelOrigin{0.0f};
-    bool m_gizmoWasUsing{false};
+
+    // A gizmo drag of the selection's transform roots (MultiGizmo).
+    struct GizmoDrag {
+        std::vector<SceneEntityId> entities;
+        std::vector<glm::mat4> startWorld;
+        glm::mat4 gizmoStart{1.0f};
+        // The frame ImGuizmo returned last, handed back to it each frame.
+        glm::mat4 gizmo{1.0f};
+        // The dragged entities before the drag, recorded when it ends;
+        // empty when the capture failed.
+        std::optional<SceneEditing::EntitySnapshot> before;
+    };
+
+    std::optional<GizmoDrag> m_gizmoDrag;
     // Where the gizmo was when the current drag started.
     glm::vec3 m_gizmoStartPosition{0.0f};
-    // Scene snapshot from before the current gizmo drag, for undo.
-    // The dragged entity before a gizmo drag, recorded when it ends.
-    std::optional<SceneEditing::EntitySnapshot> m_gizmoBefore;
     std::vector<RenderObjectId> m_outlinedObjects;
     std::vector<Entity> m_outlineTraversal;
     glm::vec2 m_mouseInView{0.0f};
