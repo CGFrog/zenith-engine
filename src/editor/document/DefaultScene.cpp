@@ -20,6 +20,16 @@ Entity addFog(Scene& scene) {
     return fog;
 }
 
+Entity addCamera(Scene& scene) {
+    bool primaryExists = false;
+    for (const auto [entity, camera] : scene.registry().view<const CameraComponent>().each()) {
+        primaryExists = primaryExists || camera.primary;
+    }
+    const Entity camera = scene.createEntity("Camera");
+    scene.registry().emplace<CameraComponent>(camera).primary = !primaryExists;
+    return camera;
+}
+
 Entity addEmpty(Scene& scene) {
     return scene.createEntity("Empty");
 }

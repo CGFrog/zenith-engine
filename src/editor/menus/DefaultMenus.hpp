@@ -17,12 +17,19 @@ struct DefaultMenuSources {
 };
 
 // Registers the editor's own menus with editorMenuOwner: the Add menu
-// (VIEW3D_MT_add: the add-object entries, then Prefab > one entry per project
+// (VIEW3D_MT_add: the add-object entries (Mesh, Light, Light Probe, Camera,
+// Audio, Effects, Environment, Fog, Empty; lights, probes, audio, and
+// effects are empties with one component), then Prefab > one entry per project
 // prefab running prefab.instantiate, then Component > category > type
 // creating an empty with that component) and the Add Component menu
-// (OBJECT_MT_add_component, grouped by category), plus the pies
-// (registerPieMenus).
+// (OBJECT_MT_add_component, grouped by category), plus Select Grouped
+// (registerSelectGroupedMenu) and the pies (registerPieMenus).
 MenuResult registerDefaultMenus(MenuRegistry& registry, DefaultMenuSources sources = {});
+
+// Registers Select Grouped (selectGroupedMenuId) with editorMenuOwner: one
+// object.select_grouped {type} entry per SelectGroupedType, for Shift G and
+// the Edit menu.
+MenuResult registerSelectGroupedMenu(MenuRegistry& registry);
 
 // Registers the viewport pies with editorMenuOwner, for wm.call_pie: Shading
 // (VIEW3D_MT_shading_pie: view3d.shading_set {type}), View
