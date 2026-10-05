@@ -13,7 +13,7 @@ Wraps an EnTT registry and defines the core ECS components:
 | `RelationshipComponent` | Parent entity plus an owned list of child entities. |
 | `ModelComponent` | Records the model instantiated at a root entity. |
 | `MeshRendererComponent` | Refers to CPU mesh data through a `MeshHandle`. |
-| `MaterialOverrideComponent` | Per-instance tint of a mesh renderer: base color, emission, roughness and metallic factors, and an optional runtime-only replacement material (see [Graphics passes](graphics-passes.md#material-overrides)). |
+| `MaterialOverrideComponent` | Per-instance tint of a mesh renderer: base color, emission, roughness and metallic factors, and an optional replacement material: a `.zmat` file named by `material_asset` (schema version 2) or a runtime material code assigns (see [Graphics passes](graphics-passes.md#material-overrides)). |
 | `CameraComponent` | Perspective projection settings and primary-camera selection. |
 | `ParticleEmitterComponent` | GPU particle emitter parameters (`ParticleEmitter.*`, with `validateParticleEmitter`). |
 
@@ -153,7 +153,19 @@ moved, and falls back to the path without a database or for unknown GUIDs.
 Version 3 adds a top-level `collections` array (see Collections below);
 version 2 documents migrate with none. Component structs keep path strings at
 runtime; GUIDs live only at the document boundary. Texture paths (`ComponentTypeBuilder::texture`) and other
-`assetReference` fields are converted after component migrations run. Inside
+`assetReference` fields are converted after component migrations run. Each
+such field carries `FieldPresentation::assetKind`, a plain word reflection
+gives no meaning (`texture()` defaults it to `texture`, `material()` to
+`material`, `assetReference()` to `asset`; `Fields::asset` names one
+explicitly, such as `environment`, `audio`, or `bake`), so editors know which
+files a field takes. `ComponentTypeBuilder::material` binds a path to a
+`MaterialHandle` loaded with `AssetManager::loadMaterial`, as `texture` binds
+one to a texture. After an edit changes a bound path in place,
+`ComponentType::reloadAssets` points the handles at the files the paths name
+now (clearing a handle whose path was emptied, keeping a runtime asset whose
+path stays empty); a texture's reference is saved from its loaded handle, so
+an edit must reload before it is saved. `assetLoaded` reports a bound
+field's load state. Inside
 component JSON the key `path` is reserved for asset references, which lets
 `relocateSceneAssetReferences` rewrite references to moved files generically.
 Prefab entities use the same entity form and component codecs, so their asset

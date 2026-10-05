@@ -75,6 +75,40 @@ field's disappearance cancels it, and `EditorSession::updateEyedropper` shows
 the hint at the mouse. `tests/editor/EntityReferenceFieldTests.cpp` covers
 the widget, an outliner-click pick, and undo.
 
+String fields whose descriptor names an asset kind
+(`FieldPresentation::assetKind`, set by `Fields::asset` or defaulted by
+`ComponentTypeBuilder::texture`, `material`, and `assetReference`) draw
+through `interaction/AssetReferenceField` when the view has project assets
+(`EditorContext::projectAssets`, passed on as
+`ReflectedFieldEditorOptions::assets`): a box naming the file (red with
+"(missing)" when the catalog does not list it or its handle failed to load,
+the full path in its tooltip) that opens a searchable picker of the
+catalog's matching assets with thumbnails, a Clear button, and a drop target
+for the matching Asset Browser payload. `editorAssetKindsFor` maps the kinds:
+`texture` and `environment` take images (`.hdr` and `.ktx2` included),
+`audio` sounds, `material` `.zmat` files, `model` glTF models, and anything
+else every kind. Values are paths relative to the document's asset root. The
+widget writes the whole string, so mixed display and multi-object edits work
+as for any string; read-only asset fields (the irradiance `bake`) keep their
+text form. Decal maps, particle sprites, environment and probe maps, audio
+clips, and a material override's material are such fields.
+
+Before an edit is recorded the view calls `ComponentType::reloadAssets` on
+each edited component. A texture field saves its loaded handle's own path, so
+without the reload an edited path would be saved over by the stale handle and
+the undo step would be empty; a path that cannot load is reported and the
+edit is dropped. In Play the reloaded handle is what stays live.
+
+Below the components, the Model row (`drawModelField`) names the model an
+entity instantiates and offers model assets through the same widget; a pick
+or a dropped model runs `object.model_replace` (operators/ModelOperators),
+which destroys the previous model's node entities, removes its Model and
+Animation components, and instantiates the new model as one undo step,
+moving user children of old nodes to the entity with a warning. An empty
+entity gets the model; node entities of a model have no row.
+`tests/editor/AssetReferenceFieldTests.cpp` covers the widget, undo and redo,
+multi-edit, and the reload; `ModelReplaceTests.cpp` the operator.
+
 `panels/InspectorPanel` lists those sections in one scrolling column.
 `panels/PropertiesPanel` is the Blender-style alternative: a vertical tab strip
 with Object (name, transform, Add Component), one tab per component category
