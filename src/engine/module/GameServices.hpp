@@ -24,6 +24,8 @@ class DebugDraw;
 // A physics step's sensor entries and exits and the contacts that began
 // between two solid bodies, by scene id, kept for the behaviours' trigger and
 // collision hooks. A collision's normal points from first toward second.
+// Both lists keep the physics world's deterministic order
+// (triggerEventPrecedes and contactEventPrecedes), step after step.
 struct GameplayPhysicsEvents {
     struct Trigger {
         bool entered{true};
@@ -142,7 +144,8 @@ class GameServices {
     void flush(Scene& scene);
     // Publishes a physics step's sensor events as TriggerEntered and
     // TriggerExited, and keeps them and the step's new contacts between solid
-    // bodies for the behaviours. The host calls it after each step.
+    // bodies for the behaviours, in the order given (PhysicsWorld's order is
+    // deterministic). The host calls it after each step.
     void publishPhysicsEvents(const Scene& scene, std::span<const TriggerEvent> triggers,
                               std::span<const ContactEvent> contacts);
     // The physics events kept since the last call.

@@ -38,6 +38,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -48,6 +49,11 @@ constexpr JPH::BroadPhaseLayer broadPhaseMoving{1};
 
 uint32_t bodyKey(JPH::BodyID id) {
     return id.GetIndexAndSequenceNumber();
+}
+
+// The contactEventPrecedes key of a contact between two bodies.
+auto contactOrderKey(ContactEventType type, SceneEntityId first, SceneEntityId second, const glm::vec3& normal) {
+    return std::tuple(std::min(first, second), std::max(first, second), type, first, normal.x, normal.y, normal.z);
 }
 
 // Either order of two bodies.
@@ -196,6 +202,10 @@ class PhysicsWorld::Impl {
         glm::vec3 normal;
         // Whether either body is a sensor; unknown (false) for End.
         bool sensor{false};
+        // Resolved after the step (orderPendingContacts); zero for a body
+        // that is gone or has no scene id.
+        SceneEntityId firstId;
+        SceneEntityId secondId;
     };
 
     // A sensor and a body touching it, counted per touching shape pair. Jolt
@@ -280,9 +290,41 @@ class PhysicsWorld::Impl {
     }
 
     void removeCharacters() {
-        while (!characters.empty()) {
-            removeCharacter(characters.begin()->first);
+        std::vector<Entity> entities;
+        entities.reserve(characters.size());
+        for (const auto& [entity, _] : characters) {
+            entities.push_back(entity);
         }
+        removeCharactersInOrder(std::move(entities));
+    }
+
+    // Removes every character, in scene id order so that Jolt reuses the
+    // freed inner body ids the same way every run.
+    void removeCharactersInOrder(std::vector<Entity> entities) {
+        std::ranges::sort(entities, {}, [this](Entity entity) { return characters.at(entity).sceneId; });
+        for (const Entity entity : entities) {
+            removeCharacter(entity);
+        }
+    }
+
+    // Puts the step's contacts, which Jolt's worker threads reported in any
+    // order, in contactEventPrecedes order (body ids break the remaining ties,
+    // such as bodies without scene ids).
+    void orderPendingContacts() {
+        const auto sceneIdOfBody = [this](JPH::BodyID body) {
+            const auto entity = bodyEntities.find(bodyKey(body));
+            return entity != bodyEntities.end() ? sceneIdOf(entity->second) : SceneEntityId{};
+        };
+        for (PendingContact& pending : pendingContacts) {
+            pending.firstId = sceneIdOfBody(pending.first);
+            pending.secondId = sceneIdOfBody(pending.second);
+        }
+        std::ranges::sort(pendingContacts, [](const PendingContact& first, const PendingContact& second) {
+            return std::tuple(contactOrderKey(first.type, first.firstId, first.secondId, first.normal),
+                              bodyKey(first.first), bodyKey(first.second)) <
+                   std::tuple(contactOrderKey(second.type, second.firstId, second.secondId, second.normal),
+                              bodyKey(second.first), bodyKey(second.second));
+        });
     }
 
     // Reports the end of every sensor overlap the body was part of.
@@ -327,9 +369,12 @@ class PhysicsWorld::Impl {
                 .otherId = pair.otherId};
     }
 
-    // Turns the step's sensor contacts into enter and exit events, after the
-    // exits of bodies removed since the last step.
+    // Turns the step's sensor contacts (in orderPendingContacts order, so a
+    // pair's Begin counts before its End) into enter and exit events, after
+    // the exits of bodies removed since the last step.
     void updateTriggers() {
+        const auto removalExits = static_cast<std::ptrdiff_t>(pendingTriggerEvents.size());
+        std::ranges::sort(pendingTriggerEvents, triggerEventPrecedes);
         for (const PendingContact& pending : pendingContacts) {
             if (pending.type == ContactEventType::Persist) {
                 continue;
@@ -383,6 +428,7 @@ class PhysicsWorld::Impl {
                                             .sensorId = pair.sensorId,
                                             .otherId = pair.otherId});
         }
+        std::sort(pendingTriggerEvents.begin() + removalExits, pendingTriggerEvents.end(), triggerEventPrecedes);
         triggerEvents.swap(pendingTriggerEvents);
         pendingTriggerEvents.clear();
     }
@@ -540,10 +586,16 @@ void PhysicsWorld::clear() {
     }
 
     m_impl->removeCharacters();
-    JPH::BodyInterface& bodies = m_impl->system->GetBodyInterface();
+    // In scene id order, so Jolt reuses the freed body ids the same way every run.
+    std::vector<std::pair<SceneEntityId, JPH::BodyID>> removed;
     for (const auto& [_, state] : m_impl->bodies) {
-        bodies.RemoveBody(state.id);
-        bodies.DestroyBody(state.id);
+        removed.emplace_back(state.sceneId, state.id);
+    }
+    std::ranges::sort(removed, {}, [](const auto& body) { return std::pair(body.first, bodyKey(body.second)); });
+    JPH::BodyInterface& bodies = m_impl->system->GetBodyInterface();
+    for (const auto& [_, id] : removed) {
+        bodies.RemoveBody(id);
+        bodies.DestroyBody(id);
     }
     m_impl->bodies.clear();
     m_impl->bodyEntities.clear();
@@ -831,13 +883,13 @@ constexpr float characterTeleportDistance = 1.0e-4f;
 void PhysicsWorld::stepCharacters(Scene& scene, float deltaSeconds) {
     Impl& impl = *m_impl;
     entt::registry& registry = scene.registry();
-    for (auto iterator = impl.characters.begin(); iterator != impl.characters.end();) {
-        const Entity entity = iterator->first;
-        ++iterator;
+    std::vector<Entity> removed;
+    for (const auto& [entity, _] : impl.characters) {
         if (!registry.valid(entity) || !registry.all_of<TransformComponent, CharacterControllerComponent>(entity)) {
-            impl.removeCharacter(entity);
+            removed.push_back(entity);
         }
     }
+    impl.removeCharactersInOrder(std::move(removed));
     std::erase_if(impl.rejectedCharacters, [&registry](Entity entity) {
         return !registry.valid(entity) || !registry.all_of<TransformComponent, CharacterControllerComponent>(entity);
     });
@@ -1026,12 +1078,17 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
                 refreshOrSkipBody(entity, scene, assets);
             }
         }
-        for (auto iterator = m_impl->bodies.begin(); iterator != m_impl->bodies.end();) {
-            const Entity entity = iterator->first;
-            ++iterator;
+        // In scene id order, so Jolt reuses the freed body ids the same way
+        // every run.
+        std::vector<std::pair<SceneEntityId, Entity>> stale;
+        for (const auto& [entity, state] : m_impl->bodies) {
             if (!hasBodyComponents(scene, entity)) {
-                removeBody(entity);
+                stale.emplace_back(state.sceneId, entity);
             }
+        }
+        std::ranges::sort(stale);
+        for (const auto& [_, entity] : stale) {
+            removeBody(entity);
         }
         for (auto iterator = m_impl->rejectedBodies.begin(); iterator != m_impl->rejectedBodies.end();) {
             const Entity entity = iterator->first;
@@ -1121,11 +1178,17 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
 
     m_impl->contactEvents.clear();
     std::scoped_lock lock(m_impl->contactMutex);
+    m_impl->orderPendingContacts();
     for (const Impl::PendingContact& pending : m_impl->pendingContacts) {
         const auto first = m_impl->bodyEntities.find(bodyKey(pending.first));
         const auto second = m_impl->bodyEntities.find(bodyKey(pending.second));
         if (first != m_impl->bodyEntities.end() && second != m_impl->bodyEntities.end()) {
-            m_impl->contactEvents.push_back({pending.type, first->second, second->second, pending.normal});
+            m_impl->contactEvents.push_back({.type = pending.type,
+                                             .first = first->second,
+                                             .second = second->second,
+                                             .normal = pending.normal,
+                                             .firstId = pending.firstId,
+                                             .secondId = pending.secondId});
         }
     }
     m_impl->updateTriggers();
@@ -1421,6 +1484,16 @@ bool PhysicsWorld::closestPoint(const glm::vec3& point, float maxDistance, Physi
         found = true;
     }
     return found;
+}
+
+bool contactEventPrecedes(const ContactEvent& first, const ContactEvent& second) {
+    return contactOrderKey(first.type, first.firstId, first.secondId, first.normal) <
+           contactOrderKey(second.type, second.firstId, second.secondId, second.normal);
+}
+
+bool triggerEventPrecedes(const TriggerEvent& first, const TriggerEvent& second) {
+    return std::tuple(first.sensorId, first.otherId, first.type) <
+           std::tuple(second.sensorId, second.otherId, second.type);
 }
 
 std::span<const ContactEvent> PhysicsWorld::contactEvents() const {

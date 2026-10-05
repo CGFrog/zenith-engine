@@ -54,12 +54,24 @@ enum class ContactEventType {
     End,
 };
 
+// Two bodies began, kept, or stopped touching. normal points from first
+// toward second (zero for End). Each side also carries its scene id (zero for
+// an entity without one).
 struct ContactEvent {
     ContactEventType type{ContactEventType::Begin};
     Entity first{entt::null};
     Entity second{entt::null};
     glm::vec3 normal{0.0f};
+    SceneEntityId firstId;
+    SceneEntityId secondId;
 };
+
+// The order a step reports its contact events in: by the pair's lower, then
+// higher scene id, then type (Begin, Persist, End), then the first body's
+// scene id and the normal. Jolt reports contacts from its worker threads in
+// any order; this one depends only on the scene, so a replayed run sees the
+// same sequence.
+bool contactEventPrecedes(const ContactEvent& first, const ContactEvent& second);
 
 // A body entered or left a sensor (a rigid body with RigidBodyComponent::
 // sensor set). Exited is also reported when either body is removed, for
@@ -80,6 +92,10 @@ struct TriggerEvent {
     SceneEntityId sensorId;
     SceneEntityId otherId;
 };
+
+// By sensor scene id, then the other body's scene id, then type (Entered
+// before Exited); see PhysicsWorld::triggerEvents.
+bool triggerEventPrecedes(const TriggerEvent& first, const TriggerEvent& second);
 
 // What a query may hit: bodies on the layers in layerMask (bit i is layer i),
 // except the ignored entities (for example a ray's own shooter) and, unless
@@ -241,9 +257,11 @@ class PhysicsWorld {
     bool closestPoint(const glm::vec3& point, float maxDistance, PhysicsClosestPoint& closest,
                       const PhysicsQueryFilter& filter = {}) const;
 
+    // The contacts of the last step, in contactEventPrecedes order.
     std::span<const ContactEvent> contactEvents() const;
-    // The sensor entries and exits of the last step, exits of removed bodies
-    // first.
+    // The sensor entries and exits of the last step: exits of bodies removed
+    // since the step before first, then the step's own events, each group in
+    // triggerEventPrecedes order. Deterministic like contactEvents.
     std::span<const TriggerEvent> triggerEvents() const;
     // Records the bodies' debug geometry into `output` (for example
     // RenderRuntime::debugDraw()). Physics depends only on the recording

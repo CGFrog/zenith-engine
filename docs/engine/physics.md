@@ -41,8 +41,24 @@ per pair of bodies. They are derived on the main thread from Jolt's contacts.
   first. Each side carries its scene id, because the entity may already be
   gone.
 - A body that falls asleep inside stays inside.
-- `GameServices::publishTriggerEvents` turns them into `TriggerEntered` and
+- `GameServices::publishPhysicsEvents` turns them into `TriggerEntered` and
   `TriggerExited` events.
+
+Event order is deterministic, so a seeded run replayed with the same input
+sees the same sequence. Jolt reports contacts from its worker threads in any
+order; the step sorts them before turning them into events:
+- `contactEvents()` follows `contactEventPrecedes`: the pair's lower, then
+  higher scene id, then type (Begin, Persist, End), then the first body's
+  scene id and the normal. Each contact also carries both scene ids.
+- `triggerEvents()` lists the exits of removed bodies first, then the step's
+  own events, each group by sensor scene id, other scene id, then type
+  (`triggerEventPrecedes`). A pair's new contacts count before its ended ones,
+  so a body swapping touching shapes inside a sensor does not flicker out and
+  back in.
+- Characters, and bodies the audit or `clear` removes, are removed in scene id
+  order, so Jolt reuses freed body ids the same way every run.
+- `GameServices` hands the events to the `EventQueue` and the behaviours'
+  trigger and collision hooks in that order.
 
 `step` fails only before `init`; content problems degrade instead of ending
 the run, so an outlier generated level keeps playing:
