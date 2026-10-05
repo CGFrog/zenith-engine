@@ -78,6 +78,7 @@ zenith_add_test(zenith_native_file_dialog SOURCES NativeFileDialogTests.cpp LIBS
 zenith_add_test(zenith_default_scene SOURCES DefaultSceneTests.cpp LIBS zenith_editor_app NEEDS_ASSETS)
 zenith_add_test(zenith_modal_transform SOURCES ModalTransformTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_multi_gizmo SOURCES MultiGizmoTests.cpp LIBS zenith_editor_app)
+zenith_add_test(zenith_placement SOURCES PlacementTests.cpp LIBS zenith_editor_app NEEDS_ASSETS)
 zenith_add_test(zenith_pick_queries SOURCES PickQueriesTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_selection SOURCES SelectionTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_outliner SOURCES OutlinerTests.cpp LIBS zenith_editor_app)

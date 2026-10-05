@@ -5,7 +5,6 @@
 #include "editor/interaction/ComponentEditors.hpp"
 #include "editor/interaction/PickQueries.hpp"
 #include "editor/operators/KeymapDispatch.hpp"
-#include "editor/panels/AssetDragPayloads.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
@@ -16,6 +15,7 @@
 #include "editor/viewport/MultiGizmo.hpp"
 #include "editor/viewport/SceneGizmoDraw.hpp"
 #include "editor/viewport/ViewFraming.hpp"
+#include "editor/viewport/ViewportDrop.hpp"
 #include "engine/graphics/ViewShading.hpp"
 #include "engine/navigation/NavigationWorld.hpp"
 
@@ -573,14 +573,11 @@ void ViewportPanel::draw(EditorContext& context) {
     if (texture) {
         drawSceneLabels(context);
     }
-    if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ZENITH_MODEL_ASSET")) {
-            context.placeModel(static_cast<const char*>(payload->Data), entt::null);
-        }
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(prefabAssetPayload)) {
-            context.placePrefab(static_cast<const char*>(payload->Data), entt::null);
-        }
-        ImGui::EndDragDropTarget();
+    if (!m_gameView) {
+        // Drops land on the surface under the mouse; a game view takes none.
+        const ImVec2 dropMouse = ImGui::GetMousePos();
+        acceptViewportAssetDrops(context, snapView(context.app.scene),
+                                 glm::vec2(dropMouse.x, dropMouse.y) - m_position);
     }
     // The chrome is drawn in child windows, so the image reports no hover or
     // click while the mouse is over the header, tool shelf, or sidebar.

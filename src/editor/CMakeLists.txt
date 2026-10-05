@@ -87,6 +87,7 @@ add_library(zenith_editor_app STATIC
     operators/PlayOperators.cpp
     operators/OutlinerOperators.cpp
     operators/PackageOperators.cpp
+    operators/PlacementOperators.cpp
     operators/PreferencesOperators.cpp
     operators/VisibilityOperators.cpp
     panels/AssetBrowserPanel.cpp
@@ -176,6 +177,7 @@ add_library(zenith_editor_app STATIC
     viewport/RegionSelect.cpp
     viewport/SnapQueries.cpp
     viewport/ViewFraming.cpp
+    viewport/ViewportDrop.cpp
     viewport/ViewportPickProvider.cpp
     viewport/ViewportPicker.cpp
     viewport/ViewportSelectOperators.cpp

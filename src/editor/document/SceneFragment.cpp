@@ -15,6 +15,10 @@
 using Json = nlohmann::json;
 
 namespace {
+// A fragment root's world transform when copied, beside its local_transform
+// (relative to the parent it had). Paste removes it.
+constexpr const char* worldTransformKey = "world_transform";
+
 // Collection ids are per scene, so a fragment carries the names of the
 // collections its entities reference. Pasting keeps a reference when the
 // destination has the same collection (same id and name), otherwise moves it
@@ -62,6 +66,27 @@ void remapCollections(const SceneCollections& destination, const std::unordered_
             components.erase(instance);
         }
     }
+}
+
+Json matrixJson(const glm::mat4& matrix) {
+    Json values = Json::array();
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            values.push_back(matrix[column][row]);
+        }
+    }
+    return values;
+}
+
+// entity's world transform from its local chain, whether or not the scene's
+// cached world matrices are current.
+glm::mat4 worldFromLocals(const Scene& scene, Entity entity) {
+    glm::mat4 world(1.0f);
+    for (Entity current = entity; current != entt::null;
+         current = scene.registry().get<RelationshipComponent>(current).parent) {
+        world = scene.registry().get<TransformComponent>(current).local * world;
+    }
+    return world;
 }
 } // namespace
 
@@ -134,9 +159,12 @@ SceneDocumentResult SceneFragment::copy(const Scene& scene, const AssetManager& 
         for (const Json& entity : document.at("entities")) {
             if (included.contains(entity.at("id").get<uint64_t>())) {
                 Json fragmentEntity = entity;
-                if (std::ranges::find(effectiveRoots, fragmentEntity.at("id").get<uint64_t>()) !=
-                    effectiveRoots.end()) {
+                const uint64_t id = fragmentEntity.at("id").get<uint64_t>();
+                if (std::ranges::find(effectiveRoots, id) != effectiveRoots.end()) {
                     fragmentEntity["parent"] = nullptr;
+                    if (const Entity root = scene.findEntity(SceneEntityId{id}); root != entt::null) {
+                        fragmentEntity[worldTransformKey] = matrixJson(worldFromLocals(scene, root));
+                    }
                 }
                 output["entities"].push_back(std::move(fragmentEntity));
             }
@@ -191,10 +219,15 @@ SceneDocumentResult SceneFragment::paste(std::string_view fragment, Scene& scene
             entity["id"] = remap.at(oldId);
             if (entity.at("parent").is_null()) {
                 entity["parent"] = parentId ? Json(parentId.value) : Json(nullptr);
+                // At the top level a root lands where its original was.
+                if (const auto world = entity.find(worldTransformKey); !parentId && world != entity.end()) {
+                    entity["local_transform"] = *world;
+                }
             } else {
                 const uint64_t oldParent = entity.at("parent").get<uint64_t>();
                 entity["parent"] = remap.contains(oldParent) ? Json(remap.at(oldParent)) : Json(nullptr);
             }
+            entity.erase(worldTransformKey);
             destination["entities"].push_back(std::move(entity));
         }
         Scene staged;
@@ -210,5 +243,70 @@ SceneDocumentResult SceneFragment::paste(std::string_view fragment, Scene& scene
         return {.success = true};
     } catch (const std::exception& exception) {
         return {.error = std::string("Could not paste scene fragment: ") + exception.what()};
+    }
+}
+
+SceneDocumentResult SceneFragment::roots(std::string_view fragment, std::vector<SceneEntityId>& sourceRoots) {
+    try {
+        const Json source = Json::parse(fragment);
+        sourceRoots.clear();
+        for (const Json& root : source.at("roots")) {
+            sourceRoots.push_back({root.get<uint64_t>()});
+        }
+        return {.success = true};
+    } catch (const std::exception& exception) {
+        return {.error = std::string("Not a scene fragment: ") + exception.what()};
+    }
+}
+
+SceneDocumentResult SceneFragment::replicate(std::string_view fragment, const SceneDocumentOptions& options,
+                                             std::span<const std::vector<glm::mat4>> rootWorlds, std::string& output) {
+    try {
+        const Json source = Json::parse(fragment);
+        const Json& roots = source.at("roots");
+        uint64_t nextId = 1;
+        for (const Json& entity : source.at("entities")) {
+            nextId = std::max(nextId, entity.at("id").get<uint64_t>() + 1);
+        }
+        const ComponentTypeRegistry& types = componentTypesFor(options);
+        Json replicated{{"version", source.at("version")},
+                        {"collections", source.value("collections", Json::array())},
+                        {"entities", Json::array()},
+                        {"roots", Json::array()}};
+        for (const std::vector<glm::mat4>& worlds : rootWorlds) {
+            if (worlds.size() != roots.size()) {
+                return {.error = "Each copy needs one transform per fragment root"};
+            }
+            // Fresh ids for this copy; paste gives them scene ids later.
+            std::unordered_map<uint64_t, uint64_t> remap;
+            for (const Json& entity : source.at("entities")) {
+                remap.emplace(entity.at("id").get<uint64_t>(), nextId++);
+            }
+            for (Json entity : source.at("entities")) {
+                remapEntityReferences(entity.at("components"), types,
+                                      [&remap](uint64_t id, const EntityReferenceSite&) -> std::optional<uint64_t> {
+                                          const auto found = remap.find(id);
+                                          return found == remap.end() ? std::nullopt : std::optional(found->second);
+                                      });
+                const uint64_t oldId = entity.at("id").get<uint64_t>();
+                entity["id"] = remap.at(oldId);
+                if (!entity.at("parent").is_null()) {
+                    entity["parent"] = remap.at(entity.at("parent").get<uint64_t>());
+                }
+                for (size_t root = 0; root < roots.size(); ++root) {
+                    if (roots[root].get<uint64_t>() == oldId) {
+                        entity[worldTransformKey] = matrixJson(worlds[root]);
+                    }
+                }
+                replicated["entities"].push_back(std::move(entity));
+            }
+            for (const Json& root : roots) {
+                replicated["roots"].push_back(remap.at(root.get<uint64_t>()));
+            }
+        }
+        output = replicated.dump() + '\n';
+        return {.success = true};
+    } catch (const std::exception& exception) {
+        return {.error = std::string("Could not replicate scene fragment: ") + exception.what()};
     }
 }
