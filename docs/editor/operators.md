@@ -53,8 +53,18 @@ names for Add > Prefab once per file write time,
 and suggests `prefabs/<name>.prefab` when create gets no path); they run
 headless in `tests/editor/PrefabTests.cpp`, and the UI flows (field override
 marks and Revert to Prefab, the instance header, Add > Prefab, asset drops) in
-`tests/editor/PrefabUiTests.cpp`. Each is one undo step for its scene changes,
-while the prefab files they write stay as written on undo. The Add menu's
+`tests/editor/PrefabUiTests.cpp`. Each is one undo step for its scene changes.
+`prefab.apply` and `prefab.create_from_selection` also write their prefab
+file, and that write is part of the same step: the operator returns an
+`OperatorResult::undoStep` factory, and the runner records its scene diff
+through it as one `PrefabWriteCommand` instead of a plain `EntityDiffCommand`
+(an `Undo` operator still never commits history itself). Undoing Apply puts
+back the file's previous content and the other instances; undoing Create
+removes the new file and unlinks the entity; redo writes the file again.
+Undo and redo never overwrite a file changed outside the editor since the
+step: they fail with "<file> changed on disk since this step; undo skipped"
+and change nothing (see [Scene editing](scene-editing.md#prefab-file-writes)).
+`tests/editor/PrefabWriteTests.cpp` covers the file side. The Add menu's
 Prefab section lists the asset catalog's `.prefab` files
 (`EditorAssetKind::Prefab`), and the Asset Browser drags them with the
 `ZENITH_PREFAB_ASSET` payload (`panels/AssetDragPayloads.hpp`).

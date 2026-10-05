@@ -89,6 +89,18 @@ void SceneEditing::commit(std::string name, std::string coalesceKey, std::string
     record(std::move(name), std::move(coalesceKey), std::move(changes));
 }
 
+void SceneEditing::commit(std::string name, std::string_view before, std::string_view after,
+                          const EditorCommandFactory& makeStep) const {
+    SceneChanges changes;
+    if (before != after) {
+        if (const SceneDocumentResult result = SceneDocument::diff(before, after, changes); !result) {
+            m_diagnostics.reportError("Could not record editor command: " + result.error);
+            return;
+        }
+    }
+    record(std::move(name), {}, std::move(changes), makeStep);
+}
+
 void SceneEditing::commit(std::string name, std::string coalesceKey, EntitySnapshot before) const {
     // Entities the edit created are new on the after side.
     size_t created = 0;
@@ -125,13 +137,16 @@ void SceneEditing::commit(std::string name, std::string coalesceKey, EntitySnaps
     record(std::move(name), std::move(coalesceKey), std::move(changes));
 }
 
-void SceneEditing::record(std::string name, std::string coalesceKey, SceneChanges changes) const {
-    if (changes.empty()) {
-        return;
-    }
+void SceneEditing::record(std::string name, std::string coalesceKey, SceneChanges changes,
+                          const EditorCommandFactory& makeStep) const {
     if (runtime()) {
         // A runtime edit is already applied and is never recorded.
-        markRuntimeChanges(changes);
+        if (!changes.empty()) {
+            markRuntimeChanges(changes);
+        }
+        return;
+    }
+    if (changes.empty() && !makeStep) {
         return;
     }
     // History commands apply their own after state, so the changed entities
@@ -143,10 +158,11 @@ void SceneEditing::record(std::string name, std::string coalesceKey, SceneChange
         m_diagnostics.reportError("Could not prepare editor command: " + result.error);
         return;
     }
+    std::unique_ptr<EditorCommand> step =
+        makeStep ? makeStep(std::move(name), std::move(changes))
+                 : std::make_unique<EntityDiffCommand>(std::move(name), std::move(changes), std::move(coalesceKey));
     EditorCommandContext command = commandContext();
-    if (const EditorCommandResult result = m_history.execute(
-            std::make_unique<EntityDiffCommand>(std::move(name), std::move(changes), std::move(coalesceKey)), command);
-        !result) {
+    if (const EditorCommandResult result = m_history.execute(std::move(step), command); !result) {
         m_diagnostics.reportError(result.error);
         return;
     }

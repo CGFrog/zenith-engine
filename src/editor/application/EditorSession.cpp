@@ -1,6 +1,7 @@
 #include "EditorSession.hpp"
 
 #include "editor/application/EntityCommands.hpp"
+#include "editor/application/PrefabInstanceRefresh.hpp"
 #include "editor/areas/AreaWindows.hpp"
 #include "editor/areas/DefaultWorkspaces.hpp"
 #include "editor/document/DefaultScene.hpp"
@@ -20,6 +21,8 @@
 #include <ImGuizmo.h>
 #include <SDL3/SDL_stdinc.h>
 
+#include <algorithm>
+#include <string>
 #include <utility>
 
 namespace {
@@ -156,6 +159,7 @@ EditorOperatorServices EditorSession::operatorServices() {
             .codeSnippetDirectory = m_codeSnippetDirectory,
             .revealAsset = [this](const std::filesystem::path& asset) { m_projectAssets.requestReveal(asset); },
             .simulateMaskChanged = [this] { saveSimulateSystems(); },
+            .prefabWritten = prefabWriteHooks().fileWritten,
             .documentCommands = *this,
             .playCommands = *this,
             .objectModeCommands = *this,
@@ -363,6 +367,7 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
     updateStandalone(context);
     // Once per frame, however many asset browsers are open.
     m_projectAssets.pollChanges(m_diagnostics, projectAssetActions(context), deltaSeconds);
+    reconcileChangedPrefabs(context);
     updateAreas(context, input, deltaSeconds);
     updateGameModule(context, input, deltaSeconds);
     syncAreaTypes();
@@ -384,18 +389,87 @@ ProjectAssetActions EditorSession::projectAssetActions(ApplicationContext& conte
             [this, &context](const std::filesystem::path& path) {
                 reloadProjectModel(context.assets, m_diagnostics, path);
             },
-        // Editor prefab operations build a fresh PrefabSystem each time; the
-        // game's lives as long as the module host.
         .prefabChanged =
             [this](const std::filesystem::path& path) {
-                if (GameServices* services = m_moduleHost.gameServices()) {
-                    services->prefabs().invalidate(path);
+                invalidateGamePrefab(path);
+                if (std::ranges::find(m_changedPrefabFiles, path) == m_changedPrefabFiles.end()) {
+                    m_changedPrefabFiles.push_back(path);
                 }
             },
         .filesMoved = [this, &context](std::span<const ProjectFileMove> moves) { projectFilesMoved(context, moves); },
         .filesRemoved =
             [this, &context](std::span<const std::filesystem::path> removed) { projectFilesRemoved(context, removed); },
     };
+}
+
+void EditorSession::invalidateGamePrefab(const std::filesystem::path& file) {
+    // Editor prefab operations build a fresh PrefabSystem each time; the
+    // game's lives as long as the module host.
+    if (GameServices* services = m_moduleHost.gameServices()) {
+        services->prefabs().invalidate(file);
+    }
+}
+
+PrefabWriteHooks EditorSession::prefabWriteHooks() {
+    return {.fileWritten = [this](const std::filesystem::path& file, const std::optional<std::string>& bytes) {
+        m_prefabWrites.record(file, bytes);
+        invalidateGamePrefab(file);
+    }};
+}
+
+void EditorSession::reconcileChangedPrefabs(ApplicationContext& context) {
+    // A modal transform's undo step diffs against the scene it started from,
+    // so a refresh recorded under it would be undone twice.
+    if (m_changedPrefabFiles.empty() || m_activeTransform) {
+        return;
+    }
+    for (const std::filesystem::path& file : std::exchange(m_changedPrefabFiles, {})) {
+        reconcileChangedPrefab(context, file);
+    }
+}
+
+void EditorSession::reconcileChangedPrefab(ApplicationContext& context, const std::filesystem::path& file) {
+    PrefabFileChange change;
+    if (const PrefabResult classified =
+            classifyPrefabFileChange(m_prefabWrites, file, m_document.options().assetRoot, change);
+        !classified) {
+        m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Prefabs", classified.error);
+        return;
+    }
+    if (!change.external) {
+        // The editor's own write (or undo or redo of one): caches were
+        // already dropped when it wrote.
+        return;
+    }
+    // During Play the parked edit scene is refreshed; the running scene keeps
+    // its copies until Stop.
+    Scene* editScene = m_playMode.editScene();
+    Scene& scene = editScene != nullptr ? *editScene : context.scene;
+    const SceneEditing documentEditing(scene, context.assets, m_document, m_history, m_diagnostics);
+    size_t refreshed = 0;
+    const PrefabResult result =
+        refreshPrefabInstances(documentEditing, change.reference, change.previous ? &*change.previous : nullptr,
+                               externalPrefabRefreshStepName(change.displayName), &refreshed);
+    for (const std::string& diagnostic : result.diagnostics) {
+        m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Prefabs", diagnostic);
+    }
+    if (!result) {
+        m_diagnostics.reportError("Could not refresh " + change.displayName + " instances: " + result.error);
+        return;
+    }
+    if (refreshed == 0) {
+        return;
+    }
+    if (editScene == nullptr) {
+        m_selection.removeMissing(scene);
+    }
+    std::string message = change.displayName + " changed on disk; refreshed " + std::to_string(refreshed) +
+                          (refreshed == 1 ? " instance" : " instances") + "; Undo puts them back.";
+    if (!change.previous) {
+        message += " Its previous content was unknown, so each instance kept the overrides of its last prefab "
+                   "operation.";
+    }
+    m_diagnostics.add(EditorDiagnosticSeverity::Info, "Prefabs", std::move(message));
 }
 
 void EditorSession::fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) {

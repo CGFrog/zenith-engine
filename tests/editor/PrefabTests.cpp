@@ -396,12 +396,14 @@ void testOperators() {
     expect(std::filesystem::is_regular_file(prefabPath) &&
                scene.registry().all_of<PrefabInstanceComponent>(fixture.find(lampId)),
            "the prefab file and link should exist");
+    const std::string created = readText(prefabPath);
     fixture.editing().undo();
     expect(!scene.registry().all_of<PrefabInstanceComponent>(fixture.find(lampId)) &&
-               std::filesystem::is_regular_file(prefabPath),
-           "undoing create should unlink the entity and keep the written file");
+               !std::filesystem::exists(prefabPath),
+           "undoing create should unlink the entity and remove the written file");
     fixture.editing().redo();
-    expect(scene.registry().all_of<PrefabInstanceComponent>(fixture.find(lampId)), "redo should restore the link");
+    expect(scene.registry().all_of<PrefabInstanceComponent>(fixture.find(lampId)) && readText(prefabPath) == created,
+           "redo should restore the link and the file");
 
     fixture.selection.clear();
     expect(fixture.invoke("prefab.instantiate", R"({"asset":"lamp.prefab"})").status == OperatorStatus::Finished,
@@ -430,8 +432,12 @@ void testOperators() {
         scene.registry().get<HealthComponent>(fixture.find(firstId)).team = "blue";
     });
     fixture.select(fixture.find(firstId));
+    const std::string beforeApply = readText(prefabPath);
+    const size_t stepsBeforeApply = fixture.history.size();
     expect(fixture.invoke("prefab.apply").status == OperatorStatus::Finished,
            "prefab.apply should write the instance into its prefab");
+    expect(fixture.history.size() == stepsBeforeApply + 1, "apply should record exactly one undo step");
+    const std::string afterApply = readText(prefabPath);
     expect(readText(prefabPath).find("\"blue\"") != std::string::npos, "apply should update the prefab file");
     expect(scene.registry().get<PointLightComponent>(fixture.find(secondId)).intensity == 77.0f &&
                scene.registry().get<HealthComponent>(fixture.find(secondId)).team == "blue" &&
@@ -445,11 +451,14 @@ void testOperators() {
                firstOverrides.components.empty(),
            "the applied instance should have no overrides left");
     fixture.editing().undo();
-    expect(scene.registry().get<PointLightComponent>(fixture.find(secondId)).intensity == 10.0f,
-           "undoing apply should restore the other instances");
+    expect(scene.registry().get<PointLightComponent>(fixture.find(secondId)).intensity == 10.0f &&
+               scene.registry().get<PointLightComponent>(fixture.find(firstId)).intensity == 77.0f,
+           "undoing apply should restore the other instances and keep the applied instance's edit");
+    expect(readText(prefabPath) == beforeApply, "undoing apply should restore the prefab file");
     fixture.editing().redo();
-    expect(scene.registry().get<PointLightComponent>(fixture.find(secondId)).intensity == 77.0f,
-           "redoing apply should update them again");
+    expect(scene.registry().get<PointLightComponent>(fixture.find(secondId)).intensity == 77.0f &&
+               readText(prefabPath) == afterApply,
+           "redoing apply should write the file and update the instances again");
 
     // Revert drops overrides and added objects.
     // Recording an edit recreates the entities it created, so keep the stable id.

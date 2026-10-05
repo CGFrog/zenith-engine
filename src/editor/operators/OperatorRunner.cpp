@@ -92,9 +92,14 @@ OperatorResult OperatorRunner::run(const Operator* op, std::string_view id, Oper
         if (!context.editing.capture(after)) {
             return OperatorResult::failed("Could not record " + op->label + " for undo");
         }
-        if (after != before) {
-            // The runner keeps after for Adjust Last Operation, so it is
-            // passed rather than captured again.
+        // The runner keeps after for Adjust Last Operation, so it is passed
+        // rather than captured again.
+        if (result.undoStep) {
+            // One step for the scene change and what the operator did
+            // outside the scene.
+            context.editing.commit(op->label, before, after, std::exchange(result.undoStep, {}));
+            recorded = true;
+        } else if (after != before) {
             context.editing.commit(op->label, {}, before, after);
             recorded = true;
         }

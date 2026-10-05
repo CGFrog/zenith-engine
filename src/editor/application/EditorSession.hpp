@@ -14,6 +14,7 @@
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/EditorRecovery.hpp"
+#include "editor/document/PrefabWriteCommand.hpp"
 #include "editor/interaction/ComponentEditorOverrides.hpp"
 #include "editor/interaction/EntityEyedropper.hpp"
 #include "editor/interaction/ModalTransform.hpp"
@@ -276,6 +277,24 @@ class EditorSession final : public ApplicationScene,
     void updateSmokeScenario(ApplicationContext& context);
     // What the editor does when project files change; dispatched by m_projectAssets.
     ProjectAssetActions projectAssetActions(ApplicationContext& context);
+
+    // Prefab files on disk (EditorSession.cpp). Every prefab file the editor
+    // writes (operators, undo and redo of their steps, and saving a prefab
+    // edited as its own document through savePrefabDocument) goes through
+    // these hooks: they note the content in m_prefabWrites and drop the
+    // game's cached copy.
+    PrefabWriteHooks prefabWriteHooks();
+    void invalidateGamePrefab(const std::filesystem::path& file);
+    // Once per frame, after the asset watcher, unless a modal transform runs:
+    // handles the prefab files it reported changed.
+    void reconcileChangedPrefabs(ApplicationContext& context);
+    // One reported file: the editor's own writes (the ledger matches) are
+    // ignored; a change made outside the editor refreshes the open
+    // document's instances of it (the edit scene during Play) as one undo
+    // step, "Refresh <name> instances (changed on disk)", reported in Info.
+    // A document parked elsewhere needs refreshPrefabInstances with a
+    // SceneEditing over its own scene and history.
+    void reconcileChangedPrefab(ApplicationContext& context, const std::filesystem::path& file);
     // Cancels the entity eyedropper on Esc, a right-click, Play mode, or a
     // target that no longer exists, and shows its hint at the mouse.
     void updateEyedropper(ApplicationContext& context);
@@ -389,6 +408,13 @@ class EditorSession final : public ApplicationScene,
     // that edit it.
     WatchList m_watches;
     CommandHistory m_history;
+    // The content the editor last wrote to, or reconciled for, each prefab
+    // file, so the asset watcher's reports of the editor's own writes are
+    // ignored and an outside change knows what the file held before.
+    PrefabWriteLedger m_prefabWrites;
+    // Prefab files the asset watcher reported changed, until
+    // reconcileChangedPrefabs handles them.
+    std::vector<std::filesystem::path> m_changedPrefabFiles;
     EditorPlayMode m_playMode;
     // The target F5 (play.start without a target) runs: the last one used.
     PlayTarget m_lastPlayTarget{PlayTarget::ActiveViewport};

@@ -9,7 +9,9 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 
 class AreaRegistry;
@@ -68,6 +70,11 @@ struct EditorOperatorServices {
     std::function<void(const std::filesystem::path&)> revealAsset;
     // The Simulate system choices changed (to save them); may be empty.
     std::function<void()> simulateMaskChanged;
+    // An operator wrote, removed (nullopt), or rewrote on undo or redo a
+    // prefab file (absolute path): the session drops cached copies and notes
+    // the content in its PrefabWriteLedger (PrefabWriteHooks::fileWritten).
+    // May be empty.
+    std::function<void(const std::filesystem::path&, const std::optional<std::string>&)> prefabWritten;
 
     // The running session's workflows (editor/application/
     // EditorSessionCommands.hpp), for the operators that start them.

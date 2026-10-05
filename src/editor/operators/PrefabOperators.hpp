@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/document/PrefabWriteCommand.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 
 #include <glm/vec3.hpp>
@@ -20,12 +21,13 @@
 //   prefab.select_asset                   show the prefab in the Asset Browser
 //
 // Undo: every operator is one undo step covering its scene changes (links,
-// instance entities, other instances an apply refreshed). Prefab files are
-// written immediately and stay as written when the step is undone or redone:
-// undoing create_from_selection unlinks the entity but keeps the new file, and
-// undoing apply restores the scene's instances while the file keeps the
-// applied content (they then show the difference as overrides). Asset files
-// are user content managed by the project, like a bake output.
+// instance entities, other instances an apply refreshed). create_from_selection
+// and apply write their prefab file at once and record it in the same step (a
+// PrefabWriteCommand the runner records from the result's undoStep): undoing
+// apply puts back the file's previous content and the instances, undoing
+// create removes the new file and unlinks the entity, and redo writes the
+// file again. A file changed outside the editor since the step is never
+// overwritten: that undo or redo fails with an error and changes nothing.
 
 struct CreatePrefabProperties {
     // Project-relative path of the new prefab, ending in .prefab. Empty picks
@@ -65,6 +67,9 @@ struct PrefabOperatorServices {
     // Shows an asset (an absolute path) in the primary Asset Browser, for
     // prefab.select_asset; the session routes it through ProjectAssets.
     std::function<void(const std::filesystem::path&)> revealAsset;
+    // Told about every prefab file write (and its undo and redo), so the
+    // session drops cached copies and notes the write in its ledger.
+    PrefabWriteHooks writeHooks;
 };
 
 OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, PrefabOperatorServices services = {});

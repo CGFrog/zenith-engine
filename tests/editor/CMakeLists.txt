@@ -139,6 +139,7 @@ zenith_add_test(zenith_menus EXECUTABLE zenith_menu_tests SOURCES MenuTests.cpp 
 zenith_add_test(zenith_prefabs EXECUTABLE zenith_prefab_tests
     SOURCES PrefabTests.cpp LIBS zenith_editor_app NEEDS_ASSETS)
 zenith_add_test(zenith_prefab_ui SOURCES PrefabUiTests.cpp LIBS zenith_editor_app)
+zenith_add_test(zenith_prefab_writes SOURCES PrefabWriteTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_workspaces EXECUTABLE zenith_workspace_tests SOURCES WorkspaceTests.cpp LIBS zenith_editor_app)
 # The full editor session driven headlessly, as zenith_editor composes it.
 zenith_add_test(zenith_editor_session SOURCES EditorSessionTests.cpp LIBS zenith_editor_app NEEDS_ASSETS

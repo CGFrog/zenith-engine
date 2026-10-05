@@ -59,9 +59,64 @@ enters without them (the parked edit scene keeps them for Stop). The
 Hierarchy dims their rows with a "generated, not saved" tooltip.
 `zenith_transient_editing` covers it.
 
+## Prefab file writes
+
+Prefab files are shared project content, so the editor writes them at once
+and makes the write part of history:
+
+- **`PrefabWriteCommand`** (`document/PrefabWriteCommand`) is one undo step
+  holding a file's content before and after (either may be absent: a created
+  or removed file) and an `EntityDiffCommand` for the scene changes made with
+  it. Undo and redo patch the scene, then rewrite the file atomically (a
+  `.tmp` renamed over it, as `savePrefab` does) or remove it. Before writing,
+  the command checks that the file holds the content of the side it leaves; a
+  file that already holds the target is left alone (so the first execute,
+  which `CommandHistory` runs on a write that already happened, writes
+  nothing), and any other content fails the step with "<file> changed on disk
+  since this step; undo skipped" without touching file or scene.
+- **Recording it.** An `Undo` operator that writes a file sets
+  `OperatorResult::undoStep` (an `EditorCommandFactory`); the runner passes it
+  to `SceneEditing::commit(name, before, after, makeStep)`, which records the
+  scene diff through it, even when the scene did not change. `prefab.apply`
+  and `prefab.create_from_selection` do this.
+- **Hooks and the ledger.** Every write reports the file's new content
+  through `PrefabWriteHooks::fileWritten` (the operators get the session's
+  through `EditorOperatorServices::prefabWritten`). The session records it in
+  its `PrefabWriteLedger` (path to the content it last wrote or reconciled)
+  and drops the game's cached copy (`GameServices::prefabs().invalidate`).
+- **Outside changes.** The asset watcher's `prefabChanged` queues the file;
+  once per frame, when no modal transform runs, the session classifies it
+  with `classifyPrefabFileChange`. Content matching the ledger is the
+  editor's own write (an apply, an undo or redo of one) and is ignored, so an
+  undo never turns into a new step that would discard redo. Other content is
+  an outside change: it is recorded in the ledger (repeated reports run
+  once) and `refreshPrefabInstances` (`application/PrefabInstanceRefresh`)
+  refreshes the open document's instances (the parked edit scene during
+  Play) as one undo step, "Refresh <name> instances (changed on disk)", with
+  an Info message. Each instance keeps its overrides against the file's
+  previous content when the ledger knew it; for a file the editor never wrote
+  or saw change in this session, each keeps its persisted overrides (those of
+  its last prefab operation), which the message mentions.
+- **Shared refresh.** Apply, the outside-change refresh, and a prefab edited
+  as its own document all update instances through
+  `PrefabAuthoring::refreshInstances(scene, reference, previous)` (or its
+  `planRefresh` and `refresh` halves when the caller writes the file between
+  them, as Apply does): overrides against the previous content, nested
+  records the new content dropped recorded as removed, then a
+  `KeepAddedObjects` refresh of each instance.
+- **A prefab as a document.** `document/PrefabEditDocument` opens a prefab
+  into an empty scene (`openPrefabDocument`: the root's id, the file's bytes,
+  and its display name) and saves it back (`savePrefabDocument`: capture with
+  `PrefabCaptureOptions::keepRootTransform`, atomic save, cache invalidation,
+  the hooks, and linking added entities so their ids stay stable; it returns
+  the before and after bytes for a `PrefabWriteCommand`). Opening and saving
+  without edits keeps the file byte for byte.
+
 ## Folder contents
 
 `src/editor/document/`: Scene document state, persistence workflow, undo/redo
-history, prefab authoring (`PrefabAuthoring`), per-scene editor data such as
+history, prefab authoring (`PrefabAuthoring`), undoable prefab file writes and
+the write ledger (`PrefabWriteCommand`), prefabs opened as documents
+(`PrefabEditDocument`), per-scene editor data such as
 the 3D cursor (`SceneEditorData`, a sidecar beside the scene file), and the
 runtime-to-edit diff behind Apply to Edit Scene (`RuntimeApply`).

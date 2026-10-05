@@ -56,6 +56,13 @@ enum class OperatorStatus : uint8_t {
 struct OperatorResult {
     OperatorStatus status{OperatorStatus::Failed};
     std::string message;
+    // For an Undo operator whose work reaches outside the scene (a prefab
+    // file write): builds the one undo step the runner records from the
+    // operator's scene changes, instead of a plain scene diff, so undo and
+    // redo cover both. The runner records it even when the scene did not
+    // change. The operator still commits nothing itself. Ignored unless the
+    // operator finished.
+    EditorCommandFactory undoStep;
 
     static OperatorResult finished() {
         return {.status = OperatorStatus::Finished};

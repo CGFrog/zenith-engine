@@ -90,6 +90,13 @@ class SceneEditing {
     // As commit, for a caller that already captured the scene after the
     // change.
     void commit(std::string name, std::string coalesceKey, std::string_view before, std::string_view after) const;
+    // As commit, recording the change as the step makeStep builds from it
+    // (a PrefabWriteCommand covering a file write too) rather than a plain
+    // EntityDiffCommand. The step is recorded even when the scene did not
+    // change, since it may undo more than the scene. In the runtime scene
+    // makeStep is ignored and nothing is recorded, as for any commit.
+    void commit(std::string name, std::string_view before, std::string_view after,
+                const EditorCommandFactory& makeStep) const;
     // As commit, for an edit captured with captureEntities: only the listed
     // entities and the ones the edit created are serialized again. An edit
     // that changed other entities is reported, and only those are recorded.
@@ -118,9 +125,11 @@ class SceneEditing {
     EditorCommandContext commandContext() const;
 
   private:
-    // Records changes the scene already shows as one command, or in the
-    // runtime scene marks them (markRuntimeChanges).
-    void record(std::string name, std::string coalesceKey, SceneChanges changes) const;
+    // Records changes the scene already shows as one command (built by
+    // makeStep when given), or in the runtime scene marks them
+    // (markRuntimeChanges).
+    void record(std::string name, std::string coalesceKey, SceneChanges changes,
+                const EditorCommandFactory& makeStep = {}) const;
     // After a runtime edit: tells the scene's renderer, physics, and
     // transform caches what changed, as a recorded edit's
     // SceneDocument::applyChanges would, without rebuilding entities.
