@@ -294,7 +294,14 @@ graph first and rejecting cycles), refreshes an instance from its prefab
 through `SceneDocument::applyChanges` (stable ids kept, added objects kept or
 removed), reports live overrides by diffing the instance's
 serialized entities against the prefab's normalized entities, and captures a
-scene subtree as a document. It is runtime code, so primary and additive
+scene subtree as a document. Capturing an instance of the same prefab (an
+apply) keeps its prefab-local ids, nested record ids, and display name, and
+the previous file's root transform, since an instance root's transform only
+places it; `PrefabCaptureOptions::keepRootTransform` (a separate `capture`
+overload, so modules built against the old one keep loading) writes the
+captured root's transform instead, for a prefab instantiated into an empty
+scene and edited as a document of its own. Instantiating an editor-written
+prefab and capturing it that way reproduces the file byte for byte. It is runtime code, so primary and additive
 scenes share definitions without editor state. Entity references inside
 component JSON are remapped by `EntityReferenceRemap` (below): capture clears
 references outside the prefab with a diagnostic.

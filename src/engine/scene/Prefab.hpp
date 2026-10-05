@@ -250,6 +250,17 @@ struct PrefabCapture {
     std::vector<std::pair<SceneEntityId, uint64_t>> nestedIds;
 };
 
+// How PrefabSystem::capture treats the captured root.
+struct PrefabCaptureOptions {
+    // When root is an instance of the reference being captured (an apply),
+    // write root's own local transform as the prefab root's instead of
+    // keeping the previous file's. An apply leaves it false, since an
+    // instance root's transform only places that instance; a prefab opened
+    // as a document of its own (instantiated into an empty scene) sets it,
+    // since there the root's transform is the prefab's content.
+    bool keepRootTransform{false};
+};
+
 // A prefab document prepared for comparing instances with it (see
 // PrefabSystem::prepareComparison), so repeated comparisons, such as override
 // highlighting while a value is dragged, skip normalizing the prefab.
@@ -345,9 +356,14 @@ class PrefabSystem {
     // references (prefabNestedReference); references to anything else become
     // none and are reported as diagnostics. Nested records' overrides name
     // captured entities with the top bit set and drop other scene references
-    // the same way. Scene-local components are not captured.
+    // the same way. Scene-local components are not captured. An apply keeps
+    // the previous file's root transform unless options.keepRootTransform.
     PrefabResult capture(const Scene& scene, Entity root, const std::filesystem::path& reference,
                          PrefabCapture& output) const;
+    // A separate overload rather than a defaulted parameter, so game modules
+    // built against the four-argument form keep loading.
+    PrefabResult capture(const Scene& scene, Entity root, const std::filesystem::path& reference, PrefabCapture& output,
+                         const PrefabCaptureOptions& options) const;
 
     // Resolves reference under the asset root and loads its document.
     PrefabResult load(const std::filesystem::path& reference, PrefabDocument& document) const;
