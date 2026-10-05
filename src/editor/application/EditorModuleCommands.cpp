@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <cstdio>
 #include <utility>
 
 namespace {
@@ -154,7 +155,14 @@ void EditorSession::reloadGameModule(ApplicationContext& context) {
 
 void EditorSession::reportGameModule(const GameModuleHostResult& result) {
     std::vector<EditorDiagnostic> entries;
-    if (result) {
+    if (result && result.reloadTimings) {
+        const GameModuleReloadTimings& timings = *result.reloadTimings;
+        char text[160];
+        std::snprintf(text, sizeof(text), " in %.0f ms (snapshot %.0f, release %.0f, load %.0f, restore %.0f)",
+                      timings.total(), timings.snapshot, timings.release, timings.load, timings.restore);
+        entries.push_back({.severity = EditorDiagnosticSeverity::Info,
+                           .message = "Reloaded game module " + moduleLabel(*m_moduleHost.module()) + text});
+    } else if (result) {
         entries.push_back({.severity = EditorDiagnosticSeverity::Info,
                            .message = "Loaded game module " + moduleLabel(*m_moduleHost.module()) + " from " +
                                       m_moduleHost.sourcePath().string()});

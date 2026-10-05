@@ -21,6 +21,8 @@ ChildProcessResult BuildRunner::start(const BuildRequest& request) {
     if (!started) {
         return started;
     }
+    m_startedAt = std::chrono::steady_clock::now();
+    m_duration.reset();
     m_parser.clear();
     m_output.clear();
     m_command = request.command;
@@ -50,9 +52,14 @@ BuildPollResult BuildRunner::poll() {
         } else {
             m_state = m_exitCode == 0 ? BuildState::Succeeded : BuildState::Failed;
         }
+        m_duration = std::chrono::steady_clock::now() - m_startedAt;
         result.finished = true;
     }
     return result;
+}
+
+std::optional<std::chrono::duration<double>> BuildRunner::duration() const {
+    return m_duration;
 }
 
 void BuildRunner::cancel() {

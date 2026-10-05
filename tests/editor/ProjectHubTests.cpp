@@ -4,10 +4,12 @@
 // project (from the C++ game template unless named) and
 // configures and builds its game module against this Zenith build with CMake
 // (in a temporary folder, or in the folder given after the flag, which is
-// kept).
+// kept). With --measure-iteration [folder] it times the editor's build of a
+// generated FPS project while gameplay code changes (measureIteration).
 
 #include "HeadlessImGui.hpp"
 
+#include "editor/project/BuildRunner.hpp"
 #include "editor/project/CodeGenerator.hpp"
 #include "editor/project/ExternalEditor.hpp"
 #include "editor/project/ProjectHub.hpp"
@@ -35,12 +37,16 @@
 #include <array>
 #include <chrono>
 #include <cstdlib>
+#include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -565,10 +571,119 @@ int buildGeneratedModule(const fs::path& root, std::string_view templateName) {
     std::cout << "Generated module built and loaded\n";
     return 0;
 }
+
+// Runs request as the editor's Build does (BuildRunner) and returns its
+// seconds, or nullopt (with the output's tail printed) when it fails.
+std::optional<double> timeBuild(const BuildRequest& request, std::string_view name) {
+    BuildRunner runner;
+    const auto begin = std::chrono::steady_clock::now();
+    if (const ChildProcessResult started = runner.start(request); !started) {
+        std::cerr << "FAILED: " << name << ": the build did not start: " << started.error << '\n';
+        return std::nullopt;
+    }
+    const auto deadline = begin + std::chrono::minutes(10);
+    while (!runner.poll().finished) {
+        if (std::chrono::steady_clock::now() > deadline) {
+            runner.cancel();
+            std::cerr << "FAILED: " << name << ": the build took over ten minutes\n";
+            return std::nullopt;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
+    if (runner.state() != BuildState::Succeeded) {
+        std::cerr << "FAILED: " << name << ": the build failed:\n";
+        const std::deque<BuildOutputLine>& output = runner.output();
+        for (size_t index = output.size() > 40 ? output.size() - 40 : 0; index < output.size(); ++index) {
+            std::cerr << "  " << output[index].text << '\n';
+        }
+        return std::nullopt;
+    }
+    return seconds;
+}
+
+// Changes file as a save in an editor does: new content, so every build tool
+// sees it.
+void appendEdit(const fs::path& file) {
+    std::ofstream output(file, std::ios::app);
+    output << "// edited\n";
+}
+
+// What iterating on gameplay code costs through the editor's own build
+// request (projectBuildRequest): a generated FPS project's first build, a
+// build with nothing changed, one with one source changed, one with a header
+// four sources include changed, and loading the built module. Run by hand
+// for numbers; CTest only checks that it completes.
+int measureIteration(const fs::path& root) {
+    AssetManager assets;
+    ProjectTemplateRequest request = templateRequest("Iteration", root);
+    request.templateDirectory = fs::path(ZENITH_TEMPLATE_DIR) / fpsGameTemplateName;
+    const ProjectTemplateResult created = generateProjectFromTemplate(request, assets);
+    if (!created) {
+        std::cerr << "FAILED: generate: " << created.error << '\n';
+        return 1;
+    }
+    const std::optional<BuildRequest> build = projectBuildRequest(created.projectFile);
+    if (!build) {
+        std::cerr << "FAILED: the generated project has no build\n";
+        return 1;
+    }
+    const fs::path sources = created.projectFile.parent_path() / "src";
+
+    struct Step {
+        const char* name;
+        std::function<void()> before;
+    };
+
+    const std::array<Step, 4> steps{
+        Step{"iteration.first_build", [] {}},
+        Step{"iteration.no_change", [] {}},
+        Step{"iteration.one_source", [&] { appendEdit(sources / "HitscanWeapon.cpp"); }},
+        Step{"iteration.shared_header", [&] { appendEdit(sources / "FpsGame.hpp"); }},
+    };
+    for (const Step& step : steps) {
+        step.before();
+        const std::optional<double> seconds = timeBuild(*build, step.name);
+        if (!seconds) {
+            return 1;
+        }
+        std::cout << step.name << ' ' << *seconds << " s\n";
+    }
+    ProjectConfig project;
+    if (!loadProjectConfig(created.projectFile, project)) {
+        std::cerr << "FAILED: the generated project does not load\n";
+        return 1;
+    }
+    std::unique_ptr<GameModule> module;
+    const auto loadBegin = std::chrono::steady_clock::now();
+    if (const GameModuleResult loaded =
+            GameModule::load(project.gameModule, {.shadowDirectory = root / "shadow"}, module);
+        !loaded) {
+        std::cerr << "FAILED: the built module does not load: " << loaded.error << '\n';
+        return 1;
+    }
+    std::cout << "iteration.module_load "
+              << std::chrono::duration<double>(std::chrono::steady_clock::now() - loadBegin).count() << " s\n";
+    std::cout << "build: " << build->command << '\n';
+    return 0;
+}
 } // namespace
 
 int main(int argc, char** argv) {
     std::error_code error;
+    if (argc > 1 && std::string_view(argv[1]) == "--measure-iteration") {
+        // An explicit folder keeps the project.
+        if (argc > 2) {
+            return measureIteration(fs::absolute(argv[2]));
+        }
+        // Not under the temporary directory: MSBuild's file tracker ignores
+        // reads from it, so a header edit there would rebuild nothing.
+        const fs::path measureRoot = fs::current_path() / "module_iteration_benchmark";
+        fs::remove_all(measureRoot, error);
+        const int result = measureIteration(measureRoot);
+        fs::remove_all(measureRoot, error);
+        return result;
+    }
     if (argc > 1 && std::string_view(argv[1]) == "--build-generated-module") {
         // --template <name> chooses another template than the C++ game.
         int next = 2;

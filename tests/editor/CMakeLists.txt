@@ -106,6 +106,10 @@ zenith_add_test(zenith_project_template_module_build EXECUTABLE zenith_project_h
     COMMAND_ARGS --build-generated-module LABELS slow TIMEOUT 600)
 zenith_add_test(zenith_fps_template_module_build EXECUTABLE zenith_project_hub_tests
     COMMAND_ARGS --build-generated-module --template fps_game LABELS slow TIMEOUT 600)
+# What iterating on gameplay code costs through the editor's build request;
+# run by hand for numbers.
+zenith_add_test(zenith_module_iteration_benchmark_run EXECUTABLE zenith_project_hub_tests
+    COMMAND_ARGS --measure-iteration LABELS benchmark slow TIMEOUT 900)
 
 # The FPS template's committed scene and prefab; with --write <folder> it
 # rewrites them.

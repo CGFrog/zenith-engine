@@ -300,18 +300,32 @@ GameModuleHostResult GameModuleHost::reload(Scene& scene, AssetManager& assets, 
     if (m_sourcePath.empty()) {
         return {.error = "The project does not name a game module"};
     }
+    using Clock = std::chrono::steady_clock;
+    const auto millisecondsSince = [](Clock::time_point begin) {
+        return std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
+    };
+    GameModuleReloadTimings timings;
+    Clock::time_point begin = Clock::now();
     std::string snapshot;
     if (const SceneDocumentResult saved = SceneDocument::serialize(scene, assets, document.options(), snapshot);
         !saved) {
         return {.error = "Could not save the scene before reloading the game module: " + saved.error};
     }
+    timings.snapshot = millisecondsSince(begin);
 
+    begin = Clock::now();
     std::vector<std::string> warnings;
     releaseModule(scene, document, warnings);
+    timings.release = millisecondsSince(begin);
+    begin = Clock::now();
     GameModuleHostResult result = loadSource(document);
+    timings.load = millisecondsSince(begin);
     result.warnings.insert(result.warnings.begin(), warnings.begin(), warnings.end());
 
+    begin = Clock::now();
     const SceneDocumentResult restored = SceneDocument::deserialize(snapshot, assets, document.options(), scene);
+    timings.restore = millisecondsSince(begin);
+    result.reloadTimings = timings;
     if (restored) {
         return result;
     }

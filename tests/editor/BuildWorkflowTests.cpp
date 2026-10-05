@@ -305,7 +305,10 @@ void testBuildPanel(const std::filesystem::path& directory) {
     expect(static_cast<bool>(fixture.invoke("build.run")), "the second build should start");
     waitForBuild(build, deadline);
     expect(build.runner().state() == BuildState::Succeeded, "the second build should succeed");
-    expect(buildEntries(diagnostics).empty(), "a clean build should replace the previous build's diagnostics");
+    const std::vector<EditorDiagnostic> succeeded = buildEntries(diagnostics);
+    expect(succeeded.size() == 1 && succeeded[0].severity == EditorDiagnosticSeverity::Info &&
+               succeeded[0].message.starts_with("Built in ") && build.runner().duration().has_value(),
+           "a clean build should replace the previous build's diagnostics with how long it took");
     expect(diagnostics.entries().front().message == "unrelated", "other diagnostics should be untouched");
 
     // A build requested while one runs is queued once, and cancelling drops

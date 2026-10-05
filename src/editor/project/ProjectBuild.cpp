@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdio>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -150,6 +151,11 @@ void ProjectBuild::publishDiagnostics() const {
                                 .action = "Review the Build panel output."});
     } else if (m_runner.state() == BuildState::Cancelled) {
         replacements.push_back({.severity = EditorDiagnosticSeverity::Info, .message = "Build cancelled"});
+    } else if (m_runner.state() == BuildState::Succeeded && m_runner.duration()) {
+        char seconds[32];
+        std::snprintf(seconds, sizeof(seconds), "%.2f", m_runner.duration()->count());
+        replacements.push_back(
+            {.severity = EditorDiagnosticSeverity::Info, .message = std::string("Built in ") + seconds + " s"});
     }
     m_diagnostics.replaceSource(buildSource, std::move(replacements));
 }

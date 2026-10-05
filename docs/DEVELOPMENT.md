@@ -206,6 +206,34 @@ Also run the bounded smoke test for graphics/window changes. Documentation-only
 changes need link/path review and `git diff --check`, but not a rebuild when
 they do not alter generated inputs.
 
+### Game module iteration
+
+What changing gameplay code costs in the editor is the project's module build
+plus a hot reload. `zenith_project_hub_tests --measure-iteration [folder]`
+(`zenith_module_iteration_benchmark_run`, labels `benchmark` and `slow`)
+generates an FPS project in the build tree and times the editor's own build
+request (`projectBuildRequest`, through `BuildRunner`):
+- the first build;
+- a build with nothing changed;
+- one with a source edited;
+- one with a header that all five sources include edited;
+- loading the module.
+
+The project is not under the temporary directory, because MSBuild's file
+tracker ignores reads from it, so a header edit there rebuilds nothing. The
+editor reports each build's time in the Build diagnostics ("Built in 1.2 s")
+and each reload's phases in the Game Module ones.
+
+Debug, seconds:
+
+| Measure | Baseline (configure on every build, Visual Studio generator, no module PCH) |
+| --- | --- |
+| First build | 25.30 |
+| Nothing changed | 1.17 |
+| One source edited | 5.75 |
+| Shared header edited | 19.89 |
+| Module load (shadow copy, register) | 0.16 |
+
 ## Game projects outside the repository
 
 The editor's Project Hub generates C++ game projects from

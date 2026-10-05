@@ -3,6 +3,7 @@
 #include "editor/project/CompilerOutputParser.hpp"
 #include "engine/platform/ChildProcess.hpp"
 
+#include <chrono>
 #include <cstddef>
 #include <deque>
 #include <filesystem>
@@ -65,6 +66,9 @@ class BuildRunner {
     // Diagnostics so far, with relative paths made absolute.
     std::vector<CompilerDiagnostic> diagnostics() const;
     const std::string& command() const;
+    // How long the last build ran, from start until its end was observed;
+    // nullopt while it runs or before the first build.
+    std::optional<std::chrono::duration<double>> duration() const;
 
   private:
     void appendLine(std::string text);
@@ -77,4 +81,6 @@ class BuildRunner {
     std::filesystem::path m_workingDirectory;
     BuildState m_state{BuildState::Idle};
     std::optional<int> m_exitCode;
+    std::chrono::steady_clock::time_point m_startedAt{};
+    std::optional<std::chrono::duration<double>> m_duration;
 };

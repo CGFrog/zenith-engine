@@ -73,12 +73,30 @@ struct GameModuleHostOptions {
 };
 
 // What a reload or load leaves for the session to report, beyond success.
+// Where a reload's time went, in milliseconds.
+struct GameModuleReloadTimings {
+    // Saving the scene before the old module goes.
+    double snapshot{0.0};
+    // Releasing everything that held the old module's code.
+    double release{0.0};
+    // Shadow copying, loading, and registering the new module.
+    double load{0.0};
+    // Reading the scene back with the new module's types.
+    double restore{0.0};
+
+    double total() const {
+        return snapshot + release + load + restore;
+    }
+};
+
 struct GameModuleHostResult {
     bool success{false};
     std::string error;
     // Problems that did not stop the operation, for example an editor
     // extension the module failed to register.
     std::vector<std::string> warnings;
+    // Set by reload.
+    std::optional<GameModuleReloadTimings> reloadTimings;
 
     explicit operator bool() const {
         return success;
