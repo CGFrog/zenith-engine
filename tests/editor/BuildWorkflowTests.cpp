@@ -407,7 +407,8 @@ void testBuildOnSave(const std::filesystem::path& directory) {
     build.setProjectBuild(BuildRequest{.command = succeedingCommand, .workingDirectory = project});
     expect(build.watchedSourceDirectory() == project / "src", "the project's src folder should be watched");
 
-    // Off by default: a saved source starts nothing.
+    // Off: a saved source starts nothing.
+    tools.buildOnSave = false;
     build.poll();
     std::ofstream(project / "src" / "First.cpp") << "// first\n";
     const auto quiet = std::chrono::steady_clock::now() + std::chrono::milliseconds(800);

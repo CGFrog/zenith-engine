@@ -29,11 +29,17 @@ The project's own build is, in order of preference:
 - `build.run` (**Ctrl B**, `operators/BuildOperators`) starts a build; pressed
   while one runs, it queues one more, which starts when that one finishes.
   `build.cancel` stops the build and drops a queued one. Both run headless.
-- **Build on save** (`build.on_save`, off by default; Preferences > Build or
-  the Build panel's settings) watches the project's `src` folder with
-  `FileWatcher` while the project's own build is used. A settled save of a
-  C or C++ source, header, or `CMakeLists.txt` runs `build.run`
-  (`buildOnSaveWatches`).
+- **Build on save** (`build.on_save`; Preferences > Build or the Build
+  panel's settings) watches the project's `src` folder with `FileWatcher`
+  while the project's own build is used.
+  - A save of a C or C++ source, header, or `CMakeLists.txt`
+    (`buildOnSaveWatches`) runs `build.run` once it has been quiet for
+    150 ms.
+  - Together with the fast build and hot reload, saving gameplay code is
+    enough to see it run.
+  - It is on by default since settings version 2. `settings.ini` without a
+    `settings.version` line, which always stored `build.on_save=false`,
+    turns it on once.
 - `panels/BuildPanel` shows the build's output with error and warning lines
   highlighted. Its Build and Cancel buttons run the operators.
 - A successful build reloads the module once the editor is back in Edit mode

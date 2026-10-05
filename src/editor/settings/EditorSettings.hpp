@@ -64,8 +64,10 @@ struct EditorToolSettings {
     // panel uses so packaging never replaces the editor's own build.
     std::string packageDirectory{"build-release"};
     // Whether saving a source file in the project's src folder starts a
-    // build (build.on_save); only the project's own build is watched.
-    bool buildOnSave{false};
+    // build (build.on_save), so gameplay code reloads as it is saved; only
+    // the project's own build is watched. On by default since settings
+    // version 2, which turns it on once in older settings files.
+    bool buildOnSave{true};
 
     auto operator<=>(const EditorToolSettings&) const = default;
 };

@@ -65,7 +65,7 @@ struct GameModuleHostOptions {
     // How long the module file must stay unchanged after a change before
     // pollSourceChange() reports it, so a linker that is still writing the
     // library is not interrupted.
-    std::chrono::milliseconds settleTime{750};
+    std::chrono::milliseconds settleTime{250};
     // Minimum time between file checks in pollSourceChange().
     std::chrono::milliseconds checkInterval{250};
     // At most this many edit-mode fixed updates run per frame.

@@ -21,8 +21,10 @@ undo. Systems get the engine's log in every mode. In Play and Simulate they
 also get the host's `GameServices`, which `enterPlayMode` starts and
 `stopPlayMode` (or any module unload) stops.
 
-Hot reload (`module.reload` in the Module menu, a settled change to the
-library file, or a successful Build that changed it) waits for Edit mode, a
+Hot reload (`module.reload` in the Module menu, a change to the library file
+that has stayed unchanged for `GameModuleHostOptions::settleTime`, 250 ms,
+for builds started outside the editor, or a successful Build that changed it,
+at once) waits for Edit mode, a
 finished build, and no modal tool, then serializes the scene, releases every
 holder of module code (editor extensions, scheduler, the document's registry,
 and the scene's whole EnTT registry), unloads, loads a fresh shadow copy, and

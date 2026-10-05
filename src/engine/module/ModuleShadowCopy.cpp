@@ -280,12 +280,16 @@ ModuleShadowCopy& ModuleShadowCopy::operator=(ModuleShadowCopy&& other) noexcept
 
 ModuleShadowCopyResult ModuleShadowCopy::create(const std::filesystem::path& source,
                                                 const std::filesystem::path& directory, ModuleShadowCopy& copy) {
-    std::ifstream input(source, std::ios::binary);
+    std::ifstream input(source, std::ios::binary | std::ios::ate);
     if (!input) {
         return {.error = "Could not read game module '" + source.string() + "'"};
     }
-    std::vector<char> bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-    if (input.bad()) {
+    // One read of the whole library rather than a byte at a time.
+    const std::streamoff size = input.tellg();
+    std::vector<char> bytes(size > 0 ? static_cast<size_t>(size) : 0);
+    input.seekg(0);
+    input.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    if (input.bad() || size < 0) {
         return {.error = "Could not read game module '" + source.string() + "'"};
     }
 

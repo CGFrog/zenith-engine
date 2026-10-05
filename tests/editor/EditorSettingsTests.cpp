@@ -34,8 +34,8 @@ int main() {
     settings.tools().buildCommand = R"(cmake --build build --config Release -- /p:Flag=1 "x=y")";
     settings.tools().buildDirectory = "C:/My Projects/game";
     settings.tools().ideCommand = R"(clion --line {line} "{file}")";
-    expect(!settings.tools().buildOnSave, "build on save should be off by default");
-    settings.tools().buildOnSave = true;
+    expect(settings.tools().buildOnSave, "build on save should be on by default");
+    settings.tools().buildOnSave = false;
     expect(settings.tools().debugCommand == std::string(defaultDebugCommand),
            "the debugger command should start as the platform default");
     settings.tools().debugCommand = "gdb -p {pid}";
@@ -58,6 +58,22 @@ int main() {
     expect(legacySettings.load().success && legacySettings.layoutVersion() == 4 && !legacySettings.panels().build &&
                !legacySettings.panels().hierarchy && legacySettings.panels().viewport,
            "legacy panel flags and layout version should still be read for migration");
+
+    // Version 1 files wrote build.on_save=false whether or not it was chosen;
+    // build on save became the default in version 2, so it turns on once.
+    {
+        std::ofstream versionOne(directory / "version1.ini", std::ios::trunc);
+        versionOne << "# Zenith editor settings\nbuild.on_save=false\n";
+    }
+    EditorSettings upgraded(directory / "version1.ini");
+    expect(upgraded.load().success && upgraded.tools().buildOnSave,
+           "a settings file from before version 2 turns build on save on");
+    expect(upgraded.save().success, "upgraded settings should save");
+    upgraded.tools().buildOnSave = false;
+    expect(upgraded.save().success, "a chosen build on save should save");
+    EditorSettings chosen(directory / "version1.ini");
+    expect(chosen.load().success && !chosen.tools().buildOnSave,
+           "build on save turned off after the upgrade stays off");
 
     EditorSettings multiline(directory / "multiline.ini");
     multiline.tools().buildCommand = "first\nsecond";

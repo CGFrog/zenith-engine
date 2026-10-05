@@ -189,6 +189,11 @@ std::optional<std::string> readPreference(std::string_view key, std::string_view
 }
 } // namespace
 
+namespace {
+// 2: build on save is on by default.
+constexpr uint32_t currentSettingsVersion = 2;
+} // namespace
+
 std::filesystem::path resolveEditorSettingsDirectory(std::string_view utf8Override,
                                                      std::filesystem::path userDirectory) {
     if (utf8Override.empty()) {
@@ -215,6 +220,8 @@ EditorSettingsResult EditorSettings::load() {
                           .appearance = m_appearance,
                           .autosave = m_autosave,
                           .layoutVersion = m_layoutVersion};
+    // Files before version 2 have no version line.
+    uint32_t settingsVersion = 1;
     std::string line;
     size_t lineNumber = 0;
     while (std::getline(input, line)) {
@@ -230,6 +237,14 @@ EditorSettingsResult EditorSettings::load() {
 
         const std::string_view key(line.data(), separator);
         const std::string_view value(line.data() + separator + 1, line.size() - separator - 1);
+        if (key == "settings.version") {
+            const std::optional<uint32_t> version = parseWholeNumber(value);
+            if (!version) {
+                return {.error = "Invalid settings version on line " + std::to_string(lineNumber)};
+            }
+            settingsVersion = *version;
+            continue;
+        }
         if (key == "layout.version") {
             const std::optional<uint32_t> version = parseWholeNumber(value);
             if (!version) {
@@ -259,6 +274,11 @@ EditorSettingsResult EditorSettings::load() {
 
     if (input.bad()) {
         return {.error = "Could not read editor settings: " + m_path.string()};
+    }
+    // Version 1 wrote build.on_save=false whether or not anyone chose it;
+    // version 2 made it the default, so turn it on once.
+    if (settingsVersion < 2) {
+        loaded.tools.buildOnSave = true;
     }
     m_panels = loaded.panels;
     m_tools = std::move(loaded.tools);
@@ -299,6 +319,7 @@ EditorSettingsResult EditorSettings::save() const {
     // Panel visibility and layout live in workspaces.json; the legacy keys
     // are only read, for migration.
     output << "# Zenith editor settings\n"
+           << "settings.version=" << currentSettingsVersion << '\n'
            << "build.command=" << m_tools.buildCommand << '\n'
            << "build.directory=" << m_tools.buildDirectory << '\n'
            << "ide.command=" << m_tools.ideCommand << '\n'

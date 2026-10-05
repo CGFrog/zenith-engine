@@ -21,7 +21,7 @@ constexpr const char* buildSetupSource = "Build Setup";
 
 // A save burst settles before the build starts, so an IDE writing several
 // files at once starts one build.
-constexpr std::chrono::milliseconds buildOnSaveDebounce{300};
+constexpr std::chrono::milliseconds buildOnSaveDebounce{150};
 
 EditorDiagnosticSeverity editorSeverity(CompilerDiagnosticSeverity severity) {
     switch (severity) {
