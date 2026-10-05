@@ -33,6 +33,7 @@ add_library(zenith_engine SHARED
     assets/AssetGuid.cpp
     assets/AssetMeta.cpp
     assets/AssetDatabase.cpp
+    assets/MaterialAssetFile.cpp
     graphics/Renderer.cpp
     graphics/GraphicsValidation.cpp
     graphics/Lighting.cpp

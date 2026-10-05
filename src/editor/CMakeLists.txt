@@ -51,6 +51,7 @@ add_library(zenith_editor_app STATIC
     interaction/EditorCamera.cpp
     interaction/EntityEyedropper.cpp
     interaction/EntityPropertiesView.cpp
+    interaction/AssetReferenceField.cpp
     interaction/EntityReferenceField.cpp
     interaction/ModalTransform.cpp
     interaction/PickQueries.cpp
@@ -76,6 +77,7 @@ add_library(zenith_editor_app STATIC
     operators/KeymapEditor.cpp
     operators/LastOperatorPanel.cpp
     operators/EyedropperOperators.cpp
+    operators/ModelOperators.cpp
     operators/ObjectOperators.cpp
     operators/PrefabOperators.cpp
     operators/Operator.cpp
@@ -127,6 +129,7 @@ add_library(zenith_editor_app STATIC
     project/ExternalEditor.cpp
     project/IrradianceVolumeBaker.cpp
     project/PackageRunner.cpp
+    project/MaterialDocument.cpp
     project/ProjectAssets.cpp
     project/ProjectFileOperations.cpp
     project/ProjectHub.cpp
@@ -134,6 +137,7 @@ add_library(zenith_editor_app STATIC
     project/RecentProjects.cpp
     project/ReflectionProbeBaker.cpp
     project/ThumbnailCache.cpp
+    project/ThumbnailTextures.cpp
     settings/AssetBrowserSettings.cpp
     settings/ComponentInspectorLayout.cpp
     settings/EditorRenderSettings.cpp

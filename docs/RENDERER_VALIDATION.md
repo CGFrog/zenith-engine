@@ -169,6 +169,10 @@ naming the project it renders, plus the reference PNGs.
 - `irradiance_room/` covers volumetric fog light shafts through the room's
   window (dense uniform fog, ambient-lit by the baked irradiance volume) and
   the volume's bounce lighting and color bleed.
+- `materials/` renders `projects/material_assets.zenith-project`: three cubes,
+  one with its own material, one whose `MaterialOverrideComponent` names the
+  `.zmat` material `assets/materials/capture_tiles.zmat` (base color and
+  normal maps), and one with that material under override factors.
 - `debug_draw/` renders `zenith_debug_draw_smoke_tests` instead of the game
   (no project, fixed camera): every `DebugDraw` primitive over three cubes,
   depth-tested lines partly hidden by and intersecting them, always-on-top

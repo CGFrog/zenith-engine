@@ -123,7 +123,7 @@ ComponentType environmentLightComponentType() {
                     .add("primary", &C::primary)
                     .add("environment_asset", &C::environmentAsset)
                     .optional()
-                    .readOnly())
+                    .asset("environment"))
         .texture(&C::environmentAsset, &C::environmentMap)
         .build();
 }
@@ -231,7 +231,7 @@ ComponentType reflectionProbeComponentType() {
                     .drag(0.1f)
                     .add("environment_asset", &C::environmentAsset)
                     .optional()
-                    .readOnly())
+                    .asset("environment"))
         .texture(&C::environmentAsset, &C::environmentMap)
         .validate([](const C& probe) {
             if (glm::any(glm::lessThanEqual(probe.halfExtents, glm::vec3(0.0f))) || probe.blendDistance < 0.0f) {
@@ -262,6 +262,7 @@ ComponentType irradianceVolumeComponentType() {
                     .add("bake_asset", &C::bakeAsset)
                     .optional()
                     .label("Bake")
+                    .asset("bake")
                     .readOnly())
         .validate([](const C& volume) {
             const uint64_t probeCount =

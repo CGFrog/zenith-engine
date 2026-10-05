@@ -22,6 +22,7 @@ class EditorMenus;
 class EditorScriptInfo;
 class GameServices;
 class NavigationWorld;
+class ProjectAssets;
 struct NavMeshBuildSettings;
 class WatchList;
 struct EditorProjectNames;
@@ -125,6 +126,9 @@ struct EditorContext {
     // The prefab open as its own document (prefab mode,
     // application/DocumentStack.hpp); null while a scene is edited.
     const PrefabEditTarget* prefabEdit{nullptr};
+    // The project's asset catalog and thumbnails, which asset fields offer
+    // (interaction/AssetReferenceField); null where there is none (tests).
+    ProjectAssets* projectAssets{nullptr};
 
     bool editMode() const {
         return mode == EditorMode::Edit;

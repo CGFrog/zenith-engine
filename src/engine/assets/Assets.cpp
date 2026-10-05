@@ -1,6 +1,7 @@
 #include "Assets.hpp"
 #include "CompressedTexture.hpp"
 #include "ImageDecoder.hpp"
+#include "MaterialAssetFile.hpp"
 #include "ModelImporter.hpp"
 #include "PackedVertexStreams.hpp"
 #include "engine/platform/FileContents.hpp"
@@ -323,6 +324,7 @@ AssetLoadResult<ModelHandle> AssetManager::importModel(const std::filesystem::pa
     const auto meshes = m_meshes;
     const auto meshSources = m_meshSources;
     const auto materials = m_materials;
+    const auto materialSources = m_materialSources;
     const auto textures = m_textures;
     const auto textureSources = m_textureSources;
     const auto modelMetadata = m_modelMetadata;
@@ -343,6 +345,7 @@ AssetLoadResult<ModelHandle> AssetManager::importModel(const std::filesystem::pa
         m_meshes = meshes;
         m_meshSources = meshSources;
         m_materials = materials;
+        m_materialSources = materialSources;
         m_textures = textures;
         m_textureSources = textureSources;
         m_modelMetadata = modelMetadata;
@@ -396,7 +399,18 @@ AssetLoadResult<FontHandle> AssetManager::loadFont(const std::filesystem::path& 
 }
 
 AssetLoadResult<TextureHandle> AssetManager::loadTexture(const std::filesystem::path& path) {
-    const auto [normalized, key] = normalizedPath(path);
+    return loadTextureWithUsage(path, TextureUsage::Color);
+}
+
+AssetLoadResult<TextureHandle> AssetManager::loadTextureWithUsage(const std::filesystem::path& path,
+                                                                  TextureUsage usage) {
+    auto [normalized, key] = normalizedPath(path);
+    // One file read as color and as data is two textures.
+    if (usage == TextureUsage::Normal) {
+        key += "#normal";
+    } else if (usage == TextureUsage::Data) {
+        key += "#data";
+    }
     if (const auto found = m_textureCache.find(key); found != m_textureCache.end()) {
         return {.handle = found->second};
     }
@@ -411,12 +425,67 @@ AssetLoadResult<TextureHandle> AssetManager::loadTexture(const std::filesystem::
                          "materials: " +
                          normalized.string()};
     }
+    decoded.texture.usage = usage;
     const TextureHandle handle = addTexture(std::move(decoded.texture));
     if (handle.index >= m_textureSources.size()) {
         m_textureSources.resize(handle.index + 1);
     }
     m_textureSources[handle.index] = {normalized};
     m_textureCache.emplace(key, handle);
+    return {.handle = handle};
+}
+
+AssetLoadResult<MaterialHandle> AssetManager::loadMaterial(const std::filesystem::path& path) {
+    const auto [normalized, key] = normalizedPath(path);
+    if (const auto found = m_materialCache.find(key); found != m_materialCache.end()) {
+        return {.handle = found->second};
+    }
+    return importMaterial(normalized, key);
+}
+
+AssetLoadResult<MaterialHandle> AssetManager::reloadMaterial(const std::filesystem::path& path) {
+    const auto [normalized, key] = normalizedPath(path);
+    return importMaterial(normalized, key);
+}
+
+AssetLoadResult<MaterialHandle> AssetManager::importMaterial(const std::filesystem::path& path,
+                                                             const std::string& cacheKey) {
+    MaterialFile file;
+    if (const MaterialFileResult read = readMaterialFile(path, file); !read) {
+        return {.error = read.error + ": " + path.string()};
+    }
+    MaterialAsset material{.baseColor = file.baseColor,
+                           .emissive = file.emissive,
+                           .emissiveStrength = file.emissiveStrength,
+                           .metallic = file.metallic,
+                           .roughness = file.roughness,
+                           .normalScale = file.normalScale,
+                           .occlusionStrength = file.occlusionStrength,
+                           .alphaMode = file.alphaMode,
+                           .alphaCutoff = file.alphaCutoff,
+                           .doubleSided = file.doubleSided};
+    std::array<TextureHandle*, materialTextureSlotCount> slots{&material.baseColorTexture, &material.normalTexture,
+                                                               &material.metallicRoughnessTexture,
+                                                               &material.occlusionTexture, &material.emissiveTexture};
+    for (size_t slot = 0; slot < materialTextureSlotCount; ++slot) {
+        const MaterialTextureReference& reference = file.textures[slot];
+        if (reference.path.empty()) {
+            continue;
+        }
+        const std::filesystem::path image =
+            path.parent_path() / std::filesystem::path(std::u8string(reference.path.begin(), reference.path.end()));
+        const AssetLoadResult<TextureHandle> loaded =
+            loadTextureWithUsage(image, materialTextureUsage(static_cast<MaterialTextureSlot>(slot)));
+        if (!loaded) {
+            m_log.warning("Material " + path.string() + " " +
+                          materialTextureKey(static_cast<MaterialTextureSlot>(slot)) + ": " + loaded.error);
+            continue;
+        }
+        *slots[slot] = loaded.handle;
+    }
+    const MaterialHandle handle = addMaterial(std::move(material));
+    m_materialSources[handle.index] = {path};
+    m_materialCache.insert_or_assign(cacheKey, handle);
     return {.handle = handle};
 }
 
@@ -498,6 +567,13 @@ std::optional<MeshAssetSource> AssetManager::meshSource(MeshHandle handle) const
                : std::nullopt;
 }
 
+std::optional<MaterialAssetSource> AssetManager::materialSource(MaterialHandle handle) const {
+    return material(handle) != nullptr && handle.index < m_materialSources.size() &&
+                   !m_materialSources[handle.index].path.empty()
+               ? std::optional<MaterialAssetSource>{m_materialSources[handle.index]}
+               : std::nullopt;
+}
+
 std::optional<TextureAssetSource> AssetManager::textureSource(TextureHandle handle) const {
     return texture(handle) != nullptr && handle.index < m_textureSources.size() &&
                    !m_textureSources[handle.index].path.empty()
@@ -536,6 +612,12 @@ MaterialHandle AssetManager::addMaterial(MaterialAsset asset) {
     const uint64_t bytes = byteSize(asset);
     const MaterialHandle handle = insertSlot<MaterialAsset, MaterialHandle>(m_materials, m_materialMetadata,
                                                                             std::move(asset), bytes, ++m_useSerial);
+    // A recycled slot must not keep the file of the material it held before;
+    // loadMaterial sets one afterwards.
+    if (handle.index >= m_materialSources.size()) {
+        m_materialSources.resize(handle.index + 1);
+    }
+    m_materialSources[handle.index] = {};
     return handle;
 }
 
@@ -675,6 +757,12 @@ AssetLeaseSet AssetManager::leaseSceneAssets(const Scene& scene) const {
             result.textures.push_back(std::move(value));
         }
     }
+    const auto emitters = scene.registry().view<const ParticleEmitterComponent>();
+    for (Entity entity : emitters) {
+        if (AssetLease<TextureHandle> value = lease(emitters.get<const ParticleEmitterComponent>(entity).texture)) {
+            result.textures.push_back(std::move(value));
+        }
+    }
     const auto decals = scene.registry().view<const DecalComponent>();
     for (Entity entity : decals) {
         const DecalComponent& decal = decals.get<const DecalComponent>(entity);
@@ -733,6 +821,8 @@ AssetCollectionResult AssetManager::collectUnused(bool force) {
                 std::erase_if(m_fontCache, [index](const auto& entry) { return entry.second.index == index; });
             } else if (kind == AssetKind::Texture) {
                 std::erase_if(m_textureCache, [index](const auto& entry) { return entry.second.index == index; });
+            } else if (kind == AssetKind::Material) {
+                std::erase_if(m_materialCache, [index](const auto& entry) { return entry.second.index == index; });
             }
         }
     };
@@ -765,7 +855,9 @@ std::vector<AssetDiagnostic> AssetManager::diagnostics() const {
     append(m_meshMetadata, AssetKind::Mesh, [&](uint32_t index) {
         return index < m_meshSources.size() ? m_meshSources[index].path.generic_string() : std::string{};
     });
-    append(m_materialMetadata, AssetKind::Material, [](uint32_t) { return std::string{}; });
+    append(m_materialMetadata, AssetKind::Material, [&](uint32_t index) {
+        return index < m_materialSources.size() ? m_materialSources[index].path.generic_string() : std::string{};
+    });
     append(m_textureMetadata, AssetKind::Texture, [&](uint32_t index) {
         return index < m_textureSources.size() ? m_textureSources[index].path.generic_string() : std::string{};
     });

@@ -11,7 +11,7 @@ zenith_add_test_executable(zenith_reference_capture SOURCES ReferenceCaptureDriv
 add_custom_target(zenith_update_references)
 # Each set renders with the game, except debug_draw and scene_gizmos,
 # whose fixed scenes are drawn by Engine-hosted smoke test executables.
-foreach(reference_set IN ITEMS showcase irradiance_room debug_draw scene_gizmos)
+foreach(reference_set IN ITEMS showcase irradiance_room materials debug_draw scene_gizmos)
     set(capture_executable zenith)
     if(reference_set STREQUAL "debug_draw")
         set(capture_executable zenith_debug_draw_smoke_tests)

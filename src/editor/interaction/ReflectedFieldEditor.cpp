@@ -1,5 +1,6 @@
 #include "ReflectedFieldEditor.hpp"
 
+#include "editor/interaction/AssetReferenceField.hpp"
 #include "editor/interaction/EntityReferenceField.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
@@ -547,7 +548,14 @@ bool drawField(std::span<void* const> objects, const FieldDescriptor& field,
         break;
     }
     case FieldKind::String:
-        changed = drawString(label, field.value<std::string>(object), mixed.any);
+        if (!presentation.assetKind.empty() && options.assets != nullptr) {
+            // The widget writes the whole string, so multi-edit copies it.
+            changed = drawAssetReferenceField(
+                label, field.value<std::string>(object), presentation.assetKind, *options.assets,
+                {.loaded = options.assetLoaded ? options.assetLoaded(field.key) : std::nullopt, .mixed = mixed.any});
+        } else {
+            changed = drawString(label, field.value<std::string>(object), mixed.any);
+        }
         break;
     case FieldKind::Enum:
         changed = drawEnum(label, object, field, mixed.any);

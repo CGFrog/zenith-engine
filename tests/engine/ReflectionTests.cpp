@@ -373,6 +373,19 @@ void testValidateFieldDescriptors() {
     expect(validateFieldDescriptors(sameKeyInDifferentStructs).empty(),
            "validate: keys only need to be unique within one struct");
 }
+
+void testAssetKindHint() {
+    std::vector<FieldDescriptor> fields =
+        built(Fields<Sample>().add("name", &Sample::name).asset("texture").add("weight", &Sample::weight));
+    expect(fields[0].presentation.assetKind == "texture", "asset() should record the asset kind on the string field");
+    expect(fields[1].presentation.assetKind.empty(), "other fields should name no asset kind");
+    expect(validateFieldDescriptors(fields).empty(), "a string naming an asset kind should validate");
+    expect(!fields[0].presentation.readOnly, "naming an asset kind should leave the field editable");
+
+    std::vector<FieldDescriptor> notString = built(Fields<Sample>().add("weight", &Sample::weight).asset("audio"));
+    expect(contains(validateFieldDescriptors(notString), "names an asset kind but is not a string"),
+           "validate: only string fields may name an asset kind");
+}
 } // namespace
 
 int main() {
@@ -384,6 +397,7 @@ int main() {
     testValidateFieldDescriptors();
     testEntityReferences();
     testLists();
+    testAssetKindHint();
     if (failures != 0) {
         std::cerr << failures << " reflection test(s) failed\n";
         return 1;

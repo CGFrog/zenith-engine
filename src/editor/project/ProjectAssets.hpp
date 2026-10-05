@@ -3,6 +3,7 @@
 #include "editor/project/AssetCatalog.hpp"
 #include "editor/project/ProjectFileOperations.hpp"
 #include "editor/project/ThumbnailCache.hpp"
+#include "editor/project/ThumbnailTextures.hpp"
 #include "editor/settings/AssetBrowserSettings.hpp"
 
 #include <cstdint>
@@ -16,12 +17,15 @@
 
 class AssetManager;
 class EditorDiagnostics;
+class Scene;
 
 // What the editor does when the project changes on disk. Unset actions are
 // skipped.
 struct ProjectAssetActions {
     // Re-imports a model that changed on disk.
     std::function<void(const std::filesystem::path&)> reloadModel;
+    // Re-reads a material file (.zmat) that changed on disk.
+    std::function<void(const std::filesystem::path&)> reloadMaterial;
     // A prefab file changed on disk (absolute path), so cached copies of it
     // are stale.
     std::function<void(const std::filesystem::path&)> prefabChanged;
@@ -86,6 +90,12 @@ class ProjectAssets {
     // CPU texture thumbnails, keyed by absolute path and invalidated here when
     // textures change, move, or are trashed.
     ThumbnailCache& thumbnails();
+    // The GPU copy of an image's thumbnail for ImGui (see ThumbnailTextures);
+    // empty until it is decoded and uploaded.
+    UiTextureHandle thumbnailTexture(RenderRuntime& rendering, const std::filesystem::path& image);
+    // Destroys the GPU thumbnails; the owner calls it before the renderer or
+    // this service goes away.
+    void releaseThumbnailTextures(RenderRuntime& rendering);
 
     bool isRoot(const std::filesystem::path& path) const;
     // Settings-file keys for folders: relative to the asset root, UTF-8, '/'.
@@ -129,6 +139,9 @@ class ProjectAssets {
                                                       EditorDiagnostics& diagnostics);
     std::optional<std::filesystem::path> createScene(const std::filesystem::path& folder,
                                                      EditorDiagnostics& diagnostics);
+    // Writes a default "New Material.zmat" (or a unique variant) into folder.
+    std::optional<std::filesystem::path> createMaterial(const std::filesystem::path& folder,
+                                                        EditorDiagnostics& diagnostics);
     // Returns the renamed path, which is item itself when the name was
     // unchanged.
     std::optional<std::filesystem::path> renameItem(const std::filesystem::path& item, const std::string& utf8NewName,
@@ -159,6 +172,7 @@ class ProjectAssets {
 
     AssetCatalog m_catalog;
     ThumbnailCache m_thumbnails;
+    ThumbnailTextures m_thumbnailTextures{m_thumbnails};
     std::filesystem::path m_settingsPath;
     AssetBrowserSettings m_settings;
     std::string m_pendingSettingsError;
@@ -182,3 +196,10 @@ class ProjectAssets {
 // editor's ProjectAssetActions::reloadModel and the browser's Reload Model
 // button both use it.
 void reloadProjectModel(AssetManager& assets, EditorDiagnostics& diagnostics, const std::filesystem::path& model);
+
+// Reloads a material file through the asset manager (AssetManager::
+// reloadMaterial), points every MaterialOverrideComponent in scenes that used
+// the previous material at the new one, and reports the outcome. Returns the
+// number of components re-pointed.
+size_t reloadProjectMaterial(AssetManager& assets, std::span<Scene* const> scenes, EditorDiagnostics& diagnostics,
+                             const std::filesystem::path& material);

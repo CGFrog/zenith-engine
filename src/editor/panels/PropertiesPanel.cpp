@@ -314,7 +314,7 @@ void PropertiesPanel::drawObjectTab(EditorContext& context) {
     m_view.drawTransform(context, *entityId, m_filter);
     m_view.drawPreservedComponents(context, *entityId);
     m_view.drawAssetWarnings(context, *entityId);
-    m_view.drawModelDropTarget(context, *entityId);
+    m_view.drawModelField(context, *entityId);
     ImGui::Separator();
     drawAddComponentButton(context, *entityId);
 }

@@ -22,6 +22,7 @@
 #include <SDL3/SDL_stdinc.h>
 
 #include <algorithm>
+#include <array>
 #include <string>
 #include <utility>
 
@@ -131,7 +132,8 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .scripts = this,
             .watches = &m_watches,
             .projectNames = &m_projectNames,
-            .prefabEdit = m_documents.activePrefab()};
+            .prefabEdit = m_documents.activePrefab(),
+            .projectAssets = &m_projectAssets};
 }
 
 OperatorContext EditorSession::operatorContext(ApplicationContext& context, KeymapRegion region) {
@@ -398,6 +400,13 @@ ProjectAssetActions EditorSession::projectAssetActions(ApplicationContext& conte
             [this, &context](const std::filesystem::path& path) {
                 reloadProjectModel(context.assets, m_diagnostics, path);
             },
+        // The scene shown and, in Play, the parked edit scene follow the
+        // material.
+        .reloadMaterial =
+            [this, &context](const std::filesystem::path& path) {
+                const std::array<Scene*, 2> scenes{&context.scene, m_playMode.editScene()};
+                reloadProjectMaterial(context.assets, scenes, m_diagnostics, path);
+            },
         .prefabChanged =
             [this](const std::filesystem::path& path) {
                 invalidateGamePrefab(path);
@@ -639,6 +648,7 @@ void EditorSession::unload(ApplicationContext& context) {
         m_crashRecoveryRegistered = false;
     }
     stopPlay(context);
+    m_projectAssets.releaseThumbnailTextures(context.rendering);
     if (m_mouseCaptureChanged) {
         m_mouseCaptureChanged(MouseCapturePolicy::WhileRightMouseDown);
     }

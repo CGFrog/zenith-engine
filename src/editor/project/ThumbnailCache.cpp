@@ -73,6 +73,15 @@ std::optional<CachedThumbnail> ThumbnailCache::find(const std::filesystem::path&
     return found == m_entries.end() ? std::nullopt : std::optional<CachedThumbnail>{found->second};
 }
 
+std::optional<ThumbnailStatus> ThumbnailCache::status(const std::filesystem::path& path) const {
+    std::lock_guard lock(m_mutex);
+    const auto found = m_entries.find(key(path));
+    if (found == m_entries.end()) {
+        return std::nullopt;
+    }
+    return ThumbnailStatus{.state = found->second.state, .serial = found->second.serial};
+}
+
 void ThumbnailCache::invalidate(const std::filesystem::path& path) {
     std::lock_guard lock(m_mutex);
     m_entries.erase(key(path));
@@ -103,6 +112,7 @@ void ThumbnailCache::work(std::stop_token stopToken) {
             thumbnail.state = ThumbnailState::Failed;
             thumbnail.error = std::move(decoded.error);
         }
+        thumbnail.serial = ++m_nextSerial;
         std::lock_guard lock(m_mutex);
         if (const auto found = m_entries.find(key(path)); found != m_entries.end()) {
             found->second = std::move(thumbnail);

@@ -29,6 +29,7 @@ ComponentType audioEmitterComponentType() {
                     .add("clip_asset", &C::clipAsset)
                     .optional()
                     .label("Clip")
+                    .asset("audio")
                     .tooltip("A WAV or Ogg file in the project's assets")
                     .add("bus", &C::bus)
                     .optional()

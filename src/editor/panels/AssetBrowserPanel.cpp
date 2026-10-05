@@ -1,6 +1,8 @@
 #include "AssetBrowserPanel.hpp"
 
 #include "editor/application/EditorDiagnostics.hpp"
+#include "editor/interaction/AssetReferenceField.hpp"
+#include "editor/interaction/ReflectedFieldEditor.hpp"
 #include "editor/panels/AssetDragPayloads.hpp"
 #include "editor/panels/EditorContext.hpp"
 #include "editor/project/ProjectFileOperations.hpp"
@@ -8,6 +10,7 @@
 #include "editor/theme/EditorWidgets.hpp"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <misc/cpp/imgui_stdlib.h>
 #include <nlohmann/json.hpp>
 
@@ -32,9 +35,23 @@ constexpr const char* revealLabel = "Show in File Manager";
 constexpr const char* trashName = "trash";
 #endif
 // In EditorAssetKind order, so a kind's value indexes the type filter.
-constexpr std::array<EditorAssetKind, 6> filterableKinds{EditorAssetKind::Model,  EditorAssetKind::Texture,
-                                                         EditorAssetKind::Audio,  EditorAssetKind::Scene,
-                                                         EditorAssetKind::Prefab, EditorAssetKind::Script};
+constexpr std::array<EditorAssetKind, 7> filterableKinds{
+    EditorAssetKind::Model,  EditorAssetKind::Texture, EditorAssetKind::Audio,   EditorAssetKind::Scene,
+    EditorAssetKind::Prefab, EditorAssetKind::Script,  EditorAssetKind::Material};
+
+// Every payload a folder accepts to move the dragged item, with whether its
+// path is UTF-8 (the others use the narrow encoding).
+struct MovablePayload {
+    const char* type;
+    bool utf8;
+};
+
+constexpr std::array<MovablePayload, 6> movablePayloads{{{itemPayloadType, false},
+                                                         {modelPayloadType, false},
+                                                         {prefabPayloadType, false},
+                                                         {textureAssetPayload, true},
+                                                         {audioAssetPayload, true},
+                                                         {materialAssetPayload, true}}};
 
 EditorIcon assetIcon(const EditorAssetRecord* asset) {
     if (asset == nullptr) {
@@ -53,6 +70,8 @@ EditorIcon assetIcon(const EditorAssetRecord* asset) {
         return EditorIcon::Components;
     case EditorAssetKind::Script:
         return EditorIcon::Script;
+    case EditorAssetKind::Material:
+        return EditorIcon::Environment;
     }
     return EditorIcon::Empty;
 }
@@ -71,6 +90,8 @@ const char* kindName(EditorAssetKind kind) {
         return "Prefab";
     case EditorAssetKind::Script:
         return "Script";
+    case EditorAssetKind::Material:
+        return "Material";
     }
     return "Asset";
 }
@@ -324,6 +345,10 @@ void AssetBrowserPanel::createScene(EditorDiagnostics& diagnostics) {
     select(m_project.createScene(m_currentFolder, diagnostics));
 }
 
+void AssetBrowserPanel::createMaterial(EditorDiagnostics& diagnostics) {
+    select(m_project.createMaterial(m_currentFolder, diagnostics));
+}
+
 void AssetBrowserPanel::renameItem(const std::filesystem::path& item, const std::string& utf8NewName,
                                    EditorDiagnostics& diagnostics) {
     select(m_project.renameItem(item, utf8NewName, diagnostics));
@@ -365,6 +390,15 @@ AssetBrowserActions AssetBrowserPanel::sessionActions(EditorContext& context) {
             [&context](const std::filesystem::path& path) {
                 context.invoke("prefab.edit", nlohmann::json{{"asset", utf8PathText(path)}}.dump());
             },
+        .reloadMaterial =
+            [&context](const std::filesystem::path& path) {
+                std::array<Scene*, 2> scenes{&context.app.scene, context.editing.editScene()};
+                reloadProjectMaterial(context.app.assets, scenes, context.diagnostics, path);
+            },
+        .thumbnailTexture =
+            [this, &context](const std::filesystem::path& image) {
+                return m_project.thumbnailTexture(context.app.rendering, image).value;
+            },
     };
 }
 
@@ -396,7 +430,11 @@ void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetB
     drawBreadcrumbs();
     ImGui::Separator();
 
-    const float detailsHeight = m_selected.empty() ? 0.0f : ImGui::GetFrameHeightWithSpacing() * 2.5f;
+    const EditorAssetRecord* selectedAsset = m_selected.empty() ? nullptr : m_project.catalog().findAsset(m_selected);
+    const float detailRows = selectedAsset != nullptr && selectedAsset->kind == EditorAssetKind::Material ? 14.0f
+                             : m_selected.empty()                                                         ? 0.0f
+                                                                                                          : 2.5f;
+    const float detailsHeight = ImGui::GetFrameHeightWithSpacing() * detailRows;
     const float paneHeight =
         std::max(ImGui::GetContentRegionAvail().y - detailsHeight, ImGui::GetFrameHeightWithSpacing() * 4.0f);
     if (ImGui::BeginTable("##AssetBrowserLayout", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
@@ -414,7 +452,7 @@ void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetB
         ImGui::EndChild();
         ImGui::EndTable();
     }
-    drawSelectedAsset(actions);
+    drawSelectedAsset(actions, diagnostics);
     runDeferredCommand(diagnostics);
     drawModals(diagnostics);
 }
@@ -682,16 +720,25 @@ void AssetBrowserPanel::drawGrid(const std::vector<BrowserEntry>& entries, const
                               ImVec2(gridTileWidth, gridTileHeight));
         handleEntryInteraction(entry, pressed, actions);
 
-        // Large kind icons stand in for previews until the browser shows
-        // thumbnails; ready texture thumbnails add their dimensions.
+        // Images show their thumbnails once uploaded, other kinds large kind
+        // icons; ready texture thumbnails add their dimensions.
         const std::string detail = entry.asset == nullptr ? std::string{} : textureDetail(*entry.asset);
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         const float lineHeight = ImGui::GetTextLineHeight();
         const float iconPixel = editorArtPixel() * 3.0f;
         const float iconExtent = iconPixel * static_cast<float>(iconBitmapSize);
         const float iconTop = tileMin.y + (gridTileHeight - iconExtent - (detail.empty() ? 0.0f : lineHeight)) * 0.5f;
-        drawIcon(drawList, assetIcon(entry.asset), {tileMin.x + (gridTileWidth - iconExtent) * 0.5f, iconTop},
-                 iconPixel);
+        const uint64_t thumbnail =
+            entry.asset != nullptr && entry.asset->kind == EditorAssetKind::Texture && actions.thumbnailTexture
+                ? actions.thumbnailTexture(entry.asset->absolutePath)
+                : 0;
+        const ImVec2 iconMin{tileMin.x + (gridTileWidth - iconExtent) * 0.5f, iconTop};
+        if (thumbnail != 0) {
+            drawList->AddImage(static_cast<ImTextureID>(thumbnail), iconMin,
+                               {iconMin.x + iconExtent, iconMin.y + iconExtent});
+        } else {
+            drawIcon(drawList, assetIcon(entry.asset), iconMin, iconPixel);
+        }
         if (!detail.empty()) {
             drawList->AddText(ImVec2(tileMin.x + (gridTileWidth - ImGui::CalcTextSize(detail.c_str()).x) * 0.5f,
                                      iconTop + iconExtent),
@@ -724,14 +771,18 @@ void AssetBrowserPanel::handleEntryInteraction(const BrowserEntry& entry, bool p
         }
     }
     if (ImGui::BeginDragDropSource()) {
-        // Models and prefabs keep the payloads viewports place; folders
+        // Models and prefabs keep the narrow payloads viewports place;
+        // textures, sounds, and materials go to asset fields in UTF-8; folders
         // accept every payload.
-        const bool model = !folder && entry.asset->kind == EditorAssetKind::Model;
-        const bool prefab = !folder && entry.asset->kind == EditorAssetKind::Prefab;
-        const char* payloadType = model ? modelPayloadType : prefab ? prefabPayloadType : itemPayloadType;
-        const std::string path = entry.path.string();
-        ImGui::SetDragDropPayload(payloadType, path.c_str(), path.size() + 1);
-        ImGui::Text("%s %s", model || prefab ? "Place" : "Move", entry.label.c_str());
+        const char* assetPayload = folder ? nullptr : assetDragPayloadFor(entry.asset->kind);
+        const bool narrow = folder || entry.asset->kind == EditorAssetKind::Model ||
+                            entry.asset->kind == EditorAssetKind::Prefab || assetPayload == nullptr;
+        const std::string path = narrow ? entry.path.string() : genericUtf8(entry.path);
+        ImGui::SetDragDropPayload(assetPayload != nullptr ? assetPayload : itemPayloadType, path.c_str(),
+                                  path.size() + 1);
+        const bool placeable =
+            !folder && (entry.asset->kind == EditorAssetKind::Model || entry.asset->kind == EditorAssetKind::Prefab);
+        ImGui::Text("%s %s", dragVerb(placeable), entry.label.c_str());
         ImGui::EndDragDropSource();
     }
     if (folder) {
@@ -760,13 +811,27 @@ void AssetBrowserPanel::acceptItemDrop(const std::filesystem::path& folder) {
     if (!ImGui::BeginDragDropTarget()) {
         return;
     }
-    for (const char* type : {itemPayloadType, modelPayloadType, prefabPayloadType}) {
-        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(type)) {
-            const std::filesystem::path item(static_cast<const char*>(payload->Data));
+    m_folderDropHoverFrame = ImGui::GetFrameCount();
+    for (const MovablePayload& movable : movablePayloads) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(movable.type)) {
+            const char* text = static_cast<const char*>(payload->Data);
+            const std::filesystem::path item = movable.utf8 ? pathFromUtf8Text(text) : std::filesystem::path(text);
             m_deferred = DeferredCommand{CommandKind::Move, item, folder};
         }
     }
     ImGui::EndDragDropTarget();
+}
+
+const char* AssetBrowserPanel::dragVerb(bool placeable) const {
+    // Targets are drawn after the source, so last frame's hover decides.
+    if (m_folderDropHoverFrame >= ImGui::GetFrameCount() - 1) {
+        return "Move";
+    }
+    const ImGuiContext& imgui = *ImGui::GetCurrentContext();
+    if (imgui.DragDropAcceptIdPrev != 0) {
+        return placeable ? "Place" : "Assign";
+    }
+    return placeable ? "Place" : "Drag";
 }
 
 void AssetBrowserPanel::drawItemMenu(const std::filesystem::path& item, bool folder) {
@@ -803,15 +868,21 @@ void AssetBrowserPanel::drawFolderMenu() {
     if (ImGui::MenuItem("New Scene", nullptr, false, !m_project.catalog().inSourceRoot(m_currentFolder))) {
         m_deferred = DeferredCommand{CommandKind::CreateScene, m_currentFolder};
     }
+    if (ImGui::MenuItem("New Material", nullptr, false, !m_project.catalog().inSourceRoot(m_currentFolder))) {
+        m_deferred = DeferredCommand{CommandKind::CreateMaterial, m_currentFolder};
+    }
 }
 
-void AssetBrowserPanel::drawSelectedAsset(const AssetBrowserActions& actions) {
+void AssetBrowserPanel::drawSelectedAsset(const AssetBrowserActions& actions, EditorDiagnostics& diagnostics) {
     if (m_selected.empty()) {
         return;
     }
     ImGui::Separator();
     ImGui::TextWrapped("%s", utf8PathText(m_selected).c_str());
     const EditorAssetRecord* asset = m_project.catalog().findAsset(m_selected);
+    if (asset != nullptr && asset->kind == EditorAssetKind::Material) {
+        drawMaterialInspector(*asset, actions, diagnostics);
+    }
     if (asset != nullptr && asset->kind == EditorAssetKind::Model && actions.reloadModel &&
         widgets::Button("Reload Model")) {
         actions.reloadModel(asset->absolutePath);
@@ -843,6 +914,9 @@ void AssetBrowserPanel::runDeferredCommand(EditorDiagnostics& diagnostics) {
     }
     case CommandKind::CreateScene:
         createScene(diagnostics);
+        break;
+    case CommandKind::CreateMaterial:
+        createMaterial(diagnostics);
         break;
     case CommandKind::BeginRename:
         beginRename(command.path);
@@ -935,4 +1009,50 @@ std::string AssetBrowserPanel::textureDetail(const EditorAssetRecord& asset) {
         return {};
     }
     return std::to_string(thumbnail->width) + "x" + std::to_string(thumbnail->height);
+}
+
+void AssetBrowserPanel::drawMaterialInspector(const EditorAssetRecord& asset, const AssetBrowserActions& actions,
+                                              EditorDiagnostics& diagnostics) {
+    const std::filesystem::path assetRoot = m_project.catalog().roots().front();
+    const MaterialDocumentLocation location{.assetRoot = assetRoot, .database = m_project.assetDatabase().get()};
+    // Read again for another material, or when the file changed elsewhere
+    // while this view had nothing unsaved.
+    const bool changedOnDisk = !m_materialUnsaved && asset.lastWriteTime != m_materialWriteTime;
+    if (m_materialPath != asset.absolutePath || changedOnDisk) {
+        m_materialPath = asset.absolutePath;
+        m_materialWriteTime = asset.lastWriteTime;
+        m_materialUnsaved = false;
+        MaterialDocument loaded;
+        const MaterialFileResult read = loadMaterialDocument(asset.absolutePath, location, loaded);
+        m_material = read ? std::optional<MaterialDocument>(std::move(loaded)) : std::nullopt;
+        m_materialError = read ? std::string{} : read.error;
+    }
+    if (!m_material) {
+        ImGui::TextColored(toImVec4(palette::error), "%s", m_materialError.c_str());
+        return;
+    }
+    const AssetReferenceFieldContext fieldContext{
+        .catalog = m_project.catalog(), .assetRoot = assetRoot, .thumbnail = actions.thumbnailTexture};
+    if (ImGui::BeginChild("##MaterialInspector", {0.0f, 0.0f})) {
+        ImGui::PushID("MaterialInspector");
+        m_materialUnsaved |= drawReflectedFields(&*m_material, materialDocumentFields(), {.assets = &fieldContext});
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    // Saved when the edit ends (a drag released, typing confirmed), not on
+    // every frame of it.
+    if (!m_materialUnsaved || ImGui::IsAnyItemActive()) {
+        return;
+    }
+    m_materialUnsaved = false;
+    if (const MaterialFileResult saved = saveMaterialDocument(m_materialPath, location, *m_material); !saved) {
+        diagnostics.reportError("Could not save material '" + utf8PathText(m_materialPath.filename()) +
+                                "': " + saved.error);
+        return;
+    }
+    std::error_code error;
+    m_materialWriteTime = std::filesystem::last_write_time(m_materialPath, error);
+    if (actions.reloadMaterial) {
+        actions.reloadMaterial(m_materialPath);
+    }
 }

@@ -225,3 +225,38 @@ SceneDocumentResult loadProjectTexture(const std::string& reference, AssetManage
     output = loaded.handle;
     return {.success = true};
 }
+
+SceneDocumentResult loadProjectMaterial(const std::string& reference, AssetManager& assets,
+                                        const SceneDocumentOptions& options, MaterialHandle& output) {
+    output = {};
+    if (reference.empty()) {
+        return {.success = true};
+    }
+    std::filesystem::path path;
+    if (SceneDocumentResult result = resolveProjectAssetPath(reference, options, path); !result) {
+        return result;
+    }
+    const AssetLoadResult<MaterialHandle> loaded = assets.loadMaterial(path);
+    if (!loaded) {
+        return {.error = loaded.error};
+    }
+    output = loaded.handle;
+    return {.success = true};
+}
+
+bool projectAssetStillNamed(const std::string& reference, const std::filesystem::path& loadedSource, bool loaded,
+                            const SceneDocumentOptions& options) {
+    if (reference.empty()) {
+        return !loaded || loadedSource.empty();
+    }
+    if (!loaded || loadedSource.empty()) {
+        return false;
+    }
+    std::filesystem::path resolved;
+    if (!resolveProjectAssetPath(reference, options, resolved)) {
+        return false;
+    }
+    std::error_code error;
+    const std::filesystem::path source = std::filesystem::weakly_canonical(loadedSource, error);
+    return !error && source == resolved;
+}

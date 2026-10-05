@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "base_color": [
+    1.0,
+    0.85,
+    0.7,
+    1.0
+  ],
+  "emissive": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "emissive_strength": 1.0,
+  "metallic": 0.0,
+  "roughness": 0.6,
+  "normal_scale": 1.0,
+  "occlusion_strength": 1.0,
+  "alpha_mode": "opaque",
+  "alpha_cutoff": 0.5,
+  "double_sided": false,
+  "base_color_texture": {
+    "guid": "c58ed1056c49a823febb0f0bae357cb0",
+    "path": "../showcase/decals/decal_plate.png"
+  },
+  "normal_texture": {
+    "guid": "ef4924f0523b9913e9d0e6a0c8427e83",
+    "path": "../showcase/decals/decal_plate_normal.png"
+  }
+}

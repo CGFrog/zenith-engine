@@ -1,0 +1,231 @@
+{
+  "entities": [
+    {
+      "components": {
+        "directional_light": {
+          "color": [
+            1.0,
+            0.9200000166893005,
+            0.800000011920929
+          ],
+          "direction": [
+            0.250627338886261,
+            0.3508782982826233,
+            0.9022584557533264
+          ],
+          "intensity": 6.0,
+          "primary": true,
+          "shadows": {
+            "constant_bias": 0.5,
+            "depth_range": 40.0,
+            "enabled": true,
+            "focus_distance": 4.0,
+            "half_extent": 9.0,
+            "normal_bias": 0.019999999552965164,
+            "slope_bias": 1.5
+          }
+        }
+      },
+      "id": 1,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Sun",
+      "parent": null
+    },
+    {
+      "components": {
+        "environment_light": {
+          "diffuse_intensity": 1.0,
+          "environment_asset": "",
+          "ground_color": [
+            0.11999999731779099,
+            0.10000000149011612,
+            0.07999999821186066
+          ],
+          "primary": true,
+          "sky_color": [
+            0.30000001192092896,
+            0.41999998688697815,
+            0.6499999761581421
+          ],
+          "specular_intensity": 0.4000000059604645
+        }
+      },
+      "id": 2,
+      "local_transform": [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Environment",
+      "parent": null
+    },
+    {
+      "components": {
+        "mesh_renderer": {
+          "mesh": 0,
+          "path": "primitives/cube.gltf"
+        }
+      },
+      "id": 3,
+      "local_transform": [
+        4.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.05,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.0,
+        0.0,
+        0.0,
+        -0.05,
+        0.0,
+        1.0
+      ],
+      "name": "Floor",
+      "parent": null
+    },
+    {
+      "components": {
+        "mesh_renderer": {
+          "mesh": 0,
+          "path": "primitives/cube.gltf"
+        }
+      },
+      "id": 4,
+      "local_transform": [
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        -1.4,
+        0.5,
+        0.0,
+        1.0
+      ],
+      "name": "Plain Cube",
+      "parent": null
+    },
+    {
+      "components": {
+        "mesh_renderer": {
+          "mesh": 0,
+          "path": "primitives/cube.gltf"
+        },
+        "material_override": {
+          "$version": 2,
+          "material_asset": {
+            "guid": "804da126cc0f9b90e662dddd4ff41131",
+            "path": "materials/capture_tiles.zmat"
+          }
+        }
+      },
+      "id": 5,
+      "local_transform": [
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        1.0
+      ],
+      "name": "Material Cube",
+      "parent": null
+    },
+    {
+      "components": {
+        "mesh_renderer": {
+          "mesh": 0,
+          "path": "primitives/cube.gltf"
+        },
+        "material_override": {
+          "$version": 2,
+          "material_asset": {
+            "guid": "804da126cc0f9b90e662dddd4ff41131",
+            "path": "materials/capture_tiles.zmat"
+          },
+          "base_color_factor": [
+            0.45,
+            0.75,
+            1.0,
+            1.0
+          ],
+          "roughness_factor": 0.4
+        }
+      },
+      "id": 6,
+      "local_transform": [
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5,
+        0.0,
+        1.4,
+        0.5,
+        0.0,
+        1.0
+      ],
+      "name": "Tinted Material Cube",
+      "parent": null
+    }
+  ],
+  "version": 1
+}

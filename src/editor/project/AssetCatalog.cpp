@@ -137,8 +137,13 @@ std::optional<EditorAssetKind> editorAssetKind(const std::filesystem::path& path
     if (extension == ".gltf" || extension == ".glb") {
         return EditorAssetKind::Model;
     }
-    if (extension == ".png" || extension == ".jpg" || extension == ".jpeg") {
+    // .hdr and .ktx2 hold environment maps as well as surface textures.
+    if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".hdr" ||
+        extension == ".ktx2") {
         return EditorAssetKind::Texture;
+    }
+    if (extension == ".zmat") {
+        return EditorAssetKind::Material;
     }
     if (extension == ".wav" || extension == ".ogg") {
         return EditorAssetKind::Audio;

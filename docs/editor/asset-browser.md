@@ -6,8 +6,12 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 
 The Asset Browser shows the project's asset and scene roots as a folder tree
 with favourites, breadcrumbs, a grid or list of the current folder, and search
-and type filters. Models drag out as `ZENITH_MODEL_ASSET` payloads and scenes
-open on double-click. Prefabs open as documents of their own (prefab mode,
+and type filters. Models drag out as `ZENITH_MODEL_ASSET` payloads; textures,
+sounds, and materials drag to inspector asset fields as
+`ZENITH_TEXTURE_ASSET`, `ZENITH_AUDIO_ASSET`, and `ZENITH_MATERIAL_ASSET`
+payloads holding UTF-8 paths (`panels/AssetDragPayloads.hpp`), and the drag
+tooltip says Assign over a field that takes the asset and Move over a
+folder. Scenes open on double-click. Prefabs open as documents of their own (prefab mode,
 `prefab.edit`) on double-click or with the context menu's **Edit Prefab**
 (`AssetBrowserActions::openPrefab`). Scripts (C and C++ sources and headers) open in the
 user's IDE on double-click, from the context menu, or with the details' Open
@@ -58,6 +62,28 @@ drags onto a folder in the tree or contents to move it within its root. `setting
 mode, favourites, and last folder in `asset-browser.json` in the editor's
 settings directory, falling back to defaults with a warning when the file is
 invalid.
+
+The catalog lists `.png`, `.jpg`, `.hdr`, and `.ktx2` images as textures and
+`.zmat` files as materials. Grid tiles of images show their thumbnails: the
+CPU `ThumbnailCache` decodes them on its worker, and `ProjectAssets`'
+`ThumbnailTextures` uploads at most 128 of them as renderer UI images
+(`RenderRuntime::createUiImage`), destroying the least recently drawn first
+and updating one whose thumbnail was decoded again; the session releases
+them on unload. Asset field pickers use the same textures
+(`AssetBrowserActions::thumbnailTexture`).
+
+**New Material** in the folder menu writes a default `New Material.zmat`
+(`createProjectMaterial`). Selecting a material shows its fields below the
+listing, drawn as reflected fields over a `project/MaterialDocument` (texture
+slots are asset fields relative to the asset root; GUIDs the asset database
+knows locate textures that moved). The document is saved atomically once the
+edit ends (no widget active), with texture paths relative to the material's
+folder plus their GUIDs, and `AssetBrowserActions::reloadMaterial` reloads it
+at once. A material modified on disk reaches `ProjectAssetActions::
+reloadMaterial` too; `reloadProjectMaterial` calls
+`AssetManager::reloadMaterial` and points every `MaterialOverrideComponent` of
+the shown scene (and, in Play, the parked edit scene) that used the previous
+material at the new one.
 
 ## Folder contents
 

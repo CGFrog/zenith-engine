@@ -65,6 +65,30 @@ renderer and physics key their caches by handle and generation, so a
 replacement is uploaded fresh and the old one's GPU memory and Jolt shapes are
 released after collection.
 
+### Material files
+
+`MaterialAssetFile.*` reads and writes `.zmat` files: one standalone
+metallic-roughness material as JSON (`version`, `base_color`, `emissive`,
+`emissive_strength`, `metallic`, `roughness`, `normal_scale`,
+`occlusion_strength`, `alpha_mode`, `alpha_cutoff`, `double_sided`, and
+optional `base_color_texture`, `normal_texture`, `metallic_roughness_texture`,
+`occlusion_texture`, and `emissive_texture` references). A texture reference
+is `{"guid", "path"}` with the path relative to the material file's folder,
+so a folder of a material and its images moves as a whole; the GUID is for
+editors. Missing values keep `MaterialFile`'s defaults, a newer version or
+negative factor is rejected, and `writeMaterialFile` writes atomically.
+
+`AssetManager::loadMaterial(path)` loads one, caching by path like models:
+base color and emissive images load as color, normal maps with
+`TextureUsage::Normal`, and metallic-roughness and occlusion maps as linear
+`Data` (each standalone RGBA8, cached per path and usage), and a slot whose
+image fails to load stays empty with a warning. `materialSource` names the
+file. `reloadMaterial` reads the file into a new handle and updates the
+cache; the old material stays valid for its users until they are re-pointed
+and `collectUnused` frees it (eviction also drops it from the cache).
+`leaseSceneAssets` leases material override materials (with their textures)
+and particle sprite textures along with the other scene assets.
+
 ## `src/engine/assets/MeshBuilder.*`
 
 Assembles a `MeshAsset` in code for `createMesh`: primitives by material,

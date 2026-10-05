@@ -30,6 +30,13 @@ struct ComponentLoadContext {
 
 template <typename Component> class ComponentTypeBuilder;
 
+// A builder's asset reference field: its byte offset within the component and
+// the asset kind it gets when its descriptor names none.
+struct ComponentAssetReferenceOffset {
+    std::ptrdiff_t offset{0};
+    std::string kind;
+};
+
 // The reflected string field that addresses member within object, or null.
 // Builders use it to find the field behind a member pointer.
 const FieldDescriptor* findStringFieldAt(std::span<const FieldDescriptor> fields, void* object, const void* member);
@@ -51,7 +58,9 @@ const FieldDescriptor* findStringFieldAt(std::span<const FieldDescriptor> fields
 // hold a project-relative path at runtime and are written to documents as
 // reference objects (see SceneAssetReferences.hpp). They are converted back to
 // path strings after the component migrations run, so a migration sees a
-// field either as a reference object or as a legacy path string.
+// field either as a reference object or as a legacy path string. Each such
+// field carries FieldPresentation::assetKind, so editors know which files it
+// takes.
 class ComponentType {
   public:
     const std::string& key() const;
@@ -87,9 +96,17 @@ class ComponentType {
     // Empty when the component is valid, otherwise why it is not. Documents
     // containing an invalid component fail to load with this message.
     std::string validate(const void* component) const;
-    // Whether the texture named by a path field loaded; nullopt when the field
-    // is not a texture path.
-    std::optional<bool> textureLoaded(const void* component, std::string_view pathField) const;
+    // Whether the asset a loaded path field names (a texture() or material()
+    // binding) is loaded; nullopt when the field is not such a path.
+    std::optional<bool> assetLoaded(const void* component, std::string_view pathField) const;
+    // Points the component's runtime handles (texture() and material()
+    // bindings) at the assets its path fields name now, after an edit changed
+    // a path in place: a path that no longer names the loaded asset is loaded
+    // (or, when empty, its handle cleared). A handle with no source file (a
+    // runtime asset code assigned) is kept while its path stays empty.
+    // Without this, saving would write the stale handle's path over the
+    // edited one. On failure the handle is cleared and the error returned.
+    SceneDocumentResult reloadAssets(void* component, AssetManager& assets, const SceneDocumentOptions& options) const;
 
     SceneDocumentResult save(const Scene& scene, Entity entity, const ComponentSaveContext& context,
                              nlohmann::json& output) const;
@@ -104,12 +121,18 @@ class ComponentType {
     // Records the reflected string fields at the given byte offsets within
     // probe as asset references; returns why one is not such a field.
     friend std::string addAssetReferenceFields(ComponentType& type, void* probe,
-                                               std::span<const std::ptrdiff_t> offsets);
+                                               std::span<const ComponentAssetReferenceOffset> offsets);
 
     struct TextureBinding {
         std::string pathField;
         std::function<std::string&(void*)> path;
         std::function<TextureHandle&(void*)> handle;
+    };
+
+    struct MaterialBinding {
+        std::string pathField;
+        std::function<std::string&(void*)> path;
+        std::function<MaterialHandle&(void*)> handle;
     };
 
     struct Migration {
@@ -126,6 +149,7 @@ class ComponentType {
     uint32_t m_schemaVersion{1};
     std::vector<FieldDescriptor> m_fields;
     std::vector<TextureBinding> m_textures;
+    std::vector<MaterialBinding> m_materials;
     // Keys of reflected string fields saved as asset references, including
     // every texture path.
     std::vector<std::string> m_assetReferenceFields;
@@ -197,21 +221,27 @@ template <typename Component> class ComponentTypeBuilder {
 
     // Loads the texture named by a reflected path field into handle after
     // reading, and saves the loaded texture's path in place of the authored
-    // one. The path member must be one of the reflected fields.
+    // one. The path member must be one of the reflected fields; its asset
+    // kind defaults to "texture".
     ComponentTypeBuilder& texture(std::string Component::* path, TextureHandle Component::* handle) {
         m_pendingTextures.emplace_back(path, handle);
-        return assetReference(path);
+        return addAssetReference(path, "texture");
+    }
+
+    // Loads the material file (.zmat) named by a reflected path field into
+    // handle after reading (AssetManager::loadMaterial). The authored path is
+    // saved. Its asset kind defaults to "material".
+    ComponentTypeBuilder& material(std::string Component::* path, MaterialHandle Component::* handle) {
+        m_pendingMaterials.emplace_back(path, handle);
+        return addAssetReference(path, "material");
     }
 
     // Saves a reflected path field as an asset reference (with the asset's
     // GUID when the document has an asset database) and resolves it by GUID
-    // on load. Nothing is loaded; use texture() for texture paths.
+    // on load. Nothing is loaded; use texture() for texture paths. Its asset
+    // kind defaults to "asset" (any file); name one with Fields::asset.
     ComponentTypeBuilder& assetReference(std::string Component::* path) {
-        // Kept as an offset so every component type shares one container type.
-        const Component probe{};
-        m_pendingAssetReferenceOffsets.push_back(reinterpret_cast<const char*>(&(probe.*path)) -
-                                                 reinterpret_cast<const char*>(&probe));
-        return *this;
+        return addAssetReference(path, "asset");
     }
 
     ComponentTypeBuilder& validate(std::function<std::string(const Component&)> validator) {
@@ -266,9 +296,21 @@ template <typename Component> class ComponentTypeBuilder {
     ComponentType build() {
         // A path member is identified by the field that addresses it.
         Component probe{};
-        if (std::string error = addAssetReferenceFields(m_type, &probe, m_pendingAssetReferenceOffsets);
-            !error.empty()) {
+        if (std::string error = addAssetReferenceFields(m_type, &probe, m_pendingAssetReferences); !error.empty()) {
             m_type.m_definitionError = std::move(error);
+        }
+        for (const auto& binding : m_pendingMaterials) {
+            std::string Component::* const path = binding.first;
+            MaterialHandle Component::* const handle = binding.second;
+            const FieldDescriptor* pathField = findStringFieldAt(m_type.m_fields, &probe, &(probe.*path));
+            if (pathField == nullptr) {
+                m_type.m_definitionError = "A material path of '" + m_type.m_key + "' is not a reflected string field";
+                continue;
+            }
+            m_type.m_materials.push_back(
+                {pathField->key,
+                 [path](void* component) -> std::string& { return static_cast<Component*>(component)->*path; },
+                 [handle](void* component) -> MaterialHandle& { return static_cast<Component*>(component)->*handle; }});
         }
         for (const auto& binding : m_pendingTextures) {
             std::string Component::* const path = binding.first;
@@ -287,9 +329,18 @@ template <typename Component> class ComponentTypeBuilder {
     }
 
   private:
+    ComponentTypeBuilder& addAssetReference(std::string Component::* path, std::string kind) {
+        // Kept as an offset so every component type shares one container type.
+        const Component probe{};
+        m_pendingAssetReferences.push_back(
+            {reinterpret_cast<const char*>(&(probe.*path)) - reinterpret_cast<const char*>(&probe), std::move(kind)});
+        return *this;
+    }
+
     ComponentType m_type;
     std::vector<std::pair<std::string Component::*, TextureHandle Component::*>> m_pendingTextures;
-    std::vector<std::ptrdiff_t> m_pendingAssetReferenceOffsets;
+    std::vector<std::pair<std::string Component::*, MaterialHandle Component::*>> m_pendingMaterials;
+    std::vector<ComponentAssetReferenceOffset> m_pendingAssetReferences;
 };
 
 // The component types a scene document understands, in registration order.

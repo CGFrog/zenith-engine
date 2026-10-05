@@ -90,6 +90,11 @@ struct FieldPresentation {
     // An integer index chosen from a list of names the editor supplies (for
     // example physicsLayerNameList); empty edits the number itself.
     std::string nameList;
+    // A String field naming an asset file: the kind of asset it accepts, for
+    // example "texture", "environment", "audio", "material", "model", or
+    // "bake". Reflection gives the word no meaning; the editor maps it to the
+    // files it offers. Empty for a plain string.
+    std::string assetKind;
 };
 
 struct FieldDescriptor {
@@ -304,6 +309,13 @@ template <typename Object> class Fields {
     // listName; the inspector shows a choice of names instead of a number.
     Fields& nameList(std::string listName) {
         last().presentation.nameList = std::move(listName);
+        return *this;
+    }
+
+    // The last field, a string, names an asset file of the given kind (see
+    // FieldPresentation::assetKind); the inspector offers matching assets.
+    Fields& asset(std::string kind) {
+        last().presentation.assetKind = std::move(kind);
         return *this;
     }
 

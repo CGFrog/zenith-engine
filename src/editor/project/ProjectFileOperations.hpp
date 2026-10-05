@@ -50,6 +50,10 @@ ProjectFileResult createProjectFolder(const std::filesystem::path& parent);
 // variant) into folder. assetRoot is the scene document's asset root.
 ProjectFileResult createProjectScene(const std::filesystem::path& folder, const std::filesystem::path& assetRoot);
 
+// Writes a default material file named "New Material.zmat" (or a unique
+// variant) into folder.
+ProjectFileResult createProjectMaterial(const std::filesystem::path& folder);
+
 // Renames a file or folder in place. A file keeps its extension: when the new
 // name does not already end with it (ignoring case), it is appended. Fails if
 // another item already has the resulting name.
