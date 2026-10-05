@@ -65,7 +65,7 @@ bool MeshPass::recordPicks(const DrawContext& draw, const Scene& scene, const Me
             m_idBuffer.draw(draw.commandBuffer,
                             {.modelViewProjection = viewProjection * item.world,
                              .firstJoint = item.skinPaletteOffset,
-                             .jointCount = static_cast<uint32_t>(item.jointPalette.size()),
+                             .jointCount = item.skinJointCount,
                              .objectId = itemIds[index]},
                             item.lod.indexCount, item.gpuMesh->geometry.firstIndex + item.lod.firstIndex,
                             item.gpuMesh->geometry.vertexOffset);

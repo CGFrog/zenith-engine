@@ -79,8 +79,7 @@ bool MeshPass::prepareGpuDrivenFrame(uint32_t frameIndex, const MeshLodView& lod
              .previousModel = item.previousWorld,
              .bounds = {item.boundsCenter, item.boundsRadius},
              .draw = {m_drawPlan.instanceBatch[slot], item.gpuSceneHandle.index, levelCount, 0u},
-             .skin = {item.skinPaletteOffset, static_cast<uint32_t>(item.jointPalette.size()), item.gpuMaterial->index,
-                      0u}});
+             .skin = {item.skinPaletteOffset, item.skinJointCount, item.gpuMaterial->index, 0u}});
     }
     return m_gpuDrivenPass.prepare(frameIndex, m_gpuDrivenObjects, m_gpuDrivenBatches, visibleInstanceCount);
 }

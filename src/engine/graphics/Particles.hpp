@@ -35,7 +35,8 @@ class Scene;
 // Units: world units (meters) and seconds; colors and radiance are linear.
 namespace particles {
 
-// Emitters simulated per frame; further emitters (in scene id order) are skipped.
+// Emitters simulated per frame; further emitters (in scene id order) are
+// skipped and counted in ParticleFramePlan::droppedEmitters.
 inline constexpr uint32_t maximumEmitters = 64;
 // Sprite textures per frame; slot 0 is the procedural soft round sprite.
 inline constexpr uint32_t maximumSpriteTextures = 8;
@@ -218,6 +219,8 @@ struct ParticleFramePlan {
     uint32_t liveBound{0};
     // The emitter layout changed: every slot must be freed before emitting.
     bool resetPool{false};
+    // Emitters left out because maximumEmitters were already scheduled.
+    uint32_t droppedEmitters{0};
 };
 
 // Decides each frame's pool layout and spawns. Layout: emitters in scene id

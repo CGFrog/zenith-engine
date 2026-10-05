@@ -218,11 +218,10 @@ bool MeshPass::drawLocalShadowCasters(VkCommandBuffer commandBuffer, const Shado
     auto* objectData = static_cast<ObjectData*>(target.objectsMapped);
     for (size_t index = 0; index < m_shadowVisibleItems.size(); ++index) {
         const RenderItem& item = *m_shadowVisibleItems[index];
-        objectData[objectBase + index] = {.model = item.world,
-                                          .previousModel = item.previousWorld,
-                                          .skin = {item.skinPaletteOffset,
-                                                   static_cast<uint32_t>(item.jointPalette.size()),
-                                                   item.gpuMaterial->index, 0}};
+        objectData[objectBase + index] = {
+            .model = item.world,
+            .previousModel = item.previousWorld,
+            .skin = {item.skinPaletteOffset, item.skinJointCount, item.gpuMaterial->index, 0}};
     }
     if (!m_shadowVisibleItems.empty()) {
         vmaFlushAllocation(m_allocator, target.objectsAllocation, sizeof(ObjectData) * objectBase,
@@ -399,10 +398,9 @@ bool MeshPass::recordShadow(VkCommandBuffer commandBuffer, DirectionalShadowMap&
         for (size_t index = 0; index < m_shadowVisibleItems.size(); ++index) {
             objectData[objectBase + index].model = m_shadowVisibleItems[index]->world;
             objectData[objectBase + index].previousModel = m_shadowVisibleItems[index]->previousWorld;
-            objectData[objectBase + index].skin = {
-                m_shadowVisibleItems[index]->skinPaletteOffset,
-                static_cast<uint32_t>(m_shadowVisibleItems[index]->jointPalette.size()),
-                m_shadowVisibleItems[index]->gpuMaterial->index, 0};
+            objectData[objectBase + index].skin = {m_shadowVisibleItems[index]->skinPaletteOffset,
+                                                   m_shadowVisibleItems[index]->skinJointCount,
+                                                   m_shadowVisibleItems[index]->gpuMaterial->index, 0};
         }
         vmaFlushAllocation(m_allocator, target.objectsAllocation, 0, VK_WHOLE_SIZE);
         std::optional<uint32_t> boundPage;

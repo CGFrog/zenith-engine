@@ -85,6 +85,8 @@ zenith_add_test(zenith_render_submission SOURCES RenderSubmissionTests.cpp LIBS 
 zenith_add_test(zenith_gpu_resource_table SOURCES GpuResourceTableTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_mesh_lod SOURCES MeshLodTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_mesh_pass_frame_plan SOURCES MeshPassFramePlanTests.cpp LIBS zenith_engine)
+# Per-frame capacity clamps and their once-per-episode reporting.
+zenith_add_test(zenith_runtime_limits SOURCES RuntimeLimitTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_view_shading SOURCES ViewShadingTests.cpp LIBS zenith_engine)
 zenith_add_test(zenith_render_views EXECUTABLE zenith_render_view_tests
     SOURCES RenderViewTests.cpp LIBS zenith_engine)
@@ -148,6 +150,12 @@ zenith_add_test(zenith_picking_vulkan_smoke EXECUTABLE zenith_picking_smoke_test
     SOURCES PickingSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
     ENVIRONMENT ZENITH_SMOKE_FRAMES=80
     LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
+# More renderables and particle emitters than the per-frame capacities: the
+# excess is clamped, counted and logged once instead of ending the run.
+zenith_add_test(zenith_render_capacity_vulkan_smoke EXECUTABLE zenith_render_capacity_smoke_tests
+    SOURCES RenderCapacitySmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
+    ENVIRONMENT ZENITH_SMOKE_FRAMES=20
+    LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 180 PROCESSORS 2)
 
 # The benchmarks are run by hand for numbers; CTest only checks that they
 # complete and exit cleanly so they cannot silently rot.

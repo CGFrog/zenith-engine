@@ -303,7 +303,7 @@ const MeshPass::GpuMaterial* MeshPass::ensureMaterial(MaterialHandle handle, con
     } else if (m_nextMaterialIndex < maximumMaterials) {
         index = m_nextMaterialIndex++;
     } else {
-        m_log.error("Material count exceeds the renderer capacity (" + std::to_string(maximumMaterials) + ")");
+        // Every slot is taken; the caller counts and reports the overflow.
         return nullptr;
     }
     // Upload referenced textures now so frame recording only resolves slots.

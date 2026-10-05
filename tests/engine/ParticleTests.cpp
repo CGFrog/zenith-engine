@@ -249,8 +249,12 @@ void testSchedulerLayout() {
     for (uint64_t id = 1; id <= particles::maximumEmitters + 4; ++id) {
         many.push_back(snapshot(id, {.maxParticles = 1}));
     }
-    expect(scheduler.plan(many, 1000, 0.016f).emitters.size() == particles::maximumEmitters,
-           "at most maximumEmitters emitters are simulated");
+    const particles::ParticleFramePlan capped = scheduler.plan(many, 1000, 0.016f);
+    expect(capped.emitters.size() == particles::maximumEmitters &&
+               capped.emitters.back().id == particles::maximumEmitters,
+           "at most maximumEmitters emitters are simulated, the lowest scene ids first");
+    expect(capped.droppedEmitters == 4, "emitters beyond maximumEmitters are counted as dropped");
+    expect(scheduler.plan(resized, 1000, 0.016f).droppedEmitters == 0, "a plan within the cap drops no emitter");
 }
 
 // A pooled effect restarts its emitter by changing restartGeneration: the

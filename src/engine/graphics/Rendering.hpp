@@ -627,6 +627,17 @@ struct RenderStats {
     // rendered view served (RenderRuntime::requestPick); zero on frames
     // without requests, which skip the pass entirely.
     uint32_t pickPasses{0};
+    // Per-frame capacities a large scene exceeded this submission; the excess
+    // is left out and logged once per episode instead of failing the frame.
+    // Render items not drawn: objects beyond the per-frame object capacity
+    // (the last in build order) and primitives whose material found no slot.
+    uint32_t droppedRenderItems{0};
+    // Skinned render items drawn in their bind pose because the frame's skin
+    // palette capacity was full.
+    uint32_t droppedSkinnedRenderItems{0};
+    // Particle emitters not simulated because particles::maximumEmitters
+    // emitters were already scheduled (the highest scene ids are left out).
+    uint32_t droppedParticleEmitters{0};
 };
 
 // A camera that replaces the scene's primary CameraComponent for one render

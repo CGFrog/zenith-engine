@@ -497,6 +497,7 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
             std::chrono::duration<double, std::milli>(viewCpuEnd - bloomCpuBegin).count() - stats.cpuBloomMilliseconds;
         frameStats.particleEmitterCount = stats.particleEmitterCount;
         frameStats.particleCapacity = stats.particleCapacity;
+        frameStats.droppedParticleEmitters = stats.droppedParticleEmitters;
     }
     if (request.stats) {
         // The work on the maps the view sampled: its own, or the frame's.

@@ -474,8 +474,13 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
     const auto packetBuildEnd = std::chrono::steady_clock::now();
     const double packetBuildMilliseconds =
         std::chrono::duration<double, std::milli>(packetBuildEnd - packetBuildStart).count();
+    if (rebuildPackets) {
+        reportRenderItemOverflow();
+    }
+    // buildRenderItems admits at most maximumObjectsPerFrame items, so the
+    // per-frame object regions below cannot overflow.
     if (m_renderItems.size() > maximumObjectsPerFrame) {
-        m_log.error("Renderable count exceeds the per-frame render capacity");
+        m_log.error("Render items exceed the per-frame render capacity");
         return false;
     }
     const FrameResourceUse lightResources[]{{"scene.lights", FrameResourceAccess::Read},
@@ -522,6 +527,7 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
     stats.taskMainThreadAssistMilliseconds = taskResult.stats.mainThreadAssistMilliseconds;
     stats.taskGraphLatencyMilliseconds = taskResult.stats.latencyMilliseconds;
     stats.renderableCount = static_cast<uint32_t>(m_renderItems.size());
+    stats.droppedRenderItems = m_droppedRenderItems + m_droppedMaterialItems;
     stats.particleBytes = m_particles.allocatedBytes();
     stats.irradianceVolumeBytes = m_irradianceVolume.allocatedBytes();
     stats.irradianceVolumeProbes =
@@ -535,24 +541,35 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
     // joint animation as well as object motion.
     auto* previousSkinMatrices = static_cast<glm::mat4*>(m_cameras[frameIndex].previousSkinPalettesMapped);
     uint32_t skinMatrixCount = 1;
+    uint32_t droppedSkinnedItems = 0;
     skinMatrices[0] = glm::mat4(1.0f);
     previousSkinMatrices[0] = glm::mat4(1.0f);
     for (RenderItem& item : m_renderItems) {
         item.skinPaletteOffset = 0;
+        item.skinJointCount = 0;
         if (item.jointPalette.empty()) {
             continue;
         }
         if (skinMatrixCount + item.jointPalette.size() > maximumSkinMatricesPerFrame) {
-            m_log.error("Skin palettes exceed the per-frame render capacity");
-            return false;
+            // Out of palette space: the item draws unskinned (in its bind
+            // pose) this frame.
+            ++droppedSkinnedItems;
+            continue;
         }
         item.skinPaletteOffset = skinMatrixCount;
+        item.skinJointCount = static_cast<uint32_t>(item.jointPalette.size());
         std::copy(item.jointPalette.begin(), item.jointPalette.end(), skinMatrices + skinMatrixCount);
         const std::vector<glm::mat4>& previousPalette = item.previousJointPalette.size() == item.jointPalette.size()
                                                             ? item.previousJointPalette
                                                             : item.jointPalette;
         std::copy(previousPalette.begin(), previousPalette.end(), previousSkinMatrices + skinMatrixCount);
         skinMatrixCount += static_cast<uint32_t>(item.jointPalette.size());
+    }
+    stats.droppedSkinnedRenderItems = droppedSkinnedItems;
+    if (m_skinPaletteOverflow.update(droppedSkinnedItems > 0)) {
+        m_log.warning("Skin palettes exceed the per-frame capacity of " + std::to_string(maximumSkinMatricesPerFrame) +
+                      " joint matrices; " + std::to_string(droppedSkinnedItems) +
+                      " skinned render items draw in their bind pose");
     }
     vmaFlushAllocation(m_allocator, m_cameras[frameIndex].skinPalettes.allocation, 0,
                        sizeof(glm::mat4) * skinMatrixCount);

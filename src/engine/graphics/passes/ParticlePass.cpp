@@ -325,6 +325,7 @@ bool ParticlePass::recordSimulation(VkCommandBuffer commandBuffer, uint32_t fram
     m_drawPending = false;
     m_emitterCount = 0;
     m_capacity = 0;
+    m_droppedEmitters = 0;
     if (!preparePool(particles::particleBudget(quality), frameSerial)) {
         return false;
     }
@@ -334,6 +335,7 @@ bool ParticlePass::recordSimulation(VkCommandBuffer commandBuffer, uint32_t fram
     const float step = stepSeconds();
     const particles::ParticleFramePlan plan =
         m_scheduler.plan(emitters.emitters, m_pool.budget, step, emitters.sceneGeneration);
+    m_droppedEmitters = plan.droppedEmitters;
     if (plan.emitters.empty()) {
         return true;
     }

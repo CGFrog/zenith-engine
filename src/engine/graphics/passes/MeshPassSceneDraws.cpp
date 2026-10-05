@@ -309,8 +309,7 @@ void MeshPass::uploadCpuSubmittedObjects(const DrawContext& draw) {
         const RenderItem& item = *view.visibleItems[index];
         objectData[index].model = item.world;
         objectData[index].previousModel = item.previousWorld;
-        objectData[index].skin = {item.skinPaletteOffset, static_cast<uint32_t>(item.jointPalette.size()),
-                                  item.gpuMaterial->index, 0};
+        objectData[index].skin = {item.skinPaletteOffset, item.skinJointCount, item.gpuMaterial->index, 0};
     }
     vmaFlushAllocation(m_allocator, allocation, sizeof(ObjectData) * draw.objectBase,
                        sizeof(ObjectData) * std::max<size_t>(view.visibleItems.size(), 1));
