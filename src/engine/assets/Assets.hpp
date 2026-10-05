@@ -432,6 +432,27 @@ struct MaterialAssetSource {
     std::filesystem::path path;
 };
 
+// A texture loaded again from its file: users of previous should move to
+// current (see AssetManager::reloadTexture).
+struct TextureReplacement {
+    TextureHandle previous;
+    TextureHandle current;
+};
+
+struct TextureReloadResult {
+    bool success{false};
+    std::string error;
+    // One entry per usage the file was loaded with (color, normal, data).
+    std::vector<TextureReplacement> replaced;
+    // Material files (.zmat) whose loaded material samples a replaced
+    // texture; reload them (reloadMaterial) so their users see the change.
+    std::vector<std::filesystem::path> materialFiles;
+
+    explicit operator bool() const {
+        return success;
+    }
+};
+
 template <typename Handle> struct AssetLoadResult {
     Handle handle{};
     std::string error;
@@ -454,7 +475,19 @@ class AssetManager {
     AssetLoadResult<ModelHandle> reloadModel(const std::filesystem::path& path);
     AssetLoadResult<MeshHandle> loadMesh(const std::filesystem::path& modelPath, uint32_t meshIndex);
     AssetLoadResult<FontHandle> loadFont(const std::filesystem::path& path);
+    // A standalone RGBA8 texture read as color.
     AssetLoadResult<TextureHandle> loadTexture(const std::filesystem::path& path);
+    // As loadTexture, with the given usage: one file read as color and as
+    // data is two textures, each cached.
+    AssetLoadResult<TextureHandle> loadTexture(const std::filesystem::path& path, TextureUsage usage);
+    // Decodes the file again for every usage it is loaded with into fresh
+    // textures and updates future lookups. Textures are immutable, so the
+    // previous handles stay valid for their users until those are pointed at
+    // the replacements (replaceSceneTextures, and reloadMaterial for the
+    // material files listed) and collectUnused frees them. A file that is not
+    // loaded reloads nothing and succeeds; a file that no longer decodes
+    // changes nothing and fails.
+    TextureReloadResult reloadTexture(const std::filesystem::path& path);
     // Loads a material file (.zmat, see MaterialAssetFile.hpp) and the images
     // its texture slots name, relative to the file's folder; base color and
     // emissive images load as color, normal and metallic-roughness and
@@ -552,9 +585,9 @@ class AssetManager {
     TextureHandle addTexture(TextureAsset asset);
     AssetLoadResult<ModelHandle> importModel(const std::filesystem::path& path, const std::string& cacheKey);
     AssetLoadResult<MaterialHandle> importMaterial(const std::filesystem::path& path, const std::string& cacheKey);
-    // A standalone RGBA8 texture read with usage; color textures share
-    // loadTexture's cache entry.
-    AssetLoadResult<TextureHandle> loadTextureWithUsage(const std::filesystem::path& path, TextureUsage usage);
+    // Adds a decoded standalone texture for path under cacheKey.
+    TextureHandle addSourceTexture(TextureAsset texture, const std::filesystem::path& path,
+                                   const std::string& cacheKey);
 
     struct SlotMetadata {
         uint32_t generation{1};

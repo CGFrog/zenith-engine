@@ -21,6 +21,9 @@ enum class EditorAssetKind {
     Script,
     // A standalone material file (.zmat, engine/assets/MaterialAssetFile.hpp).
     Material,
+    // A definition table (engine/gameplay/DefinitionTable.hpp): a .json file
+    // whose top-level value is an array (see isDefinitionTableFile).
+    Data,
 };
 
 // Paths in records and folders are absolute and lexically normal, so they can
@@ -174,5 +177,12 @@ class AssetCatalog {
 std::filesystem::path normalizedCatalogPath(const std::filesystem::path& path);
 
 // The kind of asset a file is, from its extension (case-insensitive), or
-// nullopt for unsupported files.
+// nullopt for unsupported files. A .json file is Data only when
+// isDefinitionTableFile accepts it, which reads its first bytes.
 std::optional<EditorAssetKind> editorAssetKind(const std::filesystem::path& path);
+
+// Whether a .json file holds a definition table: its first non-whitespace
+// byte (after an optional UTF-8 byte order mark) opens an array. Other JSON,
+// such as settings objects, is not an asset. False when the file cannot be
+// read.
+bool isDefinitionTableFile(const std::filesystem::path& path);

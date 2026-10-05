@@ -168,7 +168,7 @@ void testCatalogKinds() {
                editorAssetKindsFor("material") == std::vector{EditorAssetKind::Material} &&
                editorAssetKindsFor("model") == std::vector{EditorAssetKind::Model},
            "each asset kind should offer its catalog kind");
-    expect(editorAssetKindsFor("asset").size() == 7, "a generic asset field should offer every kind");
+    expect(editorAssetKindsFor("asset").size() == 8, "a generic asset field should offer every kind");
     expect(std::string_view(assetDragPayloadFor(EditorAssetKind::Texture)) == textureAssetPayload &&
                std::string_view(assetDragPayloadFor(EditorAssetKind::Audio)) == audioAssetPayload &&
                std::string_view(assetDragPayloadFor(EditorAssetKind::Material)) == materialAssetPayload &&

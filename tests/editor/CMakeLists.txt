@@ -143,6 +143,7 @@ zenith_add_test(zenith_package_workflow SOURCES PackageWorkflowTests.cpp LIBS ze
 zenith_add_test(zenith_preferences SOURCES PreferencesTests.cpp LIBS zenith_editor_app
     DEFINITIONS ZENITH_TEST_CMAKE="${CMAKE_COMMAND}")
 zenith_add_test(zenith_asset_browser SOURCES AssetBrowserTests.cpp LIBS zenith_editor_app)
+zenith_add_test(zenith_asset_import SOURCES AssetImportTests.cpp LIBS zenith_editor_app)
 zenith_add_test(zenith_asset_reference_workflow SOURCES AssetReferenceWorkflowTests.cpp LIBS zenith_editor_app
     NEEDS_ASSETS DEFINITIONS ZENITH_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 zenith_add_test(zenith_operators EXECUTABLE zenith_operator_tests SOURCES OperatorTests.cpp LIBS zenith_editor_app)

@@ -81,6 +81,8 @@ EditorIcon assetIcon(EditorAssetKind kind) {
         return EditorIcon::Script;
     case EditorAssetKind::Material:
         return EditorIcon::Environment;
+    case EditorAssetKind::Data:
+        return EditorIcon::Statistics;
     case EditorAssetKind::Model:
         break;
     }

@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 enum class FileDialogKind {
     Open,
@@ -19,7 +20,10 @@ enum class FileDialogStatus {
 struct FileDialogOutcome {
     FileDialogKind kind{};
     FileDialogStatus status{};
+    // The first file chosen; paths holds every one (several only when the
+    // request allowed it).
     std::filesystem::path path;
+    std::vector<std::filesystem::path> paths;
     std::string error;
 };
 
@@ -34,11 +38,13 @@ std::filesystem::path normalizeSavePath(std::filesystem::path path, const std::f
 // still open.
 class NativeFileDialog {
   public:
-    // extension includes the leading dot, for example ".zenith-scene".
+    // extension includes the leading dot, for example ".zenith-scene"; an
+    // empty extension offers every file.
     NativeFileDialog(std::string filterName, std::filesystem::path extension);
 
-    // Returns false when a dialog is already open.
-    bool request(FileDialogKind kind, const std::filesystem::path& defaultLocation);
+    // Returns false when a dialog is already open. allowMany lets an Open
+    // dialog choose several files.
+    bool request(FileDialogKind kind, const std::filesystem::path& defaultLocation, bool allowMany = false);
     bool pending() const;
     std::optional<FileDialogOutcome> poll();
 

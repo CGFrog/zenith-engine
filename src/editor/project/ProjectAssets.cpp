@@ -1,6 +1,7 @@
 #include "ProjectAssets.hpp"
 
 #include "editor/application/EditorDiagnostics.hpp"
+#include "editor/project/AssetImport.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/scene/Scene.hpp"
 
@@ -124,11 +125,15 @@ void ProjectAssets::dispatchChanges(EditorDiagnostics& diagnostics, const Projec
             actions.reloadMaterial(change.asset.absolutePath);
         } else if (change.asset.kind == EditorAssetKind::Prefab && actions.prefabChanged) {
             actions.prefabChanged(change.asset.absolutePath);
+        } else if (change.asset.kind == EditorAssetKind::Texture && actions.reloadTexture) {
+            actions.reloadTexture(change.asset.absolutePath);
         } else if (change.asset.kind == EditorAssetKind::Texture) {
-            // AssetManager has no texture reload; textures load fresh when a
-            // scene using them is opened again.
             diagnostics.add(EditorDiagnosticSeverity::Info, diagnosticSource,
                             "Texture '" + name + "' changed on disk. Reopen scenes that use it to see the change.");
+        } else if (change.asset.kind == EditorAssetKind::Audio && actions.reloadAudio) {
+            actions.reloadAudio(change.asset.absolutePath);
+        } else if (change.asset.kind == EditorAssetKind::Data) {
+            ++m_dataRevision;
         }
     }
 }
@@ -414,6 +419,106 @@ std::optional<std::filesystem::path> ProjectAssets::duplicateItem(const std::fil
     }
     refresh(diagnostics);
     return normalizedCatalogPath(result.path);
+}
+
+std::vector<std::filesystem::path> ProjectAssets::importFiles(std::span<const std::filesystem::path> sources,
+                                                              const std::filesystem::path& folder,
+                                                              EditorDiagnostics& diagnostics) {
+    const std::filesystem::path target = normalizedCatalogPath(folder);
+    if (m_catalog.findFolder(target) == nullptr || m_catalog.databaseFor(target) == nullptr) {
+        diagnostics.reportError("Cannot import into '" + utf8PathText(target) +
+                                "': files can only be imported into the asset and scene folders.");
+        return {};
+    }
+    AssetImportResult result = importIntoFolder(sources, target);
+    for (const std::string& error : result.errors) {
+        diagnostics.reportError(error);
+    }
+    if (result.imported.empty()) {
+        return {};
+    }
+    std::string names;
+    for (const std::filesystem::path& imported : result.imported) {
+        names += (names.empty() ? "'" : ", '") + utf8PathText(imported.filename()) + "'";
+    }
+    reportOutcome(diagnostics, true, "Imported " + names + " into '" + utf8PathText(target) + "'.");
+    refresh(diagnostics);
+    for (std::filesystem::path& imported : result.imported) {
+        imported = normalizedCatalogPath(imported);
+    }
+    return std::move(result.imported);
+}
+
+std::filesystem::path ProjectAssets::defaultImportFolder() const {
+    const std::filesystem::path& assetRoot = m_catalog.roots().front();
+    if (!m_settings.lastFolder.empty()) {
+        const std::filesystem::path remembered = resolveFolderKey(m_settings.lastFolder);
+        if (isWithin(remembered, assetRoot) && m_catalog.findFolder(remembered) != nullptr) {
+            return remembered;
+        }
+    }
+    return assetRoot;
+}
+
+std::optional<nlohmann::json> ProjectAssets::importSettings(const std::filesystem::path& asset) {
+    const std::filesystem::path path = normalizedCatalogPath(asset);
+    const EditorAssetRecord* record = m_catalog.findAsset(path);
+    const AssetDatabase* database = m_catalog.databaseFor(path);
+    const AssetRecord* tracked =
+        record != nullptr && database != nullptr && record->guid ? database->find(record->guid) : nullptr;
+    if (tracked == nullptr) {
+        return std::nullopt;
+    }
+    return tracked->importSettings;
+}
+
+bool ProjectAssets::setImportSettings(const std::filesystem::path& asset, nlohmann::json settings,
+                                      EditorDiagnostics& diagnostics) {
+    const std::filesystem::path path = normalizedCatalogPath(asset);
+    const EditorAssetRecord* record = m_catalog.findAsset(path);
+    AssetDatabase* database = m_catalog.databaseFor(path);
+    if (record == nullptr || database == nullptr || !record->guid) {
+        diagnostics.reportError("'" + utf8PathText(path) + "' has no import settings: no asset database tracks it.");
+        return false;
+    }
+    const AssetDatabaseResult stored = database->setImportSettings(record->guid, std::move(settings));
+    for (const std::string& warning : stored.warnings) {
+        diagnostics.add(EditorDiagnosticSeverity::Warning, diagnosticSource, warning);
+    }
+    if (!stored) {
+        diagnostics.reportError("Could not store the import settings of '" + utf8PathText(path.filename()) +
+                                "': " + stored.error);
+        return false;
+    }
+    reportOutcome(diagnostics, true, "Applied the import settings of '" + utf8PathText(path.filename()) + "'.");
+    queueReimport(path);
+    return true;
+}
+
+bool ProjectAssets::queueReimport(const std::filesystem::path& asset) {
+    const EditorAssetRecord* record = m_catalog.findAsset(normalizedCatalogPath(asset));
+    if (record == nullptr || record->kind == EditorAssetKind::Scene || record->kind == EditorAssetKind::Script) {
+        return false;
+    }
+    if (record->kind == EditorAssetKind::Texture) {
+        m_thumbnails.invalidate(record->absolutePath);
+    }
+    m_pending.changes.push_back({.kind = AssetCatalogChangeKind::Modified, .asset = *record});
+    return true;
+}
+
+uint64_t ProjectAssets::dataRevision() const {
+    return m_dataRevision;
+}
+
+std::vector<AssetReferrer> ProjectAssets::findReferences(const std::filesystem::path& item,
+                                                         EditorDiagnostics& diagnostics) {
+    std::vector<std::string> warnings;
+    std::vector<AssetReferrer> referrers = m_references.findReferences(m_catalog, item, warnings);
+    for (std::string& warning : warnings) {
+        diagnostics.add(EditorDiagnosticSeverity::Warning, diagnosticSource, std::move(warning));
+    }
+    return referrers;
 }
 
 bool ProjectAssets::moveItemToTrash(const std::filesystem::path& item, EditorDiagnostics& diagnostics) {

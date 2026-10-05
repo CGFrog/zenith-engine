@@ -107,6 +107,10 @@ class ComponentType {
     // Without this, saving would write the stale handle's path over the
     // edited one. On failure the handle is cleared and the error returned.
     SceneDocumentResult reloadAssets(void* component, AssetManager& assets, const SceneDocumentOptions& options) const;
+    // Points each texture() binding at replace(its handle), for a texture
+    // reloaded or imported again; replace returns the handle unchanged to
+    // keep it. Path fields are left alone. Returns whether a handle changed.
+    bool replaceTextures(void* component, const std::function<TextureHandle(TextureHandle)>& replace) const;
 
     SceneDocumentResult save(const Scene& scene, Entity entity, const ComponentSaveContext& context,
                              nlohmann::json& output) const;

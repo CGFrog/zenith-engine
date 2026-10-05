@@ -44,8 +44,8 @@ change, and reports added, modified, removed, and moved assets plus every
 moved or removed file. Roots that cannot be watched fall back to a rescan once
 a second. `ProjectAssets` acts on the changes: modified models are reloaded
 through `AssetManager::reloadModel` with a diagnostic, modified textures get
-fresh thumbnails and an informational note (there is no texture reload API
-yet), and moves and removals go to `EditorSessionActions::projectFilesMoved`
+fresh thumbnails and are reloaded (see Import settings and reimport below),
+modified sounds are reloaded, and moves and removals go to `EditorSessionActions::projectFilesMoved`
 and `projectFilesRemoved`. The session then relocates the open document when
 its own file moved (or detaches it, untitled and dirty, when it was removed)
 and points the edited scene's asset references at moved assets
@@ -63,8 +63,8 @@ mode, favourites, and last folder in `asset-browser.json` in the editor's
 settings directory, falling back to defaults with a warning when the file is
 invalid.
 
-The catalog lists `.png`, `.jpg`, `.hdr`, and `.ktx2` images as textures and
-`.zmat` files as materials. Grid tiles of images show their thumbnails: the
+The catalog lists `.png`, `.jpg`, `.hdr`, and `.ktx2` images as textures,
+`.zmat` files as materials, and JSON arrays as data tables. Grid tiles of images show their thumbnails: the
 CPU `ThumbnailCache` decodes them on its worker, and `ProjectAssets`'
 `ThumbnailTextures` uploads at most 128 of them as renderer UI images
 (`RenderRuntime::createUiImage`), destroying the least recently drawn first
@@ -84,6 +84,83 @@ reloadMaterial` too; `reloadProjectMaterial` calls
 `AssetManager::reloadMaterial` and points every `MaterialOverrideComponent` of
 the shown scene (and, in Play, the parked edit scene) that used the previous
 material at the new one.
+
+### Importing
+
+Files and folders dropped from Explorer onto an Asset Browser are copied into
+the folder under the drop (a tree node or folder tile), else the browser's
+current folder; **Import...** (toolbar, and the folder menu) opens the
+system's multi-select file dialog (`NativeFileDialog`, SDL's dialog API) for
+the current folder. `project/AssetImport` does the copying: a taken name gets
+" (1)", " (2)", ... before its extension, nothing existing is replaced, and
+`.meta` sidecars, hidden names, and `*.tmp` files stay behind, so a copy from
+another project gets its own GUID. `ProjectAssets::importFiles` then rescans,
+which writes the copies' sidecars, and the browser selects the last copy.
+Imports go only into folders of the asset and scene roots.
+
+The engine reports drops in `InputState::droppedFiles`; the session queues a
+frame's drops in a `FileDropQueue` (`EditorContext::fileDrops`), each window
+claims the ones inside its rectangle while drawing, and drops nothing took
+are reported at the next update. A model or prefab dropped on a viewport is
+imported into `ProjectAssets::defaultImportFolder` (the primary browser's
+remembered asset folder, else the asset root) unless it already lies in the
+project, then placed under the drop with `object.place_model` or
+`prefab.instantiate` (`viewport/ViewportDrop`); other files dropped there are
+imported only.
+
+### Import settings and reimport
+
+Selecting a texture shows its **Usage** (Color, Normal map, or Data; see
+`engine/assets/TextureImportSettings`), a data table its **Schema**. Edits
+stay in the browser until **Apply**, which stores them in the asset's `.meta`
+through `AssetDatabase::setImportSettings` (`ProjectAssets::
+setImportSettings`) and queues a reimport; **Revert** drops them. **Reimport**
+(the selected-asset pane and the item menu) queues the asset as modified
+(`ProjectAssets::queueReimport`), so it goes through the same dispatch as a
+change on disk: models reload (`reloadProjectModel`), materials and prefabs as
+above, textures through `reloadProjectTexture` and sounds through
+`reloadProjectAudio` (`project/AssetReload`). A texture reload re-points the
+texture bindings of the shown scene (and, in Play, the parked edit scene) at
+the new generation, reloads the material files sampling it, and loads it
+again with its import settings' usage where a binding read it with another.
+A sound reload stops voices of the old clip and points audio emitters at the
+new one. Scenes and scripts have nothing to reimport.
+
+### Find References and the delete guard
+
+**Find References** (item menu) lists every scene, prefab, and material of
+the project that references the asset, or anything inside a folder, and how
+many entities of the open scene use it, with **Select** to select them;
+clicking a file reveals it. `project/AssetReferences` reads scene and prefab
+documents for asset reference objects (`{"guid", "path"}`, relative to the
+asset root) and legacy path strings under keys ending in `_asset`, a prefab's
+nested prefab sources (relative to its folder), and a material's texture
+references (relative to its folder); a reference matches by GUID or by path.
+`AssetReferenceIndex` (owned by `ProjectAssets`) keeps each file's references
+and reads a file again only when the catalog reports a new size or write time.
+Files inside a searched folder are not counted, so a folder is not kept in use
+by its own contents. Open-scene users come from the serialized document
+(`sceneEntitiesReferencing`). The **Move to Trash** confirmation names the
+files that still reference the item before it is moved.
+
+### Data tables
+
+A `.json` file under the asset or scene root whose top-level value is an
+array (its first non-whitespace byte, after an optional UTF-8 byte order
+mark, is `[`) is a definition table, `EditorAssetKind::Data`
+(`isDefinitionTableFile`). Other JSON, such as settings objects, is not
+listed; project files at the project root (`input_actions.json`) are outside
+the asset roots anyway. Selecting one shows its entries read-only
+(`panels/DataTableView`): the schema's fields as the first columns, then any
+other keys. It is validated with the game module's `DefinitionSchema`
+(`ModuleRegistrar::addDefinitionTable`, read from `EditorContext::
+definitionSchemas` each frame and never kept), chosen by the import setting
+`schema` or the file's stem; without one only the structure is checked (an
+array of objects whose `id`s, where present, are unique non-empty strings).
+A failure is shown in the pane and reported once as a warning in the Info
+log; the table is read again when the file, its schema, or
+`ProjectAssets::dataRevision` (bumped by a change on disk or Reimport)
+changes.
 
 ## Folder contents
 

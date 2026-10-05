@@ -16,8 +16,10 @@
 #include <string_view>
 
 class ComponentEditorOverrides;
+class DefinitionSchemaRegistry;
 class EditorDiagnostics;
 class EntityEyedropper;
+class FileDropQueue;
 class EditorMenus;
 class EditorScriptInfo;
 class GameServices;
@@ -129,6 +131,13 @@ struct EditorContext {
     // The project's asset catalog and thumbnails, which asset fields offer
     // (interaction/AssetReferenceField); null where there is none (tests).
     ProjectAssets* projectAssets{nullptr};
+    // Files dropped on the window from the operating system this frame; a
+    // window claims the drops inside it. Null where there are none (tests).
+    FileDropQueue* fileDrops{nullptr};
+    // The definition table schemas the game module registered, which the
+    // Asset Browser validates data tables against; null without a module.
+    // Valid for this frame only: never keep it.
+    const DefinitionSchemaRegistry* definitionSchemas{nullptr};
 
     bool editMode() const {
         return mode == EditorMode::Edit;

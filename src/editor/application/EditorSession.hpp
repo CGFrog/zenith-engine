@@ -5,6 +5,7 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/EditorPlayMode.hpp"
 #include "editor/application/EditorSessionCommands.hpp"
+#include "editor/application/FileDropQueue.hpp"
 #include "editor/application/NativeFileDialog.hpp"
 #include "editor/application/NewCodeDialog.hpp"
 #include "editor/application/PlayTargets.hpp"
@@ -257,6 +258,8 @@ class EditorSession final : public ApplicationScene,
     void updatePackaging();
     void drawBuildPackageMenu(ApplicationContext& context);
     void saveComponentLayoutIfChanged();
+    // Reports last frame's unclaimed OS file drops and queues this frame's.
+    void takeFileDrops(const InputState& input);
     void saveSimulateSystems();
 
     // Game module hosting.
@@ -552,6 +555,8 @@ class EditorSession final : public ApplicationScene,
     // The project's asset service, shared by every Asset Browser area;
     // declared before the areas that reference it.
     ProjectAssets m_projectAssets;
+    // OS file drops of the current frame, claimed by the windows they land in.
+    FileDropQueue m_fileDrops;
 
     // Shared by the Graphics and Properties areas, so declared before them.
     RenderSettingsController m_renderSettings;

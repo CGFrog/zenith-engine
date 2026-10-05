@@ -13,6 +13,7 @@
 
 class BehaviourRegistry;
 class ComponentTypeRegistry;
+class DefinitionSchemaRegistry;
 class InputActionMap;
 
 struct GameModuleResult {
@@ -95,6 +96,10 @@ class GameModule {
     // The behaviour types the module registered (possibly none); never null.
     std::shared_ptr<const BehaviourRegistry> behaviours() const;
 
+    // The definition table schemas the module registered (possibly none);
+    // never null. Their validators are module code, like the registries.
+    std::shared_ptr<const DefinitionSchemaRegistry> definitionSchemas() const;
+
     // Whether anything outside this object still shares the registries.
     bool registriesShared() const;
 
@@ -120,5 +125,6 @@ class GameModule {
     std::shared_ptr<const SystemRegistry> m_systems;
     std::shared_ptr<const BehaviourRegistry> m_behaviours;
     std::shared_ptr<const InputActionMap> m_inputActions;
+    std::shared_ptr<const DefinitionSchemaRegistry> m_definitionSchemas;
     LogChannel m_log;
 };

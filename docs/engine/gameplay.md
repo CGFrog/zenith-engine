@@ -102,7 +102,28 @@ ItemTable& items = services.resource<ItemTable>();
 items.table.load(services.assetPath("data/items.json"));
 ```
 
+### Definition schemas (`DefinitionSchemas.*`)
+
+A module can also describe a table's layout to tools, so the editor's Asset
+Browser validates the file while it is edited, without the game's types:
+
+```cpp
+registrar.addDefinitionTable<ItemDef>("items", itemFields());
+```
+
+`DefinitionSchema` holds the name, the field descriptors (the editor's
+columns), the id key, and a `validate` function that parses text exactly as
+`DefinitionTable<Entry>::parse` does (`makeDefinitionSchema<Entry>` builds
+one). `DefinitionSchemaRegistry` keeps them by unique name and rejects a
+duplicate name, a missing validator, or fields without a required string id.
+`GameModule::definitionSchemas()` holds a loaded module's; the validators are
+module code, so they are released with the module like its other registries.
+A host without a registry (`linkGameplay`, a packaged game) accepts and drops
+the registration. A table file uses the schema its `.meta` import settings
+name (`{"schema": "items"}`), else one named like its file stem.
+
 `tests/engine/DefinitionTableTests.cpp` (`zenith_definition_tables`);
+`tests/engine/AssetReloadTests.cpp` (`zenith_asset_reload`) covers schemas;
 `tests/engine/GameServicesTests.cpp` covers the resource store and
 `assetPath`.
 

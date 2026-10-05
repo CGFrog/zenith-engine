@@ -585,6 +585,7 @@ void ViewportPanel::draw(EditorContext& context) {
         const ImVec2 dropMouse = ImGui::GetMousePos();
         acceptViewportAssetDrops(context, snapView(context.app.scene),
                                  glm::vec2(dropMouse.x, dropMouse.y) - m_position);
+        acceptViewportFileDrops(context, snapView(context.app.scene), m_position, m_size);
     }
     // The chrome is drawn in child windows, so the image reports no hover or
     // click while the mouse is over the header, tool shelf, or sidebar.

@@ -18,6 +18,14 @@ changes release held controls rather than leaving stuck state. It also reports
 quit and resize requests. Escape releases relative mouse mode; clicking the
 window captures it.
 
+Files and folders dropped onto the window from the operating system
+(`SDL_EVENT_DROP_FILE`) arrive in `InputState::droppedFiles` for one frame,
+in drop order, each a `DroppedFile` with its path (decoded from SDL's UTF-8)
+and the drop position in window coordinates. Fixed-step states never carry
+them (`InputEdgeBuffer::apply` clears them), so a drop is seen once. The
+engine gives drops no meaning: the editor imports them into the project
+(`editor/application/FileDropQueue`), and a game may ignore them.
+
 ## `src/engine/input/InputActions.*`
 
 Maps physical inputs to named button, one-dimensional, and two-dimensional

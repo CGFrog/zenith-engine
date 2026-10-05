@@ -40,10 +40,10 @@ std::filesystem::path normalizeSavePath(std::filesystem::path path, const std::f
 NativeFileDialog::NativeFileDialog(std::string filterName, std::filesystem::path extension)
     : m_filterName(std::move(filterName))
     , m_extension(std::move(extension))
-    , m_filterPattern(utf8FromPath(m_extension).substr(1))
+    , m_filterPattern(m_extension.empty() ? std::string{} : utf8FromPath(m_extension).substr(1))
     , m_state(std::make_shared<State>()) {}
 
-bool NativeFileDialog::request(FileDialogKind kind, const std::filesystem::path& defaultLocation) {
+bool NativeFileDialog::request(FileDialogKind kind, const std::filesystem::path& defaultLocation, bool allowMany) {
     if (m_pending) {
         return false;
     }
@@ -61,7 +61,10 @@ bool NativeFileDialog::request(FileDialogKind kind, const std::filesystem::path&
             outcome.status = FileDialogStatus::Cancelled;
         } else {
             outcome.status = FileDialogStatus::Chosen;
-            outcome.path = pathFromUtf8(files[0]);
+            for (const char* const* file = files; *file != nullptr; ++file) {
+                outcome.paths.push_back(pathFromUtf8(*file));
+            }
+            outcome.path = outcome.paths.front();
         }
         const std::scoped_lock lock(owned->state->mutex);
         owned->state->outcome = std::move(outcome);
@@ -72,10 +75,13 @@ bool NativeFileDialog::request(FileDialogKind kind, const std::filesystem::path&
     const char* locationArgument = location.empty() ? nullptr : location.c_str();
     // The focused editor window becomes the dialog's parent so it stays on top.
     SDL_Window* parent = SDL_GetKeyboardFocus();
+    const int filterCount = m_filterPattern.empty() ? 0 : 1;
     if (kind == FileDialogKind::Save) {
-        SDL_ShowSaveFileDialog(callback, context, parent, filters, 1, locationArgument);
+        SDL_ShowSaveFileDialog(callback, context, parent, filterCount > 0 ? filters : nullptr, filterCount,
+                               locationArgument);
     } else {
-        SDL_ShowOpenFileDialog(callback, context, parent, filters, 1, locationArgument, false);
+        SDL_ShowOpenFileDialog(callback, context, parent, filterCount > 0 ? filters : nullptr, filterCount,
+                               locationArgument, allowMany);
     }
     return true;
 }
@@ -97,8 +103,9 @@ std::optional<FileDialogOutcome> NativeFileDialog::poll() {
         return std::nullopt;
     }
     m_pending = false;
-    if (outcome->status == FileDialogStatus::Chosen && outcome->kind == FileDialogKind::Save) {
+    if (outcome->status == FileDialogStatus::Chosen && outcome->kind == FileDialogKind::Save && !m_extension.empty()) {
         outcome->path = normalizeSavePath(std::move(outcome->path), m_extension);
+        outcome->paths = {outcome->path};
     }
     return outcome;
 }

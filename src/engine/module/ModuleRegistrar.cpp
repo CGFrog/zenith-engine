@@ -3,11 +3,13 @@
 #include <utility>
 
 ModuleRegistrar::ModuleRegistrar(ComponentTypeRegistry& componentTypes, SystemRegistry& systems,
-                                 InputActionMap& inputActions, BehaviourRegistry& behaviours)
+                                 InputActionMap& inputActions, BehaviourRegistry& behaviours,
+                                 DefinitionSchemaRegistry* definitionSchemas)
     : m_componentTypes(componentTypes)
     , m_systems(systems)
     , m_inputActions(inputActions)
-    , m_behaviours(behaviours) {}
+    , m_behaviours(behaviours)
+    , m_definitionSchemas(definitionSchemas) {}
 
 SceneDocumentResult ModuleRegistrar::addComponentType(ComponentType type) {
     std::string key = type.key();
@@ -35,6 +37,17 @@ bool ModuleRegistrar::addInputActions(const InputActionMap& actions) {
     std::string error;
     if (!m_inputActions.merge(actions, error)) {
         recordFailure(error);
+        return false;
+    }
+    return true;
+}
+
+bool ModuleRegistrar::addDefinitionSchema(DefinitionSchema schema) {
+    if (m_definitionSchemas == nullptr) {
+        return true;
+    }
+    if (DefinitionTableResult result = m_definitionSchemas->add(std::move(schema)); !result) {
+        recordFailure(result.error);
         return false;
     }
     return true;

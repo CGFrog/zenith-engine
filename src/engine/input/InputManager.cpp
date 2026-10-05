@@ -284,6 +284,8 @@ InputState InputEdgeBuffer::apply(const InputState& state) const {
     buffered.m_gamepadPressed = m_gamepadPresses;
     buffered.m_gamepadReleased = m_gamepadReleases;
     buffered.mouseWheelDelta = m_mouseWheelDelta;
+    // Drops belong to the frame, not to each fixed step.
+    buffered.droppedFiles.clear();
     return buffered;
 }
 
@@ -377,6 +379,13 @@ void InputManager::handleEvent(const Window& window, const SDL_Event& event, Inp
 
     if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED || event.type == SDL_EVENT_WINDOW_RESTORED) {
         m_resizeRequested = true;
+    }
+
+    // SDL hands dropped paths over as UTF-8.
+    if (event.type == SDL_EVENT_DROP_FILE && event.drop.data != nullptr) {
+        const auto* text = reinterpret_cast<const char8_t*>(event.drop.data);
+        m_state.droppedFiles.push_back(
+            {.path = std::filesystem::path(std::u8string(text)), .position = {event.drop.x, event.drop.y}});
     }
 
     if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE && !capture.keyboard) {

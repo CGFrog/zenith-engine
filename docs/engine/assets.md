@@ -89,6 +89,34 @@ and `collectUnused` frees it (eviction also drops it from the cache).
 `leaseSceneAssets` leases material override materials (with their textures)
 and particle sprite textures along with the other scene assets.
 
+### Texture reload and import settings
+
+`loadTexture(path, usage)` reads a standalone image as `Color`, `Normal`, or
+`Data`; each usage of a file is its own cached texture (`loadTexture(path)` is
+color). `reloadTexture(path)` decodes a changed image again for every usage it
+is loaded with into new generations and updates the cache, returning the
+`TextureReplacement`s (previous and current handles) and the material files
+(`.zmat`) whose loaded material samples a replaced texture. Like materials,
+textures are immutable: the previous handles stay valid until their users are
+re-pointed and `collectUnused` frees them. `replaceSceneTextures(scene, types,
+replacements)` (`src/engine/scene/SceneAssetReplacement.*`) re-points every
+`texture()` binding of the registry's component types (decal, particle,
+environment, and probe textures, and module components) through
+`ComponentType::replaceTextures`, marking the entities renderable and light
+dirty; material users follow by reloading the listed material files. A file
+nobody loaded reloads nothing; one that no longer decodes changes nothing and
+fails.
+
+`TextureImportSettings.*` reads and writes a standalone texture's import
+settings, the `importSettings` object of its `.meta` sidecar:
+`{"usage": "color" | "normal" | "data"}` (other keys are kept). Component
+texture fields load through `loadProjectTexture`, which reads the image's
+settings from `SceneDocumentOptions::assetDatabase` and loads it with that
+usage. Color is sampled as sRGB; a decal albedo whose texture is `Normal` or
+`Data` samples the linear view instead (`MeshPassDescriptors`). Material files
+keep the usage of the slot naming the image, and model images their glTF
+classification; there are no model or audio import settings yet.
+
 ## `src/engine/assets/MeshBuilder.*`
 
 Assembles a `MeshAsset` in code for `createMesh`: primitives by material,

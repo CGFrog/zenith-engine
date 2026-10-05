@@ -19,6 +19,7 @@ add_library(zenith_editor_app STATIC
     application/EditorPlayback.cpp
     application/EditorPreferences.cpp
     application/NativeFileDialog.cpp
+    application/FileDropQueue.cpp
     application/PlayTargets.cpp
     application/PrefabInstanceRefresh.cpp
     application/EditorSession.cpp
@@ -95,6 +96,7 @@ add_library(zenith_editor_app STATIC
     operators/SelectOperators.cpp
     operators/VisibilityOperators.cpp
     panels/AssetBrowserPanel.cpp
+    panels/DataTableView.cpp
     panels/BuildPanel.cpp
     panels/ProjectSettingsWindow.cpp
     panels/DiagnosticsPanel.cpp
@@ -120,6 +122,9 @@ add_library(zenith_editor_app STATIC
     panels/outliner/OutlinerRows.cpp
     panels/outliner/OutlinerTree.cpp
     project/AssetCatalog.cpp
+    project/AssetImport.cpp
+    project/AssetReferences.cpp
+    project/AssetReload.cpp
     project/AssetRelocation.cpp
     project/BuildRunner.cpp
     project/DeveloperEnvironment.cpp

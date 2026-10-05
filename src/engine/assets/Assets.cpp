@@ -399,40 +399,105 @@ AssetLoadResult<FontHandle> AssetManager::loadFont(const std::filesystem::path& 
 }
 
 AssetLoadResult<TextureHandle> AssetManager::loadTexture(const std::filesystem::path& path) {
-    return loadTextureWithUsage(path, TextureUsage::Color);
+    return loadTexture(path, TextureUsage::Color);
 }
 
-AssetLoadResult<TextureHandle> AssetManager::loadTextureWithUsage(const std::filesystem::path& path,
-                                                                  TextureUsage usage) {
+namespace {
+// The cache key suffix of a standalone texture read with usage.
+std::string textureUsageKeySuffix(TextureUsage usage) {
+    switch (usage) {
+    case TextureUsage::Color:
+        return {};
+    case TextureUsage::Normal:
+        return "#normal";
+    case TextureUsage::Data:
+        return "#data";
+    }
+    return {};
+}
+
+// Decodes a standalone texture, which must be RGBA8.
+ImageDecodeResult decodeStandaloneTexture(const std::filesystem::path& path) {
+    ImageDecodeResult decoded = decodeImageFile(path);
+    if (decoded && decoded.texture.blockCompressed()) {
+        // Standalone textures feed CPU consumers such as environment
+        // prefiltering, which read RGBA8 texels.
+        ImageDecodeResult refused;
+        refused.error = "Standalone textures must be RGBA8; block-compressed KTX2 is only supported for model "
+                        "materials: " +
+                        path.string();
+        return refused;
+    }
+    return decoded;
+}
+} // namespace
+
+AssetLoadResult<TextureHandle> AssetManager::loadTexture(const std::filesystem::path& path, TextureUsage usage) {
     auto [normalized, key] = normalizedPath(path);
     // One file read as color and as data is two textures.
-    if (usage == TextureUsage::Normal) {
-        key += "#normal";
-    } else if (usage == TextureUsage::Data) {
-        key += "#data";
-    }
+    key += textureUsageKeySuffix(usage);
     if (const auto found = m_textureCache.find(key); found != m_textureCache.end()) {
         return {.handle = found->second};
     }
-    ImageDecodeResult decoded = decodeImageFile(normalized);
+    ImageDecodeResult decoded = decodeStandaloneTexture(normalized);
     if (!decoded) {
         return {.error = decoded.error};
     }
-    if (decoded.texture.blockCompressed()) {
-        // Standalone textures feed CPU consumers such as environment
-        // prefiltering, which read RGBA8 texels.
-        return {.error = "Standalone textures must be RGBA8; block-compressed KTX2 is only supported for model "
-                         "materials: " +
-                         normalized.string()};
-    }
     decoded.texture.usage = usage;
-    const TextureHandle handle = addTexture(std::move(decoded.texture));
+    return {.handle = addSourceTexture(std::move(decoded.texture), normalized, key)};
+}
+
+TextureHandle AssetManager::addSourceTexture(TextureAsset texture, const std::filesystem::path& path,
+                                             const std::string& cacheKey) {
+    const TextureHandle handle = addTexture(std::move(texture));
     if (handle.index >= m_textureSources.size()) {
         m_textureSources.resize(handle.index + 1);
     }
-    m_textureSources[handle.index] = {normalized};
-    m_textureCache.emplace(key, handle);
-    return {.handle = handle};
+    m_textureSources[handle.index] = {path};
+    m_textureCache.insert_or_assign(cacheKey, handle);
+    return handle;
+}
+
+TextureReloadResult AssetManager::reloadTexture(const std::filesystem::path& path) {
+    const auto [normalized, key] = normalizedPath(path);
+    std::vector<std::pair<TextureUsage, TextureHandle>> loaded;
+    for (const TextureUsage usage : {TextureUsage::Color, TextureUsage::Normal, TextureUsage::Data}) {
+        if (const auto found = m_textureCache.find(key + textureUsageKeySuffix(usage)); found != m_textureCache.end()) {
+            loaded.emplace_back(usage, found->second);
+        }
+    }
+    TextureReloadResult result{.success = true};
+    if (loaded.empty()) {
+        return result;
+    }
+    const ImageDecodeResult decoded = decodeStandaloneTexture(normalized);
+    if (!decoded) {
+        return {.error = decoded.error};
+    }
+    for (const auto& [usage, previous] : loaded) {
+        TextureAsset texture = decoded.texture;
+        texture.usage = usage;
+        const TextureHandle current =
+            addSourceTexture(std::move(texture), normalized, key + textureUsageKeySuffix(usage));
+        result.replaced.push_back({.previous = previous, .current = current});
+    }
+    // Material files load their images through this cache, so reloading one
+    // picks up the replacement.
+    for (const auto& [materialKey, handle] : m_materialCache) {
+        const MaterialAsset* asset = material(handle);
+        if (asset == nullptr || handle.index >= m_materialSources.size()) {
+            continue;
+        }
+        const std::array<TextureHandle, 13> used = asset->textures();
+        const bool samplesReplaced = std::ranges::any_of(result.replaced, [&used](const TextureReplacement& entry) {
+            return std::ranges::find(used, entry.previous) != used.end();
+        });
+        if (samplesReplaced) {
+            result.materialFiles.push_back(m_materialSources[handle.index].path);
+        }
+    }
+    std::ranges::sort(result.materialFiles);
+    return result;
 }
 
 AssetLoadResult<MaterialHandle> AssetManager::loadMaterial(const std::filesystem::path& path) {
@@ -475,7 +540,7 @@ AssetLoadResult<MaterialHandle> AssetManager::importMaterial(const std::filesyst
         const std::filesystem::path image =
             path.parent_path() / std::filesystem::path(std::u8string(reference.path.begin(), reference.path.end()));
         const AssetLoadResult<TextureHandle> loaded =
-            loadTextureWithUsage(image, materialTextureUsage(static_cast<MaterialTextureSlot>(slot)));
+            loadTexture(image, materialTextureUsage(static_cast<MaterialTextureSlot>(slot)));
         if (!loaded) {
             m_log.warning("Material " + path.string() + " " +
                           materialTextureKey(static_cast<MaterialTextureSlot>(slot)) + ": " + loaded.error);

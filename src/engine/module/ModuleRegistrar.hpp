@@ -2,6 +2,7 @@
 
 #include "SystemScheduler.hpp"
 #include "engine/behaviour/BehaviourRegistry.hpp"
+#include "engine/gameplay/DefinitionSchemas.hpp"
 #include "engine/input/InputActions.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 
@@ -28,8 +29,11 @@ struct BehaviourOptions {
 // must not keep a reference to it.
 class ModuleRegistrar {
   public:
+    // definitionSchemas receives the module's definition table schemas; null
+    // when the host has no use for them (a packaged game), which makes
+    // addDefinitionSchema accept and drop them.
     ModuleRegistrar(ComponentTypeRegistry& componentTypes, SystemRegistry& systems, InputActionMap& inputActions,
-                    BehaviourRegistry& behaviours);
+                    BehaviourRegistry& behaviours, DefinitionSchemaRegistry* definitionSchemas = nullptr);
 
     ModuleRegistrar(const ModuleRegistrar&) = delete;
     ModuleRegistrar& operator=(const ModuleRegistrar&) = delete;
@@ -73,6 +77,18 @@ class ModuleRegistrar {
         return addBehaviourType(std::move(type), std::move(behaviour));
     }
 
+    // Declares the layout of the game's definition table files, so tools such
+    // as the editor's asset browser can validate them without the game's
+    // types (see DefinitionSchemas.hpp). A name registered twice or unusable
+    // fields fail the registration.
+    bool addDefinitionSchema(DefinitionSchema schema);
+
+    // addDefinitionSchema for a DefinitionTable<Entry> with these fields.
+    template <typename Entry>
+    bool addDefinitionTable(std::string name, Fields<Entry> fields, std::string idKey = "id") {
+        return addDefinitionSchema(makeDefinitionSchema<Entry>(std::move(name), std::move(fields), std::move(idKey)));
+    }
+
     // Keys and names the module added, in registration order.
     const std::vector<std::string>& componentKeys() const;
     const std::vector<std::string>& systemNames() const;
@@ -85,6 +101,7 @@ class ModuleRegistrar {
     SystemRegistry& m_systems;
     InputActionMap& m_inputActions;
     BehaviourRegistry& m_behaviours;
+    DefinitionSchemaRegistry* m_definitionSchemas{nullptr};
     std::vector<std::string> m_componentKeys;
     std::vector<std::string> m_systemNames;
     std::vector<std::string> m_behaviourKeys;

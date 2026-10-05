@@ -2,6 +2,7 @@
 
 #include "../assets/AssetDatabase.hpp"
 #include "../assets/Assets.hpp"
+#include "../assets/TextureImportSettings.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -218,7 +219,14 @@ SceneDocumentResult loadProjectTexture(const std::string& reference, AssetManage
     if (SceneDocumentResult result = resolveProjectAssetPath(reference, options, path); !result) {
         return result;
     }
-    const AssetLoadResult<TextureHandle> loaded = assets.loadTexture(path);
+    // The image's import settings (its .meta sidecar) decide how it is read.
+    TextureImportSettings settings;
+    if (const std::optional<AssetGuid> guid = guidForReference(reference, options)) {
+        if (const AssetRecord* record = options.assetDatabase->find(*guid)) {
+            readTextureImportSettings(record->importSettings, settings);
+        }
+    }
+    const AssetLoadResult<TextureHandle> loaded = assets.loadTexture(path, settings.usage);
     if (!loaded) {
         return {.error = loaded.error};
     }

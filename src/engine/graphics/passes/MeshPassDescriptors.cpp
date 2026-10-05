@@ -137,12 +137,15 @@ std::vector<GpuDecal> MeshPass::prepareDecals(const Scene& scene, const AssetMan
     sceneDecalCount = static_cast<uint32_t>(sceneDecals.size());
     // Textures resolve before the frame's bindless writes. A decal whose
     // texture is still uploading (or was rejected) is left out until it lands,
-    // rather than drawing untextured.
-    const auto slotFor = [&](TextureHandle handle, bool srgb) -> std::optional<uint32_t> {
+    // rather than drawing untextured. A colour slot samples through the sRGB
+    // view unless the texture was imported as linear normal or data.
+    const auto slotFor = [&](TextureHandle handle, bool colour) -> std::optional<uint32_t> {
         const GpuTexture* texture = handle ? ensureTexture(handle, assets) : nullptr;
         if (!texture) {
             return std::nullopt;
         }
+        const TextureAsset* asset = assets.texture(handle);
+        const bool srgb = colour && (asset == nullptr || asset->usage == TextureUsage::Color);
         return srgb ? texture->srgbSlot : texture->linearSlot;
     };
     std::vector<GpuDecal> records;
