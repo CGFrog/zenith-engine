@@ -150,6 +150,11 @@ class ParticlePass {
         return m_capacity;
     }
 
+    // Emitters the last recorded frame left out (ParticleFramePlan::droppedEmitters).
+    uint32_t droppedEmitters() const {
+        return m_droppedEmitters;
+    }
+
     uint64_t allocatedBytes() const;
 
   private:
@@ -208,4 +213,5 @@ class ParticlePass {
     bool m_drawPending{false};
     uint32_t m_emitterCount{0};
     uint32_t m_capacity{0};
+    uint32_t m_droppedEmitters{0};
 };

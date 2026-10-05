@@ -42,6 +42,18 @@ enum class AudioScope : uint8_t {
     Persistent
 };
 
+// How much a voice matters when every voice is busy: a new sound takes the
+// voice of the lowest-priority sound playing when its own priority is at least
+// as high (see AudioSystem::play). Any value of the underlying type is valid;
+// the named ones are conventional steps.
+enum class AudioPriority : uint8_t {
+    Lowest = 0,
+    Low = 64,
+    Normal = 128,
+    High = 192,
+    Highest = 255,
+};
+
 struct AudioConfig {
     uint32_t sampleRate{48'000};
     uint32_t outputChannels{2};
@@ -94,6 +106,8 @@ struct AudioPlaybackOptions {
     float gain{1.0f};
     float pitch{1.0f};
     bool loop{false};
+    // Last, so the members before keep their aggregate order.
+    AudioPriority priority{AudioPriority::Normal};
 };
 
 struct AudioSpatialOptions : AudioPlaybackOptions {
@@ -156,8 +170,17 @@ class AudioSystem {
     AudioLoadResult<AudioClipHandle> loadClip(const std::filesystem::path& path, bool spatial = false);
     AudioLoadResult<AudioClipHandle> createClip(std::span<const float> samples, uint32_t channels, uint32_t sampleRate);
     AudioLoadResult<AudioStreamHandle> loadStream(const std::filesystem::path& path);
+    // Plays clip on a free voice. When every voice is busy, the new sound
+    // steals the voice of the least important sound playing: the lowest
+    // priority, then the quietest (gain, bus gain, and distance attenuation
+    // at the listener), then the oldest. It steals only a voice whose
+    // priority is at most options.priority, and never the streamed music
+    // voice or a voice on the Music bus; otherwise it fails. A stolen
+    // voice's handle stops being valid. Scene emitters never steal.
     AudioLoadResult<AudioVoiceHandle> play(AudioClipHandle clip, const AudioPlaybackOptions& options = {});
+    // As play, at a position in the world.
     AudioLoadResult<AudioVoiceHandle> playAt(AudioClipHandle clip, const AudioSpatialOptions& options);
+    // As play, for the one streamed music voice.
     AudioLoadResult<AudioVoiceHandle> playMusic(AudioStreamHandle stream,
                                                 const AudioPlaybackOptions& options = {
                                                     .bus = AudioBus::Music, .scope = AudioScope::Persistent});
@@ -191,6 +214,8 @@ class AudioSystem {
     void update(float deltaSeconds);
     AudioAssetCollectionResult collectUnusedAssets(bool force = false);
     uint64_t decodedAudioBytes() const;
+    // Voices taken from playing sounds because every voice was busy, since init.
+    uint64_t stolenVoiceCount() const;
     std::vector<AudioAssetDiagnostic> assetDiagnostics() const;
     bool hasOutputDevice() const;
     const AudioConfig& config() const;

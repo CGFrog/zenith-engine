@@ -151,6 +151,10 @@ void BenchmarkReport::renderCpu(const RenderStats& s, const RenderPassBudgets& b
     sample("decals.discarded_assignments", s.discardedDecalAssignments, "count");
     sample("decals.maximum_per_cluster", s.maximumDecalsPerCluster, "count");
     sample("render.decal_bytes", static_cast<double>(s.decalBytes), "bytes");
+    // Capacity overflow: nonzero means the scene exceeded a per-frame limit.
+    sample("render.dropped_items", s.droppedRenderItems, "count");
+    sample("render.dropped_skinned_items", s.droppedSkinnedRenderItems, "count");
+    sample("render.dropped_particle_emitters", s.droppedParticleEmitters, "count");
 }
 
 void BenchmarkReport::renderGpu(const RenderStats& s, const RenderPassBudgets& budgets, uint64_t firstFrame,

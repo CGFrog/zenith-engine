@@ -44,6 +44,36 @@ per pair of bodies. They are derived on the main thread from Jolt's contacts.
 - `GameServices::publishTriggerEvents` turns them into `TriggerEntered` and
   `TriggerExited` events.
 
+`step` fails only before `init`; content problems degrade instead of ending
+the run, so an outlier generated level keeps playing:
+
+- An entity whose body cannot be built (a triangle-mesh collider on a moving
+  body, a transform that cannot be decomposed, such as a zero scale) or whose
+  character capsule is not positive is left out of the simulation with one
+  warning naming it. It is retried when it changes (a lifecycle event) and on
+  audits. `refreshBody` still reports the failure as an error.
+- Bodies beyond `maxBodies` are skipped with one warning per episode and
+  built, lowest entity first, once removals make room.
+- A step that runs out of body pairs or contact constraints completes without
+  the contacts that did not fit (bodies may pass through each other) and warns
+  once per episode. Debug builds of Jolt assert on that error; the runtime's
+  assert handler lets only that assertion continue.
+
+`PhysicsStats::skippedBodies` and `contactCapacityExceeded` report both. The
+capacities are `PhysicsWorldConfig` fields (`Engine::init` takes the config).
+Their defaults and approximate memory per initialized world (the editor's edit
+and Play worlds each pay it):
+
+| Field | Default | Cost |
+| --- | --- | --- |
+| `maxBodies` | 8192 (was 4096) | about 25 bytes per body of tables, plus broad-phase nodes allocated as bodies are added |
+| `maxBodyPairs` | 32768 (was 16384) | 80 bytes per pair across Jolt's two contact caches: 2.6 MB |
+| `maxContactConstraints` | 16384 (was 10240) | 328 bytes per constraint across the two caches (5.4 MB), plus `contactConstraintTemporaryBytes` (512) of temporary memory per step |
+| `temporaryAllocatorBytes` | 16 MB (was 10 MB) | reserved up front; `init` rejects a size below `maxContactConstraints` x 512 bytes, because Jolt aborts when a step outgrows it |
+
+Together the new defaults cost about 9.5 MB more per world than the old ones
+(3.3 MB of caches, 6 MB of temporary memory).
+
 ## `src/engine/physics/CharacterController.hpp`
 
 `CharacterControllerComponent` (`character_controller`, schema version 2) is a
@@ -93,8 +123,10 @@ project's names.
 ## `src/engine/physics/JoltRuntime.*`
 
 Private reference-counted owner of Jolt's process-wide state (factory,
-registered types, the one debug renderer). Each initialized `PhysicsWorld`
-holds a move-only `JoltRuntimeLease`; worlds coexist and shut down in any order.
+registered types, the one debug renderer, and in Debug builds the assert
+handler that lets a step's capacity error continue). Each initialized
+`PhysicsWorld` holds a move-only `JoltRuntimeLease`; worlds coexist and shut
+down in any order.
 
 ## `src/engine/physics/JoltDebugDraw.*`
 

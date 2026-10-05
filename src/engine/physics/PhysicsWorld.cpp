@@ -2,6 +2,7 @@
 #include "PhysicsWorld.hpp"
 #include "JoltDebugDraw.hpp"
 #include "JoltRuntime.hpp"
+#include "engine/diagnostics/OverflowEpisode.hpp"
 
 #include <Jolt/Jolt.h>
 
@@ -34,8 +35,12 @@
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/quaternion.hpp>
 #include <mutex>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace {
 constexpr JPH::BroadPhaseLayer broadPhaseStatic{0};
@@ -422,10 +427,34 @@ class PhysicsWorld::Impl {
     std::mutex contactMutex;
     const Scene* observedScene{nullptr};
     uint32_t stepsUntilAudit{0};
+    LogChannel log;
+    // Entities whose body or character could not be built: skipped by step,
+    // reported once, and retried when they change or the next audit runs.
+    // capacityRejections counts the bodies rejected because maxBodies was
+    // reached, which are reported once per episode instead of per entity.
+    std::unordered_map<Entity, bool> rejectedBodies;
+    uint32_t capacityRejections{0};
+    std::unordered_set<Entity> rejectedCharacters;
+    OverflowEpisode bodyCapacity;
+    OverflowEpisode contactCapacity;
+
+    void forgetRejectedBody(Entity entity) {
+        const auto rejected = rejectedBodies.find(entity);
+        if (rejected == rejectedBodies.end()) {
+            return;
+        }
+        capacityRejections -= rejected->second ? 1u : 0u;
+        rejectedBodies.erase(rejected);
+    }
 };
 
 PhysicsWorld::PhysicsWorld()
-    : m_impl(std::make_unique<Impl>()) {}
+    : PhysicsWorld(nullptr) {}
+
+PhysicsWorld::PhysicsWorld(Logger* logger)
+    : m_impl(std::make_unique<Impl>()) {
+    m_impl->log = LogChannel(logger, "physics");
+}
 
 PhysicsWorld::~PhysicsWorld() {
     shutdown();
@@ -440,6 +469,17 @@ PhysicsResult PhysicsWorld::init(const PhysicsWorldConfig& config) {
     }
     if (const std::string error = config.layers.validate(); !error.empty()) {
         return {.error = error};
+    }
+    if (config.maxBodies == 0 || config.maxBodies > JPH::PhysicsSystem::cMaxBodiesLimit || config.maxBodyPairs == 0 ||
+        config.maxBodyPairs > JPH::PhysicsSystem::cMaxBodyPairsLimit || config.maxContactConstraints == 0 ||
+        config.maxContactConstraints > JPH::PhysicsSystem::cMaxContactConstraintsLimit) {
+        return {.error = "Physics configuration requires non-zero body, body pair, and contact constraint capacities "
+                         "within Jolt's limits"};
+    }
+    // Jolt aborts the process when a step outgrows its temporary allocator.
+    if (config.temporaryAllocatorBytes / contactConstraintTemporaryBytes < config.maxContactConstraints) {
+        return {.error = "Physics temporaryAllocatorBytes is too small for maxContactConstraints (each needs " +
+                         std::to_string(contactConstraintTemporaryBytes) + " bytes per step)"};
     }
 
     m_impl->config = config;
@@ -485,6 +525,9 @@ void PhysicsWorld::clear() {
     m_impl->sensorPairs.clear();
     m_impl->pendingTriggerEvents.clear();
     m_impl->triggerEvents.clear();
+    m_impl->rejectedBodies.clear();
+    m_impl->capacityRejections = 0;
+    m_impl->rejectedCharacters.clear();
     if (!m_impl->initialized) {
         m_impl->characters.clear();
         m_impl->bodies.clear();
@@ -605,6 +648,36 @@ void writeCharacterPosition(Scene& scene, Entity entity, const glm::vec3& positi
     scene.markTransformDirty(entity);
 }
 
+// Names an entity in warnings: its name when it has one, and its scene id.
+std::string describeEntity(const Scene& scene, Entity entity) {
+    const NameComponent* name = scene.registry().try_get<NameComponent>(entity);
+    const std::string label = name != nullptr && !name->name.empty() ? "'" + name->name + "'" : "an unnamed entity";
+    return label + " (scene id " + std::to_string(scene.id(entity).value) + ")";
+}
+
+// The capacities a Jolt update error says were exhausted, and the config
+// fields that raise them.
+std::string describeUpdateError(JPH::EPhysicsUpdateError error) {
+    const auto has = [error](JPH::EPhysicsUpdateError flag) {
+        return (static_cast<uint32_t>(error) & static_cast<uint32_t>(flag)) != 0;
+    };
+    std::string description;
+    const auto append = [&description](std::string_view text) {
+        description += description.empty() ? "" : ", ";
+        description += text;
+    };
+    if (has(JPH::EPhysicsUpdateError::BodyPairCacheFull)) {
+        append("body pairs (maxBodyPairs)");
+    }
+    if (has(JPH::EPhysicsUpdateError::ManifoldCacheFull)) {
+        append("contact manifolds (maxContactConstraints)");
+    }
+    if (has(JPH::EPhysicsUpdateError::ContactConstraintsFull)) {
+        append("contact constraints (maxContactConstraints)");
+    }
+    return description.empty() ? "an unknown capacity" : description;
+}
+
 // Whether the entity should have a rigid body: a character controller replaces
 // one.
 bool hasBodyComponents(const Scene& scene, Entity entity) {
@@ -617,7 +690,11 @@ bool hasBodyComponents(const Scene& scene, Entity entity) {
 
 PhysicsResult PhysicsWorld::refreshBody(Entity entity, Scene& scene, const AssetManager& assets) {
     scene.updateWorldTransforms();
-    return refreshBodyFromWorld(entity, scene, assets);
+    PhysicsResult result = refreshBodyFromWorld(entity, scene, assets);
+    if (result) {
+        m_impl->forgetRejectedBody(entity);
+    }
+    return result;
 }
 
 PhysicsResult PhysicsWorld::refreshBodyFromWorld(Entity entity, Scene& scene, const AssetManager& assets) {
@@ -700,13 +777,58 @@ PhysicsResult PhysicsWorld::refreshBodyFromWorld(Entity entity, Scene& scene, co
     return {.success = true};
 }
 
+void PhysicsWorld::refreshOrSkipBody(Entity entity, Scene& scene, const AssetManager& assets) {
+    Impl& impl = *m_impl;
+    const PhysicsResult result = refreshBodyFromWorld(entity, scene, assets);
+    if (result) {
+        impl.forgetRejectedBody(entity);
+        return;
+    }
+    // A full body manager is reported once per episode (see step); any other
+    // failure is the entity's own and is reported once per entity.
+    const bool atCapacity = impl.system->GetNumBodies() >= impl.config.maxBodies;
+    const auto [rejected, firstRejection] = impl.rejectedBodies.try_emplace(entity, atCapacity);
+    if (!firstRejection) {
+        return;
+    }
+    if (atCapacity) {
+        ++impl.capacityRejections;
+        return;
+    }
+    impl.log.warning("Physics skipped the body of " + describeEntity(scene, entity) + ": " + result.error);
+}
+
+void PhysicsWorld::retryBodiesOverCapacity(Scene& scene, const AssetManager& assets) {
+    Impl& impl = *m_impl;
+    if (impl.capacityRejections == 0 || impl.system->GetNumBodies() >= impl.config.maxBodies) {
+        return;
+    }
+    // In entity order, so the bodies that get the freed room are deterministic.
+    std::vector<Entity> waiting;
+    for (const auto& [entity, atCapacity] : impl.rejectedBodies) {
+        if (atCapacity) {
+            waiting.push_back(entity);
+        }
+    }
+    std::ranges::sort(waiting, {}, [](Entity entity) { return entt::to_integral(entity); });
+    for (const Entity entity : waiting) {
+        if (impl.system->GetNumBodies() >= impl.config.maxBodies) {
+            return;
+        }
+        impl.forgetRejectedBody(entity);
+        if (hasBodyComponents(scene, entity)) {
+            refreshOrSkipBody(entity, scene, assets);
+        }
+    }
+}
+
 namespace {
 // Farther than this from where the character last put its entity, the entity
 // was moved by gameplay; closer is rounding through a parent's transform.
 constexpr float characterTeleportDistance = 1.0e-4f;
 } // namespace
 
-PhysicsResult PhysicsWorld::stepCharacters(Scene& scene, float deltaSeconds) {
+void PhysicsWorld::stepCharacters(Scene& scene, float deltaSeconds) {
     Impl& impl = *m_impl;
     entt::registry& registry = scene.registry();
     for (auto iterator = impl.characters.begin(); iterator != impl.characters.end();) {
@@ -716,6 +838,9 @@ PhysicsResult PhysicsWorld::stepCharacters(Scene& scene, float deltaSeconds) {
             impl.removeCharacter(entity);
         }
     }
+    std::erase_if(impl.rejectedCharacters, [&registry](Entity entity) {
+        return !registry.valid(entity) || !registry.all_of<TransformComponent, CharacterControllerComponent>(entity);
+    });
 
     const JPH::Vec3 gravity = toJolt(impl.config.gravity);
     for (const Entity entity : registry.view<TransformComponent, CharacterControllerComponent>()) {
@@ -735,8 +860,13 @@ PhysicsResult PhysicsWorld::stepCharacters(Scene& scene, float deltaSeconds) {
         }
         if (existing == impl.characters.end()) {
             if (!(controller.radius > 0.0f) || !(controller.halfHeight > 0.0f)) {
-                return {.error = "Character controller capsule dimensions must be positive"};
+                if (impl.rejectedCharacters.insert(entity).second) {
+                    impl.log.warning("Physics skipped the character controller of " + describeEntity(scene, entity) +
+                                     ": its capsule radius and half height must be positive");
+                }
+                continue;
             }
+            impl.rejectedCharacters.erase(entity);
             JPH::Ref<JPH::CharacterVirtualSettings> settings = new JPH::CharacterVirtualSettings();
             settings->mShape = new JPH::CapsuleShape(controller.halfHeight, controller.radius);
             settings->mInnerBodyShape = settings->mShape;
@@ -816,7 +946,6 @@ PhysicsResult PhysicsWorld::stepCharacters(Scene& scene, float deltaSeconds) {
         controller.velocity = fromJolt(character.GetLinearVelocity());
         controller.groundDistance = probeGround(entity, controller, state.currentPosition, layer);
     }
-    return {.success = true};
 }
 
 float PhysicsWorld::probeGround(Entity entity, const CharacterControllerComponent& controller,
@@ -857,8 +986,11 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
     if (newScene) {
         m_impl->observedScene = &scene;
         m_impl->stepsUntilAudit = 0;
-        // Characters hold entity handles of the previous scene.
+        // Characters and rejections hold entity handles of the previous scene.
         m_impl->removeCharacters();
+        m_impl->rejectedBodies.clear();
+        m_impl->capacityRejections = 0;
+        m_impl->rejectedCharacters.clear();
     }
     const std::span<const PhysicsLifecycleEvent> lifecycleEvents = scene.physicsLifecycleEvents();
     for (size_t index = 0; index < lifecycleEvents.size(); ++index) {
@@ -876,11 +1008,13 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
         ++m_stats.lifecycleOperations;
         if (event.operation == PhysicsLifecycleOperation::Destroy || !hasBodyComponents(scene, event.entity)) {
             removeBody(event.entity);
-        } else if (PhysicsResult refresh = refreshBodyFromWorld(event.entity, scene, assets); !refresh) {
-            return refresh;
+            m_impl->forgetRejectedBody(event.entity);
+        } else {
+            refreshOrSkipBody(event.entity, scene, assets);
         }
     }
     scene.retirePhysicsLifecycleEvents();
+    retryBodiesOverCapacity(scene, assets);
 
     const bool audit = newScene || (m_impl->config.debugAuditInterval != 0 && m_impl->stepsUntilAudit == 0);
     if (audit) {
@@ -889,9 +1023,7 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
         for (Entity entity : view) {
             ++m_stats.auditedEntities;
             if (!m_impl->bodies.contains(entity)) {
-                if (PhysicsResult refresh = refreshBodyFromWorld(entity, scene, assets); !refresh) {
-                    return refresh;
-                }
+                refreshOrSkipBody(entity, scene, assets);
             }
         }
         for (auto iterator = m_impl->bodies.begin(); iterator != m_impl->bodies.end();) {
@@ -899,6 +1031,13 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
             ++iterator;
             if (!hasBodyComponents(scene, entity)) {
                 removeBody(entity);
+            }
+        }
+        for (auto iterator = m_impl->rejectedBodies.begin(); iterator != m_impl->rejectedBodies.end();) {
+            const Entity entity = iterator->first;
+            ++iterator;
+            if (!hasBodyComponents(scene, entity)) {
+                m_impl->forgetRejectedBody(entity);
             }
         }
         m_impl->stepsUntilAudit = m_impl->config.debugAuditInterval;
@@ -926,18 +1065,26 @@ PhysicsResult PhysicsWorld::step(Scene& scene, const AssetManager& assets, float
     }
     // After the kinematic bodies have their velocities, so characters ride
     // moving platforms; their inner bodies' contacts land in this step.
-    if (PhysicsResult characters = stepCharacters(scene, deltaSeconds); !characters) {
-        return characters;
-    }
+    stepCharacters(scene, deltaSeconds);
     const auto syncDone = std::chrono::steady_clock::now();
     m_stats.synchronizeInMilliseconds = milliseconds(transformsDone, syncDone);
     const JPH::EPhysicsUpdateError updateError =
         m_impl->system->Update(deltaSeconds, 1, m_impl->tempAllocator.get(), m_impl->jobs.get());
     const auto simulationDone = std::chrono::steady_clock::now();
     m_stats.simulationMilliseconds = milliseconds(syncDone, simulationDone);
-    if (updateError != JPH::EPhysicsUpdateError::None) {
-        return {.error = "Jolt reported an error while updating the simulation"};
+    // Every Jolt update error is an exhausted capacity: the step completed
+    // without the contacts that did not fit.
+    m_stats.contactCapacityExceeded = updateError != JPH::EPhysicsUpdateError::None;
+    if (m_impl->contactCapacity.update(m_stats.contactCapacityExceeded)) {
+        m_impl->log.warning("Physics ran out of " + describeUpdateError(updateError) +
+                            "; some contacts are not resolved until the load drops (raise them in PhysicsWorldConfig)");
     }
+    if (m_impl->bodyCapacity.update(m_impl->capacityRejections > 0)) {
+        m_impl->log.warning("Physics reached its body capacity of " + std::to_string(m_impl->config.maxBodies) +
+                            " (PhysicsWorldConfig::maxBodies); " + std::to_string(m_impl->capacityRejections) +
+                            " bodies are skipped until bodies are removed");
+    }
+    m_stats.skippedBodies = static_cast<uint32_t>(m_impl->rejectedBodies.size() + m_impl->rejectedCharacters.size());
 
     for (auto& [entity, state] : m_impl->bodies) {
         ++m_stats.bodies;

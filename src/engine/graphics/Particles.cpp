@@ -123,9 +123,14 @@ ParticleFramePlan ParticleScheduler::plan(std::span<const EmitterSnapshot> snaps
     std::vector<const EmitterSnapshot*> scheduled;
     std::vector<uint32_t> capacities;
     uint32_t remaining = budget;
+    uint32_t droppedEmitters = 0;
     for (const EmitterSnapshot& snapshot : snapshots) {
-        if (scheduled.size() == maximumEmitters || remaining == 0) {
+        if (remaining == 0) {
             break;
+        }
+        if (scheduled.size() == maximumEmitters) {
+            droppedEmitters += snapshot.emitter.maxParticles > 0 ? 1u : 0u;
+            continue;
         }
         const uint32_t capacity = std::min(snapshot.emitter.maxParticles, remaining);
         if (capacity == 0) {
@@ -136,6 +141,7 @@ ParticleFramePlan ParticleScheduler::plan(std::span<const EmitterSnapshot> snaps
         capacities.push_back(capacity);
     }
     ParticleFramePlan result;
+    result.droppedEmitters = droppedEmitters;
     // Live particles store positions in their emitter's simulation space, so
     // a space change cannot keep them.
     bool layoutChanged =

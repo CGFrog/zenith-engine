@@ -16,4 +16,14 @@ void RenderStatisticsPanel::draw(EditorContext& context) {
     ImGui::Text("GPU frame: %.2f ms", stats.gpuFrameMilliseconds);
     ImGui::Text("CPU render packets: %.3f ms%s", stats.cpuRenderPacketMilliseconds,
                 stats.renderPacketsRebuilt ? " (rebuilt)" : " (cached)");
+    // Per-frame capacities the scene exceeded; shown only while it does.
+    if (stats.droppedRenderItems > 0) {
+        ImGui::Text("Over capacity, not drawn: %u", stats.droppedRenderItems);
+    }
+    if (stats.droppedSkinnedRenderItems > 0) {
+        ImGui::Text("Over capacity, unskinned: %u", stats.droppedSkinnedRenderItems);
+    }
+    if (stats.droppedParticleEmitters > 0) {
+        ImGui::Text("Over capacity, emitters skipped: %u", stats.droppedParticleEmitters);
+    }
 }

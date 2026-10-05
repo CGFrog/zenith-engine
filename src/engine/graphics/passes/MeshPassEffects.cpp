@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <string>
 
 bool MeshPass::recordScreenSpaceReflections(const DrawContext& draw, VkImage depthImage, VkImageView depthView,
                                             ReflectionQuality reflections, const ScreenSpaceReflectionCamera& camera) {
@@ -133,6 +134,12 @@ bool MeshPass::recordParticleSimulation(const DrawContext& draw, const Scene& sc
     draw.passTimestamps->write(FrameTimestamp::particleSimulationEnd, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
     draw.stats->particleEmitterCount = m_particles.emitterCount();
     draw.stats->particleCapacity = m_particles.capacity();
+    draw.stats->droppedParticleEmitters = m_particles.droppedEmitters();
+    if (m_particleEmitterOverflow.update(m_particles.droppedEmitters() > 0)) {
+        m_log.warning("Particle emitters exceed the per-frame capacity of " +
+                      std::to_string(particles::maximumEmitters) + "; " +
+                      std::to_string(m_particles.droppedEmitters()) + " emitters are not simulated");
+    }
     return recorded;
 }
 
