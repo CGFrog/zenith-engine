@@ -1,4 +1,5 @@
 #include "Engine.hpp"
+#include "application/DeferredAssetCollection.hpp"
 #include "diagnostics/Benchmark.hpp"
 #include "diagnostics/RgbaImage.hpp"
 
@@ -162,6 +163,7 @@ bool Engine::run(Application& application) {
 
     applicationSession.setFrameTimings(&m_frameTimings);
     m_frameTimings = {};
+    DeferredAssetCollection assetCollection(Renderer::framesInFlight);
     m_input.initialize(m_window, false);
     m_physicsAccumulator = 0.0f;
 
@@ -302,6 +304,13 @@ bool Engine::run(Application& application) {
             running = false;
             break;
         }
+        if (const std::optional<DeferredAssetCollectionResult> collected =
+                assetCollection.frameRendered(m_assets, &m_audio)) {
+            m_log.debug("Collected " + std::to_string(collected->assets.assetsEvicted) + " unused assets (" +
+                        std::to_string(collected->assets.bytesFreed) + " bytes) and " +
+                        std::to_string(collected->audio.clipsEvicted + collected->audio.streamsEvicted) +
+                        " audio clips");
+        }
         const double renderMilliseconds = elapsedMilliseconds(renderBegin);
         // Rendering and audio consume the same finalized transform hierarchy.
         const auto audioBegin = std::chrono::steady_clock::now();
@@ -372,6 +381,9 @@ bool Engine::run(Application& application) {
             m_log.error("Application scene transition failed: " + frameResult.error);
             applicationSession.shutdown();
             return false;
+        }
+        if (applicationSession.takeAssetCollectionRequest()) {
+            assetCollection.request();
         }
         if (!frameResult.keepRunning) {
             running = false;

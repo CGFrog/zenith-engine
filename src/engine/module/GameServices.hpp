@@ -148,6 +148,16 @@ class GameServices {
     // The physics events kept since the last call.
     GameplayPhysicsEvents takePhysicsEvents();
 
+    // Asks the host to collect the assets nothing leases any more, after the
+    // frames in flight retire (DeferredAssetCollection); for example after
+    // destroying a roguelike floor's rooms. runGameplayPhase hands the
+    // request to the application (ApplicationControl::
+    // requestAssetCollection) after the phase's commands applied, so the
+    // destroyed entities no longer lease their assets.
+    void requestAssetCollection();
+    // Whether a collection was requested since the last call.
+    bool takeAssetCollectionRequest();
+
   private:
     PrefabSystem m_prefabs;
     EntityCommandBuffer m_commands;
@@ -171,10 +181,12 @@ class GameServices {
     float m_timeScale{1.0f};
     RandomStreams m_random;
     AudioSystem* m_audio{nullptr};
+    bool m_assetCollectionRequested{false};
 };
 
 // Runs one phase of systems and then, when context.services is set, flushes
-// the entity commands they recorded. Every host runs systems through this, so
+// the entity commands they recorded and hands a requested asset collection to
+// context.application (it stays pending without one). Every host runs systems through this, so
 // commands apply at the same points in the game and in the editor. profile and
 // faults are the host's session state SystemScheduler::run records into.
 void runGameplayPhase(const SystemScheduler& scheduler, SystemPhase phase, const SystemContext& context,

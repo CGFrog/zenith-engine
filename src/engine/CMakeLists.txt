@@ -14,6 +14,7 @@ add_library(zenith_engine SHARED
     audio/StbVorbis.cpp
     Engine.cpp
     application/Application.cpp
+    application/DeferredAssetCollection.cpp
     application/SimulationClock.cpp
     assets/Assets.cpp
     assets/ModelImporter.cpp

@@ -215,6 +215,12 @@ It holds:
   `SystemContext::unscaledDeltaSeconds`. The first-person camera ignores look
   input while the game is paused.
 - `DebugDraw&`: `RenderRuntime::debugDraw()`, drawn in every view this frame.
+- `requestAssetCollection()`: frees the CPU assets nothing leases any more,
+  once the frames in flight retired (see [Assets](assets.md)). Call it when
+  tearing down part of the scene, such as a roguelike floor, after its
+  destroy commands are recorded: `runGameplayPhase` hands the request to the
+  application after the phase's flush, and the engine collects
+  `Renderer::framesInFlight` frames later. A scene change collects on its own.
 
 Commands, timer callbacks, and event channels hold module code, so the
 services are destroyed before the module that used them unloads.

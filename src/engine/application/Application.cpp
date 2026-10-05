@@ -13,8 +13,16 @@ void ApplicationControl::requestQuit() {
     m_requestedScene.reset();
 }
 
+void ApplicationControl::requestAssetCollection() {
+    m_assetCollectionRequested = true;
+}
+
 bool ApplicationControl::actionPending() const {
     return m_quitRequested || m_requestedScene.has_value();
+}
+
+bool ApplicationControl::assetCollectionRequested() const {
+    return m_assetCollectionRequested;
 }
 
 void ApplicationControl::clear() {
@@ -168,6 +176,10 @@ bool ApplicationSession::actionPending() const {
     return m_control.actionPending();
 }
 
+bool ApplicationSession::takeAssetCollectionRequest() {
+    return std::exchange(m_control.m_assetCollectionRequested, false);
+}
+
 void ApplicationSession::requestQuit() {
     if (m_activeScene) {
         m_activeScene->requestQuit(m_context);
@@ -231,6 +243,8 @@ SceneResult ApplicationSession::transition(SceneKey scene) {
     m_context.scene.replaceWith(std::move(stagedScene));
     m_sceneAssets = m_context.assets.leaseSceneAssets(m_context.scene);
     m_activeScene = std::move(candidate);
+    // The old scene's assets are unleased now, apart from the frames in flight.
+    m_control.requestAssetCollection();
     return {.success = true};
 }
 

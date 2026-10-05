@@ -22,6 +22,20 @@ assets under configurable CPU and decoded-audio budgets; recycled slots advance
 their generation so stale handles cannot alias new content. Renderer frame
 leases defer GPU cache pruning until submitted work has retired.
 
+At runtime the engine collects after every scene change and whenever the
+application asks (`ApplicationControl::requestAssetCollection`, or
+`GameServices::requestAssetCollection` from gameplay).
+`DeferredAssetCollection` (`src/engine/application/`) runs the collection
+`Renderer::framesInFlight` frames after the latest request, when the frame
+slots that drew the old content have dropped their leases. It evicts every
+unleased CPU asset and collects decoded audio down to its budget only, since
+idle emitters and gameplay code hold clip handles without leases. Anything
+gameplay keeps across a collection without it being in the scene (a
+preloaded model, for example) needs an `AssetLease`. A roguelike floor
+teardown destroys the floor's entities, then calls
+`services.requestAssetCollection()`, so floors with different tilesets do not
+accumulate.
+
 ## `src/engine/assets/AssetStreaming.*`
 
 Owns deterministic derived-asset residency policy without importing Vulkan.

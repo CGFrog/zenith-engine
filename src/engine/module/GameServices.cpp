@@ -1,6 +1,7 @@
 #include "GameServices.hpp"
 
 #include "GameEvents.hpp"
+#include "engine/application/Application.hpp"
 #include "engine/behaviour/BehaviourScheduler.hpp"
 
 #include <utility>
@@ -191,10 +192,22 @@ GameplayPhysicsEvents GameServices::takePhysicsEvents() {
     return std::exchange(m_physicsEvents, {});
 }
 
+void GameServices::requestAssetCollection() {
+    m_assetCollectionRequested = true;
+}
+
+bool GameServices::takeAssetCollectionRequest() {
+    return std::exchange(m_assetCollectionRequested, false);
+}
+
 void runGameplayPhase(const SystemScheduler& scheduler, SystemPhase phase, const SystemContext& context,
                       SystemProfile* profile, SystemFaults* faults) {
     scheduler.run(phase, context, profile, faults);
-    if (context.services != nullptr) {
-        context.services->flush(context.scene);
+    if (context.services == nullptr) {
+        return;
+    }
+    context.services->flush(context.scene);
+    if (context.application != nullptr && context.services->takeAssetCollectionRequest()) {
+        context.application->control.requestAssetCollection();
     }
 }
