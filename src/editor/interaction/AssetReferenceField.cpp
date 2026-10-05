@@ -20,10 +20,9 @@
 #include <span>
 
 namespace {
-constexpr std::array<EditorAssetKind, 7> everyKind{EditorAssetKind::Model,  EditorAssetKind::Texture,
-                                                   EditorAssetKind::Audio,  EditorAssetKind::Scene,
-                                                   EditorAssetKind::Prefab, EditorAssetKind::Script,
-                                                   EditorAssetKind::Material};
+constexpr std::array<EditorAssetKind, 7> everyKind{
+    EditorAssetKind::Model,  EditorAssetKind::Texture, EditorAssetKind::Audio,   EditorAssetKind::Scene,
+    EditorAssetKind::Prefab, EditorAssetKind::Script,  EditorAssetKind::Material};
 constexpr const char* pickerPopup = "##AssetPicker";
 constexpr int pickerVisibleRows = 10;
 
@@ -75,7 +74,7 @@ std::optional<std::filesystem::path> acceptAssetDrop(std::span<const EditorAsset
         const std::string_view path(text, strnlen(text, static_cast<size_t>(payload->DataSize)));
         // Models and prefabs travel in the narrow encoding the viewports read.
         dropped = kind == EditorAssetKind::Model || kind == EditorAssetKind::Prefab ? std::filesystem::path(path)
-                                                                                     : pathFromUtf8Text(path);
+                                                                                    : pathFromUtf8Text(path);
     }
     ImGui::EndDragDropTarget();
     return dropped;
@@ -123,9 +122,8 @@ std::optional<std::string> drawPicker(const AssetReferenceFieldContext& context,
     if (candidates.empty()) {
         ImGui::TextDisabled("No matching assets in the project.");
     }
-    const float listHeight =
-        ImGui::GetFrameHeightWithSpacing() * static_cast<float>(std::min<int>(
-                                                 static_cast<int>(candidates.size()), pickerVisibleRows));
+    const float listHeight = ImGui::GetFrameHeightWithSpacing() *
+                             static_cast<float>(std::min<int>(static_cast<int>(candidates.size()), pickerVisibleRows));
     if (!candidates.empty() && ImGui::BeginChild("##Candidates", {ImGui::GetFontSize() * 18.0f, listHeight})) {
         for (const EditorAssetRecord* asset : candidates) {
             const std::optional<std::string> value = projectAssetValue(context.assetRoot, asset->absolutePath);
@@ -151,9 +149,9 @@ void drawValueBox(float width, const std::string& value, AssetReferenceState sta
     const ImVec2 max = ImGui::GetItemRectMax();
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     drawList->AddRectFilled(min, max, widgets::color(hovered ? palette::fieldHovered : palette::field));
-    std::string text = mixed                                ? std::string(mixedValueText)
-                       : value.empty()                      ? std::string("None")
-                                                            : utf8PathText(pathFromUtf8Text(value).filename());
+    std::string text = mixed           ? std::string(mixedValueText)
+                       : value.empty() ? std::string("None")
+                                       : utf8PathText(pathFromUtf8Text(value).filename());
     if (!mixed && state == AssetReferenceState::Missing) {
         text += " (missing)";
     }
@@ -184,12 +182,12 @@ std::optional<AssetReferenceFieldContext> assetReferenceFieldContext(EditorConte
     }
     ProjectAssets* project = context.projectAssets;
     RenderRuntime* rendering = &context.app.rendering;
-    return AssetReferenceFieldContext{
-        .catalog = project->catalog(),
-        .assetRoot = normalizedCatalogPath(context.editing.document().options().assetRoot),
-        .thumbnail = [project, rendering](const std::filesystem::path& image) {
-            return project->thumbnailTexture(*rendering, image).value;
-        }};
+    return AssetReferenceFieldContext{.catalog = project->catalog(),
+                                      .assetRoot =
+                                          normalizedCatalogPath(context.editing.document().options().assetRoot),
+                                      .thumbnail = [project, rendering](const std::filesystem::path& image) {
+                                          return project->thumbnailTexture(*rendering, image).value;
+                                      }};
 }
 
 std::vector<EditorAssetKind> editorAssetKindsFor(std::string_view assetKind) {

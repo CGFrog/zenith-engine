@@ -102,7 +102,6 @@ struct Fixture : EditorTestFixture {
         return scene.id(entity);
     }
 
-
     const ComponentType& decalType() const {
         return *componentTypesFor(document.options()).find("decal");
     }
@@ -159,8 +158,8 @@ void dropAsset(const std::function<void(const std::function<void()>&)>& draw, co
 }
 
 void testCatalogKinds() {
-    expect(editorAssetKind("sky.HDR") == EditorAssetKind::Texture && editorAssetKind("cooked.ktx2") ==
-                                                                          EditorAssetKind::Texture,
+    expect(editorAssetKind("sky.HDR") == EditorAssetKind::Texture &&
+               editorAssetKind("cooked.ktx2") == EditorAssetKind::Texture,
            "HDR and KTX2 images should be textures");
     expect(editorAssetKind("stone.zmat") == EditorAssetKind::Material, ".zmat files should be materials");
     expect(editorAssetKindsFor("environment") == std::vector{EditorAssetKind::Texture} &&
@@ -282,7 +281,8 @@ void testMaterialDocument() {
     EditorDiagnostics diagnostics;
     const TestProject project("zenith_asset_field_material_document", diagnostics);
     const std::filesystem::path file = project.root / "materials" / "stone.zmat";
-    const MaterialDocumentLocation location{.assetRoot = project.root, .database = project.assets->assetDatabase().get()};
+    const MaterialDocumentLocation location{.assetRoot = project.root,
+                                            .database = project.assets->assetDatabase().get()};
     MaterialDocument document;
     expect(loadMaterialDocument(file, location, document).success, "a new material should load as a document");
     document.roughness = 0.25f;

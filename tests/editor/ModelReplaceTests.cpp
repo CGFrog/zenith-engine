@@ -82,20 +82,17 @@ void testReplaceWithUndo() {
     const ModelHandle sample = fixture.assets.loadModel(assetRoot / "sample.gltf").handle;
     expect(fixture.model() == sample, "the prop should use the new model");
     const std::vector<Entity> sampleNodes = fixture.nodes();
-    expect(!sampleNodes.empty() && std::ranges::all_of(sampleNodes,
-                                                       [&](Entity node) {
-                                                           return fixture.scene.registry()
-                                                                      .get<ModelNodeComponent>(node)
-                                                                      .model == sample;
-                                                       }),
+    expect(!sampleNodes.empty() &&
+               std::ranges::all_of(
+                   sampleNodes,
+                   [&](Entity node) { return fixture.scene.registry().get<ModelNodeComponent>(node).model == sample; }),
            "every node of the instance should come from the new model");
     expect(fixture.scene.findEntity(firstNode) == entt::null, "the old nodes should be destroyed");
     expect(fixture.parentOf(attachedId) == fixture.scene.findEntity(fixture.prop),
            "a user child of an old node should move to the prop");
-    expect(std::ranges::any_of(fixture.diagnostics.entries(),
-                               [](const EditorDiagnostic& entry) {
-                                   return entry.severity == EditorDiagnosticSeverity::Warning;
-                               }),
+    expect(std::ranges::any_of(
+               fixture.diagnostics.entries(),
+               [](const EditorDiagnostic& entry) { return entry.severity == EditorDiagnosticSeverity::Warning; }),
            "moving a user child should warn");
     expect(fixture.history.size() == 1, "the replacement should be one undo step");
 
@@ -119,12 +116,16 @@ void testEmptyEntityAndRefusals() {
 
     expect(fixture.replace(fixture.prop, "primitives/cube.gltf").status == OperatorStatus::Cancelled,
            "giving an object the model it has should change nothing");
-    expect(fixture.replace(fixture.prop, "missing.gltf").status != OperatorStatus::Finished, "a missing model should fail");
-    expect(fixture.replace(SceneEntityId{999999}, "sample.gltf").status != OperatorStatus::Finished, "a missing object should fail");
+    expect(fixture.replace(fixture.prop, "missing.gltf").status != OperatorStatus::Finished,
+           "a missing model should fail");
+    expect(fixture.replace(SceneEntityId{999999}, "sample.gltf").status != OperatorStatus::Finished,
+           "a missing object should fail");
     const SceneEntityId node = fixture.scene.id(fixture.nodes().front());
-    expect(fixture.replace(node, "sample.gltf").status != OperatorStatus::Finished, "a model's node entity should not take a model");
+    expect(fixture.replace(node, "sample.gltf").status != OperatorStatus::Finished,
+           "a model's node entity should not take a model");
     fixture.mode = EditorMode::Play;
-    expect(fixture.replace(fixture.prop, "sample.gltf").status != OperatorStatus::Finished, "models should be replaced in Edit mode only");
+    expect(fixture.replace(fixture.prop, "sample.gltf").status != OperatorStatus::Finished,
+           "models should be replaced in Edit mode only");
 }
 } // namespace
 

@@ -106,8 +106,7 @@ class ComponentType {
     // runtime asset code assigned) is kept while its path stays empty.
     // Without this, saving would write the stale handle's path over the
     // edited one. On failure the handle is cleared and the error returned.
-    SceneDocumentResult reloadAssets(void* component, AssetManager& assets,
-                                     const SceneDocumentOptions& options) const;
+    SceneDocumentResult reloadAssets(void* component, AssetManager& assets, const SceneDocumentOptions& options) const;
 
     SceneDocumentResult save(const Scene& scene, Entity entity, const ComponentSaveContext& context,
                              nlohmann::json& output) const;
@@ -135,7 +134,6 @@ class ComponentType {
         std::function<std::string&(void*)> path;
         std::function<MaterialHandle&(void*)> handle;
     };
-
 
     struct Migration {
         uint32_t fromVersion{1};
@@ -312,9 +310,7 @@ template <typename Component> class ComponentTypeBuilder {
             m_type.m_materials.push_back(
                 {pathField->key,
                  [path](void* component) -> std::string& { return static_cast<Component*>(component)->*path; },
-                 [handle](void* component) -> MaterialHandle& {
-                     return static_cast<Component*>(component)->*handle;
-                 }});
+                 [handle](void* component) -> MaterialHandle& { return static_cast<Component*>(component)->*handle; }});
         }
         for (const auto& binding : m_pendingTextures) {
             std::string Component::* const path = binding.first;

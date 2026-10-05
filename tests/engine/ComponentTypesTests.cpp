@@ -207,8 +207,7 @@ void testAssetKindHints() {
     expect(fieldOf(sign, "picture")->presentation.assetKind == "texture", "texture() should default to texture");
     expect(fieldOf(sign, "backdrop")->presentation.assetKind == "environment",
            "an explicit asset kind should win over the builder's default");
-    expect(fieldOf(sign, "notes")->presentation.assetKind == "asset",
-           "assetReference() should default to any asset");
+    expect(fieldOf(sign, "notes")->presentation.assetKind == "asset", "assetReference() should default to any asset");
     SkinnedSign value;
     expect(sign.assetLoaded(&value, "picture") == false && !sign.assetLoaded(&value, "notes"),
            "only loaded bindings should report a load state");

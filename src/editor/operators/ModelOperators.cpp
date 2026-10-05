@@ -84,48 +84,49 @@ Operator modelReplaceOperator() {
                                                                  .add("asset", &ModelReplaceProperties::asset)
                                                                  .asset("model"))),
             .poll = [](const OperatorContext& context) { return context.editMode(); },
-            .execute = [](OperatorContext& context, OperatorProperties& properties) {
-                const auto* values = properties.get<ModelReplaceProperties>();
-                if (values == nullptr) {
-                    return OperatorResult::failed("Operator properties have the wrong type");
-                }
-                if (values->asset.empty()) {
-                    return OperatorResult::cancelled("Choose a model");
-                }
-                Scene& scene = context.editing.scene();
-                const Entity root = scene.findEntity(values->entity);
-                if (root == entt::null) {
-                    return OperatorResult::failed("The object does not exist");
-                }
-                if (scene.registry().all_of<ModelNodeComponent>(root)) {
-                    return OperatorResult::failed("A model's own node entities cannot hold another model");
-                }
-                AssetManager& assets = context.editing.assets();
-                const AssetLoadResult<ModelHandle> loaded = assets.loadModel(modelFile(context, values->asset));
-                if (!loaded) {
-                    return OperatorResult::failed("Could not load the model: " + loaded.error);
-                }
-                if (const auto* current = scene.registry().try_get<ModelComponent>(root);
-                    current != nullptr && current->model == loaded.handle) {
-                    return OperatorResult::cancelled("The object already uses that model");
-                }
-                size_t moved = 0;
-                if (SceneResult removed = removeModelInstance(scene, root, moved); !removed) {
-                    return OperatorResult::failed(removed.error);
-                }
-                if (SceneResult result = scene.instantiateModel(root, loaded.handle, assets); !result) {
-                    return OperatorResult::failed(result.error);
-                }
-                scene.markTransformDirty(root);
-                scene.updateWorldTransforms();
-                if (moved > 0) {
-                    context.editing.diagnostics().add(
-                        EditorDiagnosticSeverity::Warning, "Model",
-                        std::to_string(moved) + (moved == 1 ? " object was" : " objects were") +
-                            " parented to a node of the replaced model and moved to the model's object.");
-                }
-                return OperatorResult::finished();
-            }};
+            .execute =
+                [](OperatorContext& context, OperatorProperties& properties) {
+                    const auto* values = properties.get<ModelReplaceProperties>();
+                    if (values == nullptr) {
+                        return OperatorResult::failed("Operator properties have the wrong type");
+                    }
+                    if (values->asset.empty()) {
+                        return OperatorResult::cancelled("Choose a model");
+                    }
+                    Scene& scene = context.editing.scene();
+                    const Entity root = scene.findEntity(values->entity);
+                    if (root == entt::null) {
+                        return OperatorResult::failed("The object does not exist");
+                    }
+                    if (scene.registry().all_of<ModelNodeComponent>(root)) {
+                        return OperatorResult::failed("A model's own node entities cannot hold another model");
+                    }
+                    AssetManager& assets = context.editing.assets();
+                    const AssetLoadResult<ModelHandle> loaded = assets.loadModel(modelFile(context, values->asset));
+                    if (!loaded) {
+                        return OperatorResult::failed("Could not load the model: " + loaded.error);
+                    }
+                    if (const auto* current = scene.registry().try_get<ModelComponent>(root);
+                        current != nullptr && current->model == loaded.handle) {
+                        return OperatorResult::cancelled("The object already uses that model");
+                    }
+                    size_t moved = 0;
+                    if (SceneResult removed = removeModelInstance(scene, root, moved); !removed) {
+                        return OperatorResult::failed(removed.error);
+                    }
+                    if (SceneResult result = scene.instantiateModel(root, loaded.handle, assets); !result) {
+                        return OperatorResult::failed(result.error);
+                    }
+                    scene.markTransformDirty(root);
+                    scene.updateWorldTransforms();
+                    if (moved > 0) {
+                        context.editing.diagnostics().add(
+                            EditorDiagnosticSeverity::Warning, "Model",
+                            std::to_string(moved) + (moved == 1 ? " object was" : " objects were") +
+                                " parented to a node of the replaced model and moved to the model's object.");
+                    }
+                    return OperatorResult::finished();
+                }};
 }
 } // namespace
 

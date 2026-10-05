@@ -27,9 +27,9 @@ UiTextureHandle ThumbnailTextures::texture(RenderRuntime& rendering, const std::
         if (ready && status->serial != entry.serial) {
             if (std::optional<CachedThumbnail> decoded = m_thumbnails.find(image);
                 decoded && decoded->state == ThumbnailState::Ready) {
-                rendering.updateUiImage(entry.image, {.width = decoded->width,
-                                                      .height = decoded->height,
-                                                      .rgba = std::move(decoded->rgba)});
+                rendering.updateUiImage(
+                    entry.image,
+                    {.width = decoded->width, .height = decoded->height, .rgba = std::move(decoded->rgba)});
                 entry.serial = decoded->serial;
             }
         }

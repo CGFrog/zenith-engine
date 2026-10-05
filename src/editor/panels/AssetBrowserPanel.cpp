@@ -38,12 +38,14 @@ constexpr const char* trashName = "trash";
 constexpr std::array<EditorAssetKind, 7> filterableKinds{
     EditorAssetKind::Model,  EditorAssetKind::Texture, EditorAssetKind::Audio,   EditorAssetKind::Scene,
     EditorAssetKind::Prefab, EditorAssetKind::Script,  EditorAssetKind::Material};
+
 // Every payload a folder accepts to move the dragged item, with whether its
 // path is UTF-8 (the others use the narrow encoding).
 struct MovablePayload {
     const char* type;
     bool utf8;
 };
+
 constexpr std::array<MovablePayload, 6> movablePayloads{{{itemPayloadType, false},
                                                          {modelPayloadType, false},
                                                          {prefabPayloadType, false},
@@ -430,8 +432,8 @@ void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetB
 
     const EditorAssetRecord* selectedAsset = m_selected.empty() ? nullptr : m_project.catalog().findAsset(m_selected);
     const float detailRows = selectedAsset != nullptr && selectedAsset->kind == EditorAssetKind::Material ? 14.0f
-                             : m_selected.empty()                                                       ? 0.0f
-                                                                                                        : 2.5f;
+                             : m_selected.empty()                                                         ? 0.0f
+                                                                                                          : 2.5f;
     const float detailsHeight = ImGui::GetFrameHeightWithSpacing() * detailRows;
     const float paneHeight =
         std::max(ImGui::GetContentRegionAvail().y - detailsHeight, ImGui::GetFrameHeightWithSpacing() * 4.0f);
@@ -726,10 +728,10 @@ void AssetBrowserPanel::drawGrid(const std::vector<BrowserEntry>& entries, const
         const float iconPixel = editorArtPixel() * 3.0f;
         const float iconExtent = iconPixel * static_cast<float>(iconBitmapSize);
         const float iconTop = tileMin.y + (gridTileHeight - iconExtent - (detail.empty() ? 0.0f : lineHeight)) * 0.5f;
-        const uint64_t thumbnail = entry.asset != nullptr && entry.asset->kind == EditorAssetKind::Texture &&
-                                           actions.thumbnailTexture
-                                       ? actions.thumbnailTexture(entry.asset->absolutePath)
-                                       : 0;
+        const uint64_t thumbnail =
+            entry.asset != nullptr && entry.asset->kind == EditorAssetKind::Texture && actions.thumbnailTexture
+                ? actions.thumbnailTexture(entry.asset->absolutePath)
+                : 0;
         const ImVec2 iconMin{tileMin.x + (gridTileWidth - iconExtent) * 0.5f, iconTop};
         if (thumbnail != 0) {
             drawList->AddImage(static_cast<ImTextureID>(thumbnail), iconMin,
@@ -778,8 +780,8 @@ void AssetBrowserPanel::handleEntryInteraction(const BrowserEntry& entry, bool p
         const std::string path = narrow ? entry.path.string() : genericUtf8(entry.path);
         ImGui::SetDragDropPayload(assetPayload != nullptr ? assetPayload : itemPayloadType, path.c_str(),
                                   path.size() + 1);
-        const bool placeable = !folder && (entry.asset->kind == EditorAssetKind::Model ||
-                                           entry.asset->kind == EditorAssetKind::Prefab);
+        const bool placeable =
+            !folder && (entry.asset->kind == EditorAssetKind::Model || entry.asset->kind == EditorAssetKind::Prefab);
         ImGui::Text("%s %s", dragVerb(placeable), entry.label.c_str());
         ImGui::EndDragDropSource();
     }

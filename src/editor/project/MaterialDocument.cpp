@@ -14,9 +14,8 @@ using TextureMember = std::string MaterialDocument::*;
 
 // Indexed by MaterialTextureSlot.
 constexpr std::array<TextureMember, materialTextureSlotCount> textureMembers{
-    &MaterialDocument::baseColorTexture, &MaterialDocument::normalTexture,
-    &MaterialDocument::metallicRoughnessTexture, &MaterialDocument::occlusionTexture,
-    &MaterialDocument::emissiveTexture};
+    &MaterialDocument::baseColorTexture, &MaterialDocument::normalTexture, &MaterialDocument::metallicRoughnessTexture,
+    &MaterialDocument::occlusionTexture, &MaterialDocument::emissiveTexture};
 
 std::string genericUtf8(const std::filesystem::path& path) {
     const std::u8string text = path.generic_u8string();
@@ -106,9 +105,8 @@ MaterialFileResult loadMaterialDocument(const std::filesystem::path& file, const
         if (reference.path.empty() && !reference.guid) {
             continue;
         }
-        document.*textureMembers[slot] =
-            genericUtf8(resolveTexture(normalizedCatalogPath(file), reference, location.database)
-                            .lexically_relative(root));
+        document.*textureMembers[slot] = genericUtf8(
+            resolveTexture(normalizedCatalogPath(file), reference, location.database).lexically_relative(root));
     }
     output = std::move(document);
     return {.success = true};

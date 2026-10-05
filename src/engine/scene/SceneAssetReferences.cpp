@@ -226,7 +226,6 @@ SceneDocumentResult loadProjectTexture(const std::string& reference, AssetManage
     return {.success = true};
 }
 
-
 SceneDocumentResult loadProjectMaterial(const std::string& reference, AssetManager& assets,
                                         const SceneDocumentOptions& options, MaterialHandle& output) {
     output = {};

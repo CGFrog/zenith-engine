@@ -22,9 +22,8 @@ struct AlphaModeName {
     const char* name;
 };
 
-constexpr std::array<AlphaModeName, 3> alphaModeNames{{{MaterialAlphaMode::Opaque, "opaque"},
-                                                       {MaterialAlphaMode::Mask, "mask"},
-                                                       {MaterialAlphaMode::Blend, "blend"}}};
+constexpr std::array<AlphaModeName, 3> alphaModeNames{
+    {{MaterialAlphaMode::Opaque, "opaque"}, {MaterialAlphaMode::Mask, "mask"}, {MaterialAlphaMode::Blend, "blend"}}};
 
 bool finiteNonNegative(float value) {
     return std::isfinite(value) && value >= 0.0f;
@@ -117,9 +116,8 @@ MaterialFileResult parseMaterialFile(std::string_view text, MaterialFile& output
         material.doubleSided = document.value("double_sided", false);
         if (const auto mode = document.find("alpha_mode"); mode != document.end()) {
             const std::string name = mode->get<std::string>();
-            const auto found = std::ranges::find_if(alphaModeNames, [&](const AlphaModeName& entry) {
-                return name == entry.name;
-            });
+            const auto found =
+                std::ranges::find_if(alphaModeNames, [&](const AlphaModeName& entry) { return name == entry.name; });
             if (found == alphaModeNames.end()) {
                 return {.error = "Unknown material alpha mode '" + name + "'"};
             }

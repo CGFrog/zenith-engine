@@ -464,9 +464,9 @@ AssetLoadResult<MaterialHandle> AssetManager::importMaterial(const std::filesyst
                            .alphaMode = file.alphaMode,
                            .alphaCutoff = file.alphaCutoff,
                            .doubleSided = file.doubleSided};
-    std::array<TextureHandle*, materialTextureSlotCount> slots{
-        &material.baseColorTexture, &material.normalTexture, &material.metallicRoughnessTexture,
-        &material.occlusionTexture, &material.emissiveTexture};
+    std::array<TextureHandle*, materialTextureSlotCount> slots{&material.baseColorTexture, &material.normalTexture,
+                                                               &material.metallicRoughnessTexture,
+                                                               &material.occlusionTexture, &material.emissiveTexture};
     for (size_t slot = 0; slot < materialTextureSlotCount; ++slot) {
         const MaterialTextureReference& reference = file.textures[slot];
         if (reference.path.empty()) {
@@ -477,8 +477,8 @@ AssetLoadResult<MaterialHandle> AssetManager::importMaterial(const std::filesyst
         const AssetLoadResult<TextureHandle> loaded =
             loadTextureWithUsage(image, materialTextureUsage(static_cast<MaterialTextureSlot>(slot)));
         if (!loaded) {
-            m_log.warning("Material " + path.string() + " " + materialTextureKey(static_cast<MaterialTextureSlot>(slot)) +
-                          ": " + loaded.error);
+            m_log.warning("Material " + path.string() + " " +
+                          materialTextureKey(static_cast<MaterialTextureSlot>(slot)) + ": " + loaded.error);
             continue;
         }
         *slots[slot] = loaded.handle;

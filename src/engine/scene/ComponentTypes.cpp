@@ -272,8 +272,8 @@ SceneDocumentResult ComponentType::load(const Json& input, Scene& scene, Entity 
         }
     }
     for (const MaterialBinding& binding : m_materials) {
-        if (SceneDocumentResult result = loadProjectMaterial(binding.path(component), context.assets,
-                                                             context.options, binding.handle(component));
+        if (SceneDocumentResult result = loadProjectMaterial(binding.path(component), context.assets, context.options,
+                                                             binding.handle(component));
             !result) {
             return result;
         }

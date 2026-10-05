@@ -470,7 +470,6 @@ void reloadProjectModel(AssetManager& assets, EditorDiagnostics& diagnostics, co
                         "use the refreshed model.");
 }
 
-
 size_t reloadProjectMaterial(AssetManager& assets, std::span<Scene* const> scenes, EditorDiagnostics& diagnostics,
                              const std::filesystem::path& material) {
     const std::string name = utf8PathText(material.filename());
