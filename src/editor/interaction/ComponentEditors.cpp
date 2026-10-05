@@ -9,6 +9,7 @@
 #include <misc/cpp/imgui_stdlib.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -64,23 +65,138 @@ bool drawTransform(TransformComponent& component) {
     return changed;
 }
 
-bool drawCollider(ColliderComponent& component) {
+namespace {
+constexpr std::array<const char*, 4> colliderShapeLabels{"Box", "Sphere", "Capsule", "Triangle Mesh"};
+constexpr float minimumColliderSize = 0.001f;
+
+bool drawColliderMesh(TriangleMeshCollider& shape, std::span<const ColliderMeshChoice> meshes) {
+    const auto current = std::ranges::find(meshes, shape.mesh, &ColliderMeshChoice::mesh);
+    const char* preview = current != meshes.end() ? current->name.c_str() : "(another mesh)";
     bool changed = false;
+    if (ImGui::BeginCombo("Mesh", preview)) {
+        for (size_t index = 0; index < meshes.size(); ++index) {
+            ImGui::PushID(static_cast<int>(index));
+            const bool selected = meshes[index].mesh == shape.mesh;
+            if (ImGui::Selectable(meshes[index].name.c_str(), selected)) {
+                changed = !selected;
+                shape.mesh = meshes[index].mesh;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("One of the entity's model meshes; triangle meshes collide only on static bodies");
+    return changed;
+}
+
+bool drawColliderOffset(ColliderComponent& component) {
+    bool changed = ImGui::DragFloat3("Offset", &component.offsetPosition.x, 0.01f);
+    ImGui::SetItemTooltip("Where the shape sits, in the entity's local axes before its scale");
+    glm::vec3 degrees = glm::degrees(glm::eulerAngles(glm::normalize(component.offsetRotation)));
+    if (ImGui::DragFloat3("Offset rotation", &degrees.x, 0.25f)) {
+        component.offsetRotation = glm::normalize(glm::quat(glm::radians(degrees)));
+        changed = true;
+    }
+    return changed;
+}
+} // namespace
+
+std::vector<ColliderMeshChoice> colliderMeshChoices(const Scene& scene, const AssetManager& assets, Entity entity) {
+    std::vector<ColliderMeshChoice> choices;
+    const auto add = [&](MeshHandle mesh, const std::string& name) {
+        if (mesh && assets.mesh(mesh) != nullptr &&
+            std::ranges::find(choices, mesh, &ColliderMeshChoice::mesh) == choices.end()) {
+            choices.push_back(
+                {.mesh = mesh, .name = name.empty() ? "Mesh " + std::to_string(choices.size() + 1) : name});
+        }
+    };
+    const entt::registry& registry = scene.registry();
+    if (!registry.valid(entity)) {
+        return choices;
+    }
+    ModelHandle model;
+    std::optional<uint32_t> ownNode;
+    if (const auto* instance = registry.try_get<ModelComponent>(entity)) {
+        model = instance->model;
+    } else if (const auto* node = registry.try_get<ModelNodeComponent>(entity)) {
+        model = node->model;
+        ownNode = node->nodeIndex;
+    }
+    const ModelAsset* asset = model ? assets.model(model) : nullptr;
+    if (const auto* renderer = registry.try_get<MeshRendererComponent>(entity)) {
+        const std::string name = asset != nullptr && ownNode && *ownNode < asset->nodes.size()
+                                     ? asset->nodes[*ownNode].name
+                                     : std::string("Mesh Renderer");
+        add(renderer->mesh, name);
+    }
+    if (asset != nullptr) {
+        for (const ModelNode& node : asset->nodes) {
+            add(node.mesh, node.name);
+        }
+    }
+    return choices;
+}
+
+ColliderShape convertColliderShape(const ColliderShape& shape, ColliderShapeKind kind, MeshHandle mesh) {
+    // The source's half size along each axis, which the new shape keeps.
+    glm::vec3 halfExtents{0.5f};
+    if (const auto* box = std::get_if<BoxCollider>(&shape)) {
+        halfExtents = box->halfExtents;
+    } else if (const auto* sphere = std::get_if<SphereCollider>(&shape)) {
+        halfExtents = glm::vec3(sphere->radius);
+    } else if (const auto* capsule = std::get_if<CapsuleCollider>(&shape)) {
+        halfExtents = {capsule->radius, capsule->halfHeight + capsule->radius, capsule->radius};
+    }
+    switch (kind) {
+    case ColliderShapeKind::Box:
+        return BoxCollider{.halfExtents = halfExtents};
+    case ColliderShapeKind::Sphere:
+        return SphereCollider{.radius = std::max({halfExtents.x, halfExtents.y, halfExtents.z})};
+    case ColliderShapeKind::Capsule: {
+        const float radius = std::max(halfExtents.x, halfExtents.z);
+        return CapsuleCollider{.halfHeight = std::max(halfExtents.y - radius, minimumColliderSize), .radius = radius};
+    }
+    case ColliderShapeKind::TriangleMesh:
+        return TriangleMeshCollider{.mesh = mesh};
+    }
+    return shape;
+}
+
+bool drawCollider(ColliderComponent& component, std::span<const ColliderMeshChoice> meshes) {
+    bool changed = false;
+    const size_t current = component.shape.index();
+    if (ImGui::BeginCombo("Shape", colliderShapeLabels[current])) {
+        for (size_t index = 0; index < colliderShapeLabels.size(); ++index) {
+            const auto kind = static_cast<ColliderShapeKind>(index);
+            // A triangle mesh needs one of the entity's meshes.
+            const bool available = kind != ColliderShapeKind::TriangleMesh || !meshes.empty();
+            if (ImGui::Selectable(colliderShapeLabels[index], index == current,
+                                  available ? ImGuiSelectableFlags_None : ImGuiSelectableFlags_Disabled) &&
+                available && index != current) {
+                component.shape =
+                    convertColliderShape(component.shape, kind, meshes.empty() ? MeshHandle{} : meshes.front().mesh);
+                changed = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
     std::visit(
         [&](auto& shape) {
             using Shape = std::decay_t<decltype(shape)>;
             if constexpr (std::is_same_v<Shape, BoxCollider>) {
-                changed = ImGui::DragFloat3("Half extents", &shape.halfExtents.x, 0.01f, 0.001f, 10000.0f);
+                changed |=
+                    ImGui::DragFloat3("Half extents", &shape.halfExtents.x, 0.01f, minimumColliderSize, 10000.0f);
             } else if constexpr (std::is_same_v<Shape, SphereCollider>) {
-                changed = ImGui::DragFloat("Radius", &shape.radius, 0.01f, 0.001f, 10000.0f);
+                changed |= ImGui::DragFloat("Radius", &shape.radius, 0.01f, minimumColliderSize, 10000.0f);
             } else if constexpr (std::is_same_v<Shape, CapsuleCollider>) {
-                changed = ImGui::DragFloat("Half height", &shape.halfHeight, 0.01f, 0.001f, 10000.0f);
-                changed |= ImGui::DragFloat("Radius", &shape.radius, 0.01f, 0.001f, 10000.0f);
+                changed |= ImGui::DragFloat("Half height", &shape.halfHeight, 0.01f, minimumColliderSize, 10000.0f);
+                changed |= ImGui::DragFloat("Radius", &shape.radius, 0.01f, minimumColliderSize, 10000.0f);
             } else {
-                ImGui::TextDisabled("Triangle mesh collider");
+                changed |= drawColliderMesh(shape, meshes);
             }
         },
         component.shape);
+    changed |= drawColliderOffset(component);
     return changed;
 }
 
