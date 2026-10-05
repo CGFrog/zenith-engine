@@ -73,6 +73,11 @@ struct NavigationGeometry {
 // updated first.
 NavigationGeometry gatherNavigationGeometry(const Scene& scene, const AssetManager& assets, uint32_t layerMask = ~0u);
 
+// Appends a mesh's full-detail triangles (the ones physics collides with),
+// placed by transform, for example a runtime mesh of generated floors that
+// has no collider yet. A mirroring transform keeps the triangles facing out.
+void appendMeshGeometry(NavigationGeometry& geometry, const MeshAsset& mesh, const glm::mat4& transform);
+
 // A navigation mesh over a scene's static geometry, built with Recast and
 // queried with Detour, which stay private. One mesh covers the whole scene
 // (a single tile); bake again after the static geometry changes.

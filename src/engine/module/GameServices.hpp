@@ -85,6 +85,10 @@ class GameServices {
     // runtime, after its spawn commands applied (the next phase, or a timer).
     // A failed bake leaves no mesh and is returned, not logged.
     NavigationResult bakeNavigation(const Scene& scene, const NavMeshBuildSettings& settings = {});
+    // The same from triangles the game assembled itself (gatherNavigationGeometry,
+    // appendMeshGeometry), for example a generated floor; settings.layerMask
+    // does not apply.
+    NavigationResult bakeNavigation(const NavigationGeometry& geometry, const NavMeshBuildSettings& settings = {});
     // The session's crowd of navigation agents (zenith.nav_agents), started
     // over with crowdSettings() whenever the mesh is baked again.
     NavigationCrowd& navigationCrowd();

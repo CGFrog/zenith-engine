@@ -94,6 +94,12 @@ NavigationResult GameServices::bakeNavigation(const Scene& scene, const NavMeshB
     return m_navigation.bake(scene, m_assets, settings);
 }
 
+NavigationResult GameServices::bakeNavigation(const NavigationGeometry& geometry,
+                                              const NavMeshBuildSettings& settings) {
+    m_navigationBaked = true;
+    return m_navigation.bake(geometry, settings);
+}
+
 NavigationCrowd& GameServices::navigationCrowd() {
     return m_crowd;
 }
