@@ -8,18 +8,36 @@ edit rather than the scene. `CommandHistory::storedBytes` reports what the
 history keeps.
 
 There are two ways to capture an edit:
-- **The whole scene** (`capture`, then `commit` or `perform`). Use it when the
-  edit's reach is unknown: structural edits and operators. `OperatorRunner`
-  passes the after-capture it keeps for Adjust Last Operation to `commit`, so
-  it is not serialized twice.
 - **Only the entities the edit changes** (`captureEntities`, then `commit`
-  with the `EntitySnapshot`). The inspector's name, transform and component
-  edits and the viewport's transform widget and gizmo use it. Entities the
-  edit creates are found by id and recorded too. Destroying an entity the
-  snapshot did not list is reported, because undo could not bring it back.
+  with the `EntitySnapshot`). The inspector, the transform widget and gizmo,
+  modal G/R/S, `EntityCommands`, and every operator that declares a scope
+  (`Operator::scope`, see [Operators](operators.md#declaring-what-an-operator-changes))
+  use it. By id, it takes a `CaptureReach` (the entities, their subtrees, or
+  their subtrees and ancestors, which deleting or moving a prefab instance's
+  entity needs for the removal record on the instance root) and, with
+  `CaptureCollections::Include`, the collection definitions
+  (`SceneDocument::serializeCollections`). Each listed entity's parent is
+  always captured too, since a parent's document form holds its children's
+  order. Entities the edit creates are found by id and recorded too.
+  Destroying an entity the snapshot did not list (counted by entity, so a
+  listed entity's transient children count as listed) is reported, because
+  undo could not bring it back. `changesSince` returns the changes without
+  recording them and an after snapshot, which `unchangedSince` compares
+  later (Adjust Last Operation's check); `record` records changes.
+- **The whole scene** (`capture`, then `commit` or `perform`). Use it only
+  when the edit's reach is unknown: operators without a scope, refreshing
+  prefab instances, prefab mode's document switches. It also fails when
+  anything in the scene cannot be serialized (a runtime mesh), while a
+  scoped capture fails only when the captured entities cannot be.
 
-In a 5,000-entity scene, recording an inspector edit costs about 1.7 ms this
-way against 120 ms for the whole scene (`zenith_scene_editing_benchmark_run`). Opening or creating a document still replaces the whole scene and
+In a 5,000-entity scene (`zenith_scene_editing_benchmark_run`, Release, one
+machine; whole-scene numbers vary with load), recording an inspector edit
+costs about 3 ms against about 250 ms for the whole scene, and operators run
+through the runner cost (before, with whole-scene capture and paste, against
+after): rename 203 ms to 2.2 ms, duplicate a 10-entity group 585 ms to
+3.3 ms, array of 10 copies of it 670 ms to 9 ms, delete it 226 ms to 2.9 ms;
+`SceneFragment` copy of the group 97 ms to 0.23 ms and paste 158 ms to
+0.18 ms. Opening or creating a document still replaces the whole scene and
 clears the history. `CommandHistory::marker` and `stepsSince` count the undo
 steps recorded after a point of the timeline (a difference of `size()` is no
 count once new steps discard redo steps); the smoke steps undo exactly their
@@ -35,7 +53,10 @@ runtime undo; Stop discards it). The Inspector and Hierarchy stay enabled
 (no panel overrides `EditorPanel::editModeOnly` now), show a runtime-only
 notice, and draw running values every frame. `OperatorRunner` runs operators
 on the runtime scene without an undo step or Adjust Last Operation and notes
-an `Undo` operator's change in Info as lost on Stop; object and component
+an `Undo` operator's change in Info as lost on Stop (it captures only the
+operator's scope, just to mark the changed entities for the renderer and
+physics; only an operator without a scope still serializes the whole
+scene); object and component
 operators allow it, while document-only ones (save, prefabs, collections,
 visibility, bakes) keep polling Edit mode, and the runner's refusal then says
 they work only in Edit mode. `play.apply_to_edit {entity, component}`
@@ -53,8 +74,8 @@ captures serialize the scene without them, so an edit that only builds or
 changes a preview records nothing, a mixed edit records only its saved
 entities, and undo and redo leave a preview in place (removing a saved entity
 removes its transient children, as deleting it did). Copy skips them, paste
-(which rebuilds the scene from its document) drops them and pastes at the top
-level under a transient parent, saves and autosaves leave them out, and Play
+leaves them in place and pastes at the top level under a transient parent
+(copies under it would be transient too), saves and autosaves leave them out, and Play
 enters without them (the parked edit scene keeps them for Stop). The
 Hierarchy dims their rows with a "generated, not saved" tooltip.
 `zenith_transient_editing` covers it.
@@ -70,7 +91,23 @@ children of different parents keeps every copy beside its original.
 `SceneFragment::replicate` turns one fragment into N copies with their own
 root transforms (entity references inside each copy follow to that copy), so
 `object.array` and `object.scatter` paste once, however many copies they
-make: paste rebuilds the whole scene from its document.
+make.
+
+Copy and paste cost what is copied, not the scene. `copy` serializes only
+the copied subtrees (`SceneDocument::serializeEntities`) and names the
+collections they reference, which `paste` matches by name (same id and name,
+then same name, else the reference is dropped). `paste` gives every copy a
+fresh id (`Scene::reserveEntityId`), remaps entity references, sibling
+orders (`remapChildOrder`), and parents inside the fragment (references to
+entities outside it keep naming them), and creates the copies in the live
+scene with `SceneDocument::createEntities`. Every other entity keeps its EnTT
+handle and components, so in Play pasting or duplicating leaves the running
+physics bodies of the rest of the scene alone; only the copies are marked for
+physics. Prefab instance links and overrides, preserved components of
+unregistered (module) types, and collections travel inside the copied
+entities' document forms. `zenith_scoped_capture` covers scope parity for
+every migrated operator, paste parity, handles, Play, sibling order, and
+runtime meshes.
 
 ## Prefab file writes
 
