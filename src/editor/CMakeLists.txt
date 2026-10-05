@@ -53,6 +53,7 @@ add_library(zenith_editor_app STATIC
     interaction/EntityPropertiesView.cpp
     interaction/AssetReferenceField.cpp
     interaction/EntityReferenceField.cpp
+    interaction/MeshRendererField.cpp
     interaction/ModalTransform.cpp
     interaction/PickQueries.cpp
     interaction/GraphicsSettingsEditor.cpp
