@@ -8,6 +8,7 @@
 #include "editor/menus/DefaultMenus.hpp"
 #include "editor/operators/DefaultKeymap.hpp"
 #include "editor/operators/EditorOperatorFamilies.hpp"
+#include "editor/project/FastProjectBuild.hpp"
 #include "editor/settings/SimulateSystemSettings.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
@@ -84,6 +85,12 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     // Scene references resolve through the project's asset database by GUID.
     m_document.setAssetDatabase(m_projectAssets.assetDatabase());
     m_projectBuild.setProjectBuild(std::move(projectServices.build));
+    // Captures the compiler's developer environment in the background now,
+    // so the first build of the session is already a fast one.
+    if (!m_projectFile.empty()) {
+        m_projectBuild.setFastBuild(
+            std::make_unique<FastProjectBuild>(m_projectFile, settingsDirectory / "developer-environment.json"));
+    }
     m_moduleHost.setProjectInputActions(std::move(projectServices.inputActions));
     if (!projectServices.inputActionsError.empty()) {
         m_diagnostics.add(EditorDiagnosticSeverity::Error, "Project", projectServices.inputActionsError,

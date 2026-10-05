@@ -226,13 +226,13 @@ and each reload's phases in the Game Module ones.
 
 Debug, seconds:
 
-| Measure | Baseline | Module PCH |
-| --- | --- | --- |
-| First build | 25.30 | 10.26 |
-| Nothing changed | 1.17 | 1.20 |
-| One source edited | 5.75 | 2.61 |
-| Shared header edited | 19.89 | 2.67 |
-| Module load (shadow copy, register) | 0.16 | 0.11 |
+| Measure | Baseline | Module PCH | Fast build (Ninja) |
+| --- | --- | --- | --- |
+| First build | 25.30 | 10.26 | 7.53 |
+| Nothing changed | 1.17 | 1.20 | 0.12 |
+| One source edited | 5.75 | 2.61 | 1.36 |
+| Shared header edited | 19.89 | 2.67 | 1.57 |
+| Module load (shadow copy, register) | 0.16 | 0.11 | 0.11 |
 
 - **Baseline:** the build configures every time, uses the Visual Studio
   generator, and has no module PCH.
@@ -248,6 +248,18 @@ Debug, seconds:
 
   `zenith_configure_game_module(<target>)`, which the templates call, adds
   parallel compilation under the Visual Studio generator.
+- **Fast build:** the editor's own build of the project
+  (`editor/project/FastProjectBuild`). `--measure-iteration --preset`
+  measures the preset build instead.
+  - It is a Ninja tree in `<project>/.zenith/build`, configured only while
+    its `build.ninja` is missing. Ninja reconfigures itself when a
+    `CMakeLists.txt` or the engine's config changes.
+  - It runs with the engine's compiler, through the developer environment
+    of the engine's Visual Studio (`editor/project/DeveloperEnvironment`).
+    That environment is `vcvars64.bat`'s, captured in the background when
+    a project opens and cached in the editor's settings directory.
+  - The project's own preset build tree (`build/`) stays for its IDE. Both
+    copy the module to `modules/`.
 
 ## Game projects outside the repository
 

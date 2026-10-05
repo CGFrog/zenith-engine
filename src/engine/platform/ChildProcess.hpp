@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // What a child process runs: either a program with an exact argument list,
@@ -31,6 +32,11 @@ struct ChildProcessOptions {
     ChildProcessCommand command;
     // Empty inherits the parent's working directory.
     std::filesystem::path workingDirectory;
+    // Variables the process gets in place of the parent's of the same name
+    // (names compare without case on Windows); the rest of the parent's
+    // environment is inherited. A program without a directory is searched
+    // for on this PATH when it sets one. UTF-8.
+    std::vector<std::pair<std::string, std::string>> environment;
 };
 
 struct ChildProcessResult {

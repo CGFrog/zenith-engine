@@ -5,6 +5,7 @@
 #include "editor/panels/DiagnosticsPanel.hpp"
 #include "editor/project/BuildRunner.hpp"
 #include "editor/project/CompilerOutputParser.hpp"
+#include "editor/project/DeveloperEnvironment.hpp"
 #include "editor/project/ExternalEditor.hpp"
 #include "editor/project/ProjectBuild.hpp"
 #include "editor/settings/EditorSettings.hpp"
@@ -18,7 +19,9 @@
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -239,6 +242,54 @@ void testBuildRunner(const std::filesystem::path& directory) {
            "output lines should keep their text with highlighting and locations");
 }
 
+bool hasLine(const BuildRunner& runner, std::string_view text) {
+    return std::ranges::any_of(runner.output(), [text](const BuildOutputLine& line) { return line.text == text; });
+}
+
+// A request's prepare step (configuring a build tree once) runs before the
+// build while its marker is missing, joins the build's output, and stops the
+// build when it fails; both steps get the request's environment.
+void testPrepareStep(const std::filesystem::path& directory) {
+    const std::string cmake = ZENITH_TEST_CMAKE;
+    const BuildRequest prepared{.command = "echo",
+                                .arguments = {cmake, "-E", "echo", "built"},
+                                .workingDirectory = directory,
+                                .prepareArguments = {cmake, "-E", "echo", "prepared"},
+                                .prepareUnlessExists = directory / "missing-marker"};
+    BuildRunner runner;
+    expect(runner.start(prepared).success && pollUntilFinished(runner).finished, "a prepared build should run");
+    expect(runner.state() == BuildState::Succeeded && hasLine(runner, "prepared") && hasLine(runner, "built"),
+           "the prepare step runs first while its marker is missing, and the build follows");
+
+    BuildRequest skipped = prepared;
+    skipped.prepareUnlessExists = directory;
+    expect(runner.start(skipped).success && pollUntilFinished(runner).finished, "a build should run again");
+    expect(runner.state() == BuildState::Succeeded && !hasLine(runner, "prepared") && hasLine(runner, "built"),
+           "the prepare step is skipped once its marker exists");
+
+    BuildRequest failing = prepared;
+    failing.prepareArguments = {cmake, "-E", "false"};
+    expect(runner.start(failing).success && pollUntilFinished(runner).finished, "a failing prepare should finish");
+    expect(runner.state() == BuildState::Failed && !hasLine(runner, "built"),
+           "a failed prepare step fails the build without running it");
+
+    const BuildRequest withEnvironment{.command = "environment",
+                                       .arguments = {cmake, "-E", "environment"},
+                                       .workingDirectory = directory,
+                                       .environment = {{"ZENITH_BUILD_TEST", "from the request"}}};
+    expect(runner.start(withEnvironment).success && pollUntilFinished(runner).finished,
+           "a build with an environment should run");
+    expect(hasLine(runner, "ZENITH_BUILD_TEST=from the request"), "the build gets the request's environment");
+}
+
+void testDeveloperEnvironmentListing() {
+    const std::vector<std::pair<std::string, std::string>> parsed =
+        parseEnvironmentListing("Path=C:\\a;C:\\b\r\nINCLUDE=C:\\inc\r\n=C:=C:\\work\r\nnot a variable\r\nEMPTY=\r\n");
+    expect(parsed.size() == 3 && parsed[0] == std::pair<std::string, std::string>{"Path", "C:\\a;C:\\b"} &&
+               parsed[1].first == "INCLUDE" && parsed[2] == std::pair<std::string, std::string>{"EMPTY", ""},
+           "a `set` listing parses into variables, skipping lines without a name");
+}
+
 #ifdef _WIN32
 constexpr const char* succeedingCommand = "echo all good&& exit /b 0";
 constexpr const char* slowCommand = "ping -n 30 127.0.0.1 >nul";
@@ -397,6 +448,8 @@ int main() {
     std::filesystem::remove_all(directory, error);
     std::filesystem::create_directories(directory);
     testBuildRunner(directory);
+    testPrepareStep(directory);
+    testDeveloperEnvironmentListing();
     testBuildPanel(directory);
     testBuildOnSave(directory);
     std::filesystem::remove_all(directory, error);

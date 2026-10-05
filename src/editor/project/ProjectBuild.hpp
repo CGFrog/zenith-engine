@@ -9,6 +9,7 @@
 #include <string>
 
 class EditorDiagnostics;
+class FastProjectBuild;
 class FileWatcher;
 struct EditorToolSettings;
 
@@ -48,6 +49,11 @@ class ProjectBuild {
     // the settings while build.command and build.directory are unchanged
     // from their defaults; editing either builds with the settings again.
     void setProjectBuild(std::optional<BuildRequest> projectBuild);
+    // The project's fast build (a Ninja tree with the engine's compiler),
+    // used in place of the project build whenever it can run. While its
+    // developer environment is still being captured, a started build waits
+    // (queued) rather than taking the slower path.
+    void setFastBuild(std::unique_ptr<FastProjectBuild> fastBuild);
     // The request start() runs now.
     BuildRequest buildRequest() const;
     bool usesProjectBuild() const;
@@ -56,6 +62,8 @@ class ProjectBuild {
     std::filesystem::path watchedSourceDirectory() const;
 
   private:
+    // True while the project build waits for the fast build's environment.
+    bool waitingForFastBuild() const;
     void publishDiagnostics() const;
     // Keeps the watcher matching build.on_save and the source directory, and
     // requests a build when a source file changed.
@@ -64,6 +72,8 @@ class ProjectBuild {
     const EditorToolSettings& m_tools;
     EditorDiagnostics& m_diagnostics;
     std::optional<BuildRequest> m_projectBuild;
+    std::unique_ptr<FastProjectBuild> m_fastBuild;
+    bool m_reportedFastBuild{false};
     BuildRunner m_runner;
     uint64_t m_startCount{0};
     bool m_queued{false};

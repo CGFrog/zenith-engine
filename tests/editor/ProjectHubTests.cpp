@@ -4,14 +4,16 @@
 // project (from the C++ game template unless named) and
 // configures and builds its game module against this Zenith build with CMake
 // (in a temporary folder, or in the folder given after the flag, which is
-// kept). With --measure-iteration [folder] it times the editor's build of a
-// generated FPS project while gameplay code changes (measureIteration).
+// kept). With --measure-iteration [--preset] [folder] it times the editor's
+// build of a generated FPS project while gameplay code changes
+// (measureIteration).
 
 #include "HeadlessImGui.hpp"
 
 #include "editor/project/BuildRunner.hpp"
 #include "editor/project/CodeGenerator.hpp"
 #include "editor/project/ExternalEditor.hpp"
+#include "editor/project/FastProjectBuild.hpp"
 #include "editor/project/ProjectHub.hpp"
 #include "editor/project/ProjectTemplate.hpp"
 #include "editor/project/RecentProjects.hpp"
@@ -229,6 +231,24 @@ void testGenerateProject(const fs::path& root) {
            "template: the editor builds the project's preset from its folder");
     expect(!projectBuildRequest(root / "elsewhere" / "none.zenith-project"),
            "template: a project without presets has no project build");
+
+    const DeveloperEnvironment environment{.variables = {{"ZENITH_TEST_VARIABLE", "1"}},
+                                           .ninja = fs::path("C:/tools/ninja.exe")};
+    const std::optional<BuildRequest> fast = fastProjectBuildRequest(created.projectFile, environment);
+    const fs::path fastTree = directory / ".zenith" / "build";
+    const auto hasArgument = [&fast](std::string_view argument) {
+        return fast && std::ranges::find(fast->prepareArguments, argument) != fast->prepareArguments.end();
+    };
+    expect(fast && fast->workingDirectory == directory && fast->environment == environment.variables &&
+               fast->arguments == std::vector<std::string>{"cmake", "--build", fastTree.generic_string()} &&
+               fast->prepareUnlessExists == fastTree / "build.ninja",
+           "template: the fast build builds .zenith/build with the captured environment, configuring it once");
+    expect(hasArgument("Ninja") && hasArgument("-DCMAKE_MAKE_PROGRAM=C:/tools/ninja.exe") &&
+               hasArgument("-DZENITH_ROOT=" + fs::path(ZENITH_ENGINE_BUILD_DIR).generic_string()) &&
+               hasArgument(std::string("-DCMAKE_BUILD_TYPE=") + ZENITH_EDITOR_CONFIGURATION),
+           "template: the fast build configures Ninja for the preset's engine and configuration");
+    expect(!fastProjectBuildRequest(root / "elsewhere" / "none.zenith-project", environment),
+           "template: a project without presets has no fast build");
     expect(projectIdeLocation(created.projectFile).file == directory.lexically_normal().make_preferred(),
            "hub: Open in IDE opens the project folder");
     const ExternalEditorCommandResult ide =
@@ -614,7 +634,7 @@ void appendEdit(const fs::path& file) {
 // build with nothing changed, one with one source changed, one with a header
 // four sources include changed, and loading the built module. Run by hand
 // for numbers; CTest only checks that it completes.
-int measureIteration(const fs::path& root) {
+int measureIteration(const fs::path& root, bool preset) {
     AssetManager assets;
     ProjectTemplateRequest request = templateRequest("Iteration", root);
     request.templateDirectory = fs::path(ZENITH_TEMPLATE_DIR) / fpsGameTemplateName;
@@ -623,7 +643,23 @@ int measureIteration(const fs::path& root) {
         std::cerr << "FAILED: generate: " << created.error << '\n';
         return 1;
     }
-    const std::optional<BuildRequest> build = projectBuildRequest(created.projectFile);
+    // What the editor runs: the fast build once its environment is captured,
+    // else (or with --preset) the project's preset build.
+    std::optional<BuildRequest> build;
+    if (!preset) {
+        FastProjectBuild fast(created.projectFile, root / "developer-environment.json");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(2);
+        while (fast.pending() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        build = fast.request();
+        if (!build) {
+            std::cout << "fast build unavailable: " << fast.unavailableReason() << '\n';
+        }
+    }
+    if (!build) {
+        build = projectBuildRequest(created.projectFile);
+    }
     if (!build) {
         std::cerr << "FAILED: the generated project has no build\n";
         return 1;
@@ -672,15 +708,21 @@ int measureIteration(const fs::path& root) {
 int main(int argc, char** argv) {
     std::error_code error;
     if (argc > 1 && std::string_view(argv[1]) == "--measure-iteration") {
+        // --preset measures the project's preset build instead of the fast one.
+        int next = 2;
+        const bool preset = argc > 2 && std::string_view(argv[2]) == "--preset";
+        if (preset) {
+            next = 3;
+        }
         // An explicit folder keeps the project.
-        if (argc > 2) {
-            return measureIteration(fs::absolute(argv[2]));
+        if (argc > next) {
+            return measureIteration(fs::absolute(argv[next]), preset);
         }
         // Not under the temporary directory: MSBuild's file tracker ignores
         // reads from it, so a header edit there would rebuild nothing.
         const fs::path measureRoot = fs::current_path() / "module_iteration_benchmark";
         fs::remove_all(measureRoot, error);
-        const int result = measureIteration(measureRoot);
+        const int result = measureIteration(measureRoot, preset);
         fs::remove_all(measureRoot, error);
         return result;
     }

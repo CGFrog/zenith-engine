@@ -14,10 +14,25 @@ ChildProcessResult BuildRunner::start(const BuildRequest& request) {
     if (!request.workingDirectory.empty() && !std::filesystem::is_directory(request.workingDirectory, error)) {
         return {.error = "Build directory does not exist: " + request.workingDirectory.string()};
     }
-    const ChildProcessResult started =
-        m_process.start({.command = request.arguments.empty() ? ChildProcessCommand::shell(request.command)
-                                                              : ChildProcessCommand::program(request.arguments),
-                         .workingDirectory = request.workingDirectory});
+    ChildProcessOptions build{.command = request.arguments.empty() ? ChildProcessCommand::shell(request.command)
+                                                                   : ChildProcessCommand::program(request.arguments),
+                              .workingDirectory = request.workingDirectory,
+                              .environment = request.environment};
+    const bool prepare =
+        !request.prepareArguments.empty() &&
+        (request.prepareUnlessExists.empty() || !std::filesystem::exists(request.prepareUnlessExists, error));
+    m_pendingBuild.reset();
+    ChildProcessResult started;
+    if (prepare) {
+        started = m_process.start({.command = ChildProcessCommand::program(request.prepareArguments),
+                                   .workingDirectory = request.workingDirectory,
+                                   .environment = request.environment});
+        if (started) {
+            m_pendingBuild = std::move(build);
+        }
+    } else {
+        started = m_process.start(build);
+    }
     if (!started) {
         return started;
     }
@@ -47,6 +62,10 @@ BuildPollResult BuildRunner::poll() {
     }
     if (!stillRunning) {
         m_exitCode = m_process.exitCode();
+        if (m_pendingBuild && !m_process.cancelled() && m_exitCode == 0 && startPendingBuild()) {
+            return result;
+        }
+        m_pendingBuild.reset();
         if (m_process.cancelled()) {
             m_state = BuildState::Cancelled;
         } else {
@@ -62,7 +81,20 @@ std::optional<std::chrono::duration<double>> BuildRunner::duration() const {
     return m_duration;
 }
 
+bool BuildRunner::startPendingBuild() {
+    const ChildProcessOptions build = std::move(*m_pendingBuild);
+    m_pendingBuild.reset();
+    if (const ChildProcessResult started = m_process.start(build); !started) {
+        appendLine("Could not start the build: " + started.error);
+        m_exitCode = -1;
+        return false;
+    }
+    m_exitCode.reset();
+    return true;
+}
+
 void BuildRunner::cancel() {
+    m_pendingBuild.reset();
     m_process.cancel();
 }
 

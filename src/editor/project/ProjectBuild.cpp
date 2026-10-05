@@ -1,6 +1,7 @@
 #include "ProjectBuild.hpp"
 
 #include "editor/application/EditorDiagnostics.hpp"
+#include "editor/project/FastProjectBuild.hpp"
 #include "editor/project/ProjectFileOperations.hpp"
 #include "editor/settings/EditorSettings.hpp"
 #include "engine/platform/FileWatcher.hpp"
@@ -15,6 +16,8 @@
 
 namespace {
 constexpr const char* buildSource = "Build";
+// Notes about how the project builds, kept apart from each build's own.
+constexpr const char* buildSetupSource = "Build Setup";
 
 // A save burst settles before the build starts, so an IDE writing several
 // files at once starts one build.
@@ -59,7 +62,25 @@ ProjectBuild::ProjectBuild(const EditorToolSettings& tools, EditorDiagnostics& d
 ProjectBuild::~ProjectBuild() = default;
 
 ChildProcessResult ProjectBuild::start() {
+    if (waitingForFastBuild()) {
+        m_queued = true;
+        return {.success = true};
+    }
     m_queued = false;
+    if (usesProjectBuild() && m_fastBuild && !m_reportedFastBuild) {
+        m_reportedFastBuild = true;
+        const std::string& unavailable = m_fastBuild->unavailableReason();
+        m_diagnostics.replaceSource(
+            buildSetupSource,
+            {{.severity = EditorDiagnosticSeverity::Info,
+              .message = unavailable.empty()
+                             ? std::string("Building with Ninja in ") + std::string(fastBuildDirectoryName) +
+                                   " with the engine's compiler"
+                             : "Fast builds are off (" + unavailable + "); building with the project's preset",
+              .action = unavailable.empty() ? std::string{}
+                                            : std::string("Install Ninja (it ships with Visual Studio's C++ "
+                                                          "CMake tools) for builds that start faster.")}});
+    }
     const ChildProcessResult started = m_runner.start(buildRequest());
     std::vector<EditorDiagnostic> replacements;
     if (!started) {
@@ -90,9 +111,18 @@ void ProjectBuild::poll() {
         publishDiagnostics();
     }
     watchSources();
-    if (m_queued && !m_runner.running()) {
+    if (m_queued && !m_runner.running() && !waitingForFastBuild()) {
         start();
     }
+}
+
+void ProjectBuild::setFastBuild(std::unique_ptr<FastProjectBuild> fastBuild) {
+    m_fastBuild = std::move(fastBuild);
+    m_reportedFastBuild = false;
+}
+
+bool ProjectBuild::waitingForFastBuild() const {
+    return usesProjectBuild() && m_fastBuild && m_fastBuild->pending();
 }
 
 const BuildRunner& ProjectBuild::runner() const {
@@ -123,6 +153,11 @@ bool ProjectBuild::usesProjectBuild() const {
 
 BuildRequest ProjectBuild::buildRequest() const {
     if (usesProjectBuild()) {
+        if (m_fastBuild) {
+            if (std::optional<BuildRequest> fast = m_fastBuild->request()) {
+                return *fast;
+            }
+        }
         return *m_projectBuild;
     }
     return {.command = m_tools.buildCommand, .workingDirectory = pathFromUtf8Text(m_tools.buildDirectory)};

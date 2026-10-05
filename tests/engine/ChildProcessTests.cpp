@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -91,6 +92,45 @@ void testPartialFinalLine() {
            "output without a final newline should still be delivered");
 }
 
+void setParentVariable(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+bool startsWithAny(const std::vector<std::string>& lines, const std::string& prefix) {
+    return std::ranges::any_of(lines, [&prefix](const std::string& line) { return line.starts_with(prefix); });
+}
+
+void testEnvironment() {
+    setParentVariable("ZENITH_CHILD_REPLACED", "parent");
+    setParentVariable("ZENITH_CHILD_INHERITED", "kept");
+    const Finished printed =
+        run({.command = cmake({"-E", "environment"}),
+             .environment = {{"ZENITH_CHILD_REPLACED", "child value"}, {"ZENITH_CHILD_ADDED", "added"}}});
+    expect(printed.exitCode == 0, "printing the environment should succeed");
+    expect(contains(printed.lines, "ZENITH_CHILD_REPLACED=child value") &&
+               !contains(printed.lines, "ZENITH_CHILD_REPLACED=parent"),
+           "an override replaces the parent's variable");
+    expect(contains(printed.lines, "ZENITH_CHILD_ADDED=added"), "an override adds a variable");
+    expect(contains(printed.lines, "ZENITH_CHILD_INHERITED=kept"), "the rest of the environment is inherited");
+#ifdef _WIN32
+    const Finished cased =
+        run({.command = cmake({"-E", "environment"}), .environment = {{"zenith_child_replaced", "lower"}}});
+    expect(contains(cased.lines, "zenith_child_replaced=lower") &&
+               !startsWithAny(cased.lines, "ZENITH_CHILD_REPLACED="),
+           "Windows compares variable names without case");
+#endif
+
+    // A bare program name is found on the overridden PATH.
+    const std::string cmakeDirectory = std::filesystem::path(ZENITH_TEST_CMAKE).parent_path().string();
+    const Finished found = run({.command = ChildProcessCommand::program({"cmake", "-E", "echo", "found"}),
+                                .environment = {{"PATH", cmakeDirectory}}});
+    expect(found.exitCode == 0 && contains(found.lines, "found"), "a program is searched for on the overridden PATH");
+}
+
 void testWorkingDirectory() {
     const std::filesystem::path directory = std::filesystem::temp_directory_path() / "zenith_child_process_tests";
     std::error_code error;
@@ -155,6 +195,7 @@ int main() {
     testShellExitCodeAndStreams();
     testPartialFinalLine();
     testWorkingDirectory();
+    testEnvironment();
     testCancel();
     testMoveAndRestart();
     testFailures();

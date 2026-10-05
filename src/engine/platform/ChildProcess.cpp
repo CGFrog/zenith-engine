@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstddef>
 #include <iterator>
+#include <map>
 #include <mutex>
 #include <string_view>
 #include <system_error>
@@ -31,6 +32,8 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+extern char** environ;
 #endif
 
 namespace {
@@ -124,6 +127,74 @@ std::wstring environmentVariable(const wchar_t* name) {
     return value;
 }
 
+std::wstring upperCase(std::wstring text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](wchar_t character) { return static_cast<wchar_t>(towupper(character)); });
+    return text;
+}
+
+// The child's environment: the parent's, with overrides replacing variables
+// of the same name (compared without case, as Windows does).
+class ChildEnvironment {
+  public:
+    explicit ChildEnvironment(const std::vector<std::pair<std::string, std::string>>& overrides) {
+        if (overrides.empty()) {
+            return;
+        }
+        if (wchar_t* inherited = GetEnvironmentStringsW()) {
+            for (const wchar_t* entry = inherited; *entry != L'\0'; entry += wcslen(entry) + 1) {
+                const std::wstring_view text(entry);
+                // Skip the first character: the hidden drive variables
+                // ("=C:=C:\\work") begin with '='.
+                const size_t separator = text.find(L'=', 1);
+                if (separator != std::wstring_view::npos) {
+                    set(std::wstring(text.substr(0, separator)), std::wstring(text.substr(separator + 1)));
+                }
+            }
+            FreeEnvironmentStringsW(inherited);
+        }
+        for (const auto& [name, value] : overrides) {
+            set(widen(name), widen(value));
+        }
+        m_overridden = true;
+    }
+
+    // A variable's value; the parent's when nothing is overridden.
+    std::wstring variable(const wchar_t* name) const {
+        if (!m_overridden) {
+            return environmentVariable(name);
+        }
+        const auto found = m_variables.find(upperCase(name));
+        return found != m_variables.end() ? found->second.second : std::wstring{};
+    }
+
+    // The block CreateProcessW takes (sorted, as Windows expects), or null to
+    // inherit the parent's.
+    wchar_t* block() {
+        if (!m_overridden) {
+            return nullptr;
+        }
+        m_block.clear();
+        for (const auto& [key, entry] : m_variables) {
+            m_block += entry.first + L"=" + entry.second;
+            m_block.push_back(L'\0');
+        }
+        m_block.push_back(L'\0');
+        return m_block.data();
+    }
+
+  private:
+    void set(std::wstring name, std::wstring value) {
+        std::wstring key = upperCase(name);
+        m_variables[std::move(key)] = {std::move(name), std::move(value)};
+    }
+
+    bool m_overridden{false};
+    // By upper-case name: the name as written and the value.
+    std::map<std::wstring, std::pair<std::wstring, std::wstring>> m_variables;
+    std::wstring m_block;
+};
+
 std::filesystem::path commandInterpreter() {
     std::array<wchar_t, MAX_PATH> directory{};
     const UINT length = GetSystemDirectoryW(directory.data(), static_cast<UINT>(directory.size()));
@@ -164,17 +235,17 @@ std::wstring quoteArgument(const std::wstring& argument) {
 // Finds a program the way a console user would: explicit paths as given,
 // bare names on PATH with each PATHEXT extension. The current directory is
 // not searched.
-std::optional<std::filesystem::path> resolveProgram(const std::wstring& program) {
+std::optional<std::filesystem::path> resolveProgram(const std::wstring& program, const ChildEnvironment& environment) {
     const std::filesystem::path candidate(program);
     if (candidate.has_parent_path()) {
         return candidate;
     }
-    const std::wstring searchPath = environmentVariable(L"PATH");
+    const std::wstring searchPath = environment.variable(L"PATH");
     std::vector<std::wstring> extensions;
     if (candidate.has_extension()) {
         extensions.emplace_back();
     }
-    std::wstring pathExtensions = environmentVariable(L"PATHEXT");
+    std::wstring pathExtensions = environment.variable(L"PATHEXT");
     if (pathExtensions.empty()) {
         pathExtensions = L".COM;.EXE;.BAT;.CMD";
     }
@@ -215,7 +286,7 @@ struct WindowsCommandLineResult {
     std::string error;
 };
 
-WindowsCommandLineResult buildCommandLine(const ChildProcessCommand& command) {
+WindowsCommandLineResult buildCommandLine(const ChildProcessCommand& command, const ChildEnvironment& environment) {
     if (command.kind == ChildProcessCommand::Kind::Shell) {
         const std::wstring interpreter = commandInterpreter().wstring();
         // /s strips exactly the outer quotes, so the command reaches cmd as typed.
@@ -223,7 +294,7 @@ WindowsCommandLineResult buildCommandLine(const ChildProcessCommand& command) {
                                                                widen(command.arguments.front()) + L"\""}};
     }
 
-    const std::optional<std::filesystem::path> program = resolveProgram(widen(command.arguments.front()));
+    const std::optional<std::filesystem::path> program = resolveProgram(widen(command.arguments.front()), environment);
     if (!program) {
         return {.error = "Could not find program on PATH: " + command.arguments.front()};
     }
@@ -355,7 +426,8 @@ ChildProcessResult ChildProcess::start(const ChildProcessOptions& options) {
     if (const ChildProcessResult valid = validateCommand(options.command); !valid) {
         return valid;
     }
-    const WindowsCommandLineResult built = buildCommandLine(options.command);
+    ChildEnvironment environment(options.environment);
+    const WindowsCommandLineResult built = buildCommandLine(options.command, environment);
     if (!built.command) {
         return failure(built.error);
     }
@@ -406,10 +478,11 @@ ChildProcessResult ChildProcess::start(const ChildProcessOptions& options) {
     std::wstring commandLine = built.command->commandLine;
     const std::wstring workingDirectory = options.workingDirectory.wstring();
     PROCESS_INFORMATION information{};
-    const BOOL created = CreateProcessW(built.command->application.c_str(), commandLine.data(), nullptr, nullptr, TRUE,
-                                        CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr,
-                                        workingDirectory.empty() ? nullptr : workingDirectory.c_str(),
-                                        &startup.StartupInfo, &information);
+    const BOOL created =
+        CreateProcessW(built.command->application.c_str(), commandLine.data(), nullptr, nullptr, TRUE,
+                       CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                       environment.block(), workingDirectory.empty() ? nullptr : workingDirectory.c_str(),
+                       &startup.StartupInfo, &information);
     const std::string createError = created ? std::string{} : lastErrorMessage("Could not start process");
     DeleteProcThreadAttributeList(attributes);
     closeChildEnds();
@@ -442,7 +515,8 @@ ChildProcessResult ChildProcess::launchDetached(const ChildProcessOptions& optio
     if (const ChildProcessResult valid = validateCommand(options.command); !valid) {
         return valid;
     }
-    const WindowsCommandLineResult built = buildCommandLine(options.command);
+    ChildEnvironment environment(options.environment);
+    const WindowsCommandLineResult built = buildCommandLine(options.command, environment);
     if (!built.command) {
         return failure(built.error);
     }
@@ -452,7 +526,7 @@ ChildProcessResult ChildProcess::launchDetached(const ChildProcessOptions& optio
     const std::wstring workingDirectory = options.workingDirectory.wstring();
     PROCESS_INFORMATION information{};
     if (!CreateProcessW(built.command->application.c_str(), commandLine.data(), nullptr, nullptr, FALSE,
-                        CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, nullptr,
+                        CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT, environment.block(),
                         workingDirectory.empty() ? nullptr : workingDirectory.c_str(), &startup, &information)) {
         return failure(lastErrorMessage("Could not start process"));
     }
@@ -468,11 +542,15 @@ std::string errnoMessage(std::string_view operation, int code) {
     return std::string(operation) + ": " + std::strerror(code);
 }
 
-std::optional<std::string> resolveProgram(const std::string& program) {
+// The variable name of a "NAME=value" environment entry.
+std::string_view variableName(std::string_view entry) {
+    return entry.substr(0, entry.find('='));
+}
+
+std::optional<std::string> resolveProgram(const std::string& program, const char* path) {
     if (program.find('/') != std::string::npos) {
         return program;
     }
-    const char* path = std::getenv("PATH");
     const std::string_view directories = path != nullptr ? path : "/usr/local/bin:/usr/bin:/bin";
     size_t begin = 0;
     while (begin <= directories.size()) {
@@ -488,12 +566,15 @@ std::optional<std::string> resolveProgram(const std::string& program) {
     return std::nullopt;
 }
 
-// Owned argv storage prepared before fork, because only async-signal-safe
-// calls may run in the child.
+// Owned argv (and, with overrides, envp) storage prepared before fork,
+// because only async-signal-safe calls may run in the child.
 struct ExecArguments {
     std::string program;
     std::vector<std::string> storage;
     std::vector<char*> pointers;
+    // Empty inherits the parent's environment.
+    std::vector<std::string> environmentStorage;
+    std::vector<char*> environmentPointers;
 };
 
 struct ExecArgumentsResult {
@@ -501,13 +582,35 @@ struct ExecArgumentsResult {
     std::string error;
 };
 
-ExecArgumentsResult buildExecArguments(const ChildProcessCommand& command) {
+ExecArgumentsResult buildExecArguments(const ChildProcessCommand& command,
+                                       const std::vector<std::pair<std::string, std::string>>& environment) {
     ExecArguments built;
+    const char* path = std::getenv("PATH");
+    if (!environment.empty()) {
+        for (char** entry = environ; *entry != nullptr; ++entry) {
+            const std::string_view name = variableName(*entry);
+            const bool overridden =
+                std::ranges::any_of(environment, [name](const auto& variable) { return variable.first == name; });
+            if (!overridden) {
+                built.environmentStorage.emplace_back(*entry);
+            }
+        }
+        for (const auto& [name, value] : environment) {
+            built.environmentStorage.push_back(name + "=" + value);
+        }
+        for (std::string& entry : built.environmentStorage) {
+            if (variableName(entry) == "PATH") {
+                path = entry.c_str() + 5;
+            }
+            built.environmentPointers.push_back(entry.data());
+        }
+        built.environmentPointers.push_back(nullptr);
+    }
     if (command.kind == ChildProcessCommand::Kind::Shell) {
         built.program = "/bin/sh";
         built.storage = {"/bin/sh", "-c", command.arguments.front()};
     } else {
-        std::optional<std::string> program = resolveProgram(command.arguments.front());
+        std::optional<std::string> program = resolveProgram(command.arguments.front(), path);
         if (!program) {
             return {.error = "Could not find program on PATH: " + command.arguments.front()};
         }
@@ -593,7 +696,11 @@ struct Pipe {
         [[maybe_unused]] const ssize_t written = ::write(errorDescriptor, &code, sizeof(code));
         _exit(127);
     }
-    execv(arguments.program.c_str(), arguments.pointers.data());
+    if (arguments.environmentPointers.empty()) {
+        execv(arguments.program.c_str(), arguments.pointers.data());
+    } else {
+        execve(arguments.program.c_str(), arguments.pointers.data(), arguments.environmentPointers.data());
+    }
     const int code = errno;
     [[maybe_unused]] const ssize_t written = ::write(errorDescriptor, &code, sizeof(code));
     _exit(127);
@@ -738,7 +845,7 @@ ChildProcessResult ChildProcess::start(const ChildProcessOptions& options) {
     if (const ChildProcessResult valid = validateCommand(options.command); !valid) {
         return valid;
     }
-    const ExecArgumentsResult built = buildExecArguments(options.command);
+    const ExecArgumentsResult built = buildExecArguments(options.command, options.environment);
     if (!built.arguments) {
         return failure(built.error);
     }
@@ -792,7 +899,7 @@ ChildProcessResult ChildProcess::launchDetached(const ChildProcessOptions& optio
     if (const ChildProcessResult valid = validateCommand(options.command); !valid) {
         return valid;
     }
-    const ExecArgumentsResult built = buildExecArguments(options.command);
+    const ExecArgumentsResult built = buildExecArguments(options.command, options.environment);
     if (!built.arguments) {
         return failure(built.error);
     }

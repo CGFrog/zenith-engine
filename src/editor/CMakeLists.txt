@@ -110,6 +110,8 @@ add_library(zenith_editor_app STATIC
     project/AssetCatalog.cpp
     project/AssetRelocation.cpp
     project/BuildRunner.cpp
+    project/DeveloperEnvironment.cpp
+    project/FastProjectBuild.cpp
     project/ProjectBuild.cpp
     project/TemplateText.cpp
     project/CodeGenerator.cpp

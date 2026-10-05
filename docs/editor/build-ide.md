@@ -3,12 +3,28 @@
 Part of the [repository guide](../REPOSITORY_GUIDE.md).
 
 The session owns one build, `project/ProjectBuild`. It runs the open
-project's own build (`projectBuildRequest`: configure and build its preset in
-the project directory) or, once `build.command` or `build.directory` is edited,
+project's own build or, once `build.command` or `build.directory` is edited,
 that command through the platform shell in that directory, without blocking the
 UI, using `project/BuildRunner`. The session polls it every frame, so a build
 progresses with no Build area open; when it ends, its diagnostics replace the
 previous build's entries (source `Build`) in `EditorDiagnostics`.
+
+The project's own build is, in order of preference:
+- **The fast build** (`project/FastProjectBuild`), a Ninja tree in
+  `<project>/.zenith/build`. `BuildRequest::prepareArguments` configures it
+  only while its `build.ninja` is missing.
+  - It runs with the engine's compiler. The environment is the one
+    `vcvars64.bat` of the engine's Visual Studio sets
+    (`project/DeveloperEnvironment`), captured on a background thread when
+    the session opens and cached in `developer-environment.json` in the
+    editor's settings directory.
+  - A build started while that capture is still running waits for it
+    (queued) rather than taking the slower path.
+  - The Build Setup diagnostic says once which build runs, or why the fast
+    one is off.
+- **The preset build** (`projectBuildRequest`: configure and build the
+  project's `zenith` preset). It is used when there is no Ninja or no
+  Visual Studio, and it is what the project's IDE builds.
 
 - `build.run` (**Ctrl B**, `operators/BuildOperators`) starts a build; pressed
   while one runs, it queues one more, which starts when that one finishes.
