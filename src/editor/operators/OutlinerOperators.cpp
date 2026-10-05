@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -54,53 +55,57 @@ bool storedValue(EntityVisibilityFlag flag, bool value) {
 }
 
 Operator setVisibilityOperator() {
-    return {.id = "object.set_visibility",
-            .label = "Set Object Visibility",
-            .description = "Show or hide an object in viewports, or change whether it is selectable or rendered",
-            .flags = OperatorFlags::Undo | OperatorFlags::Internal,
-            .properties = OperatorProperties::make(
-                EntityVisibilityProperties{},
-                std::move(
-                    Fields<EntityVisibilityProperties>()
-                        .add("entity", &EntityVisibilityProperties::entity)
-                        .add("flag", &EntityVisibilityProperties::flag)
-                        .options({{"visible", "Visible", static_cast<int64_t>(EntityVisibilityFlag::Visible)},
-                                  {"selectable", "Selectable", static_cast<int64_t>(EntityVisibilityFlag::Selectable)},
-                                  {"renderable", "Renderable", static_cast<int64_t>(EntityVisibilityFlag::Renderable)}})
-                        .add("value", &EntityVisibilityProperties::value))),
-            .poll = inEditMode,
-            .execute =
-                typed<EntityVisibilityProperties>([](OperatorContext& context, EntityVisibilityProperties& values) {
-                    Scene& scene = context.editing.scene();
-                    const Entity entity = scene.findEntity(values.entity);
-                    if (entity == entt::null) {
-                        return OperatorResult::failed("Unknown object " + std::to_string(values.entity.value));
-                    }
-                    entt::registry& registry = scene.registry();
-                    const VisibilityComponent* current = registry.try_get<VisibilityComponent>(entity);
-                    VisibilityComponent visibility = current != nullptr ? *current : VisibilityComponent{};
-                    bool& field = visibilityField(visibility, values.flag);
-                    const bool stored = storedValue(values.flag, values.value);
-                    if (field == stored) {
-                        return OperatorResult::cancelled("The object already has that setting");
-                    }
-                    field = stored;
-                    // Only differences from the defaults are kept, as object.hide does.
-                    if (visibility == VisibilityComponent{}) {
-                        registry.remove<VisibilityComponent>(entity);
-                    } else {
-                        registry.emplace_or_replace<VisibilityComponent>(entity, visibility);
-                    }
-                    scene.markRenderableDirty(entity);
-                    scene.markLightDirty(entity);
-                    // Hidden objects cannot be picked, so they leave the selection.
-                    if (visibility.hidden && context.selection.contains(values.entity)) {
-                        std::vector<SceneEntityId> kept = context.selection.ids();
-                        std::erase(kept, values.entity);
-                        context.selection.assign(std::move(kept));
-                    }
-                    return OperatorResult::finished();
-                })};
+    return {
+        .id = "object.set_visibility",
+        .label = "Set Object Visibility",
+        .description = "Show or hide an object in viewports, or change whether it is selectable or rendered",
+        .flags = OperatorFlags::Undo | OperatorFlags::Internal,
+        .properties = OperatorProperties::make(
+            EntityVisibilityProperties{},
+            std::move(
+                Fields<EntityVisibilityProperties>()
+                    .add("entity", &EntityVisibilityProperties::entity)
+                    .add("flag", &EntityVisibilityProperties::flag)
+                    .options({{"visible", "Visible", static_cast<int64_t>(EntityVisibilityFlag::Visible)},
+                              {"selectable", "Selectable", static_cast<int64_t>(EntityVisibilityFlag::Selectable)},
+                              {"renderable", "Renderable", static_cast<int64_t>(EntityVisibilityFlag::Renderable)}})
+                    .add("value", &EntityVisibilityProperties::value))),
+        .poll = inEditMode,
+        .execute = typed<EntityVisibilityProperties>([](OperatorContext& context, EntityVisibilityProperties& values) {
+            Scene& scene = context.editing.scene();
+            const Entity entity = scene.findEntity(values.entity);
+            if (entity == entt::null) {
+                return OperatorResult::failed("Unknown object " + std::to_string(values.entity.value));
+            }
+            entt::registry& registry = scene.registry();
+            const VisibilityComponent* current = registry.try_get<VisibilityComponent>(entity);
+            VisibilityComponent visibility = current != nullptr ? *current : VisibilityComponent{};
+            bool& field = visibilityField(visibility, values.flag);
+            const bool stored = storedValue(values.flag, values.value);
+            if (field == stored) {
+                return OperatorResult::cancelled("The object already has that setting");
+            }
+            field = stored;
+            // Only differences from the defaults are kept, as object.hide does.
+            if (visibility == VisibilityComponent{}) {
+                registry.remove<VisibilityComponent>(entity);
+            } else {
+                registry.emplace_or_replace<VisibilityComponent>(entity, visibility);
+            }
+            scene.markRenderableDirty(entity);
+            scene.markLightDirty(entity);
+            // Hidden objects cannot be picked, so they leave the selection.
+            if (visibility.hidden && context.selection.contains(values.entity)) {
+                std::vector<SceneEntityId> kept = context.selection.ids();
+                std::erase(kept, values.entity);
+                context.selection.assign(std::move(kept));
+            }
+            return OperatorResult::finished();
+        }),
+        .scope = [](const OperatorContext&, const OperatorProperties& properties) {
+            const auto* values = properties.get<EntityVisibilityProperties>();
+            return OperatorScope::of(values != nullptr ? std::vector{values->entity} : std::vector<SceneEntityId>{});
+        }};
 }
 
 bool isAncestorOrSelf(const Scene& scene, Entity candidate, Entity entity) {
@@ -111,6 +116,19 @@ bool isAncestorOrSelf(const Scene& scene, Entity candidate, Entity entity) {
         }
     }
     return false;
+}
+
+// Entities moving to parent: their subtrees and ancestors (a move out of a
+// prefab instance unlinks the subtree and records the removal on the
+// instance root) and the new parent, whose child order changes.
+OperatorScope movedEntitiesScope(const OperatorContext& context, std::span<const SceneEntityId> moved,
+                                 SceneEntityId parent) {
+    std::vector<SceneEntityId> entities =
+        SceneEditing::withRelatives(context.editing.scene(), moved, SceneEditing::CaptureReach::SubtreesAndAncestors);
+    if (parent) {
+        entities.push_back(parent);
+    }
+    return OperatorScope::of(std::move(entities));
 }
 
 Operator parentDropOperator() {
@@ -163,7 +181,15 @@ Operator parentDropOperator() {
                 }
                 return changed ? OperatorResult::finished()
                                : OperatorResult::cancelled("The selection already has that parent");
-            })};
+            }),
+            // Leaving a prefab instance unlinks the moved subtree and records
+            // the removal on the instance root, an ancestor; the old and new
+            // parents' child orders change.
+            .scope = [](const OperatorContext& context, const OperatorProperties& properties) {
+                const auto* values = properties.get<ParentDropProperties>();
+                return movedEntitiesScope(context, context.selection.ids(),
+                                          values != nullptr ? values->parent : SceneEntityId{});
+            }};
 }
 
 // The object's position among its parent's children.
@@ -228,7 +254,12 @@ Operator reorderOperator() {
                                                    .add("index", &ReorderProperties::index)
                                                    .add("keep_transform", &ReorderProperties::keepTransform))),
             .poll = inEditMode,
-            .execute = typed<ReorderProperties>(reorder)};
+            .execute = typed<ReorderProperties>(reorder),
+            .scope = [](const OperatorContext& context, const OperatorProperties& properties) {
+                const auto* values = properties.get<ReorderProperties>();
+                return values != nullptr ? movedEntitiesScope(context, std::span(&values->entity, 1), values->parent)
+                                         : OperatorScope::whole();
+            }};
 }
 
 Operator selectMatchingOperator() {

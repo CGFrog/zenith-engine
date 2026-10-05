@@ -75,6 +75,12 @@ Operator pickOperator(EntityEyedropper& eyedropper) {
                     *resolved.value = values->entity;
                     resolved.type->sanitize(resolved.component);
                     return OperatorResult::finished();
+                },
+            // Only the entity holding the field changes.
+            .scope =
+                [&eyedropper](const OperatorContext&, const OperatorProperties&) {
+                    return eyedropper.target() ? OperatorScope::of({eyedropper.target()->entity})
+                                               : OperatorScope::newEntities();
                 }};
 }
 

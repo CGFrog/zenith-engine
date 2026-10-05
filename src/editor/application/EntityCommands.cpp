@@ -12,29 +12,47 @@
 namespace EntityCommands {
 SceneEntityId createEntity(const SceneEditing& editing, Entity parent) {
     Scene& scene = editing.scene();
-    SceneEntityId createdId;
-    editing.perform("Create Entity", {}, [&] {
-        const Entity created = scene.createEntity("Entity");
-        createdId = scene.id(created);
-        return parent == entt::null ? SceneResult{.success = true} : scene.reparent(created, parent);
-    });
+    // The new entity, and the parent whose child order it joins.
+    std::vector<SceneEntityId> parentId;
+    if (parent != entt::null) {
+        parentId.push_back(scene.id(parent));
+    }
+    SceneEditing::EntitySnapshot before;
+    if (!editing.captureEntities(parentId, SceneEditing::CaptureReach::Entities,
+                                 SceneEditing::CaptureCollections::Exclude, before)) {
+        return {};
+    }
+    const Entity created = scene.createEntity("Entity");
+    const SceneEntityId createdId = scene.id(created);
+    if (parent != entt::null) {
+        if (const SceneResult result = scene.reparent(created, parent); !result) {
+            editing.diagnostics().reportError(result.error);
+            return createdId;
+        }
+    }
+    editing.commit("Create Entity", {}, std::move(before));
     return createdId;
 }
 
 void deleteEntities(const SceneEditing& editing, std::span<const SceneEntityId> entities, std::string commandName) {
     Scene& scene = editing.scene();
     const std::vector<SceneEntityId> targets(entities.begin(), entities.end());
-    editing.perform(std::move(commandName), {}, [&] {
-        for (SceneEntityId id : targets) {
-            // Deleting a parent removes its children, so look each one up again.
-            if (const Entity entity = scene.findEntity(id); entity != entt::null) {
-                // A prefab entity deleted from an instance stays deleted.
-                recordPrefabEntityRemoval(scene, entity);
-                scene.destroyEntity(entity);
-            }
+    // Children go with their parent, and a prefab entity's removal is
+    // recorded on its instance root, an ancestor.
+    SceneEditing::EntitySnapshot before;
+    if (!editing.captureEntities(targets, SceneEditing::CaptureReach::SubtreesAndAncestors,
+                                 SceneEditing::CaptureCollections::Exclude, before)) {
+        return;
+    }
+    for (SceneEntityId id : targets) {
+        // Deleting a parent removes its children, so look each one up again.
+        if (const Entity entity = scene.findEntity(id); entity != entt::null) {
+            // A prefab entity deleted from an instance stays deleted.
+            recordPrefabEntityRemoval(scene, entity);
+            scene.destroyEntity(entity);
         }
-        return SceneResult{.success = true};
-    });
+    }
+    editing.commit(std::move(commandName), {}, std::move(before));
 }
 
 void deleteSelection(const SceneEditing& editing, Selection& selection) {
@@ -45,7 +63,20 @@ void deleteSelection(const SceneEditing& editing, Selection& selection) {
     selection.clear();
 }
 
-bool duplicateSelectionUncommitted(const SceneEditing& editing, Selection& selection, std::string& before) {
+bool duplicateSelectionUncommitted(const SceneEditing& editing, Selection& selection,
+                                   SceneEditing::EntitySnapshot& before) {
+    if (selection.empty()) {
+        return false;
+    }
+    // The copies join the originals' parents, captured with them.
+    if (!editing.captureEntities(selection.ids(), SceneEditing::CaptureReach::Entities,
+                                 SceneEditing::CaptureCollections::Exclude, before)) {
+        return false;
+    }
+    return duplicateSelectionUnrecorded(editing, selection);
+}
+
+bool duplicateSelectionUnrecorded(const SceneEditing& editing, Selection& selection) {
     if (selection.empty()) {
         return false;
     }
@@ -61,9 +92,6 @@ bool duplicateSelectionUncommitted(const SceneEditing& editing, Selection& selec
     std::vector<SceneEntityId> sources;
     if (const SceneDocumentResult result = SceneFragment::roots(fragment, sources); !result) {
         editing.diagnostics().reportError("Duplicate failed: " + result.error);
-        return false;
-    }
-    if (!editing.capture(before)) {
         return false;
     }
     std::vector<SceneEntityId> duplicates;
@@ -82,8 +110,7 @@ SceneDocumentResult pasteBesideSources(const SceneEditing& editing, std::string_
                                        std::vector<SceneEntityId>& pasted) {
     Scene& scene = editing.scene();
 
-    // Each source's parent and local transform, by id: paste rebuilds the
-    // scene, so entity handles do not survive it.
+    // Each source's parent and local transform, by id.
     struct Placement {
         SceneEntityId parent;
         glm::mat4 local{1.0f};
@@ -130,7 +157,7 @@ SceneDocumentResult pasteBesideSources(const SceneEditing& editing, std::string_
 }
 
 void duplicateSelection(const SceneEditing& editing, Selection& selection) {
-    std::string before;
+    SceneEditing::EntitySnapshot before;
     if (duplicateSelectionUncommitted(editing, selection, before)) {
         editing.commit("Duplicate Objects", {}, std::move(before));
     }

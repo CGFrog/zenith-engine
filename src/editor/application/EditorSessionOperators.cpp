@@ -100,7 +100,8 @@ OperatorRegistrationResult registerDocumentOperatorFamily(OperatorRegistry& regi
          .flags = OperatorFlags::Undo,
          .poll = [](const OperatorContext& context) { return context.app != nullptr && context.editMode(); },
          .execute = [&commands](OperatorContext& context,
-                                OperatorProperties&) { return commands.pasteClipboard(*context.app); }});
+                                OperatorProperties&) { return commands.pasteClipboard(*context.app); },
+         .scope = newEntitiesScope()});
     return addOperators(registry, std::move(operators));
 }
 
