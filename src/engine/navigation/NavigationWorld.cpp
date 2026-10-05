@@ -177,7 +177,9 @@ NavigationGeometry gatherNavigationGeometry(const Scene& scene, const AssetManag
             continue;
         }
         Pose pose;
-        if (!decompose(registry.get<const TransformComponent>(entity).world, pose)) {
+        // Resolved from the hierarchy: a bake right after spawning or moving
+        // entities must not wait for the next updateWorldTransforms.
+        if (!decompose(scene.worldTransform(entity), pose)) {
             continue;
         }
         GeometryWriter writer(geometry, pose);

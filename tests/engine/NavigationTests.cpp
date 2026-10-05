@@ -289,8 +289,32 @@ void testEngineSystem() {
 }
 } // namespace
 
+// Geometry gathered right after a move, with no updateWorldTransforms in
+// between, sits where the hierarchy now places it.
+void testGeometryBeforeTransformUpdate() {
+    Scene scene;
+    const Entity level = scene.createEntity("Level");
+    const Entity floor = addBox(scene, {0.0f, -0.5f, 0.0f}, {2.0f, 0.5f, 2.0f});
+    scene.setParent(floor, level);
+    scene.updateWorldTransforms();
+    scene.setPosition(level, {50.0f, 0.0f, 0.0f});
+
+    AssetManager assets;
+    const NavigationGeometry geometry = gatherNavigationGeometry(scene, assets);
+    expect(!geometry.vertices.empty() && std::all_of(geometry.vertices.begin(), geometry.vertices.end(),
+                                                     [](const glm::vec3& vertex) { return vertex.x >= 47.9f; }),
+           "geometry follows a moved parent before world transforms update");
+
+    NavigationWorld navigation;
+    expect(navigation.bake(scene, assets).success, "a bake straight after the move succeeds");
+    const std::optional<glm::vec3> onMesh = navigation.nearestPoint({50.0f, 0.0f, 0.0f});
+    expect(onMesh && glm::distance(*onMesh, glm::vec3(50.0f, 0.0f, 0.0f)) < 0.5f,
+           "the baked mesh lies under the moved floor");
+}
+
 int main() {
     testGeometry();
+    testGeometryBeforeTransformUpdate();
     testBakeAndPaths();
     testAgents();
     testAvoidance();

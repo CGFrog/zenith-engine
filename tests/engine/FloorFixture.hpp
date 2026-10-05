@@ -148,7 +148,6 @@ struct FloorSession {
     // created and removed there), the LateUpdate systems (emitters load their
     // clips), and the frame's audio sync.
     void step() {
-        scene.updateWorldTransforms();
         require(physics.step(scene, assets, physics.config().fixedTimeStep), "step physics");
         runGameplayPhase(systems, SystemPhase::LateUpdate,
                          {.scene = scene, .mode = SimulationMode::Play, .logger = &logger, .services = services.get()});

@@ -38,15 +38,9 @@ bool joinCrowd(NavAgentComponent& agent, NavigationCrowd& crowd, const Navigatio
 
 // Places the entity where the crowd moved it, keeping its parent.
 void moveTransform(Scene& scene, Entity entity, const glm::vec3& position) {
-    entt::registry& registry = scene.registry();
-    auto& transform = registry.get<TransformComponent>(entity);
-    glm::mat4 world = transform.world;
+    glm::mat4 world = scene.worldTransform(entity);
     world[3] = glm::vec4(position, 1.0f);
-    const Entity parent = registry.get<RelationshipComponent>(entity).parent;
-    transform.local = parent != entt::null && registry.valid(parent)
-                          ? glm::inverse(registry.get<TransformComponent>(parent).world) * world
-                          : world;
-    scene.markTransformDirty(entity);
+    scene.setWorldTransform(entity, world);
 }
 } // namespace
 
