@@ -124,9 +124,17 @@ void expect(bool condition, const char* message) {
     }
 }
 
+// Cleanup never throws: under a loaded suite another process (a virus
+// scanner, the indexer) can still hold a file the test just wrote, and an
+// uncaught filesystem_error would abort the test after every check passed.
+void removeTemporaryRoot(const std::filesystem::path& root) {
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+}
+
 std::filesystem::path temporaryRoot() {
     const auto root = std::filesystem::temp_directory_path() / "zenith-production-milestones-tests";
-    std::filesystem::remove_all(root);
+    removeTemporaryRoot(root);
     std::filesystem::create_directories(root);
     return root;
 }
@@ -721,7 +729,7 @@ int main() {
     testPrefabs(root);
     testLightingAndConfiguration();
     testDeferredReleaseAndManifest(root);
-    std::filesystem::remove_all(root);
+    removeTemporaryRoot(root);
     if (failures == 0) {
         std::cout << "Production milestone tests passed\n";
     }

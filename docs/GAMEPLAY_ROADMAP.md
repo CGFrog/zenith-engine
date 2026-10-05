@@ -1382,8 +1382,13 @@ needed:
   - `zenith_scene_gizmos_capture_overlays` mismatches its reference
     (1.3% of pixels): gizmo colours come from `EditorPalette`, which the
     retheme changed, so the reference needs regenerating.
-  - `zenith_production_milestones` failed under the parallel suite and
-    passed alone.
+  - `zenith_production_milestones` failed under the parallel suite (and in
+    batch 2's run, after 350 s) and passed alone. Every check passed; the
+    test's final `std::filesystem::remove_all` threw because another
+    process (a virus scanner or the indexer) still held a file it had just
+    written, and the uncaught exception aborted it. Its cleanup now uses the
+    non-throwing overload. It reproduced in 19 runs under load before the
+    fix and passed 60 after.
 
 - Hot reload during Play is out of scope for now. Reloads stay queued until
   Stop.
