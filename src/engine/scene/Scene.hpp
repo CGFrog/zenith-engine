@@ -360,6 +360,13 @@ class Scene {
     Entity findDescendant(Entity root, std::string_view name) const;
     void setParent(Entity child, Entity parent);
     SceneResult reparent(Entity child, Entity parent, ReparentMode mode = ReparentMode::PreserveLocalTransform);
+    // Moves child to position index among its parent's children (clamped to
+    // the last position); the other children keep their relative order.
+    // Root entities have no stored order (scene documents and the editor list
+    // them by id), so an entity without a parent is refused. setParent and
+    // reparent place a new child before the first sibling with a larger
+    // stable id, so siblings are in id order until this moves one.
+    SceneResult setSiblingIndex(Entity child, size_t index);
     SceneResult duplicateSubtree(Entity source, Entity parent, Entity& duplicate);
     SceneResult instantiateModel(Entity root, ModelHandle model, const AssetManager& assets);
     MeshRendererComponent& attachMesh(Entity entity, MeshHandle mesh);

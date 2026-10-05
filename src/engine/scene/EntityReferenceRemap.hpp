@@ -35,3 +35,9 @@ using EntityReferenceMapping = std::function<std::optional<uint64_t>(uint64_t id
 // Unregistered keys, missing values, and none (null or zero) are skipped.
 void remapEntityReferences(nlohmann::json& components, const ComponentTypeRegistry& types,
                            const EntityReferenceMapping& mapping);
+
+// Rewrites a scene document entity's optional "children" order (the ids of
+// its children in sibling order, see SceneDocument) through mapping, which
+// returns an id's copy or nullopt for a child that was not copied. Ids
+// without a copy are dropped, and an order left empty is removed.
+void remapChildOrder(nlohmann::json& entity, const std::function<std::optional<uint64_t>(uint64_t id)>& mapping);

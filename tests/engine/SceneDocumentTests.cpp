@@ -156,6 +156,75 @@ void testEntityChanges(AssetManager& assets, const SceneDocumentOptions& options
     expect(scene.findEntity({8}) == entt::null, "a rejected patch should not create any of its entities");
 }
 
+// Sibling order: a parent whose children are not in id order saves a
+// "children" order; loads, patches, and new entities honor it, and documents
+// without one keep listing children by id.
+void testChildOrder(AssetManager& assets, const SceneDocumentOptions& options) {
+    Scene scene;
+    const Entity parent = scene.createEntity("Parent");
+    std::vector<Entity> children;
+    for (const char* name : {"A", "B", "C"}) {
+        children.push_back(scene.createEntity(name));
+        scene.setParent(children.back(), parent);
+    }
+    const SceneEntityId parentId = scene.id(parent);
+    const std::string idOrdered = serialize(scene, assets, options);
+    expect(idOrdered.find("\"children\"") == std::string::npos, "children in id order should not save an order");
+
+    expect(!scene.setSiblingIndex(parent, 0).success, "a root entity should have no sibling order");
+    expect(scene.setSiblingIndex(children[2], 0).success, "a child should move to a sibling index");
+    expect(childIds(scene, parentId) == std::vector<uint64_t>{4, 2, 3}, "the moved child should come first");
+    expect(scene.setSiblingIndex(children[0], 99).success, "an index past the end should clamp");
+    expect(childIds(scene, parentId) == std::vector<uint64_t>{4, 3, 2}, "the clamped child should come last");
+    const std::string reordered = serialize(scene, assets, options);
+    const nlohmann::json document = nlohmann::json::parse(reordered);
+    expect(document["entities"][0]["children"] == nlohmann::json::array({4, 3, 2}),
+           "a reordered parent should save its children's order");
+
+    Scene loaded;
+    const SceneDocumentResult load = SceneDocument::deserialize(reordered, assets, options, loaded);
+    expect(load.success, load.error);
+    expect(childIds(loaded, parentId) == std::vector<uint64_t>{4, 3, 2}, "loading should restore the sibling order");
+    expect(serialize(loaded, assets, options) == reordered, "the order should round trip");
+
+    SceneChanges changes;
+    expect(SceneDocument::diff(idOrdered, reordered, changes).success && changes.entities.size() == 1 &&
+               changes.entities[0].id == parentId,
+           "reordering should change only the parent's document form");
+    const SceneDocumentResult backward =
+        SceneDocument::applyChanges(changes, SceneChangeDirection::Backward, assets, options, scene);
+    expect(backward.success, backward.error);
+    expect(childIds(scene, parentId) == std::vector<uint64_t>{2, 3, 4}, "patching back should restore id order");
+    const SceneDocumentResult forward =
+        SceneDocument::applyChanges(changes, SceneChangeDirection::Forward, assets, options, scene);
+    expect(forward.success, forward.error);
+    expect(childIds(scene, parentId) == std::vector<uint64_t>{4, 3, 2}, "patching forward should reorder again");
+
+    // A new child of an ordered parent is listed after the ordered ones; an
+    // order naming an entity that is not a child is ignored.
+    Scene extended;
+    const std::string stale = entityJson(1, "Parent", "null").insert(1, R"("children":[9,3,2],)");
+    const std::string withStale = R"({"version":3,"collections":[],"entities":[)" + stale + "," +
+                                  entityJson(2, "A", "1") + "," + entityJson(3, "B", "1") + "," +
+                                  entityJson(4, "C", "1") + "]}";
+    const SceneDocumentResult staleLoad = SceneDocument::deserialize(withStale, assets, options, extended);
+    expect(staleLoad.success, staleLoad.error);
+    expect(childIds(extended, parentId) == std::vector<uint64_t>{3, 2, 4},
+           "unlisted children should follow the listed ones in id order");
+    const nlohmann::json created =
+        nlohmann::json::parse(entityJson(10, "D", "null").insert(1, R"("children":[12,11],)"));
+    const nlohmann::json first = nlohmann::json::parse(entityJson(11, "E", "10"));
+    const nlohmann::json second = nlohmann::json::parse(entityJson(12, "F", "10"));
+    const std::vector<SceneEntityDocument> added{{{10}, &created}, {{11}, &first}, {{12}, &second}};
+    const SceneDocumentResult creation = SceneDocument::createEntities(added, assets, options, extended);
+    expect(creation.success, creation.error);
+    expect(childIds(extended, {10}) == std::vector<uint64_t>{12, 11}, "created entities should honor their order");
+
+    const std::string invalid = R"({"version":3,"collections":[],"entities":[)" +
+                                entityJson(1, "Parent", "null").insert(1, R"("children":"no",)") + "]}";
+    expectRejectedWithoutReplacement(invalid, "children order", assets, options);
+}
+
 const nlohmann::json& onlyEntityWith(const nlohmann::json& document, std::string_view component) {
     static const nlohmann::json empty = nlohmann::json::object();
     for (const nlohmann::json& entity : document.at("entities")) {
@@ -353,6 +422,7 @@ int main() {
         "Volumetric fog parameters are invalid", assets, options);
 
     testEntityChanges(assets, options);
+    testChildOrder(assets, options);
     testAssetReferences(assetRoot, tempDirectory);
 
     std::filesystem::remove_all(tempDirectory, filesystemError);

@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+class ComponentTypeRegistry;
 class Scene;
 
 // What the outliner lists, as Blender's outliner display modes. The key is
@@ -78,19 +79,23 @@ struct OutlinerNode {
 
 struct OutlinerTreeOptions {
     OutlinerDisplayMode mode{OutlinerDisplayMode::ViewLayer};
-    // Case-insensitive substring; empty lists everything.
+    // The search (OutlinerFilter.hpp syntax: names, c:, t:, p:); empty lists
+    // everything.
     std::string_view filter;
+    // The component types c: terms name; null uses the engine's built-ins.
+    const ComponentTypeRegistry* componentTypes{nullptr};
     // Orphan Data only: the assets to list (see findOrphanAssets).
     std::span<const OrphanAsset> orphanAssets;
 };
 
-// Whether label contains filter, ignoring ASCII case. An empty filter
-// matches everything.
+// Whether label contains filter as plain text, ignoring ASCII case. An empty
+// filter matches everything.
 bool outlinerFilterMatches(std::string_view label, std::string_view filter);
 
 // The rows of one display mode. Top-level entities, collection members, and
 // instances are listed in ascending stable id order; children keep the
-// scene's child order. With a filter, a row is kept when it matches or when a
+// scene's child order (RelationshipComponent::children, which documents
+// save). With a filter, a row is kept when it matches every term or when a
 // row below it does (then marked filterContext), so matches always appear
-// with their ancestors.
+// with their ancestors. Rows that are not entities match name terms only.
 std::vector<OutlinerNode> buildOutlinerTree(const Scene& scene, const OutlinerTreeOptions& options);

@@ -28,9 +28,16 @@ and middle presses stay camera navigation. `OperatorSearch` is the F3 popup
 and `KeymapEditor` the rebinding window (keys, viewport mouse chords, and a
 trigger per binding). `ObjectOperators` holds the document-only object
 operators, which run headless in `tests/editor/OperatorTests.cpp`, and
-registers `CollectionOperators` (`collection.new`, `delete`, `link`, `unlink`,
-`set_flag`, and `object.collection_instance_add`) and `VisibilityOperators`
-(`object.hide` H, `object.unhide` Alt+H, `object.isolate` Shift+H). The
+registers `CollectionOperators` (`collection.new`, `delete`, `rename`, `link`,
+`unlink`, `set_flag`, and `object.collection_instance_add`),
+`OutlinerOperators` (`object.set_visibility`, `outliner.parent_drop`,
+`outliner.reorder {entity, parent, index, keep_transform}`, which moves one
+object to a position among a parent's children, and the non-undoable
+`outliner.select_matching {filter}`, which selects every object an outliner
+search matches), and `VisibilityOperators`
+(`object.hide` H, `object.unhide` Alt+H, `object.isolate` Shift+H).
+`collection.rename {collection, name}` trims the name and refuses an empty
+one; names need not be unique. The
 viewport hide is editor-only: `EditorSession` renders with
 `SceneVisibilityMode::Editor` while editing and `Runtime` in Play mode, and
 hidden or unselectable entities (or collections) cannot be picked or selected

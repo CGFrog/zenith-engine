@@ -14,6 +14,7 @@
 #include <map>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -205,6 +206,64 @@ SceneDocumentResult readCollections(const Json& array, SceneCollections& output)
     return {.success = true};
 }
 
+// The ids of entity's saved (non-transient) children in child order when that
+// is not ascending id order, which is what readers assume without the key.
+std::optional<Json> childOrderJson(const Scene& scene, const RelationshipComponent& relationship) {
+    std::vector<uint64_t> ids;
+    ids.reserve(relationship.children.size());
+    for (const Entity child : relationship.children) {
+        if (scene.registry().valid(child) && !scene.isTransient(child)) {
+            ids.push_back(scene.id(child).value);
+        }
+    }
+    if (std::ranges::is_sorted(ids)) {
+        return std::nullopt;
+    }
+    return Json(ids);
+}
+
+// Reads an entity object's optional "children" order: an array of non-zero
+// ids. Absent means ascending id order (an empty order).
+SceneDocumentResult readChildOrder(const Json& entity, std::vector<uint64_t>& order) {
+    order.clear();
+    const auto children = entity.find("children");
+    if (children == entity.end()) {
+        return {.success = true};
+    }
+    const auto label = [&entity] { return "Entity " + std::to_string(entity.value("id", uint64_t{0})); };
+    if (!children->is_array()) {
+        return {.error = label() + " has a children order that is not an array"};
+    }
+    for (const Json& child : *children) {
+        if (!child.is_number_unsigned() || child.get<uint64_t>() == 0) {
+            return {.error = label() + " lists an invalid child id"};
+        }
+        order.push_back(child.get<uint64_t>());
+    }
+    return {.success = true};
+}
+
+// Puts parent's children in order: the ones order lists first, as listed, and
+// then the rest (transient children, or children the order does not know) in
+// ascending id order. Ids in order that are not children are ignored, so an
+// order copied with a subset of the hierarchy stays usable.
+void applyChildOrder(Scene& scene, Entity parent, std::span<const uint64_t> order) {
+    auto& children = scene.registry().get<RelationshipComponent>(parent).children;
+    if (children.size() < 2) {
+        return;
+    }
+    std::unordered_map<uint64_t, size_t> rank;
+    for (size_t index = 0; index < order.size(); ++index) {
+        rank.emplace(order[index], index);
+    }
+    const auto key = [&scene, &rank](Entity child) {
+        const uint64_t id = scene.id(child).value;
+        const auto found = rank.find(id);
+        return std::pair{found == rank.end() ? (std::numeric_limits<size_t>::max)() : found->second, id};
+    };
+    std::ranges::sort(children, {}, key);
+}
+
 SceneDocumentResult serializeEntity(const Scene& scene, Entity entity, const AssetManager& assets,
                                     const SceneDocumentOptions& options, Json& output) {
     const entt::registry& registry = scene.registry();
@@ -221,6 +280,9 @@ SceneDocumentResult serializeEntity(const Scene& scene, Entity entity, const Ass
 
     output = {{"id", entityId.value}, {"name", name->name}, {"local_transform", matrix4(transform->local)}};
     output["parent"] = relationship->parent == entt::null ? Json(nullptr) : Json(scene.id(relationship->parent).value);
+    if (std::optional<Json> order = childOrderJson(scene, *relationship)) {
+        output["children"] = std::move(*order);
+    }
     Json components = Json::object();
     const ComponentSaveContext context{.assets = assets, .options = options};
     for (const ComponentType& type : componentTypesFor(options).types()) {
@@ -346,6 +408,8 @@ struct StagedEntity {
     std::string name;
     glm::mat4 local{1.0f};
     SceneEntityId parent;
+    // Its "children" order (see readChildOrder).
+    std::vector<uint64_t> childOrder;
     Entity staged{entt::null};
 };
 
@@ -364,6 +428,9 @@ SceneDocumentResult stageEntity(SceneEntityId id, const std::string& serialized,
     output.parent = parent.is_null() ? SceneEntityId{} : SceneEntityId{parent.get<uint64_t>()};
     if (!parent.is_null() && !output.parent) {
         return {.error = "Entity " + std::to_string(id.value) + " references invalid parent ID 0"};
+    }
+    if (SceneDocumentResult result = readChildOrder(json, output.childOrder); !result) {
+        return result;
     }
     if (SceneResult result = staging.createEntityWithId(id, output.name, output.staged); !result) {
         return {.error = result.error};
@@ -558,6 +625,10 @@ void applyPlan(const PatchPlan& plan, const Scene& staging, const SceneDocumentO
             scene.destroyEntity(found->second);
         }
     }
+    // Every move is done, so each rebuilt entity's children are all in place.
+    for (const StagedEntity& upsert : plan.upserts) {
+        applyChildOrder(scene, entities.at(upsert.id.value), upsert.childOrder);
+    }
 
     const ComponentTypeRegistry& types = componentTypesFor(options);
     for (size_t index = 0; index < plan.upserts.size(); ++index) {
@@ -589,6 +660,7 @@ struct NewEntity {
     std::string name;
     glm::mat4 local{1.0f};
     SceneEntityId parent;
+    std::vector<uint64_t> childOrder;
     Entity entity{entt::null};
 };
 
@@ -615,6 +687,9 @@ SceneDocumentResult planNewEntities(std::span<const SceneEntityDocument> documen
         entity.parent = parent.is_null() ? SceneEntityId{} : SceneEntityId{parent.get<uint64_t>()};
         if (!parent.is_null() && !entity.parent) {
             return {.error = label() + " references invalid parent ID 0"};
+        }
+        if (SceneDocumentResult result = readChildOrder(*document.entity, entity.childOrder); !result) {
+            return result;
         }
         planned.push_back(std::move(entity));
     }
@@ -686,6 +761,11 @@ SceneDocumentResult createPlanned(std::vector<NewEntity>& planned, AssetManager&
             const auto parent = created.find(entity.parent.value);
             attachInIdOrder(scene, entity.entity,
                             parent != created.end() ? parent->second : scene.findEntity(entity.parent));
+        }
+    }
+    for (const NewEntity& entity : planned) {
+        if (!entity.childOrder.empty()) {
+            applyChildOrder(scene, entity.entity, entity.childOrder);
         }
     }
     for (const NewEntity& entity : planned) {
@@ -812,7 +892,8 @@ SceneDocumentResult SceneDocument::commit(const ParsedSceneDocument& parsed, Ass
         loaded.setCollections(std::move(collections));
         std::unordered_map<uint64_t, Entity> entities;
         // Children are attached in document order, which serialize writes
-        // in ascending id order, so a loaded hierarchy lists siblings by id.
+        // in ascending id order, so siblings are in id order unless their
+        // parent lists a "children" order.
         std::vector<std::pair<uint64_t, uint64_t>> parents;
         for (const Json& serialized : document["entities"]) {
             const SceneEntityId id{serialized.at("id").get<uint64_t>()};
@@ -833,6 +914,15 @@ SceneDocumentResult SceneDocument::commit(const ParsedSceneDocument& parsed, Ass
 
         for (const auto& [child, parent] : parents) {
             loaded.setParent(entities.at(child), entities.at(parent));
+        }
+        std::vector<uint64_t> order;
+        for (const Json& serialized : document["entities"]) {
+            if (SceneDocumentResult result = readChildOrder(serialized, order); !result) {
+                return result;
+            }
+            if (!order.empty()) {
+                applyChildOrder(loaded, entities.at(serialized.at("id").get<uint64_t>()), order);
+            }
         }
         for (const Json& serialized : document["entities"]) {
             const uint64_t id = serialized.at("id").get<uint64_t>();
