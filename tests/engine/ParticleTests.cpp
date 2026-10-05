@@ -228,11 +228,13 @@ void testSchedulerLayout() {
     expect(!scheduler.plan(emitters, 100, 0.016f).resetPool, "an unchanged layout keeps the pool");
     std::vector<particles::EmitterSnapshot> resized = emitters;
     resized[0].emitter.maxParticles = 20;
-    expect(scheduler.plan(resized, 100, 0.016f).resetPool, "changing an emitter's capacity resets the pool");
+    expect(scheduler.plan(resized, 100, 0.016f).resetPool,
+           "a capacity change that no free range of a full budget fits compacts and resets the pool");
     expect(scheduler.plan(resized, 200, 0.016f).resetPool, "changing the budget resets the pool");
     resized[1].emitter.space = ParticleSimulationSpace::Local;
-    expect(scheduler.plan(resized, 200, 0.016f).resetPool,
-           "changing a simulation space resets the pool (live positions are in the old space)");
+    const particles::ParticleFramePlan respaced = scheduler.plan(resized, 200, 0.016f);
+    expect(!respaced.resetPool && respaced.clearRanges == std::vector<particles::SlotRange>{{.first = 20, .count = 60}},
+           "changing a simulation space clears only that emitter's slots (live positions are in the old space)");
     expect(scheduler.plan(resized, 200, 0.016f, 7).resetPool && !scheduler.plan(resized, 200, 0.016f, 7).resetPool,
            "a new scene content generation resets the pool once");
     Scene scene;
@@ -255,6 +257,83 @@ void testSchedulerLayout() {
            "at most maximumEmitters emitters are simulated, the lowest scene ids first");
     expect(capped.droppedEmitters == 4, "emitters beyond maximumEmitters are counted as dropped");
     expect(scheduler.plan(resized, 1000, 0.016f).droppedEmitters == 0, "a plan within the cap drops no emitter");
+}
+
+particles::ScheduledEmitter scheduledEmitter(const particles::ParticleFramePlan& plan, uint64_t id) {
+    for (const particles::ScheduledEmitter& emitter : plan.emitters) {
+        if (emitter.id == id) {
+            return emitter;
+        }
+    }
+    return {};
+}
+
+// Adding or removing one emitter leaves the others' slots, table entries,
+// rings, and spawn accumulators alone; only the affected slots are cleared.
+void testSchedulerKeepsUnaffectedEmitters() {
+    particles::ParticleScheduler scheduler;
+    // 3 particles per second with 0.25 s steps: the accumulator carries
+    // fractions, so a restart would show up in the spawn counts.
+    const ParticleEmitterComponent stream{.maxParticles = 10, .spawnRate = 3.0f};
+    std::vector<particles::EmitterSnapshot> emitters{snapshot(2, stream), snapshot(5, stream), snapshot(8, stream)};
+    particles::ParticleFramePlan plan = scheduler.plan(emitters, 100, 0.25f);
+    expect(plan.resetPool && scheduledEmitter(plan, 8).firstSlot == 20 && scheduledEmitter(plan, 8).emitterIndex == 2,
+           "the first layout packs emitters in id order");
+    plan = scheduler.plan(emitters, 100, 0.25f); // accumulators at 0.5 after 0.75 + 0.75 spawns 1
+    const particles::ScheduledEmitter before = scheduledEmitter(plan, 8);
+
+    // Add emitter 3 (between existing ids) and remove emitter 5.
+    std::vector<particles::EmitterSnapshot> changed{snapshot(2, stream), snapshot(3, stream), snapshot(8, stream)};
+    plan = scheduler.plan(changed, 100, 0.25f);
+    const particles::ScheduledEmitter kept = scheduledEmitter(plan, 8);
+    const particles::ScheduledEmitter added = scheduledEmitter(plan, 3);
+    expect(!plan.resetPool, "adding and removing emitters keeps the pool");
+    expect(kept.firstSlot == before.firstSlot && kept.capacity == before.capacity &&
+               kept.emitterIndex == before.emitterIndex && kept.ringStart == before.ringStart + before.spawnCount &&
+               kept.firstOrdinal == before.firstOrdinal + before.spawnCount,
+           "an unaffected emitter keeps its slots, table entry, and ring");
+    expect(kept.spawnCount == 1 && scheduledEmitter(plan, 2).spawnCount == 1,
+           "an unaffected emitter keeps its spawn accumulator (0.5 + 0.75 spawns 1)");
+    expect(added.firstSlot == 10 && added.emitterIndex == 1 && added.firstOrdinal == 0 && added.spawnCount == 0,
+           "a new emitter takes the first free range and table entry and starts fresh");
+    expect(plan.clearRanges == std::vector<particles::SlotRange>{{.first = 10, .count = 10}},
+           "the removed emitter's slots, now the new emitter's, are cleared");
+    expect(plan.emitterTableSize == 3 && plan.poolSlots == 30, "the table and pool cover every scheduled emitter");
+
+    // Removing the last emitter frees its slots and shrinks nothing else.
+    changed.pop_back();
+    plan = scheduler.plan(changed, 100, 0.25f);
+    expect(!plan.resetPool && plan.clearRanges == std::vector<particles::SlotRange>{{.first = 20, .count = 10}} &&
+               plan.poolSlots == 20 && plan.emitterTableSize == 2,
+           "a removed emitter's slots are cleared and leave the simulated prefix");
+
+    // A larger emitter that does not fit a gap goes after the others.
+    changed.push_back(snapshot(9, {.maxParticles = 40, .spawnRate = 3.0f}));
+    plan = scheduler.plan(changed, 100, 0.25f);
+    expect(!plan.resetPool && scheduledEmitter(plan, 9).firstSlot == 20 && scheduledEmitter(plan, 9).emitterIndex == 2,
+           "a new emitter takes the first range that fits");
+
+    // Fragmentation that leaves no range large enough compacts the layout.
+    changed.erase(changed.begin()); // frees slots 0-9
+    changed.push_back(snapshot(11, {.maxParticles = 45, .spawnRate = 3.0f}));
+    plan = scheduler.plan(changed, 100, 0.25f);
+    expect(plan.resetPool && plan.clearRanges.empty() && scheduledEmitter(plan, 3).firstSlot == 0 &&
+               scheduledEmitter(plan, 9).firstSlot == 10 && scheduledEmitter(plan, 11).firstSlot == 50,
+           "when no free range fits, emitters are packed again in id order and the pool resets");
+
+    // The layout is a function of the plan sequence alone.
+    particles::ParticleScheduler replay;
+    replay.plan(emitters, 100, 0.25f);
+    replay.plan(emitters, 100, 0.25f);
+    const particles::ParticleFramePlan replayed = replay.plan(
+        std::vector<particles::EmitterSnapshot>{snapshot(2, stream), snapshot(3, stream), snapshot(8, stream)}, 100,
+        0.25f);
+    expect(scheduledEmitter(replayed, 3).firstSlot == 10 && scheduledEmitter(replayed, 8).firstSlot == 20,
+           "the same plan sequence produces the same layout");
+
+    // Emptying the set and starting again rebuilds from scratch.
+    expect(scheduler.plan({}, 100, 0.25f).emitters.empty() && scheduler.plan(emitters, 100, 0.25f).resetPool,
+           "a plan after an empty one resets the pool, forgetting particles of emitters that left meanwhile");
 }
 
 // A pooled effect restarts its emitter by changing restartGeneration: the
@@ -367,6 +446,7 @@ int main() {
     testSortPlan();
     testSchedulerLayout();
     testSchedulerSpawns();
+    testSchedulerKeepsUnaffectedEmitters();
     testSchedulerRestart();
     testPackEmitter();
     testGatherEmitters();
