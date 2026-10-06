@@ -236,7 +236,8 @@ compressed paths report the missing optional decoder by name. Parsing,
 resource-limit, and validation failures return descriptive errors. Each
 imported mesh then passes through `MeshOptimization`. Materials also take the
 `KHR_materials_clearcoat`, `sheen`, `specular`, `transmission`, `volume`, and
-`ior` extensions (see `docs/RENDERER_VALIDATION.md`), whose texture slots join
+`ior` extensions (see
+[KHR material extensions](graphics-passes.md#khr-material-extensions)), whose texture slots join
 the color/normal/data usage classification.
 `readModelOutline` reads only a model's glTF JSON (no buffers or images) and
 returns its meshes by glTF index (the `loadMesh` index) with their names,

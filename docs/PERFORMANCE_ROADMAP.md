@@ -160,7 +160,9 @@ downsampler and made the post-prepass rebuild on the GPU-driven path
 conditional on the late phase drawing anything, so the pyramid is built once
 per frame in the steady state. A full build fell from about 0.067 ms to 0.047
 ms at 1280x720 (RTX 2070 SUPER); GPU-driven showcase frames fell from 1.551 ms
-to 1.466 ms median. See `RENDERER_VALIDATION.md` for the full A/B table.
+to 1.466 ms median. See
+[Renderer measurements](history/renderer-measurements.md#single-pass-depth-pyramid-2026-10-02)
+for the full A/B table.
 
 ### Measurement and completion gate
 
@@ -180,8 +182,9 @@ submission slower in every scene. The `gpu.frame` medians were 0.489 vs 0.548 ms
 1.015 vs 1.494 ms (10,000 objects), and CPU recording cost 0.2 to 0.4 ms more.
 The cost of culling outweighs the raster savings for cheap, already-instanced
 geometry. CPU submission therefore stays the default, with no automatic
-draw-count threshold. `docs/RENDERER_VALIDATION.md` has the full table and
-methodology. The decision lives in `planMeshPassFrame()`
+draw-count threshold.
+[Renderer measurements](history/renderer-measurements.md#gpu-driven-submission-default-2026-10-02)
+has the full table and methodology. The decision lives in `planMeshPassFrame()`
 (`src/engine/graphics/MeshPassFramePlan.*`), so a future data-driven policy
 such as a measured instance threshold changes one pure, tested function.
 
@@ -304,8 +307,9 @@ denoises and upsamples to the render resolution in one depth-aware pass:
 0.14 ms at 720p and 0.32 ms at 1080p with visually equivalent contact
 occlusion, so it is the recommended quality and the one
 `ZENITH_FORCE_HIGH_QUALITY` selects. Full resolution remains available and
-unchanged in cost. `RENDERER_VALIDATION.md` has the full table and the image
-comparison.
+unchanged in cost.
+[Renderer measurements](history/renderer-measurements.md#ground-truth-ambient-occlusion-2026-10-02)
+has the full table and the image comparison.
 
 ## Step 7: physics scale and capability expansion
 

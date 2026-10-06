@@ -2,6 +2,18 @@
 
 Part of the [repository guide](../REPOSITORY_GUIDE.md).
 
+The file sections come first. The feature contracts (settings, fallbacks, GPU
+scopes, budgets, and tests) follow them:
+[Ground-truth ambient occlusion](#ground-truth-ambient-occlusion),
+[Single-pass depth pyramid](#single-pass-depth-pyramid),
+[GPU-culled shadow cascades](#gpu-culled-shadow-cascades),
+[GPU particles](#gpu-particles),
+[Reflection probe blending](#reflection-probe-blending),
+[Clustered decals](#clustered-decals),
+[KHR material extensions](#khr-material-extensions),
+[Local-light shadows](#local-light-shadows), and
+[View shading modes](#view-shading-modes).
+
 ## `src/engine/graphics/passes/GpuDrivenPass.*`
 
 Two-phase GPU frustum and occlusion culling and draw compaction into
@@ -92,8 +104,7 @@ mode's reduced settings for the frame, so the plan, the graph model and the
 passes all see the same feature set; the mesh pass only selects a pipeline
 variant (clay surfaces, the LINE overlay), lights the camera constants with a
 studio rig, and draws Wireframe's edges, and only those, through every
-surface. The contract is in
-`docs/RENDERER_VALIDATION.md` (View shading modes);
+surface. The contract is in [View shading modes](#view-shading-modes);
 `tests/engine/ViewShadingTests.cpp` covers it.
 
 ## `src/engine/graphics/passes/ClusteredLightingPass.*`
@@ -478,3 +489,279 @@ that transmissive materials sample through camera binding 24. `MeshPass`
 captures it between opaque and blended surfaces, ending and resuming the scene
 pass, only on frames that draw a transmissive surface; the copy stretches the
 render extent over the whole image so every mip is valid.
+
+## Ground-truth ambient occlusion
+
+`RenderSettings::ambientOcclusion` selects GTAO's resolution and sampling
+pattern (`ambient_occlusion::qualityProfile`); both qualities write a
+render-resolution R8 image, so shading is identical:
+
+| Quality | Traced texels | Slices x steps per side | Horizon depth | Denoise |
+| --- | --- | --- | --- | --- |
+| **HalfResolution** (recommended) | one per 2x2 pixels | 2 x 4 | pyramid level 1, farthest/closest depth in a checkerboard | `gtao_upsample.comp`: 4x4 raw texels per render pixel, depth-weighted against the pixel's own view depth |
+| **FullResolution** | every pixel | 3 x 4 | pyramid level 0 | `gtao_denoise.comp`: depth-aware 5x5 |
+
+Both rotate slices with a 4x4 ordered dither (advanced per frame under TAA),
+and the denoise window holds each of its 16 phases, so half resolution still
+averages 32 slice directions per pixel. The clamp to [0, 1] and the occlusion
+power apply after the average: clamping each few-slice estimate first darkened
+open surfaces far from the view axis. The scope is `gpu.ambient_occlusion` and
+the budget `RenderPassBudgets::ambientOcclusion` (zero, unenforced, like every
+default budget; half resolution fits 0.2 ms at 720p and 0.35 ms at 1080p on the
+reference GPU).
+
+## Single-pass depth pyramid
+
+`DepthPyramid` builds every level in one dispatch
+(`shaders/depth_pyramid_single_pass.comp`, structured after AMD FidelityFX SPD):
+each 256-thread workgroup reduces a 64x64 tile through six levels in shared
+memory, and a global atomic counter elects the last workgroup, which completes
+the edge texels of levels whose extent does not tile the base exactly and then
+reduces the remaining levels. The result is identical to the per-level build
+(`zenith_depth_prepass` checks both against a brute-force min/max on odd
+sizes). Devices without `shaderStorageImageArrayDynamicIndexing` fall back to
+the per-level build and log it once; `ZENITH_DEPTH_PYRAMID_PER_LEVEL` forces it.
+
+With GPU-driven submission and the depth prepass, the pyramid used to be built
+twice per frame: once from the early phase's depth for the late cull, and again
+after the late phase for screen-space effects. The second build now passes the
+late phase's emitted-instance count (`GpuDrivenPass::lateEmittedCount`) and the
+shader exits when it is zero, since the depth is then unchanged. In the steady
+state the pyramid is built once per frame; when objects become visible the
+rebuild still runs, so SSR and GTAO always see the complete depth. Using last
+frame's pyramid for the late cull instead would cull objects disoccluded by
+camera motion for a frame. `gpu.depth_pyramid` measures only the post-prepass
+build on that path (the occlusion build counts toward `gpu.depth_prepass`).
+
+## GPU-culled shadow cascades
+
+GPU-driven submission culls each dirty directional shadow cascade on the GPU
+(`GpuDrivenPass::cullFrustumView`) and draws it with indirect commands. There is
+no separate render setting: the technique's Off fallback is the CPU cascade
+cull, used whenever GPU-driven submission is off or unsupported, and
+`ZENITH_DISABLE_GPU_SHADOW_CULLING` forces it for A/B measurement. Culling has its
+own timestamp scope (`gpu.shadow_culling`) and budget
+(`RenderPassBudgets::shadowCulling`, serialized as `shadowCulling`). The three
+cascade regions add about 33 MB of device memory to the GPU-driven buffers
+(visible instances, counters, and commands sized like a camera phase). With GPU
+culling, `RenderStats::shadowCasterCount` reports the casters a retired frame
+emitted, like `visibleCount`, and shadow triangles are not counted.
+
+## GPU particles
+
+`ParticleEmitterComponent` (scene document `particle_emitter`, every field
+optional) authors an emitter; `RenderSettings::particles` (`particles` in render
+settings: 0 Off, 1 Low with 16,384 particles, 2 High with 131,072) sets the
+budget every emitter shares, and the editor's Graphics panel exposes it next to
+the volumetric fog. Emitters take their slots in scene-id order, so with too
+small a budget the last emitters get fewer slots or none; within its ring an
+emitter replaces its oldest particle once full. At most 64 emitters and eight
+sprite textures (one is the procedural round sprite) are used per frame.
+
+Captures are reproducible: with a fixed frame time (implied by
+`ZENITH_CAPTURE_FRAME`) spawn counts, pool slots, and random values depend only
+on the frame number and the emitters' scene ids, and the back-to-front sort
+breaks depth ties by slot. Two consecutive captures of a 2,400-particle ember
+and smoke scene differed by at most 2 8-bit steps (RMSE 0.13), the same noise
+as captures without particles.
+
+## Reflection probe blending
+
+`RenderSettings::reflectionProbeBlending` selects how reflection probes reach
+shading when image-based lighting and `reflectionProbes` are on:
+
+- **PerPixel** (default): up to eight probes nearest the camera stay resident.
+  `EnvironmentPass` copies each one's prefiltered specular cube into a slot of
+  one cube-map array (binding 16) once, when it becomes resident, building at
+  most two new probe environments per frame. `ReflectionProbeClusterPass`
+  uploads the probe records and their irradiance and
+  `reflection_probe_clusters.comp` assigns each probe's influence box (its box
+  expanded by the blend distance) to the light-cluster grid (binding 17).
+  `mesh.frag` blends up to four of its cluster's probes per pixel with
+  box-projected specular lookups and blended irradiance, matching
+  `blendReflectionProbes`; the scene environment fills the remainder across
+  each probe's blend distance. The GPU scope is `gpu.reflection_probe_clusters`
+  with the `reflectionProbeClusters` budget; `reflection_probes` counts the
+  resident probes.
+- **CameraOnly** (the Off fallback): the dominant probe at the camera is
+  blended over the whole frame, as before. Validation selects it, with a
+  fallback message, when the device lacks per-pixel support.
+
+`zenith_reflection_probes` covers box projection against an independent slab
+intersection, weight normalization against `blendReflectionProbes`, resident
+selection, and conservative cluster assignment against brute-force frustum
+samples. The showcase project's west and east halves carry two overlapping
+probes with distinct environments (`tools/showcase/build_probe_environments.py`).
+
+## Clustered decals
+
+`DecalComponent` is an oriented box projector: the entity's world transform
+applied to `[-halfExtents, halfExtents]`, projecting along its local -Y (an
+unrotated decal lands on floors; pitch it 90 degrees for a wall), with u along
+local +X and v along local +Z. It carries an optional albedo texture (sRGB; its
+alpha masks every effect), an optional tangent-space normal texture (+Y up),
+a linear tint and opacity, per-property strengths for base color, normal
+(without a normal texture it flattens the surface toward its geometric normal,
+as paint or standing water fills bumps), roughness and metallic overrides, an angle fade (full coverage up to
+`angleFadeStartRadians` between the surface's geometric normal and the
+projector axis, none past `angleFadeEndRadians`, so walls next to a floor decal
+and back faces stay clean), and a sort order. Decals also fade across the outer
+quarter of the box depth. Scene documents store it as the optional `decal`
+component; only `half_extents` is required.
+
+`RenderSettings::decals` (`DecalQuality`, serialized as `decals` by value) is
+On by default; Off is the fallback and records no work. Each frame
+`MeshPass::prepareDecals` gathers decals in application order (ascending sort
+order, then stable scene id), keeps the 1024 nearest the camera, resolves their textures
+to bindless slots, and packs them with conservative view-space bounds.
+`DecalClusterPass` uploads the records (camera binding 19) and
+`decal_clusters.comp` lists up to 31 decals per light-cluster froxel in
+application order (binding 20). `applyDecals` in `mesh.frag` walks the
+fragment's cluster list before lighting and blends each decal into base color,
+the (material-mapped) normal, roughness and metallic of opaque and masked
+surfaces; textures filter with explicit gradients from the world-position
+derivatives. Decals do not change the depth prepass normals, so GTAO and
+screen-space reflections see the undecorated surface.
+
+The GPU scope is `gpu.decal_clusters` (timestamp slots 51/52) with the
+`decalClusters` budget; the benchmark also reports `decals.count`,
+`decals.dropped`, `decals.discarded_assignments`, `decals.maximum_per_cluster`
+and `render.decal_bytes` (records and cluster lists, about 0.6 MB per frame in
+flight). `zenith_decals` covers decal-space projection, the angle
+and depth fades, ordering and nearest selection, conservative cluster
+assignment with overflow counting against a brute-force test, GPU packing,
+scene-document round trips with the shipped textures, and the setting's
+serialization and fallback. `tools/showcase/build_decal_textures.py` writes the
+showcase textures under `assets/showcase/decals/`.
+
+## KHR material extensions
+
+`ModelImporter` reads `KHR_materials_clearcoat`, `KHR_materials_sheen`,
+`KHR_materials_specular`, `KHR_materials_transmission`, `KHR_materials_volume`
+(thickness and attenuation factors; no thickness texture) and
+`KHR_materials_ior` into `MaterialAsset`. Absent extensions keep neutral
+defaults (ior 1.5, specular 1 and white, no coat, black sheen, no
+transmission), which shade exactly like plain metallic-roughness. Texture
+slots are classified for cooking like the core ones: coat normals are normal
+maps, sheen and specular colors are sRGB color, the rest linear data.
+
+`MaterialRecord` (`engine/graphics/MaterialRecord.hpp`, 192 bytes, mirrored in
+`mesh.frag`, `shadow.frag` and `depth_normal.frag`) carries a lobe bit mask;
+`mesh.frag` evaluates and samples a lobe only when its bit is set, so a
+material without extensions pays a few uniform branches. Shading follows the
+glTF specifications and the Khronos sample viewer:
+
+- **ior / specular**: dielectric F0 = min(((ior - 1) / (ior + 1))^2 *
+  specular color, 1); the specular factor scales the dielectric Fresnel term,
+  grazing value included, in direct, image-based and hemisphere lighting. The
+  depth prepass writes the same F0 for screen-space reflections.
+- **sheen**: Charlie distribution with the Estevez-Kulla visibility per light;
+  the layers below are scaled by 1 - max(sheen color) * albedo, where the
+  directional albedo lives in the environment BRDF table's blue channel
+  (`env_brdf_lut.comp`, CPU reference `integrateSheenAlbedo`). Ambient sheen is
+  lit by the cosine-weighted environment (irradiance), not a Charlie-filtered
+  cube.
+- **clearcoat**: a second GGX lobe (ior 1.5) on the coat normal (the coat
+  normal map, or the geometric normal) for every light and for prefiltered
+  image-based reflections; everything below, emission included, is attenuated
+  by 1 - coat * F(n.v).
+- **transmission**: transmissive materials are translucent
+  (`MaterialAsset::translucent()`): they draw with blended surfaces, cast no
+  shadows and stay out of the depth prepass, ambient occlusion and the
+  irradiance baker. On frames that draw one, `TransmissionBackground` ends the
+  scene pass after opaque surfaces, the sky and screen-space reflections,
+  blits the HDR target into a mip-chained copy, and resumes. The surface
+  replaces `transmission` of its diffuse base with that copy, tinted by the
+  base color and reduced by its split-sum reflectance, blurred by
+  roughness * clamp(2 ior - 2, 0, 1) through the mips. Without a volume the
+  surface is thin-walled (straight through); a `KHR_materials_volume`
+  thickness refracts the view ray by the ior and absorbs along it with the
+  Beer-Lambert attenuation. Limitations: thickness is in world units (object
+  scale is ignored), lights behind the surface reach it only through the copy,
+  and transmissive surfaces do not see each other (the copy holds only the
+  opaque scene). An opaque-mode transmissive surface writes alpha 1; with
+  `BLEND` its alpha still composites over the result.
+- The fast lighting variant (`PHYSICALLY_BASED_LIGHTING` off) keeps only
+  transmission, without the reflectance term.
+
+`gpu.transmission_background` times the copy (inside the `gpu.blended` span and
+subtracted from it); the lobes are part of `gpu.opaque` and `gpu.blended`
+shading. `zenith_material_extensions` covers import, defaults, texture usages,
+record packing and the sheen albedo; `tools/showcase/build_materials.py`
+generates the material gallery (`assets/showcase/materials/`).
+
+The transmission copy holds one RGBA16F image of the render target's size with
+a full mip chain (about 22 MB at 1920x1080), paid only on frames that draw a
+transmissive surface.
+
+## Local-light shadows
+
+`RenderSettings::localShadows` (`LocalShadowQuality`) shadows point and spot
+lights whose components set `castsShadows`. Off is the fallback: lights stay
+unshadowed, a 64x64 placeholder atlas stays bound, and no tile pass runs.
+Validation also turns it Off when clustered local lighting is disabled or
+unsupported. Low, Medium, and High pick the atlas size (2048 or 4096 texels),
+the default tile sizes, the number of shadowed lights (8, 16, 24), and the
+per-frame tile budget (6, 12, 24 tiles); see `localShadowProfile`.
+
+Tiles keep their depth across frames and are redrawn only when their light
+moves, a caster within the light's range moves or animates, or the caster set
+or materials change; dirty tiles beyond the budget keep shading with their
+previous depth and projection. The benchmark reports `gpu.local_shadows` and
+`cpu.local_shadows` against `RenderPassBudgets::localShadows`, plus
+`local_shadows.tiles_rendered`, `tiles_cached`, `tiles_pending`,
+`lights_rejected` (no atlas space), and `render.local_shadow_atlas_bytes`.
+`zenith_local_shadows` covers request order, cache invalidation, budget
+selection, and the face projections on the CPU.
+
+## View shading modes
+
+`RenderSettings::viewShading` selects Rendered, Material Preview, Solid or
+Wireframe, after Blender's viewport shading. The frame settings carry a
+project-wide value (the editor's Graphics Settings panel has a "Viewport
+shading" combo, serialized by value), and each editor viewport sets its own
+through a per-view settings override (`RenderRuntime::setViewSettings`)
+holding the already reduced `viewShadingFrameSettings`. Documents written before
+the field existed load as Rendered. Every mode is one
+recording path with a reduced feature set:
+
+- `viewShadingFrameSettings` (`ViewShading.hpp`) turns the requested settings
+  into the frame's. Rendered returns them unchanged, so its output is
+  untouched. The other modes drop shadows, local lights and their shadows,
+  reflection probes, the irradiance volume, image-based lighting and the
+  environment background, ambient occlusion, screen-space reflections,
+  volumetric fog, bloom, motion blur, depth of field and colour grading, and
+  fix exposure at 0 EV manual. Material Preview keeps decals, particles and
+  temporal anti-aliasing; Solid and Wireframe drop decals and particles, and
+  Wireframe swaps TAA (and TAA upsampling) for FXAA because jitter smears
+  one-pixel edges, and turns off the depth prepass and GPU-driven submission
+  (no surface depth is drawn and nothing is occlusion culled, so every edge
+  shows). The tone-mapping operator, anti-aliasing, the upscaler, resolution
+  and LOD stay as requested, so the editor grid, selection mask and outlines
+  work unchanged.
+- `Renderer::recordFrame` substitutes those settings for the frame through
+  `ScopedViewShadingSettings`, so the frame plan, the render-graph shape and
+  every pass agree, while the editor and serialization keep seeing the request.
+- `MeshPass` replaces the scene's directional and hemisphere light in the
+  camera constants with a camera-relative studio rig (`studioLighting`: a key
+  light above, behind and left of the camera plus a neutral sky and ground),
+  so Material Preview shades textured materials through the ordinary
+  hemisphere path.
+- Solid and Wireframe select the `SOLID_SURFACES` specialization of
+  `mesh.frag`: one 0.8 clay albedo, geometric normals, the studio key and
+  hemisphere and a faint rim, with no texture reads except base-colour alpha
+  for cutouts and blending.
+- Wireframe also builds polygon-mode LINE overlay pipelines
+  (`mesh_wireframe.frag`) and, like Blender's default wireframe shading, draws
+  only the edges of every surface, through each other (x-ray): no surface is
+  shaded (`drawsSurfaces`) or written to depth, and the CPU-submitted items
+  draw on the cleared scene in one light colour. The edges pass every depth
+  test, write no depth and write only scene RGB, so the selection mask and
+  outlines still work. Line width is 1 (`wideLines` is not used).
+
+Wireframe needs `fillModeNonSolid`. `RenderCapabilities::wireframe` reports
+it; `validateRenderSettings` falls back to Solid with a message, and the frame
+settings resolve the same way for settings forced past validation.
+`ZENITH_DISABLE_WIREFRAME=1` exercises that fallback on capable devices.
+`ZENITH_FORCE_VIEW_SHADING` selects a mode for smoke runs; the validation
+matrix runs each mode on both submission paths with every feature requested.
