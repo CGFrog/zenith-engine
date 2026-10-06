@@ -111,7 +111,7 @@ void EditorSession::registerAreaTypes() {
                                             .tools = m_settings.tools(),
                                             .build = m_buildPanel,
                                             .info = m_infoPanel,
-                                            .modules = m_moduleHost,
+                                            .modules = m_modules.host(),
                                             .playMode = m_playMode})) {
         addAreaType(std::move(type));
     }
@@ -202,7 +202,7 @@ void EditorSession::resetActiveWorkspace() {
 
 void EditorSession::syncAreaTypes() {
     std::vector<std::string> moduleTypes;
-    for (const GameModuleHost::Panel& panel : m_moduleHost.panels()) {
+    for (const GameModuleHost::Panel& panel : m_modules.host().panels()) {
         std::string id = gameModuleAreaTypeId(panel.panel.title);
         // Titles that differ only in '.' or '#' share an id; the first wins.
         if (m_areaTypes.find(id) == nullptr) {
@@ -210,7 +210,7 @@ void EditorSession::syncAreaTypes() {
                          .title = panel.panel.title,
                          .instancing = AreaInstancing::Single,
                          .create = [this, title = panel.panel.title] {
-                             return std::make_unique<GameModulePanel>(m_moduleHost, title);
+                             return std::make_unique<GameModulePanel>(m_modules.host(), title);
                          }});
         }
         moduleTypes.push_back(std::move(id));
@@ -334,7 +334,7 @@ void EditorSession::drawAreas(ApplicationContext& context) {
                 ImGui::EndDisabled();
                 // The main menu and global keys act on the level again.
                 if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
-                    m_focusedPrefabWindow = 0;
+                    m_prefabWindows.clearFocus();
                 }
             });
         if (AreaInstance* drawn = m_workspaces.active().find(id)) {

@@ -38,19 +38,46 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     : m_settings(settingsDirectory / "settings.ini")
     , m_document(assetRoot)
     , m_recovery(settingsDirectory / (std::string("recovery") + sceneExtension))
-    , m_prefabWindowRecovery(settingsDirectory / "recovery-prefab-windows")
     , m_projectFile(projectServices.projectFile)
     , m_codeSnippetDirectory(projectServices.codeSnippetDirectory)
     , m_physicsLayers(projectServices.physicsLayers)
     , m_projectNames{.physicsLayers = m_physicsLayers.names, .tags = projectServices.tags}
-    , m_playServices(projectServices.play)
-    , m_standalone(m_playServices.makeGameProcess ? m_playServices.makeGameProcess() : makeGameProcess())
-    , m_mouseCaptureChanged(projectServices.mouseCaptureChanged)
     , m_crashRecoveryChanged(projectServices.crashRecoveryChanged)
     , m_fileDialog("Zenith scene", sceneExtension)
     , m_operatorRunner(m_operators, m_history)
-    , m_gameModulePath(std::move(gameModule))
-    , m_simulateSystemsPath(settingsDirectory / "simulate-systems.json")
+    , m_modules({.editor = {.operators = m_operators,
+                            .runner = m_operatorRunner,
+                            .menus = m_menus.registry(),
+                            .viewports = m_viewports,
+                            .componentEditors = m_componentEditors},
+                 .build = m_projectBuild,
+                 .diagnostics = m_diagnostics,
+                 .document = m_document,
+                 .selection = m_selection,
+                 .modulePath = std::move(gameModule),
+                 .simulateSystemsPath = settingsDirectory / "simulate-systems.json",
+                 // Prefab windows hold module storage that the reload would
+                 // not restore, so it also waits for the windows to close.
+                 .reloadAllowed =
+                     [this] {
+                         return m_playMode.mode() == EditorMode::Edit && !m_activeTransform &&
+                                !m_fileDialog.pending() && m_prefabWindows.windows().empty();
+                     }})
+    , m_playback({.playMode = m_playMode,
+                  .document = m_document,
+                  .history = m_history,
+                  .selection = m_selection,
+                  .diagnostics = m_diagnostics,
+                  .viewports = m_viewports,
+                  .workspaces = m_workspaces,
+                  .areaTypes = m_areaTypes,
+                  .moduleHost = m_modules.host(),
+                  .navigationSettings = m_navigationSettings,
+                  .projectFile = m_projectFile,
+                  .play = projectServices.play,
+                  .mouseCaptureChanged = projectServices.mouseCaptureChanged,
+                  .activeLevelViewport = [this] { return activeLevelViewport(); },
+                  .workspacesChanged = [this] { m_workspacesDirty = true; }})
     , m_keymap(defaultEditorKeymap())
     , m_keymapPath(settingsDirectory / "keymap.json")
     , m_appearance(appearance)
@@ -61,6 +88,14 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
                                          : projectSourceDirectory(projectServices.projectFile)})
     , m_renderSettings(std::move(renderSettings))
     , m_componentLayoutPath(settingsDirectory / "component-inspector.json")
+    , m_prefabWindows({.host = *this,
+                       .document = m_document,
+                       .diagnostics = m_diagnostics,
+                       .areaTypes = m_areaTypes,
+                       .themeChrome = m_themeChrome,
+                       .keymap = m_keymap,
+                       .eyedropper = m_eyedropper,
+                       .recoveryDirectory = settingsDirectory / "recovery-prefab-windows"})
     , m_workspacesPath(settingsDirectory / "workspaces.json")
     , m_legacyLayoutPath(settingsDirectory / "layout.ini")
     , m_sceneRoot(std::move(sceneRoot))
@@ -104,7 +139,7 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
         m_projectBuild.setFastBuild(
             std::make_unique<FastProjectBuild>(m_projectFile, settingsDirectory / "developer-environment.json"));
     }
-    m_moduleHost.setProjectInputActions(std::move(projectServices.inputActions));
+    m_modules.host().setProjectInputActions(std::move(projectServices.inputActions));
     if (!projectServices.inputActionsError.empty()) {
         m_diagnostics.add(EditorDiagnosticSeverity::Error, "Project", projectServices.inputActionsError,
                           "Fix the project's input action file, or its actions in Edit > Project Settings.");
@@ -129,14 +164,14 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .componentEditors = &m_componentEditors,
             .navigationPreview = &m_navigationPreview,
             .navigationSettings = &m_navigationSettings,
-            .gameServices = m_playMode.mode() == EditorMode::Edit ? nullptr : m_moduleHost.gameServices(),
-            .scripts = this,
+            .gameServices = m_playMode.mode() == EditorMode::Edit ? nullptr : m_modules.host().gameServices(),
+            .scripts = &m_modules,
             .watches = &m_watches,
             .projectNames = &m_projectNames,
             .projectAssets = &m_projectAssets,
             .fileDrops = &m_fileDrops,
             .definitionSchemas =
-                m_moduleHost.module() != nullptr ? m_moduleHost.module()->definitionSchemas().get() : nullptr};
+                m_modules.host().module() != nullptr ? m_modules.host().module()->definitionSchemas().get() : nullptr};
 }
 
 OperatorContext EditorSession::levelOperatorContext(ApplicationContext& context, KeymapRegion region) {
@@ -148,7 +183,7 @@ OperatorContext EditorSession::levelOperatorContext(ApplicationContext& context,
 }
 
 OperatorContext EditorSession::operatorContext(ApplicationContext& context, KeymapRegion region) {
-    return operatorContextOn(context, focusedPrefabWindow(), region);
+    return operatorContextOn(context, m_prefabWindows.focused(), region);
 }
 
 OperatorContext EditorSession::operatorContextOn(ApplicationContext& context, PrefabWindowDocument* window,
@@ -166,13 +201,13 @@ EditorOperatorServices EditorSession::operatorServices() {
             .workspaces = m_workspaces,
             .areaTypes = m_areaTypes,
             .playMode = m_playMode,
-            .modules = m_moduleHost,
+            .modules = m_modules.host(),
             .preferences = m_preferences,
             .packageRunner = m_packageRunner,
             .build = m_projectBuild,
             .watches = m_watches,
             .documentWatches = [this](const OperatorContext& context) -> WatchList* {
-                PrefabWindowDocument* window = m_prefabWindows.owner(context.editing.document());
+                PrefabWindowDocument* window = m_prefabWindows.windows().owner(context.editing.document());
                 return window != nullptr ? &window->watches : nullptr;
             },
             .navigationPreview = m_navigationPreview,
@@ -181,14 +216,14 @@ EditorOperatorServices EditorSession::operatorServices() {
             .projectFile = m_renderSettings.settings().projectFile(),
             .codeSnippetDirectory = m_codeSnippetDirectory,
             .revealAsset = [this](const std::filesystem::path& asset) { m_projectAssets.requestReveal(asset); },
-            .simulateMaskChanged = [this] { saveSimulateSystems(); },
+            .simulateMaskChanged = [this] { m_modules.saveSimulateSystems(); },
             .prefabWritten = prefabWriteHooks().fileWritten,
             .prefabRead = prefabWriteHooks().fileRead,
             .documentCommands = *this,
-            .playCommands = *this,
+            .playCommands = m_playback,
             .objectModeCommands = *this,
             .windowCommands = *this,
-            .prefabWindowCommands = *this};
+            .prefabWindowCommands = m_prefabWindows};
 }
 
 bool EditorSession::documentCommandsAvailable(const OperatorContext&) const {
@@ -202,7 +237,7 @@ bool EditorSession::editCommandsAvailable(const OperatorContext& context) const 
 }
 
 bool EditorSession::saveAsAvailable(const OperatorContext& context) const {
-    return documentCommandsAvailable(context) && m_prefabWindows.owner(context.editing.document()) == nullptr;
+    return documentCommandsAvailable(context) && m_prefabWindows.windows().owner(context.editing.document()) == nullptr;
 }
 
 bool EditorSession::projectHubAvailable() const {
@@ -218,7 +253,7 @@ void EditorSession::openKeymapEditor() {
 }
 
 // The level's areas run operators on the level; prefab windows' panels
-// run them through PrefabWindowActions on their own document.
+// run them through PrefabWindowController::Actions on their own document.
 OperatorResult EditorSession::invokeOperator(ApplicationContext& context, std::string_view operatorId,
                                              std::string_view properties, KeymapRegion region) {
     return invokeOperatorOn(context, nullptr, operatorId, properties, region);
@@ -260,7 +295,7 @@ void EditorSession::dispatchKeymap(ApplicationContext& context, PrefabWindowDocu
     // Global keys work while any panel has focus; region keys already require
     // the mouse over the region. A game view with input focus owns the keys
     // the game can use, so Space there reaches the game, not operator search.
-    const ViewportPanel* game = gameViewport();
+    const ViewportPanel* game = m_playback.gameViewport();
     const KeyboardOwner owner = game != nullptr && game->gameInputFocus() ? KeyboardOwner::Game : KeyboardOwner::Editor;
     const uint64_t followed = m_keymapDispatcher.gestureSerial();
     const std::optional<KeymapInvocation> invocation = m_keymapDispatcher.pressKeys(m_keymap, region, owner);
@@ -280,7 +315,7 @@ void EditorSession::updateKeymapGesture(ApplicationContext& context) {
     // Every phase runs on the document the press started in.
     PrefabWindowDocument* window = nullptr;
     if (m_gestureWindow != 0) {
-        window = m_prefabWindows.find(m_gestureWindow);
+        window = m_prefabWindows.windows().find(m_gestureWindow);
         if (window == nullptr) {
             // Its window closed mid-gesture.
             m_keymapDispatcher.cancel();
@@ -323,7 +358,7 @@ void EditorSession::operatorMenuItem(ApplicationContext& context, std::string_vi
         return;
     }
     // The main menu acts on the document whose window last had focus.
-    PrefabWindowDocument* window = focusedPrefabWindow();
+    PrefabWindowDocument* window = m_prefabWindows.focused();
     const bool enabled = op->canRun(operatorContextOn(context, window, KeymapRegion::Global));
     const std::string shortcut = m_keymap.shortcutLabel(operatorId, properties);
     if (ImGui::MenuItem(label != nullptr ? label : op->label.c_str(), shortcut.empty() ? nullptr : shortcut.c_str(),
@@ -338,7 +373,7 @@ void EditorSession::operatorMenuItem(ApplicationContext& context, std::string_vi
 void EditorSession::drawOperatorWindows(ApplicationContext& context) {
     if (const std::optional<std::string> chosen =
             m_operatorSearch.draw(m_operators, m_keymap, operatorContext(context, KeymapRegion::Global))) {
-        invokeOperatorOn(context, focusedPrefabWindow(), *chosen, {}, KeymapRegion::Global);
+        invokeOperatorOn(context, m_prefabWindows.focused(), *chosen, {}, KeymapRegion::Global);
     }
     if (m_keymapEditor.draw(m_showKeymapEditor, m_keymap, m_operators)) {
         saveKeymap();
@@ -354,14 +389,6 @@ void EditorSession::drawOperatorWindows(ApplicationContext& context) {
             m_lastOperatorPanel.draw(m_operatorRunner.lastOperator(), lastOperatorAnchor())) {
         OperatorContext operatorContext = levelOperatorContext(context, KeymapRegion::Global);
         m_operatorRunner.adjustLast(operatorContext, *edited);
-    }
-}
-
-void EditorSession::saveSimulateSystems() {
-    if (const SimulateSystemSettingsResult result =
-            saveSimulateSystemSettings(m_simulateSystemsPath, m_moduleHost.simulateMask());
-        !result) {
-        m_diagnostics.reportError(result.error);
     }
 }
 
@@ -394,21 +421,16 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     for (const std::string& warning : keymap.warnings) {
         m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Keymap", warning);
     }
-    SimulateSystemMask simulateMask;
-    if (const SimulateSystemSettingsResult result = loadSimulateSystemSettings(m_simulateSystemsPath, simulateMask);
-        !result) {
-        m_diagnostics.reportError(result.error);
-    }
-    m_moduleHost.setSimulateMask(std::move(simulateMask));
-    m_moduleHost.setLogger(context.logger);
-    m_moduleHost.setDebugDraw(context.rendering.debugDraw());
+    m_modules.loadSimulateSystems();
+    m_modules.host().setLogger(context.logger);
+    m_modules.host().setDebugDraw(context.rendering.debugDraw());
     // A previous project's bodies may still be in the world.
     context.physics.clear();
     if (const PhysicsResult result = context.physics.setLayers(m_physicsLayers); !result) {
         m_diagnostics.reportError("Could not use the project's physics layers: " + result.error);
     }
     m_projectAssets.refresh(m_diagnostics);
-    m_openRecoveryDialog = m_recovery.available() || !m_prefabWindowRecovery.available().empty();
+    m_openRecoveryDialog = m_recovery.available() || m_prefabWindows.recoveryAvailable();
 
     // The theme, fonts, popup bevels, and the disabled imgui.ini are the
     // application's (EditorApplication::onStart), so they outlive a switch
@@ -419,7 +441,7 @@ SceneResult EditorSession::load(ApplicationContext& context) {
     // the edited project's assets.
     context.rendering.setAssetRoot(m_document.options().assetRoot);
     // Before any scene loads, so documents read the module's component types.
-    loadGameModule();
+    m_modules.load();
     // After the module, so its panels' areas are restored with their types.
     syncAreaTypes();
     loadWorkspaces();
@@ -445,7 +467,7 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
     // Before the smoke scenario, which checks the switch it requested.
     updateWorkspaces();
     // Between frames: no window's panels are drawing.
-    applyPrefabWindowCloses(context);
+    m_prefabWindows.applyCloses(context);
     beginViewportFrame(context);
     if (m_smokeRunner) {
         updateSmokeScenario(context);
@@ -454,14 +476,13 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
     updateAutosave(context, deltaSeconds);
     updatePackaging();
     m_projectBuild.poll();
-    updateStandalone(context);
+    m_playback.pollStandalone(context);
     // Once per frame, however many asset browsers are open.
     m_projectAssets.pollChanges(m_diagnostics, projectAssetActions(context), deltaSeconds);
     takeFileDrops(input);
     reconcileChangedPrefabs(context);
     updateAreas(context, input, deltaSeconds);
-    updatePrefabWindows(context, input, deltaSeconds);
-    leasePrefabWindowAssets(context);
+    m_prefabWindows.update(context, input, deltaSeconds);
     updateGameModule(context, input, deltaSeconds);
     syncAreaTypes();
     saveComponentLayoutIfChanged();
@@ -513,7 +534,7 @@ ProjectAssetActions EditorSession::projectAssetActions(ApplicationContext& conte
             },
         .prefabChanged =
             [this](const std::filesystem::path& path) {
-                invalidateGamePrefab(path);
+                m_modules.invalidatePrefab(path);
                 if (std::ranges::find(m_changedPrefabFiles, path) == m_changedPrefabFiles.end()) {
                     m_changedPrefabFiles.push_back(path);
                 }
@@ -524,21 +545,13 @@ ProjectAssetActions EditorSession::projectAssetActions(ApplicationContext& conte
     };
 }
 
-void EditorSession::invalidateGamePrefab(const std::filesystem::path& file) {
-    // Editor prefab operations build a fresh PrefabSystem each time; the
-    // game's lives as long as the module host.
-    if (GameServices* services = m_moduleHost.gameServices()) {
-        services->prefabs().invalidate(file);
-    }
-}
-
 PrefabWriteHooks EditorSession::prefabWriteHooks() {
     return {
         .fileWritten =
             [this](const std::filesystem::path& file, const std::optional<std::string>& bytes, const Scene* origin) {
                 queueOwnPrefabWrite(file, bytes, origin);
                 m_prefabWrites.record(file, bytes);
-                invalidateGamePrefab(file);
+                m_modules.invalidatePrefab(file);
             },
         // The first content seen is what an outside change is compared
         // with; the editor's own later writes replace it.
@@ -558,7 +571,7 @@ void EditorSession::queueOwnPrefabWrite(const std::filesystem::path& file, const
     if (origin == nullptr || !bytes || known == nullptr || !*known || *known == bytes) {
         return;
     }
-    const PrefabWindowDocument* window = m_prefabWindows.owner(*origin);
+    const PrefabWindowDocument* window = m_prefabWindows.windows().owner(*origin);
     m_ownPrefabWrites.push_back({.file = file,
                                  .before = *known,
                                  .after = bytes,
@@ -590,7 +603,7 @@ void EditorSession::refreshAfterOwnPrefabWrites(ApplicationContext& context) {
         // A window closed since keeps no instances to skip; the level wrote
         // it when its operator ran on the scene the level edits now.
         const PrefabWindowDocument* originWindow =
-            write.originWindow != 0 ? m_prefabWindows.find(write.originWindow) : nullptr;
+            write.originWindow != 0 ? m_prefabWindows.windows().find(write.originWindow) : nullptr;
         const bool levelWrote =
             write.originScene != nullptr && write.originScene == &context.scene && m_playMode.editScene() == nullptr;
         if (const size_t refreshed = refreshPrefabInstancesElsewhere(context, change, originWindow, !levelWrote);
@@ -616,16 +629,11 @@ void EditorSession::reconcileChangedPrefab(ApplicationContext& context, const st
         // already dropped when it wrote.
         return;
     }
-    reconcilePrefabWindows(context, change);
-    // During Play the parked edit scene is refreshed; the running scene keeps
-    // its copies until Stop.
-    Scene* editScene = m_playMode.editScene();
-    Scene& scene = editScene != nullptr ? *editScene : context.scene;
-    const SceneEditing documentEditing(scene, context.assets, m_document, m_history, m_diagnostics);
+    m_prefabWindows.reconcile(context, change);
     size_t refreshed = 0;
     const PrefabResult result =
-        refreshPrefabInstances(documentEditing, change.reference, change.previous ? &*change.previous : nullptr,
-                               externalPrefabRefreshStepName(change.displayName), &refreshed);
+        refreshLevelPrefabInstances(context, change.reference, change.previous ? &*change.previous : nullptr,
+                                    externalPrefabRefreshStepName(change.displayName), refreshed);
     for (const std::string& diagnostic : result.diagnostics) {
         m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Prefabs", diagnostic);
     }
@@ -636,9 +644,6 @@ void EditorSession::reconcileChangedPrefab(ApplicationContext& context, const st
     if (refreshed == 0) {
         return;
     }
-    if (editScene == nullptr) {
-        m_selection.removeMissing(scene);
-    }
     std::string message = change.displayName + " changed on disk; refreshed " + std::to_string(refreshed) +
                           (refreshed == 1 ? " instance" : " instances") + "; Undo puts them back.";
     if (!change.previous) {
@@ -648,38 +653,121 @@ void EditorSession::reconcileChangedPrefab(ApplicationContext& context, const st
     m_diagnostics.add(EditorDiagnosticSeverity::Info, "Prefabs", std::move(message));
 }
 
-void EditorSession::fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) {
-    // Fixed updates run only while simulating (including a paused single
-    // step); Edit mode keeps its own fixed clock in updateGameModule.
-    // Simulate passes no input; the host enforces that too.
-    if (m_playMode.mode() != EditorMode::Edit) {
-        const SimulationMode mode = m_playMode.simulationMode();
-        runGameplayStage(systemPhaseName(SystemPhase::FixedUpdate), [&] {
-            m_moduleHost.runSystems(SystemPhase::FixedUpdate, context.scene, &context, mode, deltaSeconds,
-                                    mode == SimulationMode::Simulate ? nullptr : &gameInput(input));
-        });
+PrefabResult EditorSession::refreshLevelPrefabInstances(ApplicationContext& context,
+                                                        const std::filesystem::path& reference,
+                                                        const PrefabDocument* previous, std::string stepName,
+                                                        size_t& refreshed) {
+    // During Play the parked edit scene is refreshed; the running scene keeps
+    // its copies until Stop.
+    Scene* editScene = m_playMode.editScene();
+    Scene& scene = editScene != nullptr ? *editScene : context.scene;
+    const SceneEditing levelEditing(scene, context.assets, m_document, m_history, m_diagnostics);
+    const PrefabResult result =
+        refreshPrefabInstances(levelEditing, reference, previous, std::move(stepName), &refreshed);
+    if (editScene == nullptr) {
+        m_selection.removeMissing(scene);
     }
+    return result;
+}
+
+size_t EditorSession::refreshPrefabInstancesElsewhere(ApplicationContext& context, const PrefabFileChange& change,
+                                                      const PrefabWindowDocument* originWindow, bool refreshLevel) {
+    const PrefabDocument* previous = change.previous ? &*change.previous : nullptr;
+    const std::string stepName = "Refresh " + change.displayName + " instances";
+    PrefabResult result{.success = true};
+    const auto combine = [&result](const PrefabResult& part) {
+        result.diagnostics.insert(result.diagnostics.end(), part.diagnostics.begin(), part.diagnostics.end());
+        if (!part && result) {
+            result.success = false;
+            result.error = part.error;
+        }
+    };
+    size_t inLevel = 0;
+    if (refreshLevel) {
+        combine(refreshLevelPrefabInstances(context, change.reference, previous, stepName, inLevel));
+    }
+    size_t inWindows = 0;
+    combine(m_prefabWindows.windows().refreshInstances(context.assets, m_diagnostics, change.reference, previous,
+                                                       stepName, originWindow, inWindows));
+    for (const std::string& diagnostic : result.diagnostics) {
+        m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Prefabs", diagnostic);
+    }
+    if (!result) {
+        m_diagnostics.reportError("Could not refresh " + change.displayName + " instances: " + result.error);
+    }
+    return inLevel + inWindows;
+}
+
+OperatorContext EditorSession::prefabWindowOperatorContext(ApplicationContext& context, KeymapRegion region,
+                                                           PrefabWindowDocument& window) {
+    // A prefab document is never Play's runtime scene: it records history
+    // and stays editable while the level plays.
+    return {.editing = {window.scene, context.assets, window.document, window.history, m_diagnostics},
+            .selection = window.selection,
+            .mode = EditorMode::Edit,
+            .region = region,
+            .app = &context};
+}
+
+EditorSessionActions& EditorSession::levelActions() {
+    return *this;
+}
+
+EditorContext EditorSession::prefabWindowEditorContext(ApplicationContext& windowContext, ApplicationContext& context,
+                                                       PrefabWindowDocument& window, EditorSessionActions& actions) {
+    return {.app = windowContext,
+            .editing = {window.scene, context.assets, window.document, window.history, m_diagnostics},
+            .selection = window.selection,
+            .diagnostics = m_diagnostics,
+            .mode = EditorMode::Edit,
+            .actions = actions,
+            .eyedropper = &m_eyedropper,
+            .menus = m_menus,
+            .simulating = false,
+            .componentEditors = &m_componentEditors,
+            .navigationPreview = nullptr,
+            .navigationSettings = &m_navigationSettings,
+            .gameServices = nullptr,
+            .scripts = &m_modules,
+            .watches = &window.watches,
+            .projectNames = &m_projectNames,
+            .prefabEdit = OpenPrefabSummary{.displayName = window.target.displayName, .root = window.target.root},
+            .projectAssets = &m_projectAssets,
+            .fileDrops = &m_fileDrops,
+            .definitionSchemas =
+                m_modules.host().module() != nullptr ? m_modules.host().module()->definitionSchemas().get() : nullptr};
+}
+
+bool EditorSession::prefabWindowToolsBusy() const {
+    return m_fileDialog.pending() || m_activeTransform.has_value();
+}
+
+void EditorSession::cancelModalTransformIn(ApplicationContext& context, uint64_t window) {
+    if (m_activeTransform && m_activeTransform->window == window) {
+        finishModalTransform(context, false);
+    }
+}
+
+void EditorSession::withFocusedEditorContext(ApplicationContext& context,
+                                             const std::function<void(EditorContext&)>& draw) {
+    if (PrefabWindowDocument* window = m_prefabWindows.focused()) {
+        m_prefabWindows.withEditorContext(context, *window, draw);
+        return;
+    }
+    EditorContext editor = editorContext(context);
+    draw(editor);
+}
+
+void EditorSession::fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) {
+    m_playback.fixedUpdate(context, input, deltaSeconds);
 }
 
 void EditorSession::afterPhysicsStep(ApplicationContext& context) {
-    if (GameServices* services = m_moduleHost.gameServices()) {
-        runGameplayStage("the physics events", [&] {
-            services->publishPhysicsEvents(context.scene, context.physics.triggerEvents(),
-                                           context.physics.contactEvents());
-        });
-    }
+    m_playback.afterPhysicsStep(context);
 }
 
 void EditorSession::lateUpdate(ApplicationContext& context, const InputState&, float deltaSeconds) {
-    if (m_playMode.mode() == EditorMode::Edit || !m_playMode.advancesThisFrame()) {
-        return;
-    }
-    const SimulationMode mode = m_playMode.simulationMode();
-    runGameplayStage(systemPhaseName(SystemPhase::LateUpdate), [&] {
-        m_moduleHost.runSystems(SystemPhase::LateUpdate, context.scene, &context, mode,
-                                simulatedSeconds(simulationClock(), deltaSeconds), &m_frameGameInput, nullptr,
-                                deltaSeconds);
-    });
+    m_playback.lateUpdate(context, deltaSeconds);
 }
 
 bool EditorSession::fixedUpdatesEnabled() const {
@@ -691,10 +779,7 @@ bool EditorSession::beginFixedUpdate() {
 }
 
 SimulationClock EditorSession::simulationClock() const {
-    // The game's own pause and time scale apply on top of the editor's.
-    const SimulationClock editorClock = m_playMode.simulationClock();
-    const GameServices* services = m_moduleHost.gameServices();
-    return services != nullptr ? services->simulationClock(editorClock) : editorClock;
+    return m_playback.simulationClock();
 }
 
 void EditorSession::requestQuit(ApplicationContext& context) {
@@ -704,15 +789,10 @@ void EditorSession::requestQuit(ApplicationContext& context) {
 void EditorSession::drawUi(ApplicationContext& context) {
     // Every system of this frame ran in update and fixedUpdate; publish
     // their timings for the System Profiler areas drawn below.
-    m_moduleHost.finishSystemFrame();
-    // Between the frame's gameplay and the game view's UI: a run whose
-    // gameplay failed ends here, so the rest of the frame draws Edit mode.
-    stopFailedGameplay(context);
-    // The engine has run this frame's fixed steps, so a frame step is done;
-    // play.step below requests the next one.
-    m_playMode.finishFrame();
-    // Before the areas, so the game view draws this frame's game UI.
-    drawGameViewUi(context);
+    m_modules.host().finishSystemFrame();
+    // Ends a failed run, a frame step, and draws the game view's game UI,
+    // before the areas show it.
+    m_playback.beginUiFrame(context);
     ImGuizmo::BeginFrame();
     m_themeChrome.setModeTint(playModeTint(m_playMode.mode(), m_playMode.simulating()));
     m_themeChrome.beginFrame();
@@ -732,15 +812,15 @@ void EditorSession::drawUi(ApplicationContext& context) {
     drawRecoveryDialog(context);
     updateEyedropper(context);
     drawAreas(context);
-    drawPrefabWindows(context);
+    m_prefabWindows.draw(context);
     syncActiveRenderView(context);
     drawObjectPopups(context);
     drawNewCodeDialog(context);
     drawOperatorWindows(context);
     drawStatusBar(context.rendering.stats());
-    publishMouseCapture();
+    m_playback.publishMouseCapture();
     // Last, after every edit of this frame: the renderer draws next.
-    bindPrefabWindowScenes(context);
+    m_prefabWindows.bindScenes(context);
 }
 
 void EditorSession::updateEyedropper(ApplicationContext& context) {
@@ -755,7 +835,7 @@ void EditorSession::updateEyedropper(ApplicationContext& context) {
     // The field lives in the document that armed it: the level, which stops
     // picking when it leaves Edit mode, or a prefab window, which never plays.
     const bool forLevel = m_eyedropper.owner() == &m_document;
-    PrefabWindowDocument* window = forLevel ? nullptr : m_prefabWindows.owner(*m_eyedropper.owner());
+    PrefabWindowDocument* window = forLevel ? nullptr : m_prefabWindows.windows().owner(*m_eyedropper.owner());
     const bool cancelKey = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
     ResolvedEntityReference resolved;
     if (forLevel || window != nullptr) {
@@ -799,17 +879,14 @@ void EditorSession::unload(ApplicationContext& context) {
         m_crashRecoveryChanged({});
         m_crashRecoveryRegistered = false;
     }
-    stopPlay(context);
+    m_playback.unload(context);
     m_projectAssets.releaseThumbnailTextures(context.rendering);
-    if (m_mouseCaptureChanged) {
-        m_mouseCaptureChanged(MouseCapturePolicy::WhileRightMouseDown);
-    }
     // The scene and document release module code before the module unloads;
     // prefab windows go first, unsaved prefab edits with them.
     context.audio.stopSceneVoices();
     context.physics.clear();
-    closeAllPrefabWindows(context);
-    m_moduleHost.unload(context.scene, m_document);
+    m_prefabWindows.closeAll(context);
+    m_modules.host().unload(context.scene, m_document);
     context.rendering.setGridOverlay(std::nullopt);
     context.rendering.clearOutlinedObjects();
     context.rendering.clearViewOverride();
@@ -822,7 +899,7 @@ void EditorSession::unload(ApplicationContext& context) {
 }
 
 void EditorSession::projectFilesMoved(ApplicationContext& context, std::span<const ProjectFileMove> moves) {
-    m_prefabWindows.filesMoved(moves, m_document.options().assetRoot, context.assets, m_diagnostics);
+    m_prefabWindows.windows().filesMoved(moves, m_document.options().assetRoot, context.assets, m_diagnostics);
     if (m_document.path()) {
         if (std::optional<std::filesystem::path> moved =
                 relocatedProjectPath(normalizedCatalogPath(*m_document.path()), moves)) {
@@ -849,7 +926,7 @@ void EditorSession::projectFilesMoved(ApplicationContext& context, std::span<con
 }
 
 void EditorSession::projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path> removed) {
-    m_prefabWindows.filesRemoved(removed, m_diagnostics);
+    m_prefabWindows.windows().filesRemoved(removed, m_diagnostics);
     if (m_document.path() && isRemovedProjectPath(normalizedCatalogPath(*m_document.path()), removed)) {
         m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Editor",
                           "The open scene's file was removed; save it to keep the scene.");

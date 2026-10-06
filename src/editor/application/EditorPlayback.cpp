@@ -1,20 +1,22 @@
-// EditorSession's play workflows: the play operators and their targets (the
-// active viewport, a floating viewport, or a standalone game process),
-// entering and leaving Play mode, game views and the input and Ui they route
-// to module systems, the mouse capture policy, and the playback toolbar in
-// the main menu bar.
+// The play operators and EditorPlayback: play targets (the active viewport,
+// a floating viewport, or a standalone game process), entering and leaving
+// Play and Simulate, game views and the input and Ui they route to module
+// systems, and the mouse capture policy.
 
-#include "EditorSession.hpp"
+#include "EditorPlayback.hpp"
 
+#include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/EditorSessionOperators.hpp"
-#include "editor/panels/SimulateSystemPicker.hpp"
-#include "editor/theme/EditorTheme.hpp"
-#include "editor/theme/EditorWidgets.hpp"
+#include "editor/areas/AreaRegistry.hpp"
+#include "editor/areas/Workspace.hpp"
+#include "editor/document/CommandHistory.hpp"
+#include "editor/document/EditorDocument.hpp"
+#include "editor/interaction/Selection.hpp"
+#include "editor/modules/GameModuleHost.hpp"
+#include "editor/panels/ViewportPanel.hpp"
 #include "engine/module/GameEvents.hpp"
+#include "engine/module/GameServices.hpp"
 #include "engine/module/GuardedCall.hpp"
-
-#include <imgui.h>
-#include <nlohmann/json.hpp>
 
 #include <span>
 #include <utility>
@@ -129,32 +131,48 @@ OperatorRegistrationResult registerPlayControlOperatorFamily(OperatorRegistry& r
     return addOperators(registry, std::move(operators));
 }
 
-bool EditorSession::standaloneRunning() const {
+EditorPlayback::EditorPlayback(EditorPlaybackServices services)
+    : m_services(std::move(services))
+    , m_standalone(m_services.play.makeGameProcess ? m_services.play.makeGameProcess() : makeGameProcess()) {}
+
+const std::optional<PlayTarget>& EditorPlayback::activeTarget() const {
+    return m_activePlayTarget;
+}
+
+const StandalonePlayer& EditorPlayback::standalone() const {
+    return m_standalone;
+}
+
+const std::filesystem::path& EditorPlayback::gameExecutable() const {
+    return m_services.play.gameExecutable;
+}
+
+bool EditorPlayback::standaloneRunning() const {
     return m_standalone.running();
 }
 
-PlayTarget EditorSession::lastPlayTarget() const {
+PlayTarget EditorPlayback::lastPlayTarget() const {
     return m_lastPlayTarget;
 }
 
-void EditorSession::startSimulate(ApplicationContext& context) {
-    enterPlayMode(context, EditorRuntime::Simulate);
+void EditorPlayback::startSimulate(ApplicationContext& context) {
+    enter(context, EditorRuntime::Simulate);
 }
 
-bool EditorSession::playActive() const {
-    return m_playMode.mode() != EditorMode::Edit || m_standalone.running();
+bool EditorPlayback::playActive() const {
+    return m_services.playMode.mode() != EditorMode::Edit || m_standalone.running();
 }
 
-OperatorResult EditorSession::startPlay(ApplicationContext& context, PlayTarget target) {
+OperatorResult EditorPlayback::startPlay(ApplicationContext& context, PlayTarget target) {
     m_lastPlayTarget = target;
     if (target == PlayTarget::Standalone) {
         return startStandalone(context);
     }
     // The game plays in a viewport of the level, never a prefab window's.
-    ViewportPanel* viewport = activeLevelViewport();
+    ViewportPanel* viewport = m_services.activeLevelViewport ? m_services.activeLevelViewport() : nullptr;
     if (target == PlayTarget::FloatingViewport) {
-        Workspace& workspace = m_workspaces.active();
-        const AreaResult opened = workspace.openNew(m_areaTypes, "viewport");
+        Workspace& workspace = m_services.workspaces.active();
+        const AreaResult opened = workspace.openNew(m_services.areaTypes, "viewport");
         AreaInstance* area = opened ? workspace.find(opened.areaId) : nullptr;
         viewport = area != nullptr ? dynamic_cast<ViewportPanel*>(area->panel.get()) : nullptr;
         if (viewport == nullptr) {
@@ -165,27 +183,27 @@ OperatorResult EditorSession::startPlay(ApplicationContext& context, PlayTarget 
         m_floatingPlayArea = opened.areaId;
         m_floatingPlayWorkspace = workspace.name();
     }
-    if (!enterPlayMode(context)) {
+    if (!enter(context)) {
         endGameView();
         return OperatorResult::failed("Play mode could not start");
     }
     m_activePlayTarget = target;
     if (viewport == nullptr) {
-        m_diagnostics.add(EditorDiagnosticSeverity::Info, playDiagnosticSource,
-                          "No viewport is open, so the game runs without a view.");
+        m_services.diagnostics.add(EditorDiagnosticSeverity::Info, playDiagnosticSource,
+                                   "No viewport is open, so the game runs without a view.");
         return OperatorResult::finished();
     }
     viewport->beginGameView();
     m_gameViewport = viewport->id();
-    m_viewports.activate(m_gameViewport);
+    m_services.viewports.activate(m_gameViewport);
     return OperatorResult::finished();
 }
 
-OperatorResult EditorSession::startStandalone(ApplicationContext& context) {
-    const StandaloneResult started = m_standalone.start({.gameExecutable = m_playServices.gameExecutable,
-                                                         .projectFile = m_projectFile,
-                                                         .temporaryDirectory = playTemporaryDirectory(m_playServices)},
-                                                        context.scene, context.assets, m_document.options());
+OperatorResult EditorPlayback::startStandalone(ApplicationContext& context) {
+    const StandaloneResult started = m_standalone.start({.gameExecutable = m_services.play.gameExecutable,
+                                                         .projectFile = m_services.projectFile,
+                                                         .temporaryDirectory = playTemporaryDirectory(m_services.play)},
+                                                        context.scene, context.assets, m_services.document.options());
     if (!started) {
         return OperatorResult::failed(started.error);
     }
@@ -198,15 +216,15 @@ OperatorResult EditorSession::startStandalone(ApplicationContext& context) {
     return OperatorResult::finished();
 }
 
-void EditorSession::stopPlay(ApplicationContext& context) {
+void EditorPlayback::stopPlay(ApplicationContext& context) {
     if (m_standalone.running()) {
         // The session leaves Play once updateStandalone sees the process end.
         m_standalone.stop();
     }
-    stopPlayMode(context);
+    stop(context);
 }
 
-void EditorSession::endGameView() {
+void EditorPlayback::endGameView() {
     if (ViewportPanel* viewport = gameViewport()) {
         viewport->endGameView();
     }
@@ -217,22 +235,24 @@ void EditorSession::endGameView() {
     if (m_floatingPlayArea.empty()) {
         return;
     }
-    if (Workspace* workspace = m_workspaces.find(m_floatingPlayWorkspace)) {
+    if (Workspace* workspace = m_services.workspaces.find(m_floatingPlayWorkspace)) {
         // Hides rather than removes it when the user closed every other
         // viewport meanwhile; either way it leaves the screen.
         workspace->close(m_floatingPlayArea);
-        m_workspacesDirty = true;
+        if (m_services.workspacesChanged) {
+            m_services.workspacesChanged();
+        }
     }
     m_floatingPlayArea.clear();
     m_floatingPlayWorkspace.clear();
 }
 
-ViewportPanel* EditorSession::gameViewport() const {
-    ViewportPanel* viewport = m_gameViewport ? m_viewports.find(m_gameViewport) : nullptr;
+ViewportPanel* EditorPlayback::gameViewport() const {
+    ViewportPanel* viewport = m_gameViewport ? m_services.viewports.find(m_gameViewport) : nullptr;
     return viewport != nullptr && viewport->gameView() ? viewport : nullptr;
 }
 
-const InputState& EditorSession::gameInput(const InputState& input) const {
+const InputState& EditorPlayback::gameInput(const InputState& input) const {
     if (!m_gameViewport) {
         // Play without a view (no viewport was open) keeps the old routing.
         return input;
@@ -241,20 +261,20 @@ const InputState& EditorSession::gameInput(const InputState& input) const {
     return viewport != nullptr && viewport->gameInputFocus() ? input : m_idleGameInput;
 }
 
-MouseCapturePolicy EditorSession::mouseCapturePolicy() const {
+MouseCapturePolicy EditorPlayback::mouseCapturePolicy() const {
     const ViewportPanel* viewport = gameViewport();
     return playMouseCapturePolicy(viewport != nullptr && viewport->gameViewHoldsCursor());
 }
 
-void EditorSession::publishMouseCapture() {
+void EditorPlayback::publishMouseCapture() {
     // Every frame rather than on change: a session whose replacement failed
     // to load (and reset the policy while unloading) restores its own.
-    if (m_mouseCaptureChanged) {
-        m_mouseCaptureChanged(mouseCapturePolicy());
+    if (m_services.mouseCaptureChanged) {
+        m_services.mouseCaptureChanged(mouseCapturePolicy());
     }
 }
 
-void EditorSession::updateStandalone(ApplicationContext& context) {
+void EditorPlayback::pollStandalone(ApplicationContext& context) {
     if (!m_standalone.poll(context.logger)) {
         return;
     }
@@ -263,84 +283,9 @@ void EditorSession::updateStandalone(ApplicationContext& context) {
     }
 }
 
-void EditorSession::drawPlaybackToolbar(ApplicationContext& context) {
-    ImGui::Separator();
-    const float side = ImGui::GetFrameHeight();
-    const ImVec2 square{side, side};
-    const EditorMode mode = m_playMode.mode();
-    const auto button = [&](const char* id, EditorIcon icon, bool active, std::string_view operatorId,
-                            const char* tooltip, std::string_view properties = {}) {
-        ImGui::BeginDisabled(!operatorAvailable(context, operatorId));
-        if (widgets::ToolButton(id, icon, active, square)) {
-            invokeOperator(context, operatorId, properties, KeymapRegion::Global);
-        }
-        ImGui::EndDisabled();
-        const std::string shortcut = m_keymap.shortcutLabel(operatorId, properties);
-        ImGui::SetItemTooltip("%s%s%s", tooltip, shortcut.empty() ? "" : "  ", shortcut.c_str());
-    };
-    const auto dropdown = [&](const char* id, const char* popup) {
-        ImGui::SameLine(0.0f, 0.0f);
-        if (widgets::Button(id, {side * 0.6f, side})) {
-            ImGui::OpenPopup(popup);
-        }
-    };
-
-    const bool simulating = mode == EditorMode::Simulate || (mode == EditorMode::Paused && m_playMode.simulating());
-    // One button starts and stops: while anything runs it is Stop.
-    const bool running = mode != EditorMode::Edit || m_standalone.running();
-    if (running) {
-        button("##toolbar_play", EditorIcon::Stop, true, "play.stop", "Stop");
-    } else {
-        const std::string playTooltip = "Play in " + std::string(playTargetInfo(m_lastPlayTarget).label);
-        button("##toolbar_play", EditorIcon::Play, false, "play.start", playTooltip.c_str());
-    }
-    ImGui::BeginDisabled(running);
-    dropdown("v##toolbar_play_targets", "##PlayTargetMenu");
-    ImGui::EndDisabled();
-    if (ImGui::BeginPopup("##PlayTargetMenu")) {
-        for (const PlayTargetInfo& target : playTargets()) {
-            operatorMenuItem(context, "play.start", std::string(target.label).c_str(),
-                             nlohmann::json{{"target", target.key}}.dump(), target.target == m_lastPlayTarget);
-        }
-        ImGui::EndPopup();
-    }
-    ImGui::SameLine();
-    button("##toolbar_simulate", EditorIcon::Physics, simulating, "play.simulate", "Simulate");
-    dropdown("v##toolbar_simulate_options", "##SimulateOptions");
-    if (ImGui::BeginPopup("##SimulateOptions")) {
-        drawSimulateOptions(context);
-        ImGui::EndPopup();
-    }
-    ImGui::SameLine();
-    button("##toolbar_pause", EditorIcon::Pause, mode == EditorMode::Paused, "play.toggle_pause",
-           mode == EditorMode::Paused ? "Resume" : "Pause");
-    ImGui::SameLine();
-    ImGui::BeginDisabled(!operatorAvailable(context, "play.step"));
-    if (widgets::Button("Step##toolbar_step", {0.0f, side})) {
-        invokeOperator(context, "play.step", {}, KeymapRegion::Global);
-    }
-    ImGui::EndDisabled();
-    ImGui::SetItemTooltip("Step one frame while paused  %s", m_keymap.shortcutLabel("play.step", {}).c_str());
-    ImGui::SameLine();
-    float scale = m_playMode.timeScale();
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.0f);
-    if (ImGui::DragFloat("##toolbar_time_scale", &scale, 0.01f, SimulationClock::minimumTimeScale,
-                         SimulationClock::maximumTimeScale, "x%.2f")) {
-        invokeOperator(context, "play.set_time_scale", nlohmann::json{{"scale", scale}}.dump(), KeymapRegion::Global);
-    }
-    ImGui::SetItemTooltip("Time scale for Play and Simulate");
-}
-
-void EditorSession::drawSimulateOptions(ApplicationContext& context) {
-    operatorMenuItem(context, "play.simulate", "Simulate");
-    ImGui::Separator();
-    EditorContext editor = editorContext(context);
-    drawSimulateSystemPicker(editor, m_moduleHost);
-}
-
-void EditorSession::drawGameViewUi(ApplicationContext& context) {
+void EditorPlayback::drawGameViewUi(ApplicationContext& context) {
     ViewportPanel* viewport = gameViewport();
-    if (viewport == nullptr || m_playMode.mode() == EditorMode::Edit || m_playMode.simulating()) {
+    if (viewport == nullptr || m_services.playMode.mode() == EditorMode::Edit || m_services.playMode.simulating()) {
         return;
     }
     // The game sees the pointer relative to its view, as it would its window.
@@ -349,22 +294,22 @@ void EditorSession::drawGameViewUi(ApplicationContext& context) {
     const glm::vec2 size = glm::max(viewport->size(), glm::vec2(1.0f));
     m_gameViewUi.beginFrame({static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y)}, input);
     runGameplayStage(systemPhaseName(SystemPhase::Ui), [&] {
-        m_moduleHost.runSystems(SystemPhase::Ui, context.scene, &context, m_playMode.simulationMode(),
-                                m_frameGameSeconds, &input, &m_gameViewUi);
+        m_services.moduleHost.runSystems(SystemPhase::Ui, context.scene, &context, m_services.playMode.simulationMode(),
+                                         m_frameGameSeconds, &input, &m_gameViewUi);
     });
     viewport->setGameUi(&m_gameViewUi);
 }
 
-void EditorSession::runGameplayStage(std::string_view stage, const std::function<void()>& run) {
+void EditorPlayback::runGameplayStage(std::string_view stage, const std::function<void()>& run) {
     if (m_gameplayFailure) {
         return;
     }
-    const size_t faultsBefore = m_moduleHost.systemFaults().faults().size();
+    const size_t faultsBefore = m_services.moduleHost.systemFaults().faults().size();
     if (const std::optional<std::string> failure = callGuarded(run)) {
         m_gameplayFailure = "Gameplay threw in " + std::string(stage) + ": " + *failure;
         return;
     }
-    const std::span<const SystemFault> faults = m_moduleHost.systemFaults().faults();
+    const std::span<const SystemFault> faults = m_services.moduleHost.systemFaults().faults();
     if (faults.size() > faultsBefore) {
         const SystemFault& fault = faults[faultsBefore];
         m_gameplayFailure =
@@ -372,61 +317,153 @@ void EditorSession::runGameplayStage(std::string_view stage, const std::function
     }
 }
 
-void EditorSession::stopFailedGameplay(ApplicationContext& context) {
+void EditorPlayback::stopFailedGameplay(ApplicationContext& context) {
     if (!m_gameplayFailure) {
         return;
     }
     const std::string failure = *std::exchange(m_gameplayFailure, std::nullopt);
-    if (m_playMode.mode() == EditorMode::Edit) {
+    if (m_services.playMode.mode() == EditorMode::Edit) {
         return;
     }
-    const char* runtime = m_playMode.simulating() ? "Simulate" : "Play";
-    stopPlayMode(context);
-    m_diagnostics.add(EditorDiagnosticSeverity::Error, playDiagnosticSource,
-                      std::string(runtime) + " stopped and the edit scene was restored. " + failure,
-                      "Fix the gameplay code, rebuild the module, and start again.");
+    const char* runtime = m_services.playMode.simulating() ? "Simulate" : "Play";
+    stop(context);
+    m_services.diagnostics.add(EditorDiagnosticSeverity::Error, playDiagnosticSource,
+                               std::string(runtime) + " stopped and the edit scene was restored. " + failure,
+                               "Fix the gameplay code, rebuild the module, and start again.");
 }
 
-bool EditorSession::enterPlayMode(ApplicationContext& context, EditorRuntime runtime) {
+bool EditorPlayback::enter(ApplicationContext& context, EditorRuntime runtime) {
     context.physics.clear();
     context.audio.stopSceneVoices();
-    if (const SceneDocumentResult result =
-            m_playMode.enter(context.scene, context.assets, m_document.options(), m_selection.ids(), runtime);
+    if (const SceneDocumentResult result = m_services.playMode.enter(
+            context.scene, context.assets, m_services.document.options(), m_services.selection.ids(), runtime);
         !result) {
-        m_diagnostics.reportError(std::string(runtime == EditorRuntime::Simulate ? "Could not enter Simulate: "
-                                                                                 : "Could not enter Play mode: ") +
-                                  result.error);
+        m_services.diagnostics.reportError(std::string(runtime == EditorRuntime::Simulate
+                                                           ? "Could not enter Simulate: "
+                                                           : "Could not enter Play mode: ") +
+                                           result.error);
         return false;
     }
-    m_moduleHost.startGameplay(context.assets, m_document.options(), context.rendering.debugDraw());
-    if (GameServices* services = m_moduleHost.gameServices()) {
+    m_services.moduleHost.startGameplay(context.assets, m_services.document.options(), context.rendering.debugDraw());
+    if (GameServices* services = m_services.moduleHost.gameServices()) {
         services->setAudio(&context.audio);
         // The game bakes as navigation.bake previewed, as the shipped game does.
-        services->setDefaultNavigationSettings(m_navigationSettings);
+        services->setDefaultNavigationSettings(m_services.navigationSettings);
         // Play saves into the project, apart from the shipped game's saves.
-        if (!m_projectFile.empty() && m_document.path()) {
-            const std::filesystem::path project = m_projectFile.parent_path();
-            services->setSaveGames(SaveGameStore(project / ".zenith" / "saves", project), *m_document.path());
+        if (!m_services.projectFile.empty() && m_services.document.path()) {
+            const std::filesystem::path project = m_services.projectFile.parent_path();
+            services->setSaveGames(SaveGameStore(project / ".zenith" / "saves", project), *m_services.document.path());
         }
         services->events().publish(SceneLoaded{});
     }
-    m_history.crossBoundary(CommandHistoryBoundary::EnterPlayMode);
-    m_diagnostics.acknowledgeErrors();
+    m_services.history.crossBoundary(CommandHistoryBoundary::EnterPlayMode);
+    m_services.diagnostics.acknowledgeErrors();
     m_gameplayFailure.reset();
     return true;
 }
 
-void EditorSession::stopPlayMode(ApplicationContext& context) {
-    if (m_playMode.mode() == EditorMode::Edit) {
+void EditorPlayback::stop(ApplicationContext& context) {
+    if (m_services.playMode.mode() == EditorMode::Edit) {
         return;
     }
     context.audio.stopSceneVoices();
     context.physics.clear();
     endGameView();
-    m_moduleHost.stopGameplay(context.scene);
+    m_services.moduleHost.stopGameplay(context.scene);
     std::vector<SceneEntityId> restoredSelection;
-    m_playMode.stop(context.scene, restoredSelection);
-    m_selection.assign(std::move(restoredSelection));
-    m_history.crossBoundary(CommandHistoryBoundary::LeavePlayMode);
-    m_document.setDirty(m_history.dirty());
+    m_services.playMode.stop(context.scene, restoredSelection);
+    m_services.selection.assign(std::move(restoredSelection));
+    m_services.history.crossBoundary(CommandHistoryBoundary::LeavePlayMode);
+    m_services.document.setDirty(m_services.history.dirty());
+}
+
+void EditorPlayback::update(ApplicationContext& context, const InputState& input, float deltaSeconds) {
+    EditorPlayMode& playMode = m_services.playMode;
+    if (playMode.mode() == EditorMode::Edit) {
+        return;
+    }
+    const SimulationMode mode = playMode.simulationMode();
+    m_frameGameInput = mode == SimulationMode::Play ? gameInput(input) : m_idleGameInput;
+    m_frameGameSeconds = deltaSeconds;
+    if (!playMode.advancesThisFrame()) {
+        return;
+    }
+    // Update systems and timers run on simulated time (a paused frame step's
+    // own length, zero while the game pauses itself); the engine scales the
+    // fixed steps, animation, and audio by the same clock.
+    runGameplayStage(systemPhaseName(SystemPhase::Update), [&] {
+        GameModuleHost& host = m_services.moduleHost;
+        GameServices* services = host.gameServices();
+        if (services != nullptr) {
+            services->beginFrame();
+        }
+        host.runSystems(SystemPhase::Update, context.scene, &context, mode,
+                        simulatedSeconds(simulationClock(), deltaSeconds), &m_frameGameInput, nullptr, deltaSeconds);
+        if (services != nullptr) {
+            // On the clock as the systems left it, so a pause they requested
+            // holds the timers this frame.
+            services->advanceTimers(context.scene, simulatedSeconds(simulationClock(), deltaSeconds));
+        }
+    });
+}
+
+void EditorPlayback::fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) {
+    // Fixed updates run only while simulating (including a paused single
+    // step); Edit mode keeps its own fixed clock in the module host's edit
+    // frame. Simulate passes no input; the host enforces that too.
+    if (m_services.playMode.mode() == EditorMode::Edit) {
+        return;
+    }
+    const SimulationMode mode = m_services.playMode.simulationMode();
+    runGameplayStage(systemPhaseName(SystemPhase::FixedUpdate), [&] {
+        m_services.moduleHost.runSystems(SystemPhase::FixedUpdate, context.scene, &context, mode, deltaSeconds,
+                                         mode == SimulationMode::Simulate ? nullptr : &gameInput(input));
+    });
+}
+
+void EditorPlayback::afterPhysicsStep(ApplicationContext& context) {
+    if (GameServices* services = m_services.moduleHost.gameServices()) {
+        runGameplayStage("the physics events", [&] {
+            services->publishPhysicsEvents(context.scene, context.physics.triggerEvents(),
+                                           context.physics.contactEvents());
+        });
+    }
+}
+
+void EditorPlayback::lateUpdate(ApplicationContext& context, float deltaSeconds) {
+    EditorPlayMode& playMode = m_services.playMode;
+    if (playMode.mode() == EditorMode::Edit || !playMode.advancesThisFrame()) {
+        return;
+    }
+    const SimulationMode mode = playMode.simulationMode();
+    runGameplayStage(systemPhaseName(SystemPhase::LateUpdate), [&] {
+        m_services.moduleHost.runSystems(SystemPhase::LateUpdate, context.scene, &context, mode,
+                                         simulatedSeconds(simulationClock(), deltaSeconds), &m_frameGameInput, nullptr,
+                                         deltaSeconds);
+    });
+}
+
+SimulationClock EditorPlayback::simulationClock() const {
+    // The game's own pause and time scale apply on top of the editor's.
+    const SimulationClock editorClock = m_services.playMode.simulationClock();
+    const GameServices* services = m_services.moduleHost.gameServices();
+    return services != nullptr ? services->simulationClock(editorClock) : editorClock;
+}
+
+void EditorPlayback::beginUiFrame(ApplicationContext& context) {
+    // Between the frame's gameplay and the game view's UI: a run whose
+    // gameplay failed ends here, so the rest of the frame draws Edit mode.
+    stopFailedGameplay(context);
+    // The engine has run this frame's fixed steps, so a frame step is done;
+    // play.step during the UI requests the next one.
+    m_services.playMode.finishFrame();
+    // Before the areas, so the game view draws this frame's game UI.
+    drawGameViewUi(context);
+}
+
+void EditorPlayback::unload(ApplicationContext& context) {
+    stopPlay(context);
+    if (m_services.mouseCaptureChanged) {
+        m_services.mouseCaptureChanged(MouseCapturePolicy::WhileRightMouseDown);
+    }
 }

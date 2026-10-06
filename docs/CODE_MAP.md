@@ -148,7 +148,7 @@ capability. `--check` fails when the generated index is stale.
 | Create/duplicate/delete/paste entities | `application/EntityCommands.*`, `document/SceneFragment.*` | `EntityCommands::{createEntity,deleteSelection,duplicateSelection,pasteBesideSources}` | `zenith_scene_editing` | [Scene editing](editor/scene-editing.md) |
 | Play / Simulate / Stop | `application/EditorPlayback.cpp`, `EditorPlayMode.*`, `PlayTargets.*` | `EditorSession::{startPlay,enterPlayMode,stopPlayMode,runGameplayStage}`, `EditorPlayMode::enter` | `zenith_editor_play_mode`, `zenith_play_targets` | [Play mode](editor/play-mode.md) |
 | Live edits and Apply to Edit Scene | `document/RuntimeApply.*`, `application/SceneEditing.*` | `SceneEditing::{runtime,applyToEditScene}` | `zenith_live_editing` | [Scene editing](editor/scene-editing.md) |
-| Hosting/hot reloading the game module | `src/editor/modules/GameModuleHost.*`, `application/EditorModuleCommands.cpp` | `GameModuleHost::{load,reload,unload,startGameplay,stopGameplay,runSystems}` | `zenith_game_module_host` | [Game module hosting](editor/modules.md) |
+| Hosting/hot reloading the game module | `src/editor/modules/GameModuleHost.*`, `application/GameModuleController.*`, `application/EditorModuleCommands.cpp` | `GameModuleController::{load,pollReload}`, `GameModuleHost::{load,reload,unload,startGameplay,stopGameplay,runSystems}` | `zenith_game_module_host` | [Game module hosting](editor/modules.md) |
 | Editor extensions from a module | `src/editor/modules/EditorModuleApi.hpp` | `ZENITH_EDITOR_MODULE_REGISTER`, `EditorModuleContext` | `zenith_game_module_host` | [Editor extensions](EDITOR_EXTENSIONS.md) |
 | Operators (commands) | `src/editor/operators/Operator.*`, `OperatorRegistry.*`, `OperatorRunner.*`, `EditorOperatorFamilies.cpp` | `Operator`, `OperatorRunner::invoke`, `editorOperatorFamilies` | `zenith_operators`, `zenith_operator_families` | [Operators](editor/operators.md) |
 | Default keys, keymap, gestures | `operators/DefaultKeymap.cpp`, `Keymap.*`, `KeymapDispatch.*`, `KeymapEditor.*` | `defaultEditorKeymap`, `Keymap`, `KeyTrigger` | `zenith_operators` | [Operators](editor/operators.md) |
@@ -167,7 +167,7 @@ capability. `--check` fails when the generated index is stale.
 | Viewport overlays (lights, colliders, names) | `viewport/SceneGizmoDraw.*`, `ColliderHandles.*`, `IconPicking.*` | `SceneGizmoOverlays` | `zenith_scene_gizmo`, `zenith_collider_tools` | [Viewports](editor/viewport.md) |
 | Dropping models/prefabs into the viewport | `viewport/ViewportDrop.*`, `operators/PlacementOperators.*` | `object.place_model`, `object.array`, `object.scatter` | `zenith_placement` | [Viewports](editor/viewport.md) |
 | Game UI over the game view | `viewport/GameUiOverlay.*` | – | `zenith_play_targets` | [Play mode](editor/play-mode.md) |
-| Prefab windows | `application/PrefabWindowSet.*`, `EditorPrefabWindows.cpp`, `document/PrefabEditDocument.*` | `PrefabWindowSet`, `PrefabWindowDocument`, `DocumentBinding` | `zenith_prefab_windows` | [Prefab windows](editor/prefab-windows.md) |
+| Prefab windows | `application/PrefabWindowSet.*`, `application/PrefabWindowController.*`, `document/PrefabEditDocument.*` | `PrefabWindowSet`, `PrefabWindowController`, `PrefabWindowHost`, `PrefabWindowDocument`, `DocumentBinding` | `zenith_prefab_windows` | [Prefab windows](editor/prefab-windows.md) |
 | Prefab authoring commands | `document/PrefabAuthoring.*`, `operators/PrefabOperators.*` | `PrefabAuthoring` | `zenith_prefabs`, `zenith_prefab_ui`, `zenith_prefab_writes` | [Scene editing](editor/scene-editing.md) |
 | Areas and workspaces | `src/editor/areas/`, `application/EditorAreas.cpp`, `application/EditorAreaTypes.*` | `Workspace`, `AreaRegistry`, `builtInAreaTypes` | `zenith_workspaces`, `zenith_editor_area_types` | [Areas](editor/areas-workspaces.md) |
 | Theme, palette, widgets | `src/editor/theme/` | `EditorPalette`, `widgets::Button`, `ThemeChrome` | `zenith_editor_theme`, `zenith_editor_palette` | [Theme](editor/theme-settings.md) |
@@ -231,22 +231,22 @@ Function names are real; follow them in the files named.
 1. `src/editor/main.cpp`: resource locator, settings directory (`ZENITH_EDITOR_SETTINGS_DIR`), crash handler, `Engine::init`.
 2. `EditorApplication` (`editor/application/EditorApplication.*`) → `Engine::run`.
 3. No project argument → Project Hub (`editor/project/ProjectHub.*`); a project → `EditorSession` (`editor/application/EditorSession.*`).
-4. `EditorSession` builds the operator registry from `editorOperatorFamilies()`, the default keymap, default menus and workspaces, loads the project's module through `GameModuleHost::load`, and opens the startup scene.
+4. `EditorSession` builds the operator registry from `editorOperatorFamilies()`, the default keymap, default menus and workspaces, loads the project's module through `GameModuleController::load` (`GameModuleHost::load`), and opens the startup scene.
 5. Each frame: `EditorSession::update` (keymap dispatch, module edit systems via `GameModuleHost::runEditFrame` or Play stages) and `EditorSession::drawUi` (main menu, areas/panels, viewports).
 
 ### Pressing Play (`F5`)
 
-1. Keymap → operator `play.start` (`application/EditorPlayback.cpp`) → `EditorSession::startPlay(context, target)`.
-2. `EditorSession::enterPlayMode`: `PhysicsWorld::clear`, `EditorPlayMode::enter` (snapshot the edit scene, clone the runtime scene), `GameModuleHost::startGameplay` (new `GameServices`), set audio, navigation settings, save store, publish `SceneLoaded`; `CommandHistory::crossBoundary(EnterPlayMode)`.
+1. Keymap → operator `play.start` (`application/EditorPlayback.cpp`) → `EditorPlayback::startPlay(context, target)` (the session's `m_playback`).
+2. `EditorPlayback::enter`: `PhysicsWorld::clear`, `EditorPlayMode::enter` (snapshot the edit scene, clone the runtime scene), `GameModuleHost::startGameplay` (new `GameServices`), set audio, navigation settings, save store, publish `SceneLoaded`; `CommandHistory::crossBoundary(EnterPlayMode)`.
 3. Target: active viewport → `ViewportPanel::beginGameView`; floating → a new floating Viewport area; standalone → `StandalonePlayer` runs `zenith --project <p> --scene <temp>` as a `ChildProcess`.
-4. Each frame: `EditorSession::runGameplayStage` per stage → `GameModuleHost::runSystems(phase, ...)`; a fault → `stopFailedGameplay`.
-5. `Shift+F5` → `play.stop` → `EditorSession::stopPlay` → `stopPlayMode`: `GameModuleHost::stopGameplay` (behaviour `onDestroy`, services released), restore the edit scene.
+4. Each frame: the session's frame hooks forward to `EditorPlayback` (`update`, `fixedUpdate`, `afterPhysicsStep`, `lateUpdate`, `beginUiFrame`); `EditorPlayback::runGameplayStage` per stage → `GameModuleHost::runSystems(phase, ...)`; a fault → `stopFailedGameplay`.
+5. `Shift+F5` → `play.stop` → `EditorPlayback::stopPlay` → `stop`: `GameModuleHost::stopGameplay` (behaviour `onDestroy`, services released), restore the edit scene.
 
 ### Building and hot reloading a module (`Ctrl+B`)
 
 1. `build.run` (`operators/BuildOperators.*`) → `ProjectBuild` → `BuildRunner` (fast Ninja build in `<project>/.zenith/build`, else the CMake preset).
 2. Output parsed by `CompilerOutputParser` → Build panel and `EditorDiagnostics`.
-3. The module file changes → `GameModuleHost::reload(scene, assets, document)` (deferred while playing or while prefab windows are open): serialize module components, `releaseModule` (editor extensions, services, behaviours), `GameModule::load` the new shadow copy, re-register, deserialize. A failed load keeps the data as JSON.
+3. The module file changes → `GameModuleController::pollReload` → `GameModuleHost::reload(scene, assets, document)` (deferred while building, playing, or while prefab windows are open): serialize module components, `releaseModule` (editor extensions, services, behaviours), `GameModule::load` the new shadow copy, re-register, deserialize. A failed load keeps the data as JSON.
 
 ### Loading and saving a scene
 
@@ -355,12 +355,11 @@ The editor session: lifecycle, Play, menus, prefab windows, file and module work
 | `EditorAreaTypes` .hpp/.cpp | `EditorAreaServices` | The editor's built-in area types (Viewport, Hierarchy, Inspector, ...) and what each shows. |
 | `EditorDiagnostics` .hpp/.cpp | `EditorDiagnosticSeverity`, `EditorSourceLocation`, `EditorDiagnostic`, `EditorDiagnostics` | Diagnostics with severity, source location, and a suggested action (the Diagnostics panel's model). |
 | `EditorFileDialogs` .cpp |  | EditorSession's document workflow: native and typed-path file dialogs, the unsaved-changes prompt, and the actions (New, Open, Close, leaving for the Project Hub, leaving a prefab) that wait on it. |
-| `EditorMainMenu` .cpp |  | EditorSession's main menu bar and the global keymap it dispatches first. |
-| `EditorModuleCommands` .cpp |  | EditorSession's game module workflows: loading the project's module, running its systems each frame, hot reloading it, and its menu, status, and panels. |
+| `EditorMainMenu` .cpp |  | EditorSession's main menu bar (with the playback toolbar) and the global keymap it dispatches first. |
+| `EditorModuleCommands` .cpp |  | EditorSession's game module workflows: running the module's systems each frame, the Module menu, and the New Code dialog. |
 | `EditorObjectCommands` .cpp |  | Blender object-mode operators that need the running editor: modal G/R/S transforms and the Delete/Rename popups, and drawing the menu opened with wm.call_menu (the Add menu is defined in editor/menus). |
-| `EditorPlayback` .cpp | `PlayStartProperties` | EditorSession's play workflows: the play operators and their targets (the active viewport, a floating viewport, or a standalone game process), entering and leaving Play mode, game views and the input and Ui they route to module systems, the mouse capture policy, and the playback toolbar in the main menu bar. |
+| `EditorPlayback` .hpp/.cpp | `EditorPlaybackServices`, `EditorPlayback` | Play targets, entering and leaving Play and Simulate, game views and the input and Ui they route, the standalone game. |
 | `EditorPlayMode` .hpp/.cpp | `EditorMode`, `EditorRuntime`, `EditorPlayMode` | Edit/Play/Simulate state: snapshot on enter, restore on stop, time scale, pause, frame step. |
-| `EditorPrefabWindows` .cpp | `EditorSession` | EditorSession's prefab windows: prefabs open in floating windows of their own (PrefabWindowSet) while the level stays open, editable, and playable underneath. |
 | `EditorPreferences` .cpp |  | EditorSession's preferences and packaging workflows: the Preferences window and its live application of the look, and Build and Package. |
 | `EditorProjectSettings` .cpp |  | EditorSession's Project Settings workflow: opening the window on the project file's values, and saving and applying what it returns. |
 | `EditorSession` .hpp/.cpp | `EditorProjectServices`, `EditorSession` | EditorSession: the per-project editor coordinator (document, history, selection, panels, Play, module host); |
@@ -373,11 +372,13 @@ The editor session: lifecycle, Play, menus, prefab windows, file and module work
 | `EntityCommands` .hpp/.cpp | `PastedTransform` | Create, duplicate, delete, reparent, and paste entities as undoable edits. |
 | `FileDropQueue` .hpp/.cpp | `FileDropQueue` | Files and folders dropped onto the editor window from the operating system in one frame (InputState::droppedFiles), handed to the window they landed in. |
 | `FolderPicker` .hpp/.cpp | `FolderPicker` | A "Browse..." button that fills a UTF-8 path text field from the operating system's folder dialog. |
+| `GameModuleController` .hpp/.cpp | `GameModuleServices`, `GameModuleController` | The project's game module in the editor: loading it, hot reloading it after a build, and its status. |
 | `NativeFileDialog` .hpp/.cpp | `FileDialogKind`, `FileDialogStatus`, `FileDialogOutcome`, `FileDialogFilter`, … | Shows the operating system's open/save dialog for one file type. |
 | `NewCodeDialog` .hpp/.cpp | `NewCodeDialog` | The New Behaviour, Component, and System dialog the module.new_* operators open. |
 | `PlayTargets` .hpp/.cpp | `PlayTarget`, `PlayTargetInfo`, `GameViewBanner`, `GameProcess`, … | Play targets: the active viewport, a floating viewport, or a standalone game process. |
 | `PrefabEditTargets` .hpp/.cpp |  | What the prefab windows do with a prefab open as a document of its own (PrefabEditTarget): saving it, and following its file when project files move or go. |
 | `PrefabInstanceRefresh` .hpp/.cpp |  | Refreshes a prefab's instances in a scene after its file changed, keeping each instance's overrides. |
+| `PrefabWindowController` .hpp/.cpp | `PrefabWindowHost`, `PrefabWindowServices`, `PrefabWindowController` | The prefab windows: opening, drawing, saving, closing, and recovering prefabs edited in floating windows. |
 | `PrefabWindowSet` .hpp/.cpp | `PrefabWindowDocument`, `PrefabWindowSet` | The prefabs open in windows of their own (the editor's prefab windows), at most one window per prefab. |
 | `SceneEditing` .hpp/.cpp | `SceneEditing` | Records changes to the edited scene as undoable document commands. |
 | `SystemClipboard` .hpp/.cpp | `SystemClipboard` | The operating system clipboard, through ImGui's platform backend. |

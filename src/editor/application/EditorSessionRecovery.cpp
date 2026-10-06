@@ -1,7 +1,7 @@
 // EditorSession's autosave, its emergency save after a crash, and the
 // recovery prompt shown when the previous session left an autosave behind.
 // Prefab windows with unsaved changes are saved beside the level
-// (m_prefabWindowRecovery), and Recover opens them again.
+// (PrefabWindowController), and Recover opens them again.
 
 #include "EditorSession.hpp"
 
@@ -16,10 +16,7 @@ void EditorSession::updateAutosave(ApplicationContext& context, float deltaSecon
     // An interval of 0 turns autosave off (Edit > Preferences > Saving).
     const float intervalSeconds = m_settings.autosave().intervalSeconds;
     const bool levelUnsaved = m_document.dirty();
-    const bool windowsUnsaved =
-        std::ranges::any_of(m_prefabWindows.windows(), [](const std::unique_ptr<PrefabWindowDocument>& window) {
-            return window->document.dirty();
-        });
+    const bool windowsUnsaved = m_prefabWindows.anyUnsaved();
     if (intervalSeconds <= 0.0f || !(levelUnsaved || windowsUnsaved) || m_playMode.mode() != EditorMode::Edit) {
         m_autosaveElapsed = 0.0f;
         return;
@@ -28,7 +25,7 @@ void EditorSession::updateAutosave(ApplicationContext& context, float deltaSecon
     if (m_autosaveElapsed >= intervalSeconds) {
         m_autosaveElapsed = 0.0f;
         if (windowsUnsaved) {
-            autosavePrefabWindows(context, true);
+            m_prefabWindows.autosave(context, true);
         }
         if (!levelUnsaved) {
             return;
@@ -49,7 +46,7 @@ void EditorSession::registerCrashRecovery(ApplicationContext& context) {
 }
 
 void EditorSession::saveRecoveryAfterCrash(ApplicationContext& context) {
-    autosavePrefabWindows(context, false);
+    m_prefabWindows.autosave(context, false);
     if (!m_document.dirty()) {
         return;
     }
@@ -69,7 +66,7 @@ void EditorSession::drawRecoveryDialog(ApplicationContext& context) {
         return;
     }
     ImGui::TextWrapped("A recovery document is available from the previous editor session.");
-    if (!m_prefabWindowRecovery.available().empty()) {
+    if (m_prefabWindows.recoveryAvailable()) {
         ImGui::TextWrapped("It includes unsaved prefab windows; Recover opens them again.");
     }
     if (widgets::Button("Recover")) {
@@ -87,7 +84,7 @@ void EditorSession::drawRecoveryDialog(ApplicationContext& context) {
             }
         }
         if (recovered) {
-            recoverPrefabWindows(context);
+            m_prefabWindows.recover(context);
         }
         if (recovered) {
             ImGui::CloseCurrentPopup();
@@ -96,7 +93,7 @@ void EditorSession::drawRecoveryDialog(ApplicationContext& context) {
     ImGui::SameLine();
     if (widgets::Button("Discard Recovery")) {
         std::string error;
-        if (!m_recovery.discard(error) || !m_prefabWindowRecovery.discard(error)) {
+        if (!m_recovery.discard(error) || !m_prefabWindows.discardRecovery(error)) {
             m_diagnostics.reportError(error);
         } else {
             ImGui::CloseCurrentPopup();

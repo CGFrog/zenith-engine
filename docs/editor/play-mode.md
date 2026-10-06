@@ -38,8 +38,8 @@ into a game view (`ViewportPanel::beginGameView`): it looks through
 `gameCamera(scene)` (the first primary camera, the renderer's fallback) by
 clearing its view override, ignores editor navigation, picking, and the
 gizmo, and shows a banner about game input. Module systems get the frame's
-`InputState` only while the game view has focus (`EditorSession::gameInput`;
-a neutral state otherwise), and `EditorSession::mouseCapturePolicy()` is
+`InputState` only while the game view has focus (`EditorPlayback::gameInput`;
+a neutral state otherwise), and `EditorPlayback::mouseCapturePolicy()` is
 `Persistent` exactly then, published to `EditorApplication` each frame.
 `play.focus_game_view` (a click on the view) and `play.release_game_input`
 (Esc or a click elsewhere) move the focus. `standalone` writes the document
@@ -65,9 +65,10 @@ A module system that throws is logged and disabled (see
 [Fault isolation](../engine/modules.md#fault-isolation)); in Play and
 Simulate the session also stops the run. Each gameplay stage it drives
 (Update with the timers, FixedUpdate, the physics events, LateUpdate, Ui)
-goes through `EditorSession::runGameplayStage`, which records a failure when
+goes through `EditorPlayback::runGameplayStage`, which records a failure when
 an exception escapes the stage or a system was disabled in it, and skips the
-later stages of that frame. `drawUi` then calls `stopFailedGameplay`: Play
+later stages of that frame. `drawUi` then calls `EditorPlayback::beginUiFrame`,
+whose `stopFailedGameplay` ends the run: Play
 stops, the edit scene is restored, and an error from `Play` in the Info log
 says which system threw and what. The System Profiler shows a disabled system
 as `<name> (disabled)` with the reason in its tooltip; an Edit system that

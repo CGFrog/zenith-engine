@@ -206,7 +206,7 @@ void EditorSession::drawObjectPopups(ApplicationContext& context) {
 bool EditorSession::beginModalTransform(OperatorContext& context, TransformOperation operation, std::string commandName,
                                         std::optional<SceneEditing::EntitySnapshot> before, bool commitOnCancel) {
     const ViewportPanel* viewport = m_viewports.active();
-    const PrefabWindowDocument* window = m_prefabWindows.owner(context.editing.document());
+    const PrefabWindowDocument* window = m_prefabWindows.windows().owner(context.editing.document());
     // The level transforms only in Edit mode; a prefab window's document
     // always is in Edit mode.
     const bool levelPlaying = window == nullptr && m_playMode.mode() != EditorMode::Edit;
@@ -362,7 +362,7 @@ Scene* EditorSession::modalTransformScene(ApplicationContext& context) {
     if (!m_activeTransform || m_activeTransform->window == 0) {
         return &context.scene;
     }
-    PrefabWindowDocument* window = m_prefabWindows.find(m_activeTransform->window);
+    PrefabWindowDocument* window = m_prefabWindows.windows().find(m_activeTransform->window);
     return window != nullptr ? &window->scene : nullptr;
 }
 
@@ -370,7 +370,7 @@ std::optional<SceneEditing> EditorSession::modalTransformEditing(ApplicationCont
     if (!m_activeTransform || m_activeTransform->window == 0) {
         return editing(context);
     }
-    PrefabWindowDocument* window = m_prefabWindows.find(m_activeTransform->window);
+    PrefabWindowDocument* window = m_prefabWindows.windows().find(m_activeTransform->window);
     if (window == nullptr) {
         return std::nullopt;
     }

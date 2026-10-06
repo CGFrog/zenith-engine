@@ -40,11 +40,11 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     }
 
     void enterPlayMode() override {
-        m_session.enterPlayMode(m_context);
+        m_session.m_playback.enter(m_context);
     }
 
     void stopPlayMode() override {
-        m_session.stopPlayMode(m_context);
+        m_session.m_playback.stop(m_context);
     }
 
     const CommandHistory& history() const override {
@@ -64,16 +64,15 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     }
 
     const PrefabWindowSet& prefabWindows() const override {
-        return m_session.m_prefabWindows;
+        return m_session.m_prefabWindows.windows();
     }
 
     ViewportPanel* prefabWindowViewport(uint64_t window) override {
-        PrefabWindowView* view = m_session.prefabWindowView(window);
-        return view != nullptr ? dynamic_cast<ViewportPanel*>(view->viewport.get()) : nullptr;
+        return m_session.m_prefabWindows.viewport(window);
     }
 
     std::optional<SceneEditing> prefabWindowEditing(uint64_t window) override {
-        PrefabWindowDocument* document = m_session.m_prefabWindows.find(window);
+        PrefabWindowDocument* document = m_session.m_prefabWindows.windows().find(window);
         if (document == nullptr) {
             return std::nullopt;
         }
@@ -82,12 +81,12 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     }
 
     bool savePrefabWindow(uint64_t window) override {
-        PrefabWindowDocument* document = m_session.m_prefabWindows.find(window);
-        return document != nullptr && m_session.savePrefabWindow(m_context, *document);
+        PrefabWindowDocument* document = m_session.m_prefabWindows.windows().find(window);
+        return document != nullptr && m_session.m_prefabWindows.save(m_context, *document);
     }
 
     void closePrefabWindow(uint64_t window) override {
-        m_session.m_prefabWindowCloses.push_back(window);
+        m_session.m_prefabWindows.requestClose(window);
     }
 
     EditorMenus& menus() override {
@@ -121,40 +120,40 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     }
 
     const GameModuleHost& moduleHost() const override {
-        return m_session.m_moduleHost;
+        return m_session.m_modules.host();
     }
 
     void requestModuleReload() override {
-        m_session.m_moduleReloadPending = true;
+        m_session.m_modules.requestReload();
     }
 
     bool moduleReloadPending() const override {
-        return m_session.m_moduleReloadPending;
+        return m_session.m_modules.reloadPending();
     }
 
     ViewportPanel* gameViewport() override {
-        return m_session.gameViewport();
+        return m_session.m_playback.gameViewport();
     }
 
     bool gameReceivesInput() const override {
         const InputState frameInput;
-        return &m_session.gameInput(frameInput) == &frameInput;
+        return &m_session.m_playback.gameInput(frameInput) == &frameInput;
     }
 
     MouseCapturePolicy mouseCapturePolicy() const override {
-        return m_session.mouseCapturePolicy();
+        return m_session.m_playback.mouseCapturePolicy();
     }
 
     bool playTargetActive() const override {
-        return m_session.playActive() || m_session.m_activePlayTarget.has_value();
+        return m_session.m_playback.playActive() || m_session.m_playback.activeTarget().has_value();
     }
 
     const StandalonePlayer& standalone() const override {
-        return m_session.m_standalone;
+        return m_session.m_playback.standalone();
     }
 
     const std::filesystem::path& gameExecutable() const override {
-        return m_session.m_playServices.gameExecutable;
+        return m_session.m_playback.gameExecutable();
     }
 
   private:

@@ -1,4 +1,4 @@
-// EditorSession's main menu bar and the global keymap it dispatches first.
+// EditorSession's main menu bar (with the playback toolbar) and the global keymap it dispatches first.
 
 #include "EditorSession.hpp"
 
@@ -20,7 +20,7 @@ void EditorSession::handleGlobalShortcuts(ApplicationContext& context) {
     // when the mouse has left it.
     updateKeymapGesture(context);
     // Global keys act on the document whose window last had focus.
-    dispatchKeymap(context, focusedPrefabWindow(), KeymapRegion::Global);
+    dispatchKeymap(context, m_prefabWindows.focused(), KeymapRegion::Global);
 }
 
 void EditorSession::drawDebugOverlaysMenu(ApplicationContext& context) {
@@ -154,7 +154,8 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         for (const PlayTargetInfo& target : playTargets()) {
             const std::string label = "Play in " + std::string(target.label);
             const std::string properties = nlohmann::json{{"target", target.key}}.dump();
-            operatorMenuItem(context, "play.start", label.c_str(), properties, target.target == m_lastPlayTarget);
+            operatorMenuItem(context, "play.start", label.c_str(), properties,
+                             target.target == m_playback.lastPlayTarget());
         }
         operatorMenuItem(context, "play.simulate", "Simulate");
         ImGui::Separator();
@@ -165,7 +166,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         operatorMenuItem(context, "play.apply_to_edit", "Apply Selection to Edit Scene");
         if (ImGui::BeginMenu("Simulate Systems")) {
             EditorContext editor = editorContext(context);
-            drawSimulateSystemPicker(editor, m_moduleHost);
+            drawSimulateSystemPicker(editor, m_modules.host());
             ImGui::EndMenu();
         }
         ImGui::EndMenu();
@@ -174,4 +175,80 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
     drawPlaybackToolbar(context);
     drawWorkspaceTabs(context);
     ImGui::EndMainMenuBar();
+}
+
+void EditorSession::drawPlaybackToolbar(ApplicationContext& context) {
+    ImGui::Separator();
+    const float side = ImGui::GetFrameHeight();
+    const ImVec2 square{side, side};
+    const EditorMode mode = m_playMode.mode();
+    const auto button = [&](const char* id, EditorIcon icon, bool active, std::string_view operatorId,
+                            const char* tooltip, std::string_view properties = {}) {
+        ImGui::BeginDisabled(!operatorAvailable(context, operatorId));
+        if (widgets::ToolButton(id, icon, active, square)) {
+            invokeOperator(context, operatorId, properties, KeymapRegion::Global);
+        }
+        ImGui::EndDisabled();
+        const std::string shortcut = m_keymap.shortcutLabel(operatorId, properties);
+        ImGui::SetItemTooltip("%s%s%s", tooltip, shortcut.empty() ? "" : "  ", shortcut.c_str());
+    };
+    const auto dropdown = [&](const char* id, const char* popup) {
+        ImGui::SameLine(0.0f, 0.0f);
+        if (widgets::Button(id, {side * 0.6f, side})) {
+            ImGui::OpenPopup(popup);
+        }
+    };
+
+    const bool simulating = mode == EditorMode::Simulate || (mode == EditorMode::Paused && m_playMode.simulating());
+    // One button starts and stops: while anything runs it is Stop.
+    const bool running = mode != EditorMode::Edit || m_playback.standaloneRunning();
+    if (running) {
+        button("##toolbar_play", EditorIcon::Stop, true, "play.stop", "Stop");
+    } else {
+        const std::string playTooltip = "Play in " + std::string(playTargetInfo(m_playback.lastPlayTarget()).label);
+        button("##toolbar_play", EditorIcon::Play, false, "play.start", playTooltip.c_str());
+    }
+    ImGui::BeginDisabled(running);
+    dropdown("v##toolbar_play_targets", "##PlayTargetMenu");
+    ImGui::EndDisabled();
+    if (ImGui::BeginPopup("##PlayTargetMenu")) {
+        for (const PlayTargetInfo& target : playTargets()) {
+            operatorMenuItem(context, "play.start", std::string(target.label).c_str(),
+                             nlohmann::json{{"target", target.key}}.dump(),
+                             target.target == m_playback.lastPlayTarget());
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::SameLine();
+    button("##toolbar_simulate", EditorIcon::Physics, simulating, "play.simulate", "Simulate");
+    dropdown("v##toolbar_simulate_options", "##SimulateOptions");
+    if (ImGui::BeginPopup("##SimulateOptions")) {
+        drawSimulateOptions(context);
+        ImGui::EndPopup();
+    }
+    ImGui::SameLine();
+    button("##toolbar_pause", EditorIcon::Pause, mode == EditorMode::Paused, "play.toggle_pause",
+           mode == EditorMode::Paused ? "Resume" : "Pause");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!operatorAvailable(context, "play.step"));
+    if (widgets::Button("Step##toolbar_step", {0.0f, side})) {
+        invokeOperator(context, "play.step", {}, KeymapRegion::Global);
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Step one frame while paused  %s", m_keymap.shortcutLabel("play.step", {}).c_str());
+    ImGui::SameLine();
+    float scale = m_playMode.timeScale();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.0f);
+    if (ImGui::DragFloat("##toolbar_time_scale", &scale, 0.01f, SimulationClock::minimumTimeScale,
+                         SimulationClock::maximumTimeScale, "x%.2f")) {
+        invokeOperator(context, "play.set_time_scale", nlohmann::json{{"scale", scale}}.dump(), KeymapRegion::Global);
+    }
+    ImGui::SetItemTooltip("Time scale for Play and Simulate");
+}
+
+void EditorSession::drawSimulateOptions(ApplicationContext& context) {
+    operatorMenuItem(context, "play.simulate", "Simulate");
+    ImGui::Separator();
+    EditorContext editor = editorContext(context);
+    drawSimulateSystemPicker(editor, m_modules.host());
 }
