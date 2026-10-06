@@ -594,6 +594,8 @@ ProjectConfig prefabProject(const fs::path& root, bool withModule = false) {
                               {"chord", formatKeyChord(chord)},
                               {"properties", std::move(properties)}};
     };
+    // These tests cover prefab mode, which prefab windows replace by default.
+    std::ofstream(root / "settings" / "settings.ini") << "ui.prefab_windows=false\n";
     std::ofstream(root / "settings" / "keymap.json") << nlohmann::json{
         {"version", 1},
         {"removed", nlohmann::json::array()},
@@ -728,7 +730,7 @@ void testPrefabWorkspace(const fs::path& root) {
         const fs::path off = root / "off";
         ProjectConfig project = prefabProject(off);
         {
-            std::ofstream(off / "settings" / "settings.ini") << "ui.prefab_workspace=false\n";
+            std::ofstream(off / "settings" / "settings.ini", std::ios::app) << "ui.prefab_workspace=false\n";
         }
         EditorHarness editor(off, project);
         if (!editor.start()) {
@@ -791,7 +793,7 @@ void testModuleReloadWaitsForTheScene(const fs::path& root) {
 void testRecoverAPrefabEdit(const fs::path& root) {
     ProjectConfig project = prefabProject(root);
     {
-        std::ofstream(root / "settings" / "settings.ini") << "autosave.interval=0.01\n";
+        std::ofstream(root / "settings" / "settings.ini", std::ios::app) << "autosave.interval=0.01\n";
     }
     {
         EditorHarness editor(root, project);

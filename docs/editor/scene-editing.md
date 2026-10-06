@@ -183,9 +183,9 @@ and makes the write part of history:
 
 ## Prefab mode: the document stack
 
-With `ui.prefab_windows` on, a prefab opens in a floating window of its own
-beside the level instead ([Prefab windows](prefab-windows.md)); what follows
-describes prefab mode, the default.
+By default a prefab opens in a floating window of its own beside the level
+([Prefab windows](prefab-windows.md)); what follows describes prefab mode,
+which `ui.prefab_windows=false` selects instead.
 
 By default a prefab also opens in its own **Prefab workspace** tab (below the
 document stack, which is what makes it a separate document): entering the

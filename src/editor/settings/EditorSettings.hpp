@@ -87,9 +87,8 @@ struct EditorAppearanceSettings {
     bool prefabWorkspace{true};
     // Whether editing a prefab opens it in a floating window of its own
     // beside the level (ui.prefab_windows), which stays open and editable,
-    // instead of swapping it in over the level. Off until the window shows
-    // the prefab in 3D.
-    bool prefabWindows{false};
+    // instead of swapping it in over the level (prefab mode).
+    bool prefabWindows{true};
 
     bool operator==(const EditorAppearanceSettings&) const = default;
 };

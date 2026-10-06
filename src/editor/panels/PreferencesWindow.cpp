@@ -300,8 +300,9 @@ bool PreferencesWindow::drawInterface(const PreferencesContext& context) {
     ImGui::SetItemTooltip("Editing a prefab switches to a Prefab workspace tab and Back returns to the workspace "
                           "you came from. Off edits the prefab in the current workspace.");
     edited = ImGui::Checkbox("Open prefabs in their own windows", &appearance.prefabWindows) || edited;
-    ImGui::SetItemTooltip("Editing a prefab opens it in a floating window with its own Hierarchy and Inspector, "
-                          "while the level stays open and editable. The window has no 3D view yet.");
+    ImGui::SetItemTooltip("Editing a prefab opens it in a floating window with its own Hierarchy, Viewport, and "
+                          "Inspector, while the level stays open and editable. Off swaps the prefab in over the "
+                          "level (prefab mode).");
     edited = drawSectionFooter(PreferenceSection::Interface) || edited;
     ImGui::PopID();
     return edited;

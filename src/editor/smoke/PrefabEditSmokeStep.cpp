@@ -63,6 +63,9 @@ class PrefabEditSmokeStep final : public SmokeStep {
         std::error_code error;
         std::filesystem::remove_all(m_folder, error);
         m_reference = std::string(smokeFolder) + "/crate.prefab";
+        // This step covers prefab mode; prefab windows have their own.
+        m_windowsWereEnabled = context.editor.prefabWindowsEnabled();
+        context.editor.setPrefabWindowsEnabled(false);
         PrefabAuthoring authoring(context.app.assets, options);
         Scene staging;
         const Entity crate = staging.createEntity("Smoke Crate");
@@ -149,6 +152,7 @@ class PrefabEditSmokeStep final : public SmokeStep {
             return SmokeStepResult::failed("undo did not restore the instance");
         }
         context.editor.undoSince(m_marker);
+        context.editor.setPrefabWindowsEnabled(m_windowsWereEnabled);
         return SmokeStepResult::done();
     }
 
@@ -164,6 +168,7 @@ class PrefabEditSmokeStep final : public SmokeStep {
     std::optional<std::string> m_original;
     SceneEntityId m_instance;
     CommandHistoryMarker m_marker;
+    bool m_windowsWereEnabled{false};
 };
 
 } // namespace

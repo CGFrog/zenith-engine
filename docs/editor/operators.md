@@ -149,9 +149,9 @@ file dialog or modal tool; they record nothing themselves. In prefab mode
 `play.simulate` are disabled, and going back after saving records one
 "Edit <name>" step on the document below (see
 [Scene editing](scene-editing.md#prefab-mode-the-document-stack)). With
-`ui.prefab_windows` on, `prefab.edit` opens a floating window beside the level
-instead (also during Play), and `prefab.exit_edit` closes the prefab window
-that last had focus ([Prefab windows](prefab-windows.md)).
+`ui.prefab_windows` on (the default), `prefab.edit` opens a floating window
+beside the level instead (also during Play), and `prefab.exit_edit` closes the
+prefab window that last had focus ([Prefab windows](prefab-windows.md)).
 
 Operators run on the document their `OperatorContext` names: the level, or a
 prefab window's document. `file.save`, `edit.undo`, `edit.redo`, `edit.copy`,
