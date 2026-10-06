@@ -57,6 +57,16 @@ It also holds the secondary render scenes (`createScene`, `setViewScene`,
 preview lighting. `tests/engine/TwoSceneSmokeTests.cpp` renders one beside the
 application's scene and picks in it.
 
+Cost: a bound scene costs nothing unless a view of it was requested this
+frame (`requestViewSize`): the renderer then leases its assets for the frame
+in flight and `MeshPass` builds and records it. `RenderStats` reports how many
+secondary scenes a submission drew, the CPU time they took
+(`cpuSecondarySceneMilliseconds`), and their packet rebuilds. Measured with
+`zenith_secondary_scene_benchmark` (Release, lavapipe, 500 cubes per scene),
+the renderer's CPU time is about 0.55 ms + 0.26 ms per drawn scene, ~0.23 ms
+of which is recording its view; a bound but hidden scene adds nothing
+measurable.
+
 `RenderIds.hpp` holds `RenderViewId`, `RenderSceneId`, and `RenderObjectId` so
 the picking types can name them.
 

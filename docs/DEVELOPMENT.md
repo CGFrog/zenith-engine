@@ -176,6 +176,14 @@ specific systems:
 .\build\Release\zenith_simulation_benchmark.exe
 ```
 
+`zenith_secondary_scene_benchmark` (Vulkan) measures secondary render scenes,
+the editor's prefab windows: 0, 1, 2, 4, and 8 scenes of
+`ZENITH_SECONDARY_BENCHMARK_OBJECTS` cubes (500), each static, with one object
+moving, and bound but hidden, over `ZENITH_SECONDARY_BENCHMARK_WARMUP` (10) and
+`ZENITH_SECONDARY_BENCHMARK_FRAMES` (120) frames per case. It samples the
+renderer's CPU time without fence wait, acquire, and present, the part spent on
+secondary scenes, and their packet rebuilds.
+
 CTest also runs both (label `benchmark`) to check that they complete and exit
 cleanly; read timings from a Release build, not from those runs.
 
