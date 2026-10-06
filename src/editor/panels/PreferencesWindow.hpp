@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/application/FolderPicker.hpp"
 #include "editor/settings/EditorSettings.hpp"
 
 #include <cstdint>
@@ -91,6 +92,7 @@ class PreferencesWindow {
     bool drawExternalIde(const PreferencesContext& context);
     bool drawSaving();
     bool drawBuild();
+    bool drawPackageDirectoryPicker();
     bool drawSectionFooter(PreferenceSection section);
 
     bool m_open{false};
@@ -100,6 +102,9 @@ class PreferencesWindow {
     std::vector<PreferenceProblem> m_problems;
     // The interval autosave returns to when it is switched back on.
     float m_enabledAutosaveInterval{EditorAutosaveSettings{}.intervalSeconds};
+    std::filesystem::path m_workingDirectory;
+    FolderPicker m_buildDirectoryPicker;
+    FolderPicker m_packageDirectoryPicker;
     std::string m_ideTestResult;
     bool m_ideTestFailed{false};
 };

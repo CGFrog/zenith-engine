@@ -4,7 +4,9 @@
 #include <SDL3/SDL_error.h>
 #include <SDL3/SDL_keyboard.h>
 
+#include <memory>
 #include <mutex>
+#include <system_error>
 #include <utility>
 
 namespace {
@@ -29,6 +31,15 @@ struct NativeFileDialog::CallbackContext {
     std::shared_ptr<State> state;
     FileDialogKind kind{};
 };
+
+std::filesystem::path dialogStartFolder(const std::filesystem::path& folder) {
+    std::error_code error;
+    const std::filesystem::path absolute = std::filesystem::absolute(folder, error);
+    if (folder.empty() || error || !std::filesystem::is_directory(absolute, error)) {
+        return {};
+    }
+    return (absolute / "").make_preferred();
+}
 
 std::filesystem::path normalizeSavePath(std::filesystem::path path, const std::filesystem::path& extension) {
     if (!path.empty() && path.extension() != extension) {
@@ -100,7 +111,9 @@ bool NativeFileDialog::request(FileDialogKind kind, const std::filesystem::path&
     // The focused editor window becomes the dialog's parent so it stays on top.
     SDL_Window* parent = SDL_GetKeyboardFocus();
     const int filterCount = static_cast<int>(filters.size());
-    if (kind == FileDialogKind::Save) {
+    if (kind == FileDialogKind::Folder) {
+        SDL_ShowOpenFolderDialog(callback, context, parent, locationArgument, allowMany);
+    } else if (kind == FileDialogKind::Save) {
         SDL_ShowSaveFileDialog(callback, context, parent, filters.empty() ? nullptr : filters.data(), filterCount,
                                locationArgument);
     } else {

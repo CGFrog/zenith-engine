@@ -290,12 +290,19 @@ void EditorSession::drawPlaybackToolbar(ApplicationContext& context) {
         }
     };
 
-    const bool playing = mode == EditorMode::Play || (mode == EditorMode::Paused && !m_playMode.simulating());
     const bool simulating = mode == EditorMode::Simulate || (mode == EditorMode::Paused && m_playMode.simulating());
-    const std::string playTooltip = "Play in " + std::string(playTargetInfo(m_lastPlayTarget).label);
-    button("##toolbar_play", EditorIcon::Play, playing || m_standalone.running(), "play.start",
-           prefabBlocks != nullptr ? prefabBlocks : playTooltip.c_str());
+    // One button starts and stops: while anything runs it is Stop.
+    const bool running = mode != EditorMode::Edit || m_standalone.running();
+    if (running) {
+        button("##toolbar_play", EditorIcon::Stop, true, "play.stop", "Stop");
+    } else {
+        const std::string playTooltip = "Play in " + std::string(playTargetInfo(m_lastPlayTarget).label);
+        button("##toolbar_play", EditorIcon::Play, false, "play.start",
+               prefabBlocks != nullptr ? prefabBlocks : playTooltip.c_str());
+    }
+    ImGui::BeginDisabled(running);
     dropdown("v##toolbar_play_targets", "##PlayTargetMenu");
+    ImGui::EndDisabled();
     if (ImGui::BeginPopup("##PlayTargetMenu")) {
         for (const PlayTargetInfo& target : playTargets()) {
             operatorMenuItem(context, "play.start", std::string(target.label).c_str(),
@@ -321,8 +328,6 @@ void EditorSession::drawPlaybackToolbar(ApplicationContext& context) {
     }
     ImGui::EndDisabled();
     ImGui::SetItemTooltip("Step one frame while paused  %s", m_keymap.shortcutLabel("play.step", {}).c_str());
-    ImGui::SameLine();
-    button("##toolbar_stop", EditorIcon::Stop, false, "play.stop", "Stop");
     ImGui::SameLine();
     float scale = m_playMode.timeScale();
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.0f);

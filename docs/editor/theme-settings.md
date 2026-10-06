@@ -82,3 +82,7 @@ for migration) and the systems chosen for Simulate.
 (`ThemeParameters`, passed explicitly; one look only), art-pixel metrics, the
 pixel font, hard-edged painting, window chrome, themed widget wrappers, and
 pixel-art icons.
+
+`widgets::CopyableText` draws wrapped text the user can copy with Ctrl+C while
+hovering or from a right-click Copy menu; use it for errors and other messages
+meant to be pasted elsewhere.

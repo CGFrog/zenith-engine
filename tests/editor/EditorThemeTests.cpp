@@ -144,6 +144,40 @@ void testWidgetsKeepImGuiIds() {
     expect(pressed && !toolPressed, "activating a themed button's id presses it");
 }
 
+void testCopyableText() {
+    const std::string message = "Build failed: error C2065";
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 center{};
+    const auto draw = [&](bool& copied) {
+        HeadlessImGuiFrame frame("Copyable");
+        copied = widgets::CopyableText(message, palette::error);
+        const ImVec2 min = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
+        center = {(min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f};
+    };
+    bool copied = false;
+    draw(copied);
+    io.AddMousePosEvent(center.x, center.y);
+    draw(copied);
+    expect(!copied, "hovering error text alone copies nothing");
+    io.AddKeyEvent(ImGuiMod_Ctrl, true);
+    io.AddKeyEvent(ImGuiKey_C, true);
+    draw(copied);
+    io.AddKeyEvent(ImGuiKey_C, false);
+    io.AddKeyEvent(ImGuiMod_Ctrl, false);
+    expect(copied, "Ctrl+C over error text copies it");
+    const char* clipboard = ImGui::GetClipboardText();
+    expect(clipboard != nullptr && message == clipboard, "the clipboard holds the whole message");
+
+    // Empty text has nothing to copy.
+    bool emptyCopied = true;
+    {
+        HeadlessImGuiFrame frame("Copyable empty");
+        emptyCopied = widgets::CopyableText("");
+    }
+    expect(!emptyCopied, "empty text is never copied");
+}
+
 void testEntityIcons() {
     Scene scene;
     const Entity camera = scene.createEntity("Camera");
@@ -246,6 +280,7 @@ int main() {
     testChromeClampsParameters();
     testIconsAndPainterDraw();
     testWidgetsKeepImGuiIds();
+    testCopyableText();
     testEntityIcons();
     testChromeOverSeveralFrames();
     testAppearanceAppliesPreferences();

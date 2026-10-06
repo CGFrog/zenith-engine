@@ -226,10 +226,10 @@ std::optional<ProjectSettingsValues> ProjectSettingsWindow::drawContents(bool ca
     ImGui::Separator();
     const std::string problem = validateProjectSettings(m_draft);
     if (!problem.empty()) {
-        ImGui::TextColored(toImVec4(palette::warning), "%s", problem.c_str());
+        widgets::CopyableText(problem, palette::warning);
     }
     if (!m_error.empty()) {
-        ImGui::TextColored(toImVec4(palette::error), "%s", m_error.c_str());
+        widgets::CopyableText(m_error, palette::error);
     }
     std::optional<ProjectSettingsValues> applied;
     const bool applicable = canApply && problem.empty() && m_modified;
@@ -467,7 +467,7 @@ void ProjectSettingsWindow::drawNavigation() {
 
     struct Setting {
         const char* label;
-        float NavMeshBuildSettings::* value;
+        float NavMeshBuildSettings::*value;
         float speed;
         float minimum;
         float maximum;

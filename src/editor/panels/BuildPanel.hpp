@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/application/FolderPicker.hpp"
 #include "editor/panels/EditorPanel.hpp"
 #include "editor/project/BuildRunner.hpp"
 
@@ -46,6 +47,7 @@ class BuildPanel final : public EditorPanel {
     void drawOutput(const std::deque<BuildOutputLine>& output, EditorDiagnostics& diagnostics);
 
     EditorToolSettings& m_tools;
+    FolderPicker m_directoryPicker;
     const ProjectBuild& m_build;
     PackageRunner* m_package{nullptr};
     View m_view{View::Build};

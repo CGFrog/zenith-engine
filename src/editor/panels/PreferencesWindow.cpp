@@ -81,9 +81,7 @@ void drawProblems(std::span<const PreferenceProblem> problems, PreferenceSection
         if (problem.section != section) {
             continue;
         }
-        ImGui::PushStyleColor(ImGuiCol_Text, toImVec4(palette::error));
-        ImGui::TextWrapped("%s", problem.message.c_str());
-        ImGui::PopStyleColor();
+        widgets::CopyableText(problem.message, palette::error);
     }
 }
 
@@ -241,6 +239,7 @@ const std::string& PreferencesWindow::ideTestResult() const {
 
 void PreferencesWindow::syncWithSettings(const EditorSettings& settings,
                                          const std::filesystem::path& workingDirectory) {
+    m_workingDirectory = workingDirectory;
     const EditorPreferenceValues current = preferenceValues(settings);
     if (m_synced && current == m_committed) {
         return;
@@ -335,9 +334,7 @@ bool PreferencesWindow::drawExternalIde(const PreferencesContext& context) {
     }
     if (!m_ideTestResult.empty()) {
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, toImVec4(m_ideTestFailed ? palette::error : palette::success));
-        ImGui::TextWrapped("%s", m_ideTestResult.c_str());
-        ImGui::PopStyleColor();
+        widgets::CopyableText(m_ideTestResult, m_ideTestFailed ? palette::error : palette::success);
     }
     edited = drawSectionFooter(PreferenceSection::ExternalIde) || edited;
     ImGui::PopID();
@@ -374,13 +371,35 @@ bool PreferencesWindow::drawBuild() {
     edited = ImGui::InputTextWithHint("Build directory", "Editor working directory", &m_draft.tools.buildDirectory) ||
              edited;
     ImGui::SetItemTooltip("Where the build command runs. Build and Package also configures CMake from here.");
+    ImGui::SameLine();
+    edited = m_buildDirectoryPicker.draw("build_directory_picker", m_draft.tools.buildDirectory) || edited;
     edited = ImGui::InputTextWithHint("Package directory", "build-release", &m_draft.tools.packageDirectory) || edited;
     ImGui::SetItemTooltip("The release tree Build and Package uses, inside the build directory.");
+    ImGui::SameLine();
+    edited = drawPackageDirectoryPicker() || edited;
     edited = ImGui::Checkbox("Build on save", &m_draft.tools.buildOnSave) || edited;
     ImGui::SetItemTooltip("Saving a source file in the project's src folder builds the project, as Ctrl B does.");
     edited = drawSectionFooter(PreferenceSection::Build) || edited;
     ImGui::PopID();
     return edited;
+}
+
+// The package directory lives inside the build directory, so a folder chosen
+// there is stored relative to it; one elsewhere is stored as chosen.
+bool PreferencesWindow::drawPackageDirectoryPicker() {
+    std::string chosen = m_draft.tools.packageDirectory;
+    if (!m_packageDirectoryPicker.draw("package_directory_picker", chosen)) {
+        return false;
+    }
+    std::filesystem::path buildDirectory = pathFromUtf8Text(m_draft.tools.buildDirectory);
+    if (buildDirectory.empty()) {
+        buildDirectory = m_workingDirectory;
+    } else if (buildDirectory.is_relative()) {
+        buildDirectory = m_workingDirectory / buildDirectory;
+    }
+    m_draft.tools.packageDirectory =
+        utf8PathText(relativeIfInside(pathFromUtf8Text(chosen), buildDirectory.lexically_normal()));
+    return true;
 }
 
 bool PreferencesWindow::drawSectionFooter(PreferenceSection section) {

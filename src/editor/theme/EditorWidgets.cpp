@@ -102,6 +102,33 @@ bool Button(const char* label, ImVec2 size, bool active) {
     return pressed;
 }
 
+bool CopyableText(const std::string& text, std::optional<ThemeColor> ink) {
+    if (ink) {
+        ImGui::PushStyleColor(ImGuiCol_Text, toImVec4(*ink));
+    }
+    ImGui::TextWrapped("%s", text.c_str());
+    if (ink) {
+        ImGui::PopStyleColor();
+    }
+    if (text.empty()) {
+        return false;
+    }
+    // Plain text has no id, so the popup is keyed by the text itself.
+    ImGui::PushID(text.c_str(), text.c_str() + text.size());
+    bool copied = ImGui::IsItemHovered() && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_C);
+    if (ImGui::BeginPopupContextItem("##copy_text")) {
+        if (ImGui::MenuItem("Copy")) {
+            copied = true;
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    if (copied) {
+        ImGui::SetClipboardText(text.c_str());
+    }
+    return copied;
+}
+
 bool ToolButton(const char* label, EditorIcon icon, bool active, ImVec2 size) {
     const bool pressed = ImGui::InvisibleButton(label, size);
     if (!ImGui::IsItemVisible()) {
