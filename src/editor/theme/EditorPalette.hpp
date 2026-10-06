@@ -127,6 +127,9 @@ inline constexpr ThemeColor overlayIrradianceVolume = ThemeColor::hex(0x4F9BFF);
 inline constexpr ThemeColor overlaySelected = ThemeColor::hex(0xFF9A1F);
 inline constexpr ThemeColor overlayActive = ThemeColor::hex(0xFFD070);
 inline constexpr ThemeColor overlayLabel = ThemeColor::hex(0xF0F0F0);
+// Alpha factor of an unselected collider or directional light, which draw
+// faintly so objects without a surface are never visible only when selected.
+inline constexpr float overlayIdleAlpha = 0.4f;
 // The 3D cursor (editor/viewport/Cursor3D): a ring of alternating dashes with
 // dark crosshair ticks, as in Blender, so it reads over light and dark scenes.
 inline constexpr ThemeColor cursorRing = ThemeColor::hex(0xFF5A5A);

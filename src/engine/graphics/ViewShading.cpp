@@ -63,10 +63,16 @@ RenderSettings viewShadingFrameSettings(const RenderSettings& settings, const Re
     }
     frame.decals = DecalQuality::Off;
     frame.particles = ParticleQuality::Off;
-    if (frame.viewShading == ViewShading::Wireframe && frame.antialiasing == AntialiasingMode::Taa) {
-        frame.antialiasing = AntialiasingMode::Fxaa;
-        if (frame.upscaler.mode == UpscalerMode::Taau) {
-            frame.upscaler.mode = UpscalerMode::Off;
+    if (frame.viewShading == ViewShading::Wireframe) {
+        // Edges only, every edge shown: no surface depth is drawn and nothing
+        // is occlusion culled.
+        frame.depthPrepass = false;
+        frame.preferGpuDrivenSubmission = false;
+        if (frame.antialiasing == AntialiasingMode::Taa) {
+            frame.antialiasing = AntialiasingMode::Fxaa;
+            if (frame.upscaler.mode == UpscalerMode::Taau) {
+                frame.upscaler.mode = UpscalerMode::Off;
+            }
         }
     }
     return frame;
@@ -74,6 +80,10 @@ RenderSettings viewShadingFrameSettings(const RenderSettings& settings, const Re
 
 bool usesSolidSurfaceShading(ViewShading shading) {
     return shading == ViewShading::Solid || shading == ViewShading::Wireframe;
+}
+
+bool drawsSurfaces(ViewShading shading) {
+    return shading != ViewShading::Wireframe;
 }
 
 bool drawsWireframeOverlay(ViewShading shading) {

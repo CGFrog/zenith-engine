@@ -799,8 +799,9 @@ class MeshPass {
     void recordShadedItems(const DrawContext& draw, ShadedItems selection);
     void recordOutlines(const DrawContext& draw);
     // Wireframe view shading: draws the edges of every surface drawn this
-    // frame (GPU-driven groups and CPU-submitted items) over them, inside the
-    // scene pass. Does nothing unless draw.pipelines has the overlay.
+    // frame, through each other (x-ray, no depth test), on the cleared scene.
+    // Surfaces are not shaded in that mode. Runs inside the scene pass and
+    // does nothing unless draw.pipelines has the overlay.
     void recordWireframeOverlay(const DrawContext& draw, bool gpuDrivenActive);
     // Inside the scene pass, after opaque surfaces, the background and
     // screen-space reflections: when a transmissive surface will draw, ends

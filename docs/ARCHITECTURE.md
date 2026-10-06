@@ -602,7 +602,8 @@ View shading modes other than Rendered (Material Preview, Solid, Wireframe;
 the mode's reduced settings for the frame, so the plan, the graph model and
 the passes all see the same feature set; the mesh pass only selects a pipeline
 variant (clay surfaces, the LINE overlay), lights the camera constants with a
-studio rig, and draws Wireframe's edges after the blended surfaces.
+studio rig, and draws Wireframe's edges, and only those, through every
+surface.
 
 The mesh pass maintains per-handle GPU caches. Camera buffers are per frame to
 avoid CPU/GPU write races. Materials are bindless: each frame slot owns a

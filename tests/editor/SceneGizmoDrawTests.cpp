@@ -51,7 +51,8 @@ constexpr size_t arrowLines = 5;
 constexpr size_t boxLines = 12;
 constexpr size_t markerLines = sphereLines(sceneGizmoSegments::marker);
 constexpr size_t capsuleLines = 2u * sceneGizmoSegments::range + 4u + 4u * (sceneGizmoSegments::range / 2u);
-constexpr size_t cameraLines = 12 + 3;
+// The camera icon: four edges to the base, the base rectangle, and the up triangle.
+constexpr size_t cameraIconLines = 4 + 4 + 3;
 
 SceneGizmoOverlays allOff() {
     return {.lights = OverlayScope::Off,
@@ -84,7 +85,6 @@ struct GizmoScene {
         drawSceneGizmos({.scene = scene,
                          .assets = assets,
                          .selection = selection,
-                         .aspectRatio = 2.0f,
                          .viewCamera = viewCamera,
                          .isolatedObjects = isolatedObjects ? &*isolatedObjects : nullptr},
                         overlays, output);
@@ -172,6 +172,12 @@ void testLights() {
                "a directional light draws a circle and three arrows");
         expect(near(lowest(output).y, 10.0f - sceneGizmoSizes::directionalArrowLength),
                "directional arrows point along the light's travel");
+        const std::span<const DebugLineVertex> idle = output.lineVertices(DebugDepth::AlwaysOnTop);
+        expect(idle.size() == output.lineCount() * 2u && (idle.front().color >> 24) < 255u,
+               "an unselected sun draws faintly over the scene");
+        fixture.selection = {fixture.scene.id(sun)};
+        expect(allColored(fixture.draw(lights).lineVertices(DebugDepth::AlwaysOnTop), sceneGizmoColors().active),
+               "a selected sun draws in the active colour");
     }
     {
         GizmoScene fixture;
@@ -193,26 +199,49 @@ void testCameras() {
     fixture.scene.registry().emplace<CameraComponent>(second).primary = false;
 
     DebugDraw output = fixture.draw(cameras);
-    expect(output.lineCount() == 2u * cameraLines, "each camera draws a frustum and an up triangle");
+    expect(output.lineCount() == 2u * cameraIconLines, "each unselected camera draws only its small icon");
     const std::span<const DebugLineVertex> tested = output.lineVertices(DebugDepth::Tested);
     const auto countColored = [&](const glm::vec4& color) {
         return std::ranges::count_if(
             tested, [&](const DebugLineVertex& vertex) { return vertex.color == packDebugColor(color); });
     };
-    expect(countColored(colors.activeCamera) == static_cast<long long>(cameraLines * 2u) &&
-               countColored(colors.camera) == static_cast<long long>(cameraLines * 2u),
+    expect(countColored(colors.activeCamera) == static_cast<long long>(cameraIconLines * 2u) &&
+               countColored(colors.camera) == static_cast<long long>(cameraIconLines * 2u),
            "the primary camera is highlighted as the active scene camera");
-    expect(lowest(output).z > -(0.1f + sceneGizmoSizes::cameraDisplayDepth) - 1e-3f,
-           "an unselected camera's frustum stops at the display depth");
+    expect(lowest(output).z > -(sceneGizmoSizes::cameraIconDepth + 1e-3f),
+           "the unselected icon stays within its fixed depth, whatever the clip planes");
+    const glm::vec3 unselectedSize = highest(output) - lowest(output);
 
     fixture.selection = {fixture.scene.id(primary)};
     output = fixture.draw(cameras);
-    expect(near(lowest(output).z, -20.0f), "a selected camera shows its frustum out to the far plane");
+    expect(output.lineCount() > 2u * cameraIconLines &&
+               lowest(output).z <=
+                   -(sceneGizmoSizes::cameraRayLength - sceneGizmoSizes::dashLength - sceneGizmoSizes::dashGap) &&
+               lowest(output).z >= -sceneGizmoSizes::cameraRayLength - 1e-3f,
+           "a selected camera adds dotted rays along its view instead of a frustum");
     expect(allColored(output.lineVertices(DebugDepth::AlwaysOnTop), colors.active),
            "the active camera draws over the scene in the active colour");
+    // Dashes: every ray line is shorter than the dash length plus a rounding margin.
+    const std::span<const DebugLineVertex> onTop = output.lineVertices(DebugDepth::AlwaysOnTop);
+    bool dotted = onTop.size() > 2u * cameraIconLines;
+    for (size_t index = 2u * cameraIconLines * 2u; index + 1 < onTop.size(); index += 2) {
+        dotted = dotted &&
+                 glm::length(onTop[index + 1].position - onTop[index].position) <= sceneGizmoSizes::dashLength + 1e-3f;
+    }
+    expect(dotted, "the selected camera's rays are dotted");
+
+    // A camera with a different lens draws the same icon: it is not tied to the
+    // field of view or the clip planes.
+    primaryCamera.verticalFovRadians = glm::radians(20.0f);
+    primaryCamera.farPlane = 500.0f;
+    fixture.selection.clear();
+    const glm::vec3 changedSize = highest(fixture.draw(cameras)) - lowest(fixture.draw(cameras));
+    expect(near(changedSize.x, unselectedSize.x) && near(changedSize.y, unselectedSize.y) &&
+               near(changedSize.z, unselectedSize.z),
+           "the camera icon keeps its size whatever the lens");
 
     fixture.viewCamera = fixture.scene.id(primary);
-    expect(fixture.draw(cameras).lineCount() == cameraLines, "the camera the view looks through draws no frustum");
+    expect(fixture.draw(cameras).lineCount() == cameraIconLines, "the camera the view looks through draws no icon");
 }
 
 void testCollidersAndVolumes() {
@@ -221,14 +250,21 @@ void testCollidersAndVolumes() {
     const Entity box = fixture.add("Box", glm::scale(glm::mat4(1.0f), {2.0f, 1.0f, 1.0f}));
     registry.emplace<ColliderComponent>(box, ColliderComponent{.shape = BoxCollider{.halfExtents = glm::vec3(0.5f)}});
     const SceneGizmoOverlays defaults;
-    expect(defaults.colliders == OverlayScope::Selected, "colliders default to the selection");
-    expect(fixture.draw(defaults).lineCount() == 0, "an unselected collider draws nothing by default");
+    expect(defaults.colliders == OverlayScope::All, "colliders default to every object");
+    DebugDraw faint = fixture.draw(defaults);
+    expect(faint.lineCount() == boxLines, "an unselected collider still draws its shape by default");
+    const std::span<const DebugLineVertex> faintLines = faint.lineVertices(DebugDepth::Tested);
+    expect(!faintLines.empty() &&
+               (faintLines.front().color >> 24) < (packDebugColor(sceneGizmoColors().collider) >> 24),
+           "an unselected collider is fainter than its category colour");
     fixture.selection = {fixture.scene.id(box)};
     SceneGizmoOverlays colliders = allOff();
     colliders.colliders = OverlayScope::Selected;
     DebugDraw output = fixture.draw(colliders);
     expect(output.lineCount() == boxLines && near(highest(output).x, 1.0f),
            "a selected box collider is drawn with the world scale baked in");
+    expect(allColored(output.lineVertices(DebugDepth::AlwaysOnTop), sceneGizmoColors().active),
+           "a selected collider draws brighter, over the scene");
     fixture.selection.clear();
 
     colliders.colliders = OverlayScope::All;
@@ -247,8 +283,12 @@ void testCollidersAndVolumes() {
         registry.emplace<ColliderComponent>(mesh, ColliderComponent{.shape = TriangleMeshCollider{.mesh = *cube}});
         const MeshAsset* cubeMesh = fixture.assets.mesh(*cube);
         const size_t triangles = cubeMesh != nullptr ? cubeMesh->indices.size() / 3u : 0u;
+        expect(fixture.draw(colliders).lineCount() == output.lineCount() + boxLines,
+               "an unselected triangle mesh collider draws only its bounds");
+        fixture.selection = {fixture.scene.id(mesh)};
         expect(fixture.draw(colliders).lineCount() == output.lineCount() + triangles * 3u,
-               "a triangle mesh collider draws every triangle edge");
+               "a selected triangle mesh collider draws every triangle edge");
+        fixture.selection.clear();
     }
 }
 

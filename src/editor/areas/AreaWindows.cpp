@@ -3,7 +3,9 @@
 #include "editor/areas/AreaRegistry.hpp"
 #include "editor/areas/DefaultWorkspaces.hpp"
 #include "editor/areas/Workspace.hpp"
+#include "editor/theme/EditorPalette.hpp"
 #include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/PixelPainter.hpp"
 #include "editor/theme/ThemeChrome.hpp"
 
 #include <imgui.h>
@@ -15,12 +17,37 @@
 #include <utility>
 #include <vector>
 
+std::string editorTypeMenuLabel(std::string_view title) {
+    // The trailing spaces leave room for the dropdown arrow.
+    return std::string(title) + "    ###editor_type";
+}
+
+EditorTypeArrow editorTypeArrow(float itemMinY, float itemMaxX, float itemMaxY, float fontSize, float artPixel) {
+    const float size = std::floor(fontSize * 0.5f);
+    return {.x = itemMaxX - size - artPixel * 3.0f, .y = std::floor((itemMinY + itemMaxY - size) * 0.5f), .size = size};
+}
+
 namespace {
+// Marks the editor type menu as a dropdown: a raised frame and a down arrow
+// over the item BeginMenu just made, in the room its label's trailing spaces
+// left.
+void paintEditorTypeAffordance() {
+    const float artPixel = editorArtPixel();
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const ImVec2 max = ImGui::GetItemRectMax();
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    pixel::bevel(drawList, min, max, toImU32(palette::bevelHighlight), toImU32(palette::bevelShade), artPixel);
+    const EditorTypeArrow arrow = editorTypeArrow(min.y, max.x, max.y, ImGui::GetFontSize(), artPixel);
+    pixel::triangle(drawList, {arrow.x, arrow.y}, arrow.size, ImGuiDir_Down, toImU32(palette::captionInk));
+}
+
 AreaWindowRequest drawAreaHeader(const AreaType& type, const AreaRegistry& registry) {
     AreaWindowRequest request;
     // The label is the editor type; the id keeps it stable across types.
-    const std::string label = type.title + "###editor_type";
-    if (!ImGui::BeginMenu(label.c_str())) {
+    const std::string label = editorTypeMenuLabel(type.title);
+    const bool open = ImGui::BeginMenu(label.c_str());
+    paintEditorTypeAffordance();
+    if (!open) {
         ImGui::SetItemTooltip("Editor type: choose what this area shows");
         return request;
     }

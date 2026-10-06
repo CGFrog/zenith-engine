@@ -73,6 +73,19 @@ struct KeymapMousePress {
 // Every mouse button bit, for KeymapDispatcher::pressMouse.
 inline constexpr uint32_t allMouseButtons = (1u << ImGuiMouseButton_COUNT) - 1u;
 
+// Who a frame's keyboard input belongs to: the editor, or the game playing in
+// a game view that has input focus.
+enum class KeyboardOwner : uint8_t {
+    Editor,
+    Game,
+};
+
+// Whether the game could use the chord: any key without Ctrl, Alt, or Super
+// except function keys and Escape. While the game owns the keyboard these
+// chords are never editor shortcuts (Space opens operator search in the
+// editor but jumps in the game).
+bool chordReachesGame(ImGuiKeyChord chord);
+
 // Turns this frame's ImGui input into keymap invocations: chord presses run
 // their Press or DoubleTap binding, and a press of a chord with Hold,
 // Release, Click, or Drag bindings is followed (one at a time; a newer
@@ -82,8 +95,10 @@ class KeymapDispatcher {
     // The binding of the first keyboard chord of region pressed this frame.
     // Global chords are routed globally, so they work whichever window has
     // focus, below focused text fields; region chords need the caller to
-    // check that the mouse is over the region.
-    std::optional<KeymapInvocation> pressKeys(Keymap& keymap, KeymapRegion region);
+    // check that the mouse is over the region. While the game owns the
+    // keyboard, chords the game could use (chordReachesGame) are skipped.
+    std::optional<KeymapInvocation> pressKeys(Keymap& keymap, KeymapRegion region,
+                                              KeyboardOwner owner = KeyboardOwner::Editor);
     // Mouse buttons pressed this frame whose bit is set in allowedButtons,
     // with the modifiers held now.
     KeymapMousePress pressMouse(Keymap& keymap, KeymapRegion region, uint32_t allowedButtons);

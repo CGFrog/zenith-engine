@@ -1,5 +1,7 @@
 #include "MeshPassFramePlan.hpp"
 
+#include "ViewShading.hpp"
+
 #include <SDL3/SDL_stdinc.h>
 
 MeshPassDiagnosticOverrides MeshPassDiagnosticOverrides::fromEnvironment() {
@@ -11,11 +13,14 @@ MeshPassDiagnosticOverrides MeshPassDiagnosticOverrides::fromEnvironment() {
 MeshPassFramePlan planMeshPassFrame(const RenderSettings& settings, const RenderCapabilities& capabilities,
                                     const MeshPassDiagnosticOverrides& overrides) {
     MeshPassFramePlan plan;
-    plan.depthPrepass = settings.depthPrepass && !overrides.disableDepthPrepass;
+    // Wireframe draws edges only and through every surface, so it draws no
+    // surface depth and culls nothing by occlusion.
+    const bool surfaces = drawsSurfaces(settings.viewShading);
+    plan.depthPrepass = surfaces && settings.depthPrepass && !overrides.disableDepthPrepass;
     const bool gpuDrivenAvailable =
         capabilities.gpuDrivenPath && capabilities.descriptorIndexing && capabilities.multiDrawIndirect;
     const bool gpuDrivenRequested = settings.preferGpuDrivenSubmission || overrides.forceGpuDrivenSubmission;
-    plan.gpuDrivenSubmission = gpuDrivenAvailable && gpuDrivenRequested;
+    plan.gpuDrivenSubmission = surfaces && gpuDrivenAvailable && gpuDrivenRequested;
     plan.gpuShadowCulling = plan.gpuDrivenSubmission && !overrides.disableGpuShadowCulling;
     plan.ambientOcclusion = plan.depthPrepass ? settings.ambientOcclusion : AmbientOcclusionQuality::Off;
     plan.screenSpaceReflections = plan.depthPrepass && settings.reflections != ReflectionQuality::ProbesOnly;

@@ -24,8 +24,13 @@ Release, and Click bindings. The session updates it once per frame and the
 viewport asks it, through `EditorSessionActions::dispatchMouseChords` and
 `mouseButtonBound`, which operator a mouse chord runs (select, Alt+click
 cycle, the Ctrl+RMB drag lasso, the Shift+RMB 3D cursor), so unbound right
-and middle presses stay camera navigation. `OperatorSearch` is the F3 popup
-and `KeymapEditor` the rebinding window (keys, viewport mouse chords, and a
+and middle presses stay camera navigation. A left drag in the viewport runs
+`view3d.select_box` (`left_drag`: the box starts where the press began, Shift
+extends, Ctrl subtracts). `OperatorSearch` is the F3 or Space popup (Space is a
+Global key, so it waits for text fields, and `KeyboardOwner::Game` makes
+`pressKeys` skip every chord the game could use, `chordReachesGame`, while a
+game view has input focus: Space then jumps in the game, F3 and Ctrl chords
+still reach the editor) and `KeymapEditor` the rebinding window (keys, viewport mouse chords, and a
 trigger per binding). `ObjectOperators` holds the document-only object
 operators, which run headless in `tests/editor/OperatorTests.cpp`, and
 registers `CollectionOperators` (`collection.new`, `delete`, `rename`, `link`,

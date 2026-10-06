@@ -102,8 +102,10 @@ class SceneGizmoScene final : public ApplicationScene {
         registry.emplace<DirectionalLightComponent>(add("Sun", translation({0.0f, 4.0f, -3.0f})));
         registry.emplace<EnvironmentLightComponent>(add("Sky", translation({-5.5f, 0.5f, 2.0f})));
         registry.emplace<CameraComponent>(add("Main camera", lookFrom({5.0f, 1.5f, 2.5f}, {0.0f, 0.5f, 0.0f})));
-        registry.emplace<CameraComponent>(add("Side camera", lookFrom({-5.0f, 1.5f, 2.5f}, {0.0f, 0.5f, 0.0f})))
-            .primary = false;
+        const Entity sideCamera = add("Side camera", lookFrom({-5.0f, 1.5f, 2.5f}, {0.0f, 0.5f, 0.0f}));
+        registry.emplace<CameraComponent>(sideCamera).primary = false;
+        // A selected camera adds its dotted rays to the icon.
+        m_selection.push_back(scene.id(sideCamera));
         registry.emplace<ReflectionProbeComponent>(add("Probe", translation({0.0f, 1.5f, -1.5f}))).halfExtents = {
             2.0f, 1.0f, 1.5f};
         registry
@@ -139,11 +141,8 @@ class SceneGizmoScene final : public ApplicationScene {
             return;
         }
         context.scene.updateWorldTransforms();
-        const float width = static_cast<float>(std::max(rendering.viewWidth(view), 1u));
-        const float height = static_cast<float>(std::max(rendering.viewHeight(view), 1u));
-        drawSceneGizmos(
-            {.scene = context.scene, .assets = context.assets, .selection = m_selection, .aspectRatio = width / height},
-            everyOverlay(), *output);
+        drawSceneGizmos({.scene = context.scene, .assets = context.assets, .selection = m_selection}, everyOverlay(),
+                        *output);
         m_results.expect(output->lineCount() > 0 && !output->labels().empty(), m_frame,
                          "the scene records gizmo lines and labels");
     }

@@ -38,6 +38,9 @@ std::vector<KeymapBinding> defaultEditorKeymap() {
         // Blender redoes with Ctrl Shift Z; Ctrl Y is kept as the Windows alias.
         binding("edit.redo", global, ImGuiMod_Ctrl | ImGuiKey_Y),
         binding("wm.search_menu", global, ImGuiKey_F3),
+        // Blender's Space opens search. Global keys already wait for text
+        // fields, and a game view with input focus keeps Space for the game.
+        binding("wm.search_menu", global, ImGuiKey_Space),
         binding("build.run", global, ImGuiMod_Ctrl | ImGuiKey_B),
         binding("play.start", global, ImGuiKey_F5),
         binding("play.simulate", global, ImGuiMod_Alt | ImGuiKey_F5),
@@ -84,6 +87,15 @@ std::vector<KeymapBinding> defaultEditorKeymap() {
         binding("view3d.select", viewport, ImGuiMod_Shift | ImGuiKey_MouseLeft, R"({"extend":true})"),
         binding("view3d.select", viewport, ImGuiMod_Ctrl | ImGuiKey_MouseLeft),
         binding("view3d.select", viewport, ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_MouseLeft, R"({"extend":true})"),
+        // Dragging with the left button draws a box (the Select Box tool): the
+        // press has already selected under the mouse, and Shift extends or
+        // Ctrl subtracts at release.
+        binding("view3d.select_box", viewport, ImGuiKey_MouseLeft, R"({"mode":"auto","left_drag":true})",
+                KeyTrigger::Drag),
+        binding("view3d.select_box", viewport, ImGuiMod_Shift | ImGuiKey_MouseLeft,
+                R"({"mode":"auto","left_drag":true})", KeyTrigger::Drag),
+        binding("view3d.select_box", viewport, ImGuiMod_Ctrl | ImGuiKey_MouseLeft,
+                R"({"mode":"auto","left_drag":true})", KeyTrigger::Drag),
         binding("view3d.select_cycle", viewport, ImGuiMod_Alt | ImGuiKey_MouseLeft, {}, KeyTrigger::Click),
         binding("view3d.select_cycle", viewport, ImGuiMod_Shift | ImGuiMod_Alt | ImGuiKey_MouseLeft,
                 R"({"extend":true})", KeyTrigger::Click),

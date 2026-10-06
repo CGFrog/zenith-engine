@@ -419,6 +419,25 @@ ImGuiWindow* window(const char* name) {
     return ImGui::FindWindowByName(name);
 }
 
+// The editor type button reads as a dropdown: its label reserves room for an
+// arrow, which sits inside the button's right end.
+void testEditorTypeButtonShowsADropdownArrow() {
+    HeadlessImGui imgui;
+    imgui.frame([] {
+        const std::string label = editorTypeMenuLabel("Viewport");
+        expect(label.find("###editor_type") != std::string::npos && label.starts_with("Viewport"),
+               "the editor type label should show the type's title and keep a stable id");
+        const float titleWidth = ImGui::CalcTextSize("Viewport").x;
+        const float labelWidth = ImGui::CalcTextSize(label.c_str(), nullptr, true).x;
+        const float fontSize = ImGui::GetFontSize();
+        const EditorTypeArrow arrow = editorTypeArrow(4.0f, 10.0f + labelWidth, 4.0f + fontSize, fontSize, 2.0f);
+        expect(arrow.size > 0.0f && arrow.x >= 10.0f + titleWidth && arrow.x + arrow.size <= 10.0f + labelWidth,
+               "the arrow should fit in the room after the title, inside the button");
+        expect(arrow.y >= 4.0f && arrow.y + arrow.size <= 4.0f + fontSize,
+               "the arrow should sit within the button vertically");
+    });
+}
+
 void testHeadlessTypeSwitch() {
     RegistryFixture fixture;
     HeadlessImGui imgui;
@@ -533,6 +552,7 @@ int main() {
     testMigration(directory);
     std::error_code error;
     std::filesystem::remove_all(directory, error);
+    testEditorTypeButtonShowsADropdownArrow();
     testHeadlessTypeSwitch();
     testHeadlessWorkspaceSwitch();
     if (failures != 0) {

@@ -171,7 +171,9 @@ class ViewportPanel final : public EditorPanel {
     glm::vec2 mouseInView() const;
     // Modal box and lasso tools; at most one runs at a time, and starting
     // one cancels the other.
-    void beginBoxSelect(SelectionSetMode mode);
+    // A left-drag box (the keymap's drag binding) starts where the claimed
+    // press began (see dispatchMouseChords), or at the mouse.
+    void beginBoxSelect(SelectionSetMode mode, bool leftDrag = false);
     // A right-drag lasso starts its outline where the claimed right press
     // began (see dispatchMouseChords), or at the mouse.
     void beginLassoSelect(SelectionSetMode mode, bool rightDrag);

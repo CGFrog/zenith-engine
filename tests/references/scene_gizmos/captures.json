@@ -9,7 +9,7 @@
   "views": [
     {
       "name": "overlays",
-      "covers": "every viewport scene gizmo with its category set to All: point, spot, directional and environment light shapes, the active (primary) and a second camera frustum, box and sphere colliders, reflection probe, decal and irradiance volume bounds, and active and selected bounds drawn over the scene in the palette's overlay colours",
+      "covers": "every viewport scene gizmo with its category set to All: point, spot, directional and environment light shapes, the active (primary) camera icon and a selected second camera with its dotted rays, box and sphere colliders, reflection probe, decal and irradiance volume bounds, and active and selected bounds drawn over the scene in the palette's overlay colours",
       "frame": 60
     }
   ]

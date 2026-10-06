@@ -460,6 +460,47 @@ void testBoxSelect() {
            "a box without a GPU should select the objects whose centres it encloses");
 }
 
+// With no tool started, a left drag in the viewport draws a box (the keymap's
+// drag binding), and a plain click still selects.
+void testLeftDragSelectsInABox() {
+    Fixture fixture;
+    Frames frames;
+    frames.settle(fixture, corner(fixture));
+    fixture.paintVisibleCubes();
+    const glm::vec2 front = fixture.viewPixel({0.0f, 0.0f, 0.0f});
+    const glm::vec2 rightCube = fixture.viewPixel({4.0f, 0.0f, 0.0f});
+    // From empty space, around the front and right cubes.
+    const std::vector<ImVec2> aroundBoth{fixture.screen(front - glm::vec2(30.0f)),
+                                         fixture.screen(rightCube + glm::vec2(30.0f))};
+    expect(!fixture.panel->selectToolActive(), "no select tool should be running before the drag");
+    frames.drag(fixture, aroundBoth);
+    frames.frame(fixture, aroundBoth.back());
+    std::vector<SceneEntityId> selected = fixture.selection.ids();
+    std::ranges::sort(selected);
+    std::vector<SceneEntityId> expected{fixture.id(fixture.front), fixture.id(fixture.right)};
+    std::ranges::sort(expected);
+    expect(selected == expected, "a left drag in empty space should select the objects inside the box");
+    expect(!fixture.panel->selectToolActive(), "the drag's box should end with the release");
+
+    // Shift extends what is selected.
+    fixture.selection.selectOnly(fixture.id(fixture.front));
+    const std::vector<ImVec2> aroundRight{fixture.screen(rightCube - glm::vec2(30.0f)),
+                                          fixture.screen(rightCube + glm::vec2(30.0f))};
+    // Shift is held from the press, as a user extending a selection does.
+    Frames::setModifiers(ImGuiMod_Shift);
+    frames.drag(fixture, aroundRight, ImGuiMod_Shift);
+    frames.frame(fixture, aroundRight.back());
+    expect(fixture.selection.size() == 2 && fixture.selection.contains(fixture.id(fixture.front)) &&
+               fixture.selection.contains(fixture.id(fixture.right)),
+           "a left drag released with Shift should extend the selection");
+
+    // A click without movement is still a plain select.
+    frames.click(fixture, fixture.screen(front));
+    expect(fixture.selection.ids() == std::vector<SceneEntityId>{fixture.id(fixture.front)} &&
+               !fixture.panel->selectToolActive(),
+           "a click without a drag should select one object and start no box");
+}
+
 void testLassoSelect() {
     Fixture fixture;
     Frames frames;
@@ -692,6 +733,7 @@ int main() {
     testGpuClick();
     testPendingFallsBackToCpu();
     testBoxSelect();
+    testLeftDragSelectsInABox();
     testLassoSelect();
     testCycle();
     testMouseChordBindings();

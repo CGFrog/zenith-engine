@@ -62,7 +62,8 @@ its own plan; only the default view may plan GPU-driven submission.
 
 View shading modes (Rendered, Material Preview, Solid, Wireframe) as pure
 functions: the Wireframe capability fallback, the reduced frame settings each
-mode records with, which mesh pipeline variant it needs, and the
+mode records with (Wireframe: edges only, through every surface, with no
+prepass or occlusion culling), which mesh pipeline variant it needs, and the
 camera-relative studio light rig. `ScopedViewShadingSettings` applies the
 frame settings while `Renderer::recordFrame` records. The contract is in
 `docs/RENDERER_VALIDATION.md` (View shading modes);

@@ -219,8 +219,11 @@ std::string EditorSession::operatorShortcut(std::string_view operatorId, std::st
 
 void EditorSession::dispatchKeymap(ApplicationContext& context, KeymapRegion region) {
     // Global keys work while any panel has focus; region keys already require
-    // the mouse over the region.
-    if (const std::optional<KeymapInvocation> invocation = m_keymapDispatcher.pressKeys(m_keymap, region)) {
+    // the mouse over the region. A game view with input focus owns the keys
+    // the game can use, so Space there reaches the game, not operator search.
+    const ViewportPanel* game = gameViewport();
+    const KeyboardOwner owner = game != nullptr && game->gameInputFocus() ? KeyboardOwner::Game : KeyboardOwner::Editor;
+    if (const std::optional<KeymapInvocation> invocation = m_keymapDispatcher.pressKeys(m_keymap, region, owner)) {
         invokeOperator(context, invocation->operatorId, invocation->properties, invocation->region);
     }
 }
