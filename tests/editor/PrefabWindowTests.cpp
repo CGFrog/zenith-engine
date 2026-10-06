@@ -259,8 +259,8 @@ class EditorHarness {
         return m_session.start();
     }
 
-    ApplicationFrameResult frame() {
-        m_session.update(InputState{}, 1.0f / 60.0f);
+    ApplicationFrameResult frame(const InputState& input = {}) {
+        m_session.update(input, 1.0f / 60.0f);
         buildFontAtlas();
         m_imgui.frame([this] { m_session.drawUi(); });
         return m_session.finishFrame();
@@ -307,6 +307,44 @@ class EditorHarness {
             ImGui::FocusWindow(window);
         }
         frame();
+    }
+
+    // Moves the window whose name contains name over the middle of the one
+    // named over, brings it to the front as a click would, and runs a frame.
+    void placeOver(const char* name, const char* over) {
+        ImGuiWindow* window = HeadlessImGuiContext::findWindow(name);
+        const ImGuiWindow* below = HeadlessImGuiContext::findWindow(over);
+        if (window == nullptr || below == nullptr) {
+            return;
+        }
+        const ImVec2 centre = below->Rect().GetCenter();
+        ImGui::SetWindowPos(window, {centre.x - 150.0f, centre.y - 100.0f});
+        ImGui::SetWindowSize(window, {300.0f, 200.0f});
+        ImGui::FocusWindow(window);
+        frame();
+    }
+
+    // A point (screen pixels) from the centre of the window whose name
+    // contains name towards its lower right where that window is on top,
+    // inside the window named under too; nullopt when there is none.
+    std::optional<glm::vec2> pointOnTop(const char* name, const char* under) const {
+        const ImGuiWindow* window = HeadlessImGuiContext::findWindow(name);
+        const ImGuiWindow* below = HeadlessImGuiContext::findWindow(under);
+        if (window == nullptr || below == nullptr || !window->Active) {
+            return std::nullopt;
+        }
+        const ImVec2 centre = window->Rect().GetCenter();
+        for (float y = centre.y; y < window->Pos.y + window->Size.y - 8.0f; y += 4.0f) {
+            for (float x = centre.x; x < window->Pos.x + window->Size.x - 8.0f; x += 4.0f) {
+                ImGuiWindow* hovered = nullptr;
+                ImGui::FindHoveredWindowEx({x, y}, false, &hovered, nullptr);
+                if (hovered != nullptr && hovered->RootWindowDockTree == window->RootWindowDockTree &&
+                    below->Rect().Contains(ImVec2(x, y))) {
+                    return glm::vec2(x, y);
+                }
+            }
+        }
+        return std::nullopt;
     }
 
     bool windowOpen(const char* name) const {
@@ -582,6 +620,37 @@ void testGesturesStayInTheirWindow(const fs::path& root) {
     expect(litLamps(editor.scene) == 2, "gesture: the window's click added the light that its save then applies");
 }
 
+// A file dropped on a prefab window's viewport floating over the level's
+// viewport goes into the prefab, not the level under it.
+void testDropOnAWindowOverTheLevel(const fs::path& root) {
+    EditorHarness editor(root, prefabProject(root));
+    if (!editor.start()) {
+        expect(false, "drop: the editor session starts");
+        return;
+    }
+    editor.frame();
+    editor.press(editShelfKey);
+    editor.frame();
+    editor.frame();
+    // Headless, the window's panels float undocked; place its viewport over
+    // the level's as the floating window opens in the editor.
+    editor.placeOver("Viewport##prefab.1.viewport", "Viewport##viewport.");
+    editor.frame();
+    const std::optional<glm::vec2> point = editor.pointOnTop("Viewport##prefab.1.viewport", "Viewport##viewport.");
+    expect(point.has_value(), "drop: the window's viewport lies over the level's");
+    if (!point) {
+        return;
+    }
+    InputState input;
+    input.droppedFiles.push_back({.path = root / "assets" / "lamp.prefab", .position = *point});
+    editor.frame(input);
+    editor.frame();
+    expect(instancesOf(editor.scene, "lamp.prefab").size() == 2, "drop: the level under the window gains nothing");
+    editor.press(closeKey);
+    expect(editor.windowOpen("Unsaved Prefab") && editor.clickButton("Unsaved Prefab", "Cancel"),
+           "drop: the shelf gained the dropped lamp, so closing it asks about the change");
+}
+
 void testPlayWithAWindowOpen(const fs::path& root) {
     EditorHarness editor(root, prefabProject(root));
     if (!editor.start()) {
@@ -699,6 +768,7 @@ int main() {
     testWindowEditsThePrefabBesideTheLevel(root / "window");
     testApplyReachesOtherDocuments(root / "apply");
     testGesturesStayInTheirWindow(root / "gesture");
+    testDropOnAWindowOverTheLevel(root / "drop");
     testPlayWithAWindowOpen(root / "play");
     testModuleReloadWaitsForWindows(root / "reload");
     testQuitAsksAboutWindows(root / "quit");

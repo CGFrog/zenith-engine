@@ -51,6 +51,11 @@ session's own members, a window's are its document's.
   (`EditorSession::m_gestureWindow`), so box select, lasso, and Shift right
   click work in a window's viewport; a gesture whose window closed runs
   nothing more.
+- **Files dropped from the operating system** go to the window on top where
+  they land (`dropLandsInCurrentWindow`), so a drop on a window's viewport
+  floating over a level viewport instances into the prefab; a drop on a
+  window's Hierarchy or Inspector is reported as unclaimed rather than
+  reaching the level under it.
 - **Level areas** always act on the level.
 - A prefab document is never Play's runtime scene: its `OperatorContext` has
   mode Edit, so it records history and stays editable while the level plays.
