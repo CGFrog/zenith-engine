@@ -34,6 +34,43 @@ branches under entities marked with `markTransformDirty`. Its cost follows the
 number of changed entities, not the scene's size: marking is constant time and
 each dirty branch is walked once per call.
 
+### Entity invariants and component capabilities
+
+Every created entity starts with identity local/world transforms and a
+relationship component. This invariant lets hierarchy and transform code
+operate without optional branches. Scene data is expressed as components, not
+renderer or physics internals, and components are capabilities:
+
+- `MeshRendererComponent` makes an entity renderable.
+- `CameraComponent` makes it a camera candidate; `primary` selects the normal
+  view.
+- `DirectionalLightComponent` and `EnvironmentLightComponent` provide the
+  primary direct, shadow, and indirect-light settings used by the renderer.
+- `ColliderComponent` plus `RigidBodyComponent` and `TransformComponent` makes
+  an entity discoverable by physics.
+- `CharacterControllerComponent` makes it a walking character that physics
+  moves without a rigid body; a camera child with `FirstPersonCameraComponent`
+  gives it a first-person view (see [Gameplay](gameplay.md)).
+- Game-defined components can add behavior without becoming engine
+  dependencies; the demo's item collection components are an example. The
+  demo registers them through `registerDemoGameplay`, which both the
+  `zenith_game_demo` module and the game executable (for runs without a game
+  module) call.
+
+Imported models do not become monolithic render objects. The model root gets a
+`ModelComponent`; every imported node gets its own entity and transform; nodes
+with geometry get `MeshRendererComponent`. Individual nodes remain addressable
+by other systems while meshes and materials remain shared assets.
+
+### Transform conventions
+
+Zenith uses GLM column-major matrices and composes a hierarchy as
+`parentWorld * local`. Positions occupy the translation column. Positive Y is
+up; first-person forward maps toward negative Z after yaw is applied.
+`TransformComponent::local` is the authored state and `world` a cache that
+`updateWorldTransforms` refreshes. How physics reads and writes transforms is
+in [Physics](physics.md#transforms-and-body-ownership).
+
 ### Transient entities
 
 `TransientComponent` is a tag for generated content, such as the preview a
@@ -404,6 +441,20 @@ main-thread ECS and asset commits. `AdditiveSceneManager` composes those pieces
 into stable scene instances with per-instance asset leases, desired-set
 streaming, deterministic unload, and validated cross-instance entity
 references.
+
+`JobSystem` also provides deterministic single-thread pumping for tests and
+explicit shutdown. Background jobs may read and parse authored scene files,
+but they do not mutate ECS registries or acquire scene-owned resources.
+`SceneDocument::parse` produces an immutable validated scene description;
+`SceneDocument::commit` performs the main-thread ECS and asset operations, so a
+failed commit cannot publish a partially loaded additive scene.
+`AdditiveSceneManager` assigns stable instance identifiers, owns an asset lease
+set per committed instance, and unloads each instance deterministically. The
+application supplies the desired streaming set and priorities; the manager
+reprioritizes, cancels, loads, or unloads work to match it. Cross-instance
+entity references pair an instance identifier with an authored stable entity
+identifier and are resolved only while both remain valid. `PrefabSystem` can
+instantiate into a primary scene or any committed additive instance.
 
 ## `src/engine/scene/Tags.*`
 

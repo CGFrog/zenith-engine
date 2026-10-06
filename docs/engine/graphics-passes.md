@@ -35,6 +35,27 @@ into an R8 render-resolution image per frame slot that `mesh.frag` reads at
 camera binding 13 for indirect diffuse and specular occlusion. Cleared to 1
 when occlusion is off or the prepass did not run.
 
+`gtao.comp` runs right after the prepass and pyramid and integrates
+cosine-weighted horizon visibility per slice from the prepass normals and the
+depth pyramid (view positions come from the inverse of the jittered
+projection). `ambient_occlusion::qualityProfile` maps `AmbientOcclusionQuality`
+to a resolution and sampling pattern: Full traces every render pixel with 3
+slices x 4 steps against pyramid level 0 and blurs the result with
+`gtao_denoise.comp` (depth-aware 5x5, covering the 4x4 noise tile);
+HalfResolution traces a quarter of the pixels with 2 slices x 4 steps against
+level 1 (checkerboarded farthest/closest depth), and `gtao_upsample.comp`
+denoises and upsamples to the render resolution in one pass, averaging the 4x4
+raw texels around each pixel weighted by view-depth similarity. The clamp and
+occlusion power follow the average so few-slice estimates are not biased dark.
+The R8 result (one render-resolution image per frame slot, kept in `GENERAL`)
+is sampled by `mesh.frag` with `ambient_occlusion::occlusionUv` (scale in
+`environmentParams.w`, 1 for every quality). Its minimum with material
+occlusion attenuates indirect diffuse, and Lagarde's specular occlusion
+attenuates indirect specular; blended surfaces skip it. With TAA the noise
+rotates per frame and the temporal resolve supplies stability. When the
+prepass is off (its normals are missing) or occlusion is Off, the image is
+cleared to 1 and no dispatch runs.
+
 ## `src/engine/graphics/AmbientOcclusion.*`
 
 CPU mirror of the GTAO integration, per-quality sampling profiles, horizon
@@ -65,7 +86,13 @@ functions: the Wireframe capability fallback, the reduced frame settings each
 mode records with (Wireframe: edges only, through every surface, with no
 prepass or occlusion culling), which mesh pipeline variant it needs, and the
 camera-relative studio light rig. `ScopedViewShadingSettings` applies the
-frame settings while `Renderer::recordFrame` records. The contract is in
+frame settings while `Renderer::recordFrame` records. The modes other than
+Rendered do not add a recording path: `Renderer::recordFrame` swaps in the
+mode's reduced settings for the frame, so the plan, the graph model and the
+passes all see the same feature set; the mesh pass only selects a pipeline
+variant (clay surfaces, the LINE overlay), lights the camera constants with a
+studio rig, and draws Wireframe's edges, and only those, through every
+surface. The contract is in
 `docs/RENDERER_VALIDATION.md` (View shading modes);
 `tests/engine/ViewShadingTests.cpp` covers it.
 
@@ -74,7 +101,12 @@ frame settings while `Renderer::recordFrame` records. The contract is in
 Owns the per-frame local-light buffer and the cluster light lists. Each frame
 `light_clusters.comp` assigns lights to a 16x9 screen grid times 24
 exponential view-depth slices before the scene pass; `Lighting.*` holds the
-CPU mirror of the cluster math used by tests.
+CPU mirror of the cluster math used by tests. Point and spot lights are
+gathered by stable entity ID, capped at the configured `maximumLocalLights`
+(nearest to the camera kept), and uploaded to a per-frame storage buffer; the
+depth slices are exponential, reversed-Z-aware, and cover the internal render
+extent, and `mesh.frag` loops only its cluster's list. Older settings that
+chose 32- or 64-light tiles load as clustered.
 
 ## `src/engine/graphics/LocalShadows.*` and `src/engine/graphics/passes/LocalShadowPass.*`
 
@@ -106,6 +138,24 @@ fog in enclosed spaces is not lit like open sky;
 `volumetric_fog_integrate.comp` accumulates it front to back. `mesh.frag` and
 `skybox.frag` composite the integrated RGBA16F volume at camera binding 18.
 
+Fog is authored per scene by the primary `VolumetricFogComponent` (density,
+height falloff, albedo, Henyey-Greenstein anisotropy, noise) because the
+medium is content, like lights; its cost is a project render setting,
+`VolumetricFogQuality` (Off, Low, Medium, High). The froxel grid subdivides
+the cluster grid: each cluster tile and depth slice splits into an integer
+number of froxels with the same exponential depth law, so froxel `(x, y, z)`
+reads the light list of cluster `(x / sub.x, y / sub.y, z / sub.z)` and the
+volume ends at the cluster grid's `sliceEndDepth`. After light clustering and
+the shadow cascades, injection writes in-scattered radiance and extinction per
+froxel (sun with one hardware PCF tap of its cascade, clustered local lights
+unshadowed, ambient as above), jittered and blended 1:9 with the reprojected
+previous frame on Medium and High. Integration then accumulates each column
+front to back, slice by slice with the analytic homogeneous-slice integral.
+`mesh.frag` (opaque and blended) composites `color * transmittance +
+scattering`; the skybox reads the last slice. Off records no fog work and
+keeps a cleared 1x1x1 volume bound. Local-light shadows in fog are a
+follow-up.
+
 ## `src/engine/graphics/Decals.*` and `src/engine/graphics/passes/DecalClusterPass.*`
 
 Clustered decals for scenes with `DecalComponent` box projectors when
@@ -130,6 +180,27 @@ particles to the sort keys and indirect draw), and `particle_sort.comp`
 (bitonic sort back to front). Between blended surfaces and editor outlines it
 draws `particle.vert`/`particle.frag` quads in its own rendering scope with the
 scene depth read-only, sampled for soft particles.
+
+Particles are authored per entity with a `ParticleEmitterComponent` (rate,
+bursts, lifetime, cone, speed, gravity, drag, size and color over life,
+emissive intensity, lit or unlit, alpha or additive, world or local space,
+soft distance, optional sprite); `ParticleQuality` (Off, Low, High) sets the
+total particle budget the emitters share. The CPU side
+(`particles::ParticleScheduler` in `Particles.hpp`) gives each emitter, in
+stable scene-id order, a ring of consecutive pool slots and decides each
+frame's spawn count, so the layout, spawn ordinals, and every random value
+(hashed from the emitter id and ordinal on the GPU) are reproducible under a
+fixed frame time. Lit particles are lit at their centers (sun with one
+shadow-cascade tap, clustered local lights, ambient from the environment SH or
+the irradiance volume). `particle_sort.comp` runs a bitonic network
+(shared-memory blocks of 1024 keys plus global merge steps). After blended
+surfaces the scene pass ends; `particle.vert` pulls one camera-facing quad per
+sorted key and `particle.frag` writes premultiplied HDR color (additive
+particles write zero coverage), fades against the opaque depth, which is bound
+read-only and sampled at the same time (soft particles), composites the
+volumetric fog in front of the particle, and raises the motion target's
+reactive channel by maximum blending so the temporal resolve trusts history
+less under particles. Off records no particle work.
 
 ## `src/engine/graphics/Particles.*`
 
@@ -169,8 +240,17 @@ Split-sum image-based lighting. Per environment source (an equirectangular
 map, or the analytic sky when none is loaded) it precomputes on the GPU, once
 and cached: an RGBA16F radiance cube with mips, a GGX-prefiltered specular cube,
 and order-2 spherical-harmonic irradiance; a BRDF table is built once. It binds
-these into camera-set bindings 5-7 for the primary environment and the dominant
-reflection probe, and draws the skybox behind opaque geometry.
+these into camera-set bindings 5-7 for the primary environment (and, with
+`CameraOnly` probe blending, the dominant reflection probe), copies resident
+probes into the per-pixel probe cube-map array (binding 16) with `PerPixel`
+blending, and draws the skybox behind opaque geometry.
+
+Precomputation is recorded into the frame when an environment source first
+appears, cached by source, and evicted data retires through the frame-serial
+release queue. Scenes without an environment map use an analytic sky built
+from the environment colors, so lighting and the skybox stay consistent; the
+lowest quality keeps hemispherical sky/ground lighting and the flat clear
+color.
 
 ## `src/engine/graphics/EnvironmentLighting.*`
 
@@ -199,8 +279,16 @@ Local point and spot lights use clustered forward shading: up to the configured
 light limit (nearest first) is uploaded each frame, and mesh.frag shades only
 the lights listed for its view cluster. Environment textures are prefiltered on
 the GPU by `EnvironmentPass`, while reflection probes contribute through
-explicit influence boxes, blend distances, and priorities; the dominant probe at
-the camera is blended over the primary environment.
+explicit influence boxes, blend distances, and priorities. By default
+(`ReflectionProbeBlending::PerPixel`) resident probes are assigned to the
+light-cluster grid and blended per pixel with box projection; `CameraOnly`
+(the fallback) blends the dominant probe at the camera over the primary
+environment for the whole frame. Deterministic CPU probe preprocessing and
+bake-file policy live in editor tooling.
+
+The primary directional and environment light components provide direct-light,
+shadow, sky, and ground settings. Material occlusion attenuates only indirect
+environment lighting, leaving direct and emissive contributions unchanged.
 
 Indirect diffuse light comes from the environment's spherical harmonics unless
 `RenderSettings::indirectDiffuse` is `ProbeVolume` and a baked
@@ -241,9 +329,102 @@ the frame. Each overflow is logged once per episode (until a frame fits again,
   episode).
 
 Local lights and local shadow tiles already keep the nearest within their
-limits. The GPU-driven draw-group limit (64 pipeline bucket and geometry page
-pairs) still fails the frame: it is a geometry-arena layout limit, not a
-per-scene count.
+limits. The GPU-driven limits still fail the frame and log an error each frame
+they are exceeded: the draw-group limit (64 pipeline bucket and geometry page
+pairs, a geometry-arena layout limit, not a per-scene count) and the LOD
+instance capacity (`maximumGpuDrivenInstances`).
+
+### Bindless materials and vertex streams
+
+The mesh pass maintains per-handle GPU caches. Camera buffers are per frame to
+avoid CPU/GPU write races. Materials are bindless: each frame slot owns a
+material-record buffer and a runtime-sized texture array whose slots are only
+rewritten after that slot's previous submission retires, so no descriptor is
+updated while in use. Every object record carries its material index, so draws
+of one primitive batch across materials and need no per-draw binding; missing
+maps use default slots. Meshes are suballocated into shared vertex/index pages
+and drawn by offset. Vertices upload as quantized split streams (position,
+attributes, and skin for skinned pages only); depth-style pipelines fetch only
+position, skin, and, for alpha-tested shadows, UVs. Static pages bind one zero
+skin influence with a dynamic stride of 0, so every mesh pipeline shares one
+vertex layout.
+
+### GPU-driven submission and LOD
+
+GPU-driven submission is opt-in and uses two-phase occlusion culling. Objects
+visible last frame are drawn first; a depth pyramid built from that depth
+then tests every object, records its visibility for the next frame, and draws
+the newly visible remainder. A compaction pass packs non-empty draws so each
+pipeline and geometry page is one `vkCmdDrawIndexedIndirectCount`. Blended
+surfaces and editor outlines stay on CPU submission within the same frame.
+
+Imported primitives carry up to four LOD index ranges over shared vertices,
+each with an object-space geometric error. Both submission paths pick the
+coarsest level whose error, scaled by the object's largest axis scale and
+projected from the nearest point of its bounding sphere at internal render
+resolution, is at most `RenderSettings::lodErrorThresholdPixels` (zero keeps
+full detail). The CPU path selects per render item, and shadows reuse the
+camera's choice. The GPU path gives each level its own batch, chains a
+primitive's levels through the batch records, and selects in the cull shader
+with the same formula; every object reserves an instance slot in each of its
+level batches.
+
+With GPU-driven submission the directional shadow cascades are culled on the
+GPU as well. `GpuDrivenPass` owns one output region per view
+(`GpuCullLayout.hpp`): the camera's early and late phases, then one
+frustum-only region per cascade. A frustum-only cull tests the sphere against
+the cascade's orthographic clip volume with the same predicate the CPU cascade
+cull uses, never reads the depth pyramid or the camera's visibility history,
+and selects LODs from the camera's view, so cascades match the CPU path's
+choice. Only cascades the cache marks dirty are culled and redrawn; their draws
+use the shadow pipeline with the GPU-driven camera set, whose object binding is
+the cull output, so `shadow.vert` is shared by both paths. Blended materials
+never enter the GPU-driven records, matching the CPU cascade cull. The CPU path
+remains the fallback whenever GPU-driven submission is off, and
+`ZENITH_DISABLE_GPU_SHADOW_CULLING` selects it explicitly for comparison.
+
+### Depth prepass and screen-space inputs
+
+`RenderSettings::depthPrepass` (on by default) draws opaque and masked
+surfaces into scene depth and a view-space normal target before shading. With
+GPU-driven submission the two-phase cull runs inside the prepass, and the
+shading pass redraws both phases' compacted draws without culling again. The
+prepass vertex shader repeats `mesh.vert`'s position math with `precise` and
+`invariant gl_Position`, so opaque shading tests `EQUAL` with depth writes off
+and every opaque pixel shades once; masked materials alpha-test in both passes.
+After the prepass the depth pyramid is rebuilt from the complete opaque depth
+on both submission paths; with GPU-driven submission the GPU skips that rebuild
+when the late phase emitted nothing, since the occlusion build already holds
+the complete depth. With the prepass off, the main pass tests and writes
+depth as before and the outputs below are unavailable.
+
+Contract for screen-space consumers (`MeshPass::sceneGeometry` returns
+`SceneGeometryViews`, valid for the frame being recorded only when the prepass
+ran):
+
+- Normals: `PostProcessPass::normalFormat` (`A2B10G10R10_UNORM`), in
+  `SHADER_READ_ONLY_OPTIMAL`, output-sized with the render extent at the
+  top-left. `rg` is the octahedral view-space normal mapped to `[0, 1]` (view
+  space is right-handed, +Z towards the camera; back faces of double-sided
+  surfaces are flipped towards the viewer), `b` is perceptual roughness clamped
+  like the shading pass, and `a` is 1 where an opaque surface was written (0 on
+  clear). `SceneNormalEncoding.hpp` mirrors the encoding on the CPU.
+- Specular: `PostProcessPass::specularFormat` (`R8G8B8A8_SRGB`), in
+  `SHADER_READ_ONLY_OPTIMAL`, same extents as the normals, written only on
+  frames that trace screen-space reflections (otherwise the attachment is
+  `VK_NULL_HANDLE` and `SceneGeometryViews::specular` is null). `rgb` is the
+  linear specular reflectance at normal incidence (F0 =
+  `mix(0.04, baseColor, metallic)`, stored through the sRGB transfer) and `a`
+  is coverage. Allocated per frame slot on first use, 4 bytes per output pixel;
+  `SceneSpecularEncoding.hpp` mirrors the encoding on the CPU.
+- Depth pyramid: `DepthPyramid`, one RG32F image in `GENERAL` layout,
+  sampled with its nearest/clamp sampler via `texelFetch`. `r` is the farthest
+  (minimum, reversed Z) and `g` the closest (maximum) depth a texel covers.
+  Level 0 copies scene depth over the render extent; level `L` spans
+  `max(renderExtent >> L, 1)` texels in the top-left of its storage mip, and
+  base pixel `p` lies in texel `min(p >> L, levelExtent - 1)`. Normalized UVs
+  must be scaled by `levelExtent / storageExtent` of the sampled level.
+  Readers in compute or fragment shaders are ordered before the next rebuild.
 
 ### Material overrides
 

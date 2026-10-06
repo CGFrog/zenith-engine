@@ -35,6 +35,26 @@ the renderer and the editor's game-view overlay draw them unchanged:
 Font files are cached as CPU assets through `AssetManager::loadFont`, while UI
 images reuse normal `TextureHandle` values and the renderer's texture cache.
 
+### Frame flow and scaling
+
+`Engine` owns one `GameUiContext` and exposes it to the active application
+scene through `ApplicationContext`. At the start of each frame the context
+captures the drawable pixel size and device-independent input snapshot. Game
+code then records panels, text, texture-handle images, and buttons without
+including ImGui or Vulkan headers; ImGui and its Vulkan backend remain private
+renderer/editor implementation details.
+
+The design space is 1920x1080. Uniform scaling preserves proportions at 16:9,
+centers content with gutters on wider displays, and uses drawable pixels so
+high-DPI windows retain stable logical sizing. Anchors, clip rectangles, draw
+orders, pointer hit testing, and focused action navigation are resolved before
+the renderer consumes the command list.
+
+After the post-process pass writes the tone-mapped swapchain image, `UiPass`
+translates the game commands to its private ImGui draw list and composes them
+before presentation. Font bytes and texture handles cross the public boundary;
+backend font atlases and Vulkan descriptors do not.
+
 ## `src/engine/ui/GameMenus.*`
 
 Reusable screens built on the widgets, centred on the canvas, that carry no
@@ -49,3 +69,9 @@ fallback shaping. `Accessibility.*` owns timed caption tracks and
 color-independent indicator semantics. `InputProfiles.*` stores named,
 remappable keyboard, mouse, and gamepad profiles with explicit conflict and
 hold/toggle policies.
+
+These services stay below game policy. Stable message IDs select runtime
+locales and plural forms; UTF-8 shaping emits fallback-font glyph runs. Game
+UI applies text/UI scaling and high-contrast styles, captions use timed
+message IDs, and indicators always include a shape and label. Versioned
+control profiles preserve remaps and hold/toggle choices.

@@ -170,7 +170,8 @@ Engine (`src/engine/`, `shaders/`):
 - [Animation](engine/animation.md): clip playback, cross-fades, and the animator state machine.
 - [Navigation](engine/navigation.md): navigation meshes from static colliders, paths, and agents.
 - [Gameplay](engine/gameplay.md): reusable gameplay mechanisms such as the first-person player.
-- [Graphics](engine/graphics.md): the renderer structure, Vulkan context, swapchain, frame resources, render graph, and pipelines.
+- [Graphics](engine/graphics.md): the renderer structure and render flow, Vulkan context, swapchain, frame resources, render graph, debug drawing, and pipelines.
+- [Graphics render views and picking](engine/graphics-views.md): multi-view frames, secondary scenes, per-view shadows, and GPU picking.
 - [Graphics scene passes](engine/graphics-passes.md): GPU-driven culling, AO, clustered and local-light shadows, fog, decals, particles, environment lighting, and `MeshPass`.
 - [Graphics post-processing](engine/graphics-post.md): post-process, colour grading, SSR, bloom and exposure, motion blur, TAA, upscaling, and depth of field.
 - [Shaders](engine/shaders.md): every GLSL file under `shaders/` and its stage.

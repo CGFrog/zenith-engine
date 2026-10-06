@@ -32,6 +32,34 @@ from registration linked into the executable (`linkGameplay`), or the built-in
 types and systems alone. `GameplayRunner` plays a `Gameplay` in a game's
 `ApplicationScene` (the project application and the demo use it).
 
+## Shared engine library
+
+`zenith_engine` is a shared library. The editor, the game executable, tests,
+and any game module loaded at runtime link the same engine binary, so there is
+one copy of engine code and of third-party state that must not be duplicated:
+SDL (itself built shared), the Dear ImGui context (compiled into the engine
+with ImGuizmo and exported with `IMGUI_API`), and the privately linked volk
+function table, Jolt allocator and factory, and shaderc. On Windows the build
+exports every engine function automatically; data that must cross the
+boundary needs `ZENITH_ENGINE_API` (`EngineExport.hpp`). Engine headers must
+not call privately linked libraries inline, and a consumer that uses one
+directly links its own independent copy.
+
+Module code is reachable through registered functions, EnTT storage created by
+module code, and component values, so a host releases all of them, destroying
+affected scenes after serializing what must survive, before unloading.
+Wiring modules and systems into `Engine` and the editor is application
+composition: the game executable loads the project's module in place when it
+ships inside the package (from a shadow copy otherwise, so it can be rebuilt)
+and runs its Play systems with the frame's input (see
+[Demo game](../game/demo.md)); the editor's `GameModuleHost` hot reloads it by
+serializing the scene, replacing the scene's registry, and restoring it with
+the new module's registry (see [Game module hosting](../editor/modules.md)).
+A module's optional editor extensions use a header-only, editor-owned API
+(`EditorModuleApi.hpp`) the engine never sees; the host removes each from the
+editor's registries before the module unloads (see
+[Editor extensions](../EDITOR_EXTENSIONS.md)).
+
 ## Fault isolation
 
 A gameplay bug must not end the game or the editor, so every call into game

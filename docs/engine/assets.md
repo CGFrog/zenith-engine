@@ -2,6 +2,71 @@
 
 Part of the [repository guide](../REPOSITORY_GUIDE.md).
 
+## Asset flow
+
+```text
+path passed to AssetManager::loadModel
+  -> canonicalized cache key
+  -> cgltf parse, buffers load, validation
+  -> images decoded to RGBA8 by ImageDecoder
+  -> meshes reordered and simplified into LODs by MeshOptimization
+  -> materials, meshes, and model nodes committed to generational asset slots
+  -> typed handles returned to scene components
+  -> MeshPass sees a handle on first use
+  -> data staged into VMA-backed GPU resources and cached
+```
+
+Assets are parsed into CPU values; only the renderer owns Vulkan uploads. This
+split keeps file parsing usable in CPU-only tests and prevents asset code from
+inheriting GPU lifetime or synchronization concerns. Repeated loads of the
+same normalized model path return the cached handle. GPU resources are
+uploaded lazily only if a visible scene needs them.
+
+Reload imports a fresh immutable generation transactionally. Failure restores
+the prior slots and cache entry; success redirects future lookups while leases
+keep the previous generation valid. Collection obeys CPU and decoded-audio
+budgets, and renderer frame leases delay mesh, texture, descriptor, and audio
+resource reclamation without device-wide or queue-wide idle waits.
+
+Release and development paths share one contract. The composition root
+initializes `ResourceLocator` (`src/engine/resources/ResourceLocator.*`) from
+the executable path; engine and game code then request the asset or shader
+root. A packaged executable finds sibling resource directories, while a
+multi-config development executable may use its parent build directory. No
+absolute source or build path is compiled into the runtime.
+
+The importer supports triangle geometry, node transforms, indexed and
+non-indexed primitives, common vertex attributes, embedded/external buffers and
+images, glTF metallic-roughness materials, skins, skeletal and morph-weight
+animation, and opaque, masked, or blended alpha modes. Morph deltas remain CPU
+asset data and active weights are selected deterministically with an
+eight-target render bound. Meshopt and Draco cross an isolated decoder
+interface; builds without the corresponding optional decoder return a named
+diagnostic.
+
+### Cooked textures and mip streaming
+
+Textures are cooked offline. `zenith_asset_build cook-model-textures` derives
+each external image's usage from its material slots (normal, color, or data),
+builds a full mip chain, and stores BC5 (normals) or BC7 (color as sRGB, data
+as linear) KTX2 in a derived cache keyed by the source bytes and cook settings.
+The build cooks the shipped models into `build/derived`, and executables point
+`AssetManager::setCookedTextureRoot` at `<resource root>/derived`. `Engine`
+publishes the device's BC capability to the asset manager; when a format is
+unsupported, or no current cooked entry exists, import decodes the RGBA8 source
+and the renderer generates mips as before. Cooked textures stream their stored
+levels: the image is created with the full chain, but only the tail (levels of
+at most 64 texels per side) uploads on first use. Each frame,
+`planTextureMipUploads` spends `RenderSettings::textureStreamingBytesPerFrame`
+on the next higher-resolution levels, most visible textures first, and the mesh
+pass republishes the texture's views over the wider range in the same bindless
+slots; old views retire with the frames that could still bind them. A budget of
+zero (Off) uploads every level on first use. Captures refuse frames with mip
+backlog, and UI images are completed before their view is handed out because
+UI descriptor sets keep it. BC7 images get UNORM and sRGB views; BC5 has a
+single linear view, and shaders reconstruct normal Z from X and Y for every
+normal map.
+
 ## `src/engine/assets/Assets.*`
 
 Defines renderer-independent CPU asset types and opaque typed handles:
@@ -129,12 +194,18 @@ normal and tangent generators the glTF importer uses.
 ## `src/engine/assets/AssetStreaming.*`
 
 Owns deterministic derived-asset residency policy without importing Vulkan.
-It tracks independent CPU/GPU generations, ranks requests by visibility,
-distance, gameplay importance, and deadline, and emits bounded decode and
-upload work lists. Texture mip ranges and mesh chunks are independent segments.
-Ordered pressure handling discards temporary caches, removes optional distant
-mips, retires unused generations after a completion serial, then reports a hard
-budget failure if live content still cannot fit.
+`DerivedAssetResidencyManager` tracks independent CPU/GPU generations, which
+move explicitly through the `ResidencyState`s requested, decoding,
+upload-pending, resident, eviction-pending, and retired. It ranks requests by
+visibility, distance, gameplay importance, and deadline into a stable priority
+order, and emits decode and upload work lists bounded by separate byte and job
+limits per frame. Texture mip ranges and mesh chunks are independent segments
+(individual upload units). Cancellation invalidates the generation
+immediately, so a late completion cannot publish content after its owning
+scene has left the streaming set. Ordered pressure handling discards temporary
+caches, removes optional distant mips, retires unused generations after a
+completion serial, then reports a hard budget failure if live content still
+cannot fit.
 
 ## `src/engine/assets/TextureMipStreaming.*`
 
@@ -208,7 +279,11 @@ data or BC5 for normal maps, plus a CPU block decoder for validation.
 
 Defines untrusted-content limits, isolated Meshopt/Draco decoder registration,
 KTX2 target-format choice, and deterministic derived assets keyed by source,
-settings, tool version, and target. Editor inspection and the
+settings, tool version, and target. It validates source, decoded, vertex,
+index, morph, and texture limits before allocations, validates KTX2, chooses
+BC7, ASTC, ETC2, or RGBA8 from renderer capabilities, and provides the RGBA8
+CPU fallback. `DerivedAssetCache` stores its output under the project's
+`.zenith/derived` directory. Editor inspection and the
 `zenith_asset_build` command share this implementation; the command also cooks
 single textures (`cook-texture`) or a model's external textures
 (`cook-model-textures`).
