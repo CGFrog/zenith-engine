@@ -782,61 +782,60 @@ AssetLease<FontHandle> AssetManager::lease(FontHandle handle) const {
     return makeLease(handle, m_fontMetadata);
 }
 
+namespace {
+// Each distinct handle once: one lease keeps an asset alive however many
+// entities share it, and a lease costs allocations.
+template <typename Handle> void sortUnique(std::vector<Handle>& handles) {
+    std::ranges::sort(handles);
+    const auto duplicates = std::ranges::unique(handles);
+    handles.erase(duplicates.begin(), duplicates.end());
+}
+} // namespace
+
 AssetLeaseSet AssetManager::leaseSceneAssets(const Scene& scene) const {
+    std::vector<ModelHandle> models;
+    std::vector<MeshHandle> meshes;
+    std::vector<MaterialHandle> materials;
+    std::vector<TextureHandle> textures;
+    const entt::registry& registry = scene.registry();
+    for (const auto [entity, model] : registry.view<const ModelComponent>().each()) {
+        models.push_back(model.model);
+    }
+    for (const auto [entity, node] : registry.view<const ModelNodeComponent>().each()) {
+        models.push_back(node.model);
+    }
+    for (const auto [entity, renderer] : registry.view<const MeshRendererComponent>().each()) {
+        meshes.push_back(renderer.mesh);
+    }
+    for (const auto [entity, replacement] : registry.view<const MaterialOverrideComponent>().each()) {
+        materials.push_back(replacement.material);
+    }
+    for (const auto [entity, environment] : registry.view<const EnvironmentLightComponent>().each()) {
+        textures.push_back(environment.environmentMap);
+    }
+    for (const auto [entity, probe] : registry.view<const ReflectionProbeComponent>().each()) {
+        textures.push_back(probe.environmentMap);
+    }
+    for (const auto [entity, emitter] : registry.view<const ParticleEmitterComponent>().each()) {
+        textures.push_back(emitter.texture);
+    }
+    for (const auto [entity, decal] : registry.view<const DecalComponent>().each()) {
+        textures.push_back(decal.albedoTexture);
+        textures.push_back(decal.normalTexture);
+    }
     AssetLeaseSet result;
-    const auto models = scene.registry().view<const ModelComponent>();
-    for (Entity entity : models) {
-        if (AssetLease<ModelHandle> value = lease(models.get<const ModelComponent>(entity).model)) {
-            result.models.push_back(std::move(value));
-        }
-    }
-    const auto modelNodes = scene.registry().view<const ModelNodeComponent>();
-    for (Entity entity : modelNodes) {
-        if (AssetLease<ModelHandle> value = lease(modelNodes.get<const ModelNodeComponent>(entity).model)) {
-            result.models.push_back(std::move(value));
-        }
-    }
-    const auto meshes = scene.registry().view<const MeshRendererComponent>();
-    for (Entity entity : meshes) {
-        if (AssetLease<MeshHandle> value = lease(meshes.get<const MeshRendererComponent>(entity).mesh)) {
-            result.meshes.push_back(std::move(value));
-        }
-    }
-    const auto overrides = scene.registry().view<const MaterialOverrideComponent>();
-    for (Entity entity : overrides) {
-        if (AssetLease<MaterialHandle> value = lease(overrides.get<const MaterialOverrideComponent>(entity).material)) {
-            result.materials.push_back(std::move(value));
-        }
-    }
-    const auto environments = scene.registry().view<const EnvironmentLightComponent>();
-    for (Entity entity : environments) {
-        if (AssetLease<TextureHandle> value =
-                lease(environments.get<const EnvironmentLightComponent>(entity).environmentMap)) {
-            result.textures.push_back(std::move(value));
-        }
-    }
-    const auto probes = scene.registry().view<const ReflectionProbeComponent>();
-    for (Entity entity : probes) {
-        if (AssetLease<TextureHandle> value =
-                lease(probes.get<const ReflectionProbeComponent>(entity).environmentMap)) {
-            result.textures.push_back(std::move(value));
-        }
-    }
-    const auto emitters = scene.registry().view<const ParticleEmitterComponent>();
-    for (Entity entity : emitters) {
-        if (AssetLease<TextureHandle> value = lease(emitters.get<const ParticleEmitterComponent>(entity).texture)) {
-            result.textures.push_back(std::move(value));
-        }
-    }
-    const auto decals = scene.registry().view<const DecalComponent>();
-    for (Entity entity : decals) {
-        const DecalComponent& decal = decals.get<const DecalComponent>(entity);
-        for (TextureHandle texture : {decal.albedoTexture, decal.normalTexture}) {
-            if (AssetLease<TextureHandle> value = lease(texture)) {
-                result.textures.push_back(std::move(value));
+    const auto leaseEach = [this](auto& handles, auto& leases) {
+        sortUnique(handles);
+        for (const auto handle : handles) {
+            if (auto value = lease(handle)) {
+                leases.push_back(std::move(value));
             }
         }
-    }
+    };
+    leaseEach(models, result.models);
+    leaseEach(meshes, result.meshes);
+    leaseEach(materials, result.materials);
+    leaseEach(textures, result.textures);
     return result;
 }
 

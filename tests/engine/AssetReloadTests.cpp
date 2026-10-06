@@ -268,12 +268,34 @@ void testDroppedFiles() {
 }
 } // namespace
 
+// A scene's lease set holds each distinct asset once, however many entities
+// share it, and still keeps it from collection.
+void testSceneLeasesEachAssetOnce() {
+    AssetManager assets;
+    const AssetLoadResult<MeshHandle> cube =
+        assets.loadMesh(std::filesystem::path(ZENITH_ASSET_DIR) / "primitives" / "cube.gltf", 0);
+    expect(static_cast<bool>(cube), "scene leases: the cube should load");
+    Scene scene;
+    for (int index = 0; index < 5; ++index) {
+        scene.attachMesh(scene.createEntity("Cube"), cube.handle);
+    }
+    {
+        const AssetLeaseSet leases = assets.leaseSceneAssets(scene);
+        expect(leases.meshes.size() == 1, "scene leases: five cubes sharing a mesh lease it once");
+        assets.collectUnused(true);
+        expect(assets.mesh(cube.handle) != nullptr, "scene leases: the leased mesh survives a collection");
+    }
+    assets.collectUnused(true);
+    expect(assets.mesh(cube.handle) == nullptr, "scene leases: the mesh is collected once nothing leases it");
+}
+
 int main() {
     testTextureReload();
     testTextureImportSettings();
     testAudioReload();
     testDefinitionSchemas();
     testDroppedFiles();
+    testSceneLeasesEachAssetOnce();
     if (failures != 0) {
         std::cerr << failures << " asset reload checks failed\n";
         return 1;
