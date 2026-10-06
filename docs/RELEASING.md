@@ -38,7 +38,7 @@ project's asset root, as for the projects under `projects/`.
 
 ## Create an archive
 
-From a clean checkout with a C++20 toolchain, CMake 3.24 or newer, and the
+From a clean checkout with a C++20 toolchain, CMake 3.25 or newer, and the
 platform development packages needed by SDL and Vulkan headers:
 
 ```powershell

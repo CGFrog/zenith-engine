@@ -45,7 +45,8 @@ When a change alters behaviour a user sees, update the matching
 `python tools/docs/code_index.py` (and add a *Find it fast* row to
 `docs/CODE_MAP.md` for a new capability). UI changes that need a new image get a
 `📷 Screenshot needed` callout; regenerate the checklist with
-`python tools/docs/screenshot_checklist.py`.
+`python tools/docs/screenshot_checklist.py`. CI's `docs` job fails on a broken
+link (`python tools/docs/check_links.py`) or a stale generated file.
 
 ## Environment notes
 

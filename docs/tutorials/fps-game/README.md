@@ -30,7 +30,7 @@ module. [Architecture](../../ARCHITECTURE.md) explains that boundary.
 - Windows with Visual Studio 2022 (or 18) and the Desktop C++ workload, or
   Linux with GCC or Clang
 - a Vulkan 1.4-capable driver
-- CMake 3.24 or later
+- CMake 3.25 or later
 - a Debug build of this repository, with the editor:
 
 ```powershell

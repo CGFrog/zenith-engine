@@ -27,7 +27,7 @@ add_library(zenith_editor_app STATIC
     application/EditorSession.cpp
     application/EditorFileDialogs.cpp
     application/EditorMainMenu.cpp
-    application/EditorRecovery.cpp
+    application/EditorSessionRecovery.cpp
     application/EditorStatusBar.cpp
     application/EditorSessionOperators.cpp
     application/EditorSessionSmoke.cpp

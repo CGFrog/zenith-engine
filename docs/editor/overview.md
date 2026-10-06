@@ -51,7 +51,7 @@ and the UI/session coordinator, including Play mode and its targets
 process; wired in `EditorPlayback.cpp`). `EditorSession` is one class
 implemented across several files, one per domain: `EditorSession.cpp` (the
 frame loop, operators and keymaps), `EditorFileDialogs.cpp`,
-`EditorRecovery.cpp` (autosave), `EditorMainMenu.cpp`, `EditorStatusBar.cpp`,
+`EditorSessionRecovery.cpp` (autosave), `EditorMainMenu.cpp`, `EditorStatusBar.cpp`,
 `EditorPlayback.cpp`, `EditorPrefabWindows.cpp` (prefabs in windows of their
 own, see [Prefab windows](prefab-windows.md)),
 `EditorAreas.cpp`, `EditorObjectCommands.cpp`,

@@ -188,4 +188,5 @@ component it is given; the view propagates to multi-selection).
 - [ ] Graphics/window changes: a bounded smoke run where Vulkan is available, or state that it could not be run.
 - [ ] Engine code has no game/editor knowledge; no upward includes.
 - [ ] Subsystem doc updated; if a file was added, moved, or removed, `python tools/docs/code_index.py` run (and a *Find it fast* row added for a new capability).
+- [ ] `python tools/docs/check_links.py` passes (CI's `docs` job runs it with both generators' `--check`).
 - [ ] User-visible behaviour changed? Update the [user guide](guide/README.md) page and add a `📷 Screenshot needed` callout if the UI changed (then run `tools/docs/screenshot_checklist.py`).

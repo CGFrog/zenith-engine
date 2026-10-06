@@ -180,7 +180,7 @@ capability. `--check` fails when the generated index is stale.
 | Build and Package | `project/PackageRunner.*`, `operators/PackageOperators.*` | `file.build_package` | `zenith_package_workflow` | [Releasing](RELEASING.md) |
 | Watches, attach debugger | `interaction/WatchList.*`, `operators/DebugOperators.*` | `debug.watch_field`, `debug.attach` | `zenith_debug_tools` | [Play mode](editor/play-mode.md) |
 | Info log, Diagnostics, System Profiler | `panels/InfoPanel.*`, `panels/DiagnosticsPanel.*`, `panels/SystemProfilerPanel.*` | `InfoLog`, `EditorDiagnostics` | `zenith_info_panel`, `zenith_system_profiler` | [Editor overview](editor/overview.md) |
-| Autosave and recovery | `application/EditorRecovery.cpp`, `document/EditorRecovery.*`, `document/PrefabWindowRecovery.*` | `EditorRecovery` | `zenith_editor_hardening` | [Editor overview](editor/overview.md) |
+| Autosave and recovery | `application/EditorSessionRecovery.cpp`, `document/EditorRecovery.*`, `document/PrefabWindowRecovery.*` | `EditorRecovery` | `zenith_editor_hardening` | [Editor overview](editor/overview.md) |
 | Navigation and probe/irradiance baking | `operators/NavigationOperators.*`, `project/IrradianceVolumeBaker.*`, `project/ReflectionProbeBaker.*` | `navigation.bake` | `zenith_irradiance_volume_baker` | [Viewports](editor/viewport.md) |
 | Editor smoke run | `src/editor/smoke/` | `EditorSmokeScenario`, `SmokeStep` | `zenith_editor_vulkan_smoke`, `zenith_editor_module_smoke`, `zenith_smoke_runner` | [Editor smoke](editor/smoke.md) |
 
@@ -195,7 +195,7 @@ capability. `--check` fails when the generated index is stale.
 | Packaging | `cmake/PackageProject.cmake`, root `CMakeLists.txt` (CPack) | [Releasing](RELEASING.md). |
 | Presets | `CMakePresets.json` | `default`/`worktree` configure, `debug` build, `debug`/`debug-cpu` test. |
 | One-step local check | `tools/check.ps1` | Build, CPU tests, clang-format of changed files. |
-| Doc generators | `tools/docs/code_index.py`, `tools/docs/screenshot_checklist.py` | Both take `--check`. |
+| Doc tooling | `tools/docs/check_links.py`, `tools/docs/code_index.py`, `tools/docs/screenshot_checklist.py` | The generators take `--check`; CI's `docs` job (`.github/workflows/ci.yml`) runs all three. |
 | Content generators | `tools/showcase/`, `tools/irradiance_room/`, `tools/color_grading/` | Regenerate checked-in content. |
 
 ## Call chains
@@ -363,10 +363,10 @@ The editor session: lifecycle, Play, menus, prefab windows, file and module work
 | `EditorPrefabWindows` .cpp | `EditorSession` | EditorSession's prefab windows: their panels, focus routing, close prompts, and recovery. |
 | `EditorPreferences` .cpp |  | EditorSession's preferences and packaging workflows: the Preferences window and its live application of the look, and Build and Package. |
 | `EditorProjectSettings` .cpp |  | EditorSession's Project Settings workflow: opening the window on the project file's values, and saving and applying what it returns. |
-| `EditorRecovery` .cpp |  | EditorSession's autosave, its emergency save after a crash, and the recovery prompt shown when the previous session left an autosave behind. |
 | `EditorSession` .hpp/.cpp | `EditorProjectServices`, `EditorSession` | The per-project editor coordinator: document, history, selection, panels, Play, module host. Its workflows are split into Editor*.cpp files here. |
 | `EditorSessionCommands` .hpp | `EditorDocumentCommands`, `EditorPlayCommands`, `EditorPrefabWindowCommands`, `EditorObjectModeCommands`, … | The running session's workflows that its operators start. |
 | `EditorSessionOperators` .hpp/.cpp |  | Registers the operator families that need the running session. |
+| `EditorSessionRecovery` .cpp |  | EditorSession's autosave, its emergency save after a crash, and the recovery prompt shown when the previous session left an autosave behind. |
 | `EditorSessionSmoke` .cpp | `EditorSession` | EditorSession's side of the editor smoke (ZENITH_EDITOR_SMOKE): the hooks the smoke steps use, and running the scenario once per frame. |
 | `EditorStatusBar` .cpp |  | EditorSession's status bar: the document, the active viewport's transform tools, frame statistics, and the play mode and module state. |
 | `EditorViewports` .cpp |  | EditorSession's viewports: the per-frame bookkeeping that keeps the active viewport, modal transforms, and the renderer's active view consistent. |

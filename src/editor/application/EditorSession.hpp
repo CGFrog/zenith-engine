@@ -441,7 +441,7 @@ class EditorSession final : public ApplicationScene,
     // Recover: reopens the autosaved prefab windows.
     void recoverPrefabWindows(ApplicationContext& context);
 
-    // Autosave and the recovery prompt (EditorRecovery.cpp).
+    // Autosave and the recovery prompt (EditorSessionRecovery.cpp).
     void updateAutosave(ApplicationContext& context, float deltaSeconds);
     // Gives the crash handler the session's emergency save, once, with the
     // context the session runs in (the context load gets may be a staging
