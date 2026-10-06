@@ -1,5 +1,7 @@
 #pragma once
 
+// GPU timestamp query slots per pass and frame.
+
 #include <volk.h>
 
 #include <cstdint>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Froxel volumetric fog: inject, scatter, integrate.
+
 #include "../Rendering.hpp"
 #include "../VolumetricFog.hpp"
 #include "../pipeline/ComputePipeline.hpp"

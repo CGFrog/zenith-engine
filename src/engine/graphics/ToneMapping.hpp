@@ -1,5 +1,8 @@
 #pragma once
 
+// CPU reference for the display transform and exposure math evaluated on the GPU by post.frag, luminance_histogram.comp
+// and exposure_adapt.comp.
+
 #include "Rendering.hpp"
 
 #include <cstdint>

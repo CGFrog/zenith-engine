@@ -1,5 +1,7 @@
 #pragma once
 
+// debug.* operators: watch fields while playing and attach a debugger.
+
 #include "editor/operators/OperatorRegistry.hpp"
 
 #include <functional>

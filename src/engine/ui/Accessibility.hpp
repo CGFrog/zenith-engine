@@ -1,5 +1,7 @@
 #pragma once
 
+// Accessibility settings, captions, and colour-independent indicators.
+
 #include <cstdint>
 #include <span>
 #include <string>

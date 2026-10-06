@@ -1,5 +1,7 @@
 #pragma once
 
+// What zenith_module_register receives: addComponentType, addSystem, addBehaviour, addInputActions, addDefinitionTable.
+
 #include "SystemScheduler.hpp"
 #include "engine/behaviour/BehaviourRegistry.hpp"
 #include "engine/gameplay/DefinitionSchemas.hpp"

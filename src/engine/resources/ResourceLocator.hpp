@@ -1,5 +1,7 @@
 #pragma once
 
+// Executable-relative asset and shader roots (assetRoot, shaderRoot, resourceRoot).
+
 #include <filesystem>
 
 // Initializes executable-relative resource discovery. Call once from an

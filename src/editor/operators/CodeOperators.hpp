@@ -1,5 +1,7 @@
 #pragma once
 
+// module.generate_code / new_* and opening sources in the IDE (Edit Script).
+
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/project/CodeGenerator.hpp"

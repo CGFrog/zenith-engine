@@ -1,5 +1,7 @@
 #pragma once
 
+// Motion blur: tile max, neighbour max, reconstruction gather.
+
 #include "engine/graphics/MotionBlur.hpp"
 #include "engine/graphics/pipeline/ComputePipeline.hpp"
 #include "engine/graphics/vulkan/VulkanContext.hpp"

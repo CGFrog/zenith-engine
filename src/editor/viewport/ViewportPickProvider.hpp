@@ -1,5 +1,7 @@
 #pragma once
 
+// Where a viewport's GPU picks come from (RenderRuntime::requestPick and its companions).
+
 #include "engine/graphics/Rendering.hpp"
 
 // Where a viewport's GPU picks come from (RenderRuntime::requestPick and its

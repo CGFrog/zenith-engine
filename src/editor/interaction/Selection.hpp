@@ -1,5 +1,7 @@
 #pragma once
 
+// The editor's object selection.
+
 #include "engine/scene/Scene.hpp"
 
 #include <cstddef>

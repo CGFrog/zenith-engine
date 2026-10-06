@@ -1,5 +1,7 @@
 #pragma once
 
+// Incremental 64-bit FNV-1a: a fast, stable, non-cryptographic fingerprint for cache keys and change detection.
+
 #include <cstdint>
 #include <filesystem>
 #include <span>

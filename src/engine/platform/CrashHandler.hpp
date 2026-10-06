@@ -1,5 +1,7 @@
 #pragma once
 
+// Installs the process's crash handler for its lifetime and restores the previous one when destroyed.
+
 #include <filesystem>
 #include <functional>
 #include <memory>

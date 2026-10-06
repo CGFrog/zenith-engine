@@ -1,5 +1,7 @@
 #pragma once
 
+// The Asset Browser: folder tree, favourites, breadcrumbs, grid or list view, search, filters, and file operations.
+
 #include "editor/application/NativeFileDialog.hpp"
 #include "editor/panels/DataTableView.hpp"
 #include "editor/panels/EditorPanel.hpp"

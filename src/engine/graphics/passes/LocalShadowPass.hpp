@@ -1,5 +1,7 @@
 #pragma once
 
+// Point and spot light shadows rendered into the shared shadow atlas.
+
 #include "../LocalShadows.hpp"
 #include "../Rendering.hpp"
 #include "../pipeline/GraphicsPipeline.hpp"

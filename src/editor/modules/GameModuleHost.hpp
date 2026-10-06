@@ -1,5 +1,7 @@
 #pragma once
 
+// Loads, runs, hot reloads, and unloads the project's game module in the editor; owns GameServices during Play.
+
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/menus/MenuRegistry.hpp"
 #include "editor/modules/EditorModuleApi.hpp"

@@ -1,5 +1,7 @@
 #pragma once
 
+// GPU particle and emitter records and the bitonic sort plan (CPU side of ParticlePass).
+
 #include "Rendering.hpp"
 #include "engine/scene/ParticleEmitter.hpp"
 #include "engine/scene/SceneVisibilityMode.hpp"

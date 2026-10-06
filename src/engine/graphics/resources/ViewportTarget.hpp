@@ -1,5 +1,7 @@
 #pragma once
 
+// Offscreen color/depth target a render view draws into (editor viewports).
+
 #include "../passes/UiPass.hpp"
 #include "../vulkan/VulkanContext.hpp"
 

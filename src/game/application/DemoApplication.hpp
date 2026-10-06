@@ -1,5 +1,7 @@
 #pragma once
 
+// The demo's application: title, pause and settings menus, HUD, player, music, scenes.
+
 #include "engine/application/Application.hpp"
 #include "engine/module/Gameplay.hpp"
 #include "engine/project/ProjectConfig.hpp"

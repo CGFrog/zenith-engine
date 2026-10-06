@@ -1,7 +1,8 @@
 # Zenith Engine
 
 Zenith is an educational C++20 game-engine project intended to grow into a
-reusable foundation for future games.
+reusable foundation for future games: a Vulkan 1.4 renderer, Jolt physics, an
+EnTT scene, hot-reloaded C++ game modules, and a Blender-style editor.
 
 ![The renderer showcase project](docs/images/showcase_overview.png)
 
@@ -10,232 +11,73 @@ Zenith.*
 
 # Notes from Ian
 
-At the start of this project the plan was that I would write every line of code myself, with no AI. As I slogged through the Vulkan boilerplate, I began to question why I was so determined to learn the syntax. Software engineering has fundamentally changed, so instead of clinging to my desire to return to a now distant past where syntax knowledge was a necessity for every software engineer, I have been using this project to try a different approach to learning. Instead of writing code by hand to learn the concepts, I write extensive prompts for the agents by hand instead. I am focusing on understanding the fundamental concepts of computer graphics rather than specific implementation details and I plan on recording what I am learning onto my website [cgfrog.org](https://cgfrog.org/). 
+At the start of this project the plan was that I would write every line of code myself, with no AI. As I slogged through the Vulkan boilerplate, I began to question why I was so determined to learn the syntax. Software engineering has fundamentally changed, so instead of clinging to my desire to return to a now distant past where syntax knowledge was a necessity for every software engineer, I have been using this project to try a different approach to learning. Instead of writing code by hand to learn the concepts, I write extensive prompts for the agents by hand instead. I am focusing on understanding the fundamental concepts of computer graphics rather than specific implementation details and I plan on recording what I am learning onto my website [cgfrog.org](https://cgfrog.org/).
 
 ## Documentation
 
-- [`docs/REPOSITORY_GUIDE.md`](docs/REPOSITORY_GUIDE.md) is the index: it
-  explains every top-level directory, build target, runtime asset, and test
-  area, and links the per-subsystem docs under `docs/engine/`, `docs/editor/`,
-  and `docs/game/`.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) describes subsystem ownership,
-  the ECS component model, startup, the frame loop, rendering, physics, and
-  asset data flow.
-- [`docs/EDITOR_TUTORIAL.md`](docs/EDITOR_TUTORIAL.md) is the minimal
-  build-to-save level-authoring workflow.
-- [`docs/tutorials/`](docs/tutorials/README.md) contains project guides,
-  including a complete first-person target-range game walkthrough.
-- [`docs/RENDERER_VALIDATION.md`](docs/RENDERER_VALIDATION.md) defines the
-  performance, image-regression, and Vulkan smoke gates.
-- [`docs/PERFORMANCE_ROADMAP.md`](docs/PERFORMANCE_ROADMAP.md) tracks the
-  remaining measured CPU, GPU, graphics, physics, and streaming objectives.
-- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) covers configuration, building,
-  testing, smoke tests, benchmarks, formatting, and common extension tasks.
-- [`docs/RELEASING.md`](docs/RELEASING.md) covers Windows, Linux, and macOS
-  artifacts, package contents, provenance, and clean-extraction verification.
+**Start at [`docs/README.md`](docs/README.md).** It routes you to:
 
-## Build
+- the **[User guide](docs/guide/README.md)**: install, the editor, building
+  levels, playing and debugging, writing game logic in C++, gameplay
+  services, how the engine works, and shipping, plus a cookbook and glossary;
+- the **[first-person game tutorial](docs/tutorials/fps-game/README.md)**, a
+  complete game from the First-Person Shooter template;
+- contributor references: the [code map](docs/CODE_MAP.md),
+  [contributor playbook](docs/CONTRIBUTOR_PLAYBOOK.md),
+  [repository guide](docs/REPOSITORY_GUIDE.md),
+  [architecture](docs/ARCHITECTURE.md), and
+  [development guide](docs/DEVELOPMENT.md).
 
-The project uses Vulkan 1.4, Volk, GLM, SDL 3, cgltf, EnTT, Vulkan Memory
-Allocator, Khronos glslang, stb_image, and meshoptimizer. Dependencies are pinned and downloaded
-into the build tree by CMake `FetchContent`.
+AI coding agents: [`AGENTS.md`](AGENTS.md) is the contributor policy and
+[`CLAUDE.md`](CLAUDE.md) adds a fast-navigation guide.
 
-Requirements are CMake 3.24 or newer, a C++20 compiler, Git, Python 3, and a
-Vulkan 1.4-capable GPU and driver. SDL 3 also supplies default-device audio;
-the engine continues in null-output mode when no playback device is available.
+## Quick start
+
+Requirements: CMake 3.25 or newer, a C++20 compiler (Visual Studio 2022+ on
+Windows, GCC or Clang on Linux), Git, Python 3, and a Vulkan 1.4-capable GPU
+and driver. Dependencies are pinned and downloaded by CMake on the first
+configure.
 
 ```powershell
-cmake -S . -B build
-cmake --build build --config Debug --parallel 4
+cmake --preset default            # configure build/
+cmake --build --preset debug      # engine, editor, game runner, tests
+build/Debug/zenith_editor.exe     # the editor; opens the Project Hub
 ```
 
-GLSL files under `shaders/` compile automatically to matching SPIR-V files under
-`build/shaders/`. Runtime assets are copied to `build/assets/`, so the executable
-does not depend on its working directory.
+Then create a project from a template in the Project Hub and follow
+[Getting started](docs/guide/01-getting-started.md).
 
-## Run the gameplay-room template
+Play a project outside the editor with the game runner:
 
 ```powershell
-.\build\Debug\zenith.exe
+build/Debug/zenith.exe --project projects/demo.zenith-project
 ```
 
-The runtime opens on a controller-friendly title screen. Press Space, the
-south gamepad button, or activate **Play** to enter the room. Escape/Start opens
-the pause menu; keyboard, gamepad, and pointer navigation can resume play or
-change antialiasing, bloom, audio mute, look sensitivity, and inverted-Y input.
-Settings persist atomically in the platform user-data directory. The settings
-screen also exposes high-contrast and reduced-motion modes; the underlying
-accessibility profile includes scalable UI/text, captions, locale, and
-color-independent indicator choices.
-
-The demo project opens an editor-authored collection level built from
-`assets/basic_map.gltf`, with static collision, a physics-controlled player,
-and five blue pickups. Walking into a pickup collects it and updates the HUD;
-the same behavior runs from the editor's Play mode through the demo game
-module.
-Move with WASD or the left stick, look with the mouse or right stick, jump with
-Space or the south gamepad button, and hold Shift or press the left stick to
-sprint. Press E or the west gamepad button to play the demo's original
-synthesized positional interaction tone.
-The demo also loops a quiet streamed Ogg background chord across scene reloads.
-The player collides with the room and can push the props. Escape releases the
-mouse; click the window to capture it again. Press R to unload and recreate the
-gameplay scene. The Khronos validation layer is enabled when installed;
-otherwise the application prints a notice and continues without it.
-
-For an automated GPU smoke test, set `ZENITH_SMOKE_FRAMES` to a positive frame
-count. The engine exits cleanly after presenting that many frames.
-
-For a repeatable rendering benchmark, build `Release` and set
-`ZENITH_BENCHMARK_FRAMES` to the number of measured frames. Full-runtime mode is
-the default and advances gameplay, animation, physics, audio, and rendering with
-a fixed simulation delta. Set `ZENITH_BENCHMARK_MODE=render` to freeze simulation
-and isolate rendering. The harness warms up for 120 frames, then prints one JSON
-report with median, p95, p99, maximum, and budget misses for each CPU/GPU scope.
-Set `ZENITH_BENCHMARK_OBJECTS` to add a deterministic grid of repeated meshes:
+Run the fast CPU-only tests:
 
 ```powershell
-$env:ZENITH_BENCHMARK_FRAMES = 20000
-$env:ZENITH_BENCHMARK_OBJECTS = 2000
-.\build\Release\zenith.exe
+ctest --preset debug-cpu
 ```
 
-`ZENITH_BENCHMARK_WARMUP_FRAMES`, `ZENITH_BENCHMARK_FRAME_BUDGET_MS`, and
-`ZENITH_BENCHMARK_SAMPLES=1` control warmup, the whole-frame budget, and optional
-raw sample output. The manual `zenith_render_packet_benchmark` and
-`zenith_simulation_benchmark` executables cover CPU packet caching and sleeping
-versus active rigid-body workloads without making unstable timing thresholds part
-of the test suite.
+`tools/check.ps1` builds, runs those tests, and formats changed C++ files in
+one step; see [Development](docs/DEVELOPMENT.md) for smoke tests, benchmarks,
+and build-speed options.
 
-## Assets and scene components
+## What is in the engine
 
-`AssetManager` parses and caches `.gltf` and `.glb` files. CPU model, mesh, and
-material data use opaque generational handles; Vulkan allocations remain in the
-renderer-owned GPU cache, so many entities can share a single mesh upload.
-Models expand into an EnTT hierarchy: the requested root receives
-`ModelComponent`, imported nodes receive `TransformComponent`, and drawable
-nodes receive `MeshRendererComponent`.
-
-Morph targets and animation weight channels import with a deterministic active
-target bound. KTX2 RGBA8 content has a CPU fallback, while optional compressed
-mesh and Basis decoders report their exact missing capability. Deterministic
-derived data is stored outside source folders and can be built with
-`zenith_asset_build` or inspected and invalidated by editor tooling.
-
-The `zenith_demo` application library owns the map, player camera, controller,
-gameplay action mapping, menus, and settings policy. `Engine` initializes
-reusable systems and hosts an `ApplicationSession` without naming any scene.
-SDL event polling and mouse capture stay in `InputManager`; demo code consumes
-device-independent actions. Runtime menus and HUDs record engine game-UI
-commands and do not include ImGui or Vulkan headers.
-
-## Physics
-
-Zenith wraps Jolt Physics 5.6 behind ECS components in
-`engine/physics/PhysicsComponents.hpp`. The simulation runs at a fixed 60 Hz by
-default, independently of rendering. `PhysicsWorldConfig` controls gravity,
-step rate, catch-up limits, capacities, worker threads, and collision layers.
-
-Add a transform, collider, and rigid body to make an entity physical:
-
-```cpp
-Entity crate = scene.createEntity("Crate");
-scene.registry().emplace<ColliderComponent>(crate, BoxCollider{{0.5f, 0.5f, 0.5f}});
-scene.registry().emplace<RigidBodyComponent>(crate, RigidBodyComponent{
-    .motionType = PhysicsMotionType::Dynamic,
-    .layer = PhysicsLayer::Dynamic,
-    .mass = 12.0f,
-    .friction = 0.7f,
-});
-```
-
-Box, sphere, capsule, and static triangle-mesh colliders are supported. A
-transform's scale is baked into its collision shape; dynamic translation and
-rotation are written back without losing that visual scale. After changing an
-existing body's collider or creation settings, call
-`engine.physics().refreshBody(entity, scene, assets)`. Forces and gameplay can
-use forces, impulses, velocity access, raycasts (including hit entity, point, and
-normal), and per-step begin/persist/end contact events.
-
-The default `Static`, `Dynamic`, and `Player` layer definitions can be replaced
-through `PhysicsWorldConfig::layers`. Most code should use Zenith's types, while
-advanced integrations can deliberately opt into `nativeSystem()` or
-`nativeBodyInterface()`.
-
-`DemoApplication` is the current game client. Its `GameplayScene` combines a
-glTF room with code-authored physics, player configuration, and props. Scene
-changes are deferred to a frame boundary; unloading clears ECS and physics
-state while retaining cached assets and renderer resources. Joints, vehicles,
-soft bodies, serialization, and debug drawing are intentionally left for later
-layers. Triangle meshes are static-only; use primitives for moving objects.
-
-Versioned prefab documents provide stable IDs, nested composition, separate
-property/component overrides, transactional refresh, and project-relative
-asset references. The editor authoring service makes create, instantiate,
-override, unpack, apply, and revert operations undoable; the runtime prefab
-system is also usable in additive scene instances.
-
-## Audio
-
-`AudioSystem` owns SDL device output, decoding, mixing, and voice lifetime. WAV
-and Ogg effects are cached by canonical path as immutable float PCM; Ogg music
-is decoded on a worker into a bounded ring buffer. Public APIs use generational
-clip, stream, and voice handles and expose fixed master, music, and SFX buses.
-
-`AudioListenerComponent` and `AudioEmitterComponent` are declarative ECS state.
-Callers keep runtime playback state out of components; the engine synchronizes
-world transforms after physics interpolation. Scene transitions stop scoped
-voices before clearing entities, while persistent music survives until stopped
-or engine shutdown. Spatial audio uses Zenith's +Y-up, -Z-forward, metre-based
-coordinates, inverse-distance attenuation, and equal-power stereo panning.
+| Area | Highlights | Docs |
+| --- | --- | --- |
+| Rendering | Vulkan 1.4, dynamic rendering, bindless materials, GPU-driven culling, Cook–Torrance GGX PBR, clustered lights, cascaded and local shadows, GTAO, SSR, volumetric fog, particles, decals, TAA/FSR, depth of field, motion blur, bloom, AgX tone mapping, colour grading. | [Graphics](docs/engine/graphics.md) |
+| Scene | EnTT ECS, explicit reflection, versioned JSON scenes with migrations, prefabs with overrides and nesting, collections, additive and asynchronous loading. | [Scene](docs/engine/scene.md) |
+| Gameplay | Hot-reloaded C++ game modules, systems, behaviours, events, timers, entity commands, effects, deterministic random streams, data tables, save games. | [Game modules](docs/engine/modules.md), [Gameplay](docs/engine/gameplay.md) |
+| Physics | Jolt behind ECS components: rigid bodies, sensors, character controllers, queries, 32 collision layers. | [Physics](docs/engine/physics.md) |
+| Assets | glTF 2.0 import, generational handles, GUIDs and `.meta` sidecars, offline BC7/BC5 texture cooking, derived-data cache. | [Assets](docs/engine/assets.md) |
+| Audio, input, UI | SDL audio with spatial voices and streaming music; device-independent input actions with gamepad support; resolution-independent game UI and menus. | [Audio](docs/engine/audio.md), [Input](docs/engine/window-input.md), [UI](docs/engine/ui.md) |
+| Navigation, animation | Recast/Detour navigation meshes and agents; skeletal animation with an animator state machine. | [Navigation](docs/engine/navigation.md), [Animation](docs/engine/animation.md) |
+| Editor | Blender-style areas and workspaces, operators and rebindable keymaps, multi-viewport editing, prefab windows, live Play-mode editing, build and IDE integration, packaging. | [User guide](docs/guide/02-editor-tour.md) |
 
 ## Code style
 
-The C++ sources use the repository's `.clang-format` configuration. Control
-statements always use braces, related operations are separated into readable
-blocks, and implementation details stay in their owning subsystem. To format
-the source and tests with clang-format 19 or newer:
-
-```powershell
-clang-format -i --style=file (rg --files src tests -g '*.cpp' -g '*.hpp')
-```
-
-```cpp
-auto loaded = assets.loadModel("models/ship.glb");
-if (loaded) {
-    Entity ship = scene.createEntity("Ship");
-    scene.instantiateModel(ship, loaded.handle, assets);
-}
-```
-
-The importer supports triangle primitives, indexed and non-indexed geometry,
-node transforms, skin weights, animation clips, embedded/external buffers and
-images, and glTF metallic-roughness PBR materials. Opaque, masked, blended, and
-double-sided materials are rendered; masked surfaces also cast cutout shadows.
-Missing normals and tangents are generated. Morph targets and compressed mesh
-extensions are not yet rendered. Unsupported non-triangle primitives are
-skipped; malformed assets and models without renderable primitives return
-descriptive errors.
-
-The renderer uses dynamic rendering, synchronization2, staging uploads,
-mipmapped anisotropic textures, per-frame camera buffers, push constants,
-VMA-backed vertex/index buffers, and three frames in flight. The mesh pass uses
-Cook-Torrance GGX lighting, bounded tiled point/spot lighting, cached
-roughness-prefiltered environments, deterministic reflection-probe blending,
-and a stabilized 2,048-pixel directional shadow map with PCF. Project settings
-select validated quality fallbacks and per-pass CPU/GPU budgets. A single fused
-HDR post-process pass adds
-thresholded bloom, ACES tone mapping, and edge-adaptive anti-aliasing.
-
-## Tests
-
-```powershell
-ctest --test-dir build -C Debug --output-on-failure -j 8
-```
-
-The CPU-side tests cover audio decoding, caching, mixing, buses, handle and
-voice lifetime, spatialization, model loading, path caching, generated normals,
-materials, component instantiation, hierarchy cleanup, rigid-body settling,
-contacts, impulses, raycasts, static mesh collision, and entity cleanup without
-requiring a GPU. For a visual smoke test, resize, minimize, and restore the
-window; the room and physics props should return without validation errors.
+The C++ sources follow the repository's `.clang-format` (clang-format 19 or
+newer). Control statements always use braces. See [`AGENTS.md`](AGENTS.md)
+for the full contributor policy.

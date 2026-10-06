@@ -1,5 +1,7 @@
 #pragma once
 
+// Baked irradiance probe volume: a regular grid of probes filling a world-space axis-aligned box.
+
 #include <glm/glm.hpp>
 
 #include <array>

@@ -1,3 +1,5 @@
+// zenith_asset_build: offline texture cooking and derived-data builds.
+
 #include "engine/assets/CompressedTexture.hpp"
 #include "engine/assets/ImageDecoder.hpp"
 #include "engine/assets/ModelImporter.hpp"

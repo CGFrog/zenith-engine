@@ -1,5 +1,7 @@
 #pragma once
 
+// A Blender-style Properties editor: a vertical tab strip beside the selected tab's contents.
+
 #include "editor/interaction/EntityPropertiesView.hpp"
 #include "editor/panels/EditorPanel.hpp"
 

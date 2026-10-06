@@ -1,5 +1,7 @@
 #pragma once
 
+// TAA temporal resolve against output-resolution history.
+
 #include "engine/graphics/pipeline/ComputePipeline.hpp"
 #include "engine/graphics/vulkan/VulkanContext.hpp"
 

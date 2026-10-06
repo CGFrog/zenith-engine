@@ -1,5 +1,7 @@
 #pragma once
 
+// Copies a colour image to host memory (frame captures, references).
+
 #include "../../diagnostics/RgbaImage.hpp"
 #include "../vulkan/VulkanContext.hpp"
 

@@ -1,5 +1,7 @@
 #pragma once
 
+// The demo's gameplay scene: room, physics props, player, pickups, benchmark objects.
+
 #include "engine/application/Application.hpp"
 #include "engine/module/Gameplay.hpp"
 #include "engine/project/ProjectConfig.hpp"

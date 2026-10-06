@@ -1,3 +1,5 @@
+// MeshPass: texture uploads (including block-compressed) and mip streaming.
+
 #include "../resources/MipChainBlit.hpp"
 #include "MeshPass.hpp"
 #include "MeshPassInternal.hpp"

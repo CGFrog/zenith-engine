@@ -1,5 +1,7 @@
 #pragma once
 
+// CPU milliseconds the engine loop spent in each phase of one frame, measured on the main thread with a steady clock.
+
 #include <cstdint>
 
 // CPU milliseconds the engine loop spent in each phase of one frame, measured

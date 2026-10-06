@@ -1,5 +1,7 @@
 #pragma once
 
+// The editor's one build of the open project (or the build.command setting) and its Build diagnostics.
+
 #include "editor/project/BuildRunner.hpp"
 
 #include <cstdint>

@@ -1,5 +1,7 @@
 #pragma once
 
+// The Info log panel: records, severity and category filters.
+
 #include "editor/panels/EditorPanel.hpp"
 
 #include <array>

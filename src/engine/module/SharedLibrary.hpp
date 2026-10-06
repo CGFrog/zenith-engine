@@ -1,5 +1,7 @@
 #pragma once
 
+// Owns one handle to a shared library loaded with LoadLibrary or dlopen and closes it on destruction.
+
 #include <filesystem>
 #include <string>
 

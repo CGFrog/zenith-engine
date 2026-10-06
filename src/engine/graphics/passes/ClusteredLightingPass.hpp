@@ -1,5 +1,7 @@
 #pragma once
 
+// Assigns point and spot lights to the cluster grid (light_clusters.comp).
+
 #include "../Lighting.hpp"
 #include "../pipeline/ComputePipeline.hpp"
 #include "../vulkan/VulkanContext.hpp"

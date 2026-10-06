@@ -1,5 +1,7 @@
 #pragma once
 
+// Application and ApplicationScene lifecycle interfaces, ApplicationContext, deferred scene switches.
+
 #include "../assets/Assets.hpp"
 #include "../audio/AudioSystem.hpp"
 #include "../diagnostics/FrameTimings.hpp"

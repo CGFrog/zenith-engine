@@ -1,5 +1,7 @@
 #pragma once
 
+// The Project Hub: recent projects, new from template, open project.
+
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/FolderPicker.hpp"
 #include "editor/application/NativeFileDialog.hpp"

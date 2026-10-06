@@ -1,5 +1,7 @@
 #pragma once
 
+// Asset browser preferences kept in asset-browser.json in the editor's settings directory.
+
 #include <filesystem>
 #include <string>
 #include <vector>

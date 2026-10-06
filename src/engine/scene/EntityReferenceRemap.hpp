@@ -1,5 +1,7 @@
 #pragma once
 
+// Remapping entity reference fields when entities are copied or instanced.
+
 #include <nlohmann/json_fwd.hpp>
 
 #include <cstdint>

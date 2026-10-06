@@ -1,4 +1,6 @@
 #pragma once
+
+// Swapchain creation, recreation on resize, and present modes.
 #include "../../window/Window.hpp"
 #include "../surface/Surface.hpp"
 #include "../vulkan/VulkanContext.hpp"

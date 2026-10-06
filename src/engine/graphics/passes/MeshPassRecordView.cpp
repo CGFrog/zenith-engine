@@ -1,3 +1,5 @@
+// MeshPass: recording one render view.
+
 #include "../Decals.hpp"
 #include "../Lighting.hpp"
 #include "../ReflectionProbes.hpp"

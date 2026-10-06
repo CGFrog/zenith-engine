@@ -1,5 +1,7 @@
 #pragma once
 
+// What smoke steps may use of the editor session.
+
 #include "editor/application/SceneEditing.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/operators/KeymapRegion.hpp"

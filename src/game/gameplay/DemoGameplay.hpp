@@ -1,5 +1,8 @@
 #pragma once
 
+// The demo's gameplay as a game module registers it: component types the editor can author and the systems that
+// simulate them.
+
 #include "engine/scene/ComponentTypes.hpp"
 
 #include <string_view>

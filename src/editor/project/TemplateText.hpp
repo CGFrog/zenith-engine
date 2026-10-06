@@ -1,5 +1,7 @@
 #pragma once
 
+// {{NAME}} token substitution in template files.
+
 #include <filesystem>
 #include <span>
 #include <string>

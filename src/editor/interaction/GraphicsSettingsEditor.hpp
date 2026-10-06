@@ -1,5 +1,7 @@
 #pragma once
 
+// Render settings widgets and the GPU pass timing table.
+
 #include "engine/graphics/Rendering.hpp"
 
 #include <vector>

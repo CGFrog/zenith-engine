@@ -1,4 +1,6 @@
 #pragma once
+
+// A short-lived shader module used during pipeline creation.
 #include <filesystem>
 #include <volk.h>
 

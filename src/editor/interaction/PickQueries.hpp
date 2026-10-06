@@ -1,5 +1,7 @@
 #pragma once
 
+// Reading GPU pick results (id and depth grids) for click, box, and lasso selection.
+
 #include "engine/graphics/RenderPicking.hpp"
 #include "engine/scene/SceneEntityId.hpp"
 

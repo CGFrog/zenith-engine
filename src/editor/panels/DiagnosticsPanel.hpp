@@ -1,5 +1,7 @@
 #pragma once
 
+// Lists editor diagnostics and shows asset ownership and memory, with a manual collection of unused assets.
+
 #include "editor/panels/EditorPanel.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/audio/AudioSystem.hpp"

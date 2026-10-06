@@ -1,5 +1,7 @@
 #pragma once
 
+// callGuarded: runs a callback into game code and returns what it threw instead of unwinding through the engine.
+
 #include <exception>
 #include <optional>
 #include <string>

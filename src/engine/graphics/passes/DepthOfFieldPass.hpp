@@ -1,5 +1,7 @@
 #pragma once
 
+// Depth of field: circle of confusion, half-resolution bokeh gather, composite.
+
 #include "engine/graphics/DepthOfField.hpp"
 #include "engine/graphics/Rendering.hpp"
 #include "engine/graphics/pipeline/ComputePipeline.hpp"

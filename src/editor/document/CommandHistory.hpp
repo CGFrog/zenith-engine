@@ -1,5 +1,7 @@
 #pragma once
 
+// Undo/redo stack and its command types (whole-scene and per-entity diff commands).
+
 #include "engine/scene/SceneDocument.hpp"
 
 #include <cstddef>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Copies a module (and its PDB) to a unique shadow file so the original can be rebuilt while loaded.
+
 #include <filesystem>
 #include <memory>
 #include <string>

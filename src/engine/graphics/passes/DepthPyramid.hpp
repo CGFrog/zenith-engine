@@ -1,5 +1,7 @@
 #pragma once
 
+// Hierarchical depth of the scene view, rebuilt from the scene depth image.
+
 #include "../pipeline/ComputePipeline.hpp"
 #include "../vulkan/VulkanContext.hpp"
 

@@ -1,12 +1,13 @@
 # Zenith tutorials
 
-These project-oriented guides combine several engine subsystems into a
-playable result. For subsystem contracts, use
-[Architecture](../ARCHITECTURE.md); for repository commands, use
-[Development](../DEVELOPMENT.md).
+Project-oriented guides that combine several engine subsystems into a
+playable result. If you have not used Zenith before, read the
+[User guide](../guide/README.md) first (at least chapters 1–5); for subsystem
+contracts, use [Architecture](../ARCHITECTURE.md).
 
 ## Available tutorials
 
-- [Build a first-person game](fps-game/README.md): create a game target,
-  author and load a level, implement a physics-backed player and hitscan
-  weapon, add HUD/audio, and establish tests and performance checks.
+- [Build a first-person game](fps-game/README.md): create a project from the
+  First-Person Shooter template, play and inspect it, write a behaviour,
+  edit input actions, physics layers, and tags, connect behaviours with
+  events, draw a HUD and menus, then debug, test, and ship it.

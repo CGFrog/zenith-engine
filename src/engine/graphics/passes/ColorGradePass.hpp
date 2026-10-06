@@ -1,5 +1,7 @@
 #pragma once
 
+// Colour grading after tone mapping (color_grade.frag): 3D LUT, vignette, and film grain.
+
 #include "../Rendering.hpp"
 #include "../vulkan/VulkanContext.hpp"
 #include "engine/assets/ColorLut.hpp"

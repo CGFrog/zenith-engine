@@ -1,5 +1,7 @@
 #pragma once
 
+// What a game plays: the component types its scenes load with and the systems it runs while playing.
+
 #include "GameServices.hpp"
 #include "SystemScheduler.hpp"
 #include "engine/input/InputActions.hpp"

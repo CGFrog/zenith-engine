@@ -1,5 +1,8 @@
 #pragma once
 
+// Physics component types: colliders (box, sphere, capsule, triangle mesh, convex hull), rigid bodies, motion types,
+// layers.
+
 #include "../assets/Assets.hpp"
 #include "../reflection/Reflection.hpp"
 

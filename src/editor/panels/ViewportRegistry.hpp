@@ -1,5 +1,7 @@
 #pragma once
 
+// The session's viewports, the active one, and sidebar tabs added to every viewport.
+
 #include "engine/graphics/Rendering.hpp"
 
 #include <cstdint>

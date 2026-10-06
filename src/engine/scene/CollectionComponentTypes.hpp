@@ -1,5 +1,7 @@
 #pragma once
 
+// Registers the collection and visibility components ("collection_membership", "collection_instance", "visibility")
+
 #include "SceneDocument.hpp"
 
 class ComponentTypeRegistry;

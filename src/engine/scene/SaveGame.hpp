@@ -1,5 +1,7 @@
 #pragma once
 
+// SaveGameStore: save slots holding a scene's changes against its baseline document.
+
 #include "SceneDocument.hpp"
 #include "engine/reflection/Reflection.hpp"
 

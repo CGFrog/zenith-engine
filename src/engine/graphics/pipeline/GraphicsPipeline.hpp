@@ -1,4 +1,6 @@
 #pragma once
+
+// Graphics pipeline creation and the shared mesh vertex layout.
 #include <volk.h>
 
 #include <cstdint>

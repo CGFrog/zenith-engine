@@ -1,5 +1,7 @@
 #pragma once
 
+// Reusable gameplay components (engine/gameplay): first-person views and tags.
+
 class ComponentType;
 
 // Reusable gameplay components (engine/gameplay): first-person views and

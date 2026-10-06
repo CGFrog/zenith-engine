@@ -1,5 +1,7 @@
 #pragma once
 
+// Watches a directory tree recursively and reports coalesced changes.
+
 #include <chrono>
 #include <cstddef>
 #include <filesystem>

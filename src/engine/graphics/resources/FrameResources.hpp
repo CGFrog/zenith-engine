@@ -1,4 +1,6 @@
 #pragma once
+
+// Owns the resources reused for one frame of CPU work.
 #include <volk.h>
 
 struct GpuFrameTimings {

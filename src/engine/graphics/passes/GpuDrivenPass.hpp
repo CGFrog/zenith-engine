@@ -1,5 +1,7 @@
 #pragma once
 
+// GPU visibility culling and indirect draw compaction (gpu_visibility.comp, compact_draws.comp).
+
 #include "../GpuCullLayout.hpp"
 #include "../MeshLodSelection.hpp"
 #include "../pipeline/ComputePipeline.hpp"

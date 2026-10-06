@@ -5,6 +5,22 @@ on:
   pull_request:
 
 jobs:
+  # Fast documentation checks, independent of the build: every Markdown link
+  # resolves, and the generated parts of the docs match the sources
+  # (tools/docs/*.py; run them without --check to regenerate).
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check Markdown links
+        run: python tools/docs/check_links.py
+      - name: Check every source file has a summary and the code map's source index is current
+        run: python tools/docs/code_index.py --check
+      - name: Check the screenshot checklist is current
+        run: python tools/docs/screenshot_checklist.py --check
   build-test-package:
     strategy:
       fail-fast: false

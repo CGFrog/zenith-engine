@@ -1,5 +1,7 @@
 #pragma once
 
+// AssetManager and the CPU asset types (model, mesh, material, texture, font) with generational handles and leases.
+
 #include "AssetStreaming.hpp"
 #include "ProductionAssetPipeline.hpp"
 #include "engine/diagnostics/Logger.hpp"

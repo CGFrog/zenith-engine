@@ -1,5 +1,7 @@
 #pragma once
 
+// Create, rename, move, duplicate, and delete project files and folders.
+
 #include "engine/assets/AssetDatabase.hpp"
 
 #include <filesystem>

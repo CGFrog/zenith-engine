@@ -16,6 +16,8 @@ project's file replaces those of the same name.
 In the **Input Actions** tab, select `Fire` and press **Add Binding**. Choose
 `key:F` as the source. Play: F fires too. The file now lists the binding:
 
+> 📷 **Screenshot needed — `TUT-FPS-04-BINDING`:** *Project Settings > Input Actions with Fire selected and the new key:F binding added.*
+
 ```json
 {"name": "Fire", "type": "button", "bindings": [
   {"source": "mouseButton:Left"}, {"source": "gamepadButton:RightShoulder"},
@@ -31,6 +33,8 @@ The **Physics Layers** tab names collision layers and which pairs collide.
 Add a layer `Targets` and uncheck its pair with `Player`, so the player walks
 through targets but shots still hit them. Then set each target's rigid body
 **Layer**, which the inspector now offers by name.
+
+> 📷 **Screenshot needed — `TUT-FPS-04-LAYERS`:** *Project Settings > Physics Layers with the Targets layer added and its Player pair unchecked.*
 
 A ray can also filter by layer. `PhysicsQueryFilter::layerMask`
 (`physicsLayerMask({...})`) limits what it hits, and `ignore` skips entities;

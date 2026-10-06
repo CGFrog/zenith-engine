@@ -1,5 +1,7 @@
 #pragma once
 
+// GTAO parameters and quality profiles (CPU side of the AO pass).
+
 #include "Rendering.hpp"
 
 #include <glm/glm.hpp>

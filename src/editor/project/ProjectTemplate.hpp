@@ -1,5 +1,7 @@
 #pragma once
 
+// Reading template.json and generating a project from a template.
+
 #include "editor/project/BuildRunner.hpp"
 
 #include <filesystem>

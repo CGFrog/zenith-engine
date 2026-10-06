@@ -1,5 +1,7 @@
 #pragma once
 
+// Autosaves of the prefab windows with unsaved changes, and recovering them.
+
 #include "editor/document/EditorRecovery.hpp"
 #include "engine/scene/SceneDocument.hpp"
 

@@ -1,5 +1,7 @@
 #pragma once
 
+// Screen-space reflection math shared by shaders/ssr_trace.comp and shaders/ssr_composite.comp.
+
 #include "engine/graphics/DepthPyramidLayout.hpp"
 
 #include <glm/glm.hpp>

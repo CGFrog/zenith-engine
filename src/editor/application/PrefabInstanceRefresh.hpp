@@ -1,5 +1,7 @@
 #pragma once
 
+// Refreshes a prefab's instances in a scene after its file changed, keeping each instance's overrides.
+
 #include "engine/scene/Prefab.hpp"
 
 #include <cstddef>

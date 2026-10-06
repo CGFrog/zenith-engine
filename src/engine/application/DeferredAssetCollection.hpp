@@ -1,5 +1,7 @@
 #pragma once
 
+// Runs asset collections requested at runtime once the frames in flight no longer use the assets.
+
 #include "engine/assets/Assets.hpp"
 #include "engine/audio/AudioSystem.hpp"
 

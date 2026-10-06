@@ -1,5 +1,7 @@
 #pragma once
 
+// InputActionMap/InputActionState: named buttons and axes evaluated from bindings.
+
 #include "InputManager.hpp"
 
 #include <glm/glm.hpp>

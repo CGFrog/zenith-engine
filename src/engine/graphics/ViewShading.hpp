@@ -1,5 +1,7 @@
 #pragma once
 
+// View shading modes (Material Preview, Solid, Wireframe) as reduced RenderSettings plus pipeline choices.
+
 #include "Rendering.hpp"
 
 #include <array>

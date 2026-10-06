@@ -1,5 +1,7 @@
 #pragma once
 
+// Encoding of the depth prepass normal target (PostProcessPass::normalFormat, A2B10G10R10_UNORM).
+
 #include <glm/glm.hpp>
 
 #include <algorithm>

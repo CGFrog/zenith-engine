@@ -1,5 +1,7 @@
 #pragma once
 
+// Validation-layer configuration requested by the composition root or the environment.
+
 #include <cstdint>
 
 // Validation-layer configuration requested by the composition root or the

@@ -1,5 +1,7 @@
 #pragma once
 
+// Animation playback, animators, morph-target weights, and skins.
+
 class ComponentType;
 
 // Animation playback, animators, morph-target weights, and skins.

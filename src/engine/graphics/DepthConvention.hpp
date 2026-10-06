@@ -1,4 +1,6 @@
 #pragma once
+
+// Scene (main view) depth uses reversed Z: the near plane maps to 1 and the far plane to 0.
 #include <volk.h>
 
 // Scene (main view) depth uses reversed Z: the near plane maps to 1 and the far

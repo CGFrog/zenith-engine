@@ -1,5 +1,7 @@
 #pragma once
 
+// The default workspaces (Layout, Lighting, Debug) and where each docks its areas.
+
 #include "editor/areas/WorkspaceFile.hpp"
 
 #include <cstdint>

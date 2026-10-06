@@ -1,5 +1,7 @@
 #pragma once
 
+// Physics components: colliders, rigid bodies and character controllers.
+
 class ComponentType;
 
 // Physics components: colliders, rigid bodies and character controllers.

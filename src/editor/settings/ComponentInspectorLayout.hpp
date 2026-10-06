@@ -1,5 +1,7 @@
 #pragma once
 
+// Which Inspector component sections are collapsed and their order, per component type (component-inspector.json).
+
 #include <cstdint>
 #include <filesystem>
 #include <span>

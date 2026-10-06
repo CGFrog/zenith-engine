@@ -1,5 +1,7 @@
 #pragma once
 
+// Fields<T>, FieldDescriptor, FieldKind, FieldPresentation: explicit reflection.
+
 #include <glm/glm.hpp>
 
 #include <cstdint>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Diagnostics with severity, source location, and a suggested action (the Diagnostics panel's model).
+
 #include <chrono>
 #include <compare>
 #include <cstdint>

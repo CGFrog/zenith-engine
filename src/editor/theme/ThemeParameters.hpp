@@ -1,5 +1,7 @@
 #pragma once
 
+// The tunable parts of the "8-bit Blender" theme.
+
 #include "editor/theme/EditorPalette.hpp"
 
 #include <cstdint>

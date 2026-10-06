@@ -1,5 +1,7 @@
 #pragma once
 
+// Navigation components: agents that walk the navigation mesh.
+
 class ComponentType;
 
 // Navigation components: agents that walk the navigation mesh.

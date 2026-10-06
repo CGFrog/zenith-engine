@@ -1,5 +1,7 @@
 #pragma once
 
+// Headless collection operators (Blender-style collections, see engine/scene/Collections.hpp).
+
 #include "editor/operators/OperatorRegistry.hpp"
 #include "engine/scene/Collections.hpp"
 

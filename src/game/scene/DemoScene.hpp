@@ -1,5 +1,7 @@
 #pragma once
 
+// Builds the reusable, document-safe portion of the demo.
+
 #include "engine/scene/Scene.hpp"
 
 #include <cstdint>

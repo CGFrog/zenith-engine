@@ -1,5 +1,7 @@
 #pragma once
 
+// Editor preferences (settings.ini): tools, appearance, autosave, build, IDE commands.
+
 #include "editor/theme/ThemeParameters.hpp"
 
 #include <cstdint>

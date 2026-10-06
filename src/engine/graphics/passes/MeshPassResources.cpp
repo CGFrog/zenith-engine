@@ -1,3 +1,5 @@
+// MeshPass: GPU resources for assets: geometry pages, meshes, textures, and materials.
+
 #include "MeshPass.hpp"
 #include "MeshPassInternal.hpp"
 

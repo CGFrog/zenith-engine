@@ -1,5 +1,7 @@
 #pragma once
 
+// User-data directories, atomic writes and backups, crash reports, diagnostic bundles, provenance.
+
 #include <cstdint>
 #include <filesystem>
 #include <map>

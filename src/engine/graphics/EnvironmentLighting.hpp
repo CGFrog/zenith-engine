@@ -1,5 +1,7 @@
 #pragma once
 
+// CPU environment lighting preprocessing (prefiltered specular, irradiance) for tools and as a runtime fallback.
+
 #include "engine/assets/Assets.hpp"
 
 #include <array>

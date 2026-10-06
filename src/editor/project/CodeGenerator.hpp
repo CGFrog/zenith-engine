@@ -1,5 +1,7 @@
 #pragma once
 
+// Module > New Behaviour/Component/System: writes sources from snippets and edits CMakeLists and GameModule.cpp.
+
 #include "engine/module/SystemScheduler.hpp"
 
 #include <cstdint>

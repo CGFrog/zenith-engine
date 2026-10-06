@@ -1,5 +1,7 @@
 #pragma once
 
+// A 128-bit identifier that names an asset independently of its file path, so references survive renames and moves.
+
 #include <compare>
 #include <cstddef>
 #include <cstdint>

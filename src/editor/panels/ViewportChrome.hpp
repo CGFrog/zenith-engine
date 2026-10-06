@@ -1,5 +1,7 @@
 #pragma once
 
+// Per-viewport header, tool shelf, sidebar, shading, and overlay state and widgets.
+
 #include "editor/interaction/ModalTransform.hpp"
 #include "editor/operators/Operator.hpp"
 #include "editor/viewport/SceneGizmoDraw.hpp"

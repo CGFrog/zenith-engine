@@ -1,5 +1,7 @@
 #pragma once
 
+// The editor's fly/orbit camera, its lens, and picking rays.
+
 #include "engine/assets/Assets.hpp"
 #include "engine/graphics/Rendering.hpp"
 #include "engine/input/InputManager.hpp"

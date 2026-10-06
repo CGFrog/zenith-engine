@@ -1,5 +1,7 @@
 #pragma once
 
+// Where a behaviour type was registered, for jumping to its source.
+
 #include "Behaviour.hpp"
 #include "engine/module/SystemScheduler.hpp"
 

@@ -1,5 +1,7 @@
 #pragma once
 
+// One 3D viewport area: camera, render view, chrome, picking, gizmo, drops, game view.
+
 #include "editor/application/EditorPlayMode.hpp"
 #include "editor/application/PlayTargets.hpp"
 #include "editor/application/SceneEditing.hpp"

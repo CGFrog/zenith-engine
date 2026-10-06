@@ -1,5 +1,7 @@
 #pragma once
 
+// The prefabs open in windows of their own (the editor's prefab windows), at most one window per prefab.
+
 #include "editor/application/DocumentBinding.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"

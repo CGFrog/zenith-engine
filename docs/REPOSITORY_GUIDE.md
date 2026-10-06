@@ -23,6 +23,8 @@ gaps to close before the roguelike are in
 | `CMakeLists.txt` | Declares the C++20 project, includes `cmake/Dependencies.cmake` (pinned third-party dependencies), adds `src/` and `tests/`, compiles shaders, copies and cooks assets, and installs and packages releases. Each source folder's own `CMakeLists.txt` lists its sources. |
 | `README.md` | Quick-start overview, controls, current feature summary, and links into these detailed guides. |
 | `AGENTS.md` | Root contributor policy and navigation. Scoped guides under `src/engine/`, `src/editor/`, `src/game/`, and `tests/` add local ownership rules. |
+| `CLAUDE.md` | Claude Code entry point: imports `AGENTS.md` and adds the fast-navigation rules (code map first, scoped searches). Each folder with an `AGENTS.md` has a `CLAUDE.md` that imports it. |
+| `docs/` | Documentation, indexed by `docs/README.md`: the user guide (`docs/guide/`), tutorials, the code map and contributor playbook, this guide, architecture, and per-subsystem references. |
 | `.clang-format` | Formatting rules for C++ headers and sources. |
 | `.gitignore` | Excludes generated and local files such as the build tree. |
 | `.vscode/` | Optional editor configuration. It is not required by the build. |
@@ -31,6 +33,7 @@ gaps to close before the roguelike are in
 | `src/` | Application composition and reusable engine implementation. |
 | `tests/` | CPU-side subsystem and integration tests registered with CTest. |
 | `tools/export_definitions/` | Build tool that writes the module-definition file exporting a Windows DLL's out-of-line functions and data (`cmake/WindowsExports.cmake`). |
+| `tools/docs/` | `check_links.py` checks every relative Markdown link and heading anchor; `code_index.py` regenerates the source index in `docs/CODE_MAP.md`; `screenshot_checklist.py` regenerates `docs/guide/SCREENSHOTS.md` from the `📷 Screenshot needed` callouts in `docs/`. Both generators take `--check`, which fails when the output is stale; CI's `docs` job runs all three. |
 | `tools/showcase/` | Blender and Python scripts that regenerate the renderer showcase content. |
 | `tools/irradiance_room/` | Standard-library Python script that regenerates the irradiance-volume test interior. |
 | `tools/color_grading/` | Standard-library Python script that regenerates the example `.cube` colour grade. |
@@ -69,6 +72,13 @@ tests/
 |- packaging/              CMake script tests of the packaging configure checks
 `- validation/             strict Vulkan validation smoke matrix (CMake only)
 ```
+
+The user guide in `docs/guide/` teaches the editor, game logic, and the
+engine's concepts in order; [`docs/README.md`](README.md) is the entry point
+for every reader. For locating code, the [code map](CODE_MAP.md) maps
+features to files, symbols, and tests, and the
+[contributor playbook](CONTRIBUTOR_PLAYBOOK.md) lists the files each common
+change touches.
 
 Long-form project tutorials live under `docs/tutorials/`. The
 [first-person game tutorial](tutorials/fps-game/README.md) makes a game from

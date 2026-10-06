@@ -1,5 +1,7 @@
 #pragma once
 
+// Renderer-independent planning for streaming a texture's mip chain into GPU memory.
+
 #include "AssetStreaming.hpp"
 
 #include <cstdint>

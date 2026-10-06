@@ -1,5 +1,7 @@
 #pragma once
 
+// An entity that walks to a destination along the navigation mesh, steering around the other agents.
+
 #include "NavigationCrowd.hpp"
 #include "engine/scene/Scene.hpp"
 

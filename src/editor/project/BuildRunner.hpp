@@ -1,5 +1,8 @@
 #pragma once
 
+// Runs one build command at a time without blocking its caller, keeping the output log and the diagnostics parsed from
+// it.
+
 #include "editor/project/CompilerOutputParser.hpp"
 #include "engine/platform/ChildProcess.hpp"
 

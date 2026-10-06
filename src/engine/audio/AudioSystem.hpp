@@ -1,5 +1,7 @@
 #pragma once
 
+// AudioSystem: device output, clip cache, streaming music, buses, spatial voices, scene sync.
+
 #include "engine/diagnostics/Logger.hpp"
 #include "engine/scene/SceneEntityId.hpp"
 

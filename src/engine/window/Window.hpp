@@ -1,5 +1,7 @@
 #pragma once
 
+// The SDL window and its Vulkan surface access.
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 

@@ -1,5 +1,8 @@
 #pragma once
 
+// A named arrangement of areas with its own docking layout, shown as a tab in the main menu bar (Layout, Lighting,
+// Debug).
+
 #include "editor/areas/AreaInstance.hpp"
 
 #include <cstddef>

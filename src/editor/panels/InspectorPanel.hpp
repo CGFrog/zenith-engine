@@ -1,5 +1,7 @@
 #pragma once
 
+// The Inspector: the selection's name, transform, and components in one scrolling list, with multi-entity editing.
+
 #include "editor/interaction/EntityPropertiesView.hpp"
 #include "editor/panels/EditorPanel.hpp"
 

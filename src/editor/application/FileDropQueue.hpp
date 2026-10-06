@@ -1,5 +1,8 @@
 #pragma once
 
+// Files and folders dropped onto the editor window from the operating system in one frame (InputState::droppedFiles),
+// handed to the window they landed in.
+
 #include "engine/input/InputManager.hpp"
 
 #include <filesystem>

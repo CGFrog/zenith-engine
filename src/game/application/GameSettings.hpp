@@ -1,5 +1,7 @@
 #pragma once
 
+// The demo's persisted player settings.
+
 #include "engine/graphics/Rendering.hpp"
 #include "engine/ui/Accessibility.hpp"
 

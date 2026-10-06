@@ -1,5 +1,7 @@
 #pragma once
 
+// Deterministic random numbers (PCG32) identical on every platform, and named streams derived from one seed.
+
 #include "engine/reflection/Reflection.hpp"
 
 #include <cstddef>

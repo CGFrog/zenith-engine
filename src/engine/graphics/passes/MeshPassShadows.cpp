@@ -1,3 +1,5 @@
+// MeshPass: directional cascade and local light shadow maps and their recording.
+
 #include "../Lighting.hpp"
 #include "../resources/DescriptorPoolSizes.hpp"
 #include "MeshPass.hpp"

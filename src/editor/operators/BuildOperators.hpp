@@ -1,5 +1,7 @@
 #pragma once
 
+// Starts and stops the session's build (ProjectBuild), which the Build panel shows.
+
 #include "editor/operators/OperatorRegistry.hpp"
 
 class ProjectBuild;

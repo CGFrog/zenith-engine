@@ -1,5 +1,7 @@
 #pragma once
 
+// First-person camera component, character input, look, and spawnFirstPersonPlayer.
+
 #include "engine/physics/CharacterController.hpp"
 #include "engine/scene/Scene.hpp"
 

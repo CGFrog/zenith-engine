@@ -2,6 +2,10 @@
 
 ## Start here
 
+- To locate code, start with `docs/CODE_MAP.md` (feature → file → symbol →
+  test) and `docs/CONTRIBUTOR_PLAYBOOK.md` (the files each common change
+  touches) before searching; update the map when files are added, moved, or
+  removed.
 - Read `docs/REPOSITORY_GUIDE.md`, the index of the workspace map, and
   `docs/ARCHITECTURE.md` before changing subsystem boundaries. Per-subsystem
   docs live under `docs/engine/`, `docs/editor/`, and `docs/game/`; read the
@@ -86,6 +90,10 @@ Dependencies must not point upward. Keep graphics independent of gameplay rules,
 - Do not mix unrelated cleanup, refactoring, or formatting into a focused change, but callout any needed changes when possible.
 - Match existing conventions unless intentionally improving them consistently across the affected module.
 - Always use brackets in if statements.
+- Open every header (right after `#pragma once`), and every `.cpp` without a
+  header, with a comment whose first sentence says what the file is for.
+  `tools/docs/code_index.py` builds the code map's source index from it, and
+  CI fails when a file has none.
 
 ## Adding or changing features
 

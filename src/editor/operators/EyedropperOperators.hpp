@@ -1,5 +1,7 @@
 #pragma once
 
+// ui.eyedropper_entity: pick an entity in a viewport to fill a reference field.
+
 #include "editor/operators/OperatorRegistry.hpp"
 #include "engine/scene/SceneEntityId.hpp"
 

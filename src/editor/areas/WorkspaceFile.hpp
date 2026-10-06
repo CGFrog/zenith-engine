@@ -1,5 +1,7 @@
 #pragma once
 
+// workspaces.json: the user's workspaces, their areas, and each workspace's ImGui docking layout.
+
 #include <cstdint>
 #include <filesystem>
 #include <string>

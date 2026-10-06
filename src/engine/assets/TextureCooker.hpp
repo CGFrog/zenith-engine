@@ -1,5 +1,7 @@
 #pragma once
 
+// Offline texture cooking to BC7/BC5 KTX2 (zenith_asset_build).
+
 #include "Assets.hpp"
 
 #include <cstdint>

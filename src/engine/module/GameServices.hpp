@@ -1,5 +1,8 @@
 #pragma once
 
+// GameServices: the per-session hub of gameplay mechanisms (commands, events, timers, effects, resources, random,
+// audio, navigation, saves).
+
 #include "Effects.hpp"
 #include "EntityCommandBuffer.hpp"
 #include "EventQueue.hpp"

@@ -1,5 +1,7 @@
 #pragma once
 
+// Assigns reflection probes to clusters for per-pixel blending.
+
 #include "engine/graphics/ReflectionProbes.hpp"
 #include "engine/graphics/pipeline/ComputePipeline.hpp"
 #include "engine/graphics/vulkan/VulkanContext.hpp"

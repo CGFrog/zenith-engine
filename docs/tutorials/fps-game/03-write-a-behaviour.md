@@ -23,6 +23,8 @@ Behaviour...** and enter:
 `registerSlider(registrar);` above the `zenith:` markers in
 `src/GameModule.cpp`, opens `Slider.cpp` in your IDE, and starts a build.
 
+> 📷 **Screenshot needed — `TUT-FPS-03-GENERATE`:** *The Module > New Behaviour... dialog filled in with Slider, distance (float), and speed (float).*
+
 ## Write the logic
 
 Give the fields defaults in `Slider.hpp`, and keep where the slide started:
@@ -77,6 +79,8 @@ moved transform.
 Press **Ctrl B**. After the reload, select a target, choose **Add Component >
 Behaviours > Slider**, and press F5. If you build during Play, the status bar
 says **Reload pending - stop to apply**; the new code loads on Stop.
+
+> 📷 **Screenshot needed — `TUT-FPS-03-SLIDER`:** *A target with the Slider behaviour added in the Inspector, in Play mode mid-slide.*
 
 Compiler errors appear in the Build panel and the Diagnostics panel; clicking
 one opens the IDE at that line.

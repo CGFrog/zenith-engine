@@ -860,7 +860,7 @@ These items are independent and can go into any batch.
       status bar into their own units.
 
   Result: `EditorFileDialogs.cpp` (with the unsaved-changes workflow),
-  `EditorRecovery.cpp`, `EditorMainMenu.cpp` and `EditorStatusBar.cpp`;
+  `EditorRecovery.cpp` (since renamed `EditorSessionRecovery.cpp`), `EditorMainMenu.cpp` and `EditorStatusBar.cpp`;
   entering and leaving Play mode and the game view's Ui moved to
   `EditorPlayback.cpp`. `EditorSession.cpp` is about 600 lines. The unused
   `drawPanels` declaration is gone.

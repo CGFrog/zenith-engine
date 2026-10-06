@@ -1,5 +1,7 @@
 #pragma once
 
+// The <asset>.meta JSON sidecar: an asset's GUID and per-asset import settings.
+
 #include "engine/assets/AssetGuid.hpp"
 
 #include <filesystem>

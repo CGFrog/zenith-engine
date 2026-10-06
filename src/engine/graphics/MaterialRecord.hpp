@@ -1,5 +1,7 @@
 #pragma once
 
+// GPU form of a MaterialAsset: one std430 record per material in the camera set's material buffer (binding 4).
+
 #include "engine/assets/Assets.hpp"
 
 #include <cstdint>

@@ -1,5 +1,8 @@
 #pragma once
 
+// The icon that best names what an entity is, from its components in a fixed priority (a camera before its mesh, lights
+// before probes).
+
 #include "editor/theme/PixelIconBitmaps.hpp"
 
 #include "engine/scene/Scene.hpp"

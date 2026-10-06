@@ -1,5 +1,7 @@
 #pragma once
 
+// Chooses the gameplay a run plays and the application that presents it (the demo's or ProjectApplication).
+
 #include "engine/module/GameModule.hpp"
 #include "engine/module/Gameplay.hpp"
 #include "engine/project/ProjectConfig.hpp"

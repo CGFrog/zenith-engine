@@ -1,3 +1,6 @@
+// The prefab link components are registered here rather than with the other built-in types so the prefab system owns
+// its persisted form.
+
 #include "ComponentTypes.hpp"
 #include "Prefab.hpp"
 #include "SceneAssetReferences.hpp"

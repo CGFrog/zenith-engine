@@ -1,5 +1,7 @@
 #pragma once
 
+// Applies the pixel theme to ImGui: style, fonts, scale.
+
 #include "editor/theme/EditorPalette.hpp"
 #include "editor/theme/ThemeParameters.hpp"
 

@@ -1,5 +1,7 @@
 #pragma once
 
+// Thresholds for comparing a rendered capture against a reference.
+
 #include "RgbaImage.hpp"
 
 #include <string>

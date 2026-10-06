@@ -1,5 +1,7 @@
 #pragma once
 
+// Hi-Z screen-space reflection trace and composite.
+
 #include "engine/graphics/Rendering.hpp"
 #include "engine/graphics/ScreenSpaceReflectionTrace.hpp"
 #include "engine/graphics/passes/SceneGeometryViews.hpp"

@@ -1,3 +1,6 @@
+// MeshPass: descriptor sets and bindless texture slots, including the clustered lighting, probe, decal, AO,
+// transmission, and fog bindings.
+
 #include "../Decals.hpp"
 #include "../ReflectionProbes.hpp"
 #include "../resources/DescriptorPoolSizes.hpp"

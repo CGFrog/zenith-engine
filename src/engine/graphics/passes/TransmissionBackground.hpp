@@ -1,5 +1,7 @@
 #pragma once
 
+// A copy of the opaque scene that transmissive surfaces (KHR_materials_transmission) sample.
+
 #include "../vulkan/VulkanContext.hpp"
 
 // Copy of the opaque scene (with its background and screen-space reflections)

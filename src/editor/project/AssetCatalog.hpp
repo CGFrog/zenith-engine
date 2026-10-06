@@ -1,5 +1,7 @@
 #pragma once
 
+// The project's asset and folder records, scanned and kept current from disk.
+
 #include "editor/project/AssetRelocation.hpp"
 #include "engine/assets/AssetDatabase.hpp"
 #include "engine/platform/FileWatcher.hpp"

@@ -1,5 +1,7 @@
 #pragma once
 
+// Asset Browser thumbnails, decoded and downsampled off the UI thread.
+
 #include <condition_variable>
 #include <cstdint>
 #include <deque>

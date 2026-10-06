@@ -1,5 +1,7 @@
 #pragma once
 
+// Draggable handles that resize collider shapes in the viewport.
+
 #include "editor/application/SceneEditing.hpp"
 #include "engine/graphics/Rendering.hpp"
 #include "engine/physics/PhysicsComponents.hpp"

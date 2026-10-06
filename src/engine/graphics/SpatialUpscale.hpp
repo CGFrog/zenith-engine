@@ -1,5 +1,7 @@
 #pragma once
 
+// CPU side of the upscalers: render-scale presets, dynamic resolution, and AMD FSR 1 constants and reference math.
+
 #include "Rendering.hpp"
 
 #include <glm/glm.hpp>

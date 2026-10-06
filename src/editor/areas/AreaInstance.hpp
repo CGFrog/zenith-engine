@@ -1,5 +1,7 @@
 #pragma once
 
+// One area of a workspace: a dockable window showing an editor type.
+
 #include "editor/panels/EditorPanel.hpp"
 
 #include <cstdint>

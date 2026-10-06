@@ -1,5 +1,7 @@
 #pragma once
 
+// object.model_replace and mesh assignment operators.
+
 #include "editor/operators/OperatorRegistry.hpp"
 #include "engine/scene/SceneEntityId.hpp"
 

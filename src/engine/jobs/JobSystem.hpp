@@ -1,5 +1,7 @@
 #pragma once
 
+// Bounded prioritized background job system.
+
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>

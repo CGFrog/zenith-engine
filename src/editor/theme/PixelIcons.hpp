@@ -1,5 +1,7 @@
 #pragma once
 
+// Draws the pixel-art icons at the current art-pixel scale.
+
 #include "editor/theme/PixelIconBitmaps.hpp"
 
 #include <imgui.h>

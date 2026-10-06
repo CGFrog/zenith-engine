@@ -1,5 +1,7 @@
 #pragma once
 
+// prefab.* operators: create, instantiate, edit, apply, revert, unpack, add character.
+
 #include "editor/application/EditorSessionCommands.hpp"
 #include "editor/document/PrefabWriteCommand.hpp"
 #include "editor/operators/OperatorRegistry.hpp"

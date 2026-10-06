@@ -1,5 +1,7 @@
 #pragma once
 
+// object.* operators: add objects and colliders, duplicate, delete, select all, rename, add/remove components.
+
 #include "editor/operators/OperatorRegistry.hpp"
 #include "engine/physics/PhysicsComponents.hpp"
 

@@ -1,5 +1,7 @@
 #pragma once
 
+// Retires native resources only after the frame/voice serial that last used them has completed.
+
 #include <algorithm>
 #include <cstdint>
 #include <functional>

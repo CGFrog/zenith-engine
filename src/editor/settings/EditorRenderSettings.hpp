@@ -1,5 +1,7 @@
 #pragma once
 
+// The render settings the editor requests and where they persist (the project file, or a standalone document).
+
 #include "engine/graphics/RenderConfiguration.hpp"
 #include "engine/graphics/Rendering.hpp"
 #include "engine/project/ProjectConfig.hpp"

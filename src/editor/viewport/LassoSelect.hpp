@@ -1,5 +1,7 @@
 #pragma once
 
+// Blender's lasso select as a modal tool over one viewport.
+
 #include "editor/viewport/RegionSelect.hpp"
 
 #include <optional>

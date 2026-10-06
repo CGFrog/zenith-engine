@@ -1,5 +1,7 @@
 #pragma once
 
+// The catalog of operators.
+
 #include "editor/operators/Operator.hpp"
 
 #include <memory>

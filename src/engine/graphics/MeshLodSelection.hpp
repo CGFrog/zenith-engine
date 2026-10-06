@@ -1,5 +1,7 @@
 #pragma once
 
+// Per-view terms for choosing a primitive's level of detail by projected screen-space error.
+
 #include "engine/assets/Assets.hpp"
 
 #include <cstdint>

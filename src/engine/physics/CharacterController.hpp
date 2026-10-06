@@ -1,5 +1,7 @@
 #pragma once
 
+// CharacterControllerComponent: a walking character moved by a kinematic controller (steps, slopes, ground snapping).
+
 #include "PhysicsComponents.hpp"
 
 #include <glm/glm.hpp>

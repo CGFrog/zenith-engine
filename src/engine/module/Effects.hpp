@@ -1,5 +1,8 @@
 #pragma once
 
+// Short-lived effects for a gameplay session (GameServices::effects): a prefab placed at a transform that removes
+// itself when it ends.
+
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneEntityId.hpp"
 

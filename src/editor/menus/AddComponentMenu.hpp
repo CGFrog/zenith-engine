@@ -1,5 +1,8 @@
 #pragma once
 
+// An Add Component button that opens the Add Component menu at the mouse through wm.call_menu, showing only category's
+// types when one is given.
+
 #include "editor/menus/MenuRegistry.hpp"
 #include "engine/scene/Scene.hpp"
 

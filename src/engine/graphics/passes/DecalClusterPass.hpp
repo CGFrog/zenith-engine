@@ -1,5 +1,7 @@
 #pragma once
 
+// Assigns decal projectors to clusters (decal_clusters.comp).
+
 #include "engine/graphics/Decals.hpp"
 #include "engine/graphics/pipeline/ComputePipeline.hpp"
 #include "engine/graphics/vulkan/VulkanContext.hpp"

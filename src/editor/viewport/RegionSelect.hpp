@@ -1,5 +1,7 @@
 #pragma once
 
+// What a box or lasso does to the selection, with Blender's modifiers.
+
 #include "editor/interaction/Selection.hpp"
 
 #include <glm/glm.hpp>

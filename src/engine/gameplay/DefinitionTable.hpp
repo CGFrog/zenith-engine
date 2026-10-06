@@ -1,5 +1,7 @@
 #pragma once
 
+// DefinitionTable<Entry>: strict JSON data tables keyed by id, with hot reload.
+
 #include "engine/reflection/Reflection.hpp"
 
 #include <cstddef>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Importing files from outside the project (an Explorer drop, the Import dialog) into a project folder.
+
 #include <filesystem>
 #include <span>
 #include <string>

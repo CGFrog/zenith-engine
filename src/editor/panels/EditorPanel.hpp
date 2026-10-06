@@ -1,5 +1,7 @@
 #pragma once
 
+// One dockable editor window.
+
 #include <string>
 #include <string_view>
 

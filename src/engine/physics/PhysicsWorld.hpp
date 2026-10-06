@@ -1,5 +1,7 @@
 #pragma once
 
+// PhysicsWorld: body sync, stepping, interpolation, forces, queries, contact and trigger events.
+
 #include "../diagnostics/Logger.hpp"
 #include "../graphics/DebugDraw.hpp"
 #include "../scene/Scene.hpp"

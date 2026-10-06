@@ -1,5 +1,7 @@
 #pragma once
 
+// AMD FSR 1 spatial upscaling (SpatialUpscale.hpp documents the math and color space).
+
 #include "engine/graphics/pipeline/ComputePipeline.hpp"
 #include "engine/graphics/vulkan/VulkanContext.hpp"
 

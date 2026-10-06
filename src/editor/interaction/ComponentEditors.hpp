@@ -1,5 +1,7 @@
 #pragma once
 
+// Custom Inspector editors for components reflection cannot express (transform, collider shape, mesh).
+
 #include "engine/assets/IrradianceVolumeAsset.hpp"
 #include "engine/reflection/Reflection.hpp"
 #include "engine/scene/Scene.hpp"

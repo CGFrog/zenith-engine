@@ -1,5 +1,7 @@
 #pragma once
 
+// Blender's box select (B) as a modal tool over one viewport.
+
 #include "editor/viewport/RegionSelect.hpp"
 
 #include <optional>

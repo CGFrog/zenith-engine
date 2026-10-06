@@ -1,5 +1,7 @@
 #pragma once
 
+// The engine's own systems, which every Gameplay runs before a game's systems of the same phase and order.
+
 #include "SystemScheduler.hpp"
 
 #include <memory>

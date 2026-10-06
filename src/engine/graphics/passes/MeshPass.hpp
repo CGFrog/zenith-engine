@@ -1,5 +1,8 @@
 #pragma once
 
+// MeshPass, the main scene pass: geometry caches, materials, shadows, prepass, shading, overlays (split over
+// MeshPass*.cpp).
+
 #include "../../assets/Assets.hpp"
 #include "../../jobs/FrameTaskGraph.hpp"
 #include "../../scene/Scene.hpp"

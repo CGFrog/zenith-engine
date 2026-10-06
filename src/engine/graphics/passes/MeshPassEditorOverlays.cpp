@@ -1,3 +1,5 @@
+// MeshPass: editor-only recording: GPU picks, selection mask, outlines, and the wireframe overlay.
+
 #include "MeshPass.hpp"
 #include "MeshPassInternal.hpp"
 

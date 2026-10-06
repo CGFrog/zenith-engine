@@ -1,5 +1,8 @@
 #pragma once
 
+// Pool sizes that hold exactly `setCount` sets of a layout built from `bindings`: one entry per descriptor type,
+// summing every binding's descriptorCount.
+
 #include <volk.h>
 
 #include <cstdint>

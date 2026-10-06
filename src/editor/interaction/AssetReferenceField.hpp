@@ -1,5 +1,7 @@
 #pragma once
 
+// The Inspector's asset field: a project path with a picker, drag and drop, and thumbnails.
+
 #include "editor/project/AssetCatalog.hpp"
 
 #include <cstdint>

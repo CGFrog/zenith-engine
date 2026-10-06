@@ -1,5 +1,7 @@
 #pragma once
 
+// How a navigation mesh is built, in metres and degrees.
+
 #include <cstdint>
 #include <string>
 

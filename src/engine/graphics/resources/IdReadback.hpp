@@ -1,5 +1,8 @@
 #pragma once
 
+// Host-visible copy of one id-buffer region: R32_UINT object ids followed by R32_SFLOAT depth, each tightly packed row
+// by row.
+
 #include "../vulkan/VulkanContext.hpp"
 
 #include <cstdint>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Rendering and effect components: model instances, meshes, cameras, particle emitters, decals, and material overrides.
+
 class ComponentType;
 
 // Rendering and effect components: model instances, meshes, cameras,

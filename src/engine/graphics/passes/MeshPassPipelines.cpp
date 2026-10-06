@@ -1,3 +1,5 @@
+// MeshPass: pipeline creation and variants (mesh pipelines, wireframe overlay).
+
 #include "MeshPass.hpp"
 
 #include "engine/resources/ResourceLocator.hpp"

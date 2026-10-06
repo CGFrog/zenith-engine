@@ -1,5 +1,7 @@
 #pragma once
 
+// CPU decisions shared by Renderer and MeshPass when a frame records several views.
+
 #include "Lighting.hpp"
 
 #include <cstdint>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Post chain: FXAA, exposure, bloom mix, tone mapping, editor grid.
+
 #include "../Rendering.hpp"
 #include "../resources/FrameTimestamps.hpp"
 #include "../vulkan/VulkanContext.hpp"

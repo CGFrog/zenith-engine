@@ -1,5 +1,7 @@
 #pragma once
 
+// A navigation mesh over a scene's static geometry, built with Recast and queried with Detour, which stay private.
+
 #include "NavMeshBuildSettings.hpp"
 #include "engine/graphics/DebugDraw.hpp"
 #include "engine/scene/Scene.hpp"

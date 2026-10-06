@@ -1,5 +1,7 @@
 #pragma once
 
+// Themed wrappers for ImGui controls (buttons, section headers, status pills).
+
 #include "editor/theme/EditorPalette.hpp"
 #include "editor/theme/PixelIcons.hpp"
 

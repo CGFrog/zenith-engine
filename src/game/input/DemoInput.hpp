@@ -1,5 +1,7 @@
 #pragma once
 
+// The demo's input action map.
+
 #include "engine/input/InputActions.hpp"
 
 #include <memory>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Motion blur tile and reconstruction planning.
+
 #include "Rendering.hpp"
 
 #include <glm/glm.hpp>

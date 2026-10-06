@@ -1,5 +1,7 @@
 #pragma once
 
+// Component types: ComponentType, ComponentTypeBuilder, ComponentTypeRegistry, and registerBuiltInComponentTypes.
+
 #include "../reflection/Reflection.hpp"
 #include "SceneDocument.hpp"
 

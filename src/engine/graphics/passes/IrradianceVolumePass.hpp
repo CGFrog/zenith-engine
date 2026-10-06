@@ -1,5 +1,8 @@
 #pragma once
 
+// Owns the device-local probe buffer behind camera-set binding 8, which mesh.frag reads as IrradianceVolumeProbes
+// (irradiance_volume::GpuProbe records).
+
 #include "../vulkan/VulkanContext.hpp"
 #include "engine/assets/IrradianceVolumeAsset.hpp"
 #include "engine/resources/DeferredReleaseQueue.hpp"

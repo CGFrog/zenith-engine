@@ -1,4 +1,7 @@
 #pragma once
+
+// Assigns stable array slots to sampled image views for a bindless descriptor array and tracks which slots each
+// per-frame descriptor set still has to rewrite.
 #include <volk.h>
 
 #include <cstdint>

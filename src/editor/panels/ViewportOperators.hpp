@@ -1,5 +1,7 @@
 #pragma once
 
+// The view3d.* operators, acting on the active viewport: chrome, shading, snapping, pivot, viewpoints, framing.
+
 #include "editor/operators/OperatorRegistry.hpp"
 
 #include <vector>

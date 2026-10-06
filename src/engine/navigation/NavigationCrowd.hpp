@@ -1,5 +1,7 @@
 #pragma once
 
+// How a crowd steers its agents around each other.
+
 #include "NavigationWorld.hpp"
 
 #include <glm/glm.hpp>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Draws any reflected field (Fields<T>) as an Inspector widget, including multi-entity editing.
+
 #include "engine/reflection/Reflection.hpp"
 
 #include <functional>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Reading and writing reflected fields as JSON.
+
 #include "Reflection.hpp"
 
 #include <nlohmann/json_fwd.hpp>

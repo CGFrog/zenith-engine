@@ -1,5 +1,7 @@
 #pragma once
 
+// PhysicsLayerTable: the project's named collision layers and their collision matrix.
+
 #include "PhysicsComponents.hpp"
 
 #include <array>

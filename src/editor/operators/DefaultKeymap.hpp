@@ -1,5 +1,7 @@
 #pragma once
 
+// The default key bindings for every operator.
+
 #include "editor/operators/Keymap.hpp"
 
 #include <vector>

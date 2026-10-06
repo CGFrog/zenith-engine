@@ -1,4 +1,6 @@
 #pragma once
+
+// The Vulkan surface for the SDL window.
 #include <SDL3/SDL_vulkan.h>
 #include <vector>
 #include <volk.h>

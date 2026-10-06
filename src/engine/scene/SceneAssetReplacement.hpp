@@ -1,5 +1,8 @@
 #pragma once
 
+// Re-points a scene's components at replaced textures, after AssetManager::reloadTexture or an import-settings change
+// loaded a texture again.
+
 #include "engine/assets/Assets.hpp"
 
 #include <cstddef>

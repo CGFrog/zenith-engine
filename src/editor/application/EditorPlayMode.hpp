@@ -1,5 +1,7 @@
 #pragma once
 
+// Edit/Play/Simulate state: snapshot on enter, restore on stop, time scale, pause, frame step.
+
 #include "engine/application/SimulationClock.hpp"
 #include "engine/module/SystemScheduler.hpp"
 #include "engine/scene/SceneDocument.hpp"

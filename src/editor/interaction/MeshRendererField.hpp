@@ -1,5 +1,7 @@
 #pragma once
 
+// The Inspector's mesh renderer field: names and picks a model's meshes and materials.
+
 #include "engine/assets/ModelImporter.hpp"
 #include "engine/scene/SceneEntityId.hpp"
 

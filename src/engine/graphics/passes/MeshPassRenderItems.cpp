@@ -1,3 +1,5 @@
+// MeshPass: building render items from the scene, LOD selection, and overflow reporting.
+
 #include "MeshPass.hpp"
 #include "MeshPassInternal.hpp"
 

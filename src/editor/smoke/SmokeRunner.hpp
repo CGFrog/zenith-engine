@@ -1,5 +1,7 @@
 #pragma once
 
+// Runs smoke steps sequentially, one update per frame, with per-step status.
+
 #include <cstdint>
 #include <memory>
 #include <string>

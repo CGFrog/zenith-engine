@@ -1,5 +1,7 @@
 #pragma once
 
+// Shows and validates a definition-table JSON file in the Asset Browser.
+
 #include "engine/gameplay/DefinitionSchemas.hpp"
 
 #include <nlohmann/json_fwd.hpp>

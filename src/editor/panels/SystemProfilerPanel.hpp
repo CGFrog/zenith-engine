@@ -1,5 +1,7 @@
 #pragma once
 
+// The System Profiler: per-system CPU time, engine phases, and GPU passes.
+
 #include "editor/panels/EditorPanel.hpp"
 
 class EditorPlayMode;

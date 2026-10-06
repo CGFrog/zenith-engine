@@ -1,5 +1,7 @@
 #pragma once
 
+// Audio components: the listener and sound emitters placed in a scene.
+
 class ComponentType;
 
 // Audio components: the listener and sound emitters placed in a scene.

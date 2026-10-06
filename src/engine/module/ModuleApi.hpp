@@ -1,5 +1,7 @@
 #pragma once
 
+// ZENITH_GAME_MODULE, ZENITH_MODULE_API_VERSION, and the compatibility check.
+
 #include "EngineExport.hpp"
 
 #include <cstdint>
