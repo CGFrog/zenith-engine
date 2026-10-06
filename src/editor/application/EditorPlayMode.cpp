@@ -1,7 +1,5 @@
 #include "EditorPlayMode.hpp"
 
-#include "engine/assets/Assets.hpp"
-
 SceneDocumentResult EditorPlayMode::enter(Scene& activeScene, AssetManager& assets, const SceneDocumentOptions& options,
                                           std::span<const SceneEntityId> selection, EditorRuntime runtime) {
     if (m_mode != EditorMode::Edit) {
@@ -17,6 +15,7 @@ SceneDocumentResult EditorPlayMode::enter(Scene& activeScene, AssetManager& asse
         activeScene.swap(m_editScene);
         return result;
     }
+    m_editSceneAssets = assets.leaseSceneAssets(m_editScene);
     m_editSelection.assign(selection.begin(), selection.end());
     m_simulating = runtime == EditorRuntime::Simulate;
     m_mode = m_simulating ? EditorMode::Simulate : EditorMode::Play;
@@ -55,6 +54,8 @@ void EditorPlayMode::stop(Scene& activeScene, std::vector<SceneEntityId>& select
     // for game module component types was created by module code, which a
     // module reload unloads.
     m_editScene.replaceWith(Scene{});
+    // The restored scene is the active one again, which the engine leases.
+    m_editSceneAssets.clear();
     selection = std::move(m_editSelection);
     m_editSelection.clear();
     m_mode = EditorMode::Edit;
@@ -116,4 +117,10 @@ SimulationClock EditorPlayMode::simulationClock() const {
 
 Scene* EditorPlayMode::editScene() {
     return m_mode == EditorMode::Edit ? nullptr : &m_editScene;
+}
+
+void EditorPlayMode::leaseEditSceneAssets(const AssetManager& assets) {
+    if (m_mode != EditorMode::Edit) {
+        m_editSceneAssets = assets.leaseSceneAssets(m_editScene);
+    }
 }
