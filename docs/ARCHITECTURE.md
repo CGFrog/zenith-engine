@@ -810,6 +810,21 @@ skip all temporal and screen-space work. Shadows, environment and probe
 quality, indirect diffuse, local lights and their shadows, particles,
 GPU-driven submission, and streaming stay frame settings.
 
+A created view may also draw a **secondary scene** instead of the
+application's: `createScene` hands out a generational `RenderSceneId`,
+`setViewScene` binds a view to it (never the default view), and each frame the
+owner binds the scene's content with `setSceneContent` before `drawFrame`. The
+editor uses this for prefab windows. A secondary scene has its own render
+packets and caches in `MeshPass` (`SceneRenderState`, exchanged into the
+per-scene members while that scene builds and records; scenes are keyed by
+handle because revision counters start alike in every scene), its assets are
+leased into the frame's leases, and it is drawn with preview lighting: the
+studio rig, CPU submission, and none of the frame stage's sun cascades,
+local-light shadows, environment maps, probes, irradiance volume, fog, or
+particles, which belong to the application's scene. Its views follow every
+view of the application's scene in a frame, and it always honours the editor's
+viewport hide.
+
 What renders is filtered twice. Render packets include only entities the
 runtime's `SceneVisibilityMode` draws (`SceneVisibility`: `renderable` flags
 always, the editor's viewport hide only in `Editor` mode, which the editor

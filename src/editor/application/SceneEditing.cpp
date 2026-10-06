@@ -37,6 +37,10 @@ EditorDiagnostics& SceneEditing::diagnostics() const {
     return m_diagnostics;
 }
 
+SceneEditorData& SceneEditing::editorData() const {
+    return m_document.editorData();
+}
+
 uint64_t SceneEditing::historyRevision() const {
     return m_history.revision();
 }
@@ -340,6 +344,14 @@ bool SceneEditing::applyToEditScene(std::string name, SceneChanges changes) cons
     }
     syncDirtyState();
     return true;
+}
+
+bool SceneEditing::canUndo() const {
+    return !runtime() && m_history.canUndo();
+}
+
+bool SceneEditing::canRedo() const {
+    return !runtime() && m_history.canRedo();
 }
 
 void SceneEditing::undo() const {

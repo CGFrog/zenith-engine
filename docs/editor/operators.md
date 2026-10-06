@@ -138,17 +138,24 @@ and change nothing (see [Scene editing](scene-editing.md#prefab-file-writes)).
 Prefab section lists the asset catalog's `.prefab` files
 (`EditorAssetKind::Prefab`), and the Asset Browser drags them with the
 `ZENITH_PREFAB_ASSET` payload (`panels/AssetDragPayloads.hpp`).
-`prefab.edit {asset}` opens a prefab as a document of its own (prefab mode;
-the asset is project-relative or absolute inside the asset root, and empty
-means the active entity's nearest instance's prefab), and `prefab.exit_edit`
-returns to the document under it, asking about unsaved changes. Both reach
-the session through `EditorPrefabModeCommands` (`PrefabOperatorServices::
-prefabMode`; without it they never poll) and run only in Edit mode with no
-file dialog or modal tool; they record nothing themselves. In prefab mode
-`file.save` writes the prefab, `file.save_as`, `play.start`, and
-`play.simulate` are disabled, and going back after saving records one
-"Edit <name>" step on the document below (see
-[Scene editing](scene-editing.md#prefab-mode-the-document-stack)).
+`prefab.edit {asset}` opens a prefab in a floating window of its own beside
+the level (the asset is project-relative or absolute inside the asset root,
+and empty means the active entity's nearest instance's prefab), also during
+Play, and `prefab.exit_edit` (Close Prefab) closes the prefab window that
+last had focus, asking about unsaved changes
+([Prefab windows](prefab-windows.md)). Both reach the session through
+`EditorPrefabWindowCommands` (`PrefabOperatorServices::prefabWindows`;
+without it they never poll) and run with no file dialog or modal tool; they
+record nothing themselves.
+
+Operators run on the document their `OperatorContext` names: the level, or a
+prefab window's document. `file.save`, `edit.undo`, `edit.redo`, `edit.copy`,
+and `edit.paste` reach the session with that context
+(`EditorDocumentCommands`), and their polls read its history through
+`SceneEditing::canUndo`/`canRedo`. A context's `mode` is its document's: a
+prefab window's is Edit even while the level plays, so operators about the
+session itself (`play.*`, `file.new`, `file.open`, `file.save_as`) poll the
+session's play state instead.
 `prefab.instantiate` also reports the files it read
 (`PrefabWriteHooks::fileRead`), which seeds the session's write ledger.
 

@@ -18,6 +18,16 @@
 // holds what the editor last left there: a file changed outside the editor
 // since the step is never overwritten.
 
+class Scene;
+
+// A prefab file the editor wrote: file is absolute; bytes is its new content,
+// or nullopt when the write removed it. origin is the scene of the document
+// whose operator or undo step wrote it, so the session can refresh the
+// prefab's instances in every other open document; null for a prefab saved as
+// a document of its own, whose saver refreshes the others itself.
+using PrefabFileWritten = std::function<void(const std::filesystem::path& file, const std::optional<std::string>& bytes,
+                                             const Scene* origin)>;
+
 // What the editor tells the rest of the session about each prefab file it
 // writes, removes, or rewrites on undo and redo. The session uses it to drop
 // cached copies (its own and the game's PrefabSystem caches) and to note the
@@ -25,18 +35,16 @@
 // editor's own write for an outside change. Unset hooks are skipped
 // (headless tests).
 struct PrefabWriteHooks {
-    // file is absolute; bytes is its new content, or nullopt when the write
-    // removed it.
-    std::function<void(const std::filesystem::path& file, const std::optional<std::string>& bytes)> fileWritten;
+    PrefabFileWritten fileWritten;
     // The editor built instances from file, which held bytes (nullopt: it
     // did not exist): the session notes the content in its ledger unless it
     // already knows the file, so an outside change made later still knows
     // what the file held before it (notePrefabFilesRead).
     std::function<void(const std::filesystem::path& file, const std::optional<std::string>& bytes)> fileRead;
 
-    void notify(const std::filesystem::path& file, const std::optional<std::string>& bytes) const {
+    void notify(const std::filesystem::path& file, const std::optional<std::string>& bytes, const Scene* origin) const {
         if (fileWritten) {
-            fileWritten(file, bytes);
+            fileWritten(file, bytes, origin);
         }
     }
 
@@ -165,3 +173,12 @@ struct PrefabFileChange {
 // cannot be read or lies outside assetRoot.
 PrefabResult classifyPrefabFileChange(PrefabWriteLedger& ledger, const std::filesystem::path& file,
                                       const std::filesystem::path& assetRoot, PrefabFileChange& output);
+
+// Describes a change of file (absolute, under assetRoot) from previous to
+// current content (nullopt: no file, or unknown) as a change to refresh
+// instances from: its reference, display name, and previous document. For
+// the editor's own writes, which other open documents catch up with. Fails
+// when file lies outside assetRoot.
+PrefabResult describePrefabFileChange(const std::filesystem::path& file, const std::filesystem::path& assetRoot,
+                                      const std::optional<std::string>& current,
+                                      const std::optional<std::string>& previous, PrefabFileChange& output);

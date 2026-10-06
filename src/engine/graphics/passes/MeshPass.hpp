@@ -90,6 +90,13 @@ struct MeshPassViewRequest {
     RenderViewStats* stats{nullptr};
     // Pick regions to draw into the id buffer; empty skips the pass.
     std::span<MeshPassPick> picks;
+    // A secondary render scene the view draws instead of the frame's scene
+    // (RenderRuntime::setViewScene), with preview lighting; null for the
+    // frame's scene. Views of secondary scenes follow every view of the
+    // frame's scene in a frame's requests, never use GPU-driven submission,
+    // and must use a studio-lit viewShading (not Rendered).
+    const Scene* scene{nullptr};
+    RenderSceneId sceneId;
 };
 
 // The camera a view's latest recording rendered with, for overlays drawn over
@@ -462,6 +469,39 @@ class MeshPass {
     // MeshPass.cpp.
     struct FrameState;
 
+    // The render packets and their caches of one scene. The members of
+    // MeshPass with these names hold the scene being processed; a secondary
+    // scene's state is exchanged into them (exchangeSceneState) while its
+    // packets build and its views record, then exchanged back, so the code
+    // that builds and draws packets serves every scene. Everything else (the
+    // frame stage's lights, shadows, environment, particles, GPU-driven
+    // submission) belongs to the frame's scene.
+    struct SceneRenderState {
+        std::vector<RenderItem> renderItems;
+        std::unordered_map<RenderObjectId, std::vector<size_t>> objectItems;
+        std::unordered_map<uint64_t, GpuSceneHandle> gpuRecords;
+        std::unordered_map<uint64_t, size_t> gpuHandleItems;
+        PersistentGpuScene gpuScene;
+        SceneRevisions sceneRevisions{};
+        uint64_t assetRevision{0};
+        uint64_t outlineRevision{0};
+        std::vector<RenderObjectId> outlinedObjects;
+        SceneVisibilityMode builtVisibilityMode{SceneVisibilityMode::Runtime};
+        bool hasCollectionInstances{false};
+        std::vector<CollectionInstanceDraw> collectionInstanceDraws;
+        std::vector<const RenderItem*> shadowVisibleItems;
+        bool meshUploadsPending{false};
+        uint32_t droppedRenderItems{0};
+        uint32_t droppedMaterialItems{0};
+        uint32_t droppedMaterialOverrides{0};
+        // The RenderSceneId generation this state belongs to; 0 for an
+        // unused slot.
+        uint32_t generation{0};
+        // A fresh state never matches a scene's revisions, so its first frame
+        // builds (two scenes may carry equal revision counters).
+        bool built{false};
+    };
+
     enum class SceneAttachments {
         Clear,
         // Continue a scene pass whose attachments the caller already prepared.
@@ -559,7 +599,46 @@ class MeshPass {
     // slots are all taken; the item then draws the plain material.
     const GpuMaterial* ensureOverrideMaterial(MaterialHandle material, const MaterialOverrideComponent& values);
     // Frees the override records the latest packet build did not use.
+    // Frees the override records the scene being processed no longer uses
+    // and no other scene does.
     void releaseUnusedOverrideMaterials();
+    // Forgets which override records a destroyed scene used.
+    void releaseSceneOverrideMaterials(uint32_t sceneKey);
+    // Swaps state with the per-scene members (see SceneRenderState).
+    void exchangeSceneState(SceneRenderState& state);
+    // The state of a secondary scene; created on first use, replaced when
+    // the slot's generation changed.
+    SceneRenderState& secondarySceneState(RenderSceneId scene);
+    // Drops the state of destroyed secondary scenes (CPU only: their GPU
+    // resources are shared and asset-keyed).
+    void retireSecondaryScenes(std::span<const RenderSceneId> scenes);
+
+    // Builds or updates the processed scene's render packets for this
+    // frame. outlinedObjects must be the processed scene's outline union.
+    struct PacketBuild {
+        bool rebuilt{false};
+        uint32_t scannedRenderables{0};
+        uint32_t updatedObjectRecords{0};
+        uint32_t allocations{0};
+    };
+
+    bool buildScenePackets(const Scene& scene, const AssetManager& assets, PacketBuild& build);
+    // Writes the processed scene's skin palettes into the frame slot's
+    // palette buffers from firstMatrix on, assigning each item its offset;
+    // returns the next free matrix and adds items left in bind pose to dropped.
+    uint32_t writeSkinPalettes(uint32_t frameIndex, uint32_t firstMatrix, uint32_t& dropped);
+    // The union of requests' outlined objects, sorted and deduplicated.
+    static std::vector<RenderObjectId> outlineUnion(std::span<const MeshPassViewRequest> requests);
+    // Builds one secondary scene's packets (views: that scene's requests),
+    // before the frame stage writes material records and bindless slots;
+    // build receives what the build did.
+    bool buildSecondaryScene(const AssetManager& assets, std::span<const MeshPassViewRequest> views,
+                             PacketBuild& build);
+    // Records the views of one secondary scene, with its state exchanged in.
+    bool recordSecondaryScene(VkCommandBuffer commandBuffer, uint32_t frameIndex, const AssetManager& assets,
+                              RenderRuntime& rendering, std::span<const MeshPassViewRequest> views,
+                              FrameTaskExecutor& frameTasks, double previousGpuFrameMilliseconds,
+                              const FrameState& frame, uint32_t& skinMatrixCount);
     std::optional<uint32_t> allocateMaterialIndex();
     void pruneUnusedAssets(const AssetManager& assets);
     // Closes the frame's deferred-upload bookkeeping: fills the stats counters
@@ -865,13 +944,20 @@ class MeshPass {
         GpuMaterial gpu;
         MaterialHandle material;
         MaterialOverrideComponent values;
-        uint64_t lastBuild{0};
+        // The packet build of each scene (sceneKey) that last used the
+        // record; the record is freed once no scene uses it.
+        std::map<uint32_t, uint64_t> builds;
     };
 
     using OverrideMaterialKey = std::pair<uint64_t, std::array<uint32_t, 10>>;
     std::map<OverrideMaterialKey, OverrideMaterial> m_overrideMaterials;
     // Counts packet builds, so override records unused by the latest are freed.
     uint64_t m_renderItemBuild{0};
+    // Which scene the per-scene members hold: 0 for the frame's scene,
+    // RenderSceneId::index + 1 for a secondary one.
+    uint32_t m_sceneKey{0};
+    // Indexed by RenderSceneId::index.
+    std::vector<SceneRenderState> m_secondaryScenes;
     // Overridden primitives drawn with their plain material in the last
     // packet build because no override record was free.
     uint32_t m_droppedMaterialOverrides{0};

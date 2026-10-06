@@ -99,6 +99,17 @@ class ViewportPanel final : public EditorPanel {
     void restoreAreaState(std::string_view state) override;
 
     ViewportId id() const;
+    // The document the viewport shows and edits, and the render scene its
+    // view draws (RenderRuntime::setViewScene): nullopt for the application's
+    // scene, else a scene of its own, which is empty while the renderer has
+    // none free (the viewport then shows a placeholder and takes no view). A
+    // null document matches any (headless tests); the session names the
+    // level's for level areas and a prefab window's for that window's
+    // viewport, which draws the window's scene and never takes the default
+    // view (GPU-driven, the application's scene only).
+    void showDocument(const EditorDocument* document, std::optional<RenderSceneId> renderScene);
+    bool showsDocument(const EditorDocument& document) const;
+    const EditorDocument* document() const;
     // Empty until the viewport is first drawn, or while the renderer has no
     // free view.
     RenderViewId renderView() const;
@@ -205,24 +216,6 @@ class ViewportPanel final : public EditorPanel {
         std::optional<SceneEntityId> previousCameraView;
     };
 
-    // How the viewport looks at one document, kept while another document
-    // is edited in its place (prefab mode, DocumentStack): the editor camera,
-    // the scene camera it looks through, and local view.
-    struct DocumentView {
-        EditorCamera camera;
-        std::optional<SceneEntityId> cameraView;
-        std::optional<LocalView> localView;
-    };
-
-    // Hands over the view of the document being replaced and leaves its
-    // camera view and local view (the camera stays where it was); a box or
-    // lasso and a click waiting to pick are cancelled, since their entities
-    // belong to that document.
-    DocumentView takeDocumentView();
-    // Puts back a view takeDocumentView returned, once its document is the
-    // edited one again.
-    void restoreDocumentView(DocumentView view);
-
   private:
     // A click or region pick waiting for the next draw to start it.
     struct QueuedSelect {
@@ -303,6 +296,10 @@ class ViewportPanel final : public EditorPanel {
     // The runtime m_view came from, kept to return the view on destruction.
     RenderRuntime* m_rendering{nullptr};
     RenderViewId m_view;
+    const EditorDocument* m_document{nullptr};
+    RenderSceneId m_renderScene;
+    // Whether it draws a scene of its own rather than the application's.
+    bool m_ownScene{false};
     EditorCamera m_camera;
     std::optional<SceneEntityId> m_cameraView;
     std::optional<RenderSettings> m_appliedViewSettings;

@@ -14,6 +14,7 @@
 class AssetManager;
 class EditorDiagnostics;
 class EditorDocument;
+struct SceneEditorData;
 
 // Records changes to the edited scene as undoable document commands. It holds
 // references only, so the session builds one per frame from the objects it
@@ -97,6 +98,9 @@ class SceneEditing {
 
     AssetManager& assets() const;
     const EditorDocument& document() const;
+    // The document's editor-only state (the 3D cursor), which changes
+    // outside the undo history.
+    SceneEditorData& editorData() const;
     EditorDiagnostics& diagnostics() const;
     // The history's revision (CommandHistory::revision): it changes with
     // every recorded edit, undo, redo, and document replacement, so views can
@@ -167,6 +171,10 @@ class SceneEditing {
     // Undo and redo the edit history; they do nothing in the runtime scene.
     void undo() const;
     void redo() const;
+    // Whether undo or redo would change anything: the history has a step to
+    // take and the scene is not Play's runtime scene.
+    bool canUndo() const;
+    bool canRedo() const;
 
     // The history's revision (CommandHistory::revision): it changes with every
     // recorded edit, undo, and redo, so views can cache what they derive from

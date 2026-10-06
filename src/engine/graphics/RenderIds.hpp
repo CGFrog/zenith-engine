@@ -20,3 +20,18 @@ struct RenderViewId {
 
     bool operator==(const RenderViewId&) const = default;
 };
+
+// Generational handle of a secondary render scene (RenderRuntime::
+// createScene): a scene other than the application's, which views can draw
+// (RenderRuntime::setViewScene). The empty handle names the application's own
+// scene, the one Renderer::drawFrame is given.
+struct RenderSceneId {
+    uint32_t index{0};
+    uint32_t generation{0};
+
+    explicit operator bool() const {
+        return generation != 0;
+    }
+
+    bool operator==(const RenderSceneId&) const = default;
+};

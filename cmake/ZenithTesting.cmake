@@ -12,6 +12,13 @@ include("${CMAKE_CURRENT_LIST_DIR}/CompilerSettings.cmake")
 # zenith_test_temp_directory test (the zenith_test_temp fixture) creates it.
 set(ZENITH_TEST_TEMP_DIR "${PROJECT_BINARY_DIR}/test-temp")
 
+# Multiplies every test's TIMEOUT, for machines far slower than a developer's:
+# a CPU Vulkan driver (lavapipe) in CI runs the GPU tests several times slower.
+set(ZENITH_TEST_TIMEOUT_SCALE 1 CACHE STRING "Factor applied to every zenith_add_test TIMEOUT")
+if(NOT ZENITH_TEST_TIMEOUT_SCALE MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "ZENITH_TEST_TIMEOUT_SCALE must be a positive integer, not '${ZENITH_TEST_TIMEOUT_SCALE}'")
+endif()
+
 function(_zenith_apply_test_temp_directory)
     get_property(directory_tests DIRECTORY PROPERTY TESTS)
     list(REMOVE_ITEM directory_tests zenith_test_temp_directory)
@@ -102,7 +109,8 @@ endfunction()
 # wherever the test is declared). With SOURCES the executable is created here
 # as by zenith_add_test_executable; without them EXECUTABLE must name an
 # existing target or a program, and the target options are rejected. The
-# remaining options set the test properties of the same names.
+# remaining options set the test properties of the same names; TIMEOUT is
+# multiplied by ZENITH_TEST_TIMEOUT_SCALE.
 function(zenith_add_test name)
     cmake_parse_arguments(PARSE_ARGV 1 TEST "NEEDS_ASSETS" "EXECUTABLE;WORKING_DIRECTORY;TIMEOUT;SKIP_RETURN_CODE;PROCESSORS"
         "${_ZENITH_TEST_TARGET_KEYWORDS};COMMAND_ARGS;LABELS;ENVIRONMENT;FIXTURES_SETUP;FIXTURES_REQUIRED")
@@ -134,6 +142,9 @@ function(zenith_add_test name)
     endif()
     add_test(NAME ${name} COMMAND ${TEST_EXECUTABLE} ${TEST_COMMAND_ARGS} WORKING_DIRECTORY "${TEST_WORKING_DIRECTORY}")
 
+    if(DEFINED TEST_TIMEOUT)
+        math(EXPR TEST_TIMEOUT "${TEST_TIMEOUT} * ${ZENITH_TEST_TIMEOUT_SCALE}")
+    endif()
     foreach(keyword IN ITEMS ENVIRONMENT LABELS TIMEOUT SKIP_RETURN_CODE PROCESSORS FIXTURES_SETUP FIXTURES_REQUIRED)
         if(DEFINED TEST_${keyword})
             set_tests_properties(${name} PROPERTIES ${keyword} "${TEST_${keyword}}")

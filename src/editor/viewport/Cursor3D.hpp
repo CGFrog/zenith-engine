@@ -43,9 +43,10 @@ void recordCursor3D(const glm::vec3& location, const RenderView& lens, glm::vec2
 // - view3d.snap_selected_to_cursor {offset}: moves each selected object (the
 //   transform roots) to the cursor, or with offset the selection as a whole
 //   so its median lands there; one undo step.
-// They need no window, so they run headless; viewports and document must
-// outlive them.
-std::vector<Operator> cursorOperators(ViewportRegistry& viewports, EditorDocument& document);
+// They move the cursor of the document the operator runs on, and act only
+// through an active viewport showing that document. They need no window, so
+// they run headless; viewports must outlive them.
+std::vector<Operator> cursorOperators(ViewportRegistry& viewports);
 
 struct EditorOperatorServices;
 // This family's entry in editorOperatorFamilies() (EditorOperatorFamilies.hpp).

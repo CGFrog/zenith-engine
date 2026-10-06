@@ -93,6 +93,29 @@ ViewportPanel::ViewportPanel(ViewportRegistry& registry)
     : m_registry(registry)
     , m_id(registry.add(*this)) {}
 
+void ViewportPanel::showDocument(const EditorDocument* document, std::optional<RenderSceneId> renderScene) {
+    const RenderSceneId scene = renderScene.value_or(RenderSceneId{});
+    if (m_renderScene != scene || m_ownScene != renderScene.has_value()) {
+        // The default view draws only the application's scene.
+        releaseRenderView();
+    }
+    m_document = document;
+    m_renderScene = scene;
+    m_ownScene = renderScene.has_value();
+    if (m_ownScene) {
+        // Secondary scenes render with preview lighting (studio rig).
+        m_chrome.shading = ViewportShading::MaterialPreview;
+    }
+}
+
+bool ViewportPanel::showsDocument(const EditorDocument& document) const {
+    return m_document == nullptr || m_document == &document;
+}
+
+const EditorDocument* ViewportPanel::document() const {
+    return m_document;
+}
+
 ViewportPanel::~ViewportPanel() {
     releaseRenderView();
     m_registry.remove(m_id);
@@ -351,24 +374,6 @@ void ViewportPanel::exitLocalView() {
     m_localViewObjects.reset();
 }
 
-ViewportPanel::DocumentView ViewportPanel::takeDocumentView() {
-    DocumentView view{.camera = m_camera, .cameraView = m_cameraView, .localView = std::move(m_localView)};
-    m_localView.reset();
-    m_localViewObjects.reset();
-    m_cameraView.reset();
-    m_queuedSelect.reset();
-    m_gizmoDrag.reset();
-    cancelSelectTool();
-    return view;
-}
-
-void ViewportPanel::restoreDocumentView(DocumentView view) {
-    m_camera = view.camera;
-    m_cameraView = view.cameraView;
-    m_localView = std::move(view.localView);
-    m_localViewObjects.reset();
-}
-
 bool ViewportPanel::localViewActive() const {
     return m_localView.has_value();
 }
@@ -406,6 +411,7 @@ void ViewportPanel::update(EditorContext& context, const InputState& input, floa
 void ViewportPanel::syncRenderView(EditorContext& context) {
     RenderRuntime& rendering = context.app.rendering;
     const Scene& scene = context.app.scene;
+    rendering.setViewScene(m_view, m_renderScene);
     // A deleted camera (or one that lost its CameraComponent) ends the
     // camera view.
     if (m_cameraView && !sceneCameraLens(scene, scene.findEntity(*m_cameraView))) {
@@ -543,11 +549,14 @@ void ViewportPanel::draw(EditorContext& context) {
     m_registry.markDrawn(m_id);
     // Trade a view of its own for the free default view, which renders every
     // frame anyway and keeps GPU-driven submission.
-    if (m_view && m_view != rendering.defaultView() && m_registry.defaultViewFree()) {
+    if (!m_ownScene && m_view && m_view != rendering.defaultView() && m_registry.defaultViewFree()) {
         releaseRenderView();
     }
-    if (!m_view) {
-        m_view = m_registry.acquireView(rendering, m_id);
+    // A viewport of its own scene without one draws nothing rather than the
+    // application's scene.
+    const bool sceneMissing = m_ownScene && !m_renderScene;
+    if (!m_view && !sceneMissing) {
+        m_view = m_registry.acquireView(rendering, m_id, !m_ownScene);
         if (m_view) {
             m_rendering = &rendering;
         }
@@ -574,8 +583,9 @@ void ViewportPanel::draw(EditorContext& context) {
     m_position = {imagePosition.x, imagePosition.y};
     m_size = {static_cast<float>(width), static_cast<float>(height)};
     ImGui::Dummy({m_size.x, m_size.y});
-    drawViewImage(texture, m_view ? "Viewport will be available on the next rendered frame."
-                                  : "No render view is free; close another viewport.");
+    drawViewImage(texture, sceneMissing ? "Too many prefab windows are open to draw this one; close another."
+                           : m_view     ? "Viewport will be available on the next rendered frame."
+                                        : "No render view is free; close another viewport.");
     if (texture) {
         drawSceneLabels(context);
     }

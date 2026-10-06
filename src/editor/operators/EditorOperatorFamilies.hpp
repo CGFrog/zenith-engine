@@ -15,15 +15,13 @@
 #include <string_view>
 
 class AreaRegistry;
-class CommandHistory;
 class ComponentInspectorLayout;
-class EditorDocument;
 class EditorDocumentCommands;
 class EditorMenus;
 class EditorObjectModeCommands;
 class EditorPlayCommands;
 class EditorPlayMode;
-class EditorPrefabModeCommands;
+class EditorPrefabWindowCommands;
 class EditorWindowCommands;
 class EntityEyedropper;
 class GameModuleHost;
@@ -31,6 +29,7 @@ class NavigationWorld;
 class PackageRunner;
 class PreferencesWindow;
 class ProjectBuild;
+class Scene;
 class TextClipboard;
 class ViewportRegistry;
 class WatchList;
@@ -42,8 +41,6 @@ struct NavMeshBuildSettings;
 // session from what it owns. Every reference must outlive the registered
 // operators; a family keeps what it needs in its own services.
 struct EditorOperatorServices {
-    EditorDocument& document;
-    CommandHistory& history;
     EntityEyedropper& eyedropper;
     // Where the component copy and paste operators exchange values.
     TextClipboard& componentClipboard;
@@ -58,8 +55,12 @@ struct EditorOperatorServices {
     PackageRunner& packageRunner;
     // The session's build, which the Build panel shows.
     ProjectBuild& build;
-    // The fields the Properties panel watches (debug.watch_field).
+    // The fields the Properties panel watches (debug.watch_field): the
+    // level's, and documentWatches' for another document.
     WatchList& watches;
+    // The watch list of the document an operator runs on when that is not
+    // the level (a prefab window's), else null; may be empty.
+    std::function<WatchList*(const OperatorContext&)> documentWatches;
     // The preview navigation mesh the viewports draw.
     NavigationWorld& navigationPreview;
     // The project's navigation mesh settings, which navigation.bake uses;
@@ -77,9 +78,9 @@ struct EditorOperatorServices {
     std::function<void()> simulateMaskChanged;
     // An operator wrote, removed (nullopt), or rewrote on undo or redo a
     // prefab file (absolute path): the session drops cached copies and notes
-    // the content in its PrefabWriteLedger (PrefabWriteHooks::fileWritten).
-    // May be empty.
-    std::function<void(const std::filesystem::path&, const std::optional<std::string>&)> prefabWritten;
+    // the content in its PrefabWriteLedger; origin is the scene of the
+    // document it ran on (PrefabWriteHooks::fileWritten). May be empty.
+    std::function<void(const std::filesystem::path&, const std::optional<std::string>&, const Scene*)> prefabWritten;
     // An operator built instances from a prefab file that held this content
     // (PrefabWriteHooks::fileRead). May be empty.
     std::function<void(const std::filesystem::path&, const std::optional<std::string>&)> prefabRead;
@@ -90,7 +91,7 @@ struct EditorOperatorServices {
     EditorPlayCommands& playCommands;
     EditorObjectModeCommands& objectModeCommands;
     EditorWindowCommands& windowCommands;
-    EditorPrefabModeCommands& prefabModeCommands;
+    EditorPrefabWindowCommands& prefabWindowCommands;
 };
 
 using OperatorFamilyRegistration = OperatorRegistrationResult (*)(OperatorRegistry& registry,

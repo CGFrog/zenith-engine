@@ -80,8 +80,8 @@ ViewportPanel* ViewportRegistry::active() const {
     return firstOpen == m_entries.end() ? nullptr : firstOpen->panel;
 }
 
-RenderViewId ViewportRegistry::acquireView(RenderRuntime& rendering, ViewportId requester) {
-    if (defaultViewFree()) {
+RenderViewId ViewportRegistry::acquireView(RenderRuntime& rendering, ViewportId requester, bool mayUseDefaultView) {
+    if (mayUseDefaultView && defaultViewFree()) {
         m_defaultViewHolder = requester;
         return rendering.defaultView();
     }

@@ -56,13 +56,19 @@ std::optional<char> pressedNumericCharacter() {
 } // namespace
 
 void EditorSession::handleObjectKeys(ApplicationContext& context, KeymapRegion region) {
+    handleObjectKeysOn(context, nullptr, region);
+}
+
+void EditorSession::handleObjectKeysOn(ApplicationContext& context, PrefabWindowDocument* window, KeymapRegion region) {
+    // A prefab window's document stays editable while the level plays.
+    const bool documentPlaying = window == nullptr && m_playMode.mode() != EditorMode::Edit;
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.WantTextInput || m_playMode.mode() != EditorMode::Edit || m_activeTransform || m_fileDialog.pending() ||
+    if (io.WantTextInput || documentPlaying || m_activeTransform || m_fileDialog.pending() ||
         m_keymapEditor.capturing() || ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
         ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
         return;
     }
-    dispatchKeymap(context, region);
+    dispatchKeymap(context, window, region);
 }
 
 OperatorRegistrationResult registerObjectModeOperatorFamily(OperatorRegistry& registry,
@@ -70,9 +76,11 @@ OperatorRegistrationResult registerObjectModeOperatorFamily(OperatorRegistry& re
     EditorObjectModeCommands& objectMode = services.objectModeCommands;
     ViewportRegistry& viewports = services.viewports;
     const auto canTransform = [&objectMode, &viewports](const OperatorContext& context) {
-        // A modal transform follows the mouse over the active viewport.
+        // A modal transform follows the mouse over the active viewport, which
+        // must show the document the selection is in.
         return context.app != nullptr && context.editMode() && !context.selection.empty() &&
-               !objectMode.modalTransformRunning() && viewports.active() != nullptr;
+               !objectMode.modalTransformRunning() && viewports.active() != nullptr &&
+               objectMode.viewportsShowDocument(context);
     };
     const auto modalTransform = [&objectMode, canTransform](std::string id, std::string label, std::string description,
                                                             TransformOperation operation, std::string commandName) {
@@ -82,7 +90,7 @@ OperatorRegistrationResult registerObjectModeOperatorFamily(OperatorRegistry& re
             .description = std::move(description),
             .poll = canTransform,
             .execute = [&objectMode, operation, commandName](OperatorContext& context, OperatorProperties&) {
-                return objectMode.beginModalTransform(*context.app, operation, commandName, {}, false)
+                return objectMode.beginModalTransform(context, operation, commandName, {}, false)
                            ? OperatorResult::finished()
                            : OperatorResult::cancelled("Nothing to transform in an open viewport");
             }};
@@ -106,7 +114,7 @@ OperatorRegistrationResult registerObjectModeOperatorFamily(OperatorRegistry& re
              if (!EntityCommands::duplicateSelectionUncommitted(context.editing, context.selection, before)) {
                  return OperatorResult::cancelled("Nothing was duplicated");
              }
-             if (!objectMode.beginModalTransform(*context.app, TransformOperation::Translate, "Duplicate Objects",
+             if (!objectMode.beginModalTransform(context, TransformOperation::Translate, "Duplicate Objects",
                                                  std::optional(before), true)) {
                  context.editing.commit("Duplicate Objects", {}, std::move(before));
              }
@@ -117,13 +125,19 @@ OperatorRegistrationResult registerObjectModeOperatorFamily(OperatorRegistry& re
         "object.delete_menu", "Delete...", "Ask before deleting the selected objects",
         [](const OperatorContext& context) { return context.editMode() && !context.selection.empty(); },
         [&objectMode](ApplicationContext&) { objectMode.openDeleteMenu(); }));
-    operators.push_back(applicationOperator(
-        "object.rename_popup", "Rename...", "Type a new name for the active object",
-        [](const OperatorContext& context) {
-            return context.editMode() && !context.selection.empty() &&
-                   context.editing.scene().findEntity(*context.selection.active()) != entt::null;
-        },
-        [&objectMode](ApplicationContext& app) { objectMode.openRenamePopup(app); }));
+    operators.push_back({.id = "object.rename_popup",
+                         .label = "Rename...",
+                         .description = "Type a new name for the active object",
+                         .poll =
+                             [](const OperatorContext& context) {
+                                 return context.app != nullptr && context.editMode() && !context.selection.empty() &&
+                                        context.editing.scene().findEntity(*context.selection.active()) != entt::null;
+                             },
+                         .execute =
+                             [&objectMode](OperatorContext& context, OperatorProperties&) {
+                                 objectMode.openRenamePopup(context);
+                                 return OperatorResult::finished();
+                             }});
     return addOperators(registry, std::move(operators));
 }
 
@@ -135,17 +149,23 @@ void EditorSession::openDeleteMenu() {
     m_openDeleteMenu = true;
 }
 
-void EditorSession::openRenamePopup(ApplicationContext& context) {
-    const Entity active = context.scene.findEntity(*m_selection.active());
-    m_renameBuffer = context.scene.registry().get<NameComponent>(active).name;
+bool EditorSession::viewportsShowDocument(const OperatorContext& context) const {
+    const ViewportPanel* viewport = m_viewports.active();
+    return viewport != nullptr && viewport->showsDocument(context.editing.document());
+}
+
+void EditorSession::openRenamePopup(OperatorContext& context) {
+    const Scene& scene = context.editing.scene();
+    const Entity active = scene.findEntity(*context.selection.active());
+    m_renameBuffer = scene.registry().get<NameComponent>(active).name;
     m_openRenamePopup = true;
     m_focusRenameField = true;
 }
 
 void EditorSession::drawObjectPopups(ApplicationContext& context) {
-    // The Add menu and any other menu opened with wm.call_menu.
-    EditorContext editor = editorContext(context);
-    m_menus.draw(editor);
+    // The Add menu and any other menu opened with wm.call_menu, on the
+    // document whose window opened it (the one last focused).
+    withFocusedEditorContext(context, [this](EditorContext& editor) { m_menus.draw(editor); });
 
     if (m_openDeleteMenu) {
         ImGui::OpenPopup(deleteMenuPopup);
@@ -174,7 +194,8 @@ void EditorSession::drawObjectPopups(ApplicationContext& context) {
                 if (RenameProperties* values = properties.get<RenameProperties>()) {
                     values->name = m_renameBuffer;
                 }
-                invokeOperator(context, "object.rename", properties);
+                OperatorContext operatorContext = this->operatorContext(context, KeymapRegion::Global);
+                m_operatorRunner.invoke("object.rename", operatorContext, &properties);
             }
             ImGui::CloseCurrentPopup();
         }
@@ -182,37 +203,44 @@ void EditorSession::drawObjectPopups(ApplicationContext& context) {
     }
 }
 
-bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOperation operation,
-                                        std::string commandName, std::optional<SceneEditing::EntitySnapshot> before,
-                                        bool commitOnCancel) {
+bool EditorSession::beginModalTransform(OperatorContext& context, TransformOperation operation, std::string commandName,
+                                        std::optional<SceneEditing::EntitySnapshot> before, bool commitOnCancel) {
     const ViewportPanel* viewport = m_viewports.active();
-    if (m_playMode.mode() != EditorMode::Edit || m_selection.empty() || viewport == nullptr) {
+    const PrefabWindowDocument* window = m_prefabWindows.owner(context.editing.document());
+    // The level transforms only in Edit mode; a prefab window's document
+    // always is in Edit mode.
+    const bool levelPlaying = window == nullptr && m_playMode.mode() != EditorMode::Edit;
+    if (levelPlaying || context.selection.empty() || viewport == nullptr ||
+        !viewport->showsDocument(context.editing.document())) {
         return false;
     }
-    context.scene.updateWorldTransforms();
-    std::vector<SceneEntityId> roots = m_selection.transformRoots(context.scene);
+    Scene& scene = context.editing.scene();
+    const Selection& selection = context.selection;
+    scene.updateWorldTransforms();
+    std::vector<SceneEntityId> roots = selection.transformRoots(scene);
     if (roots.empty()) {
         return false;
     }
     // Only the transform roots' local transforms change.
     if (!before) {
         before.emplace();
-        if (!editing(context).captureEntities(roots, SceneEditing::CaptureReach::Entities,
-                                              SceneEditing::CaptureCollections::Exclude, *before)) {
+        if (!context.editing.captureEntities(roots, SceneEditing::CaptureReach::Entities,
+                                             SceneEditing::CaptureCollections::Exclude, *before)) {
             return false;
         }
     }
     std::vector<glm::mat4> startWorld;
     std::vector<glm::mat4> startLocal;
     for (SceneEntityId id : roots) {
-        const auto& transform = context.scene.registry().get<TransformComponent>(context.scene.findEntity(id));
+        const auto& transform = scene.registry().get<TransformComponent>(scene.findEntity(id));
         startWorld.push_back(transform.world);
         startLocal.push_back(transform.local);
     }
     glm::mat3 localAxes(1.0f);
-    ModalTransformPivot pivot{.mode = viewport->tools().pivot, .cursor = m_document.editorData().cursorLocation};
-    if (const Entity active = context.scene.findEntity(*m_selection.active()); active != entt::null) {
-        const glm::mat4& activeWorld = context.scene.registry().get<TransformComponent>(active).world;
+    ModalTransformPivot pivot{.mode = viewport->tools().pivot,
+                              .cursor = context.editing.document().editorData().cursorLocation};
+    if (const Entity active = scene.findEntity(*selection.active()); active != entt::null) {
+        const glm::mat4& activeWorld = scene.registry().get<TransformComponent>(active).world;
         localAxes = normalizedAxes(activeWorld);
         pivot.activeOrigin = glm::vec3(activeWorld[3]);
     }
@@ -220,7 +248,7 @@ bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOp
     // scene camera it looks through.
     const glm::vec2 viewportSize = viewport->size();
     const float aspectRatio = viewportSize.x / std::max(viewportSize.y, 1.0f);
-    const RenderView lens = viewport->lens(context.scene);
+    const RenderView lens = viewport->lens(scene);
     const ModalTransformView view{.view = lensViewMatrix(lens),
                                   .projection = lensProjectionMatrix(lens, aspectRatio),
                                   .viewportPosition = viewport->position(),
@@ -229,6 +257,7 @@ bool EditorSession::beginModalTransform(ApplicationContext& context, TransformOp
     m_activeTransform.emplace(ActiveTransform{
         .transform = ModalTransform(operation, std::move(startWorld), localAxes, {mouse.x, mouse.y}, view, pivot),
         .viewport = viewport->id(),
+        .window = window != nullptr ? window->id : 0,
         .entities = std::move(roots),
         .startLocal = std::move(startLocal),
         .before = std::move(*before),
@@ -248,10 +277,12 @@ void EditorSession::updateModalTransform(ApplicationContext& context, ViewportId
         return;
     }
     ViewportPanel* viewport = m_viewports.find(viewportId);
-    if (viewport == nullptr) {
+    Scene* target = modalTransformScene(context);
+    if (viewport == nullptr || target == nullptr) {
         finishModalTransform(context, false);
         return;
     }
+    Scene& scene = *target;
     ModalTransform& transform = m_activeTransform->transform;
     const ImGuiIO& io = ImGui::GetIO();
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
@@ -301,44 +332,74 @@ void EditorSession::updateModalTransform(ApplicationContext& context, ViewportId
     if (snapping.enabled && snapping.target != SnapTarget::Increment &&
         transform.operation() == TransformOperation::Translate) {
         // The moved objects are where the mouse is, so they never snap to themselves.
-        const std::vector<Entity> excluded = snapExclusions(context.scene, m_activeTransform->entities);
+        const std::vector<Entity> excluded = snapExclusions(scene, m_activeTransform->entities);
         snapping.targetPoint =
-            snapTargetPoint(snapping.target, context.scene, context.assets, viewport->snapView(context.scene),
+            snapTargetPoint(snapping.target, scene, context.assets, viewport->snapView(scene),
                             glm::vec2(io.MousePos.x, io.MousePos.y) - viewport->position(), excluded);
     }
     const ModalTransformResult result = transform.evaluate(snapping);
     const std::vector<SceneEntityId>& entities = m_activeTransform->entities;
     for (size_t index = 0; index < entities.size() && index < result.world.size(); ++index) {
-        const Entity entity = context.scene.findEntity(entities[index]);
+        const Entity entity = scene.findEntity(entities[index]);
         if (entity == entt::null) {
             continue;
         }
-        const Entity parent = context.scene.registry().get<RelationshipComponent>(entity).parent;
-        context.scene.registry().get<TransformComponent>(entity).local =
+        const Entity parent = scene.registry().get<RelationshipComponent>(entity).parent;
+        scene.registry().get<TransformComponent>(entity).local =
             parent == entt::null
                 ? result.world[index]
-                : glm::inverse(context.scene.registry().get<TransformComponent>(parent).world) * result.world[index];
-        context.scene.markTransformDirty(entity);
+                : glm::inverse(scene.registry().get<TransformComponent>(parent).world) * result.world[index];
+        scene.markTransformDirty(entity);
     }
-    context.scene.updateWorldTransforms();
+    if (m_activeTransform->window == 0) {
+        // A prefab window's scene updates once per frame before it renders.
+        scene.updateWorldTransforms();
+    }
     drawModalTransformOverlay(*viewport, result);
 }
 
+Scene* EditorSession::modalTransformScene(ApplicationContext& context) {
+    if (!m_activeTransform || m_activeTransform->window == 0) {
+        return &context.scene;
+    }
+    PrefabWindowDocument* window = m_prefabWindows.find(m_activeTransform->window);
+    return window != nullptr ? &window->scene : nullptr;
+}
+
+std::optional<SceneEditing> EditorSession::modalTransformEditing(ApplicationContext& context) {
+    if (!m_activeTransform || m_activeTransform->window == 0) {
+        return editing(context);
+    }
+    PrefabWindowDocument* window = m_prefabWindows.find(m_activeTransform->window);
+    if (window == nullptr) {
+        return std::nullopt;
+    }
+    return SceneEditing(window->scene, context.assets, window->document, window->history, m_diagnostics);
+}
+
 void EditorSession::finishModalTransform(ApplicationContext& context, bool confirm) {
+    Scene* scene = modalTransformScene(context);
+    std::optional<SceneEditing> editing = modalTransformEditing(context);
     ActiveTransform active = std::move(*m_activeTransform);
     m_activeTransform.reset();
     m_modalTransformFinishedThisFrame = true;
+    if (scene == nullptr || !editing) {
+        // Its prefab window closed: nothing left to restore or record.
+        return;
+    }
     if (!confirm) {
         for (size_t index = 0; index < active.entities.size(); ++index) {
-            if (const Entity entity = context.scene.findEntity(active.entities[index]); entity != entt::null) {
-                context.scene.registry().get<TransformComponent>(entity).local = active.startLocal[index];
-                context.scene.markTransformDirty(entity);
+            if (const Entity entity = scene->findEntity(active.entities[index]); entity != entt::null) {
+                scene->registry().get<TransformComponent>(entity).local = active.startLocal[index];
+                scene->markTransformDirty(entity);
             }
         }
-        context.scene.updateWorldTransforms();
+        if (active.window == 0) {
+            scene->updateWorldTransforms();
+        }
     }
     if (confirm || active.commitOnCancel) {
-        editing(context).commit(std::move(active.commandName), {}, std::move(active.before));
+        editing->commit(std::move(active.commandName), {}, std::move(active.before));
     }
 }
 

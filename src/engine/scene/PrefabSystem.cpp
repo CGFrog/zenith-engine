@@ -4,6 +4,7 @@
 #include "PrefabSystemInternal.hpp"
 
 #include <functional>
+#include <system_error>
 
 using namespace prefab_detail;
 
@@ -151,7 +152,13 @@ PrefabInstanceResult PrefabSystem::transact(Scene& scene, Entity root,
 PrefabSystem::PrefabSystem(AssetManager& assets, SceneDocumentOptions options)
     : m_assets(assets)
     , m_options(std::move(options)) {
-    m_options.assetRoot = std::filesystem::absolute(m_options.assetRoot).lexically_normal();
+    // The non-throwing overload: libstdc++ throws for an empty path (a
+    // system without an asset root), which then stays as it was given.
+    std::error_code error;
+    std::filesystem::path absolute = std::filesystem::absolute(m_options.assetRoot, error);
+    if (!error) {
+        m_options.assetRoot = absolute.lexically_normal();
+    }
 }
 
 PrefabResult PrefabSystem::resolve(const std::filesystem::path& reference, std::filesystem::path& path) const {

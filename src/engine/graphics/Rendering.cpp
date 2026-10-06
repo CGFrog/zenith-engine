@@ -1,6 +1,7 @@
 #include "Rendering.hpp"
 
 #include <algorithm>
+#include <utility>
 
 RenderSettings composeViewSettings(const RenderSettings& frameSettings,
                                    const std::optional<RenderSettings>& viewSettings) {
@@ -68,6 +69,95 @@ bool RenderRuntime::destroyView(RenderViewId view) {
     }
     m_picks.cancelView(view);
     return true;
+}
+
+RenderSceneId RenderRuntime::createScene() {
+    uint32_t index = 0;
+    while (index < m_scenes.size() && m_scenes[index].alive) {
+        ++index;
+    }
+    if (index >= maximumScenes) {
+        return {};
+    }
+    if (index == m_scenes.size()) {
+        m_scenes.emplace_back();
+    }
+    SceneSlot& slot = m_scenes[index];
+    const uint32_t generation = slot.generation + 1;
+    slot = {};
+    slot.generation = generation;
+    slot.alive = true;
+    return {.index = index, .generation = generation};
+}
+
+bool RenderRuntime::destroyScene(RenderSceneId scene) {
+    SceneSlot* slot = findScene(scene);
+    if (slot == nullptr) {
+        return false;
+    }
+    const uint32_t generation = slot->generation;
+    *slot = {};
+    slot->generation = generation;
+    m_destroyedScenes.push_back(scene);
+    return true;
+}
+
+bool RenderRuntime::sceneAlive(RenderSceneId scene) const {
+    return findScene(scene) != nullptr;
+}
+
+bool RenderRuntime::setSceneContent(RenderSceneId scene, const Scene* content) {
+    SceneSlot* slot = findScene(scene);
+    if (slot == nullptr) {
+        return false;
+    }
+    slot->content = content;
+    return true;
+}
+
+bool RenderRuntime::setViewScene(RenderViewId view, RenderSceneId scene) {
+    ViewSlot* slot = findView(view);
+    if (slot == nullptr || (scene && (view.index == 0 || findScene(scene) == nullptr))) {
+        return false;
+    }
+    slot->scene = scene;
+    return true;
+}
+
+RenderSceneId RenderRuntime::viewScene(RenderViewId view) const {
+    const ViewSlot* slot = findView(view);
+    return slot != nullptr ? slot->scene : RenderSceneId{};
+}
+
+RenderRuntime::SceneSlot* RenderRuntime::findScene(RenderSceneId scene) {
+    if (!scene || scene.index >= m_scenes.size()) {
+        return nullptr;
+    }
+    SceneSlot& slot = m_scenes[scene.index];
+    return slot.alive && slot.generation == scene.generation ? &slot : nullptr;
+}
+
+const RenderRuntime::SceneSlot* RenderRuntime::findScene(RenderSceneId scene) const {
+    if (!scene || scene.index >= m_scenes.size()) {
+        return nullptr;
+    }
+    const SceneSlot& slot = m_scenes[scene.index];
+    return slot.alive && slot.generation == scene.generation ? &slot : nullptr;
+}
+
+const Scene* RenderRuntime::sceneContent(RenderSceneId scene) const {
+    const SceneSlot* slot = findScene(scene);
+    return slot != nullptr ? slot->content : nullptr;
+}
+
+void RenderRuntime::clearSceneContents() {
+    for (SceneSlot& slot : m_scenes) {
+        slot.content = nullptr;
+    }
+}
+
+std::vector<RenderSceneId> RenderRuntime::takeDestroyedScenes() {
+    return std::exchange(m_destroyedScenes, {});
 }
 
 bool RenderRuntime::viewAlive(RenderViewId view) const {

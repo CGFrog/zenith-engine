@@ -97,10 +97,12 @@ ResolvedEntityReference resolveEntityReference(Scene& scene, const ComponentType
     return resolved;
 }
 
-void EntityEyedropper::arm(EntityReferenceTarget target) {
+void EntityEyedropper::arm(EntityReferenceTarget target, const EditorDocument* owner) {
     m_target = std::move(target);
+    m_owner = owner;
 }
 
 void EntityEyedropper::cancel() {
     m_target.reset();
+    m_owner = nullptr;
 }

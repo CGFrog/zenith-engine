@@ -13,6 +13,7 @@
 #include "engine/assets/Assets.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/Prefab.hpp"
+#include "engine/scene/SceneDocument.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -57,16 +58,29 @@ void writeText(const std::filesystem::path& path, const std::string& text) {
     output << text;
 }
 
-// The session's side of the write hooks: a ledger and a count of writes.
+// The session's side of the write hooks: a ledger, the writes, and the scene
+// each write came from.
 struct WriteRecorder {
     PrefabWriteLedger ledger;
     std::vector<std::optional<std::string>> writes;
+    std::vector<const Scene*> origins;
 
     PrefabWriteHooks hooks() {
-        return {.fileWritten = [this](const std::filesystem::path& file, const std::optional<std::string>& bytes) {
-            ledger.record(file, bytes);
-            writes.push_back(bytes);
-        }};
+        return {.fileWritten =
+                    [this](const std::filesystem::path& file, const std::optional<std::string>& bytes,
+                           const Scene* origin) {
+                        ledger.record(file, bytes);
+                        writes.push_back(bytes);
+                        origins.push_back(origin);
+                    },
+                // As the session: the first content seen is what an outside
+                // change is compared with.
+                .fileRead =
+                    [this](const std::filesystem::path& file, const std::optional<std::string>& bytes) {
+                        if (ledger.recorded(file) == nullptr) {
+                            ledger.record(file, bytes);
+                        }
+                    }};
     }
 };
 
@@ -146,11 +160,13 @@ void testUndoableApply() {
     expect(fixture.history.size() == steps + 1, "apply should record one step for the file and the scene");
     const std::string after = readText(file);
     expect(after != before && fixture.recorder.ledger.matches(file, after), "the applied file should be in the ledger");
+    expect(fixture.recorder.origins.back() == &fixture.scene, "apply should name the scene it wrote from");
 
     fixture.editing().undo();
     expect(readText(file) == before && fixture.intensity(second) == 10.0f && fixture.intensity(first) == 30.0f,
            "undo should restore the file and the other instance");
     expect(fixture.recorder.ledger.matches(file, before), "undo's write should be in the ledger");
+    expect(fixture.recorder.origins.back() == &fixture.scene, "undo should name the scene it wrote from");
     fixture.editing().redo();
     expect(readText(file) == after && fixture.intensity(second) == 30.0f,
            "redo should write the file and refresh the other instance again");
@@ -434,6 +450,86 @@ void testSaveReportsThroughHooks() {
 }
 } // namespace
 
+// lamp.prefab (a lit Lamp with a Shade) and shelf.prefab (a Shelf holding one
+// lamp) under root.
+void authorLampAndShelf(const std::filesystem::path& root) {
+    AssetManager assets;
+    PrefabAuthoring authoring(assets, SceneDocumentOptions{.assetRoot = root});
+    Scene staging;
+    const Entity lamp = staging.createEntity("Lamp");
+    staging.registry().emplace<PointLightComponent>(lamp, glm::vec3(1.0f), 10.0f, 4.0f);
+    staging.setParent(staging.createEntity("Shade"), lamp);
+    expect(authoring.create(staging, lamp, "lamp.prefab").success, "the lamp prefab should be created");
+    Scene shelfStaging;
+    const Entity shelf = shelfStaging.createEntity("Shelf");
+    Entity nested = entt::null;
+    expect(authoring.instantiate(shelfStaging, "lamp.prefab", shelf, nested).success &&
+               authoring.create(shelfStaging, shelf, "shelf.prefab").success,
+           "the shelf prefab should be created");
+}
+
+// A prefab file the editor never wrote: the ledger learns its content when a
+// document with its instances opens or an instance is placed, so an outside
+// change keeps the instances' live overrides.
+void testLedgerSeeding() {
+    Fixture fixture(freshDirectory("seeding"));
+    authorLampAndShelf(fixture.root);
+    PrefabWriteLedger& ledger = fixture.recorder.ledger;
+    const std::filesystem::path file = (fixture.root / "lamp.prefab").lexically_normal();
+    expect(fixture.invoke("prefab.instantiate", R"({"asset":"shelf.prefab"})").status == OperatorStatus::Finished,
+           "seeding: the shelf should instantiate");
+    expect(ledger.recorded(file) != nullptr && ledger.recorded(fixture.root / "shelf.prefab") != nullptr,
+           "seeding: placing an instance notes its file and its nested prefabs' files");
+
+    // A level saved earlier and opened now: nothing has been noted yet.
+    PrefabAuthoring authoring(fixture.assets, fixture.document.options());
+    Scene level;
+    Entity first = entt::null;
+    Entity second = entt::null;
+    expect(authoring.instantiate(level, "lamp.prefab", entt::null, first).success &&
+               authoring.instantiate(level, "lamp.prefab", entt::null, second).success,
+           "seeding: the level's lamps should instantiate");
+    // An override edited since the last prefab operation, so not persisted.
+    level.registry().get<PointLightComponent>(second).range = 9.0f;
+    Scene unseededLevel;
+    std::string text;
+    expect(SceneDocument::serialize(level, fixture.assets, fixture.document.options(), text).success &&
+               SceneDocument::deserialize(text, fixture.assets, fixture.document.options(), unseededLevel).success,
+           "seeding: the level should copy");
+
+    PrefabWriteLedger seeded;
+    notePrefabFilesRead(
+        level, fixture.root,
+        {.fileRead = [&seeded](const std::filesystem::path& path, const std::optional<std::string>& bytes) {
+            seeded.record(path, bytes);
+        }});
+    expect(seeded.matches(file, readText(file)), "seeding: opening a document notes its prefabs' content");
+
+    PrefabDocument document;
+    expect(loadPrefab(file, document).success, "seeding: the lamp should load");
+    document.entities.front().name = "Renamed lamp";
+    expect(savePrefab(file, document).success, "seeding: the outside edit should save");
+
+    PrefabFileChange change;
+    expect(classifyPrefabFileChange(seeded, file, fixture.root, change).success && change.previous.has_value(),
+           "seeding: the outside change knows the content before it");
+    expect(authoring.refreshInstances(level, change.reference, &*change.previous).success &&
+               level.registry().get<NameComponent>(second).name == "Renamed lamp" &&
+               level.registry().get<PointLightComponent>(second).range == 9.0f,
+           "seeding: the refresh keeps the override edited since the last prefab operation");
+
+    // Without the seed the same refresh falls back to persisted overrides.
+    expect(authoring.refreshInstances(unseededLevel, "lamp.prefab", nullptr).success, "seeding: refresh unseeded");
+    float lastRange = 0.0f;
+    for (const auto [entity, instance] : unseededLevel.registry().view<const PrefabInstanceComponent>().each()) {
+        if (instance.prefab == "lamp.prefab") {
+            lastRange = unseededLevel.registry().get<PointLightComponent>(entity).range;
+        }
+    }
+    expect(lastRange == 4.0f,
+           "seeding: without the previous content the live override is lost (what seeding prevents)");
+}
+
 int main() {
     testUndoableApply();
     testUndoRefusesOutsideChange();
@@ -443,8 +539,9 @@ int main() {
     testRefreshWithoutPreviousContent();
     testRefreshParityWithApply();
     testSaveReportsThroughHooks();
-    for (const char* name :
-         {"apply", "outside", "create", "ledger", "external", "unknown", "parity-apply", "parity-refresh", "save"}) {
+    testLedgerSeeding();
+    for (const char* name : {"apply", "outside", "create", "ledger", "external", "unknown", "parity-apply",
+                             "parity-refresh", "save", "seeding"}) {
         std::error_code error;
         std::filesystem::remove_all(
             std::filesystem::temp_directory_path() / ("zenith-prefab-write-tests-" + std::string(name)), error);

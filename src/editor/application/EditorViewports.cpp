@@ -27,8 +27,23 @@ void EditorSession::beginViewportFrame(ApplicationContext& context) {
     }
 }
 
+std::vector<ViewportPanel*> EditorSession::levelViewports() const {
+    std::vector<ViewportPanel*> viewports = m_viewports.openViewports();
+    std::erase_if(viewports, [this](const ViewportPanel* viewport) { return !viewport->showsDocument(m_document); });
+    return viewports;
+}
+
+ViewportPanel* EditorSession::activeLevelViewport() const {
+    if (ViewportPanel* active = m_viewports.active(); active != nullptr && active->showsDocument(m_document)) {
+        return active;
+    }
+    const std::vector<ViewportPanel*> viewports = levelViewports();
+    return viewports.empty() ? nullptr : viewports.front();
+}
+
 void EditorSession::syncActiveRenderView(ApplicationContext& context) {
-    const ViewportPanel* viewport = m_viewports.active();
+    // Shadows and streaming follow a view of the application's scene.
+    const ViewportPanel* viewport = activeLevelViewport();
     if (viewport != nullptr && viewport->renderView()) {
         context.rendering.setActiveView(viewport->renderView());
     }

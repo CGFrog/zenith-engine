@@ -106,7 +106,7 @@ int main() {
     EditorSettings tuned(directory / "tuned.ini");
     tuned.appearance().theme = {.accent = ThemeAccent::Violet};
     tuned.appearance().uiScale = 3;
-    tuned.appearance().prefabWorkspace = false;
+    tuned.appearance().pieMenus = true;
     tuned.autosave().intervalSeconds = 0.0f;
     tuned.tools().packageDirectory = "out/release pkg";
     expect(tuned.save().success, "tuned preferences should save");

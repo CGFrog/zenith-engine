@@ -177,6 +177,38 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const 
             m_log.error("Only the default render view may use GPU-driven submission");
             return false;
         }
+        if (request.scene != nullptr && (request.view == 0 || !request.sceneId)) {
+            m_log.error("Render view request " + std::to_string(index) +
+                        " draws a secondary scene from the default view or without its handle");
+            return false;
+        }
+    }
+    // The frame's scene's views lead; each secondary scene's views follow,
+    // grouped by scene.
+    const auto firstSecondary =
+        std::ranges::find_if(views, [](const MeshPassViewRequest& request) { return request.scene != nullptr; });
+    const std::span<const MeshPassViewRequest> frameViews(views.begin(), firstSecondary);
+    std::vector<std::span<const MeshPassViewRequest>> secondaryScenes;
+    for (auto group = firstSecondary; group != views.end();) {
+        const auto end = std::find_if(group, views.end(), [&](const MeshPassViewRequest& request) {
+            return request.scene == nullptr || !(request.sceneId == group->sceneId) || request.scene != group->scene;
+        });
+        if (end != views.end() && end->scene == nullptr) {
+            m_log.error("Render views of secondary scenes must follow every view of the frame's scene");
+            return false;
+        }
+        if (std::ranges::any_of(secondaryScenes, [&](std::span<const MeshPassViewRequest> earlier) {
+                return earlier.front().sceneId == group->sceneId;
+            })) {
+            m_log.error("Render views of one secondary scene must be adjacent");
+            return false;
+        }
+        secondaryScenes.emplace_back(group, end);
+        group = end;
+    }
+    if (frameViews.empty()) {
+        m_log.error("A frame must record at least one view of the frame's scene");
+        return false;
     }
 
     const double previousGpuFrameMilliseconds = rendering.m_stats.gpuFrameMilliseconds;
@@ -200,17 +232,23 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const 
     m_textureStreamingBytesPerFrame = rendering.settings().textureStreamingBytesPerFrame;
 
     m_sceneVisibilityMode = rendering.sceneVisibilityMode();
-    // Render packets mark the union of every view's outlines; views filter.
-    m_outlinedObjects.clear();
-    for (const MeshPassViewRequest& request : views) {
-        m_outlinedObjects.insert(m_outlinedObjects.end(), request.outlinedObjects.begin(),
-                                 request.outlinedObjects.end());
+    retireSecondaryScenes(rendering.takeDestroyedScenes());
+    // Each scene's render packets mark the union of its views' outlines;
+    // views filter. Secondary scenes build before the frame stage writes the
+    // material records and bindless slots their packets may add.
+    const auto secondaryBuildBegin = std::chrono::steady_clock::now();
+    for (std::span<const MeshPassViewRequest> sceneViews : secondaryScenes) {
+        PacketBuild build;
+        if (!buildSecondaryScene(assets, sceneViews, build)) {
+            return false;
+        }
+        rendering.m_stats.secondaryScenePacketRebuilds += build.rebuilt ? 1u : 0u;
+        rendering.m_stats.secondaryScannedRenderables += build.scannedRenderables;
     }
-    if (views.size() > 1) {
-        std::ranges::sort(m_outlinedObjects);
-        const auto duplicates = std::ranges::unique(m_outlinedObjects);
-        m_outlinedObjects.erase(duplicates.begin(), duplicates.end());
-    }
+    rendering.m_stats.secondaryScenesDrawn = static_cast<uint32_t>(secondaryScenes.size());
+    double secondaryMilliseconds =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - secondaryBuildBegin).count();
+    m_outlinedObjects = outlineUnion(frameViews);
 
     // The frame's shadow maps live in the frame's camera sets, so they cast
     // from the isolation of the view drawing through those sets (the default
@@ -245,9 +283,9 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const 
     // Views after the leading one write no timestamps: each query is written
     // once per frame.
     OptionalPassTimestamps noTimestamps(commandBuffer, VK_NULL_HANDLE);
-    for (size_t index = 0; index < views.size(); ++index) {
+    for (size_t index = 0; index < frameViews.size(); ++index) {
         const bool leading = index == 0;
-        const MeshPassViewRequest& request = views[index];
+        const MeshPassViewRequest& request = frameViews[index];
         const ViewFrame viewFrame =
             leading ? leadFrame
                     : prepareViewFrame(*m_views[request.view], request, scene, previousGpuFrameMilliseconds);
@@ -256,6 +294,17 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const 
             return false;
         }
     }
+    uint32_t skinMatrixCount = frame.skinMatrixCount;
+    const auto secondaryRecordBegin = std::chrono::steady_clock::now();
+    for (std::span<const MeshPassViewRequest> sceneViews : secondaryScenes) {
+        if (!recordSecondaryScene(commandBuffer, frameIndex, assets, rendering, sceneViews, frameTasks,
+                                  previousGpuFrameMilliseconds, frame, skinMatrixCount)) {
+            return false;
+        }
+    }
+    secondaryMilliseconds +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - secondaryRecordBegin).count();
+    rendering.m_stats.cpuSecondarySceneMilliseconds = secondaryMilliseconds;
     if (std::ranges::none_of(views, [](const MeshPassViewRequest& request) { return request.view == 0; })) {
         // The shadow passes read the cascades from the frame's camera buffer,
         // which only the default view writes otherwise.
@@ -416,73 +465,19 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
                                 ? 0u
                                 : std::min(settings.maximumLocalLights, leadView.clusteredLighting.lightCapacity());
 
-    uint64_t outlineRevision = 0;
-    for (RenderObjectId outlined : m_outlinedObjects) {
-        outlineRevision ^=
-            static_cast<uint64_t>(outlined) + 0x9e3779b97f4a7c15ull + (outlineRevision << 6) + (outlineRevision >> 2);
-    }
-    const SceneRevisions& revisions = scene.revisions();
-    const bool instancesMoved = m_hasCollectionInstances && (revisions.transform != m_sceneRevisions.transform ||
-                                                             revisions.skin != m_sceneRevisions.skin);
-    const bool rebuildPackets =
-        !m_packetCachingEnabled || m_meshUploadsPending || revisions.renderable != m_sceneRevisions.renderable ||
-        revisions.material != m_sceneRevisions.material || assets.revision() != m_assetRevision ||
-        outlineRevision != m_outlineRevision || m_sceneVisibilityMode != m_builtVisibilityMode || instancesMoved;
     const auto packetBuildStart = std::chrono::steady_clock::now();
-    uint32_t scannedRenderables = 0;
-    uint32_t updatedObjectRecords = 0;
-    uint32_t allocationCount = 0;
-    if (rebuildPackets) {
-        // Rebuilt items normally start without motion; when instances force
-        // the rebuild, each record keeps last frame's transform and palette.
-        std::unordered_map<uint64_t, std::pair<glm::mat4, std::vector<glm::mat4>>> previousState;
-        if (instancesMoved) {
-            for (RenderItem& item : m_renderItems) {
-                previousState.emplace(item.recordId,
-                                      std::pair(item.previousWorld, std::move(item.previousJointPalette)));
-            }
-        }
-        m_renderItems.clear();
-        const size_t previousCapacity = m_renderItems.capacity();
-        if (!buildRenderItems(scene, assets, m_outlinedObjects, m_renderItems)) {
-            return false;
-        }
-        for (RenderItem& item : m_renderItems) {
-            if (const auto previous = previousState.find(item.recordId); previous != previousState.end()) {
-                item.previousWorld = previous->second.first;
-                item.previousJointPalette = std::move(previous->second.second);
-            }
-        }
-        scannedRenderables = static_cast<uint32_t>(scene.registry().view<const MeshRendererComponent>().size());
-        updatedObjectRecords = static_cast<uint32_t>(m_renderItems.size());
-        allocationCount = m_renderItems.capacity() != previousCapacity ? 1u : 0u;
-    } else if (revisions.transform != m_sceneRevisions.transform || revisions.skin != m_sceneRevisions.skin) {
-        updatedObjectRecords = updateRenderItems(scene, scene.changedTransforms());
-        if (revisions.skin != m_sceneRevisions.skin) {
-            const auto skins = scene.registry().view<const SkinComponent>();
-            for (Entity entity : skins) {
-                updatedObjectRecords += updateRenderItems(scene, std::span<const Entity>(&entity, 1));
-            }
-        }
+    PacketBuild build;
+    if (!buildScenePackets(scene, assets, build)) {
+        return false;
     }
-    m_sceneRevisions = revisions;
-    m_assetRevision = assets.revision();
-    m_outlineRevision = outlineRevision;
+    const bool rebuildPackets = build.rebuilt;
+    const SceneRevisions& revisions = scene.revisions();
     writeMaterialRecords(frameIndex, assets);
     streamTextureMips(assets, cameraPosition);
     updateBindlessDescriptor(frameIndex);
     const auto packetBuildEnd = std::chrono::steady_clock::now();
     const double packetBuildMilliseconds =
         std::chrono::duration<double, std::milli>(packetBuildEnd - packetBuildStart).count();
-    if (rebuildPackets) {
-        reportRenderItemOverflow();
-    }
-    // buildRenderItems admits at most maximumObjectsPerFrame items, so the
-    // per-frame object regions below cannot overflow.
-    if (m_renderItems.size() > maximumObjectsPerFrame) {
-        m_log.error("Render items exceed the per-frame render capacity");
-        return false;
-    }
     const FrameResourceUse lightResources[]{{"scene.lights", FrameResourceAccess::Read},
                                             {"frame.light_list", FrameResourceAccess::Write}};
     const FrameResourceUse visibilityResources[]{{"renderer.persistent_scene", FrameResourceAccess::Read},
@@ -516,9 +511,9 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
     m_uploadMilliseconds = 0.0;
     m_uploadGpuMilliseconds = 0.0;
     stats.renderPacketsRebuilt = rebuildPackets;
-    stats.scannedRenderables = scannedRenderables;
-    stats.updatedObjectRecords = updatedObjectRecords;
-    stats.mainThreadAllocations = allocationCount;
+    stats.scannedRenderables = build.scannedRenderables;
+    stats.updatedObjectRecords = build.updatedObjectRecords;
+    stats.mainThreadAllocations = build.allocations;
     recordDeferredUploads(settings, stats);
     recordTextureStreaming(assets, stats);
     stats.taskQueueDepth = taskResult.stats.maximumQueueDepth;
@@ -536,45 +531,23 @@ bool MeshPass::recordFrameStage(VkCommandBuffer commandBuffer, uint32_t frameInd
         static_cast<uint64_t>(shadowResolution) * shadowResolution * sizeof(float) * maximumShadowCascades;
     DirectionalLightComponent shadowLight = light;
     shadowLight.shadows.enabled = frame.shadowsEnabled;
-    auto* skinMatrices = static_cast<glm::mat4*>(m_cameras[frameIndex].skinPalettesMapped);
-    // Last frame's palettes at the same offsets, so skinned motion vectors see
-    // joint animation as well as object motion.
-    auto* previousSkinMatrices = static_cast<glm::mat4*>(m_cameras[frameIndex].previousSkinPalettesMapped);
-    uint32_t skinMatrixCount = 1;
     uint32_t droppedSkinnedItems = 0;
-    skinMatrices[0] = glm::mat4(1.0f);
-    previousSkinMatrices[0] = glm::mat4(1.0f);
-    for (RenderItem& item : m_renderItems) {
-        item.skinPaletteOffset = 0;
-        item.skinJointCount = 0;
-        if (item.jointPalette.empty()) {
-            continue;
-        }
-        if (skinMatrixCount + item.jointPalette.size() > maximumSkinMatricesPerFrame) {
-            // Out of palette space: the item draws unskinned (in its bind
-            // pose) this frame.
-            ++droppedSkinnedItems;
-            continue;
-        }
-        item.skinPaletteOffset = skinMatrixCount;
-        item.skinJointCount = static_cast<uint32_t>(item.jointPalette.size());
-        std::copy(item.jointPalette.begin(), item.jointPalette.end(), skinMatrices + skinMatrixCount);
-        const std::vector<glm::mat4>& previousPalette = item.previousJointPalette.size() == item.jointPalette.size()
-                                                            ? item.previousJointPalette
-                                                            : item.jointPalette;
-        std::copy(previousPalette.begin(), previousPalette.end(), previousSkinMatrices + skinMatrixCount);
-        skinMatrixCount += static_cast<uint32_t>(item.jointPalette.size());
+    {
+        // The identity matrix every unskinned draw indexes.
+        auto* skinMatrices = static_cast<glm::mat4*>(m_cameras[frameIndex].skinPalettesMapped);
+        auto* previousSkinMatrices = static_cast<glm::mat4*>(m_cameras[frameIndex].previousSkinPalettesMapped);
+        skinMatrices[0] = glm::mat4(1.0f);
+        previousSkinMatrices[0] = glm::mat4(1.0f);
+        vmaFlushAllocation(m_allocator, m_cameras[frameIndex].skinPalettes.allocation, 0, sizeof(glm::mat4));
+        vmaFlushAllocation(m_allocator, m_cameras[frameIndex].previousSkinPalettes.allocation, 0, sizeof(glm::mat4));
     }
+    frame.skinMatrixCount = writeSkinPalettes(frameIndex, 1, droppedSkinnedItems);
     stats.droppedSkinnedRenderItems = droppedSkinnedItems;
     if (m_skinPaletteOverflow.update(droppedSkinnedItems > 0)) {
         m_log.warning("Skin palettes exceed the per-frame capacity of " + std::to_string(maximumSkinMatricesPerFrame) +
                       " joint matrices; " + std::to_string(droppedSkinnedItems) +
                       " skinned render items draw in their bind pose");
     }
-    vmaFlushAllocation(m_allocator, m_cameras[frameIndex].skinPalettes.allocation, 0,
-                       sizeof(glm::mat4) * skinMatrixCount);
-    vmaFlushAllocation(m_allocator, m_cameras[frameIndex].previousSkinPalettes.allocation, 0,
-                       sizeof(glm::mat4) * skinMatrixCount);
     if (timestampQueries) {
         // The transfer timeline wait is scoped to vertex/index consumption, so
         // this timestamp exposes any queue bubble before the first consumer.

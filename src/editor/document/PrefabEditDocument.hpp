@@ -7,7 +7,7 @@
 #include <optional>
 #include <string>
 
-// A prefab opened as a document of its own (the editor's prefab mode): its
+// A prefab opened as a document of its own (the editor's prefab windows): its
 // content is instantiated into an otherwise empty scene, edited there like any
 // scene, and written back to the file. Named apart from the engine's
 // PrefabDocument, which is the file's parsed content.
@@ -42,25 +42,19 @@ struct SavedPrefabDocument {
     std::string after;
 };
 
-// A prefab open as a document of its own (prefab mode): its content
-// instantiated into an otherwise empty scene (openPrefabDocument), as the
-// editor's document stack keeps it (application/DocumentStack.hpp).
+// A prefab open as a document of its own: its content instantiated into an
+// otherwise empty scene (openPrefabDocument), as a prefab window keeps it
+// (application/PrefabWindowSet.hpp).
 struct PrefabEditTarget {
     // Project-relative, generic form, as instances name it.
     std::filesystem::path reference;
     // Absolute and lexically normal.
     std::filesystem::path file;
-    // The prefab's display name, for breadcrumbs, prompts, and step names.
+    // The prefab's display name, for window titles, prompts, and step names.
     std::string displayName;
     // The prefab root in the document's scene, which carries the prefab's own
     // link (PrefabInstanceComponent naming reference).
     SceneEntityId root;
-    // Whether the prefab was saved since it was opened; then before is what
-    // the file held just before the first of those saves (nullopt when it did
-    // not exist) and saved what the latest one wrote.
-    bool savedThisVisit{false};
-    std::optional<std::string> before;
-    std::string saved;
 };
 
 // Reads the prefab at reference (project-relative) and instantiates it into

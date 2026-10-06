@@ -16,9 +16,9 @@ class SceneEditing;
 // scene has no instance of the prefab or the refresh changed nothing.
 //
 // editing must edit a document's scene, not Play's runtime scene (whose
-// changes are never recorded): to refresh a parked scene (Play's edit scene,
-// or a document parked while another is edited), build a SceneEditing over
-// that scene and its own history. refreshed, when given, receives how many
+// changes are never recorded): to refresh Play's parked edit scene or a
+// prefab window's scene, build a SceneEditing over that scene and its own
+// history. refreshed, when given, receives how many
 // instances were refreshed.
 PrefabResult refreshPrefabInstances(const SceneEditing& editing, const std::filesystem::path& reference,
                                     const PrefabDocument* previous, std::string stepName, size_t* refreshed = nullptr);

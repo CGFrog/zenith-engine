@@ -53,11 +53,9 @@ enum class ThemeModeTint : uint8_t {
     None,
     Play,
     Simulate,
-    // A prefab open as its own document (prefab mode).
-    Prefab,
 };
 
-// The tint's colour (palette::playTint, simulateTint, or prefabTint), or
+// The tint's colour (palette::playTint or simulateTint), or
 // nullopt for None.
 std::optional<ThemeColor> themeModeTintColor(ThemeModeTint tint);
 

@@ -35,18 +35,6 @@ constexpr std::array debugAreas{
     DefaultArea{"build", Bottom},
 };
 
-// Editing a prefab: the prefab's objects and the active one, without the
-// project's assets. Not a tab until a prefab is edited (prefabWorkspaceName),
-// so it is no part of workspaces.
-constexpr std::array prefabAreas{
-    DefaultArea{"viewport", Center},
-    DefaultArea{"hierarchy", Left},
-    DefaultArea{"inspector", Right},
-    DefaultArea{"properties", Right},
-};
-
-constexpr DefaultWorkspace prefabWorkspace{prefabWorkspaceName, prefabAreas};
-
 constexpr std::array workspaces{
     DefaultWorkspace{"Layout", layoutAreas},
     DefaultWorkspace{"Lighting", lightingAreas},
@@ -58,7 +46,7 @@ constexpr std::array workspaces{
 struct LegacyPanel {
     std::string_view type;
     std::string_view title;
-    bool EditorPanelVisibility::* visible;
+    bool EditorPanelVisibility::*visible;
 };
 
 constexpr std::array legacyPanels{
@@ -115,9 +103,6 @@ std::span<const DefaultWorkspace> defaultWorkspaces() {
 }
 
 const DefaultWorkspace& defaultWorkspaceFor(std::string_view name) {
-    if (name == prefabWorkspaceName) {
-        return prefabWorkspace;
-    }
     const auto found = std::ranges::find(workspaces, name, &DefaultWorkspace::name);
     return found == workspaces.end() ? workspaces.front() : *found;
 }

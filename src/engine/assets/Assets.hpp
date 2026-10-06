@@ -543,6 +543,8 @@ class AssetManager {
     AssetLease<MaterialHandle> lease(MaterialHandle handle) const;
     AssetLease<TextureHandle> lease(TextureHandle handle) const;
     AssetLease<FontHandle> lease(FontHandle handle) const;
+    // Leases every asset scene's components use, each distinct asset once
+    // however many entities share it.
     AssetLeaseSet leaseSceneAssets(const Scene& scene) const;
     void setMemoryBudget(AssetMemoryBudget budget);
     AssetMemoryBudget memoryBudget() const;

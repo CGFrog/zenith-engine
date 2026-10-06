@@ -23,7 +23,7 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     }
 
     OperatorContext operatorContext(KeymapRegion region) override {
-        return m_session.operatorContext(m_context, region);
+        return m_session.levelOperatorContext(m_context, region);
     }
 
     SceneEditing editing() override {
@@ -31,7 +31,8 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     }
 
     void undo() override {
-        m_session.undo(m_context);
+        OperatorContext level = m_session.levelOperatorContext(m_context, KeymapRegion::Global);
+        m_session.undo(level);
     }
 
     void undoSince(CommandHistoryMarker marker) override {
@@ -62,8 +63,31 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
         return m_session.m_document;
     }
 
-    const DocumentStack& documents() const override {
-        return m_session.m_documents;
+    const PrefabWindowSet& prefabWindows() const override {
+        return m_session.m_prefabWindows;
+    }
+
+    ViewportPanel* prefabWindowViewport(uint64_t window) override {
+        PrefabWindowView* view = m_session.prefabWindowView(window);
+        return view != nullptr ? dynamic_cast<ViewportPanel*>(view->viewport.get()) : nullptr;
+    }
+
+    std::optional<SceneEditing> prefabWindowEditing(uint64_t window) override {
+        PrefabWindowDocument* document = m_session.m_prefabWindows.find(window);
+        if (document == nullptr) {
+            return std::nullopt;
+        }
+        return SceneEditing(document->scene, m_context.assets, document->document, document->history,
+                            m_session.m_diagnostics);
+    }
+
+    bool savePrefabWindow(uint64_t window) override {
+        PrefabWindowDocument* document = m_session.m_prefabWindows.find(window);
+        return document != nullptr && m_session.savePrefabWindow(m_context, *document);
+    }
+
+    void closePrefabWindow(uint64_t window) override {
+        m_session.m_prefabWindowCloses.push_back(window);
     }
 
     EditorMenus& menus() override {

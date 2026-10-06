@@ -74,7 +74,7 @@ settings controls over the same `RenderSettingsController`.
 ## Folder contents
 
 `src/editor/settings/`: Persistent editor preferences (`settings.ini`: tools,
-theme tuning, UI scale, pie menus, the Prefab workspace preference `ui.prefab_workspace`, autosave), including the component
+theme tuning, UI scale, pie menus, autosave), including the component
 inspector's section order and collapse state (legacy panel flags are only read,
 for migration) and the systems chosen for Simulate.
 

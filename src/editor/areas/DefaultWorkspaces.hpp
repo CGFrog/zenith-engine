@@ -38,16 +38,11 @@ struct DefaultWorkspace {
     std::span<const DefaultArea> areas;
 };
 
-// The workspace prefab editing opens (see EditorSession). It is created the
-// first time it is needed, from defaultWorkspaceFor(prefabWorkspaceName), and
-// saved with the others afterwards.
-inline constexpr std::string_view prefabWorkspaceName = "Prefab";
-
 // Layout, Lighting, and Debug, in tab order. Changing them requires bumping
 // currentWorkspaceFileVersion so saved workspaces pick up the new defaults.
 std::span<const DefaultWorkspace> defaultWorkspaces();
-// The default named name (including prefabWorkspaceName), or the first
-// default for a workspace the editor does not define.
+// The default named name, or the first default for a workspace the editor
+// does not define.
 const DefaultWorkspace& defaultWorkspaceFor(std::string_view name);
 // The default area that places area number of typeId (the number-th listed
 // area of the type, or the first when there are fewer); null when the

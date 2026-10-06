@@ -633,7 +633,8 @@ void testEyedropperTakesTheClick() {
     frames.settle(fixture, corner(fixture));
     fixture.paintVisibleCubes();
     fixture.selection.selectOnly(fixture.id(fixture.right));
-    fixture.eyedropper.arm({.entity = fixture.id(fixture.right), .componentKey = "test", .fieldPath = {"target"}});
+    fixture.eyedropper.arm({.entity = fixture.id(fixture.right), .componentKey = "test", .fieldPath = {"target"}},
+                           &fixture.document);
     const ImVec2 front = fixture.screen(fixture.viewPixel({0.0f, 0.0f, 0.0f}));
     frames.click(fixture, front);
     expect(fixture.actions.eyedropperPicks == std::vector<uint64_t>{fixture.id(fixture.front).value},

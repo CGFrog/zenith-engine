@@ -103,6 +103,14 @@ everything in parallel and `ctest --preset debug-cpu` skips the Vulkan,
 benchmark, and slow tests for a fast CPU-only loop. GPU tests set `PROCESSORS 2`, so
 `-j 8` runs at most four engine instances on the GPU at once.
 
+On a much slower machine, such as Linux CI running the Vulkan tests on Mesa's
+lavapipe (a CPU Vulkan driver) under Xvfb, configure with
+`-DZENITH_TEST_TIMEOUT_SCALE=4` to multiply every test's timeout. Validation
+needs a Vulkan 1.4 aware layer: Ubuntu 24.04's packaged one (1.3.275) crashes
+on core push descriptors, so CI takes `VkLayer_khronos_validation` from the
+LunarG SDK and points `VK_ADD_LAYER_PATH` at it. Reference captures skip
+themselves without a hardware device.
+
 Run one test by name:
 
 ```powershell
@@ -175,6 +183,14 @@ specific systems:
 .\build\Release\zenith_render_packet_benchmark.exe
 .\build\Release\zenith_simulation_benchmark.exe
 ```
+
+`zenith_secondary_scene_benchmark` (Vulkan) measures secondary render scenes,
+the editor's prefab windows: 0, 1, 2, 4, and 8 scenes of
+`ZENITH_SECONDARY_BENCHMARK_OBJECTS` cubes (500), each static, with one object
+moving, and bound but hidden, over `ZENITH_SECONDARY_BENCHMARK_WARMUP` (10) and
+`ZENITH_SECONDARY_BENCHMARK_FRAMES` (120) frames per case. It samples the
+renderer's CPU time without fence wait, acquire, and present, the part spent on
+secondary scenes, and their packet rebuilds.
 
 CTest also runs both (label `benchmark`) to check that they complete and exit
 cleanly; read timings from a Release build, not from those runs.

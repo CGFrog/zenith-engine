@@ -1,6 +1,6 @@
 #pragma once
 
-#include "editor/application/DocumentStack.hpp"
+#include "editor/application/DocumentBinding.hpp"
 #include "editor/application/EditorAppearance.hpp"
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/EditorPlayMode.hpp"
@@ -9,6 +9,7 @@
 #include "editor/application/NativeFileDialog.hpp"
 #include "editor/application/NewCodeDialog.hpp"
 #include "editor/application/PlayTargets.hpp"
+#include "editor/application/PrefabWindowSet.hpp"
 #include "editor/application/SceneEditing.hpp"
 #include "editor/application/SystemClipboard.hpp"
 #include "editor/areas/AreaRegistry.hpp"
@@ -16,6 +17,7 @@
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/EditorRecovery.hpp"
+#include "editor/document/PrefabWindowRecovery.hpp"
 #include "editor/document/PrefabWriteCommand.hpp"
 #include "editor/interaction/ComponentEditorOverrides.hpp"
 #include "editor/interaction/EntityEyedropper.hpp"
@@ -125,7 +127,7 @@ class EditorSession final : public ApplicationScene,
                             private EditorPlayCommands,
                             private EditorObjectModeCommands,
                             private EditorWindowCommands,
-                            private EditorPrefabModeCommands,
+                            private EditorPrefabWindowCommands,
                             private EditorScriptInfo {
   public:
     // gameModule is the project's module library, or empty for none.
@@ -173,14 +175,16 @@ class EditorSession final : public ApplicationScene,
 
     // EditorDocumentCommands
     bool documentCommandsAvailable(const OperatorContext& context) const override;
+    bool editCommandsAvailable(const OperatorContext& context) const override;
+    bool saveAsAvailable(const OperatorContext& context) const override;
     void requestNew(ApplicationContext& context) override;
     void requestOpen(ApplicationContext& context) override;
-    bool saveDocument(ApplicationContext& context) override;
+    bool saveDocument(OperatorContext& context) override;
     void requestSaveAs() override;
-    void undo(ApplicationContext& context) override;
-    void redo(ApplicationContext& context) override;
-    OperatorResult copySelection(ApplicationContext& context) override;
-    OperatorResult pasteClipboard(ApplicationContext& context) override;
+    void undo(OperatorContext& context) override;
+    void redo(OperatorContext& context) override;
+    OperatorResult copySelection(OperatorContext& context) override;
+    OperatorResult pasteClipboard(OperatorContext& context) override;
     bool projectHubAvailable() const override;
     // Leaves the project for the Project Hub, asking about unsaved changes.
     void requestProjectHub(ApplicationContext& context, ProjectHubEntry entry) override;
@@ -199,10 +203,11 @@ class EditorSession final : public ApplicationScene,
 
     // EditorObjectModeCommands (EditorObjectCommands.cpp)
     bool modalTransformRunning() const override;
-    bool beginModalTransform(ApplicationContext& context, TransformOperation operation, std::string commandName,
+    bool viewportsShowDocument(const OperatorContext& context) const override;
+    bool beginModalTransform(OperatorContext& context, TransformOperation operation, std::string commandName,
                              std::optional<SceneEditing::EntitySnapshot> before, bool commitOnCancel) override;
     void openDeleteMenu() override;
-    void openRenamePopup(ApplicationContext& context) override;
+    void openRenamePopup(OperatorContext& context) override;
 
     // EditorWindowCommands
     void openOperatorSearch() override;
@@ -213,29 +218,53 @@ class EditorSession final : public ApplicationScene,
     void openNewCodeDialog(GeneratedCodeKind kind) override;
     void openProjectSettings(ApplicationContext& context, std::string_view tab) override;
 
-    // EditorPrefabModeCommands (EditorPrefabMode.cpp)
-    bool prefabEditActive() const override;
-    bool prefabEditAvailable(const OperatorContext& context) const override;
+    // EditorPrefabWindowCommands (EditorPrefabWindows.cpp)
+    bool prefabCloseAvailable() const override;
+    bool prefabEditAvailable() const override;
     OperatorResult editPrefab(ApplicationContext& context, const std::filesystem::path& reference) override;
-    void requestLeavePrefabEdit(ApplicationContext& context) override;
+    void requestCloseFocusedPrefab(ApplicationContext& context) override;
 
     // EditorScriptInfo (EditorModuleCommands.cpp)
     std::optional<EditorSourceLocation> behaviourSource(std::string_view componentKey) const override;
     ScriptStatus scriptStatus() const override;
 
+    // The level document's: what the level's areas and the session's own
+    // workflows edit.
     SceneEditing editing(ApplicationContext& context);
     EditorContext editorContext(ApplicationContext& context);
+    OperatorContext levelOperatorContext(ApplicationContext& context, KeymapRegion region);
+    // For what the main menu, the global keys, and F3 run: the document whose
+    // window last had focus (focusedPrefabWindow), or the level.
     OperatorContext operatorContext(ApplicationContext& context, KeymapRegion region);
+    // window's document, or the level's when window is null.
+    OperatorContext operatorContextOn(ApplicationContext& context, PrefabWindowDocument* window, KeymapRegion region);
+    // Runs or polls an operator on window's document (the level's when null).
+    OperatorResult invokeOperatorOn(ApplicationContext& context, PrefabWindowDocument* window,
+                                    std::string_view operatorId, std::string_view properties, KeymapRegion region);
+    bool operatorAvailableOn(ApplicationContext& context, PrefabWindowDocument* window, std::string_view operatorId);
+    // The region's keys and mouse bindings, run on window's document (the
+    // level's when null).
+    void handleObjectKeysOn(ApplicationContext& context, PrefabWindowDocument* window, KeymapRegion region);
+    uint32_t dispatchMouseChordsOn(ApplicationContext& context, PrefabWindowDocument* window, KeymapRegion region,
+                                   uint32_t allowedButtons);
+    // Saves the level document to its file, asking for a path when it has
+    // none (file.save on the level, and the unsaved-changes prompt).
+    bool saveLevelDocument(ApplicationContext& context);
 
     // What the operator families (editorOperatorFamilies) refer to.
     EditorOperatorServices operatorServices();
     OperatorResult invokeOperator(ApplicationContext& context, std::string_view operatorId,
                                   const OperatorProperties& properties);
-    // Runs the binding of the first pressed chord bound in region.
-    void dispatchKeymap(ApplicationContext& context, KeymapRegion region);
+    // Runs the binding of the first pressed chord bound in region, on
+    // window's document (the level's when null).
+    void dispatchKeymap(ApplicationContext& context, PrefabWindowDocument* window, KeymapRegion region);
     // Runs the Hold, Drag, Release, and Click bindings of the followed press
-    // (once per frame).
+    // (once per frame) on the document the press started in.
     void updateKeymapGesture(ApplicationContext& context);
+    // After a press call: when it started a gesture (the dispatcher's
+    // gestureSerial moved past followedBefore), records window (null: the
+    // level) as the gesture's document.
+    void noteGestureOwner(uint64_t followedBefore, const PrefabWindowDocument* window);
     // A menu item showing the operator's shortcut, disabled when its poll fails.
     void operatorMenuItem(ApplicationContext& context, std::string_view operatorId, const char* label,
                           std::string_view properties = {}, bool selected = false);
@@ -309,8 +338,6 @@ class EditorSession final : public ApplicationScene,
     // ignored; a change made outside the editor refreshes the open
     // document's instances of it (the edit scene during Play) as one undo
     // step, "Refresh <name> instances (changed on disk)", reported in Info.
-    // A document parked elsewhere needs refreshPrefabInstances with a
-    // SceneEditing over its own scene and history.
     void reconcileChangedPrefab(ApplicationContext& context, const std::filesystem::path& file);
     // Cancels the entity eyedropper on Esc, a right-click, Play mode, or a
     // target that no longer exists, and shows its hint at the mouse.
@@ -319,39 +346,100 @@ class EditorSession final : public ApplicationScene,
     // marker before editing undoes exactly its own steps.
     void undoSince(ApplicationContext& context, CommandHistoryMarker marker);
 
-    // Prefab mode (EditorPrefabMode.cpp): the document stack over the
-    // session's active document, history, and selection.
-    ActiveDocument activeDocument(ApplicationContext& context);
-    // Pops the active prefab (its unsaved changes are dropped) and restores
-    // the viewports' views of the document underneath.
-    void leavePrefabEdit(ApplicationContext& context);
-    // Editing a prefab opens the Prefab workspace (EditorAreas.cpp) when the
-    // ui.prefab_workspace preference is on, remembering the workspace it
-    // came from; leaving the outermost prefab returns there.
-    void enterPrefabWorkspace();
-    void applyPrefabWorkspaceRequest();
-    void leavePrefabWorkspace();
-    // A copy of what panels show of the open prefab, empty when none is open;
-    // see EditorContext::prefabEdit.
-    std::optional<OpenPrefabSummary> activePrefabSummary() const;
-    // Writes the active prefab to its file; false after reporting why not.
-    bool savePrefabEdit(ApplicationContext& context);
-    // The active document's name for the status bar and prompts: the scene's
-    // file name or the prefab's display name, with '*' when it has unsaved
-    // changes.
-    std::string activeDocumentName() const;
-    // The main menu bar's breadcrumbs (Level > room_07*) with Save and Back,
-    // while a prefab is open.
-    void drawPrefabBreadcrumbs(ApplicationContext& context);
-    // A prefab file changed outside the editor: refreshes instances in the
-    // parked documents too, and warns when it is the open prefab's own file.
-    void reconcileParkedDocuments(ApplicationContext& context, const PrefabFileChange& change);
-    // Autosave and the crash save in prefab mode: the parked scene to the
-    // scene's recovery file and the active prefab to m_prefabRecovery, each
-    // when it has unsaved changes. Best effort; returns the first error.
-    std::string autosavePrefabEdit(ApplicationContext& context);
-    // Recover: reopens the autosaved prefab edit over the current scene.
-    void recoverPrefabEdit(ApplicationContext& context);
+    // Prefab windows (EditorPrefabWindows.cpp): prefabs open in floating
+    // windows of their own beside the level.
+    class PrefabWindowActions;
+
+    // The ImGui side of one prefab window: its own panels and layout state.
+    struct PrefabWindowView {
+        uint64_t id{0};
+        std::shared_ptr<EditorPanel> hierarchy;
+        std::shared_ptr<EditorPanel> viewport;
+        std::shared_ptr<EditorPanel> inspector;
+        bool layoutBuilt{false};
+        // Bring the window to the front at the next draw.
+        bool focusRequest{true};
+    };
+
+    // A prefab window waiting for Save, Discard, or Cancel before it closes;
+    // continuesPendingAction when closing it is part of quitting or leaving
+    // for the Project Hub.
+    struct PrefabWindowPrompt {
+        uint64_t id{0};
+        bool continuesPendingAction{false};
+    };
+
+    // The prefab window that last had keyboard focus, or null when a level
+    // area had it since.
+    PrefabWindowDocument* focusedPrefabWindow() const;
+    std::shared_ptr<EditorPanel> createPrefabWindowPanel(std::string_view typeId);
+    PrefabWindowView* prefabWindowView(uint64_t id);
+    // The open windows with their views, copied so that an operator a
+    // window's panel runs may open another window meanwhile.
+    std::vector<std::pair<PrefabWindowDocument*, PrefabWindowView*>> prefabWindowSnapshot();
+    // Closes the window at the next update, first asking about unsaved
+    // changes (Save, Discard, or Cancel).
+    void requestClosePrefabWindow(uint64_t id);
+    // Between frames: closes the windows whose close was requested.
+    void applyPrefabWindowCloses(ApplicationContext& context);
+    // Drops every window with its unsaved changes (the session ending).
+    void closeAllPrefabWindows(ApplicationContext& context);
+    // Creates the panels of a window just opened or recovered, its render
+    // scene, and frames its viewport on the prefab.
+    void addPrefabWindowView(ApplicationContext& context, PrefabWindowDocument& window);
+    // Once per frame before the renderer draws: each window's world
+    // transforms, and its scene bound as its render scene's content.
+    void bindPrefabWindowScenes(ApplicationContext& context);
+    // Writes window's prefab to its file and refreshes its instances in every
+    // other open document; false after reporting why not.
+    bool savePrefabWindow(ApplicationContext& context, PrefabWindowDocument& window);
+    // After window's prefab was saved: refreshes its instances in every other
+    // open document (refreshPrefabInstancesElsewhere).
+    void refreshAfterPrefabSave(ApplicationContext& context, PrefabWindowDocument& window,
+                                const SavedPrefabDocument& saved);
+    // The editor changed change.reference's prefab file: refreshes its
+    // instances in every open document but the one that wrote it
+    // (originWindow, and the level unless refreshLevel): the level (its edit
+    // scene during Play) and the windows, each as a
+    // step "Refresh <name> instances" on its own history. Reports problems
+    // and returns how many instances were refreshed.
+    size_t refreshPrefabInstancesElsewhere(ApplicationContext& context, const PrefabFileChange& change,
+                                           const PrefabWindowDocument* originWindow, bool refreshLevel);
+    // Queues a prefab file an operator or its undo step rewrote from origin
+    // (a document's scene), for refreshAfterOwnPrefabWrites.
+    void queueOwnPrefabWrite(const std::filesystem::path& file, const std::optional<std::string>& bytes,
+                             const Scene* origin);
+    // The queued writes, once per frame with the outside changes
+    // (reconcileChangedPrefabs).
+    void refreshAfterOwnPrefabWrites(ApplicationContext& context);
+    OperatorContext prefabWindowOperatorContext(ApplicationContext& context, KeymapRegion region,
+                                                PrefabWindowDocument& window);
+    // What a window's panels get: windowContext is the session's with the
+    // window's scene; context is the session's own.
+    EditorContext prefabWindowEditorContext(ApplicationContext& windowContext, ApplicationContext& context,
+                                            PrefabWindowDocument& window, PrefabWindowActions& actions);
+    void updatePrefabWindows(ApplicationContext& context, const InputState& input, float deltaSeconds);
+    // Keeps the assets each window's scene uses loaded (once per frame).
+    void leasePrefabWindowAssets(ApplicationContext& context);
+    void drawPrefabWindows(ApplicationContext& context);
+    void drawPrefabWindow(ApplicationContext& context, PrefabWindowDocument& window, PrefabWindowView& view);
+    void buildPrefabWindowLayout(const PrefabWindowDocument& window, unsigned int dockspaceId);
+    void drawPrefabWindowToolbar(ApplicationContext& context, PrefabWindowDocument& window);
+    void drawPrefabWindowPrompt(ApplicationContext& context);
+    // Runs draw with the EditorContext of the document whose window last had
+    // focus: a prefab window's (as its panels get it), or the level's.
+    void withFocusedEditorContext(ApplicationContext& context, const std::function<void(EditorContext&)>& draw);
+    // A prefab file changed outside the editor: refreshes its instances in
+    // the windows, and warns when a window edits that prefab itself.
+    void reconcilePrefabWindows(ApplicationContext& context, const PrefabFileChange& change);
+    // For quitting and the Project Hub: asks about the first window with
+    // unsaved changes; false when none has any.
+    bool askAboutPrefabWindows();
+    // Writes the windows with unsaved changes to m_prefabWindowRecovery,
+    // replacing its previous set; reportErrors is false in a crashed process.
+    void autosavePrefabWindows(ApplicationContext& context, bool reportErrors);
+    // Recover: reopens the autosaved prefab windows.
+    void recoverPrefabWindows(ApplicationContext& context);
 
     // Autosave and the recovery prompt (EditorRecovery.cpp).
     void updateAutosave(ApplicationContext& context, float deltaSeconds);
@@ -384,10 +472,9 @@ class EditorSession final : public ApplicationScene,
     bool completeSaveAs(ApplicationContext& context, const std::filesystem::path& path);
     void onDocumentPathCommitted();
     // Runs the pending action once nothing in its way has unsaved changes:
-    // New, Open, Close, and leaving for the Project Hub first leave every open
-    // prefab, top down, asking about each one with unsaved changes (and then
-    // the scene); LeavePrefab leaves only the active one. Cancelling any
-    // prompt cancels the action.
+    // Close and leaving for the Project Hub first ask about each prefab
+    // window with unsaved changes, then every action asks about the level.
+    // Cancelling any prompt cancels the action.
     void continuePendingAction(ApplicationContext& context);
     // Lists a save's warnings (references to generated entities saved as
     // none) in the Info log.
@@ -434,6 +521,11 @@ class EditorSession final : public ApplicationScene,
     void drawProjectSettings(ApplicationContext& context);
     std::string applyProjectSettings(ApplicationContext& context, const ProjectSettingsValues& values);
     void finishModalTransform(ApplicationContext& context, bool confirm);
+    // The scene the running modal transform edits (the level's, or its
+    // prefab window's) and an editing over its document; null when that
+    // window is gone.
+    Scene* modalTransformScene(ApplicationContext& context);
+    std::optional<SceneEditing> modalTransformEditing(ApplicationContext& context);
     void drawModalTransformOverlay(const ViewportPanel& viewport, const ModalTransformResult& result) const;
 
     // Viewports (EditorViewports.cpp).
@@ -441,8 +533,12 @@ class EditorSession final : public ApplicationScene,
     // transform whose viewport closed.
     void beginViewportFrame(ApplicationContext& context);
     // After the areas are drawn: shadows and streaming follow the active
-    // viewport's render view.
+    // level viewport's render view.
     void syncActiveRenderView(ApplicationContext& context);
+    // The open viewports showing the level (not a prefab window's), and the
+    // active viewport when it is one of them, else the first.
+    std::vector<ViewportPanel*> levelViewports() const;
+    ViewportPanel* activeLevelViewport() const;
     // The bottom-left corner of the active viewport's image, or of the work
     // area when no viewport is open.
     glm::vec2 lastOperatorAnchor() const;
@@ -452,16 +548,14 @@ class EditorSession final : public ApplicationScene,
         NewDocument,
         OpenDocument,
         CloseEditor,
-        LeaveForProjectHub,
-        // Back from the active prefab to the document under it.
-        LeavePrefab
+        LeaveForProjectHub
     };
 
     EditorSettings m_settings;
     EditorDocument m_document;
     EditorRecovery m_recovery;
-    // The autosave of a prefab open in prefab mode, beside m_recovery.
-    PrefabEditRecovery m_prefabRecovery;
+    // The autosaves of the prefab windows with unsaved changes.
+    PrefabWindowRecovery m_prefabWindowRecovery;
     EditorDiagnostics m_diagnostics;
     // The game module's build: started by build.run (Ctrl B), the Build
     // panel, or build on save, and polled every frame. Declared before the
@@ -475,13 +569,23 @@ class EditorSession final : public ApplicationScene,
     // file, so the asset watcher's reports of the editor's own writes are
     // ignored and an outside change knows what the file held before.
     PrefabWriteLedger m_prefabWrites;
-    // Prefab mode: the documents parked under the prefabs being edited. The
-    // active one stays in m_document, m_history, m_selection, and the
-    // engine's scene.
-    DocumentStack m_documents;
     // Prefab files the asset watcher reported changed, until
     // reconcileChangedPrefabs handles them.
     std::vector<std::filesystem::path> m_changedPrefabFiles;
+
+    // A prefab file an operator, or the undo or redo of its step, rewrote in
+    // one open document: the others catch up with it once per frame
+    // (refreshAfterOwnPrefabWrites). The origin is kept as a window id, which
+    // is never reused, and the level's scene, which is only compared.
+    struct OwnPrefabWrite {
+        std::filesystem::path file;
+        std::optional<std::string> before;
+        std::optional<std::string> after;
+        uint64_t originWindow{0};
+        const Scene* originScene{nullptr};
+    };
+
+    std::vector<OwnPrefabWrite> m_ownPrefabWrites;
     EditorPlayMode m_playMode;
     // The target F5 (play.start without a target) runs: the last one used.
     PlayTarget m_lastPlayTarget{PlayTarget::ActiveViewport};
@@ -540,6 +644,15 @@ class EditorSession final : public ApplicationScene,
                                  .menus = m_menus.registry(),
                                  .viewports = m_viewports,
                                  .componentEditors = m_componentEditors}};
+    // Prefab windows: declared after the module host, so their scenes, which
+    // may hold module component storage, go before the module does.
+    PrefabWindowSet m_prefabWindows;
+    // The window last focused (0: a level area was focused since), which
+    // the main menu, global keys, and F3 act on.
+    uint64_t m_focusedPrefabWindow{0};
+    std::vector<uint64_t> m_prefabWindowCloses;
+    std::optional<PrefabWindowPrompt> m_prefabWindowPrompt;
+    bool m_openPrefabWindowPrompt{false};
     std::filesystem::path m_gameModulePath;
     // A reload waits for Edit mode, a finished build, and no modal tool.
     bool m_moduleReloadPending{false};
@@ -551,6 +664,10 @@ class EditorSession final : public ApplicationScene,
     // Turns key and mouse input into bindings to run, following a press for
     // its Hold, Release, Click, and Drag bindings.
     KeymapDispatcher m_keymapDispatcher;
+    // The prefab window whose document the followed press started in; 0: the
+    // level. Window ids are never reused, so a closed window's gesture is
+    // cancelled when it next advances.
+    uint64_t m_gestureWindow{0};
     OperatorSearch m_operatorSearch;
     KeymapEditor m_keymapEditor;
     LastOperatorPanel m_lastOperatorPanel;
@@ -594,6 +711,8 @@ class EditorSession final : public ApplicationScene,
     // Registration order is the View menu order.
     AreaRegistry m_areaTypes;
     WorkspaceSet m_workspaces;
+    // The prefab windows' panels, made by the area types above.
+    std::vector<std::unique_ptr<PrefabWindowView>> m_prefabWindowViews;
     std::filesystem::path m_workspacesPath;
     // layout.ini from editors before workspaces.json, read once to migrate.
     std::filesystem::path m_legacyLayoutPath;
@@ -601,12 +720,6 @@ class EditorSession final : public ApplicationScene,
     // the next frame's dockspace exists.
     bool m_buildDefaultLayout{false};
     bool m_workspacesDirty{false};
-    // The workspace that was active when the first open prefab was entered.
-    std::optional<std::string> m_workspaceBeforePrefab;
-    // Entering the Prefab workspace may add it to the set, which would
-    // invalidate references into the set while an area draws; updateWorkspaces
-    // does it between frames.
-    bool m_prefabWorkspacePending{false};
 
     std::filesystem::path m_sceneRoot;
     // The gap, area headers, and panes behind every window.
@@ -636,6 +749,8 @@ class EditorSession final : public ApplicationScene,
         // The viewport the transform started in; it alone advances and draws
         // the transform, which is cancelled if the viewport closes.
         ViewportId viewport;
+        // The prefab window whose document is transformed; 0 for the level.
+        uint64_t window{0};
         std::vector<SceneEntityId> entities;
         std::vector<glm::mat4> startLocal;
         // The moved entities (or the new copies) from before the command,

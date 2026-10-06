@@ -5,7 +5,6 @@
 #include "EditorSessionOperators.hpp"
 
 #include "editor/application/EditorSessionCommands.hpp"
-#include "editor/document/CommandHistory.hpp"
 
 #include <utility>
 #include <vector>
@@ -36,7 +35,6 @@ OperatorRegistrationResult registerDocumentOperatorFamily(OperatorRegistry& regi
                                                           const EditorOperatorServices& services) {
     EditorDocumentCommands& commands = services.documentCommands;
     EditorObjectModeCommands& objectMode = services.objectModeCommands;
-    CommandHistory& history = services.history;
     const auto documentCommands = [&commands](const OperatorContext& context) {
         return commands.documentCommandsAvailable(context);
     };
@@ -48,16 +46,24 @@ OperatorRegistrationResult registerDocumentOperatorFamily(OperatorRegistry& regi
                                             [&commands](ApplicationContext& app) { commands.requestNew(app); }));
     operators.push_back(applicationOperator("file.open", "Open", "Open a scene file", documentCommands,
                                             [&commands](ApplicationContext& app) { commands.requestOpen(app); }));
-    operators.push_back(
-        applicationOperator("file.save", "Save", "Save the scene to its file, or the prefab open in prefab mode",
-                            documentCommands, [&commands](ApplicationContext& app) { commands.saveDocument(app); }));
-    // A prefab open as its own document saves only to its own file.
-    const EditorPrefabModeCommands& prefabMode = services.prefabModeCommands;
+    // Saves the document the operator runs on: a prefab window's saves its
+    // prefab.
+    operators.push_back({.id = "file.save",
+                         .label = "Save",
+                         .description = "Save the scene to its file, or the open prefab to the prefab's file",
+                         .poll =
+                             [&commands](const OperatorContext& context) {
+                                 return context.app != nullptr && commands.editCommandsAvailable(context);
+                             },
+                         .execute =
+                             [&commands](OperatorContext& context, OperatorProperties&) {
+                                 commands.saveDocument(context);
+                                 return OperatorResult::finished();
+                             }});
+    // A prefab saves only to its own file.
     operators.push_back(applicationOperator(
         "file.save_as", "Save As", "Save the scene to a new file",
-        [&commands, &prefabMode](const OperatorContext& context) {
-            return commands.documentCommandsAvailable(context) && !prefabMode.prefabEditActive();
-        },
+        [&commands](const OperatorContext& context) { return commands.saveAsAvailable(context); },
         [&commands](ApplicationContext&) { commands.requestSaveAs(); }));
     operators.push_back(applicationOperator(
         "wm.open_project", "Open Project", "Close this project and choose another .zenith-project file to open",
@@ -72,18 +78,32 @@ OperatorRegistrationResult registerDocumentOperatorFamily(OperatorRegistry& regi
         [&objectMode](const OperatorContext&) { return !objectMode.modalTransformRunning(); },
         [&commands](ApplicationContext& app) { commands.requestClose(app); }));
 
-    operators.push_back(applicationOperator(
-        "edit.undo", "Undo", "Undo the last scene change",
-        [&commands, &history](const OperatorContext& context) {
-            return commands.documentCommandsAvailable(context) && history.canUndo();
-        },
-        [&commands](ApplicationContext& app) { commands.undo(app); }));
-    operators.push_back(applicationOperator(
-        "edit.redo", "Redo", "Redo the last undone scene change",
-        [&commands, &history](const OperatorContext& context) {
-            return commands.documentCommandsAvailable(context) && history.canRedo();
-        },
-        [&commands](ApplicationContext& app) { commands.redo(app); }));
+    operators.push_back({.id = "edit.undo",
+                         .label = "Undo",
+                         .description = "Undo the last change to the document",
+                         .poll =
+                             [&commands](const OperatorContext& context) {
+                                 return context.app != nullptr && commands.editCommandsAvailable(context) &&
+                                        context.editing.canUndo();
+                             },
+                         .execute =
+                             [&commands](OperatorContext& context, OperatorProperties&) {
+                                 commands.undo(context);
+                                 return OperatorResult::finished();
+                             }});
+    operators.push_back({.id = "edit.redo",
+                         .label = "Redo",
+                         .description = "Redo the last undone change to the document",
+                         .poll =
+                             [&commands](const OperatorContext& context) {
+                                 return context.app != nullptr && commands.editCommandsAvailable(context) &&
+                                        context.editing.canRedo();
+                             },
+                         .execute =
+                             [&commands](OperatorContext& context, OperatorProperties&) {
+                                 commands.redo(context);
+                                 return OperatorResult::finished();
+                             }});
     operators.push_back({.id = "edit.copy",
                          .label = "Copy",
                          .description = "Copy the selected objects to the clipboard",
@@ -92,7 +112,7 @@ OperatorRegistrationResult registerDocumentOperatorFamily(OperatorRegistry& regi
                                  return context.app != nullptr && context.editMode() && !context.selection.empty();
                              },
                          .execute = [&commands](OperatorContext& context,
-                                                OperatorProperties&) { return commands.copySelection(*context.app); }});
+                                                OperatorProperties&) { return commands.copySelection(context); }});
     operators.push_back(
         {.id = "edit.paste",
          .label = "Paste Entities",
@@ -100,7 +120,7 @@ OperatorRegistrationResult registerDocumentOperatorFamily(OperatorRegistry& regi
          .flags = OperatorFlags::Undo,
          .poll = [](const OperatorContext& context) { return context.app != nullptr && context.editMode(); },
          .execute = [&commands](OperatorContext& context,
-                                OperatorProperties&) { return commands.pasteClipboard(*context.app); },
+                                OperatorProperties&) { return commands.pasteClipboard(context); },
          .scope = newEntitiesScope()});
     return addOperators(registry, std::move(operators));
 }

@@ -92,7 +92,7 @@ OperatorResult recordFileWrite(OperatorContext& context, const PrefabAuthoring& 
     }
     if (recorded.after == recorded.before) {
         // Rewritten with the same content: nothing to undo outside the scene.
-        hooks.notify(recorded.file, recorded.after);
+        hooks.notify(recorded.file, recorded.after, &context.editing.scene());
         return result;
     }
     result.undoStep = [recorded = std::move(recorded), hooks](std::string name, SceneChanges changes) {
@@ -401,41 +401,40 @@ std::string activeInstancePrefab(const OperatorContext& context) {
     return root == entt::null ? std::string{} : scene.registry().get<PrefabInstanceComponent>(root).prefab;
 }
 
-Operator editOperator(EditorPrefabModeCommands* prefabMode) {
+Operator editOperator(EditorPrefabWindowCommands* prefabWindows) {
     return {.id = "prefab.edit",
             .label = "Edit Prefab",
-            .description = "Open a prefab as a document of its own, with its own undo history; the scene waits "
-                           "underneath until you go back",
+            .description = "Open a prefab in a window of its own beside the level, with its own undo history",
             .properties = OperatorProperties::make(EditPrefabProperties{}, std::move(Fields<EditPrefabProperties>().add(
                                                                                "asset", &EditPrefabProperties::asset))),
             .poll =
-                [prefabMode](const OperatorContext& context) {
-                    return prefabMode != nullptr && context.app != nullptr && prefabMode->prefabEditAvailable(context);
+                [prefabWindows](const OperatorContext& context) {
+                    return prefabWindows != nullptr && context.app != nullptr && prefabWindows->prefabEditAvailable();
                 },
             .execute =
-                typed<EditPrefabProperties>([prefabMode](OperatorContext& context, EditPrefabProperties& values) {
+                typed<EditPrefabProperties>([prefabWindows](OperatorContext& context, EditPrefabProperties& values) {
                     if (values.asset.empty()) {
                         values.asset = activeInstancePrefab(context);
                     }
                     if (values.asset.empty()) {
                         return OperatorResult::cancelled("Select a prefab instance, or choose a prefab asset to edit");
                     }
-                    return prefabMode->editPrefab(*context.app, projectRelative(context, values.asset));
+                    return prefabWindows->editPrefab(*context.app, projectRelative(context, values.asset));
                 })};
 }
 
-Operator exitEditOperator(EditorPrefabModeCommands* prefabMode) {
+Operator exitEditOperator(EditorPrefabWindowCommands* prefabWindows) {
     return {.id = "prefab.exit_edit",
-            .label = "Back to Scene",
-            .description = "Leave the prefab and return to the document under it, asking about unsaved changes",
+            .label = "Close Prefab",
+            .description = "Close the focused prefab window, asking about unsaved changes",
             .poll =
-                [prefabMode](const OperatorContext& context) {
-                    return prefabMode != nullptr && context.app != nullptr && prefabMode->prefabEditActive() &&
-                           prefabMode->prefabEditAvailable(context);
+                [prefabWindows](const OperatorContext& context) {
+                    return prefabWindows != nullptr && context.app != nullptr &&
+                           prefabWindows->prefabCloseAvailable() && prefabWindows->prefabEditAvailable();
                 },
             .execute =
-                [prefabMode](OperatorContext& context, OperatorProperties&) {
-                    prefabMode->requestLeavePrefabEdit(*context.app);
+                [prefabWindows](OperatorContext& context, OperatorProperties&) {
+                    prefabWindows->requestCloseFocusedPrefab(*context.app);
                     return OperatorResult::finished();
                 }};
 }
@@ -455,8 +454,8 @@ OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, P
                                          &PrefabAuthoring::unpack, activeInstanceScope));
     operators.push_back(revertFieldOperator());
     operators.push_back(selectAssetOperator(std::move(services.revealAsset)));
-    operators.push_back(editOperator(services.prefabMode));
-    operators.push_back(exitEditOperator(services.prefabMode));
+    operators.push_back(editOperator(services.prefabWindows));
+    operators.push_back(exitEditOperator(services.prefabWindows));
     for (Operator& op : operators) {
         if (OperatorRegistrationResult result = registry.add(std::move(op)); !result) {
             return result;
@@ -470,5 +469,5 @@ OperatorRegistrationResult registerPrefabOperatorFamily(OperatorRegistry& regist
     return registerPrefabOperators(
         registry, {.revealAsset = services.revealAsset,
                    .writeHooks = {.fileWritten = services.prefabWritten, .fileRead = services.prefabRead},
-                   .prefabMode = &services.prefabModeCommands});
+                   .prefabWindows = &services.prefabWindowCommands});
 }

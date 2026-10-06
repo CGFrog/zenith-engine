@@ -70,7 +70,13 @@ std::optional<glm::vec3> selectionMedian(const Scene& scene, std::span<const Sce
     return count == 0 ? std::nullopt : std::optional<glm::vec3>(sum / static_cast<float>(count));
 }
 
-Operator placeCursorOperator(ViewportRegistry& viewports, EditorDocument& document) {
+// The active viewport, when it shows context's document.
+const ViewportPanel* documentViewport(const ViewportRegistry& viewports, const OperatorContext& context) {
+    const ViewportPanel* viewport = viewports.active();
+    return viewport != nullptr && viewport->showsDocument(context.editing.document()) ? viewport : nullptr;
+}
+
+Operator placeCursorOperator(ViewportRegistry& viewports) {
     return {.id = "view3d.cursor3d_place",
             .label = "Set 3D Cursor",
             .description = "Place the 3D cursor on the surface under a point of the viewport",
@@ -79,10 +85,11 @@ Operator placeCursorOperator(ViewportRegistry& viewports, EditorDocument& docume
                 OperatorProperties::make(PlaceCursorProperties{}, std::move(Fields<PlaceCursorProperties>()
                                                                                 .add("x", &PlaceCursorProperties::x)
                                                                                 .add("y", &PlaceCursorProperties::y))),
-            .poll = [&viewports](const OperatorContext&) { return viewports.active() != nullptr; },
+            .poll = [&viewports](
+                        const OperatorContext& context) { return documentViewport(viewports, context) != nullptr; },
             .execute =
-                [&viewports, &document](OperatorContext& context, OperatorProperties& properties) {
-                    const ViewportPanel* viewport = viewports.active();
+                [&viewports](OperatorContext& context, OperatorProperties& properties) {
+                    const ViewportPanel* viewport = documentViewport(viewports, context);
                     if (viewport == nullptr) {
                         return OperatorResult::failed(noViewportError);
                     }
@@ -97,13 +104,13 @@ Operator placeCursorOperator(ViewportRegistry& viewports, EditorDocument& docume
                     const SnapView view{.lens = viewport->lens(scene),
                                         .viewSize = viewport->size(),
                                         .isolatedObjects = isolation ? &*isolation : nullptr};
-                    glm::vec3& cursor = document.editorData().cursorLocation;
+                    glm::vec3& cursor = context.editing.editorData().cursorLocation;
                     cursor = cursorPlacement(scene, context.editing.assets(), view, point, cursor);
                     return OperatorResult::finished();
                 }};
 }
 
-Operator snapSelectedToCursorOperator(EditorDocument& document) {
+Operator snapSelectedToCursorOperator() {
     return {.id = "view3d.snap_selected_to_cursor",
             .label = "Selection to Cursor",
             .description = "Move the selected objects to the 3D cursor",
@@ -113,7 +120,7 @@ Operator snapSelectedToCursorOperator(EditorDocument& document) {
                 std::move(Fields<SnapToCursorProperties>().add("offset", &SnapToCursorProperties::offset))),
             .poll = [](const OperatorContext& context) { return context.editMode() && !context.selection.empty(); },
             .execute =
-                [&document](OperatorContext& context, OperatorProperties& properties) {
+                [](OperatorContext& context, OperatorProperties& properties) {
                     const SnapToCursorProperties* values = properties.get<SnapToCursorProperties>();
                     const bool keepOffsets = values != nullptr && values->offset;
                     Scene& scene = context.editing.scene();
@@ -123,7 +130,7 @@ Operator snapSelectedToCursorOperator(EditorDocument& document) {
                     if (!median) {
                         return OperatorResult::cancelled("The selected objects no longer exist");
                     }
-                    const glm::vec3 cursor = document.editorData().cursorLocation;
+                    const glm::vec3 cursor = context.editing.editorData().cursorLocation;
                     // Every target is computed before anything moves.
                     std::vector<std::pair<Entity, glm::vec3>> targets;
                     for (SceneEntityId id : roots) {
@@ -178,14 +185,14 @@ void recordCursor3D(const glm::vec3& location, const RenderView& lens, glm::vec2
     }
 }
 
-std::vector<Operator> cursorOperators(ViewportRegistry& viewports, EditorDocument& document) {
+std::vector<Operator> cursorOperators(ViewportRegistry& viewports) {
     std::vector<Operator> operators;
-    operators.push_back(placeCursorOperator(viewports, document));
+    operators.push_back(placeCursorOperator(viewports));
     operators.push_back({.id = "view3d.cursor_reset",
                          .label = "Cursor to World Origin",
                          .description = "Move the 3D cursor back to the world origin",
-                         .execute = [&document](OperatorContext&, OperatorProperties&) {
-                             document.editorData().cursorLocation = glm::vec3(0.0f);
+                         .execute = [](OperatorContext& context, OperatorProperties&) {
+                             context.editing.editorData().cursorLocation = glm::vec3(0.0f);
                              return OperatorResult::finished();
                          }});
     operators.push_back({.id = "view3d.snap_cursor_to_selected",
@@ -193,7 +200,7 @@ std::vector<Operator> cursorOperators(ViewportRegistry& viewports, EditorDocumen
                          .description = "Move the 3D cursor to the median of the selected objects",
                          .poll = [](const OperatorContext& context) { return !context.selection.empty(); },
                          .execute =
-                             [&document](OperatorContext& context, OperatorProperties&) {
+                             [](OperatorContext& context, OperatorProperties&) {
                                  Scene& scene = context.editing.scene();
                                  scene.updateWorldTransforms();
                                  const std::optional<glm::vec3> median =
@@ -201,14 +208,14 @@ std::vector<Operator> cursorOperators(ViewportRegistry& viewports, EditorDocumen
                                  if (!median) {
                                      return OperatorResult::cancelled("The selected objects no longer exist");
                                  }
-                                 document.editorData().cursorLocation = *median;
+                                 context.editing.editorData().cursorLocation = *median;
                                  return OperatorResult::finished();
                              }});
-    operators.push_back(snapSelectedToCursorOperator(document));
+    operators.push_back(snapSelectedToCursorOperator());
     return operators;
 }
 
 OperatorRegistrationResult registerCursorOperatorFamily(OperatorRegistry& registry,
                                                         const EditorOperatorServices& services) {
-    return addOperators(registry, cursorOperators(services.viewports, services.document));
+    return addOperators(registry, cursorOperators(services.viewports));
 }

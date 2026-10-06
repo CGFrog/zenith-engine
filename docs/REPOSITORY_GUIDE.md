@@ -171,6 +171,7 @@ Editor (`src/editor/`):
 - [Areas and workspaces](editor/areas-workspaces.md): area types, workspaces, dock layouts, and `workspaces.json`.
 - [Viewports](editor/viewport.md): viewport panels and chrome, shading, scene gizmos, selection tools, snapping, the 3D cursor, and pick queries.
 - [Scene editing, history, and live inspection](editor/scene-editing.md): `SceneEditing` diffs, undo history, and editing the running scene.
+- [Prefab windows](editor/prefab-windows.md): prefabs open in floating windows of their own beside the level.
 - [Build and IDE workflow](editor/build-ide.md): the Build panel, compiler output, IDE launching, and Build and Package.
 - [Theme, preferences, and render settings](editor/theme-settings.md): Preferences, the Pixel Aero Night theme, and the render settings and Graphics panel.
 - [Project Settings](editor/project-settings.md): the project's physics layers, input actions, and tags, and the inspector's choices from them.

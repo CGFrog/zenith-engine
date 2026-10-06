@@ -35,9 +35,17 @@ class NoSessionCommands final : public EditorDocumentCommands,
                                 public EditorPlayCommands,
                                 public EditorObjectModeCommands,
                                 public EditorWindowCommands,
-                                public EditorPrefabModeCommands {
+                                public EditorPrefabWindowCommands {
   public:
     bool documentCommandsAvailable(const OperatorContext&) const override {
+        return false;
+    }
+
+    bool editCommandsAvailable(const OperatorContext&) const override {
+        return false;
+    }
+
+    bool saveAsAvailable(const OperatorContext&) const override {
         return false;
     }
 
@@ -45,21 +53,21 @@ class NoSessionCommands final : public EditorDocumentCommands,
 
     void requestOpen(ApplicationContext&) override {}
 
-    bool saveDocument(ApplicationContext&) override {
+    bool saveDocument(OperatorContext&) override {
         return false;
     }
 
     void requestSaveAs() override {}
 
-    void undo(ApplicationContext&) override {}
+    void undo(OperatorContext&) override {}
 
-    void redo(ApplicationContext&) override {}
+    void redo(OperatorContext&) override {}
 
-    OperatorResult copySelection(ApplicationContext&) override {
+    OperatorResult copySelection(OperatorContext&) override {
         return OperatorResult::cancelled();
     }
 
-    OperatorResult pasteClipboard(ApplicationContext&) override {
+    OperatorResult pasteClipboard(OperatorContext&) override {
         return OperatorResult::cancelled();
     }
 
@@ -99,14 +107,18 @@ class NoSessionCommands final : public EditorDocumentCommands,
         return false;
     }
 
-    bool beginModalTransform(ApplicationContext&, TransformOperation, std::string,
+    bool viewportsShowDocument(const OperatorContext&) const override {
+        return true;
+    }
+
+    bool beginModalTransform(OperatorContext&, TransformOperation, std::string,
                              std::optional<SceneEditing::EntitySnapshot>, bool) override {
         return false;
     }
 
     void openDeleteMenu() override {}
 
-    void openRenamePopup(ApplicationContext&) override {}
+    void openRenamePopup(OperatorContext&) override {}
 
     void openOperatorSearch() override {}
 
@@ -122,11 +134,11 @@ class NoSessionCommands final : public EditorDocumentCommands,
 
     void openProjectSettings(ApplicationContext&, std::string_view) override {}
 
-    bool prefabEditActive() const override {
+    bool prefabCloseAvailable() const override {
         return false;
     }
 
-    bool prefabEditAvailable(const OperatorContext&) const override {
+    bool prefabEditAvailable() const override {
         return false;
     }
 
@@ -134,7 +146,7 @@ class NoSessionCommands final : public EditorDocumentCommands,
         return OperatorResult::cancelled();
     }
 
-    void requestLeavePrefabEdit(ApplicationContext&) override {}
+    void requestCloseFocusedPrefab(ApplicationContext&) override {}
 };
 
 // What the session owns for its operator families, beyond the shared
@@ -158,9 +170,7 @@ struct OperatorFamilyFixture : EditorTestFixture {
     NoSessionCommands session;
 
     EditorOperatorServices services() {
-        return {.document = document,
-                .history = history,
-                .eyedropper = eyedropper,
+        return {.eyedropper = eyedropper,
                 .componentClipboard = clipboard,
                 .componentLayout = componentLayout,
                 .menus = menus,
@@ -183,7 +193,7 @@ struct OperatorFamilyFixture : EditorTestFixture {
                 .playCommands = session,
                 .objectModeCommands = session,
                 .windowCommands = session,
-                .prefabModeCommands = session};
+                .prefabWindowCommands = session};
     }
 };
 

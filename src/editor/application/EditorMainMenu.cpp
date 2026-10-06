@@ -19,7 +19,8 @@ void EditorSession::handleGlobalShortcuts(ApplicationContext& context) {
     // Before any panel, so a press followed from a region finishes even
     // when the mouse has left it.
     updateKeymapGesture(context);
-    dispatchKeymap(context, KeymapRegion::Global);
+    // Global keys act on the document whose window last had focus.
+    dispatchKeymap(context, focusedPrefabWindow(), KeymapRegion::Global);
 }
 
 void EditorSession::drawDebugOverlaysMenu(ApplicationContext& context) {
@@ -121,7 +122,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
             operatorMenuItem(context, "prefab.select_asset", "Select Prefab Asset");
             ImGui::Separator();
             operatorMenuItem(context, "prefab.edit", "Edit Prefab");
-            operatorMenuItem(context, "prefab.exit_edit", "Back to Scene");
+            operatorMenuItem(context, "prefab.exit_edit", "Close Prefab");
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Navigation")) {
@@ -170,7 +171,6 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         ImGui::EndMenu();
     }
     drawModuleMenu(context);
-    drawPrefabBreadcrumbs(context);
     drawPlaybackToolbar(context);
     drawWorkspaceTabs(context);
     ImGui::EndMainMenuBar();

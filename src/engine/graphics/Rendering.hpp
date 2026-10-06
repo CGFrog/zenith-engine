@@ -15,6 +15,8 @@
 #include <utility>
 #include <vector>
 
+class Scene;
+
 struct UiTextureHandle {
     uint64_t value{0};
 
@@ -480,6 +482,14 @@ struct RenderStats {
     uint32_t discardedLightAssignments{0};
     uint32_t maximumLightsPerCluster{0};
     double cpuRenderPacketMilliseconds{0.0};
+    // Secondary scenes (RenderRuntime::createScene) drawn this submission:
+    // how many, the CPU time building their packets and recording their
+    // views, and how many rebuilt their packets, scanning
+    // secondaryScannedRenderables renderables.
+    uint32_t secondaryScenesDrawn{0};
+    double cpuSecondarySceneMilliseconds{0.0};
+    uint32_t secondaryScenePacketRebuilds{0};
+    uint32_t secondaryScannedRenderables{0};
     bool renderPacketsRebuilt{false};
     uint32_t scannedRenderables{0};
     uint32_t updatedObjectRecords{0};
@@ -873,6 +883,35 @@ class RenderRuntime {
     // The view's isolation set; nullopt when it is not isolated or the handle is stale.
     std::optional<std::vector<RenderObjectId>> viewVisibleEntities(RenderViewId view) const;
 
+    // Secondary render scenes: scenes other than the one Renderer::drawFrame
+    // is given (an editor's prefab preview), which created views can draw
+    // instead. Each frame the owner binds a scene's content with
+    // setSceneContent before drawFrame; the binding lasts until that drawFrame
+    // returns. A view bound to a scene without content on a frame does not
+    // render that frame and keeps its last texture. Secondary scenes are drawn
+    // with preview lighting: the studio rig of ViewShading::MaterialPreview
+    // (unless the view asks for Solid or Wireframe), CPU submission, and none
+    // of the frame's sun cascades, local-light shadows, environment, probes,
+    // irradiance volume, fog, or particles, which belong to the application's
+    // scene. They always honour the editor's viewport hide.
+    static constexpr uint32_t maximumScenes = 8;
+
+    // An empty handle when maximumScenes secondary scenes are alive.
+    RenderSceneId createScene();
+    // Its GPU state is released once the frames in flight that drew it
+    // completed; views bound to it stop rendering.
+    bool destroyScene(RenderSceneId scene);
+    bool sceneAlive(RenderSceneId scene) const;
+    // Binds the scene drawn for scene on the next drawFrame; the pointer must
+    // stay valid until drawFrame returns, after which the binding is cleared.
+    // Null clears it now.
+    bool setSceneContent(RenderSceneId scene, const Scene* content);
+    // The empty handle draws the application's scene, the default for every
+    // view; the default view always does, so binding it fails.
+    bool setViewScene(RenderViewId view, RenderSceneId scene);
+    // The view's scene; empty for the application's scene or a stale view.
+    RenderSceneId viewScene(RenderViewId view) const;
+
     // Which visibility flags every view honours (see SceneVisibility.hpp).
     // Runtime, the default, ignores the editor's viewport hide; the editor
     // selects Editor while editing and Runtime in Play mode.
@@ -958,6 +997,25 @@ class RenderRuntime {
         UiTextureHandle texture;
     };
 
+    // One secondary scene. A slot keeps its generation when its scene is
+    // destroyed, like view slots.
+    struct SceneSlot {
+        uint32_t generation{0};
+        bool alive{false};
+        // Bound for the next drawFrame only (setSceneContent).
+        const Scene* content{nullptr};
+    };
+
+    SceneSlot* findScene(RenderSceneId scene);
+    const SceneSlot* findScene(RenderSceneId scene) const;
+    // The bound content of scene, or null when it has none this frame.
+    const Scene* sceneContent(RenderSceneId scene) const;
+    // Called by the Renderer after each drawFrame.
+    void clearSceneContents();
+    // The scenes destroyed since the last call, whose GPU state the renderer
+    // retires.
+    std::vector<RenderSceneId> takeDestroyedScenes();
+
     UiImageSlot* findUiImage(UiImageId id);
     const UiImageSlot* findUiImage(UiImageId id) const;
 
@@ -982,6 +1040,8 @@ class RenderRuntime {
         std::optional<RenderSettings> settings;
         // Sorted; nullopt draws every object (see setViewVisibleEntities).
         std::optional<std::vector<RenderObjectId>> visibleObjects;
+        // Empty: the application's scene.
+        RenderSceneId scene;
         // Published by the Renderer.
         UiTextureHandle texture;
         uint32_t width{0};
@@ -1005,6 +1065,8 @@ class RenderRuntime {
     std::vector<ViewSlot> m_views;
     RenderViewId m_activeView;
     std::vector<UiImageSlot> m_uiImages;
+    std::vector<SceneSlot> m_scenes;
+    std::vector<RenderSceneId> m_destroyedScenes;
     DebugDraw m_debugDraw;
     PickRequestBook m_picks;
 };

@@ -15,8 +15,8 @@ entity).
 
 A prefab instance's entities show the instance header (`drawPrefabHeader`):
 the prefab's name, its override count, Apply, Revert, Unpack, Select Prefab
-Asset, and **Edit Prefab**, which opens the prefab as a document of its own
-(`prefab.edit {asset}`). In prefab mode the header is hidden for the
+Asset, and **Edit Prefab**, which opens the prefab in a window of its own
+(`prefab.edit {asset}`). In a prefab window the header is hidden for the
 document's own root instance (`EditorContext::prefabEdit`), where Apply would
 be Save and Revert would discard the edits; nested instances keep theirs, and
 their Apply writes the nested prefab as an undoable step of the open prefab's
@@ -68,12 +68,16 @@ colour), which accepts an entity dragged from the outliner
 (`ZENITH_SCENE_ENTITY`), a Clear button, and a Pick button arming the entity
 eyedropper. The armed `EntityEyedropper` names its field by entity id,
 component key, and field path only (never a `ComponentType` pointer), and
-looks it up again on every use. While it is armed, the next entity clicked in
-a viewport or the outliner fills the field through `ui.eyedropper_pick`
-instead of changing the selection; Esc, a right-click, Play mode, or the
-field's disappearance cancels it, and `EditorSession::updateEyedropper` shows
-the hint at the mouse. `tests/editor/EntityReferenceFieldTests.cpp` covers
-the widget, an outliner-click pick, and undo.
+looks it up again on every use. Entity ids are per scene, so it also
+remembers the document whose field armed it (`EntityEyedropper::owner`): while
+it is armed, the next entity clicked in a viewport or the outliner of that
+document fills the field through `ui.eyedropper_pick` instead of changing the
+selection, and clicks in other documents (the level, another prefab window)
+select as usual. Esc, a right-click, the level entering Play (when the level
+armed it), the owning prefab window closing, or the field's disappearance
+cancels it, and `EditorSession::updateEyedropper` shows the hint at the mouse.
+`tests/editor/EntityReferenceFieldTests.cpp` covers the widget, an
+outliner-click pick, undo, and the same-document rule.
 
 String fields whose descriptor names an asset kind
 (`FieldPresentation::assetKind`, set by `Fields::asset` or defaulted by

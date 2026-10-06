@@ -77,7 +77,7 @@ void drawPickButton(const FieldDescriptor& field, const EntityReferenceFieldCont
     EntityReferenceTarget target{
         .entity = context.owner, .componentKey = std::string(context.componentKey), .fieldPath = std::move(*path)};
     const EntityReferenceTarget* armed = context.eyedropper->target();
-    const bool picking = armed != nullptr && *armed == target;
+    const bool picking = armed != nullptr && context.eyedropper->owner() == context.document && *armed == target;
     if (widgets::Button("Pick", {0.0f, 0.0f}, picking)) {
         if (picking) {
             context.cancel();
@@ -94,6 +94,7 @@ EntityReferenceFieldContext entityReferenceFieldContext(EditorContext& context, 
                                                         const ComponentType& type) {
     return {.scene = context.app.scene,
             .eyedropper = context.eyedropper,
+            .document = &context.editing.document(),
             .owner = owner,
             .componentKey = type.key(),
             .componentFields = type.fields(),

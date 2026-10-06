@@ -11,7 +11,7 @@ sounds, and materials drag to inspector asset fields as
 `ZENITH_TEXTURE_ASSET`, `ZENITH_AUDIO_ASSET`, and `ZENITH_MATERIAL_ASSET`
 payloads holding UTF-8 paths (`panels/AssetDragPayloads.hpp`), and the drag
 tooltip says Assign over a field that takes the asset and Move over a
-folder. Scenes open on double-click. Prefabs open as documents of their own (prefab mode,
+folder. Scenes open on double-click. Prefabs open in windows of their own (prefab windows,
 `prefab.edit`) on double-click or with the context menu's **Edit Prefab**
 (`AssetBrowserActions::openPrefab`). Scripts (C and C++ sources and headers) open in the
 user's IDE on double-click, from the context menu, or with the details' Open

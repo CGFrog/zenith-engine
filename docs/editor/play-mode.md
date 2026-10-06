@@ -25,11 +25,9 @@ systemProfile()`, published by `finishSystemFrame` at the start of `drawUi`),
 the engine's CPU phases, and the GPU pass table; `profiler.reset_max` restarts
 the maxima. The headless play operators live in `operators/PlayOperators`.
 
-While a prefab is open in prefab mode (see
-[Scene editing](scene-editing.md#prefab-mode-the-document-stack)) Play and
-Simulate are disabled, their toolbar buttons saying "Return to the scene to
-play", and prefab mode cannot be entered during Play: the runtime scene is
-always built from a scene document.
+Prefab windows ([Prefab windows](prefab-windows.md)) do not stop Play: the
+level plays while they stay open and editable, and saving one refreshes the
+level's edit scene, which Stop restores.
 
 Play targets (`application/PlayTargets`, wired in `application/
 EditorPlayback.cpp`): `play.start {target}` runs Play in `viewport` (the
@@ -91,8 +89,9 @@ document to the recovery file before the process ends
   built in Edit mode do not enter Play ([Scene editing](scene-editing.md)).
 - **Watched fields.** A reflected field's context menu (right click) has
   **Watch Field** (`debug.watch_field {entity, component, field, label}`,
-  `operators/DebugOperators`), which adds it to the session's
-  `interaction/WatchList`. The Properties panel shows a **Watched** section
+  `operators/DebugOperators`), which adds it to the
+  `interaction/WatchList` of the document it was watched in: the level's, or
+  a prefab window's own ([Prefab windows](prefab-windows.md)). The Properties panel shows a **Watched** section
   above every tab with each field's value in the active scene, read every
   frame through `watchedValueText` (runtime-state fields included): the
   running scene's in Play and Simulate. The list is editor state (no undo,

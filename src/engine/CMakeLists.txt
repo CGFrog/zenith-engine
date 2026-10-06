@@ -75,6 +75,7 @@ add_library(zenith_engine SHARED
     graphics/passes/MeshPassShadows.cpp
     graphics/passes/MeshPassRecord.cpp
     graphics/passes/MeshPassRecordView.cpp
+    graphics/passes/MeshPassScenes.cpp
     graphics/passes/MeshPassSceneDraws.cpp
     graphics/passes/MeshPassGpuDriven.cpp
     graphics/passes/MeshPassEffects.cpp

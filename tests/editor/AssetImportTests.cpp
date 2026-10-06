@@ -306,6 +306,25 @@ void testFileDrops() {
     expect(drops.pending().size() == 1 && drops.pending().front().path.filename() == "far.png",
            "a drop outside the browser should be left for another window");
     expect(!std::filesystem::exists(project.content / "far.png"), "a drop outside should not be imported");
+
+    // A window over the browser takes the drops on it: the browser leaves a
+    // drop inside its rectangle that landed on the window above it.
+    drops.takeAll();
+    writeFile(outside / "covered.gltf", "{}");
+    const auto drawCovered = [&] {
+        panel.drawBrowser(diagnostics, actions);
+        ImGui::SetNextWindowPos({350.0f, 250.0f});
+        ImGui::SetNextWindowSize({100.0f, 100.0f});
+        ImGui::Begin("Cover");
+        ImGui::End();
+    };
+    imgui.frame(drawCovered);
+    const std::array<DroppedFile, 1> covered{
+        DroppedFile{.path = outside / "covered.gltf", .position = {400.0f, 300.0f}}};
+    drops.add(covered);
+    imgui.frame(drawCovered);
+    expect(drops.pending().size() == 1 && !std::filesystem::exists(project.content / "covered.gltf"),
+           "a drop on a window above the browser should be left for that window");
 }
 
 struct EnemyDef {

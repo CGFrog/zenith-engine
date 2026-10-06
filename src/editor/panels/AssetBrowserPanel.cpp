@@ -630,7 +630,7 @@ void AssetBrowserPanel::noteDropTarget(const std::filesystem::path& folder) {
     const ImVec2 maximum = ImGui::GetItemRectMax();
     for (const DroppedFile& drop : m_frameDrops->pending()) {
         if (drop.position.x >= minimum.x && drop.position.y >= minimum.y && drop.position.x < maximum.x &&
-            drop.position.y < maximum.y) {
+            drop.position.y < maximum.y && dropLandsInCurrentWindow(drop.position)) {
             m_dropFolder = folder;
             return;
         }
@@ -643,8 +643,8 @@ void AssetBrowserPanel::importDroppedFiles(EditorDiagnostics& diagnostics) {
     }
     const ImVec2 position = ImGui::GetWindowPos();
     const ImVec2 size = ImGui::GetWindowSize();
-    const std::vector<std::filesystem::path> dropped =
-        m_frameDrops->claimWithin({position.x, position.y}, {position.x + size.x, position.y + size.y});
+    const std::vector<std::filesystem::path> dropped = m_frameDrops->claimWithin(
+        {position.x, position.y}, {position.x + size.x, position.y + size.y}, dropLandsInCurrentWindow);
     if (!dropped.empty()) {
         importFiles(dropped, m_dropFolder.value_or(m_currentFolder), diagnostics);
     }

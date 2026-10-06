@@ -57,11 +57,11 @@ void acceptViewportFileDrops(EditorContext& context, const SnapView& view, glm::
     std::vector<DroppedFile> drops;
     for (const DroppedFile& drop : context.fileDrops->pending()) {
         if (drop.position.x >= imageMin.x && drop.position.y >= imageMin.y && drop.position.x < imageMax.x &&
-            drop.position.y < imageMax.y) {
+            drop.position.y < imageMax.y && dropLandsInCurrentWindow(drop.position)) {
             drops.push_back(drop);
         }
     }
-    context.fileDrops->claimWithin(imageMin, imageMax);
+    context.fileDrops->claimWithin(imageMin, imageMax, dropLandsInCurrentWindow);
     const glm::vec3& cursor = context.editing.document().editorData().cursorLocation;
     for (const DroppedFile& drop : drops) {
         const std::optional<std::filesystem::path> file =

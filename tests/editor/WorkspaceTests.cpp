@@ -279,37 +279,32 @@ void testAreaState() {
            "each instance should find its own default placement, falling back to the first");
 }
 
-// The Prefab workspace is no default tab: it is added the first time a
-// prefab is edited (WorkspaceSet::add), with its own default areas.
-void testPrefabWorkspace() {
-    for (const DefaultWorkspace& workspace : defaultWorkspaces()) {
-        expect(workspace.name != prefabWorkspaceName, "the Prefab workspace is not one of the default tabs");
-    }
-    const DefaultWorkspace& defaults = defaultWorkspaceFor(prefabWorkspaceName);
-    expect(defaults.name == prefabWorkspaceName && defaultAreaFor(defaults, "viewport", 1) != nullptr &&
-               defaultAreaFor(defaults, "hierarchy", 1) != nullptr &&
-               defaultAreaFor(defaults, "inspector", 1) != nullptr &&
-               defaultAreaFor(defaults, "asset_browser", 1) == nullptr,
-           "the Prefab workspace has the authoring areas, without the asset browser");
+// A workspace beyond the defaults (a user's own, or a "Prefab" tab an older
+// editor added) can be added once and activated; a name the editor does not
+// define gets the first default's areas.
+void testAddedWorkspace() {
+    constexpr std::string_view added = "Prefab";
+    expect(&defaultWorkspaceFor(added) == &defaultWorkspaces().front(),
+           "a workspace the editor does not define gets the first default's areas");
 
     RegistryFixture fixture;
     WorkspaceSet workspaces;
     std::vector<std::string> warnings;
     restoreWorkspaces(defaultWorkspaceFile(), workspaces, warnings);
     workspaces.sync(fixture.registry);
-    Workspace created{std::string(prefabWorkspaceName)};
-    for (const AreaRecord& area : defaultWorkspaceRecord(defaults).areas) {
+    Workspace created{std::string(added)};
+    for (const AreaRecord& area : defaultWorkspaceRecord(defaultWorkspaceFor(added)).areas) {
         created.addStoredArea(area.type, area.instance, area.visible, area.state);
     }
     expect(workspaces.add(created) != nullptr && workspaces.workspaces().size() == 4 &&
-               workspaces.find(prefabWorkspaceName) != nullptr,
+               workspaces.find(added) != nullptr,
            "a workspace can be added");
     expect(workspaces.add(created) == nullptr && workspaces.workspaces().size() == 4,
            "a workspace name cannot be added twice");
-    expect(workspaces.requestActivation(prefabWorkspaceName).success && workspaces.requestedActivation() == 3u,
+    expect(workspaces.requestActivation(added).success && workspaces.requestedActivation() == 3u,
            "the added workspace can be activated");
     workspaces.completeActivation();
-    expect(workspaces.activeName() == prefabWorkspaceName, "activating switches to it");
+    expect(workspaces.activeName() == added, "activating switches to it");
 }
 
 void writeText(const std::filesystem::path& path, std::string_view text) {
@@ -580,7 +575,7 @@ int main() {
     testChangeType();
     testWorkspaceSet();
     testAreaState();
-    testPrefabWorkspace();
+    testAddedWorkspace();
     const std::filesystem::path directory = testDirectory();
     testWorkspaceFileRoundTrip(directory);
     testMigration(directory);

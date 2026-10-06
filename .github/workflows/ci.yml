@@ -23,14 +23,35 @@ jobs:
       - name: Install macOS Vulkan portability runtime
         if: runner.os == 'macOS'
         run: brew install molten-vk
+      # Linux runs its Vulkan tests on lavapipe (below), several times slower
+      # than a GPU, so its test timeouts are scaled.
       - name: Configure
-        run: cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DZENITH_WINDOWS_INSTALLER=${{ runner.os == 'Windows' }}
+        run: cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DZENITH_WINDOWS_INSTALLER=${{ runner.os == 'Windows' }} -DZENITH_TEST_TIMEOUT_SCALE=${{ runner.os == 'Linux' && 4 || 1 }}
       - name: Build
         run: cmake --build build --config Release --parallel 4
       # Every GPU test carries the vulkan label, including the vulkan;validation
       # strict matrix, so runners without a GPU only run CPU coverage here.
       - name: Run CPU tests
         run: ctest --test-dir build -C Release --output-on-failure -LE vulkan
+      # Linux runners have no GPU: Mesa's lavapipe runs the Vulkan tests on the
+      # CPU under Xvfb. The validation layer comes from the LunarG SDK, since
+      # Ubuntu 24.04's packaged one (1.3.275) crashes on Vulkan 1.4 core push
+      # descriptors. Reference captures skip themselves on a software device,
+      # and the strict validation matrix (minutes per run on lavapipe) stays
+      # Windows-only.
+      - name: Install Linux software Vulkan driver and validation layer
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y mesa-vulkan-drivers xvfb
+          curl -fsSL -o vulkan_sdk.tar.xz "https://sdk.lunarg.com/sdk/download/1.4.363.0/linux/vulkan_sdk.tar.xz"
+          mkdir -p "$RUNNER_TEMP/vulkan-sdk"
+          tar -xJf vulkan_sdk.tar.xz -C "$RUNNER_TEMP/vulkan-sdk" --wildcards '*/x86_64/lib/libVkLayer_khronos_validation.so' '*/x86_64/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json'
+          rm vulkan_sdk.tar.xz
+          echo "VK_ADD_LAYER_PATH=$RUNNER_TEMP/vulkan-sdk/1.4.363.0/x86_64/share/vulkan/explicit_layer.d" >> "$GITHUB_ENV"
+      - name: Run Vulkan smoke tests on lavapipe
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: xvfb-run -a -s "-screen 0 1600x900x24" ctest --test-dir build -C Release --output-on-failure -L vulkan -LE "validation|benchmark"
       - name: Run bounded Vulkan smoke test
         if: runner.os == 'Windows'
         continue-on-error: true

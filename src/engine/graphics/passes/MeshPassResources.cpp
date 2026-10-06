@@ -333,7 +333,7 @@ const MeshPass::GpuMaterial* MeshPass::ensureOverrideMaterial(MaterialHandle mat
     OverrideMaterialKey key{handleKey(material), {}};
     std::ranges::transform(factors, key.second.begin(), [](float factor) { return std::bit_cast<uint32_t>(factor); });
     if (const auto found = m_overrideMaterials.find(key); found != m_overrideMaterials.end()) {
-        found->second.lastBuild = m_renderItemBuild;
+        found->second.builds[m_sceneKey] = m_renderItemBuild;
         return &found->second.gpu;
     }
     if (m_overrideMaterials.size() >= maximumMaterialOverrides) {
@@ -343,19 +343,35 @@ const MeshPass::GpuMaterial* MeshPass::ensureOverrideMaterial(MaterialHandle mat
     if (!index) {
         return nullptr;
     }
-    OverrideMaterial created{.gpu = {*index}, .material = material, .values = values, .lastBuild = m_renderItemBuild};
+    OverrideMaterial created{
+        .gpu = {*index}, .material = material, .values = values, .builds = {{m_sceneKey, m_renderItemBuild}}};
     // The replacement handle is not part of the record; material already is it.
     created.values.material = {};
     return &m_overrideMaterials.emplace(key, created).first->second.gpu;
 }
 
 void MeshPass::releaseUnusedOverrideMaterials() {
-    std::erase_if(m_overrideMaterials, [&](const auto& entry) {
-        if (entry.second.lastBuild == m_renderItemBuild) {
+    std::erase_if(m_overrideMaterials, [&](auto& entry) {
+        std::map<uint32_t, uint64_t>& builds = entry.second.builds;
+        if (const auto scene = builds.find(m_sceneKey); scene != builds.end() && scene->second != m_renderItemBuild) {
+            builds.erase(scene);
+        }
+        if (!builds.empty()) {
             return false;
         }
         // Records are rewritten for every frame from the live set, so the
         // index can serve another material at once.
+        m_freeMaterialIndices.push_back(entry.second.gpu.index);
+        return true;
+    });
+}
+
+void MeshPass::releaseSceneOverrideMaterials(uint32_t sceneKey) {
+    std::erase_if(m_overrideMaterials, [&](auto& entry) {
+        entry.second.builds.erase(sceneKey);
+        if (!entry.second.builds.empty()) {
+            return false;
+        }
         m_freeMaterialIndices.push_back(entry.second.gpu.index);
         return true;
     });

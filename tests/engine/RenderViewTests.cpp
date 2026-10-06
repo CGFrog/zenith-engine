@@ -191,6 +191,42 @@ void testUiImages() {
     expect(!rendering.uiImageAlive(first), "the old UI image handle stays stale after reuse");
 }
 
+void testSecondaryScenes() {
+    RenderRuntime rendering;
+    const RenderViewId view = rendering.createView();
+    expect(!rendering.viewScene(view), "a view draws the application's scene by default");
+
+    const RenderSceneId first = rendering.createScene();
+    const RenderSceneId second = rendering.createScene();
+    expect(first && second && !(first == second) && rendering.sceneAlive(first) && rendering.sceneAlive(second),
+           "created scenes are distinct and alive");
+    expect(rendering.setViewScene(view, first) && rendering.viewScene(view) == first, "a created view binds a scene");
+    expect(!rendering.setViewScene(rendering.defaultView(), first) && !rendering.viewScene(rendering.defaultView()),
+           "the default view always draws the application's scene");
+    expect(rendering.setViewScene(view, {}) && !rendering.viewScene(view),
+           "the empty handle returns a view to the application's scene");
+
+    expect(rendering.destroyScene(first) && !rendering.sceneAlive(first), "a scene can be destroyed");
+    expect(!rendering.destroyScene(first), "destroying a scene twice is rejected");
+    expect(!rendering.setViewScene(view, first) && !rendering.setSceneContent(first, nullptr),
+           "a destroyed scene's handle is rejected");
+    const RenderSceneId reused = rendering.createScene();
+    expect(reused && reused.index == first.index && reused.generation != first.generation,
+           "a reused scene slot gets a new generation");
+
+    rendering.setViewScene(view, second);
+    rendering.destroyView(view);
+    const RenderViewId recreated = rendering.createView();
+    expect(recreated.index == view.index && !rendering.viewScene(recreated),
+           "a view created in a reused slot draws the application's scene");
+
+    std::vector<RenderSceneId> scenes{reused, second};
+    while (const RenderSceneId scene = rendering.createScene()) {
+        scenes.push_back(scene);
+    }
+    expect(scenes.size() == RenderRuntime::maximumScenes, "maximumScenes scenes can be alive at once");
+}
+
 int main() {
     testDefaultView();
     testCreateAndDestroy();
@@ -202,6 +238,7 @@ int main() {
     testOrderRenderedViews();
     testRemapLocalShadowTiles();
     testUiImages();
+    testSecondaryScenes();
     if (failures != 0) {
         std::cerr << failures << " render view test(s) failed\n";
         return 1;

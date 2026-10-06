@@ -1,0 +1,141 @@
+# Prefab windows
+
+Edit Prefab (`prefab.edit`, a double-click on a prefab in the Asset Browser)
+opens the prefab in a floating window of its own, as Unreal's asset editors
+do. The level stays open, visible, editable, and playable underneath, and
+several prefabs can be open at once, one window each. (An earlier "prefab
+mode", which swapped the prefab in over the level, and its
+`ui.prefab_windows` and `ui.prefab_workspace` preferences are gone; old
+settings files still load, the keys are ignored.)
+
+The window hosts its own dock space with the prefab's **Hierarchy**,
+**Viewport**, and **Inspector**, plus Save and Close. The viewport is a real
+`ViewportPanel` registered with the session's `ViewportRegistry`: camera,
+picking, the gizmo, G/R/S, snapping, collider handles, drops, the 3D cursor,
+and local view all edit the prefab. It draws the window's scene as a secondary
+render scene (`RenderRuntime::createScene`/`setViewScene`, see
+[Architecture](../ARCHITECTURE.md#render-views)), so it shows the prefab with
+preview lighting (the Material Preview studio rig): the prefab's own sun,
+shadows, environment, fog, and particles are not drawn there, and the
+viewport's Rendered shading falls back to Material Preview.
+
+## Documents
+
+`application/PrefabWindowSet` owns one `PrefabWindowDocument` per open
+prefab: the prefab instantiated into a `Scene` of its own
+(`openPrefabDocument`), an `EditorDocument` copied from the level's options
+(asset root, database, and the game module's component types), its own
+`CommandHistory` and `Selection`, the `PrefabEditTarget` (reference, file,
+display name, root), and an `AssetLeaseSet` the session renews every frame,
+because only the engine's own scene is leased by the application. Documents
+are held by address, never moved, and the set never opens the same prefab
+twice: opening an open prefab brings its window forward.
+
+A `DocumentBinding` (`application/DocumentBinding.hpp`) names one open
+document's scene, document state, history, and selection: the level's are the
+session's own members, a window's are its document's.
+
+## Which document an action edits
+
+- **Panels in a window** get an `EditorContext` built from the window's
+  document: `app` is the session's `ApplicationContext` with the window's
+  scene, so panels that read `context.app.scene` show the prefab, and
+  `actions` is `EditorSession::PrefabWindowActions`, which runs operators and
+  region keys on the window's document with the session's own context.
+- **The main menu, global keys, F3, and popup menus** (Add Component, Delete,
+  Rename) act on the document whose window last had keyboard focus: a prefab
+  window, until a level area is focused again. Ctrl S, Ctrl Z, and Ctrl Y
+  therefore follow focus. A key or mouse gesture (Hold, Drag, Release,
+  Click bindings) runs every phase on the document its press started in
+  (`EditorSession::m_gestureWindow`), so box select, lasso, and Shift right
+  click work in a window's viewport; a gesture whose window closed runs
+  nothing more.
+- **Files dropped from the operating system** go to the window on top where
+  they land (`dropLandsInCurrentWindow`), so a drop on a window's viewport
+  floating over a level viewport instances into the prefab; a drop on a
+  window's Hierarchy or Inspector is reported as unclaimed rather than
+  reaching the level under it.
+- **Level areas** always act on the level.
+- A prefab document is never Play's runtime scene: its `OperatorContext` has
+  mode Edit, so it records history and stays editable while the level plays.
+  Operators that mean the session's state (Play, New, Open, Save As) read the
+  session's play state, not the context's mode.
+- Viewports know the document they show (`ViewportPanel::showDocument`):
+  level areas the level's, a window's viewport its window's. `view3d.*` and
+  3D-cursor operators run only when the active viewport shows the operator's
+  document, and the cursor they move is that document's. A modal G/R/S
+  transform records the window it edits (`ActiveTransform::window`), so it
+  restores and commits there; closing the window cancels it first.
+- Level-only work uses the level's viewports (`EditorSession::
+  levelViewports`): Play's viewport target, the render view shadows and
+  streaming follow. A window's viewport never takes
+  the default render view (GPU-driven, the application's scene only).
+- Each frame, after the UI is drawn, the session updates every window's world
+  transforms and binds its scene as its render scene's content; the window's
+  render scene is created with the window and destroyed with it.
+- Adjust Last Operation re-runs on the level only.
+- Entity ids are per scene, so tools that hold an id stay in their document:
+  the eyedropper picks only in the document whose field armed it, and each
+  window keeps its own watch list (`PrefabWindowDocument::watches`, which
+  closes with the window; the watch operators pick the list of the document
+  they run on). Navigation baking stays the level's: `navigation.bake` and
+  `navigation.clear` run only on the application's scene in Edit mode, and a
+  window's navigation sidebar says the mesh is baked from the level.
+
+## Saving, refreshing, closing
+
+- **Save** writes the prefab (`saveOpenPrefab`):
+  the ids it gives entities added since opening are recorded as a step
+  "Save <name>" on the window's history. The session then refreshes the
+  prefab's instances in the level (its edit scene during Play; the running
+  scene keeps its copies until Stop) and in every other window, each as a
+  scene-only step "Refresh <name> instances" on that document's own history,
+  so Undo there puts the old instances back. The window editing the prefab
+  itself is never refreshed.
+- **Apply** (`prefab.apply`, and the undo and redo of its step) writes the
+  prefab from one document; at the end of the frame every other open
+  document catches up: the level (its edit scene during Play) and the other
+  windows, each with a step "Refresh
+  <name> instances" on its own history
+  (`EditorSession::refreshPrefabInstancesElsewhere`, shared with Save). The
+  write hook names the scene that wrote (`PrefabWriteHooks::fileWritten`'s
+  origin), so the writer is never refreshed by its own write.
+- **Outside changes** to a prefab file refresh its instances in the windows
+  too; a window editing that very prefab only warns, and its Save writes over
+  the change.
+- **Close** (the window's X, its Close button, or `prefab.exit_edit` on the
+  focused window) asks Save, Discard, or Cancel when the window has unsaved
+  changes. Windows close between frames, never while their panels draw.
+- **New and Open** replace only the level; windows stay open. **Quit** and
+  the **Project Hub** ask about each window with unsaved changes first.
+- **Moves and removals** follow the prefab file and the window scene's asset
+  references; a removed prefab keeps its window with a warning.
+- **Module reloads** wait until every window is closed (status bar: "close
+  the prefab windows to apply"), because window scenes hold module component
+  storage; the session closes every window before the module unloads.
+- **Autosave** writes each window with unsaved changes to
+  `<settings>/recovery-prefab-windows/<n>.prefab-edit` with its note
+  (`document/PrefabWindowRecovery`), replacing the whole set each time, so a
+  saved or closed window leaves nothing behind; the crash save does the same.
+  Recover opens them again.
+
+## Known limits
+
+- The window's view uses preview lighting (see above).
+- The renderer draws at most `RenderRuntime::maximumScenes` (8) secondary
+  scenes. A window opened beyond that edits normally but its viewport shows a
+  placeholder (it never falls back to drawing the level) until another window
+  closes; `bindPrefabWindowScenes` then gives it the freed render scene.
+- Undo of a refresh step restores the instances in that document only, not
+  the prefab file.
+
+## Folder contents
+
+`src/editor/application/`: `PrefabWindowSet` (the documents),
+`EditorPrefabWindows.cpp` (the session's windows, their panels, the close
+prompt, and recovery), `PrefabEditTargets` (save and file-move helpers), and
+`DocumentBinding.hpp`.
+`src/editor/document/PrefabWindowRecovery`: the windows' autosaves.
+Tests: `tests/editor/PrefabWindowTests.cpp`; the editor smoke's
+`smoke/PrefabWindowSmokeStep.cpp` checks the window's viewport renders the
+prefab through the renderer.
