@@ -22,10 +22,11 @@ Search hygiene:
 
 - Never search or read `build/` (generated; contains fetched third-party
   sources and is huge). `git grep` and `git ls-files` ignore it.
-- Large planning documents (`GAMEPLAY_ROADMAP.md`, `NEXT_STEPS.md`,
-  `RENDERER_VALIDATION.md`, `ROGUELIKE_READINESS_REVIEW.md`,
-  `PERFORMANCE_ROADMAP.md`, `ARCHITECTURE.md`) are long; grep them for a
-  heading instead of reading them whole.
+- Long documents (`ROGUELIKE_READINESS_REVIEW.md`, `PERFORMANCE_ROADMAP.md`,
+  `RENDERER_VALIDATION.md`, `CODE_MAP.md`, and the large subsystem pages such
+  as `engine/graphics-passes.md`) are best grepped for a heading instead of
+  read whole. `docs/history/` holds finished plans and dated measurement logs;
+  read it only for background, never as current state.
 - Headers carry the contract comments (ownership, units, threading). Read the
   `.hpp` before the `.cpp`.
 - Tests are named after what they cover (`tests/<area>/<Thing>Tests.cpp`) and
@@ -37,7 +38,7 @@ Search hygiene:
 | Audience | Start at |
 | --- | --- |
 | Game makers (editor, game logic) | `docs/guide/README.md` (user guide), `docs/tutorials/fps-game/` |
-| Engine/editor contributors | `docs/CODE_MAP.md`, `docs/CONTRIBUTOR_PLAYBOOK.md`, `docs/REPOSITORY_GUIDE.md`, `docs/ARCHITECTURE.md` |
+| Engine/editor contributors | `docs/CODE_MAP.md`, `docs/CONTRIBUTOR_PLAYBOOK.md`, `docs/REPOSITORY_GUIDE.md`, `docs/ARCHITECTURE.md` (overview) |
 | Everything | `docs/README.md` |
 
 When a change alters behaviour a user sees, update the matching

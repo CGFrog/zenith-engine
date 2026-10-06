@@ -25,7 +25,7 @@ At the start of this project the plan was that I would write every line of code 
 - contributor references: the [code map](docs/CODE_MAP.md),
   [contributor playbook](docs/CONTRIBUTOR_PLAYBOOK.md),
   [repository guide](docs/REPOSITORY_GUIDE.md),
-  [architecture](docs/ARCHITECTURE.md), and
+  [architecture overview](docs/ARCHITECTURE.md), and
   [development guide](docs/DEVELOPMENT.md).
 
 AI coding agents: [`AGENTS.md`](AGENTS.md) is the contributor policy and
