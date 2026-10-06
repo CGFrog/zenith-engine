@@ -463,7 +463,7 @@ void ProjectSettingsWindow::drawActionDetails(const std::string& action) {
 void ProjectSettingsWindow::drawNavigation() {
     NavMeshBuildSettings& settings = m_draft.navigation;
     ImGui::TextWrapped("How navigation meshes are built: the editor's Bake Navigation Mesh preview, and the game's "
-                       "own bake when it plays (GameServices::setDefaultNavigationSettings).");
+                       "own bake when it plays (OutsideServices::setDefaultNavigationSettings).");
 
     struct Setting {
         const char* label;

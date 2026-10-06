@@ -59,12 +59,12 @@ sound changes on disk or is reimported (`project/AssetReload`).
 reference (with its GUID); the runtime `clip` handle is not saved. While
 gameplay runs, the built-in `zenith.audio_emitters` system (LateUpdate, Play)
 loads each emitter's clip when its path changes, through
-`GameServices::loadClip`, and logs a clip that cannot load once. Code may
+`OutsideServices::loadClip`, and logs a clip that cannot load once. Code may
 instead set `clip` and leave `clip_asset` empty.
 
-Gameplay plays its own sounds through `GameServices::audio()` (null without
+Gameplay plays its own sounds through `OutsideServices::audio()` (null without
 audio, as in tests): `play`, `playAt` (with `follow` to move with an entity),
-and `stop` by voice handle. `GameServices::loadClip(assetPath)` resolves a
+and `stop` by voice handle. `OutsideServices::loadClip(assetPath)` resolves a
 path against the session's asset root and rejects paths outside it. Both
 hosts give their services the application's audio (`setAudio`).
 `tests/engine/AudioSystemTests.cpp` (`testGameplayAudio`) covers them.

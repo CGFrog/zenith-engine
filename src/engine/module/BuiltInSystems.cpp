@@ -30,7 +30,7 @@ SystemDescriptor firstPersonCameraSystem() {
             .runIn = RunIn::Play,
             .run = [](const SystemContext& context) {
                 // A paused game holds the view still, as it does the player.
-                const bool paused = context.services != nullptr && context.services->paused();
+                const bool paused = context.services != nullptr && context.services->time().paused();
                 updateFirstPersonCameras(context.scene, paused ? nullptr : context.actions, context.deltaSeconds);
             }};
 }
@@ -51,9 +51,9 @@ SystemDescriptor navAgentSystem() {
                     return;
                 }
                 GameServices& services = *context.services;
-                if (NavigationWorld* navigation = services.agentNavigation(context.scene)) {
-                    updateNavAgents(context.scene, *navigation, services.navigationCrowd(), context.deltaSeconds,
-                                    services.crowdSettings());
+                if (NavigationWorld* navigation = services.outside().agentNavigation(context.scene)) {
+                    updateNavAgents(context.scene, *navigation, services.outside().navigationCrowd(),
+                                    context.deltaSeconds, services.outside().crowdSettings());
                 }
             }};
 }
@@ -85,7 +85,7 @@ void loadAudioEmitterClips(Scene& scene, GameServices& services) {
         if (emitter.clipAsset.empty()) {
             continue;
         }
-        if (const AudioLoadResult<AudioClipHandle> loaded = services.loadClip(emitter.clipAsset)) {
+        if (const AudioLoadResult<AudioClipHandle> loaded = services.outside().loadClip(emitter.clipAsset)) {
             emitter.clip = loaded.handle;
         } else {
             services.log().warning("Audio emitter on entity " + std::to_string(scene.id(entity).value) +
@@ -99,7 +99,7 @@ SystemDescriptor audioEmitterSystem() {
             .phase = SystemPhase::LateUpdate,
             .runIn = RunIn::Play,
             .run = [](const SystemContext& context) {
-                if (context.services != nullptr && context.services->audio() != nullptr) {
+                if (context.services != nullptr && context.services->outside().audio() != nullptr) {
                     loadAudioEmitterClips(context.scene, *context.services);
                 }
             }};

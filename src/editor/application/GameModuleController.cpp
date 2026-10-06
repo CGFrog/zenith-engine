@@ -178,6 +178,6 @@ void GameModuleController::invalidatePrefab(const std::filesystem::path& file) {
     // Editor prefab operations build a fresh PrefabSystem each time; the
     // game's lives as long as the module host.
     if (GameServices* services = m_host.gameServices()) {
-        services->prefabs().invalidate(file);
+        services->world().prefabs().invalidate(file);
     }
 }

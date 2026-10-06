@@ -8,195 +8,39 @@
 
 GameServices::GameServices(AssetManager& assets, SceneDocumentOptions documents, DebugDraw& debugDraw, Logger* logger,
                            std::shared_ptr<const BehaviourRegistry> behaviours)
-    : m_prefabs(assets, documents)
-    , m_debugDraw(debugDraw)
-    , m_logger(logger)
+    : m_logger(logger)
     , m_log(logger, "gameplay")
     , m_behaviours(std::move(behaviours))
-    , m_assets(assets)
-    , m_documents(std::move(documents)) {}
+    , m_world(assets, documents, m_time.timers(), m_log)
+    , m_outside(assets, documents, debugDraw, m_log)
+    , m_content(documents.assetRoot, m_log) {}
 
-PrefabSystem& GameServices::prefabs() {
-    return m_prefabs;
+WorldServices& GameServices::world() {
+    return m_world;
 }
 
-EntityCommandBuffer& GameServices::commands() {
-    return m_commands;
+TimeServices& GameServices::time() {
+    return m_time;
+}
+
+const TimeServices& GameServices::time() const {
+    return m_time;
+}
+
+ContentServices& GameServices::content() {
+    return m_content;
+}
+
+OutsideServices& GameServices::outside() {
+    return m_outside;
+}
+
+const OutsideServices& GameServices::outside() const {
+    return m_outside;
 }
 
 EventQueue& GameServices::events() {
     return m_events;
-}
-
-SessionResources& GameServices::resources() {
-    return m_resources;
-}
-
-std::filesystem::path GameServices::assetPath(std::string_view assetPath) const {
-    const std::filesystem::path relative =
-        std::filesystem::path(std::u8string(assetPath.begin(), assetPath.end())).lexically_normal();
-    if (relative.empty() || relative.has_root_path() || *relative.begin() == "..") {
-        m_log.warning("'" + std::string(assetPath) + "' is not a path inside the project's assets");
-        return {};
-    }
-    return m_documents.assetRoot / relative;
-}
-
-Timers& GameServices::timers() {
-    return m_timers;
-}
-
-Effects& GameServices::effects() {
-    return m_effects;
-}
-
-void GameServices::setSaveGames(SaveGameStore saves, std::filesystem::path scene) {
-    m_saveGames.emplace(std::move(saves));
-    m_savedScene = std::move(scene);
-}
-
-SaveGameStore* GameServices::saveGames() {
-    return m_saveGames ? &*m_saveGames : nullptr;
-}
-
-void GameServices::setPaused(bool paused) {
-    m_paused = paused;
-}
-
-bool GameServices::paused() const {
-    return m_paused;
-}
-
-void GameServices::setTimeScale(float scale) {
-    m_timeScale = clampTimeScale(scale);
-}
-
-float GameServices::timeScale() const {
-    return m_timeScale;
-}
-
-SimulationClock GameServices::simulationClock(SimulationClock host) const {
-    host.timeScale = clampTimeScale(clampTimeScale(host.timeScale) * m_timeScale);
-    if (m_paused) {
-        host.paused = true;
-        host.frameStepSeconds = 0.0f;
-    }
-    return host;
-}
-
-void GameServices::setAudio(AudioSystem* audio) {
-    m_audio = audio;
-}
-
-AudioSystem* GameServices::audio() {
-    return m_audio;
-}
-
-AudioLoadResult<AudioClipHandle> GameServices::loadClip(std::string_view assetPath, bool spatial) {
-    if (m_audio == nullptr) {
-        return {.error = "This session has no audio"};
-    }
-    const std::filesystem::path relative(std::u8string(assetPath.begin(), assetPath.end()));
-    if (relative.empty() || relative.is_absolute() || *relative.begin() == "..") {
-        return {.error = "'" + std::string(assetPath) + "' is not a path inside the project's assets"};
-    }
-    return m_audio->loadClip(m_documents.assetRoot / relative, spatial);
-}
-
-NavigationResult GameServices::bakeNavigation(const Scene& scene) {
-    return bakeNavigation(scene, m_defaultNavigationSettings);
-}
-
-NavigationResult GameServices::bakeNavigation(const NavigationGeometry& geometry) {
-    return bakeNavigation(geometry, m_defaultNavigationSettings);
-}
-
-void GameServices::setDefaultNavigationSettings(const NavMeshBuildSettings& settings) {
-    m_defaultNavigationSettings = settings;
-}
-
-const NavMeshBuildSettings& GameServices::defaultNavigationSettings() const {
-    return m_defaultNavigationSettings;
-}
-
-const NavigationWorld* GameServices::navigationIfBaked() const {
-    return m_navigationBaked ? &m_navigation : nullptr;
-}
-
-const NavigationCrowd& GameServices::navigationCrowd() const {
-    return m_crowd;
-}
-
-NavigationResult GameServices::bakeNavigation(const Scene& scene, const NavMeshBuildSettings& settings) {
-    // A later navigation() call keeps this mesh, or the lack of one.
-    m_navigationBaked = true;
-    return m_navigation.bake(scene, m_assets, settings);
-}
-
-NavigationResult GameServices::bakeNavigation(const NavigationGeometry& geometry,
-                                              const NavMeshBuildSettings& settings) {
-    m_navigationBaked = true;
-    return m_navigation.bake(geometry, settings);
-}
-
-NavigationCrowd& GameServices::navigationCrowd() {
-    return m_crowd;
-}
-
-const NavCrowdSettings& GameServices::crowdSettings() const {
-    return m_crowdSettings;
-}
-
-void GameServices::setCrowdSettings(const NavCrowdSettings& settings) {
-    m_crowdSettings = settings;
-}
-
-RandomStream& GameServices::random(std::string_view name) {
-    return m_random.stream(name);
-}
-
-RandomStreams& GameServices::randomStreams() {
-    return m_random;
-}
-
-NavigationWorld& GameServices::navigation(const Scene& scene) {
-    if (!m_navigationBaked && m_navigationBakePolicy == NavigationBakePolicy::Lazy) {
-        m_navigationBaked = true;
-        if (const NavigationResult result = m_navigation.bake(scene, m_assets, m_defaultNavigationSettings); !result) {
-            m_log.warning("No navigation mesh: " + result.error);
-        }
-    }
-    return m_navigation;
-}
-
-NavigationWorld* GameServices::agentNavigation(const Scene& scene) {
-    if (m_navigationBakePolicy == NavigationBakePolicy::Explicit && !m_navigationBaked) {
-        if (!m_reportedWaitingAgents) {
-            m_reportedWaitingAgents = true;
-            m_log.warning("Navigation agents wait for GameServices::bakeNavigation (the bake policy is Explicit)");
-        }
-        return nullptr;
-    }
-    return &navigation(scene);
-}
-
-void GameServices::setNavigationBakePolicy(NavigationBakePolicy policy) {
-    m_navigationBakePolicy = policy;
-}
-
-NavigationBakePolicy GameServices::navigationBakePolicy() const {
-    return m_navigationBakePolicy;
-}
-
-SaveGameResult GameServices::saveGame(const Scene& scene, std::string_view slot, std::string title) {
-    if (!m_saveGames) {
-        return {.error = "This session has no save games"};
-    }
-    return m_saveGames->save(slot, scene, m_assets, m_documents, m_savedScene, std::move(title));
-}
-
-DebugDraw& GameServices::debugDraw() {
-    return m_debugDraw;
 }
 
 const LogChannel& GameServices::log() const {
@@ -212,17 +56,18 @@ void GameServices::beginFrame() {
 }
 
 void GameServices::advanceTimers(Scene& scene, float simulatedSeconds) {
-    m_timers.advance(scene, simulatedSeconds, m_log);
+    m_time.timers().advance(scene, simulatedSeconds, m_log);
     flush(scene);
 }
 
 void GameServices::flush(Scene& scene) {
-    m_effects.flush(scene);
+    m_world.effects().flush(scene);
+    EntityCommandBuffer& commands = m_world.commands();
     if (!m_behaviours) {
-        m_commands.flush(scene, m_prefabs, m_events, m_log);
+        commands.flush(scene, m_world.prefabs(), m_events, m_log);
         return;
     }
-    m_commands.flush(scene, m_prefabs, m_events, m_log, [this](Scene& destroyed, Entity entity) {
+    commands.flush(scene, m_world.prefabs(), m_events, m_log, [this](Scene& destroyed, Entity entity) {
         destroyBehaviours(*m_behaviours, destroyed, entity, this, m_logger);
     });
 }

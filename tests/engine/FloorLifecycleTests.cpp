@@ -38,17 +38,17 @@ void testFloorCycles() {
             session.spawnFloor(rooms, 3);
             // Baked straight after the spawn, before anything updates world
             // transforms: the rooms' placements are still only local.
-            const NavigationResult baked = session.services->bakeNavigation(session.scene);
+            const NavigationResult baked = session.services->outside().bakeNavigation(session.scene);
             session.step();
             expect(session.rooms.size() == rooms, name + "every room spawns");
             expect(session.physics.stats().bodies == persistentBodies + rooms * bodiesPerRoom,
                    name + "every room's colliders become bodies");
             expect(session.activeVoices() == rooms, name + "every room's torch sounds");
 
-            expect(baked.success && session.services->navigation(session.scene).baked(),
+            expect(baked.success && session.services->outside().navigation(session.scene).baked(),
                    name + "the floor's navigation mesh bakes on demand: " + baked.error);
             // The rooms have no doorways, so the mesh is one island per room.
-            const NavigationWorld& navigation = session.services->navigation(session.scene);
+            const NavigationWorld& navigation = session.services->outside().navigation(session.scene);
             const glm::vec3 farthestRoom(2.0f * roomSize - 3.0f, 0.0f, roomSize - 3.0f);
             const std::optional<glm::vec3> onMesh = navigation.nearestPoint(farthestRoom);
             std::vector<glm::vec3> path;
@@ -65,8 +65,8 @@ void testFloorCycles() {
         }
 
         // With the rooms gone, nothing walkable is left to bake.
-        expect(!session.services->bakeNavigation(session.scene).success &&
-                   !session.services->navigation(session.scene).baked(),
+        expect(!session.services->outside().bakeNavigation(session.scene).success &&
+                   !session.services->outside().navigation(session.scene).baked(),
                "a bake with no floor fails and leaves no mesh");
         session.audio.shutdown();
     }

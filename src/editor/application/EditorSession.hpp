@@ -103,7 +103,7 @@ struct EditorProjectServices {
     // world when it loads.
     PhysicsLayerTable physicsLayers{PhysicsLayerTable::defaults()};
     // How the project bakes navigation meshes: navigation.bake's preview and
-    // Play's sessions (GameServices::setDefaultNavigationSettings).
+    // Play's sessions (OutsideServices::setDefaultNavigationSettings).
     NavMeshBuildSettings navigation;
     // The game executable and process factory for the Standalone target.
     EditorPlayServices play;

@@ -85,7 +85,7 @@ void drawNavAgents(const Scene& scene, const NavigationCrowd& crowd, DebugDraw& 
 
 void recordRuntimeDebug(const RuntimeDebugSources& sources, const RuntimeDebugOverlays& overlays, DebugDraw& output) {
     if (overlays.navigationMesh && sources.services != nullptr) {
-        if (const NavigationWorld* navigation = sources.services->navigationIfBaked()) {
+        if (const NavigationWorld* navigation = sources.services->outside().navigationIfBaked()) {
             navigation->drawDebug(output);
         }
     }
@@ -102,6 +102,6 @@ void recordRuntimeDebug(const RuntimeDebugSources& sources, const RuntimeDebugOv
         drawCharacters(sources.scene, output);
     }
     if (overlays.navAgents && sources.services != nullptr) {
-        drawNavAgents(sources.scene, sources.services->navigationCrowd(), output);
+        drawNavAgents(sources.scene, sources.services->outside().navigationCrowd(), output);
     }
 }

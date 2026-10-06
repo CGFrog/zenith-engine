@@ -285,9 +285,9 @@ void testCommandBufferOverrides() {
                                                  .field = "/intensity",
                                                  .jsonValue = "3.5"}};
     Entity spawned = entt::null;
-    services.commands().spawn("lamp.prefab", {.localTransform = glm::mat4(2.0f)}, overrides,
-                              [&spawned](Scene&, Entity entity) { spawned = entity; });
-    services.commands().spawn("lamp.prefab");
+    services.world().commands().spawn("lamp.prefab", {.localTransform = glm::mat4(2.0f)}, overrides,
+                                      [&spawned](Scene&, Entity entity) { spawned = entity; });
+    services.world().commands().spawn("lamp.prefab");
     services.flush(scene);
     expect(spawned != entt::null && scene.registry().get<PointLightComponent>(spawned).intensity == 3.5f,
            "a command buffer spawn applies its overrides");

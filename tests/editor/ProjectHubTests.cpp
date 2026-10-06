@@ -450,7 +450,7 @@ int playFpsScene(const GameModule& module, const ProjectConfig& project) {
     pause.setKeyPressed(Key::Escape);
     frame(pause);
     frame(InputState{});
-    const bool paused = hudShows(ui, "Paused") && runner.services()->paused();
+    const bool paused = hudShows(ui, "Paused") && runner.services()->time().paused();
     // Paused, the world holds still: walking and looking do nothing.
     const glm::vec3 pausedPosition(scene.registry().get<TransformComponent>(player).world[3]);
     const float pausedYaw = scene.registry().get<FirstPersonCameraComponent>(camera).yawRadians;
@@ -461,7 +461,7 @@ int playFpsScene(const GameModule& module, const ProjectConfig& project) {
         glm::distance(pausedPosition, glm::vec3(scene.registry().get<TransformComponent>(player).world[3])) < 1e-4f &&
         scene.registry().get<FirstPersonCameraComponent>(camera).yawRadians == pausedYaw;
     frame(pause);
-    const bool resumed = !runner.services()->paused();
+    const bool resumed = !runner.services()->time().paused();
     runner.stop(context);
     if (!counted || !walked || !looked || !destroyed || !scored || !paused || !held || !resumed) {
         std::cerr << "FAILED: playing the FPS scene: targets counted " << counted << ", walked " << walked

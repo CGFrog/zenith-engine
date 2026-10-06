@@ -92,7 +92,7 @@ std::string_view systemPhaseName(SystemPhase phase);
 // - behaviours is the gameplay's behaviour types, which the engine's
 //   behaviour systems run; null when the host has none.
 // - debugDraw is the host's debug drawing (the same as
-//   GameServices::debugDraw in a gameplay session), set in every mode, so
+//   OutsideServices::debugDraw in a gameplay session), set in every mode, so
 //   Edit systems can draw previews too; null only for a host without one.
 struct SystemContext {
     Scene& scene;

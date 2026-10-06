@@ -87,7 +87,7 @@ Besides the scene, mode, and delta, a system gets:
 - `input`: null when no player input reaches the scene (Edit, Simulate).
 - `services`: the session's `GameServices`, null in Edit.
 - `debugDraw`: the host's debug drawing in every mode (in a session, the same
-  as `services->debugDraw()`), so `RunIn::Edit` systems can draw previews;
+  as `services->outside().debugDraw()`), so `RunIn::Edit` systems can draw previews;
   null only for a host without one. It is the last member, so modules built
   before it read the others unchanged.
 - `ui`: set only in the `Ui` phase.
@@ -96,7 +96,7 @@ Besides the scene, mode, and delta, a system gets:
   [Window and input](window-input.md).
 
 Changing `SystemContext`, `ModuleRegistrar`, or a registered descriptor bumps
-`ZENITH_MODULE_API_VERSION` (now 12: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, B1 made `character_controller` an engine component type with engine systems, B2 added behaviours to `ModuleRegistrar` and `SystemContext`, C6 added `BehaviourContext::physics`, and E7 added `unscaledDeltaSeconds` to both contexts and the pause and time scale to `GameServices`; the roguelike readiness review's critical items then changed the layouts of `Scene`, `GameServices`, `SystemContext` (`debugDraw`), `PrefabSystem`, `DebugDraw`, `ContactEvent` and `ApplicationControl`, which made it 9; the editor's asset, material, collision and navigation tools then changed `ContactEvent`, `ColliderComponent`, `MaterialOverrideComponent`, `FieldPresentation`, `ComponentType` and `GameServices`, which made it 10; asset import then added `InputState::droppedFiles` and definition schemas to `ModuleRegistrar` and `GameModule`, which made it 11; the convex-hull collider then added an alternative to `ColliderShape`, which made it 12).
+`ZENITH_MODULE_API_VERSION` (now 13: the gameplay roadmap's A2 changed `SystemContext`, A3 `RigidBodyComponent::layer`, A4 `ModuleRegistrar`, B1 made `character_controller` an engine component type with engine systems, B2 added behaviours to `ModuleRegistrar` and `SystemContext`, C6 added `BehaviourContext::physics`, and E7 added `unscaledDeltaSeconds` to both contexts and the pause and time scale to `GameServices`; the roguelike readiness review's critical items then changed the layouts of `Scene`, `GameServices`, `SystemContext` (`debugDraw`), `PrefabSystem`, `DebugDraw`, `ContactEvent` and `ApplicationControl`, which made it 9; the editor's asset, material, collision and navigation tools then changed `ContactEvent`, `ColliderComponent`, `MaterialOverrideComponent`, `FieldPresentation`, `ComponentType` and `GameServices`, which made it 10; asset import then added `InputState::droppedFiles` and definition schemas to `ModuleRegistrar` and `GameModule`, which made it 11; the convex-hull collider then added an alternative to `ColliderShape`, which made it 12; grouping `GameServices` into `world()`, `time()`, `content()` and `outside()` then changed its layout and accessors, which made it 13).
 
 ## Behaviours (`src/engine/behaviour/`)
 
@@ -130,7 +130,7 @@ Types run in registration order and each type's entities in creation order
 the scene, entity, delta on the simulated clock and on the wall clock
 (`unscaledDeltaSeconds`), `GameServices` (null in Edit), actions, logger, and
 the physics world for queries (null in Edit).
-Hooks change entities through `GameServices::commands()`; when a destroy
+Hooks change entities through `WorldServices::commands()`; when a destroy
 command applies, `GameServices` calls `onDisable` and `onDestroy` on the
 subtree's behaviours first (`destroyBehaviours`). When a session stops or its
 scene unloads, the host calls them on every created behaviour, in run order,
@@ -170,81 +170,97 @@ show or hide on its own.
 - `GameModuleHost` in the editor, from entering Play or Simulate to stopping.
   The host also stops it before the module unloads or reloads.
 
-It holds:
+It holds four groups, each reached through an accessor, beside the parts
+every group's users share. A new service goes in the group whose
+question it answers: what changes the scene (`world()`), when things
+happen (`time()`), the session's own data (`content()`), or what lies
+outside the scene (`outside()`).
 
-- `PrefabSystem` over the gameplay's component types and asset root.
-- `EntityCommandBuffer`: `spawn` (a prefab), `spawnEmpty`, `destroy`, and
-  `reparent` by scene id, applied in order at the flush points. A spawn's
-  callback configures the new entity. Spawned bodies are marked for physics.
-  Flushes publish `EntitySpawned` and `EntityDestroyed`. Named so that it does
-  not collide with the editor's `EntityCommands` namespace.
-- `EventQueue`: typed events, each with a unique
-  `static constexpr std::string_view eventKey`. An event published in frame N
-  is readable in every phase of frame N + 1, then dropped. Channels are keyed
-  by that string, not a C++ type id, because the engine and each module have
-  their own template statics. Engine events (`GameEvents.hpp`):
-  - `SceneLoaded`, published when gameplay starts;
-  - `EntitySpawned` and `EntityDestroyed`;
-  - `TriggerEntered` and `TriggerExited`.
-- The physics events of the last step for the behaviours' trigger and
-  collision hooks (`publishPhysicsEvents`, `takePhysicsEvents`).
-- `Effects`: `spawn(prefab, transform, EffectOptions)` places a prefab that
-  removes itself when it ends: after an explicit lifetime, or the longest
-  particle lifetime of its one-shot emitters (a continuous or repeating
-  emitter needs an explicit lifetime). Lifetimes run on the session's timers.
-  A pooled effect parks its instance (emitters stopped) instead of being
-  destroyed, and the next pooled spawn of that prefab moves and restarts it,
-  which avoids restarting every emitter in the scene as entity changes do.
-  Spawns apply at the next flush, before the entity commands.
-- Save games, when the host provides them (`setSaveGames`): `saveGames()`
-  and `saveGame(scene, slot, title)` against the scene document the session
-  plays (see [Scene](scene.md)).
-- `navigation(scene)`: the session's navigation mesh, baked from the scene's
-  static colliders on first use under the default `Lazy` bake policy.
-  `bakeNavigation(scene, settings)` bakes it again now, for a game that builds
-  or replaces a level at runtime; call it after the spawn commands applied
-  (the next phase, or a timer). Such a game sets
-  `setNavigationBakePolicy(NavigationBakePolicy::Explicit)` so agents wait for
-  that bake instead of triggering an early one (see
-  [Navigation](navigation.md)).
-- `Timers`: one-shot or repeating callbacks on simulated time. They follow the
-  clock's time scale and stop while paused. A timer may have an owner entity;
-  the timer is dropped when its owner is gone, or when its callback throws.
-- The game's own clock: `setPaused` and `setTimeScale`, for menus, inventory
-  screens, and slow motion. `simulationClock(host)` combines them with the
-  host's clock (the editor's pause, frame step, and time scale): the scales
-  multiply and the game's pause holds even through a frame step. Hosts report
-  the result as their `ApplicationScene::simulationClock`, so the engine
-  stops physics and FixedUpdate, animation, and scene audio with it, and run
-  Update and LateUpdate systems and the timers on its `simulatedSeconds`. A
-  paused game's Update and LateUpdate systems still run, with a zero
-  `deltaSeconds`, so they can read input and resume; Ui systems get the
-  wall-clock frame time, and every phase has it as
-  `SystemContext::unscaledDeltaSeconds`. The first-person camera ignores look
-  input while the game is paused.
-- `DebugDraw&`: `RenderRuntime::debugDraw()`, drawn in every view: for one
-  frame by default, or for a duration or until cleared, in named channels
-  ([Graphics](graphics.md#srcenginegraphicsdebugdraw)).
-- `SessionResources` (`resources()`, `resource<T>()`): the session's own
-  data, one value per type, such as definition tables and the current run's
-  state. A type opts in with a unique
-  `static constexpr std::string_view resourceKey`; like events, values are
-  found by that string, not a C++ type id, so the engine and a module agree
-  on them. `get` default-constructs on first use, `emplace` replaces,
-  `find` and `erase` do what they say. Module statics are lost on hot reload
-  and a registry's context goes with its scene; resources live exactly as
-  long as the services, are destroyed newest first before the services' other
-  members, and so are gone before a module unloads or reloads.
-- `assetPath(path)`: a project-relative asset path (as prefab and clip
-  references are written) resolved against the session's asset root, for
-  `DefinitionTable::load` and other files the game reads. An empty, absolute,
-  or escaping path is logged and gives an empty path.
-- `requestAssetCollection()`: frees the CPU assets nothing leases any more,
-  once the frames in flight retired (see [Assets](assets.md)). Call it when
-  tearing down part of the scene, such as a roguelike floor, after its
-  destroy commands are recorded: `runGameplayPhase` hands the request to the
-  application after the phase's flush, and the engine collects
-  `Renderer::framesInFlight` frames later. A scene change collects on its own.
+- `world()` (`WorldServices`), changes to the scene:
+  - `PrefabSystem` over the gameplay's component types and asset root.
+  - `EntityCommandBuffer`: `spawn` (a prefab), `spawnEmpty`, `destroy`, and
+    `reparent` by scene id, applied in order at the flush points. A spawn's
+    callback configures the new entity. Spawned bodies are marked for physics.
+    Flushes publish `EntitySpawned` and `EntityDestroyed`. Named so that it does
+    not collide with the editor's `EntityCommands` namespace.
+  - `Effects`: `spawn(prefab, transform, EffectOptions)` places a prefab that
+    removes itself when it ends: after an explicit lifetime, or the longest
+    particle lifetime of its one-shot emitters (a continuous or repeating
+    emitter needs an explicit lifetime). Lifetimes run on the session's timers.
+    A pooled effect parks its instance (emitters stopped) instead of being
+    destroyed, and the next pooled spawn of that prefab moves and restarts it,
+    which avoids restarting every emitter in the scene as entity changes do.
+    Spawns apply at the next flush, before the entity commands.
+- `time()` (`TimeServices`), the session's clock:
+  - `Timers`: one-shot or repeating callbacks on simulated time. They follow the
+    clock's time scale and stop while paused. A timer may have an owner entity;
+    the timer is dropped when its owner is gone, or when its callback throws.
+  - The game's own clock: `setPaused` and `setTimeScale`, for menus, inventory
+    screens, and slow motion. `simulationClock(host)` combines them with the
+    host's clock (the editor's pause, frame step, and time scale): the scales
+    multiply and the game's pause holds even through a frame step. Hosts report
+    the result as their `ApplicationScene::simulationClock`, so the engine
+    stops physics and FixedUpdate, animation, and scene audio with it, and run
+    Update and LateUpdate systems and the timers on its `simulatedSeconds`. A
+    paused game's Update and LateUpdate systems still run, with a zero
+    `deltaSeconds`, so they can read input and resume; Ui systems get the
+    wall-clock frame time, and every phase has it as
+    `SystemContext::unscaledDeltaSeconds`. The first-person camera ignores look
+    input while the game is paused.
+- `content()` (`ContentServices`), the session's own data:
+  - `SessionResources` (`resources()`, `resource<T>()`): the session's own
+    data, one value per type, such as definition tables and the current run's
+    state. A type opts in with a unique
+    `static constexpr std::string_view resourceKey`; like events, values are
+    found by that string, not a C++ type id, so the engine and a module agree
+    on them. `get` default-constructs on first use, `emplace` replaces,
+    `find` and `erase` do what they say. Module statics are lost on hot reload
+    and a registry's context goes with its scene; resources live exactly as
+    long as the services, are destroyed newest first before the services' other
+    members, and so are gone before a module unloads or reloads.
+  - `assetPath(path)`: a project-relative asset path (as prefab and clip
+    references are written) resolved against the session's asset root, for
+    `DefinitionTable::load` and other files the game reads. An empty, absolute,
+    or escaping path is logged and gives an empty path.
+  - `random(name)` and `randomStreams()`: named random streams (see
+    [Gameplay](gameplay.md)).
+- `outside()` (`OutsideServices`), what the session reaches outside the scene:
+  - Audio, when the host provides it (`setAudio`): `audio()` and
+    `loadClip(assetPath)` (see [Audio](audio.md)).
+  - `navigation(scene)`: the session's navigation mesh, baked from the scene's
+    static colliders on first use under the default `Lazy` bake policy.
+    `bakeNavigation(scene, settings)` bakes it again now, for a game that builds
+    or replaces a level at runtime; call it after the spawn commands applied
+    (the next phase, or a timer). Such a game sets
+    `setNavigationBakePolicy(NavigationBakePolicy::Explicit)` so agents wait for
+    that bake instead of triggering an early one (see
+    [Navigation](navigation.md)).
+  - Save games, when the host provides them (`setSaveGames`): `saveGames()`
+    and `saveGame(scene, slot, title)` against the scene document the session
+    plays (see [Scene](scene.md)).
+  - `DebugDraw&`: `RenderRuntime::debugDraw()`, drawn in every view: for one
+    frame by default, or for a duration or until cleared, in named channels
+    ([Graphics](graphics.md#srcenginegraphicsdebugdraw)).
+- On `GameServices` itself, shared by every group's users:
+  - `EventQueue`: typed events, each with a unique
+    `static constexpr std::string_view eventKey`. An event published in frame N
+    is readable in every phase of frame N + 1, then dropped. Channels are keyed
+    by that string, not a C++ type id, because the engine and each module have
+    their own template statics. Engine events (`GameEvents.hpp`):
+    - `SceneLoaded`, published when gameplay starts;
+    - `EntitySpawned` and `EntityDestroyed`;
+    - `TriggerEntered` and `TriggerExited`.
+  - The physics events of the last step for the behaviours' trigger and
+    collision hooks (`publishPhysicsEvents`, `takePhysicsEvents`).
+  - `requestAssetCollection()`: frees the CPU assets nothing leases any more,
+    once the frames in flight retired (see [Assets](assets.md)). Call it when
+    tearing down part of the scene, such as a roguelike floor, after its
+    destroy commands are recorded: `runGameplayPhase` hands the request to the
+    application after the phase's flush, and the engine collects
+    `Renderer::framesInFlight` frames later. A scene change collects on its own.
+
+  - `log()` and `log(name)` (above), and the host's lifecycle calls
+    (`beginFrame`, `advanceTimers`, `flush`).
 
 Commands, timer callbacks, event channels, and session resources hold module
 code, so the services are destroyed before the module that used them unloads.
@@ -255,4 +271,5 @@ code, so the services are destroyed before the module that used them unloads.
 unloading, module registration, the system registry and scheduler (Simulate
 mask, per-system CPU profile), `Gameplay` (the component types and systems a
 game plays) with `GameplayRunner`, the engine's built-in systems, and
-`GameServices` (entity commands, events, timers, session resources).
+`GameServices` and its groups (`GameServiceGroups`: the world, time, content,
+and the outside).

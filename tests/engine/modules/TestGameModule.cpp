@@ -137,7 +137,7 @@ void zenith_module_register(ModuleRegistrar& registrar) {
                              });
                              if (context.services != nullptr &&
                                  !context.services->events().read<SceneLoaded>().empty()) {
-                                 context.services->commands().spawnEmpty("Spawned on load");
+                                 context.services->world().commands().spawnEmpty("Spawned on load");
                              }
                          }});
     registrar.addSystem({.name = "fixed_tick",

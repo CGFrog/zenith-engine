@@ -35,7 +35,7 @@ world and sets the new layers (bodies are rebuilt from the scene), updates
 the names the inspector offers (`interaction/ProjectNames`, through
 `EditorContext::projectNames`), and gives the module host the new action
 overrides, and keeps the navigation settings, which the next
-`navigation.bake` and Play (`GameServices::setDefaultNavigationSettings`)
+`navigation.bake` and Play (`OutsideServices::setDefaultNavigationSettings`)
 use. Apply is Edit mode only: a running scene keeps the layers it
 started with. `EditorRenderSettings::save` likewise reads the project file
 before writing, so neither window overwrites the other's settings.

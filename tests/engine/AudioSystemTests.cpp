@@ -75,17 +75,18 @@ void testGameplayAudio(const std::filesystem::path& assetRoot) {
     DebugDraw debugDraw;
     const SceneDocumentOptions documents{.assetRoot = assetRoot, .componentTypes = builtInComponentTypes()};
     GameServices services(assets, documents, debugDraw, &logger);
-    expect(services.audio() == nullptr && !services.loadClip("sounds/hit.wav"),
+    expect(services.outside().audio() == nullptr && !services.outside().loadClip("sounds/hit.wav"),
            "a session without audio loads no clips");
 
     AudioSystem audio;
     expect(static_cast<bool>(audio.init(AudioConfig{.maxVoices = 4, .outputEnabled = false})),
            "gameplay audio test initializes");
-    services.setAudio(&audio);
-    const auto loaded = services.loadClip("sounds/hit.wav");
+    services.outside().setAudio(&audio);
+    const auto loaded = services.outside().loadClip("sounds/hit.wav");
     expect(loaded && loaded.handle == audio.loadClip(assetRoot / "sounds" / "hit.wav", true).handle,
            "a clip path is relative to the session's asset root and shares the audio cache");
-    expect(!services.loadClip("../hit.wav") && !services.loadClip((assetRoot / "sounds" / "hit.wav").string()),
+    expect(!services.outside().loadClip("../hit.wav") &&
+               !services.outside().loadClip((assetRoot / "sounds" / "hit.wav").string()),
            "a clip path outside the project's assets is rejected");
 
     Scene scene;
