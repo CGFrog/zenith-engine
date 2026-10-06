@@ -144,6 +144,37 @@ void testFrameStep() {
            "resuming drops a pending frame step");
     playMode.stop(scene, selection);
 }
+
+// An asset only the parked edit scene uses (here through a transient entity,
+// which never enters Play) survives a forced collection during Play, and is
+// collectable again once Stop hands the scene back to the engine's lease.
+void testParkedEditSceneKeepsItsAssets() {
+    AssetManager assets;
+    const MaterialHandle material =
+        assets.createMaterial(MaterialAsset{.baseColor = {1.0f, 0.0f, 0.0f, 1.0f}}, "edit only").handle;
+    Scene scene;
+    const Entity preview = scene.createEntity("Generator preview");
+    scene.markTransient(preview);
+    scene.registry().emplace<MaterialOverrideComponent>(preview, MaterialOverrideComponent{.material = material});
+    const SceneDocumentOptions options{.assetRoot = std::filesystem::temp_directory_path()};
+    EditorPlayMode playMode;
+    std::vector<SceneEntityId> selection;
+
+    expect(playMode.enter(scene, assets, options, selection).success, "Play starts for the lease test");
+    expect(assets.leaseSceneAssets(scene).materials.empty(), "the runtime scene does not use the material");
+    assets.collectUnused(true);
+    expect(assets.material(material) != nullptr, "entering Play leases the parked edit scene's assets");
+    playMode.leaseEditSceneAssets(assets);
+    assets.collectUnused(true);
+    expect(assets.material(material) != nullptr, "a renewed lease keeps the parked edit scene's assets");
+
+    playMode.stop(scene, selection);
+    playMode.leaseEditSceneAssets(assets);
+    expect(assets.material(material) != nullptr, "Stop restores the edit scene with its asset loaded");
+    scene.destroyEntity(preview);
+    assets.collectUnused(true);
+    expect(assets.material(material) == nullptr, "Stop releases the parked edit scene's leases");
+}
 } // namespace
 
 int main() {
@@ -186,5 +217,6 @@ int main() {
     testSimulate(scene, assets, options, editSnapshot);
     testTimeScale();
     testFrameStep();
+    testParkedEditSceneKeepsItsAssets();
     return failures == 0 ? 0 : 1;
 }

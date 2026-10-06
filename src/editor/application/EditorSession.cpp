@@ -462,6 +462,7 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
     updateAreas(context, input, deltaSeconds);
     updatePrefabWindows(context, input, deltaSeconds);
     leasePrefabWindowAssets(context);
+    m_playMode.leaseEditSceneAssets(context.assets);
     updateGameModule(context, input, deltaSeconds);
     syncAreaTypes();
     saveComponentLayoutIfChanged();

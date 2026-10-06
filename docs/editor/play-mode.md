@@ -25,6 +25,14 @@ systemProfile()`, published by `finishSystemFrame` at the start of `drawUi`),
 the engine's CPU phases, and the GPU pass table; `profiler.reset_max` restarts
 the maxima. The headless play operators live in `operators/PlayOperators`.
 
+While Play or Simulate runs, the parked edit scene keeps its assets loaded
+through an `AssetLeaseSet` the session renews every frame
+(`EditorPlayMode::leaseEditSceneAssets`), as prefab windows do: the
+application leases only the runtime scene, and the edit scene can use assets
+the runtime scene does not (transient entities never enter Play, and Play may
+destroy entities), which a forced `AssetManager::collectUnused` would
+otherwise evict before Stop.
+
 Prefab windows ([Prefab windows](prefab-windows.md)) do not stop Play: the
 level plays while they stay open and editable, and saving one refreshes the
 level's edit scene, which Stop restores.
