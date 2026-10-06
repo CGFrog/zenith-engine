@@ -11,3 +11,6 @@ CMakeUserPresets.json
 # Game modules copied beside the checked-in projects by the build
 /projects/modules/
 .VsCodeCounter/
+# Scratch prefabs the editor smoke writes under the asset root; a killed run
+# leaves them behind.
+assets/.zenith-smoke-*/
