@@ -273,6 +273,21 @@ class EditorHarness {
         return m_session.finishFrame();
     }
 
+    // Holds chord down over one frame; release lets it go.
+    ApplicationFrameResult hold(ImGuiKeyChord chord) {
+        m_session.update(InputState{}, 1.0f / 60.0f);
+        buildFontAtlas();
+        m_imgui.hold(chord, [this] { m_session.drawUi(); });
+        return m_session.finishFrame();
+    }
+
+    ApplicationFrameResult release(ImGuiKeyChord chord) {
+        m_session.update(InputState{}, 1.0f / 60.0f);
+        buildFontAtlas();
+        m_imgui.release(chord, [this] { m_session.drawUi(); });
+        return m_session.finishFrame();
+    }
+
     // Presses a button of the window (or popup) whose name is name, if it is
     // open, and runs the frame that handles it.
     bool clickButton(const char* name, const char* button) {
@@ -348,6 +363,9 @@ constexpr ImGuiKeyChord editShelfKey = ImGuiMod_Shift | ImGuiKey_F9;
 // Selects every object named Lamp in the focused document.
 constexpr ImGuiKeyChord selectLampsKey = ImGuiMod_Shift | ImGuiKey_F10;
 constexpr ImGuiKeyChord applyKey = ImGuiMod_Shift | ImGuiKey_F11;
+// A Click gesture (runs on release) adding a point light to the active
+// object, like addLightKey.
+constexpr ImGuiKeyChord clickLightKey = ImGuiKey_F12;
 // The lamp window's host, by its ImGui id (its title shows the dirty mark).
 constexpr const char* lampWindow = "###prefab.1";
 
@@ -395,6 +413,11 @@ ProjectConfig prefabProject(const fs::path& root, bool withModule = false, std::
           binding(editShelfKey, "prefab.edit", {{"asset", "shelf.prefab"}}),
           binding(selectLampsKey, "outliner.select_matching", {{"filter", "Lamp"}}),
           binding(applyKey, "prefab.apply", nlohmann::json::object()),
+          [&] {
+              nlohmann::json click = binding(clickLightKey, "object.component_add", {{"component", "point_light"}});
+              click["trigger"] = "click";
+              return click;
+          }(),
           binding(closeKey, "prefab.exit_edit", nlohmann::json::object()),
           binding(addLightKey, "object.component_add", {{"component", "point_light"}}),
           binding(reloadKey, "module.reload",
@@ -532,6 +555,33 @@ void testApplyReachesOtherDocuments(const fs::path& root) {
            "apply: undo in the level undoes its refresh, not the window's apply");
 }
 
+// A gesture's later phases (here a Click, run on release) run on the document
+// its press started in, and a gesture whose window closed runs nothing.
+void testGesturesStayInTheirWindow(const fs::path& root) {
+    EditorHarness editor(root, prefabProject(root));
+    if (!editor.start()) {
+        expect(false, "gesture: the editor session starts");
+        return;
+    }
+    editor.frame();
+    editor.press(editLampKey);
+    editor.frame();
+    editor.hold(clickLightKey);
+    expect(editor.clickButton(lampWindow, "Close##prefab_window_close"), "gesture: the window's Close is pressed");
+    editor.frame();
+    expect(!editor.windowOpen(lampWindow), "gesture: the clean window closes mid-gesture");
+    editor.release(clickLightKey);
+    editor.frame();
+    expect(litLamps(editor.scene) == 0, "gesture: a gesture whose window closed runs nothing on the level");
+
+    editor.press(editLampKey);
+    editor.frame();
+    editor.press(clickLightKey);
+    expect(litLamps(editor.scene) == 0, "gesture: the click edits the window, not the level");
+    editor.press(ImGuiMod_Ctrl | ImGuiKey_S);
+    expect(litLamps(editor.scene) == 2, "gesture: the window's click added the light that its save then applies");
+}
+
 void testPlayWithAWindowOpen(const fs::path& root) {
     EditorHarness editor(root, prefabProject(root));
     if (!editor.start()) {
@@ -648,6 +698,7 @@ int main() {
     testWindowsFollowMovedFiles(root);
     testWindowEditsThePrefabBesideTheLevel(root / "window");
     testApplyReachesOtherDocuments(root / "apply");
+    testGesturesStayInTheirWindow(root / "gesture");
     testPlayWithAWindowOpen(root / "play");
     testModuleReloadWaitsForWindows(root / "reload");
     testQuitAsksAboutWindows(root / "quit");

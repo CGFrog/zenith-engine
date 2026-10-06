@@ -170,8 +170,13 @@ void KeymapDispatcher::setOperatorFilter(std::function<bool(std::string_view ope
     m_registered = std::move(registered);
 }
 
+uint64_t KeymapDispatcher::gestureSerial() const {
+    return m_gestureSerial;
+}
+
 void KeymapDispatcher::follow(KeymapRegion region, ImGuiKeyChord chord) {
     m_gesture.emplace(region, chord, ImGui::GetTime(), ImGui::GetIO().MousePos);
+    ++m_gestureSerial;
 }
 
 bool KeymapDispatcher::registered(std::string_view operatorId) const {

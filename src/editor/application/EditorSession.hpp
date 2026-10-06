@@ -260,8 +260,12 @@ class EditorSession final : public ApplicationScene,
     // window's document (the level's when null).
     void dispatchKeymap(ApplicationContext& context, PrefabWindowDocument* window, KeymapRegion region);
     // Runs the Hold, Drag, Release, and Click bindings of the followed press
-    // (once per frame).
+    // (once per frame) on the document the press started in.
     void updateKeymapGesture(ApplicationContext& context);
+    // After a press call: when it started a gesture (the dispatcher's
+    // gestureSerial moved past followedBefore), records window (null: the
+    // level) as the gesture's document.
+    void noteGestureOwner(uint64_t followedBefore, const PrefabWindowDocument* window);
     // A menu item showing the operator's shortcut, disabled when its poll fails.
     void operatorMenuItem(ApplicationContext& context, std::string_view operatorId, const char* label,
                           std::string_view properties = {}, bool selected = false);
@@ -708,6 +712,10 @@ class EditorSession final : public ApplicationScene,
     // Turns key and mouse input into bindings to run, following a press for
     // its Hold, Release, Click, and Drag bindings.
     KeymapDispatcher m_keymapDispatcher;
+    // The prefab window whose document the followed press started in; 0: the
+    // level. Window ids are never reused, so a closed window's gesture is
+    // cancelled when it next advances.
+    uint64_t m_gestureWindow{0};
     OperatorSearch m_operatorSearch;
     KeymapEditor m_keymapEditor;
     LastOperatorPanel m_lastOperatorPanel;

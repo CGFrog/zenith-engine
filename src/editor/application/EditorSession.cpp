@@ -261,14 +261,34 @@ void EditorSession::dispatchKeymap(ApplicationContext& context, PrefabWindowDocu
     // the game can use, so Space there reaches the game, not operator search.
     const ViewportPanel* game = gameViewport();
     const KeyboardOwner owner = game != nullptr && game->gameInputFocus() ? KeyboardOwner::Game : KeyboardOwner::Editor;
-    if (const std::optional<KeymapInvocation> invocation = m_keymapDispatcher.pressKeys(m_keymap, region, owner)) {
+    const uint64_t followed = m_keymapDispatcher.gestureSerial();
+    const std::optional<KeymapInvocation> invocation = m_keymapDispatcher.pressKeys(m_keymap, region, owner);
+    noteGestureOwner(followed, window);
+    if (invocation) {
         invokeOperatorOn(context, window, invocation->operatorId, invocation->properties, invocation->region);
     }
 }
 
+void EditorSession::noteGestureOwner(uint64_t followedBefore, const PrefabWindowDocument* window) {
+    if (m_keymapDispatcher.gestureSerial() != followedBefore) {
+        m_gestureWindow = window != nullptr ? window->id : 0;
+    }
+}
+
 void EditorSession::updateKeymapGesture(ApplicationContext& context) {
+    // Every phase runs on the document the press started in.
+    PrefabWindowDocument* window = nullptr;
+    if (m_gestureWindow != 0) {
+        window = m_prefabWindows.find(m_gestureWindow);
+        if (window == nullptr) {
+            // Its window closed mid-gesture.
+            m_keymapDispatcher.cancel();
+            m_gestureWindow = 0;
+            return;
+        }
+    }
     for (const KeymapInvocation& invocation : m_keymapDispatcher.update(m_keymap)) {
-        invokeOperator(context, invocation.operatorId, invocation.properties, invocation.region);
+        invokeOperatorOn(context, window, invocation.operatorId, invocation.properties, invocation.region);
     }
 }
 
@@ -281,10 +301,14 @@ uint32_t EditorSession::dispatchMouseChordsOn(ApplicationContext& context, Prefa
     if (m_activeTransform || m_fileDialog.pending() || m_keymapEditor.capturing()) {
         allowedButtons = 0;
     }
-    return m_keymapDispatcher.dispatchMouse(
-        m_keymap, region, allowedButtons, [this, &context, window](const KeymapInvocation& invocation) {
-            invokeOperatorOn(context, window, invocation.operatorId, invocation.properties, invocation.region);
-        });
+    updateKeymapGesture(context);
+    const uint64_t followed = m_keymapDispatcher.gestureSerial();
+    const KeymapMousePress press = m_keymapDispatcher.pressMouse(m_keymap, region, allowedButtons);
+    noteGestureOwner(followed, window);
+    for (const KeymapInvocation& invocation : press.invocations) {
+        invokeOperatorOn(context, window, invocation.operatorId, invocation.properties, invocation.region);
+    }
+    return press.claimed;
 }
 
 bool EditorSession::mouseButtonBound(KeymapRegion region, int button) const {

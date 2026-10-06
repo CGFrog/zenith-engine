@@ -38,19 +38,29 @@ class HeadlessImGui {
 
     // Presses and releases key (with modifiers) over two frames.
     void press(ImGuiKeyChord chord, const std::function<void()>& draw) {
+        hold(chord, draw);
+        release(chord, draw);
+    }
+
+    // Presses key (with modifiers) and runs a frame, leaving it down.
+    void hold(ImGuiKeyChord chord, const std::function<void()>& draw) {
+        setKey(chord, true);
+        frame(draw);
+    }
+
+    // Lets go of key (and modifiers) and runs a frame.
+    void release(ImGuiKeyChord chord, const std::function<void()>& draw) {
+        setKey(chord, false);
+        frame(draw);
+    }
+
+  private:
+    static void setKey(ImGuiKeyChord chord, bool down) {
         ImGuiIO& io = ImGui::GetIO();
-        const auto setModifiers = [&io, chord](bool down) {
-            io.AddKeyEvent(ImGuiMod_Ctrl, down && (chord & ImGuiMod_Ctrl) != 0);
-            io.AddKeyEvent(ImGuiMod_Shift, down && (chord & ImGuiMod_Shift) != 0);
-            io.AddKeyEvent(ImGuiMod_Alt, down && (chord & ImGuiMod_Alt) != 0);
-        };
-        const ImGuiKey key = static_cast<ImGuiKey>(chord & ~ImGuiMod_Mask_);
-        setModifiers(true);
-        io.AddKeyEvent(key, true);
-        frame(draw);
-        io.AddKeyEvent(key, false);
-        setModifiers(false);
-        frame(draw);
+        io.AddKeyEvent(ImGuiMod_Ctrl, down && (chord & ImGuiMod_Ctrl) != 0);
+        io.AddKeyEvent(ImGuiMod_Shift, down && (chord & ImGuiMod_Shift) != 0);
+        io.AddKeyEvent(ImGuiMod_Alt, down && (chord & ImGuiMod_Alt) != 0);
+        io.AddKeyEvent(static_cast<ImGuiKey>(chord & ~ImGuiMod_Mask_), down);
     }
 };
 

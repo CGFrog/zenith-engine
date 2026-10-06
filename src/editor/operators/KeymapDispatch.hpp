@@ -112,6 +112,9 @@ class KeymapDispatcher {
     // Stops following the current press without running anything.
     void cancel();
     const std::optional<KeymapGesture>& gesture() const;
+    // Counts the presses followed so far: compare it before and after a
+    // press call to learn whether that press started the current gesture.
+    uint64_t gestureSerial() const;
 
     // Whether a binding in region uses button (an ImGuiMouseButton) with the
     // modifiers held now.
@@ -129,5 +132,6 @@ class KeymapDispatcher {
 
     std::function<bool(std::string_view)> m_registered;
     std::optional<KeymapGesture> m_gesture;
+    uint64_t m_gestureSerial{0};
     int m_updatedFrame{-1};
 };

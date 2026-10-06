@@ -46,7 +46,11 @@ session's own members, a window's are its document's.
 - **The main menu, global keys, F3, and popup menus** (Add Component, Delete,
   Rename) act on the document whose window last had keyboard focus: a prefab
   window, until a level area is focused again. Ctrl S, Ctrl Z, and Ctrl Y
-  therefore follow focus.
+  therefore follow focus. A key or mouse gesture (Hold, Drag, Release,
+  Click bindings) runs every phase on the document its press started in
+  (`EditorSession::m_gestureWindow`), so box select, lasso, and Shift right
+  click work in a window's viewport; a gesture whose window closed runs
+  nothing more.
 - **Level areas** always act on the level.
 - A prefab document is never Play's runtime scene: its `OperatorContext` has
   mode Edit, so it records history and stays editable while the level plays.
