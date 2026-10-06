@@ -236,11 +236,18 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const 
     // Each scene's render packets mark the union of its views' outlines;
     // views filter. Secondary scenes build before the frame stage writes the
     // material records and bindless slots their packets may add.
+    const auto secondaryBuildBegin = std::chrono::steady_clock::now();
     for (std::span<const MeshPassViewRequest> sceneViews : secondaryScenes) {
-        if (!buildSecondaryScene(assets, sceneViews)) {
+        PacketBuild build;
+        if (!buildSecondaryScene(assets, sceneViews, build)) {
             return false;
         }
+        rendering.m_stats.secondaryScenePacketRebuilds += build.rebuilt ? 1u : 0u;
+        rendering.m_stats.secondaryScannedRenderables += build.scannedRenderables;
     }
+    rendering.m_stats.secondaryScenesDrawn = static_cast<uint32_t>(secondaryScenes.size());
+    double secondaryMilliseconds =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - secondaryBuildBegin).count();
     m_outlinedObjects = outlineUnion(frameViews);
 
     // The frame's shadow maps live in the frame's camera sets, so they cast
@@ -288,12 +295,16 @@ bool MeshPass::record(VkCommandBuffer commandBuffer, uint32_t frameIndex, const 
         }
     }
     uint32_t skinMatrixCount = frame.skinMatrixCount;
+    const auto secondaryRecordBegin = std::chrono::steady_clock::now();
     for (std::span<const MeshPassViewRequest> sceneViews : secondaryScenes) {
         if (!recordSecondaryScene(commandBuffer, frameIndex, assets, rendering, sceneViews, frameTasks,
                                   previousGpuFrameMilliseconds, frame, skinMatrixCount)) {
             return false;
         }
     }
+    secondaryMilliseconds +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - secondaryRecordBegin).count();
+    rendering.m_stats.cpuSecondarySceneMilliseconds = secondaryMilliseconds;
     if (std::ranges::none_of(views, [](const MeshPassViewRequest& request) { return request.view == 0; })) {
         // The shadow passes read the cascades from the frame's camera buffer,
         // which only the default view writes otherwise.

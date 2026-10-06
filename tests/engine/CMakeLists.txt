@@ -195,4 +195,12 @@ zenith_add_test(zenith_prefab_benchmark_run EXECUTABLE zenith_prefab_benchmark
     SOURCES PrefabBenchmark.cpp LIBS zenith_engine LABELS benchmark TIMEOUT 600)
 zenith_add_test(zenith_floor_benchmark_run EXECUTABLE zenith_floor_benchmark
     SOURCES FloorBenchmark.cpp LIBS zenith_engine LABELS benchmark TIMEOUT 600)
+# Secondary render scenes (the editor's prefab windows) per scene count; a
+# Vulkan run, so it needs a GPU. CTest runs a few small frames to check it
+# completes.
+zenith_add_test(zenith_secondary_scene_benchmark_run EXECUTABLE zenith_secondary_scene_benchmark
+    SOURCES SecondarySceneBenchmark.cpp LIBS zenith_engine DEPENDS zenith_assets
+    ENVIRONMENT ZENITH_SECONDARY_BENCHMARK_OBJECTS=50 ZENITH_SECONDARY_BENCHMARK_WARMUP=2
+        ZENITH_SECONDARY_BENCHMARK_FRAMES=3
+    LABELS benchmark vulkan SKIP_RETURN_CODE 77 TIMEOUT 600 PROCESSORS 2)
 zenith_add_test(zenith_benchmark SOURCES BenchmarkTests.cpp LIBS zenith_engine)

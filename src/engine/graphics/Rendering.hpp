@@ -482,6 +482,14 @@ struct RenderStats {
     uint32_t discardedLightAssignments{0};
     uint32_t maximumLightsPerCluster{0};
     double cpuRenderPacketMilliseconds{0.0};
+    // Secondary scenes (RenderRuntime::createScene) drawn this submission:
+    // how many, the CPU time building their packets and recording their
+    // views, and how many rebuilt their packets, scanning
+    // secondaryScannedRenderables renderables.
+    uint32_t secondaryScenesDrawn{0};
+    double cpuSecondarySceneMilliseconds{0.0};
+    uint32_t secondaryScenePacketRebuilds{0};
+    uint32_t secondaryScannedRenderables{0};
     bool renderPacketsRebuilt{false};
     uint32_t scannedRenderables{0};
     uint32_t updatedObjectRecords{0};

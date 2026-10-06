@@ -168,7 +168,8 @@ uint32_t MeshPass::writeSkinPalettes(uint32_t frameIndex, uint32_t firstMatrix, 
     return skinMatrixCount;
 }
 
-bool MeshPass::buildSecondaryScene(const AssetManager& assets, std::span<const MeshPassViewRequest> views) {
+bool MeshPass::buildSecondaryScene(const AssetManager& assets, std::span<const MeshPassViewRequest> views,
+                                   PacketBuild& build) {
     const MeshPassViewRequest& first = views.front();
     SceneRenderState& state = secondarySceneState(first.sceneId);
     exchangeSceneState(state);
@@ -182,7 +183,6 @@ bool MeshPass::buildSecondaryScene(const AssetManager& assets, std::span<const M
         // Revision counters start alike in every scene; never trust a match.
         m_sceneRevisions = {};
     }
-    PacketBuild build;
     const bool built = buildScenePackets(*first.scene, assets, build);
     m_sceneVisibilityMode = frameVisibilityMode;
     m_sceneKey = 0;

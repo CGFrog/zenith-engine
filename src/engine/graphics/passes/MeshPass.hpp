@@ -630,8 +630,10 @@ class MeshPass {
     // The union of requests' outlined objects, sorted and deduplicated.
     static std::vector<RenderObjectId> outlineUnion(std::span<const MeshPassViewRequest> requests);
     // Builds one secondary scene's packets (views: that scene's requests),
-    // before the frame stage writes material records and bindless slots.
-    bool buildSecondaryScene(const AssetManager& assets, std::span<const MeshPassViewRequest> views);
+    // before the frame stage writes material records and bindless slots;
+    // build receives what the build did.
+    bool buildSecondaryScene(const AssetManager& assets, std::span<const MeshPassViewRequest> views,
+                             PacketBuild& build);
     // Records the views of one secondary scene, with its state exchanged in.
     bool recordSecondaryScene(VkCommandBuffer commandBuffer, uint32_t frameIndex, const AssetManager& assets,
                               RenderRuntime& rendering, std::span<const MeshPassViewRequest> views,
