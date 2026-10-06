@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/operators/OperatorRegistry.hpp"
+#include "engine/physics/PhysicsComponents.hpp"
 
 #include <glm/glm.hpp>
 
@@ -8,7 +9,8 @@
 #include <string>
 
 // Object-mode operators that need only the document and selection, so they
-// run headless: adding (also an empty with one component), creating,
+// run headless: adding (also an empty with one component, and a collider with
+// a rigid body: object.add_collider), creating,
 // duplicating, deleting, renaming, selecting, clearing transforms, adding
 // components (to the active object) and removing them (from every selected
 // object), and baking irradiance volumes. The component value operators are in
@@ -26,6 +28,21 @@ struct AddCubeProperties {
     glm::vec3 location{0.0f};
     // Uniform scale; the default cube is one meter across.
     float size{1.0f};
+};
+
+// The primitive shapes Add > Physics offers.
+enum class AddColliderShape : uint8_t {
+    Box,
+    Sphere,
+    Capsule,
+};
+
+struct AddColliderProperties {
+    AddColliderShape shape{AddColliderShape::Box};
+    // Static for level geometry, Dynamic for a prop that falls and collides.
+    PhysicsMotionType motion{PhysicsMotionType::Static};
+    // As AddObjectProperties::location: starts at the 3D cursor.
+    glm::vec3 location{0.0f};
 };
 
 enum class NewEntityPlacement : uint8_t {

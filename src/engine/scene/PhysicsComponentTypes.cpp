@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <optional>
 #include <type_traits>
 #include <variant>
 
@@ -30,6 +31,21 @@ bool readVector3(const Json& json, glm::vec3& value) {
     }
     value = {json[0].get<float>(), json[1].get<float>(), json[2].get<float>()};
     return true;
+}
+
+// A mesh-backed shape's document type name and mesh, or nullopt for a
+// primitive shape.
+struct MeshShapeRecord {
+    const char* type;
+    MeshHandle mesh;
+};
+
+std::optional<MeshShapeRecord> meshShapeRecord(const ColliderShape& shape) {
+    const std::optional<MeshHandle> mesh = colliderMesh(shape);
+    if (!mesh) {
+        return std::nullopt;
+    }
+    return MeshShapeRecord{std::holds_alternative<ConvexHullCollider>(shape) ? "convex_hull" : "triangle_mesh", *mesh};
 }
 
 // "offset": {"position": [x, y, z], "rotation": [x, y, z, w]}, written only
@@ -77,14 +93,14 @@ ComponentType colliderComponentType() {
         .category("Physics")
         .codec(
             [](const ColliderComponent& collider, const ComponentSaveContext& context, Json& output) {
-                if (const auto* triangleMesh = std::get_if<TriangleMeshCollider>(&collider.shape)) {
+                if (const std::optional<MeshShapeRecord> meshShape = meshShapeRecord(collider.shape)) {
                     Json reference;
                     if (SceneDocumentResult result =
-                            meshReference(context.assets, triangleMesh->mesh, context.options, reference);
+                            meshReference(context.assets, meshShape->mesh, context.options, reference);
                         !result) {
                         return result;
                     }
-                    output = {{"type", "triangle_mesh"}, {"asset", std::move(reference)}};
+                    output = {{"type", meshShape->type}, {"asset", std::move(reference)}};
                     if (hasColliderOffset(collider)) {
                         output["offset"] = colliderOffset(collider);
                     }
@@ -120,12 +136,16 @@ ComponentType colliderComponentType() {
                 } else if (type == "capsule") {
                     collider.shape =
                         CapsuleCollider{input.at("half_height").get<float>(), input.at("radius").get<float>()};
-                } else if (type == "triangle_mesh") {
+                } else if (type == "triangle_mesh" || type == "convex_hull") {
                     MeshHandle mesh;
                     if (SceneDocumentResult result = readMesh(input.at("asset"), context, mesh); !result) {
                         return result;
                     }
-                    collider.shape = TriangleMeshCollider{mesh};
+                    if (type == "triangle_mesh") {
+                        collider.shape = TriangleMeshCollider{mesh};
+                    } else {
+                        collider.shape = ConvexHullCollider{mesh};
+                    }
                 } else {
                     return SceneDocumentResult{.error = "Unsupported collider type: " + type};
                 }

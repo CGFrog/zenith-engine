@@ -325,6 +325,11 @@ class EditorSession final : public ApplicationScene,
     // Pops the active prefab (its unsaved changes are dropped) and restores
     // the viewports' views of the document underneath.
     void leavePrefabEdit(ApplicationContext& context);
+    // Editing a prefab opens the Prefab workspace (EditorAreas.cpp) when the
+    // ui.prefab_workspace preference is on, remembering the workspace it
+    // came from; leaving the outermost prefab returns there.
+    void enterPrefabWorkspace();
+    void leavePrefabWorkspace();
     // Writes the active prefab to its file; false after reporting why not.
     bool savePrefabEdit(ApplicationContext& context);
     // The active document's name for the status bar and prompts: the scene's
@@ -592,6 +597,8 @@ class EditorSession final : public ApplicationScene,
     // the next frame's dockspace exists.
     bool m_buildDefaultLayout{false};
     bool m_workspacesDirty{false};
+    // The workspace that was active when the first open prefab was entered.
+    std::optional<std::string> m_workspaceBeforePrefab;
 
     std::filesystem::path m_sceneRoot;
     // The gap, area headers, and panes behind every window.

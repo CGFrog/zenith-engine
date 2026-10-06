@@ -249,7 +249,30 @@ void testCollidersAndVolumes() {
         const size_t triangles = cubeMesh != nullptr ? cubeMesh->indices.size() / 3u : 0u;
         expect(fixture.draw(colliders).lineCount() == output.lineCount() + triangles * 3u,
                "a triangle mesh collider draws every triangle edge");
+        registry.get<ColliderComponent>(mesh).shape = ConvexHullCollider{.mesh = *cube};
+        expect(fixture.draw(colliders).lineCount() == output.lineCount() + triangles * 3u,
+               "a convex hull collider draws the mesh it wraps");
     }
+}
+
+// A character controller collides with a capsule of its own, which the
+// Colliders overlay draws centred on the entity, upright whatever its turn.
+void testCharacterCapsule() {
+    GizmoScene fixture;
+    const Entity player = fixture.add(
+        "Player", glm::rotate(glm::translate(glm::mat4(1.0f), {0.0f, 1.0f, 4.0f}), 1.0f, glm::vec3(1.0f, 0.0f, 0.0f)));
+    fixture.scene.registry().emplace<CharacterControllerComponent>(
+        player, CharacterControllerComponent{.radius = 0.4f, .halfHeight = 0.5f});
+    SceneGizmoOverlays colliders = allOff();
+    colliders.colliders = OverlayScope::All;
+    DebugDraw output = fixture.draw(colliders);
+    expect(output.lineCount() == capsuleLines, "a character controller draws its capsule");
+    expect(near(highest(output).y, 1.9f) && near(lowest(output).y, 0.1f) && near(highest(output).z, 4.4f),
+           "the capsule is upright and centred on the entity");
+    colliders.colliders = OverlayScope::Selected;
+    expect(fixture.draw(colliders).lineCount() == 0, "an unselected character draws nothing in Selected scope");
+    fixture.selection = {fixture.scene.id(player)};
+    expect(fixture.draw(colliders).lineCount() == capsuleLines, "a selected character draws its capsule");
 }
 
 struct Bounds {
@@ -594,6 +617,7 @@ int main(int, char** argv) {
     testLights();
     testCameras();
     testCollidersAndVolumes();
+    testCharacterCapsule();
     testOffsetCollidersAgree();
     testRuntimeDebug();
     testVolumes();

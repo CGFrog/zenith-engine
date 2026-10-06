@@ -43,7 +43,7 @@ viewport hide is editor-only: `EditorSession` renders with
 hidden or unselectable entities (or collections) cannot be picked or selected
 with Select All. The Add menu's operators (`object.add_*`, including
 `object.add_camera`, primary only when the scene has no primary camera, and
-`object.add_empty_with`) poll Edit mode, as the menu does, so a key, the menu,
+`object.add_empty_with`, `object.add_collider`, and `prefab.add_character`) poll Edit mode, as the menu does, so a key, the menu,
 and F3 follow the same Play rules; `object.create_entity`, duplicate, and
 delete still edit the running scene live.
 
@@ -102,6 +102,9 @@ to selected, move), tested in `tests/editor/ComponentOperatorTests.cpp`.
 (`ui.eyedropper_pick`, one undo step), and cancels (`ui.eyedropper_cancel`) the
 session's `interaction/EntityEyedropper`.
 `PrefabOperators` holds `prefab.create_from_selection`, `prefab.instantiate`,
+`prefab.add_character` (Add > Physics > Character: instantiates the project's
+`prefabs/Character.prefab`, writing it from a new first-person player the first
+time, as one undo step with the file),
 `prefab.apply`, `prefab.revert`, `prefab.unpack`, `prefab.revert_field`, and
 `prefab.select_asset` (reveals the prefab in the primary Asset Browser through
 `ProjectAssets::requestReveal`), built on `document/PrefabAuthoring` (which

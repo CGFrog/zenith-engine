@@ -196,6 +196,32 @@ void EditorSession::resetActiveWorkspace() {
     m_workspacesDirty = true;
 }
 
+void EditorSession::enterPrefabWorkspace() {
+    if (!m_settings.appearance().prefabWorkspace || m_workspaceBeforePrefab || m_workspaces.empty()) {
+        return;
+    }
+    const std::string previous = m_workspaces.active().name();
+    if (m_workspaces.find(prefabWorkspaceName) == nullptr) {
+        Workspace created = defaultWorkspace(prefabWorkspaceName);
+        created.sync(m_areaTypes);
+        m_workspaces.add(std::move(created));
+    }
+    if (m_workspaces.requestActivation(prefabWorkspaceName)) {
+        m_workspaceBeforePrefab = previous;
+    }
+    m_workspacesDirty = true;
+}
+
+void EditorSession::leavePrefabWorkspace() {
+    if (!m_workspaceBeforePrefab) {
+        return;
+    }
+    // The workspace may have been removed from workspaces.json by hand; the
+    // Prefab one then simply stays.
+    m_workspaces.requestActivation(*m_workspaceBeforePrefab);
+    m_workspaceBeforePrefab.reset();
+}
+
 void EditorSession::syncAreaTypes() {
     std::vector<std::string> moduleTypes;
     for (const GameModuleHost::Panel& panel : m_moduleHost.panels()) {

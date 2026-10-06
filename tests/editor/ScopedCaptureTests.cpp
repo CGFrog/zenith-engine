@@ -552,6 +552,13 @@ void testPasteParity(const std::string& scene) {
             return found == copies.end() ? std::nullopt : std::optional(found->second);
         });
         expected["id"] = copyIds[index].value;
+        // A copied root is renamed (Crate_1); its descendants keep their names.
+        const Json pastedForm = Json::parse(pastedForms[index].value_or("{}"));
+        const std::string originalName = expected.at("name").get<std::string>();
+        const std::string copyName = pastedForm.value("name", std::string());
+        expect(copyName == originalName || copyName.starts_with(originalName + "_"),
+               "a copy keeps its original's name or numbers it");
+        expected["name"] = copyName;
         if (!expected.at("parent").is_null()) {
             const auto parent = copies.find(expected.at("parent").get<uint64_t>());
             expected["parent"] = parent == copies.end() ? Json(nullptr) : Json(parent->second);
@@ -561,8 +568,9 @@ void testPasteParity(const std::string& scene) {
                    " should match its original with fragment ids remapped");
     }
     const Entity lampCopy = live.findEntity(pasted.back());
-    expect(live.registry().get<FollowComponent>(lampCopy).target == fixture.id("Group"),
-           "a reference to an entity outside the fragment should keep naming it");
+    // The Group is in the fragment, so the lamp's reference follows to its copy.
+    expect(live.registry().get<FollowComponent>(lampCopy).target == pasted.front(),
+           "a reference to an entity inside the fragment should follow to its copy");
     expect(prefabInstanceRoot(live, live.findEntity(pasted[1])) == live.findEntity(pasted[1]),
            "a pasted prefab instance should stay an instance");
 
@@ -625,7 +633,7 @@ void testPasteKeepsSiblingOrder(const std::string& scene) {
     for (const std::string& name : childNames(group)) {
         joined += name + " ";
     }
-    expect(childNames(group) == std::vector<std::string>{"B", "A", "B"},
+    expect(childNames(group) == std::vector<std::string>{"B", "A", "B_1"},
            "the copy should join after its siblings, not " + joined);
     fixture.editing().undo();
     expect(childNames(group) == order, "undo should restore the group's order");

@@ -393,6 +393,45 @@ void testDuplicateKeepsParents() {
             near(position(fixture.world(pasted.front())), {-1.0f, 5.0f, 0.0f}),
         "a child pasted at the top level keeps its world transform");
 }
+
+// Duplicates are named Crate_1, Crate_2, ... counting up from the largest
+// number any object of that base name has in the scene.
+void testDuplicateNames() {
+    Fixture fixture("duplicate_names");
+    Scene& scene = fixture.scene;
+    const Entity crate = scene.createEntity("Crate");
+    scene.createEntity("Crate_4");
+    const auto nameOf = [&](SceneEntityId id) {
+        return scene.registry().get<NameComponent>(scene.findEntity(id)).name;
+    };
+
+    fixture.selection.assign({scene.id(crate)});
+    expect(static_cast<bool>(fixture.invoke("object.duplicate")) && fixture.selection.size() == 1,
+           "duplicating Crate selects the copy");
+    expect(nameOf(fixture.selection.ids().front()) == "Crate_5",
+           "a duplicate takes the largest number in the scene plus one");
+    expect(static_cast<bool>(fixture.invoke("object.duplicate")) &&
+               nameOf(fixture.selection.ids().front()) == "Crate_6",
+           "duplicating a numbered copy continues the count");
+    expect(nameOf(scene.id(crate)) == "Crate", "the original keeps its name");
+
+    // A pasted copy of an object whose name nothing else has keeps it.
+    std::string fragment;
+    const std::vector<SceneEntityId> roots{scene.id(crate)};
+    expect(SceneFragment::copy(scene, fixture.assets, fixture.document.options(), roots, fragment).success,
+           "Crate should copy");
+    scene.destroyEntity(crate);
+    std::vector<SceneEntityId> pasted;
+    expect(
+        SceneFragment::paste(fragment, scene, fixture.assets, fixture.document.options(), entt::null, pasted).success &&
+            pasted.size() == 1 && nameOf(pasted.front()) == "Crate",
+        "a paste whose name is free keeps it");
+    pasted.clear();
+    expect(
+        SceneFragment::paste(fragment, scene, fixture.assets, fixture.document.options(), entt::null, pasted).success &&
+            pasted.size() == 1 && nameOf(pasted.front()) == "Crate_7",
+        "pasting a name already in the scene numbers the copy");
+}
 } // namespace
 
 int main() {
@@ -404,6 +443,7 @@ int main() {
     testScatter();
     testScatterAligned();
     testDuplicateKeepsParents();
+    testDuplicateNames();
     if (failures != 0) {
         std::cerr << failures << " placement test(s) failed\n";
         return 1;

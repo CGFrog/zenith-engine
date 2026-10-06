@@ -42,9 +42,10 @@ enum class ColliderShapeKind : uint8_t {
     Sphere,
     Capsule,
     TriangleMesh,
+    ConvexHull,
 };
 
-// A mesh a triangle-mesh collider may use, named for the inspector.
+// A mesh a triangle-mesh or convex-hull collider may use, named for the inspector.
 struct ColliderMeshChoice {
     MeshHandle mesh;
     std::string name;
@@ -56,10 +57,10 @@ struct ColliderMeshChoice {
 std::vector<ColliderMeshChoice> colliderMeshChoices(const Scene& scene, const AssetManager& assets, Entity entity);
 // shape as another kind of shape, keeping its size: a box's largest half
 // extent becomes a sphere's radius, a capsule keeps the box's height
-// including its caps, and so on. A triangle mesh takes mesh; a shape made
+// including its caps, and so on. A mesh shape takes mesh; a shape made
 // from one takes the defaults' size.
 ColliderShape convertColliderShape(const ColliderShape& shape, ColliderShapeKind kind, MeshHandle mesh);
-// The shape type (Triangle Mesh only when meshes is not empty), its size or
+// The shape type (the mesh shapes only when meshes is not empty), its size or
 // mesh (one of meshes), and the offset position and rotation (Euler degrees).
 bool drawCollider(ColliderComponent& component, std::span<const ColliderMeshChoice> meshes);
 bool drawAnimation(AnimationComponent& component, const ModelAsset* model);

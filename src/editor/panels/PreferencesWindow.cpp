@@ -297,6 +297,9 @@ bool PreferencesWindow::drawInterface(const PreferencesContext& context) {
     ImGui::TextDisabled("Whole multipliers keep the pixel grid crisp.");
     edited = ImGui::Checkbox("Pie menus", &appearance.pieMenus) || edited;
     ImGui::SetItemTooltip("Z, ` and . open shading, view, and pivot pies around the mouse instead of menus.");
+    edited = ImGui::Checkbox("Open prefabs in the Prefab workspace", &appearance.prefabWorkspace) || edited;
+    ImGui::SetItemTooltip("Editing a prefab switches to a Prefab workspace tab and Back returns to the workspace "
+                          "you came from. Off edits the prefab in the current workspace.");
     edited = drawSectionFooter(PreferenceSection::Interface) || edited;
     ImGui::PopID();
     return edited;

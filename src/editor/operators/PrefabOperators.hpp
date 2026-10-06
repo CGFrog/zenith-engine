@@ -16,6 +16,9 @@
 //   prefab.create_from_selection {path}   new prefab from the active entity
 //   prefab.instantiate {asset, parent, location, rotation, normal, align_to_normal}
 //                                         new instance, selected
+//   prefab.add_character {asset, location}
+//                                         new Character prefab instance,
+//                                         created on first use; selected
 //   prefab.apply                          write the instance into its prefab
 //   prefab.revert                         reset the instance to its prefab
 //   prefab.unpack                         keep the entities, drop the link
@@ -65,6 +68,20 @@ struct InstantiatePrefabProperties {
     glm::vec3 normal{0.0f, 1.0f, 0.0f};
     // Turns the instance's +Y onto normal.
     bool alignToNormal{false};
+};
+
+// Where the project keeps the Character prefab Add > Character instantiates:
+// the first use writes it (a first-person player: a character controller with
+// a camera child), later uses instantiate it, and the project may edit it or
+// replace the file.
+inline const char* const defaultCharacterPrefab = "prefabs/Character.prefab";
+
+struct AddCharacterProperties {
+    // Project-relative path of the Character prefab.
+    std::string asset{defaultCharacterPrefab};
+    // World position the character's feet stand on, in meters; an
+    // invocation starts it at the 3D cursor.
+    glm::vec3 location{0.0f};
 };
 
 struct EditPrefabProperties {

@@ -391,7 +391,7 @@ Add it to `zenith_engine` in `src/engine/CMakeLists.txt` and test observable pub
   collection reclaims unused generations according to configured budgets.
 - Morph targets use a bounded active-target path. Optional compressed-asset
   decoders remain capability-gated and diagnose unavailable codecs.
-- Triangle-mesh colliders are static-only.
+- Triangle-mesh colliders are static-only; convex-hull colliders work on any body.
 - Physics joints, vehicles, soft bodies, serialization, and debug drawing are
   not wrapped.
 - Platform packaging beyond the host OS is verified by its corresponding CI

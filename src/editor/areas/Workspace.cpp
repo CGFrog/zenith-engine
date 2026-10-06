@@ -280,6 +280,14 @@ Workspace* WorkspaceSet::find(std::string_view name) {
     return found == m_workspaces.end() ? nullptr : &*found;
 }
 
+Workspace* WorkspaceSet::add(Workspace workspace) {
+    if (find(workspace.name()) != nullptr) {
+        return nullptr;
+    }
+    m_workspaces.push_back(std::move(workspace));
+    return &m_workspaces.back();
+}
+
 AreaResult WorkspaceSet::requestActivation(std::string_view name) {
     for (size_t index = 0; index < m_workspaces.size(); ++index) {
         if (m_workspaces[index].name() == name) {

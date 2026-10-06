@@ -23,6 +23,7 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
@@ -694,6 +695,33 @@ void PhysicsWorld::clear() {
 }
 
 namespace {
+// The convex hull of the mesh's vertices at scale. Not cached: a hull is
+// small next to a bounding-volume tree, and each body's scale differs.
+JPH::RefConst<JPH::Shape> createConvexHullShape(const ConvexHullCollider& collider, const glm::vec3& scale,
+                                                const AssetManager& assets, std::string& error) {
+    const MeshAsset* mesh = assets.mesh(collider.mesh);
+    if (mesh == nullptr) {
+        error = "Convex hull collider references an invalid mesh";
+        return nullptr;
+    }
+    JPH::Array<JPH::Vec3> points;
+    points.reserve(mesh->vertices.size());
+    for (const Vertex& vertex : mesh->vertices) {
+        points.push_back(toJolt(vertex.position * scale));
+    }
+    if (points.size() < 4) {
+        error = "Convex hull collider needs a mesh with at least four vertices";
+        return nullptr;
+    }
+    JPH::ConvexHullShapeSettings settings(points);
+    const JPH::ShapeSettings::ShapeResult result = settings.Create();
+    if (result.HasError()) {
+        error = std::string("Convex hull collider could not be built: ") + result.GetError().c_str();
+        return nullptr;
+    }
+    return result.Get();
+}
+
 JPH::RefConst<JPH::Shape> createShape(const ColliderComponent& collider, const glm::vec3& scale,
                                       const AssetManager& assets, MeshShapeCache& meshShapes, std::string& error) {
     return std::visit(
@@ -721,6 +749,8 @@ JPH::RefConst<JPH::Shape> createShape(const ColliderComponent& collider, const g
                     return nullptr;
                 }
                 return new JPH::CapsuleShape(halfHeight, radius);
+            } else if constexpr (std::is_same_v<Shape, ConvexHullCollider>) {
+                return createConvexHullShape(shape, scale, assets, error);
             } else {
                 const MeshAsset* mesh = assets.mesh(shape.mesh);
                 if (!mesh) {

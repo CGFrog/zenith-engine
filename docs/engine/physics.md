@@ -5,13 +5,22 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 ## `src/engine/physics/PhysicsComponents.hpp`
 
 Defines static, kinematic, and dynamic motion; `PhysicsLayer` (an index into
-the project's layer table); box, sphere, capsule, and triangle-mesh shapes; and
-rigid-body tuning. The rigid body's `layer` field is schema version 2: any
+the project's layer table); box, sphere, capsule, triangle-mesh, and
+convex-hull shapes; and rigid-body tuning. The rigid body's `layer` field is schema version 2: any
 index below `maxPhysicsLayers` (32), where version 1 allowed only the
 built-in Static (0), Dynamic (1), and Player (2), which keep their indices. Primitive dimensions are multiplied by transform scale when the
 Jolt shape is created. Triangle meshes reference a `MeshAsset`, imported or
 created at runtime (`AssetManager::createMesh`), and are limited to static
-bodies.
+bodies. A convex hull (`ConvexHullCollider`, saved as `"type": "convex_hull"`
+with the same `asset` reference) wraps a mesh's vertices in a Jolt
+`ConvexHullShape`, so it works on any motion type: use it for dynamic props
+that should match their mesh, and a triangle mesh for exact static level
+geometry. Hulls are built per body (not cached like triangle-mesh trees), fill
+in concave parts, and need a mesh with at least four vertices; a hull that
+cannot be built is skipped with a warning like any unbuildable body.
+`colliderMesh(shape)` returns the mesh of either mesh shape. Navigation baking
+walks a hull as its mesh's triangles. Adding the `ConvexHullCollider`
+alternative to `ColliderShape` made the module API 12.
 
 A collider can sit away from its entity's origin: `offsetPosition` (in the
 entity's local axes) and `offsetRotation`. `colliderLocalTransform(collider,

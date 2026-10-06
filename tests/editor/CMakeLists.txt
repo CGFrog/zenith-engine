@@ -6,6 +6,11 @@ zenith_add_test(zenith_editor_settings
         ${PROJECT_SOURCE_DIR}/src/editor/settings/EditorSettings.cpp
         ${PROJECT_SOURCE_DIR}/src/editor/theme/ThemeParameters.cpp
     INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src")
+zenith_add_test(zenith_copy_naming
+    SOURCES
+        CopyNamingTests.cpp
+        ${PROJECT_SOURCE_DIR}/src/editor/document/CopyNaming.cpp
+    INCLUDE_DIRECTORIES "${PROJECT_SOURCE_DIR}/src")
 zenith_add_test(zenith_editor_palette
     SOURCES
         EditorPaletteTests.cpp

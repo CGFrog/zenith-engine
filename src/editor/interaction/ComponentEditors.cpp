@@ -66,10 +66,14 @@ bool drawTransform(TransformComponent& component) {
 }
 
 namespace {
-constexpr std::array<const char*, 4> colliderShapeLabels{"Box", "Sphere", "Capsule", "Triangle Mesh"};
+constexpr std::array<const char*, 5> colliderShapeLabels{"Box", "Sphere", "Capsule", "Triangle Mesh", "Convex Hull"};
 constexpr float minimumColliderSize = 0.001f;
 
-bool drawColliderMesh(TriangleMeshCollider& shape, std::span<const ColliderMeshChoice> meshes) {
+bool isMeshKind(ColliderShapeKind kind) {
+    return kind == ColliderShapeKind::TriangleMesh || kind == ColliderShapeKind::ConvexHull;
+}
+
+template <typename MeshShape> bool drawColliderMesh(MeshShape& shape, std::span<const ColliderMeshChoice> meshes) {
     const auto current = std::ranges::find(meshes, shape.mesh, &ColliderMeshChoice::mesh);
     const char* preview = current != meshes.end() ? current->name.c_str() : "(another mesh)";
     bool changed = false;
@@ -85,7 +89,8 @@ bool drawColliderMesh(TriangleMeshCollider& shape, std::span<const ColliderMeshC
         }
         ImGui::EndCombo();
     }
-    ImGui::SetItemTooltip("One of the entity's model meshes; triangle meshes collide only on static bodies");
+    ImGui::SetItemTooltip("One of the entity's model meshes; triangle meshes collide only on static bodies, "
+                          "convex hulls on any body");
     return changed;
 }
 
@@ -158,6 +163,8 @@ ColliderShape convertColliderShape(const ColliderShape& shape, ColliderShapeKind
     }
     case ColliderShapeKind::TriangleMesh:
         return TriangleMeshCollider{.mesh = mesh};
+    case ColliderShapeKind::ConvexHull:
+        return ConvexHullCollider{.mesh = mesh};
     }
     return shape;
 }
@@ -168,8 +175,8 @@ bool drawCollider(ColliderComponent& component, std::span<const ColliderMeshChoi
     if (ImGui::BeginCombo("Shape", colliderShapeLabels[current])) {
         for (size_t index = 0; index < colliderShapeLabels.size(); ++index) {
             const auto kind = static_cast<ColliderShapeKind>(index);
-            // A triangle mesh needs one of the entity's meshes.
-            const bool available = kind != ColliderShapeKind::TriangleMesh || !meshes.empty();
+            // A mesh shape needs one of the entity's meshes.
+            const bool available = !isMeshKind(kind) || !meshes.empty();
             if (ImGui::Selectable(colliderShapeLabels[index], index == current,
                                   available ? ImGuiSelectableFlags_None : ImGuiSelectableFlags_Disabled) &&
                 available && index != current) {
@@ -192,6 +199,7 @@ bool drawCollider(ColliderComponent& component, std::span<const ColliderMeshChoi
                 changed |= ImGui::DragFloat("Half height", &shape.halfHeight, 0.01f, minimumColliderSize, 10000.0f);
                 changed |= ImGui::DragFloat("Radius", &shape.radius, 0.01f, minimumColliderSize, 10000.0f);
             } else {
+                // Triangle mesh and convex hull: both name a mesh.
                 changed |= drawColliderMesh(shape, meshes);
             }
         },

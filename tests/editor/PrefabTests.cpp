@@ -8,6 +8,7 @@
 #include "editor/operators/PrefabOperators.hpp"
 #include "engine/assets/AssetDatabase.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/gameplay/FirstPerson.hpp"
 #include "engine/scene/Collections.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/Prefab.hpp"
@@ -15,11 +16,13 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -507,6 +510,48 @@ void testOperators() {
            "instance operators should not run on unlinked entities");
     fixture.editing().undo();
     expect(scene.registry().all_of<PrefabInstanceComponent>(fixture.find(secondId)), "undo unpack should relink");
+}
+
+// Add > Character is a prefab: the first use writes it, linking the new
+// character to it; later uses instantiate it. Undo takes back the scene change
+// and, for the first, the file.
+void testAddCharacter() {
+    OperatorFixture fixture(freshDirectory("character"));
+    Scene& scene = fixture.scene;
+    const std::filesystem::path prefabPath = fixture.root / "prefabs" / "Character.prefab";
+    expect(fixture.invoke("prefab.add_character", R"({"location":[2,0,3]})").status == OperatorStatus::Finished,
+           "prefab.add_character should add a character");
+    expect(std::filesystem::is_regular_file(prefabPath), "the first character should write the Character prefab");
+    const std::optional<SceneEntityId> firstId = fixture.selection.active();
+    const Entity first = firstId ? fixture.find(*firstId) : entt::null;
+    expect(first != entt::null && scene.registry().all_of<CharacterControllerComponent>(first) &&
+               scene.registry().all_of<PrefabInstanceComponent>(first) &&
+               scene.registry().get<PrefabInstanceComponent>(first).prefab == "prefabs/Character.prefab",
+           "the character is an instance of the Character prefab");
+    scene.updateWorldTransforms();
+    const glm::vec4 firstPosition =
+        first != entt::null ? scene.registry().get<TransformComponent>(first).world[3] : glm::vec4(0.0f);
+    expect(std::abs(firstPosition.x - 2.0f) < 1e-4f && std::abs(firstPosition.z - 3.0f) < 1e-4f &&
+               firstPosition.y > 0.5f,
+           "the character stands on the location");
+    const Entity eye = first != entt::null ? childNamed(scene, first, "Player Camera") : entt::null;
+    expect(eye != entt::null && scene.registry().all_of<FirstPersonCameraComponent>(eye),
+           "the prefab holds the first-person camera");
+    const std::string written = readText(prefabPath);
+
+    expect(fixture.invoke("prefab.add_character", R"({"location":[-2,0,0]})").status == OperatorStatus::Finished &&
+               readText(prefabPath) == written,
+           "a second character instantiates the existing prefab without rewriting it");
+    const std::optional<SceneEntityId> secondId = fixture.selection.active();
+    expect(secondId && *secondId != *firstId &&
+               scene.registry().all_of<PrefabInstanceComponent>(fixture.find(*secondId)),
+           "the second character is another instance");
+    fixture.editing().undo();
+    expect(fixture.find(*secondId) == entt::null && std::filesystem::exists(prefabPath),
+           "undoing the second character keeps the prefab");
+    fixture.editing().undo();
+    expect(fixture.find(*firstId) == entt::null && !std::filesystem::exists(prefabPath),
+           "undoing the first character removes it and the prefab file");
 }
 
 void testNestedPrefabs() {
@@ -1394,6 +1439,7 @@ int main() {
     testLinkPersistence();
     testOverrideQuery();
     testOperators();
+    testAddCharacter();
     testNestedPrefabs();
     testFailedRefreshRestoresScene();
     testApplyPropagation();
@@ -1405,9 +1451,9 @@ int main() {
     testMovesUnderAddedWithoutCycles();
     testNestedReferences();
     testOpenAndSaveRoundTrip();
-    for (const char* name :
-         {"registry", "v1", "persistence", "overrides", "operators", "nested", "rollback", "propagation", "collections",
-          "references", "structure", "nested-removal", "moves", "move-cycles", "nested-references", "round-trip"}) {
+    for (const char* name : {"registry", "v1", "persistence", "overrides", "operators", "character", "nested",
+                             "rollback", "propagation", "collections", "references", "structure", "nested-removal",
+                             "moves", "move-cycles", "nested-references", "round-trip"}) {
         std::error_code error;
         std::filesystem::remove_all(
             std::filesystem::temp_directory_path() / ("zenith-prefab-tests-" + std::string(name)), error);

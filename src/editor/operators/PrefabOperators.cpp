@@ -5,6 +5,7 @@
 #include "editor/document/PrefabAuthoring.hpp"
 #include "editor/operators/EditorOperatorFamilies.hpp"
 #include "editor/operators/PlacementOperators.hpp"
+#include "engine/gameplay/FirstPerson.hpp"
 
 #include <charconv>
 #include <memory>
@@ -218,6 +219,76 @@ Operator instantiateOperator(PrefabWriteHooks hooks) {
                 }};
 }
 
+// The character's origin is its capsule's centre, so standing it on a point
+// lifts it by half its height.
+glm::vec3 characterOrigin(const glm::vec3& feet, const CharacterControllerComponent& controller) {
+    return feet + glm::vec3(0.0f, controller.halfHeight + controller.radius, 0.0f);
+}
+
+// Writes the Character prefab from a new first-person player, which becomes
+// its instance, and has the runner record the file with the scene change.
+OperatorResult createCharacterPrefab(OperatorContext& context, PrefabAuthoring& prefabs,
+                                     const std::filesystem::path& reference, const PrefabWriteHooks& hooks,
+                                     Entity& root) {
+    Scene& scene = context.editing.scene();
+    const CharacterControllerComponent controller;
+    return recordFileWrite(context, prefabs, reference, hooks, [&]() -> PrefabResult {
+        root = spawnFirstPersonPlayer(scene, glm::vec3(0.0f), controller);
+        PrefabResult created = prefabs.create(scene, root, reference);
+        if (!created) {
+            scene.destroyEntity(root);
+            root = entt::null;
+        }
+        return created;
+    });
+}
+
+Operator addCharacterOperator(PrefabWriteHooks hooks) {
+    return {.id = "prefab.add_character",
+            .label = "Add Character",
+            .description = "Add an instance of the project's Character prefab (a first-person player), writing the "
+                           "prefab the first time",
+            .flags = OperatorFlags::Undo | OperatorFlags::Register | OperatorFlags::Internal,
+            .properties = OperatorProperties::make(AddCharacterProperties{},
+                                                   std::move(Fields<AddCharacterProperties>()
+                                                                 .add("asset", &AddCharacterProperties::asset)
+                                                                 .add("location", &AddCharacterProperties::location)
+                                                                 .drag(0.05f))),
+            .poll = [](const OperatorContext& context) { return context.editMode(); },
+            .execute = typed<AddCharacterProperties>(
+                [hooks = std::move(hooks)](OperatorContext& context, AddCharacterProperties& values) {
+                    PrefabAuthoring prefabs = authoring(context);
+                    Scene& scene = context.editing.scene();
+                    const std::filesystem::path reference = projectRelative(context, values.asset);
+                    std::filesystem::path file;
+                    if (const PrefabResult resolved = prefabs.resolve(reference, file); !resolved) {
+                        return OperatorResult::failed(resolved.error);
+                    }
+                    const glm::vec3 origin = characterOrigin(values.location, CharacterControllerComponent{});
+                    Entity root = entt::null;
+                    OperatorResult result = OperatorResult::finished();
+                    if (std::filesystem::exists(file)) {
+                        result = finish(context, prefabs.instantiate(scene, reference, entt::null, root));
+                    } else {
+                        result = createCharacterPrefab(context, prefabs, reference, hooks, root);
+                    }
+                    if (result && root != entt::null) {
+                        placeInstanceRoot(scene, root, origin, glm::mat3(1.0f));
+                        context.selection.selectOnly(scene.id(root));
+                        notePrefabFilesRead(scene, context.editing.document().options().assetRoot, hooks, root);
+                    }
+                    return result;
+                }),
+            .invokeDefaults =
+                [](const OperatorContext& context, OperatorProperties& properties) {
+                    if (AddCharacterProperties* values = properties.get<AddCharacterProperties>()) {
+                        values->location = context.editing.document().editorData().cursorLocation;
+                    }
+                },
+            .scope = [](const OperatorContext&,
+                        const OperatorProperties&) { return OperatorScope::of(std::vector<SceneEntityId>{}); }};
+}
+
 Operator applyOperator(PrefabWriteHooks hooks) {
     return {.id = "prefab.apply",
             .label = "Apply Prefab",
@@ -374,6 +445,7 @@ OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, P
     std::vector<Operator> operators;
     operators.push_back(createOperator(services.writeHooks));
     operators.push_back(instantiateOperator(services.writeHooks));
+    operators.push_back(addCharacterOperator(services.writeHooks));
     operators.push_back(applyOperator(services.writeHooks));
     operators.push_back(instanceOperator("prefab.revert", "Revert Prefab",
                                          "Reset the instance to its prefab, dropping overrides and added objects",

@@ -3,6 +3,7 @@
 #include "editor/interaction/EditorCamera.hpp"
 #include "editor/theme/EditorPalette.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/physics/CharacterController.hpp"
 #include "engine/scene/SceneVisibility.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -145,6 +146,8 @@ class GizmoRecorder {
     }
 
     void collider(const ColliderComponent& collider, const glm::mat4& entityWorld, const DebugStyle& lineStyle);
+    void characterCapsule(const CharacterControllerComponent& controller, const glm::mat4& entityWorld,
+                          const DebugStyle& lineStyle);
     void triangleMesh(const MeshAsset& mesh, const glm::mat4& shapeWorld, const DebugStyle& lineStyle);
     // Grows lower/upper by the world bounds of member's mesh drawn at
     // memberWorld, if it has a loaded mesh with vertices.
@@ -262,6 +265,23 @@ void GizmoRecorder::colliders(OverlayScope scope) {
             this->collider(collider, transform.world, style(m_colors.collider, entity));
         }
     }
+    // A character controller collides with its own capsule, not a collider
+    // component, so the Colliders overlay draws that capsule too.
+    for (const auto [entity, controller, transform] :
+         m_registry.view<const CharacterControllerComponent, const TransformComponent>().each()) {
+        if (shown(scope, entity)) {
+            characterCapsule(controller, transform.world, style(m_colors.collider, entity));
+        }
+    }
+}
+
+void GizmoRecorder::characterCapsule(const CharacterControllerComponent& controller, const glm::mat4& entityWorld,
+                                     const DebugStyle& lineStyle) {
+    // Centred on the entity's origin and standing along world Y, whatever
+    // the entity's rotation and scale (CharacterControllerComponent).
+    const glm::vec3 center(entityWorld[3]);
+    const glm::vec3 spine(0.0f, controller.halfHeight, 0.0f);
+    m_output.capsule(center - spine, center + spine, controller.radius, lineStyle, sceneGizmoSegments::range);
 }
 
 void GizmoRecorder::collider(const ColliderComponent& collider, const glm::mat4& entityWorld,
@@ -286,6 +306,7 @@ void GizmoRecorder::collider(const ColliderComponent& collider, const glm::mat4&
                 m_output.capsule(body.translation - spine, body.translation + spine,
                                  shape.radius * std::max(scale.x, scale.z), lineStyle, sceneGizmoSegments::range);
             } else {
+                // A convex hull draws the mesh it wraps.
                 if (const MeshAsset* mesh = m_view.assets.mesh(shape.mesh)) {
                     const glm::mat4 shapeWorld = glm::translate(glm::mat4(1.0f), body.translation) *
                                                  glm::mat4_cast(body.rotation) * glm::scale(glm::mat4(1.0f), scale);

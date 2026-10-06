@@ -279,6 +279,39 @@ void testAreaState() {
            "each instance should find its own default placement, falling back to the first");
 }
 
+// The Prefab workspace is no default tab: it is added the first time a
+// prefab is edited (WorkspaceSet::add), with its own default areas.
+void testPrefabWorkspace() {
+    for (const DefaultWorkspace& workspace : defaultWorkspaces()) {
+        expect(workspace.name != prefabWorkspaceName, "the Prefab workspace is not one of the default tabs");
+    }
+    const DefaultWorkspace& defaults = defaultWorkspaceFor(prefabWorkspaceName);
+    expect(defaults.name == prefabWorkspaceName && defaultAreaFor(defaults, "viewport", 1) != nullptr &&
+               defaultAreaFor(defaults, "hierarchy", 1) != nullptr &&
+               defaultAreaFor(defaults, "inspector", 1) != nullptr &&
+               defaultAreaFor(defaults, "asset_browser", 1) == nullptr,
+           "the Prefab workspace has the authoring areas, without the asset browser");
+
+    RegistryFixture fixture;
+    WorkspaceSet workspaces;
+    std::vector<std::string> warnings;
+    restoreWorkspaces(defaultWorkspaceFile(), workspaces, warnings);
+    workspaces.sync(fixture.registry);
+    Workspace created{std::string(prefabWorkspaceName)};
+    for (const AreaRecord& area : defaultWorkspaceRecord(defaults).areas) {
+        created.addStoredArea(area.type, area.instance, area.visible, area.state);
+    }
+    expect(workspaces.add(created) != nullptr && workspaces.workspaces().size() == 4 &&
+               workspaces.find(prefabWorkspaceName) != nullptr,
+           "a workspace can be added");
+    expect(workspaces.add(created) == nullptr && workspaces.workspaces().size() == 4,
+           "a workspace name cannot be added twice");
+    expect(workspaces.requestActivation(prefabWorkspaceName).success && workspaces.requestedActivation() == 3u,
+           "the added workspace can be activated");
+    workspaces.completeActivation();
+    expect(workspaces.activeName() == prefabWorkspaceName, "activating switches to it");
+}
+
 void writeText(const std::filesystem::path& path, std::string_view text) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     output << text;
@@ -528,6 +561,7 @@ int main() {
     testChangeType();
     testWorkspaceSet();
     testAreaState();
+    testPrefabWorkspace();
     const std::filesystem::path directory = testDirectory();
     testWorkspaceFileRoundTrip(directory);
     testMigration(directory);

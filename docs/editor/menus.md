@@ -26,13 +26,25 @@ off (the default) `wm.call_pie` opens the ordinary searchable popup instead.
 `DefaultMenus` registers the Add menu (Mesh > Cube; Light > Sun, Point
 Light, Spot Light; Light Probe > Reflection Probe, Irradiance Volume; Camera;
 Audio > Audio Emitter, Audio Listener; Effects > Decal, Particle Emitter;
-Environment; Fog; Empty; then Prefab > one entry per project prefab, filled
+Environment; Fog; Empty; Physics > Static and Dynamic Box, Sphere, and
+Capsule (`object.add_collider`: a collider with a rigid body, since a collider
+alone is not simulated), Rigid Body and Character Controller (empties with just
+that component), and Character (`prefab.add_character`, below); then Prefab > one entry per project prefab, filled
 from the asset catalog the session hands it as `DefaultMenuSources::
 projectPrefabs`; then Component > category > type running
 `object.add_empty_with`). Lights, probes, audio, and effects are entries
 with properties (`addEntry`'s JSON) running `object.add_empty_with
 {component}`; Camera runs `object.add_camera`, which leaves an existing
 primary camera primary. Every add operator polls Edit mode, as the menu does.
+Add > Physics > Character is a prefab: `prefab.add_character` writes
+`prefabs/Character.prefab` (a first-person player: a character controller with
+a first-person camera child, from `spawnFirstPersonPlayer`) on first use, linking
+the new object to it as its instance, and instantiates that file afterwards, so
+every character in a project shares one definition that can be edited in
+prefab mode. Adding a collider, rigid body, or character controller to an
+existing object is in the Inspector's Add Component > Physics (Collider,
+Rigid Body, Character Controller); a collider's Shape combo switches between
+Box, Sphere, Capsule, Triangle Mesh, and Convex Hull.
 `DefaultMenus` also registers the Add Component menu,
 whose sections come from the document's component registry in
 `AddComponentMenu`, so game module types appear, Select Grouped

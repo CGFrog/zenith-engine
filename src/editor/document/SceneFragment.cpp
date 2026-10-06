@@ -1,5 +1,6 @@
 #include "SceneFragment.hpp"
 
+#include "editor/document/CopyNaming.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/scene/ComponentTypes.hpp"
 #include "engine/scene/EntityReferenceRemap.hpp"
@@ -8,6 +9,7 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -188,6 +190,23 @@ SceneDocumentResult SceneFragment::copy(const Scene& scene, const AssetManager& 
     }
 }
 
+// Renames the pasted roots that share a name with something already in the
+// scene, as CopyNamer does (Crate, Crate_1, Crate_2), so a duplicate or a
+// paste is told apart from its original. Pasted descendants keep their names.
+static void nameCopiedRoots(const Scene& scene, std::span<const SceneEntityId> roots, std::vector<Json>& entities) {
+    CopyNamer namer;
+    for (const auto [entity, name] : scene.registry().view<const NameComponent>().each()) {
+        namer.add(name.name);
+    }
+    for (Json& entity : entities) {
+        const bool isRoot = std::ranges::any_of(
+            roots, [&entity](SceneEntityId root) { return root.value == entity.at("id").get<uint64_t>(); });
+        if (const auto name = entity.find("name"); isRoot && name != entity.end() && name->is_string()) {
+            *name = namer.copyOf(name->get<std::string>());
+        }
+    }
+}
+
 SceneDocumentResult SceneFragment::paste(std::string_view fragment, Scene& scene, AssetManager& assets,
                                          const SceneDocumentOptions& options, Entity parent,
                                          std::vector<SceneEntityId>& pastedRoots) {
@@ -245,6 +264,7 @@ SceneDocumentResult SceneFragment::paste(std::string_view fragment, Scene& scene
         for (const Json& root : source.at("roots")) {
             roots.push_back({remap.at(root.get<uint64_t>())});
         }
+        nameCopiedRoots(scene, roots, entities);
         // The copies are created in place: every other entity keeps its EnTT
         // handle and runtime state.
         std::vector<SceneEntityDocument> documents;
