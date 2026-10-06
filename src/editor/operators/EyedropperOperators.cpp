@@ -36,7 +36,7 @@ Operator armOperator(EntityEyedropper& eyedropper) {
                     if (const ResolvedEntityReference resolved = resolve(context, target); !resolved) {
                         return OperatorResult::failed("Cannot pick an entity reference: " + resolved.error);
                     }
-                    eyedropper.arm(std::move(target));
+                    eyedropper.arm(std::move(target), &context.editing.document());
                     return OperatorResult::finished();
                 }};
 }
@@ -49,15 +49,19 @@ Operator pickOperator(EntityEyedropper& eyedropper) {
             .properties = OperatorProperties::make(
                 EyedropperPickProperties{},
                 std::move(Fields<EyedropperPickProperties>().add("entity", &EyedropperPickProperties::entity))),
-            .poll = [&eyedropper](const OperatorContext& context) { return context.editMode() && eyedropper.armed(); },
+            // Only in the document whose field it picks for: ids are per scene.
+            .poll =
+                [&eyedropper](const OperatorContext& context) {
+                    return context.editMode() && eyedropper.armedFor(context.editing.document());
+                },
             .execute =
                 [&eyedropper](OperatorContext& context, OperatorProperties& properties) {
                     const auto* values = properties.get<EyedropperPickProperties>();
                     if (values == nullptr) {
                         return OperatorResult::failed("Operator properties have the wrong type");
                     }
-                    if (!eyedropper.armed()) {
-                        return OperatorResult::cancelled("The eyedropper is not picking a field");
+                    if (!eyedropper.armedFor(context.editing.document())) {
+                        return OperatorResult::cancelled("The eyedropper is not picking a field of this document");
                     }
                     // Disarmed whatever happens: a pick is one attempt.
                     const EntityReferenceTarget target = *eyedropper.target();

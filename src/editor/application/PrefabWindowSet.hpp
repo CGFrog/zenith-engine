@@ -5,6 +5,7 @@
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/PrefabEditDocument.hpp"
 #include "editor/interaction/Selection.hpp"
+#include "editor/interaction/WatchList.hpp"
 #include "editor/project/AssetRelocation.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/graphics/RenderIds.hpp"
@@ -43,6 +44,9 @@ struct PrefabWindowDocument {
     EditorDocument document;
     CommandHistory history;
     Selection selection;
+    // The fields its Properties panel watches; entity ids are per scene, so
+    // the window keeps its own list, which closes with it.
+    WatchList watches;
     // Keeps the assets the scene uses loaded: only the engine's own scene is
     // leased by the application, and nothing else holds a prefab window's.
     // The session renews it every frame.

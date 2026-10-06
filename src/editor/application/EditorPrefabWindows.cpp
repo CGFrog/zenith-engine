@@ -215,6 +215,9 @@ void EditorSession::applyPrefabWindowCloses(ApplicationContext& context) {
                       [id](const std::unique_ptr<PrefabWindowView>& view) { return view->id == id; });
         if (const PrefabWindowDocument* window = m_prefabWindows.find(id)) {
             context.rendering.destroyScene(window->renderScene);
+            if (m_eyedropper.owner() == &window->document) {
+                m_eyedropper.cancel();
+            }
         }
         m_prefabWindows.close(id);
         if (m_focusedPrefabWindow == id) {
@@ -234,6 +237,9 @@ void EditorSession::closeAllPrefabWindows(ApplicationContext& context) {
     m_prefabWindowViews.clear();
     for (const std::unique_ptr<PrefabWindowDocument>& window : m_prefabWindows.windows()) {
         context.rendering.destroyScene(window->renderScene);
+        if (m_eyedropper.owner() == &window->document) {
+            m_eyedropper.cancel();
+        }
     }
     m_prefabWindows.closeAll();
     m_focusedPrefabWindow = 0;
@@ -333,8 +339,7 @@ EditorContext EditorSession::prefabWindowEditorContext(ApplicationContext& windo
             .diagnostics = m_diagnostics,
             .mode = EditorMode::Edit,
             .actions = actions,
-            // The eyedropper resolves its target in the level.
-            .eyedropper = nullptr,
+            .eyedropper = &m_eyedropper,
             .menus = m_menus,
             .simulating = false,
             .componentEditors = &m_componentEditors,
@@ -342,8 +347,7 @@ EditorContext EditorSession::prefabWindowEditorContext(ApplicationContext& windo
             .navigationSettings = &m_navigationSettings,
             .gameServices = nullptr,
             .scripts = this,
-            // Watched fields name the level's entities.
-            .watches = nullptr,
+            .watches = &window.watches,
             .projectNames = &m_projectNames,
             .prefabEdit = OpenPrefabSummary{.displayName = window.target.displayName, .root = window.target.root},
             .projectAssets = &m_projectAssets,

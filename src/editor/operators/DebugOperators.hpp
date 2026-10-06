@@ -2,6 +2,7 @@
 
 #include "editor/operators/OperatorRegistry.hpp"
 
+#include <functional>
 #include <string>
 
 class WatchList;
@@ -22,7 +23,12 @@ struct WatchFieldProperties {
 struct DebugOperatorServices {
     // ide.debug_command, which debug.attach runs.
     const EditorToolSettings& tools;
+    // The level's watch list.
     WatchList& watches;
+    // Another document's (a prefab window's) watch list when the operator
+    // runs on it, else null; may be empty. Entity ids are per scene, so each
+    // document watches its own fields.
+    std::function<WatchList*(const OperatorContext&)> documentWatches;
 };
 
 // Debugging the game in the editor:
@@ -32,6 +38,8 @@ struct DebugOperatorServices {
 //   debug.watch_field    add a component field to the watch list
 //   debug.unwatch_field  remove one
 //   debug.clear_watches  remove them all
+//
+// The watch operators edit the watch list of the document they run on.
 //
 // None records undo (the watch list is editor state) and all run headless.
 OperatorRegistrationResult registerDebugOperators(OperatorRegistry& registry, DebugOperatorServices services);

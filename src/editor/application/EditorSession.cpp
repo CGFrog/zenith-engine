@@ -173,6 +173,10 @@ EditorOperatorServices EditorSession::operatorServices() {
             .packageRunner = m_packageRunner,
             .build = m_projectBuild,
             .watches = m_watches,
+            .documentWatches = [this](const OperatorContext& context) -> WatchList* {
+                PrefabWindowDocument* window = m_prefabWindows.owner(context.editing.document());
+                return window != nullptr ? &window->watches : nullptr;
+            },
             .navigationPreview = m_navigationPreview,
             .navigationSettings = m_navigationSettings,
             .tools = m_settings.tools(),
@@ -761,10 +765,19 @@ void EditorSession::updateEyedropper(ApplicationContext& context) {
     if (target == nullptr) {
         return;
     }
+    // The field lives in the document that armed it: the level, which stops
+    // picking when it leaves Edit mode, or a prefab window, which never plays.
+    const bool forLevel = m_eyedropper.owner() == &m_document;
+    PrefabWindowDocument* window = forLevel ? nullptr : m_prefabWindows.owner(*m_eyedropper.owner());
     const bool cancelKey = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsMouseClicked(ImGuiMouseButton_Right);
-    const ResolvedEntityReference resolved =
-        resolveEntityReference(context.scene, componentTypesFor(m_document.options()), *target);
-    if (cancelKey || m_playMode.mode() != EditorMode::Edit || !resolved) {
+    ResolvedEntityReference resolved;
+    if (forLevel || window != nullptr) {
+        Scene& scene = window != nullptr ? window->scene : context.scene;
+        const EditorDocument& document = window != nullptr ? window->document : m_document;
+        resolved = resolveEntityReference(scene, componentTypesFor(document.options()), *target);
+    }
+    const bool levelLeftEdit = forLevel && m_playMode.mode() != EditorMode::Edit;
+    if (cancelKey || levelLeftEdit || !resolved) {
         invokeOperator(context, "ui.eyedropper_cancel", {}, KeymapRegion::Global);
         if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
             // The cancelling click must not also start a viewport camera drag

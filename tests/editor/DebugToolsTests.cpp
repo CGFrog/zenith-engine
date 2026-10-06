@@ -163,11 +163,43 @@ void testPropertiesPanelWatches() {
 }
 } // namespace
 
+// Entity ids are per scene: the watch operators edit the watch list of the
+// document they run on, so a prefab window's watches never reach the level's.
+void testWatchesPerDocument() {
+    EditorTestFixture fixture;
+    EditorToolSettings tools;
+    WatchList levelWatches;
+    WatchList windowWatches;
+    Scene windowScene;
+    EditorDocument windowDocument(fixture.document.options().assetRoot);
+    CommandHistory windowHistory;
+    Selection windowSelection;
+    const auto documentWatches = [&](const OperatorContext& context) -> WatchList* {
+        return &context.editing.document() == &windowDocument ? &windowWatches : nullptr;
+    };
+    expect(static_cast<bool>(registerDebugOperators(
+               fixture.operators, {.tools = tools, .watches = levelWatches, .documentWatches = documentWatches})),
+           "per document: the debug operators register");
+    const std::string properties = R"({"entity":"1","component":"point_light","field":"/intensity"})";
+    OperatorContext window{.editing = {windowScene, fixture.assets, windowDocument, windowHistory, fixture.diagnostics},
+                           .selection = windowSelection,
+                           .mode = EditorMode::Edit};
+    expect(static_cast<bool>(fixture.runner.invokeWithJson("debug.watch_field", window, properties)) &&
+               windowWatches.fields().size() == 1 && levelWatches.fields().empty(),
+           "per document: a watch added in a window goes to the window's list");
+    expect(static_cast<bool>(fixture.invoke("debug.watch_field", properties)) && levelWatches.fields().size() == 1,
+           "per document: the same field watched in the level is the level's own watch");
+    expect(static_cast<bool>(fixture.runner.invokeWithJson("debug.clear_watches", window, "{}")) &&
+               windowWatches.fields().empty() && levelWatches.fields().size() == 1,
+           "per document: clearing in a window leaves the level's watches");
+}
+
 int main() {
     testDebuggerCommand();
     testDebugOperators();
     testWatchedValues();
     testPropertiesPanelWatches();
+    testWatchesPerDocument();
     if (failures != 0) {
         std::cerr << failures << " debug tools test(s) failed\n";
         return 1;

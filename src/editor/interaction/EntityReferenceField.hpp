@@ -9,6 +9,7 @@
 #include <string_view>
 
 class ComponentType;
+class EditorDocument;
 class EntityEyedropper;
 struct EditorContext;
 struct EntityReferenceTarget;
@@ -24,6 +25,9 @@ struct EntityReferenceFieldContext {
     // The eyedropper's state, which lights the Pick button of the field it is
     // picking for; null hides the Pick button.
     const EntityEyedropper* eyedropper{nullptr};
+    // The document the field belongs to: the button lights only while the
+    // eyedropper is armed for it.
+    const EditorDocument* document{nullptr};
     // The entity owning the component and the component's type key and
     // fields; the drawn field must be one of these descriptors.
     SceneEntityId owner;

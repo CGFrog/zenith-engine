@@ -36,7 +36,7 @@ void EditorContext::placePrefab(const std::filesystem::path& path, Entity parent
 }
 
 bool EditorContext::eyedropperArmed() const {
-    return eyedropper != nullptr && eyedropper->armed();
+    return eyedropper != nullptr && eyedropper->armedFor(editing.document());
 }
 
 bool EditorContext::eyedropperBlocksContextMenus() const {

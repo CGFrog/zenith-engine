@@ -11,6 +11,7 @@
 
 class ComponentType;
 class ComponentTypeRegistry;
+class EditorDocument;
 
 // Names one entity reference field by stable keys only, so it stays valid
 // across undo, redo, and game module reloads: the entity owning the
@@ -57,16 +58,29 @@ ResolvedEntityReference resolveEntityReference(Scene& scene, const ComponentType
 
 // The armed state of the entity eyedropper: a pick request for one entity
 // reference field. While armed, the next entity clicked in a viewport or the
-// outliner fills the field (through the ui.eyedropper_pick operator) instead
-// of changing the selection. The session owns one; operators arm, pick, and
-// cancel it.
+// outliner of the field's document fills the field (through the
+// ui.eyedropper_pick operator) instead of changing the selection. The session
+// owns one; operators arm, pick, and cancel it.
+//
+// Entity ids are per scene, so the eyedropper remembers the document whose
+// field it picks for (owner) and only that document's clicks pick.
 class EntityEyedropper {
   public:
-    void arm(EntityReferenceTarget target);
+    void arm(EntityReferenceTarget target, const EditorDocument* owner);
     void cancel();
 
     bool armed() const {
         return m_target.has_value();
+    }
+
+    // Whether it is armed for a field of document.
+    bool armedFor(const EditorDocument& document) const {
+        return armed() && m_owner == &document;
+    }
+
+    // The document it is armed for, or null. Compared only: it may be gone.
+    const EditorDocument* owner() const {
+        return m_target ? m_owner : nullptr;
     }
 
     // The armed target, or null.
@@ -86,5 +100,6 @@ class EntityEyedropper {
 
   private:
     std::optional<EntityReferenceTarget> m_target;
+    const EditorDocument* m_owner{nullptr};
     bool m_cancellingClickHeld{false};
 };

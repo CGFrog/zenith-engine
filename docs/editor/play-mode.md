@@ -94,8 +94,9 @@ document to the recovery file before the process ends
   built in Edit mode do not enter Play ([Scene editing](scene-editing.md)).
 - **Watched fields.** A reflected field's context menu (right click) has
   **Watch Field** (`debug.watch_field {entity, component, field, label}`,
-  `operators/DebugOperators`), which adds it to the session's
-  `interaction/WatchList`. The Properties panel shows a **Watched** section
+  `operators/DebugOperators`), which adds it to the
+  `interaction/WatchList` of the document it was watched in: the level's, or
+  a prefab window's own ([Prefab windows](prefab-windows.md)). The Properties panel shows a **Watched** section
   above every tab with each field's value in the active scene, read every
   frame through `watchedValueText` (runtime-state fields included): the
   running scene's in Play and Simulate. The list is editor state (no undo,

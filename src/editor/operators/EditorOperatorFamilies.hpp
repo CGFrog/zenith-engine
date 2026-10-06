@@ -55,8 +55,12 @@ struct EditorOperatorServices {
     PackageRunner& packageRunner;
     // The session's build, which the Build panel shows.
     ProjectBuild& build;
-    // The fields the Properties panel watches (debug.watch_field).
+    // The fields the Properties panel watches (debug.watch_field): the
+    // level's, and documentWatches' for another document.
     WatchList& watches;
+    // The watch list of the document an operator runs on when that is not
+    // the level (a prefab window's), else null; may be empty.
+    std::function<WatchList*(const OperatorContext&)> documentWatches;
     // The preview navigation mesh the viewports draw.
     NavigationWorld& navigationPreview;
     // The project's navigation mesh settings, which navigation.bake uses;

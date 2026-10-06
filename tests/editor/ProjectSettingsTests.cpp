@@ -238,6 +238,21 @@ void testNavigationBakeUsesSettings() {
     settings.agentRadius = 0.3f;
     expect(static_cast<bool>(editor.invoke("navigation.bake")) && preview.settings().agentRadius == 0.3f,
            "a settings change applies to the next bake");
+
+    // The preview is the level's: an operator context editing another
+    // document (a prefab window's) neither bakes nor clears it.
+    Scene prefabScene;
+    EditorDocument prefabDocument(fixture.document.options().assetRoot);
+    CommandHistory prefabHistory;
+    Selection prefabSelection;
+    OperatorContext prefab{.editing = {prefabScene, fixture.assets, prefabDocument, prefabHistory, fixture.diagnostics},
+                           .selection = prefabSelection,
+                           .mode = EditorMode::Edit,
+                           .app = &fixture.app};
+    expect(fixture.runner.invokeWithJson("navigation.bake", prefab, "{}").status != OperatorStatus::Finished &&
+               fixture.runner.invokeWithJson("navigation.clear", prefab, "{}").status != OperatorStatus::Finished &&
+               preview.baked(),
+           "a prefab window's document neither bakes nor clears the level's preview");
 }
 
 int main() {

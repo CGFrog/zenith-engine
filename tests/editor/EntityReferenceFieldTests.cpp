@@ -282,6 +282,39 @@ void testEyedropperOperators() {
 }
 } // namespace
 
+// Entity ids are per scene: an eyedropper armed in one document picks only
+// there, though another document has an entity with the same id.
+void testEyedropperStaysInItsDocument() {
+    Fixture fixture;
+    expect(
+        static_cast<bool>(fixture.invoke(
+            "ui.eyedropper_entity", {{"entity", fixture.owner.value}, {"component", "follow"}, {"field", "target"}})),
+        "the eyedropper should arm in the fixture's document");
+
+    Scene otherScene;
+    EditorDocument otherDocument(fixture.document.options().assetRoot);
+    otherDocument.setComponentTypes(followComponentTypes());
+    CommandHistory otherHistory;
+    Selection otherSelection;
+    while (otherScene.nextEntityId().value <= fixture.chased.value) {
+        otherScene.createEntity("Stranger");
+    }
+    OperatorContext other{.editing = {otherScene, fixture.assets, otherDocument, otherHistory, fixture.diagnostics},
+                          .selection = otherSelection,
+                          .mode = EditorMode::Edit};
+    const OperatorResult refused = fixture.runner.invokeWithJson(
+        "ui.eyedropper_pick", other, nlohmann::json{{"entity", fixture.chased.value}}.dump());
+    expect(refused.status != OperatorStatus::Finished && fixture.eyedropper.armed() && !fixture.follow().target &&
+               otherHistory.size() == 0,
+           "a pick from another document should be refused and leave the eyedropper armed");
+    expect(fixture.eyedropper.armedFor(fixture.document) && !fixture.eyedropper.armedFor(otherDocument),
+           "the eyedropper should be armed for its own document only");
+
+    expect(static_cast<bool>(fixture.invoke("ui.eyedropper_pick", {{"entity", fixture.chased.value}})) &&
+               fixture.follow().target == fixture.chased,
+           "a pick in the eyedropper's document should fill the field");
+}
+
 int main() {
     testReferenceText();
     testFieldPaths();
@@ -289,6 +322,7 @@ int main() {
     testDrop();
     testEyedropperFromWidgetAndOutliner();
     testEyedropperOperators();
+    testEyedropperStaysInItsDocument();
     if (failures != 0) {
         std::cerr << failures << " entity reference field test(s) failed\n";
         return 1;

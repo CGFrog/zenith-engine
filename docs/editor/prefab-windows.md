@@ -74,9 +74,14 @@ session's own members, a window's are its document's.
 - Each frame, after the UI is drawn, the session updates every window's world
   transforms and binds its scene as its render scene's content; the window's
   render scene is created with the window and destroyed with it.
-- Adjust Last Operation re-runs on the level only, and the eyedropper, watched
-  fields, and navigation baking are not offered in windows, since they resolve
-  their targets in the level.
+- Adjust Last Operation re-runs on the level only.
+- Entity ids are per scene, so tools that hold an id stay in their document:
+  the eyedropper picks only in the document whose field armed it, and each
+  window keeps its own watch list (`PrefabWindowDocument::watches`, which
+  closes with the window; the watch operators pick the list of the document
+  they run on). Navigation baking stays the level's: `navigation.bake` and
+  `navigation.clear` run only on the application's scene in Edit mode, and a
+  window's navigation sidebar says the mesh is baked from the level.
 
 ## Saving, refreshing, closing
 

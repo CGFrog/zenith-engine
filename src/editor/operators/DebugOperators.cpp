@@ -60,13 +60,24 @@ Operator attachOperator(const EditorToolSettings& tools) {
                 }};
 }
 
-Operator watchOperator(WatchList& watches, bool add) {
+// The watch list of the document context edits.
+WatchList& watchListFor(const DebugOperatorServices& services, const OperatorContext& context) {
+    if (services.documentWatches) {
+        if (WatchList* document = services.documentWatches(context)) {
+            return *document;
+        }
+    }
+    return services.watches;
+}
+
+Operator watchOperator(DebugOperatorServices services, bool add) {
     return {.id = add ? "debug.watch_field" : "debug.unwatch_field",
             .label = add ? "Watch Field" : "Stop Watching Field",
             .description = add ? "Show a component field's running value at the top of the Properties panel"
                                : "Remove a field from the Properties panel's watch list",
             .properties = OperatorProperties::make(WatchFieldProperties{}, watchFieldFields()),
-            .execute = [&watches, add](OperatorContext&, OperatorProperties& properties) {
+            .execute = [services, add](OperatorContext& context, OperatorProperties& properties) {
+                WatchList& watches = watchListFor(services, context);
                 const auto* values = properties.get<WatchFieldProperties>();
                 if (values == nullptr) {
                     return OperatorResult::failed("Operator properties have the wrong type");
@@ -83,22 +94,23 @@ Operator watchOperator(WatchList& watches, bool add) {
             }};
 }
 
-Operator clearOperator(WatchList& watches) {
+Operator clearOperator(DebugOperatorServices services) {
     return {.id = "debug.clear_watches",
             .label = "Clear Watched Fields",
             .description = "Remove every field from the Properties panel's watch list",
-            .poll = [&watches](const OperatorContext&) { return !watches.fields().empty(); },
+            .poll = [services](
+                        const OperatorContext& context) { return !watchListFor(services, context).fields().empty(); },
             .execute =
-                [&watches](OperatorContext&, OperatorProperties&) {
-                    watches.clear();
+                [services](OperatorContext& context, OperatorProperties&) {
+                    watchListFor(services, context).clear();
                     return OperatorResult::finished();
                 }};
 }
 } // namespace
 
 OperatorRegistrationResult registerDebugOperators(OperatorRegistry& registry, DebugOperatorServices services) {
-    for (Operator op : {attachOperator(services.tools), watchOperator(services.watches, true),
-                        watchOperator(services.watches, false), clearOperator(services.watches)}) {
+    for (Operator op : {attachOperator(services.tools), watchOperator(services, true), watchOperator(services, false),
+                        clearOperator(services)}) {
         if (OperatorRegistrationResult result = registry.add(std::move(op)); !result) {
             return result;
         }
@@ -108,5 +120,6 @@ OperatorRegistrationResult registerDebugOperators(OperatorRegistry& registry, De
 
 OperatorRegistrationResult registerDebugOperatorFamily(OperatorRegistry& registry,
                                                        const EditorOperatorServices& services) {
-    return registerDebugOperators(registry, {.tools = services.tools, .watches = services.watches});
+    return registerDebugOperators(
+        registry, {.tools = services.tools, .watches = services.watches, .documentWatches = services.documentWatches});
 }
