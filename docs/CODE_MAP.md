@@ -30,7 +30,7 @@ capability. `--check` fails when the generated index is stale.
 | The frame loop (fixed step, interpolation, render) | `src/engine/Engine.cpp` | `Engine::run` | `zenith_application_lifecycle` | [Architecture › Frame sequence](ARCHITECTURE.md#frame-sequence) |
 | Application / scene lifecycle hooks | `src/engine/application/Application.hpp` | `Application`, `ApplicationScene::{load,update,fixedUpdate,afterPhysicsStep,lateUpdate,drawUi,unload}`, `ApplicationContext` | `zenith_application_lifecycle` | [Application](engine/application.md) |
 | Pause, time scale, frame step | `src/engine/application/SimulationClock.hpp`, `src/engine/module/GameServices.*` | `SimulationClock`, `GameServices::{setPaused,setTimeScale,simulationClock}` | `zenith_game_services` | [Modules › GameServices](engine/modules.md#gameservices) |
-| Executable-relative asset/shader paths | `src/engine/resources/ResourceLocator.*` | `initializeResourceLocator`, `assetRoot`, `shaderRoot`, `resourceRoot` | – | [Architecture › Asset flow](ARCHITECTURE.md#asset-flow) |
+| Executable-relative asset/shader paths | `src/engine/resources/ResourceLocator.*` | `initializeResourceLocator`, `assetRoot`, `shaderRoot`, `resourceRoot` | – | [Assets › Asset flow](engine/assets.md#asset-flow) |
 | Logging and log categories | `src/engine/diagnostics/Logger.*` | `Logger`, `LogChannel`, `GameServices::log(name)` | `zenith_logger` | [Application](engine/application.md) |
 | Project manifest (`.zenith-project`) | `src/engine/project/ProjectConfig.*` | `ProjectConfig`, `loadProjectConfig`, `saveProjectConfig`, `loadProjectInputActions` | `zenith_project_config` | [Projects](engine/projects.md) |
 
@@ -95,7 +95,7 @@ capability. `--check` fails when the generated index is stale.
 | Task / question | Files | Symbols | Test | Doc |
 | --- | --- | --- | --- | --- |
 | Physics components | `src/engine/physics/PhysicsComponents.hpp`, `CharacterController.hpp` | `ColliderComponent`, `RigidBodyComponent`, `PhysicsMotionType`, `CharacterControllerComponent` | `zenith_physics` | [Physics](engine/physics.md) |
-| Stepping, body sync, interpolation | `src/engine/physics/PhysicsWorld.*` | `PhysicsWorld::{step,interpolate,refreshBody}` | `zenith_physics` | [Architecture › Physics flow](ARCHITECTURE.md#physics-flow) |
+| Stepping, body sync, interpolation | `src/engine/physics/PhysicsWorld.*` | `PhysicsWorld::{step,interpolate,refreshBody}` | `zenith_physics` | [Physics › PhysicsWorld](engine/physics.md#srcenginephysicsphysicsworld) |
 | Raycasts, shape casts, overlaps | `src/engine/physics/PhysicsWorld.hpp` | `raycast`, `raycastAll`, `shapeCast`, `overlap`, `closestPoint`, `PhysicsQueryFilter` | `zenith_physics_queries` | [Physics](engine/physics.md) |
 | Contacts and triggers | `src/engine/physics/PhysicsWorld.hpp` | `contactEvents`, `triggerEvents`, `ContactEvent`, `TriggerEvent` | `zenith_physics_queries` | [Physics](engine/physics.md) |
 | Collision layers | `src/engine/physics/PhysicsLayers.*` | `PhysicsLayerTable`, `physicsLayerMask` | `zenith_physics_queries` | [Physics](engine/physics.md) |
@@ -122,7 +122,7 @@ capability. `--check` fails when the generated index is stale.
 | Task / question | Files | Symbols | Test | Doc |
 | --- | --- | --- | --- | --- |
 | Renderer interface used by engine/editor/games | `src/engine/graphics/Rendering.hpp` | `RenderRuntime`, `RenderSettings`, `ViewShading` | `zenith_render_views` | [Graphics](engine/graphics.md) |
-| Recording a frame | `src/engine/graphics/Renderer.*` | `Renderer::drawFrame`, `updateRenderGraphPlan`, `RenderGraphShape` | `zenith_render_graph` | [Architecture › Render flow](ARCHITECTURE.md#render-flow) |
+| Recording a frame | `src/engine/graphics/Renderer.*` | `Renderer::drawFrame`, `updateRenderGraphPlan`, `RenderGraphShape` | `zenith_render_graph` | [Graphics › Render flow](engine/graphics.md#render-flow) |
 | Render graph model | `src/engine/graphics/graph/RenderGraph.*` | `RenderGraph` | `zenith_render_graph` | [Graphics](engine/graphics.md) |
 | Main scene pass | `src/engine/graphics/passes/MeshPass*.cpp`, `MeshPassInternal.hpp`, `src/engine/graphics/MeshPassFramePlan.*` | `MeshPass::{planFrame,record}`, `MeshPassFramePlan` | `zenith_mesh_pass_frame_plan` | [Scene passes](engine/graphics-passes.md) |
 | PBR shading (BRDF) | `shaders/mesh.frag` | `distributionGGX`, `geometrySchlickGGX`, `fresnelSchlick`, `directResponse` | `zenith_render_regression` | [Shaders](engine/shaders.md) |
@@ -133,8 +133,8 @@ capability. `--check` fails when the generated index is stale.
 | Environment lighting, probes, irradiance | `EnvironmentLighting.*`, `ReflectionProbes.*`, `IrradianceVolume.*`, `passes/EnvironmentPass.*` | – | `zenith_environment_lighting`, `zenith_reflection_probes`, `zenith_irradiance_volume` | [Scene passes](engine/graphics-passes.md) |
 | Post: TAA, upscaling, DoF, motion blur, bloom, tone map, grade | `TemporalQuality.*`, `SpatialUpscale.*`, `DepthOfField.*`, `MotionBlur.*`, `ToneMapping.*`, `ColorGrading.*` and `passes/` | – | `zenith_temporal_quality`, `zenith_tone_mapping`, `zenith_color_grading`, ... | [Post-processing](engine/graphics-post.md) |
 | Debug drawing | `src/engine/graphics/DebugDraw.*`, `passes/DebugDrawPass.*` | `DebugDraw::{line,box,sphere,label,channel}` | `zenith_debug_draw` | [Graphics › DebugDraw](engine/graphics.md) |
-| GPU picking | `src/engine/graphics/RenderPicking.*`, `passes/IdBufferPass.*` | `RenderRuntime::requestPick`, `PickResult` | `zenith_render_picking` | [Architecture › Picking](ARCHITECTURE.md#picking) |
-| Multiple views / secondary scenes | `RenderViewPlanning.*`, `RenderIds.hpp` | `RenderRuntime::{createView,createScene,setViewScene}` | `zenith_render_views` | [Architecture › Render views](ARCHITECTURE.md#render-views) |
+| GPU picking | `src/engine/graphics/RenderPicking.*`, `passes/IdBufferPass.*` | `RenderRuntime::requestPick`, `PickResult` | `zenith_render_picking` | [Render views › Picking](engine/graphics-views.md#picking) |
+| Multiple views / secondary scenes | `RenderViewPlanning.*`, `RenderIds.hpp` | `RenderRuntime::{createView,createScene,setViewScene}` | `zenith_render_views` | [Render views](engine/graphics-views.md#render-views) |
 | Vulkan device, swapchain | `graphics/vulkan/VulkanContext.*`, `graphics/swapchain/Swapchain.*` | `VulkanContext`, `Swapchain` | `zenith_graphics_validation` | [Graphics](engine/graphics.md) |
 | Add a shader | `shaders/*.{vert,frag,comp}` | – | – | [Shaders](engine/shaders.md), [Playbook](CONTRIBUTOR_PLAYBOOK.md#add-a-render-pass-or-shader) |
 
@@ -222,7 +222,7 @@ Function names are real; follow them in the files named.
 5. `ApplicationScene::lateUpdate` (`runGameplayPhase(LateUpdate)`), animation update.
 6. `Scene::updateWorldTransforms`.
 7. `Renderer::beginUiFrame` → `GameUiContext::beginFrame` → `ApplicationScene::drawUi` (`runGameplayPhase(Ui)`) → `Renderer::drawGameUi`.
-8. `Renderer::drawFrame` (records every pass; see [render flow](ARCHITECTURE.md#render-flow)).
+8. `Renderer::drawFrame` (records every pass; see [render flow](engine/graphics.md#render-flow)).
 9. `AudioSystem::syncScene` / `setPlaybackRate` / `update`.
 10. Deferred scene switch or quit; deferred asset collection.
 

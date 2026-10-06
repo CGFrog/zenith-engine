@@ -367,7 +367,11 @@ scene and edited as a document of its own. Instantiating an editor-written
 prefab and capturing it that way reproduces the file byte for byte. It is runtime code, so primary and additive
 scenes share definitions without editor state. Entity references inside
 component JSON are remapped by `EntityReferenceRemap` (below): capture clears
-references outside the prefab with a diagnostic.
+references outside the prefab with a diagnostic. The root's local transform is
+the instance's placement and never an override. Apply writes the prefab file,
+then refreshes every other instance in the scene against the new content while
+keeping the overrides it had against the old content; overrides that no longer
+match anything (orphaned overrides) are reported as diagnostics.
 
 A refresh failing after its staging check (a nested instance that no longer
 matches its prefab) puts the scene back. Only the instance's own subtree is

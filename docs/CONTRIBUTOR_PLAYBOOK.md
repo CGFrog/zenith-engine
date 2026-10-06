@@ -124,7 +124,7 @@ component it is given; the view propagates to multi-selection).
 2. The pass under `src/engine/graphics/passes/` (or `graphics/` for frame
    infrastructure), added to `src/engine/CMakeLists.txt`.
 3. Record it from the renderer at the right point of the
-   [render flow](ARCHITECTURE.md#render-flow). If it is a per-frame decision,
+   [render flow](engine/graphics.md#render-flow). If it is a per-frame decision,
    it comes from `MeshPassFramePlan`; mirror it in
    `Renderer::updateRenderGraphPlan` / `RenderGraphShape` so the render-graph
    model validates ordering and hazards.
