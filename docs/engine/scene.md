@@ -420,7 +420,8 @@ overrides through, which become the instance's persisted overrides.
 
 On the floor benchmark (`zenith_floor_benchmark`, Release, 40 rooms of seven
 entities with six box colliders, a light, and a looping sound), spawning the
-floor took a mean of 54.69 ms (about 1.4 ms per room; GAMEPLAY_ROADMAP E4).
+floor took a mean of 54.69 ms (about 1.4 ms per room;
+[gameplay roadmap E4](../history/gameplay-roadmap-2026.md#e4-building-and-replacing-a-floor-at-runtime)).
 With the cache and direct build it takes 3.2 to 3.9 ms (medians 3.0 to 3.6 ms
 over five runs), about 0.08 ms per room; the navigation bake (26 to 29 ms)
 matched E4's in those runs, so the machine was comparable. Profiling put
