@@ -163,7 +163,9 @@ Benchmark mode uses the fixed indoor/outdoor scene, adds 96 deterministic local
 point/spot lights when `ZENITH_BENCHMARK_OBJECTS` is nonzero, and warms up before
 measurement. `full` advances gameplay, animation, physics, and audio with one
 fixed simulation interval per rendered frame; `render` freezes those systems to
-isolate render submission and GPU work.
+isolate render submission and GPU work. Delayed GPU results retain their
+original submission identity. The implementation roadmap and measurement
+contract live in [Performance roadmap](PERFORMANCE_ROADMAP.md).
 
 The schema-v2 JSON contains build revision/dirty state, compiler, platform, GPU,
 resolution, presentation mode, workload settings, memory totals, and sample

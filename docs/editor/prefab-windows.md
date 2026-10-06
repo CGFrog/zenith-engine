@@ -14,7 +14,7 @@ The window hosts its own dock space with the prefab's **Hierarchy**,
 picking, the gizmo, G/R/S, snapping, collider handles, drops, the 3D cursor,
 and local view all edit the prefab. It draws the window's scene as a secondary
 render scene (`RenderRuntime::createScene`/`setViewScene`, see
-[Architecture](../ARCHITECTURE.md#render-views)), so it shows the prefab with
+[Secondary scenes](../engine/graphics-views.md#secondary-scenes)), so it shows the prefab with
 preview lighting (the Material Preview studio rig): the prefab's own sun,
 shadows, environment, fog, and particles are not drawn there, and the
 viewport's Rendered shading falls back to Material Preview.

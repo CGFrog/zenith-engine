@@ -4,8 +4,8 @@
 
 You can make games without reading this chapter. Read it when you want to
 know *why* the engine behaves as it does, or before changing the engine
-itself. It is a guided summary; [Architecture](../ARCHITECTURE.md) and the
-subsystem pages hold every detail. The mathematics behind the main mechanisms
+itself. It is a guided summary; [Architecture](../ARCHITECTURE.md) gives the
+overview and the subsystem pages hold every detail. The mathematics behind the main mechanisms
 is spelled out, because it explains behaviour you will observe.
 
 ## The layers

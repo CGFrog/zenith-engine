@@ -236,6 +236,52 @@ the pivot and snap math, the queries against real cube meshes, the operators,
 spawning, drawing, area state, and the sidecar headless; the editor smoke's
 `3D cursor` step places the cursor, adds an Empty at it, and undoes.
 
+## Renderer contract
+
+The editor requests a viewport size through `RenderRuntime`; it never receives
+Vulkan images, views, samplers, or descriptor sets. `Renderer` owns a
+per-frame offscreen color target plus its depth target and exposes only an
+opaque `UiTextureHandle`. Viewport resize recreates those targets and the
+size-dependent mesh/post-process targets without recreating the swapchain.
+Descriptor replacement happens before the next ImGui frame so queued UI draw
+data cannot retain a destroyed texture. Further editor viewports are created
+render views (see [Render views](../engine/graphics-views.md#render-views))
+with the same contract: every viewport area owns one view for its lifetime
+(the first takes the default view), renders only on frames it is drawn, and
+sets its shading through a per-view settings override, never the frame
+settings. The editor makes the active viewport's view the renderer's active
+view, so shadow cascades follow the view being worked in.
+
+UI images follow the same request-and-publish contract for CPU pixels the UI
+draws, such as generated images: `RenderRuntime::createUiImage` and
+`updateUiImage` queue RGBA8 pixels with a linear or nearest filter, the
+renderer's `UiImageStore` uploads them while recording the next frame, and
+`uiImageTexture` then returns an opaque `UiTextureHandle`. An updated image
+keeps its previous texture until the new one is published, and replaced or
+destroyed images are released only after the frames that may sample them
+complete.
+
+Editor camera policy, selection, and gizmo state remain in `src/editor/`.
+`RenderView` is the narrow engine-facing camera override. The headless picking
+path is a bounded CPU ray test against transformed mesh bounding spheres and
+triangles (`pickThroughLens`); a deterministic test
+(`tests/editor/EditorCameraTests.cpp`) exercises it with 2,000 additional
+renderables and reports its elapsed time without a machine-dependent timing
+assertion. GPU picking ([Picking](../engine/graphics-views.md#picking)) is the
+windowed path.
+
+Play in a viewport needs no renderer support beyond that contract: the
+playing viewport clears its view's camera override, so the view renders
+through the scene's primary `CameraComponent` (the renderer's fallback, which
+the game's camera systems move), and turns its view input on only while the
+game view has focus. The editor application answers
+`Application::mouseCapturePolicy()` from the session each frame: `Persistent`
+while a game view holds game input (the engine's input releases the cursor on
+Esc), `WhileRightMouseDown` otherwise. The standalone target crosses a process
+boundary instead of a library one: the game's `src/main.cpp` owns the
+`--project <file> --scene <scene>` argument contract, and the editor only
+reads the process's output (see [Play mode](play-mode.md)).
+
 ## `src/editor/interaction/PickQueries.*`
 
 Pure selection queries over a GPU pick result's id grid: point picks with a

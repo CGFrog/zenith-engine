@@ -3,7 +3,8 @@
 Project-oriented guides that combine several engine subsystems into a
 playable result. If you have not used Zenith before, read the
 [User guide](../guide/README.md) first (at least chapters 1–5); for subsystem
-contracts, use [Architecture](../ARCHITECTURE.md).
+contracts, start at [Architecture](../ARCHITECTURE.md), which links to each
+subsystem page.
 
 ## Available tutorials
 
