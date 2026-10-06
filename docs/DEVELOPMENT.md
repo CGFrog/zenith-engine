@@ -105,10 +105,11 @@ benchmark, and slow tests for a fast CPU-only loop. GPU tests set `PROCESSORS 2`
 
 On a much slower machine, such as Linux CI running the Vulkan tests on Mesa's
 lavapipe (a CPU Vulkan driver) under Xvfb, configure with
-`-DZENITH_TEST_TIMEOUT_SCALE=4` to multiply every test's timeout. Lavapipe
-needs a Vulkan 1.4 aware validation layer (the LunarG SDK's); Ubuntu 24.04's
-packaged layer (1.3.275) crashes on core push descriptors, so CI runs the
-Linux Vulkan tests without validation.
+`-DZENITH_TEST_TIMEOUT_SCALE=4` to multiply every test's timeout. Validation
+needs a Vulkan 1.4 aware layer: Ubuntu 24.04's packaged one (1.3.275) crashes
+on core push descriptors, so CI takes `VkLayer_khronos_validation` from the
+LunarG SDK and points `VK_ADD_LAYER_PATH` at it. Reference captures skip
+themselves without a hardware device.
 
 Run one test by name:
 
