@@ -114,15 +114,28 @@ class EditorSession::PrefabWindowActions final : public EditorSessionActions {
     PrefabWindowDocument& m_window;
 };
 
-bool EditorSession::prefabWindowsEnabled() const {
-    return m_settings.appearance().prefabWindows;
-}
-
 PrefabWindowDocument* EditorSession::focusedPrefabWindow() const {
     return m_focusedPrefabWindow == 0 ? nullptr : m_prefabWindows.find(m_focusedPrefabWindow);
 }
 
-OperatorResult EditorSession::openPrefabWindow(ApplicationContext& context, const std::filesystem::path& reference) {
+bool EditorSession::prefabCloseAvailable() const {
+    return focusedPrefabWindow() != nullptr;
+}
+
+bool EditorSession::prefabEditAvailable() const {
+    // A window opens beside the level, so the level may be playing.
+    return !m_fileDialog.pending() && !m_activeTransform;
+}
+
+void EditorSession::requestCloseFocusedPrefab(ApplicationContext&) {
+    if (const PrefabWindowDocument* window = focusedPrefabWindow()) {
+        requestClosePrefabWindow(window->id);
+    }
+}
+
+// Opens the prefab in a window of its own, or brings its window forward when
+// it is open; the level stays as it is.
+OperatorResult EditorSession::editPrefab(ApplicationContext& context, const std::filesystem::path& reference) {
     PrefabWindowDocument* window = nullptr;
     const PrefabResult opened = m_prefabWindows.open(reference, m_document, context.assets, window);
     for (const std::string& diagnostic : opened.diagnostics) {
@@ -315,11 +328,6 @@ size_t EditorSession::refreshPrefabInstancesElsewhere(ApplicationContext& contex
             m_selection.removeMissing(levelScene);
         }
     }
-    size_t inParked = 0;
-    if (!m_documents.empty()) {
-        combine(
-            m_documents.refreshParked(context.assets, m_diagnostics, change.reference, previous, stepName, inParked));
-    }
     size_t inWindows = 0;
     combine(m_prefabWindows.refreshInstances(context.assets, m_diagnostics, change.reference, previous, stepName,
                                              originWindow, inWindows));
@@ -329,7 +337,7 @@ size_t EditorSession::refreshPrefabInstancesElsewhere(ApplicationContext& contex
     if (!result) {
         m_diagnostics.reportError("Could not refresh " + change.displayName + " instances: " + result.error);
     }
-    return inLevel + inParked + inWindows;
+    return inLevel + inWindows;
 }
 
 OperatorContext EditorSession::prefabWindowOperatorContext(ApplicationContext& context, KeymapRegion region,

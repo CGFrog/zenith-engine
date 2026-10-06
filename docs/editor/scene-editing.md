@@ -26,7 +26,7 @@ There are two ways to capture an edit:
   later (Adjust Last Operation's check); `record` records changes.
 - **The whole scene** (`capture`, then `commit` or `perform`). Use it only
   when the edit's reach is unknown: operators without a scope, refreshing
-  prefab instances, prefab mode's document switches. It also fails when
+  prefab instances, saving a prefab window. It also fails when
   anything in the scene cannot be serialized (a runtime mesh), while a
   scoped capture fails only when the captured entities cannot be.
 
@@ -160,16 +160,17 @@ and makes the write part of history:
   an Info message. Each instance keeps its overrides against the file's
   previous content when the ledger knew it. The session seeds the ledger
   whenever instances enter a document: opening a scene, the startup scene,
-  Recover, opening a prefab in prefab mode (its nested prefabs too), and
+  Recover, opening a prefab window (its nested prefabs too), and
   `prefab.instantiate` report each instanced file's content through
   `PrefabWriteHooks::fileRead` (`notePrefabFilesRead`), which the ledger
   keeps unless it already knows the file. Only a file whose content could
   not be read falls back to each instance's persisted overrides (those of its
   last prefab operation), which the message mentions.
-- **Parked documents.** In prefab mode (below) the same change also
-  refreshes instances in every parked document, each as one step on its own
-  history. The open prefab's own file is never refreshed under the user:
-  changing it on disk while it is open only warns that Save writes over it.
+- **Prefab windows.** The same change also refreshes instances in every
+  prefab window, each as one step on its own history. A window editing that
+  prefab is never refreshed under the user: changing its file on disk while
+  it is open only warns that Save writes over it
+  ([Prefab windows](prefab-windows.md)).
 - **Shared refresh.** Apply, the outside-change refresh, and a prefab edited
   as its own document all update instances through
   `PrefabAuthoring::refreshInstances(scene, reference, previous)` (or its
@@ -185,100 +186,18 @@ and makes the write part of history:
   the before and after bytes for a `PrefabWriteCommand`). Opening and saving
   without edits keeps the file byte for byte.
 
-## Prefab mode: the document stack
+## Editing a prefab
 
-By default a prefab opens in a floating window of its own beside the level
-([Prefab windows](prefab-windows.md)); what follows describes prefab mode,
-which `ui.prefab_windows=false` selects instead.
-
-By default a prefab also opens in its own **Prefab workspace** tab (below the
-document stack, which is what makes it a separate document): entering the
-first prefab remembers the active workspace, switches to a workspace named
-Prefab (created from `defaultWorkspaceFor(prefabWorkspaceName)` the first time
-and saved with the others), and leaving the outermost prefab returns to the
-remembered workspace. Nested prefabs stay in the Prefab workspace. The
-`ui.prefab_workspace` preference (Preferences > Interface, on by default)
-turns this off, which edits the prefab in the workspace that was open. The
-engine renders and simulates one scene at a time, so this is a separate
-document and tab, not a second OS window: an area of the Prefab workspace
-shows the prefab, and the scene waits in the stack until Back.
-
-A prefab opens as a document of its own (`prefab.edit`, see
-[Operators](operators.md)) on top of the scene, like Blender's edit mode for
-a linked file. The engine renders only one scene, so
-`application/DocumentStack` parks the active document instead of keeping
-several:
-
-- **What is parked.** Each frame of the stack is one prefab edit: the prefab
-  (`PrefabEditTarget`: reference, file, display name, root id, and what this
-  visit saved) and the document it was opened over (`ParkedDocument`: the
-  scene, moved out with `Scene::swap` as Play parks the edit scene; the
-  `EditorDocument` state; the `CommandHistory` timeline; the selection; and
-  each viewport's camera, scene-camera view, and local view
-  (`ViewportPanel::takeDocumentView`)). The session's own members keep
-  holding the active document, because operators, panels, and the undo keys
-  refer to them by address: a switch exchanges their contents
-  (`CommandHistory::exchangeTimeline` keeps revisions growing, so revision
-  keyed caches such as the outliner's orphan data and the inspector's
-  prefab overrides refresh, and markers stay meaningful). The session also
-  forgets Adjust Last Operation, cancels the eyedropper, and frames the
-  prefab in every open viewport; the outliner drops its range anchor when
-  the scene's content generation changes.
-- **Separate histories.** Edits in the prefab are ordinary
-  `EntityDiffCommand` steps on the prefab's own history; undo there never
-  reaches the scene's. The prefab document is untitled to `EditorDocument`
-  (it saves no scene file); the breadcrumbs, prompts, and status bar name it
-  by its display name.
-- **Save.** File > Save (Ctrl S) writes the prefab (`DocumentStack::save`,
-  through `savePrefabDocument`); the ids it gives entities added since
-  opening are recorded as a "Save <name>" step, and the history and document
-  become clean. Save As is disabled in prefab mode.
-- **Back.** `prefab.exit_edit` (or the breadcrumbs' Back) asks about unsaved
-  changes first (`PendingAction::LeavePrefab`: Save, Discard, or Cancel),
-  then pops the frame and restores the viewports. If the prefab was saved
-  during the visit, the document below refreshes its instances and records
-  one step "Edit <name>": a `PrefabWriteCommand` whose undo puts back what
-  the file held before the visit's first save, together with the old
-  instances. Documents parked further down refresh theirs as a scene-only
-  "Refresh <name> instances" step. If someone else changed the file after
-  the last save, only the scene-only refresh is recorded, so undo never
-  overwrites their change.
-- **Nesting.** Opening a nested instance's prefab from inside prefab mode
-  pushes another frame: `Level > room_07 > door_frame`. A prefab already open
-  in the stack cannot be opened again.
-- **Leaving for something else.** New, Open, Open Recent, Close, and the
-  Project Hub leave every open prefab first, top down, prompting for each one
-  with unsaved changes and then for the scene; cancelling any prompt cancels
-  the action.
-- **Gating.** Prefab mode is entered and left only in Edit mode with no file
-  dialog pending and no modal tool running. Play and Simulate are disabled
-  ("Return to the scene to play"), and a module hot reload waits for the
-  stack to empty, since parked scenes hold module component storage the
-  reload would not snapshot. The session unwinds the stack before the module
-  unloads.
-- **Moves and removals.** A moved or renamed open prefab follows its file
-  (reference and path); parked scenes follow moved assets and their own file.
-  A removed open prefab stays open with a warning, and Save writes the file
-  again; a parked scene whose file was removed becomes untitled.
-- **Autosave and recovery.** In prefab mode autosave writes the parked scene
-  to the scene's recovery file when it has unsaved changes, and the open
-  prefab to `<settings>/recovery.prefab-edit` (a scene document of the prefab
-  edit) with `recovery.prefab-edit.json` beside it naming the prefab, its root
-  id, and display name (`PrefabEditRecovery`). The crash save writes both.
-  The Recover dialog mentions the prefab edit and reopens it in prefab mode
-  over the recovered (or startup) scene, with unsaved changes. Saving the
-  prefab or leaving it drops its autosave. Only the top prefab is autosaved;
-  unsaved changes of a prefab parked under a nested one are not.
-- **Known limit.** Undoing or redoing a prefab write refreshes the instances
-  of the document whose history holds the step; documents parked beneath it
-  keep what they showed until the file next changes or they are refreshed.
+Prefabs are edited in floating windows of their own beside the level, each
+with its own document, history, and selection; see
+[Prefab windows](prefab-windows.md).
 
 ## Folder contents
 
 `src/editor/document/`: Scene document state, persistence workflow, undo/redo
 history, prefab authoring (`PrefabAuthoring`), undoable prefab file writes and
 the write ledger (`PrefabWriteCommand`), prefabs opened as documents
-(`PrefabEditDocument`), the scene's and a prefab edit's autosaves
+(`PrefabEditDocument`), the scene's and a prefab window's autosaves
 (`EditorRecovery`, `PrefabEditRecovery`), per-scene editor data such as
 the 3D cursor (`SceneEditorData`, a sidecar beside the scene file), and the
 runtime-to-edit diff behind Apply to Edit Scene (`RuntimeApply`).

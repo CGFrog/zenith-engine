@@ -81,7 +81,7 @@ enum class AssetBrowserRole {
 // "ZENITH_MODEL_ASSET" payloads, textures, sounds, and materials onto
 // inspector asset fields with their own payloads (AssetDragPayloads.hpp), and
 // any item drags onto a folder to move it; scenes open on double-click,
-// prefabs open in prefab mode, and scripts (from the project's source root
+// prefabs open in a prefab window, and scripts (from the project's source root
 // too, when the service lists one) open in the IDE. Image tiles show
 // thumbnails, and a selected material (.zmat) is edited below the listing and
 // saved as it changes. Files dropped from the OS on a browser (or picked with

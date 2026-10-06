@@ -106,12 +106,10 @@ void EditorSession::updateGameModule(ApplicationContext& context, const InputSta
         if (m_moduleHost.pollSourceChange(std::chrono::steady_clock::now())) {
             m_moduleReloadPending = true;
         }
-        // Documents parked under a prefab edit and prefab windows hold module
-        // storage that the reload would not restore, so it also waits for the
-        // scene and for the windows to close.
+        // Prefab windows hold module storage that the reload would not
+        // restore, so it also waits for the windows to close.
         const bool reloadAllowed = buildState != BuildState::Running && m_playMode.mode() == EditorMode::Edit &&
-                                   !m_activeTransform && !m_fileDialog.pending() && m_documents.empty() &&
-                                   m_prefabWindows.empty();
+                                   !m_activeTransform && !m_fileDialog.pending() && m_prefabWindows.empty();
         if (m_moduleReloadPending && reloadAllowed) {
             reloadGameModule(context);
         }

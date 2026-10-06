@@ -31,12 +31,12 @@ struct PrefabEditRecoveryNote {
     std::string displayName;
 };
 
-// The autosave of a prefab open as its own document (prefab mode): the edited
-// scene as a scene document at path (for example
-// <settings>/recovery.prefab-edit), and a JSON note beside it (path with
-// ".json" appended) naming the prefab, its root, and its display name. Kept
-// apart from the scene's EditorRecovery, so a crash in prefab mode can keep
-// both the parked scene and the prefab.
+// The autosave of a prefab open as its own document (a prefab window): the
+// edited scene as a scene document at path (for example
+// <settings>/recovery-prefab-windows/1.prefab-edit), and a JSON note beside it
+// (path with ".json" appended) naming the prefab, its root, and its display
+// name. Kept apart from the scene's EditorRecovery
+// (document/PrefabWindowRecovery keeps one per window).
 class PrefabEditRecovery {
   public:
     explicit PrefabEditRecovery(std::filesystem::path path);

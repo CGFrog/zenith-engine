@@ -78,32 +78,26 @@ class EditorPlayCommands {
     ~EditorPlayCommands() = default;
 };
 
-// Prefab mode: a prefab open as a document of its own over the parked scene
-// (prefab.edit, prefab.exit_edit; application/DocumentStack.hpp).
-class EditorPrefabModeCommands {
+// Prefab windows: a prefab open in a floating window of its own beside the
+// level (prefab.edit, prefab.exit_edit; application/PrefabWindowSet.hpp).
+class EditorPrefabWindowCommands {
   public:
-    // Whether a prefab is open as the active document (prefab mode's stack;
-    // prefab windows never are).
-    virtual bool prefabEditActive() const = 0;
-    // Whether prefab.exit_edit has a prefab to leave: the active one of the
-    // stack, or the prefab window that last had focus.
+    // Whether prefab.exit_edit has a window to close: the prefab window that
+    // last had focus.
     virtual bool prefabCloseAvailable() const = 0;
-    // Whether prefab mode can be entered or left now: Edit mode, with no
-    // file dialog pending and no modal tool running.
-    virtual bool prefabEditAvailable(const OperatorContext& context) const = 0;
-    // Opens the prefab at reference (project-relative): in a window of its
-    // own beside the level when ui.prefab_windows is on (bringing an open
-    // one forward), otherwise as the active document, parking the current
-    // one. Fails, changing nothing, when it cannot be opened or is already
-    // open in the stack.
+    // Whether a prefab window can open or close now: no file dialog pending
+    // and no modal tool running. The level may be playing.
+    virtual bool prefabEditAvailable() const = 0;
+    // Opens the prefab at reference (project-relative) in a window of its own
+    // beside the level, bringing an open one forward. Fails, changing
+    // nothing, when it cannot be opened.
     virtual OperatorResult editPrefab(ApplicationContext& context, const std::filesystem::path& reference) = 0;
-    // Returns to the document under the active prefab, or closes the prefab
-    // window that last had focus, asking about unsaved changes first (Save,
-    // Discard, or Cancel).
-    virtual void requestLeavePrefabEdit(ApplicationContext& context) = 0;
+    // Closes the prefab window that last had focus, asking about unsaved
+    // changes first (Save, Discard, or Cancel).
+    virtual void requestCloseFocusedPrefab(ApplicationContext& context) = 0;
 
   protected:
-    ~EditorPrefabModeCommands() = default;
+    ~EditorPrefabWindowCommands() = default;
 };
 
 // Blender object-mode tools that follow the mouse or open a popup.

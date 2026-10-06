@@ -38,7 +38,6 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     : m_settings(settingsDirectory / "settings.ini")
     , m_document(assetRoot)
     , m_recovery(settingsDirectory / (std::string("recovery") + sceneExtension))
-    , m_prefabRecovery(settingsDirectory / "recovery.prefab-edit")
     , m_prefabWindowRecovery(settingsDirectory / "recovery-prefab-windows")
     , m_projectFile(projectServices.projectFile)
     , m_codeSnippetDirectory(projectServices.codeSnippetDirectory)
@@ -134,7 +133,6 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .scripts = this,
             .watches = &m_watches,
             .projectNames = &m_projectNames,
-            .prefabEdit = activePrefabSummary(),
             .projectAssets = &m_projectAssets,
             .fileDrops = &m_fileDrops,
             .definitionSchemas =
@@ -190,7 +188,7 @@ EditorOperatorServices EditorSession::operatorServices() {
             .playCommands = *this,
             .objectModeCommands = *this,
             .windowCommands = *this,
-            .prefabModeCommands = *this};
+            .prefabWindowCommands = *this};
 }
 
 bool EditorSession::documentCommandsAvailable(const OperatorContext&) const {
@@ -204,8 +202,7 @@ bool EditorSession::editCommandsAvailable(const OperatorContext& context) const 
 }
 
 bool EditorSession::saveAsAvailable(const OperatorContext& context) const {
-    return documentCommandsAvailable(context) && m_documents.empty() &&
-           m_prefabWindows.owner(context.editing.document()) == nullptr;
+    return documentCommandsAvailable(context) && m_prefabWindows.owner(context.editing.document()) == nullptr;
 }
 
 bool EditorSession::projectHubAvailable() const {
@@ -411,8 +408,7 @@ SceneResult EditorSession::load(ApplicationContext& context) {
         m_diagnostics.reportError("Could not use the project's physics layers: " + result.error);
     }
     m_projectAssets.refresh(m_diagnostics);
-    m_openRecoveryDialog =
-        m_recovery.available() || m_prefabRecovery.available() || !m_prefabWindowRecovery.available().empty();
+    m_openRecoveryDialog = m_recovery.available() || !m_prefabWindowRecovery.available().empty();
 
     // The theme, fonts, popup bevels, and the disabled imgui.ini are the
     // application's (EditorApplication::onStart), so they outlive a switch
@@ -620,15 +616,7 @@ void EditorSession::reconcileChangedPrefab(ApplicationContext& context, const st
         // already dropped when it wrote.
         return;
     }
-    reconcileParkedDocuments(context, change);
     reconcilePrefabWindows(context, change);
-    const PrefabEditTarget* openPrefab = m_documents.activePrefab();
-    if (openPrefab != nullptr &&
-        openPrefab->reference.generic_string() == change.reference.lexically_normal().generic_string()) {
-        // The open prefab's own file: its document is the user's to save or
-        // discard (reconcileParkedDocuments warned).
-        return;
-    }
     // During Play the parked edit scene is refreshed; the running scene keeps
     // its copies until Stop.
     Scene* editScene = m_playMode.editScene();
@@ -726,8 +714,7 @@ void EditorSession::drawUi(ApplicationContext& context) {
     // Before the areas, so the game view draws this frame's game UI.
     drawGameViewUi(context);
     ImGuizmo::BeginFrame();
-    m_themeChrome.setModeTint(m_documents.empty() ? playModeTint(m_playMode.mode(), m_playMode.simulating())
-                                                  : ThemeModeTint::Prefab);
+    m_themeChrome.setModeTint(playModeTint(m_playMode.mode(), m_playMode.simulating()));
     m_themeChrome.beginFrame();
     // The dockspace host is transparent so the dark gap shows between areas.
     ImGui::PushStyleColor(ImGuiCol_WindowBg, toImVec4(palette::transparent));
@@ -818,10 +805,9 @@ void EditorSession::unload(ApplicationContext& context) {
         m_mouseCaptureChanged(MouseCapturePolicy::WhileRightMouseDown);
     }
     // The scene and document release module code before the module unloads;
-    // parked documents (prefab mode) go first, unsaved prefab edits with them.
+    // prefab windows go first, unsaved prefab edits with them.
     context.audio.stopSceneVoices();
     context.physics.clear();
-    m_documents.unwind(activeDocument(context));
     closeAllPrefabWindows(context);
     m_moduleHost.unload(context.scene, m_document);
     context.rendering.setGridOverlay(std::nullopt);
@@ -836,7 +822,6 @@ void EditorSession::unload(ApplicationContext& context) {
 }
 
 void EditorSession::projectFilesMoved(ApplicationContext& context, std::span<const ProjectFileMove> moves) {
-    m_documents.filesMoved(moves, context.assets, m_diagnostics);
     m_prefabWindows.filesMoved(moves, m_document.options().assetRoot, context.assets, m_diagnostics);
     if (m_document.path()) {
         if (std::optional<std::filesystem::path> moved =
@@ -864,7 +849,6 @@ void EditorSession::projectFilesMoved(ApplicationContext& context, std::span<con
 }
 
 void EditorSession::projectFilesRemoved(ApplicationContext&, std::span<const std::filesystem::path> removed) {
-    m_documents.filesRemoved(removed, m_diagnostics);
     m_prefabWindows.filesRemoved(removed, m_diagnostics);
     if (m_document.path() && isRemovedProjectPath(normalizedCatalogPath(*m_document.path()), removed)) {
         m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Editor",

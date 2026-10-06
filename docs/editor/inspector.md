@@ -15,8 +15,8 @@ entity).
 
 A prefab instance's entities show the instance header (`drawPrefabHeader`):
 the prefab's name, its override count, Apply, Revert, Unpack, Select Prefab
-Asset, and **Edit Prefab**, which opens the prefab as a document of its own
-(`prefab.edit {asset}`). In prefab mode the header is hidden for the
+Asset, and **Edit Prefab**, which opens the prefab in a window of its own
+(`prefab.edit {asset}`). In a prefab window the header is hidden for the
 document's own root instance (`EditorContext::prefabEdit`), where Apply would
 be Save and Revert would discard the edits; nested instances keep theirs, and
 their Apply writes the nested prefab as an undoable step of the open prefab's

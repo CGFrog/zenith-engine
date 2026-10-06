@@ -47,7 +47,7 @@ OperatorRegistrationResult registerDocumentOperatorFamily(OperatorRegistry& regi
     operators.push_back(applicationOperator("file.open", "Open", "Open a scene file", documentCommands,
                                             [&commands](ApplicationContext& app) { commands.requestOpen(app); }));
     // Saves the document the operator runs on: a prefab window's saves its
-    // prefab, as does a prefab open in prefab mode.
+    // prefab.
     operators.push_back({.id = "file.save",
                          .label = "Save",
                          .description = "Save the scene to its file, or the open prefab to the prefab's file",

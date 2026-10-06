@@ -42,11 +42,9 @@ The default workspaces (`areas/DefaultWorkspaces.cpp`) are **Layout** (Viewport,
 Hierarchy, Inspector and Properties, Asset Browser and Info below), **Lighting**
 (Viewport, Hierarchy, Properties on World above Properties on Render and
 Graphics), and **Debug** (Viewport, Render Statistics above the System
-Profiler, and Info, Diagnostics, and Build below). A fourth workspace, **Prefab** (`prefabWorkspaceName`; Viewport, Hierarchy,
-Inspector, and Properties), is not a default tab: `EditorSession` adds it the first
-time a prefab is edited (`WorkspaceSet::add`) and switches back to the previous
-workspace when the outermost prefab is left (see
-[Scene editing](scene-editing.md#prefab-mode-the-document-stack)).
+Profiler, and Info, Diagnostics, and Build below). A workspace the editor does
+not define (one a user added, or the **Prefab** tab older editors added for
+prefab mode) keeps its saved areas and resets to the first default's.
 Each default area names a dock slot (left, right, lower
 right, bottom, or the central node) that `buildDefaultDockLayout` splits off
 the dockspace when the workspace has no saved layout.

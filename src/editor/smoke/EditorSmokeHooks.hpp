@@ -7,10 +7,10 @@
 #include "engine/application/Application.hpp"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 
-class DocumentStack;
 class PrefabWindowSet;
 class EditorDocument;
 class EditorMenus;
@@ -50,15 +50,14 @@ class EditorSmokeHooks {
     virtual Selection& selection() = 0;
     virtual EditorPlayMode& playMode() = 0;
     virtual EditorDocument& document() = 0;
-    // The documents parked under prefab edits (prefab mode).
-    virtual const DocumentStack& documents() const = 0;
-    // Prefab windows (ui.prefab_windows): the preference, the open windows,
-    // a window's viewport (null when it has none), and closing one at the
-    // next update without asking about unsaved changes.
-    virtual bool prefabWindowsEnabled() const = 0;
-    virtual void setPrefabWindowsEnabled(bool enabled) = 0;
+    // Prefab windows: the open windows, a window's viewport (null when it
+    // has none), edits of a window's document as its panels make them,
+    // saving it as its Save button does (false after reporting why not), and
+    // closing one at the next update without asking about unsaved changes.
     virtual const PrefabWindowSet& prefabWindows() const = 0;
     virtual ViewportPanel* prefabWindowViewport(uint64_t window) = 0;
+    virtual std::optional<SceneEditing> prefabWindowEditing(uint64_t window) = 0;
+    virtual bool savePrefabWindow(uint64_t window) = 0;
     virtual void closePrefabWindow(uint64_t window) = 0;
     virtual EditorMenus& menus() = 0;
     virtual ViewportRegistry& viewports() = 0;

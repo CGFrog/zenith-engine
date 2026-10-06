@@ -34,7 +34,7 @@ void EditorSession::drawStatusBar(const RenderStats& stats) {
             ImGui::SameLine();
             widgets::CaptionText(caption, ink);
         };
-        widgets::CaptionText(activeDocumentName().c_str(), palette::captionInk);
+        widgets::CaptionText(m_document.displayName().c_str(), palette::captionInk);
         if (m_diagnostics.hasUnacknowledgedError()) {
             segment("Diagnostics available", palette::warning);
         } else {
@@ -55,19 +55,10 @@ void EditorSession::drawStatusBar(const RenderStats& stats) {
         segment(text.data(), palette::captionInk);
         ImGui::SameLine();
         drawPlayModePill();
-        if (!m_documents.empty()) {
-            ImGui::SameLine();
-            widgets::StatusPill(EditorIcon::Prefab, "Prefab", widgets::StatusPillStyle::Lit);
-        }
         if (m_moduleReloadPending && m_playMode.mode() != EditorMode::Edit) {
             // The rebuilt module waits for Stop (EditorSession::updateGameModule).
             ImGui::SameLine();
             widgets::StatusPill(EditorIcon::Warning, "Reload pending - stop to apply",
-                                widgets::StatusPillStyle::Warning);
-        } else if (m_moduleReloadPending && !m_documents.empty()) {
-            // Parked documents hold module storage; the reload waits for them.
-            ImGui::SameLine();
-            widgets::StatusPill(EditorIcon::Warning, "Reload pending - return to the scene to apply",
                                 widgets::StatusPillStyle::Warning);
         } else if (m_moduleReloadPending && !m_prefabWindows.empty()) {
             // Prefab windows' scenes hold module storage too.

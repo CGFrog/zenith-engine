@@ -1,13 +1,12 @@
 # Prefab windows
 
-With **Open prefabs in their own windows** on (Preferences > Interface,
-`ui.prefab_windows`, on by default), Edit Prefab opens the prefab in a
-floating window of its own instead of swapping it in over the level, as
-Unreal's asset editors do. The level stays open, visible, editable, and
-playable underneath, and several prefabs can be open at once, one window
-each. With the preference off, prefab mode (the document stack,
-[Scene editing](scene-editing.md#prefab-mode-the-document-stack)) is
-unchanged.
+Edit Prefab (`prefab.edit`, a double-click on a prefab in the Asset Browser)
+opens the prefab in a floating window of its own, as Unreal's asset editors
+do. The level stays open, visible, editable, and playable underneath, and
+several prefabs can be open at once, one window each. (An earlier "prefab
+mode", which swapped the prefab in over the level, and its
+`ui.prefab_windows` and `ui.prefab_workspace` preferences are gone; old
+settings files still load, the keys are ignored.)
 
 The window hosts its own dock space with the prefab's **Hierarchy**,
 **Viewport**, and **Inspector**, plus Save and Close. The viewport is a real
@@ -69,7 +68,7 @@ session's own members, a window's are its document's.
   restores and commits there; closing the window cancels it first.
 - Level-only work uses the level's viewports (`EditorSession::
   levelViewports`): Play's viewport target, the render view shadows and
-  streaming follow, and prefab mode's framing. A window's viewport never takes
+  streaming follow. A window's viewport never takes
   the default render view (GPU-driven, the application's scene only).
 - Each frame, after the UI is drawn, the session updates every window's world
   transforms and binds its scene as its render scene's content; the window's
@@ -85,7 +84,7 @@ session's own members, a window's are its document's.
 
 ## Saving, refreshing, closing
 
-- **Save** writes the prefab (`saveOpenPrefab`, shared with prefab mode):
+- **Save** writes the prefab (`saveOpenPrefab`):
   the ids it gives entities added since opening are recorded as a step
   "Save <name>" on the window's history. The session then refreshes the
   prefab's instances in the level (its edit scene during Play; the running
@@ -95,8 +94,8 @@ session's own members, a window's are its document's.
   itself is never refreshed.
 - **Apply** (`prefab.apply`, and the undo and redo of its step) writes the
   prefab from one document; at the end of the frame every other open
-  document catches up: the level (its edit scene during Play), the documents
-  parked under prefab mode, and the other windows, each with a step "Refresh
+  document catches up: the level (its edit scene during Play) and the other
+  windows, each with a step "Refresh
   <name> instances" on its own history
   (`EditorSession::refreshPrefabInstancesElsewhere`, shared with Save). The
   write hook names the scene that wrote (`PrefabWriteHooks::fileWritten`'s
@@ -134,8 +133,8 @@ session's own members, a window's are its document's.
 
 `src/editor/application/`: `PrefabWindowSet` (the documents),
 `EditorPrefabWindows.cpp` (the session's windows, their panels, the close
-prompt, and recovery), `PrefabEditTargets` (save and file-move helpers shared
-with prefab mode), and `DocumentBinding.hpp`.
+prompt, and recovery), `PrefabEditTargets` (save and file-move helpers), and
+`DocumentBinding.hpp`.
 `src/editor/document/PrefabWindowRecovery`: the windows' autosaves.
 Tests: `tests/editor/PrefabWindowTests.cpp`; the editor smoke's
 `smoke/PrefabWindowSmokeStep.cpp` checks the window's viewport renders the

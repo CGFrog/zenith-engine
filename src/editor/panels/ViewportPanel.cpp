@@ -374,24 +374,6 @@ void ViewportPanel::exitLocalView() {
     m_localViewObjects.reset();
 }
 
-ViewportPanel::DocumentView ViewportPanel::takeDocumentView() {
-    DocumentView view{.camera = m_camera, .cameraView = m_cameraView, .localView = std::move(m_localView)};
-    m_localView.reset();
-    m_localViewObjects.reset();
-    m_cameraView.reset();
-    m_queuedSelect.reset();
-    m_gizmoDrag.reset();
-    cancelSelectTool();
-    return view;
-}
-
-void ViewportPanel::restoreDocumentView(DocumentView view) {
-    m_camera = view.camera;
-    m_cameraView = view.cameraView;
-    m_localView = std::move(view.localView);
-    m_localViewObjects.reset();
-}
-
 bool ViewportPanel::localViewActive() const {
     return m_localView.has_value();
 }

@@ -169,7 +169,7 @@ void HierarchyPanel::draw(EditorContext& context) {
     ++m_frames;
     context.selection.removeMissing(scene);
     if (scene.contentGeneration() != m_sceneGeneration) {
-        // Another document (prefab mode, a scene opened): its ids name other
+        // Another document (a scene opened): its ids name other
         // entities, so a range, a pending click, or a rename must not carry
         // over.
         m_sceneGeneration = scene.contentGeneration();
@@ -484,7 +484,7 @@ void HierarchyPanel::drawEntity(EditorContext& context, const OutlinerRowEntry& 
     treeRow(entry, ImGuiTreeNodeFlags_AllowOverlap | (selected ? ImGuiTreeNodeFlags_Selected : 0));
     const ImVec2 rowMin = m_rowMin;
     const ImVec2 rowMax = m_rowMax;
-    // In prefab mode the document's root is the prefab itself.
+    // In a prefab window the document's root is the prefab itself.
     const bool prefabRoot = context.prefabEdit && context.prefabEdit->root == node.entity;
     decorateOutlinerRow(prefabRoot ? EditorIcon::Prefab : entityIcon(scene.registry(), entity), selected,
                         node.children.empty());

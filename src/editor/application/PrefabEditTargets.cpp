@@ -35,11 +35,6 @@ PrefabResult saveOpenPrefab(DocumentBinding document, PrefabEditTarget& target, 
     }
     document.history.crossBoundary(CommandHistoryBoundary::SaveDocument);
     document.document.markSaved();
-    if (!target.savedThisVisit) {
-        target.before = saved.before;
-        target.savedThisVisit = true;
-    }
-    target.saved = saved.after;
     return result;
 }
 

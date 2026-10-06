@@ -10,16 +10,15 @@
 class AssetManager;
 class EditorDiagnostics;
 
-// What prefab mode's document stack and the prefab windows share about a
-// prefab open as a document of its own (PrefabEditTarget): saving it, and
-// following its file when project files move or go.
+// What the prefab windows do with a prefab open as a document of its own
+// (PrefabEditTarget): saving it, and following its file when project files
+// move or go.
 
 // Writes the prefab document's root back to target's file
 // (savePrefabDocument): links that saving gives entities added since opening
 // are recorded as one step "Save <name>" on the document's history, the
-// document and history become clean, and target remembers what the file held
-// before the first save of the visit and after this one. saved receives this
-// save's before and after content.
+// document and history become clean. saved receives this save's before and
+// after content.
 PrefabResult saveOpenPrefab(DocumentBinding document, PrefabEditTarget& target, AssetManager& assets,
                             EditorDiagnostics& diagnostics, const PrefabWriteHooks& hooks, SavedPrefabDocument& saved);
 

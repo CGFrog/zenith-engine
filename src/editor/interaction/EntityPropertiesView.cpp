@@ -318,7 +318,7 @@ void EntityPropertiesView::drawPrefabHeader(EditorContext& context, SceneEntityI
     if (!overrides.linked) {
         return;
     }
-    // In prefab mode the document root's instance is the prefab itself:
+    // In a prefab window the document root's instance is the prefab itself:
     // Apply would be Save, and Revert would discard the document's edits.
     if (context.prefabEdit && overrides.instanceRoot == context.prefabEdit->root) {
         return;

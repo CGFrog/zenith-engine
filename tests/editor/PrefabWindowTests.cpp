@@ -1,8 +1,8 @@
 // Prefab windows: prefabs open in floating windows of their own while the
 // level stays open. The first half drives PrefabWindowSet headless (each
 // window's own document, history, and selection, saving, and refreshing other
-// documents). The second half runs the whole editor session headlessly with
-// ui.prefab_windows on, for what only the session decides: which document
+// documents). The second half runs the whole editor session headlessly, for
+// what only the session decides: which document
 // keys act on, refreshing the level on save, the unsaved-changes prompt,
 // Play with a window open, module reloads waiting for the windows, and
 // recovering an autosaved window.
@@ -242,6 +242,11 @@ void testWindowsFollowMovedFiles(const fs::path& base) {
     expect(fixture.windows.save(*lamp, fixture.assets, fixture.diagnostics, fixture.hooks(), saved).success &&
                !fs::exists(from) && readText(to).find("point_light") != std::string::npos,
            "moved: saving writes the file where it now lives");
+
+    fixture.windows.filesRemoved(std::span(&to, 1), fixture.diagnostics);
+    expect(fixture.windows.find(lamp->id) == lamp && !fixture.diagnostics.entries().empty() &&
+               fixture.diagnostics.entries().back().message.find("was removed") != std::string::npos,
+           "moved: a window whose prefab file was removed stays open with a warning");
 }
 
 // ---------------------------------------------------------------------------
@@ -418,7 +423,7 @@ constexpr const char* lampWindow = "###prefab.1";
 
 // A project under root with lamp.prefab (without a light), shelf.prefab
 // (holding one lamp), and a startup level holding two lamp instances and a
-// "Level marker", prefab windows on, and keys bound to the prefab operators.
+// "Level marker", and keys bound to the prefab operators.
 ProjectConfig prefabProject(const fs::path& root, bool withModule = false, std::string extraSettings = {}) {
     const fs::path assetRoot = root / "assets";
     fs::create_directories(assetRoot);
@@ -479,7 +484,7 @@ ProjectConfig prefabProject(const fs::path& root, bool withModule = false, std::
           binding(addLightKey, "object.component_add", {{"component", "point_light"}}),
           binding(reloadKey, "module.reload",
                   nlohmann::json::object())}}}.dump();
-    std::ofstream(root / "settings" / "settings.ini") << "ui.prefab_windows=true\n" << extraSettings;
+    std::ofstream(root / "settings" / "settings.ini") << extraSettings;
 
     ProjectConfig project;
     project.displayName = "Prefab window test";

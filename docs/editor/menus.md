@@ -40,8 +40,8 @@ Add > Physics > Character is a prefab: `prefab.add_character` writes
 `prefabs/Character.prefab` (a first-person player: a character controller with
 a first-person camera child, from `spawnFirstPersonPlayer`) on first use, linking
 the new object to it as its instance, and instantiates that file afterwards, so
-every character in a project shares one definition that can be edited in
-prefab mode. Adding a collider, rigid body, or character controller to an
+every character in a project shares one definition that can be edited in a
+prefab window. Adding a collider, rigid body, or character controller to an
 existing object is in the Inspector's Add Component > Physics (Collider,
 Rigid Body, Character Controller); a collider's Shape combo switches between
 Box, Sphere, Capsule, Triangle Mesh, and Convex Hull.

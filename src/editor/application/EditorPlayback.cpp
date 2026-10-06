@@ -41,50 +41,46 @@ OperatorRegistrationResult registerPlayControlOperatorFamily(OperatorRegistry& r
                                                              const EditorOperatorServices& services) {
     EditorPlayCommands& play = services.playCommands;
     EditorPlayMode& playMode = services.playMode;
-    // A prefab open as its own document is not a scene to play.
-    const EditorPrefabModeCommands& prefabMode = services.prefabModeCommands;
     std::string targetKeys;
     for (const PlayTargetInfo& target : playTargets()) {
         targetKeys += targetKeys.empty() ? "" : ", ";
         targetKeys += "\"" + std::string(target.key) + "\" (" + std::string(target.label) + ")";
     }
     std::vector<Operator> operators;
-    operators.push_back({.id = "play.start",
-                         .label = "Play",
-                         .description = "Run the scene on a copy of the document in a play target: " + targetKeys +
-                                        "; without a target, the one used last",
-                         .properties = OperatorProperties::make(
-                             PlayStartProperties{},
-                             std::move(Fields<PlayStartProperties>().add("target", &PlayStartProperties::target))),
-                         .poll =
-                             // The session's state, not context's: a prefab
-                             // window's document is in Edit mode while the
-                             // level plays.
-                         [&play, &prefabMode](const OperatorContext& context) {
-                             return context.app != nullptr && !play.playActive() && !prefabMode.prefabEditActive();
-                         },
-                         .execute =
-                             [&play, targetKeys](OperatorContext& context, OperatorProperties& properties) {
-                                 const PlayStartProperties* values = properties.get<PlayStartProperties>();
-                                 if (values == nullptr) {
-                                     return OperatorResult::failed("Operator properties have the wrong type");
-                                 }
-                                 PlayTarget target = play.lastPlayTarget();
-                                 if (!values->target.empty()) {
-                                     const std::optional<PlayTarget> parsed = parsePlayTarget(values->target);
-                                     if (!parsed) {
-                                         return OperatorResult::failed("Unknown play target '" + values->target +
-                                                                       "'; use " + targetKeys);
-                                     }
-                                     target = *parsed;
-                                 }
-                                 return play.startPlay(*context.app, target);
-                             }});
+    operators.push_back(
+        {.id = "play.start",
+         .label = "Play",
+         .description = "Run the scene on a copy of the document in a play target: " + targetKeys +
+                        "; without a target, the one used last",
+         .properties = OperatorProperties::make(PlayStartProperties{}, std::move(Fields<PlayStartProperties>().add(
+                                                                           "target", &PlayStartProperties::target))),
+         .poll =
+             // The session's state, not context's: a prefab
+             // window's document is in Edit mode while the
+             // level plays.
+         [&play](const OperatorContext& context) { return context.app != nullptr && !play.playActive(); },
+         .execute =
+             [&play, targetKeys](OperatorContext& context, OperatorProperties& properties) {
+                 const PlayStartProperties* values = properties.get<PlayStartProperties>();
+                 if (values == nullptr) {
+                     return OperatorResult::failed("Operator properties have the wrong type");
+                 }
+                 PlayTarget target = play.lastPlayTarget();
+                 if (!values->target.empty()) {
+                     const std::optional<PlayTarget> parsed = parsePlayTarget(values->target);
+                     if (!parsed) {
+                         return OperatorResult::failed("Unknown play target '" + values->target + "'; use " +
+                                                       targetKeys);
+                     }
+                     target = *parsed;
+                 }
+                 return play.startPlay(*context.app, target);
+             }});
     operators.push_back(applicationOperator(
         "play.simulate", "Simulate",
         "Run physics and the systems chosen in the System Profiler on a copy of the document, keeping the editor "
         "camera and tools",
-        [&play, &prefabMode](const OperatorContext&) { return !play.playActive() && !prefabMode.prefabEditActive(); },
+        [&play](const OperatorContext&) { return !play.playActive(); },
         [&play](ApplicationContext& app) { play.startSimulate(app); }));
     operators.push_back(applicationOperator(
         "play.toggle_pause", "Pause / Resume", "Pause or resume Play or Simulate",
@@ -272,8 +268,6 @@ void EditorSession::drawPlaybackToolbar(ApplicationContext& context) {
     const float side = ImGui::GetFrameHeight();
     const ImVec2 square{side, side};
     const EditorMode mode = m_playMode.mode();
-    // Play and Simulate wait while a prefab is open as its own document.
-    const char* prefabBlocks = m_documents.empty() ? nullptr : "Return to the scene to play";
     const auto button = [&](const char* id, EditorIcon icon, bool active, std::string_view operatorId,
                             const char* tooltip, std::string_view properties = {}) {
         ImGui::BeginDisabled(!operatorAvailable(context, operatorId));
@@ -298,8 +292,7 @@ void EditorSession::drawPlaybackToolbar(ApplicationContext& context) {
         button("##toolbar_play", EditorIcon::Stop, true, "play.stop", "Stop");
     } else {
         const std::string playTooltip = "Play in " + std::string(playTargetInfo(m_lastPlayTarget).label);
-        button("##toolbar_play", EditorIcon::Play, false, "play.start",
-               prefabBlocks != nullptr ? prefabBlocks : playTooltip.c_str());
+        button("##toolbar_play", EditorIcon::Play, false, "play.start", playTooltip.c_str());
     }
     ImGui::BeginDisabled(running);
     dropdown("v##toolbar_play_targets", "##PlayTargetMenu");
@@ -312,8 +305,7 @@ void EditorSession::drawPlaybackToolbar(ApplicationContext& context) {
         ImGui::EndPopup();
     }
     ImGui::SameLine();
-    button("##toolbar_simulate", EditorIcon::Physics, simulating, "play.simulate",
-           prefabBlocks != nullptr ? prefabBlocks : "Simulate");
+    button("##toolbar_simulate", EditorIcon::Physics, simulating, "play.simulate", "Simulate");
     dropdown("v##toolbar_simulate_options", "##SimulateOptions");
     if (ImGui::BeginPopup("##SimulateOptions")) {
         drawSimulateOptions(context);

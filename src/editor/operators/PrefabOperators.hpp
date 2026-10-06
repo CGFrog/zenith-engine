@@ -24,13 +24,12 @@
 //   prefab.unpack                         keep the entities, drop the link
 //   prefab.revert_field {entity, component, field}
 //   prefab.select_asset                   show the prefab in the Asset Browser
-//   prefab.edit {asset}                   open a prefab as its own document
-//   prefab.exit_edit                      back to the document under it
+//   prefab.edit {asset}                   open a prefab in a window of its own
+//   prefab.exit_edit                      close the focused prefab window
 //
-// prefab.edit and prefab.exit_edit switch documents (prefab mode, see
-// application/DocumentStack.hpp) and record nothing themselves: edits made in
-// prefab mode go to the prefab's own history, and returning after saving
-// records one "Edit <name>" step on the document below.
+// prefab.edit and prefab.exit_edit open and close prefab windows
+// (application/PrefabWindowSet.hpp) and record nothing themselves: edits made
+// in a window go to the prefab's own history.
 //
 // Undo: every operator is one undo step covering its scene changes (links,
 // instance entities, other instances an apply refreshed). create_from_selection
@@ -113,9 +112,9 @@ struct PrefabOperatorServices {
     // session drops cached copies and notes the write in its ledger, and
     // about the files an instantiate read.
     PrefabWriteHooks writeHooks;
-    // Prefab mode, for prefab.edit and prefab.exit_edit; null leaves them
+    // Prefab windows, for prefab.edit and prefab.exit_edit; null leaves them
     // unavailable.
-    EditorPrefabModeCommands* prefabMode{nullptr};
+    EditorPrefabWindowCommands* prefabWindows{nullptr};
 };
 
 OperatorRegistrationResult registerPrefabOperators(OperatorRegistry& registry, PrefabOperatorServices services = {});

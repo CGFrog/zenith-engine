@@ -63,18 +63,6 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
         return m_session.m_document;
     }
 
-    const DocumentStack& documents() const override {
-        return m_session.m_documents;
-    }
-
-    bool prefabWindowsEnabled() const override {
-        return m_session.prefabWindowsEnabled();
-    }
-
-    void setPrefabWindowsEnabled(bool enabled) override {
-        m_session.m_settings.appearance().prefabWindows = enabled;
-    }
-
     const PrefabWindowSet& prefabWindows() const override {
         return m_session.m_prefabWindows;
     }
@@ -82,6 +70,20 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     ViewportPanel* prefabWindowViewport(uint64_t window) override {
         PrefabWindowView* view = m_session.prefabWindowView(window);
         return view != nullptr ? dynamic_cast<ViewportPanel*>(view->viewport.get()) : nullptr;
+    }
+
+    std::optional<SceneEditing> prefabWindowEditing(uint64_t window) override {
+        PrefabWindowDocument* document = m_session.m_prefabWindows.find(window);
+        if (document == nullptr) {
+            return std::nullopt;
+        }
+        return SceneEditing(document->scene, m_context.assets, document->document, document->history,
+                            m_session.m_diagnostics);
+    }
+
+    bool savePrefabWindow(uint64_t window) override {
+        PrefabWindowDocument* document = m_session.m_prefabWindows.find(window);
+        return document != nullptr && m_session.savePrefabWindow(m_context, *document);
     }
 
     void closePrefabWindow(uint64_t window) override {

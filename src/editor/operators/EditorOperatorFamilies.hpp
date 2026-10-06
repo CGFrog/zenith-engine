@@ -21,7 +21,7 @@ class EditorMenus;
 class EditorObjectModeCommands;
 class EditorPlayCommands;
 class EditorPlayMode;
-class EditorPrefabModeCommands;
+class EditorPrefabWindowCommands;
 class EditorWindowCommands;
 class EntityEyedropper;
 class GameModuleHost;
@@ -91,7 +91,7 @@ struct EditorOperatorServices {
     EditorPlayCommands& playCommands;
     EditorObjectModeCommands& objectModeCommands;
     EditorWindowCommands& windowCommands;
-    EditorPrefabModeCommands& prefabModeCommands;
+    EditorPrefabWindowCommands& prefabWindowCommands;
 };
 
 using OperatorFamilyRegistration = OperatorRegistrationResult (*)(OperatorRegistry& registry,

@@ -35,7 +35,7 @@ class NoSessionCommands final : public EditorDocumentCommands,
                                 public EditorPlayCommands,
                                 public EditorObjectModeCommands,
                                 public EditorWindowCommands,
-                                public EditorPrefabModeCommands {
+                                public EditorPrefabWindowCommands {
   public:
     bool documentCommandsAvailable(const OperatorContext&) const override {
         return false;
@@ -134,15 +134,11 @@ class NoSessionCommands final : public EditorDocumentCommands,
 
     void openProjectSettings(ApplicationContext&, std::string_view) override {}
 
-    bool prefabEditActive() const override {
-        return false;
-    }
-
     bool prefabCloseAvailable() const override {
         return false;
     }
 
-    bool prefabEditAvailable(const OperatorContext&) const override {
+    bool prefabEditAvailable() const override {
         return false;
     }
 
@@ -150,7 +146,7 @@ class NoSessionCommands final : public EditorDocumentCommands,
         return OperatorResult::cancelled();
     }
 
-    void requestLeavePrefabEdit(ApplicationContext&) override {}
+    void requestCloseFocusedPrefab(ApplicationContext&) override {}
 };
 
 // What the session owns for its operator families, beyond the shared
@@ -197,7 +193,7 @@ struct OperatorFamilyFixture : EditorTestFixture {
                 .playCommands = session,
                 .objectModeCommands = session,
                 .windowCommands = session,
-                .prefabModeCommands = session};
+                .prefabWindowCommands = session};
     }
 };
 

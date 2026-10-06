@@ -132,9 +132,9 @@ struct EditorContext {
     // The project's physics layer and tag names, which inspectors offer as
     // choices; null where there is none.
     const EditorProjectNames* projectNames{nullptr};
-    // The prefab open as its own document (prefab mode,
-    // application/DocumentStack.hpp); empty while a scene is edited. A copy,
-    // so it stays valid when an operator leaves the prefab while panels draw.
+    // The prefab a prefab window's panels edit as its own document; empty for
+    // the level. A copy, so it stays valid when an operator closes the window
+    // while panels draw.
     std::optional<OpenPrefabSummary> prefabEdit;
     // The project's asset catalog and thumbnails, which asset fields offer
     // (interaction/AssetReferenceField); null where there is none (tests).

@@ -200,47 +200,6 @@ void EditorSession::resetActiveWorkspace() {
     m_workspacesDirty = true;
 }
 
-void EditorSession::enterPrefabWorkspace() {
-    if (!m_settings.appearance().prefabWorkspace || m_workspaceBeforePrefab || m_workspaces.empty()) {
-        return;
-    }
-    // Applied between frames by updateWorkspaces: an area may be drawing now.
-    m_workspaceBeforePrefab = m_workspaces.active().name();
-    m_prefabWorkspacePending = true;
-    m_workspacesDirty = true;
-}
-
-void EditorSession::applyPrefabWorkspaceRequest() {
-    if (!m_prefabWorkspacePending) {
-        return;
-    }
-    m_prefabWorkspacePending = false;
-    if (m_workspaces.find(prefabWorkspaceName) == nullptr) {
-        Workspace created = defaultWorkspace(prefabWorkspaceName);
-        created.sync(m_areaTypes);
-        m_workspaces.add(std::move(created));
-    }
-    if (!m_workspaces.requestActivation(prefabWorkspaceName)) {
-        m_workspaceBeforePrefab.reset();
-    }
-}
-
-void EditorSession::leavePrefabWorkspace() {
-    if (!m_workspaceBeforePrefab) {
-        return;
-    }
-    if (m_prefabWorkspacePending) {
-        // Left again before the Prefab workspace was ever shown.
-        m_prefabWorkspacePending = false;
-        m_workspaceBeforePrefab.reset();
-        return;
-    }
-    // The workspace may have been removed from workspaces.json by hand; the
-    // Prefab one then simply stays.
-    m_workspaces.requestActivation(*m_workspaceBeforePrefab);
-    m_workspaceBeforePrefab.reset();
-}
-
 void EditorSession::syncAreaTypes() {
     std::vector<std::string> moduleTypes;
     for (const GameModuleHost::Panel& panel : m_moduleHost.panels()) {
@@ -315,7 +274,6 @@ void EditorSession::updateWorkspaces() {
     if (m_workspaces.empty()) {
         return;
     }
-    applyPrefabWorkspaceRequest();
     if (applyRequestedWorkspace(m_workspaces)) {
         m_buildDefaultLayout = m_workspaces.active().layout().empty();
         m_workspacesDirty = true;
