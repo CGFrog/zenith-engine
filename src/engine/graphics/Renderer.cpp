@@ -365,9 +365,17 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     // Replacing this slot's leases is safe after its fence signals; assets used
     // by the previous submission can now be collected without a queue idle.
     m_frameAssets[m_currentFrame] = assets.leaseSceneAssets(scene);
-    // Every bound secondary scene's assets too: a view may draw it this frame.
-    for (const RenderRuntime::SceneSlot& slot : m_rendering->m_scenes) {
-        if (slot.alive && slot.content != nullptr) {
+    // The assets of every bound secondary scene a view may draw this frame
+    // too. A scene bound without a requested view (a hidden editor window)
+    // reads no assets, and walking its entities would cost every frame.
+    const std::vector<RenderRuntime::SceneSlot>& scenes = m_rendering->m_scenes;
+    for (uint32_t index = 0; index < scenes.size(); ++index) {
+        const RenderRuntime::SceneSlot& slot = scenes[index];
+        const RenderSceneId id{.index = index, .generation = slot.generation};
+        const bool requested = std::ranges::any_of(m_rendering->m_views, [&id](const RenderRuntime::ViewSlot& view) {
+            return view.alive && view.renderRequested && view.scene == id;
+        });
+        if (slot.alive && slot.content != nullptr && requested) {
             appendAssetLeases(m_frameAssets[m_currentFrame], assets.leaseSceneAssets(*slot.content));
         }
     }
