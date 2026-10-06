@@ -172,6 +172,7 @@ add_library(zenith_editor_app STATIC
     smoke/PieMenuSmokeStep.cpp
     smoke/PlayTargetSmokeStep.cpp
     smoke/PrefabEditSmokeStep.cpp
+    smoke/PrefabWindowSmokeStep.cpp
     smoke/PrefabSmokeStep.cpp
     smoke/SimulateSmokeStep.cpp
     smoke/SmokeRunner.cpp

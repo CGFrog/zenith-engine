@@ -14,6 +14,7 @@
 class AssetManager;
 class EditorDiagnostics;
 class EditorDocument;
+struct SceneEditorData;
 
 // Records changes to the edited scene as undoable document commands. It holds
 // references only, so the session builds one per frame from the objects it
@@ -97,6 +98,9 @@ class SceneEditing {
 
     AssetManager& assets() const;
     const EditorDocument& document() const;
+    // The document's editor-only state (the 3D cursor), which changes
+    // outside the undo history.
+    SceneEditorData& editorData() const;
     EditorDiagnostics& diagnostics() const;
     // The history's revision (CommandHistory::revision): it changes with
     // every recorded edit, undo, redo, and document replacement, so views can

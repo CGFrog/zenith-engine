@@ -294,6 +294,10 @@ class EditorHarness {
         return m_session;
     }
 
+    RenderRuntime& rendering() {
+        return m_rendering;
+    }
+
     void shutdown() {
         m_session.shutdown();
     }
@@ -386,6 +390,21 @@ ProjectConfig prefabProject(const fs::path& root, bool withModule = false, std::
     return project;
 }
 
+// The render scene a created view draws, or empty when no view draws one.
+RenderSceneId boundScene(const RenderRuntime& rendering) {
+    for (uint32_t index = 1; index < RenderRuntime::maximumViews; ++index) {
+        for (uint32_t generation = 1; generation < 64; ++generation) {
+            const RenderViewId view{.index = index, .generation = generation};
+            if (rendering.viewAlive(view)) {
+                if (const RenderSceneId scene = rendering.viewScene(view)) {
+                    return scene;
+                }
+            }
+        }
+    }
+    return {};
+}
+
 bool inLevel(const Scene& scene) {
     return findNamed(scene, "Level marker") != entt::null;
 }
@@ -407,6 +426,10 @@ void testWindowEditsThePrefabBesideTheLevel(const fs::path& root) {
     expect(editor.windowOpen("Hierarchy##prefab.1.hierarchy") && editor.windowOpen("Inspector##prefab.1.inspector") &&
                editor.windowOpen("Viewport##prefab.1.viewport"),
            "window: the window shows its own Hierarchy, Inspector, and viewport");
+    editor.frame();
+    const RenderSceneId prefabScene = boundScene(editor.rendering());
+    expect(prefabScene && editor.rendering().sceneAlive(prefabScene),
+           "window: the window's viewport draws a render scene of its own");
     editor.press(addLightKey);
     expect(litLamps(editor.scene) == 0 && readText(file) == original,
            "window: an edit in the focused window changes neither the level nor the file");
@@ -431,6 +454,8 @@ void testWindowEditsThePrefabBesideTheLevel(const fs::path& root) {
     editor.frame();
     expect(!editor.windowOpen(lampWindow) && inLevel(editor.scene) && litLamps(editor.scene) == 2,
            "close: Discard closes the window and leaves the saved prefab in the level");
+    expect(!editor.rendering().sceneAlive(prefabScene) && !boundScene(editor.rendering()),
+           "close: the window's render scene and its view go with it");
 }
 
 void testPlayWithAWindowOpen(const fs::path& root) {

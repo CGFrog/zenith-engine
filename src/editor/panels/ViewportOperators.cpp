@@ -105,7 +105,10 @@ template <typename Run>
 Operator viewportOperator(ViewportRegistry& viewports, Operator op, Run run,
                           std::function<bool(const OperatorContext&)> extraPoll = {}) {
     op.poll = [&viewports, extraPoll = std::move(extraPoll)](const OperatorContext& context) {
-        return viewports.active() != nullptr && (!extraPoll || extraPoll(context));
+        // The viewport must show the document the operator runs on.
+        const ViewportPanel* viewport = viewports.active();
+        return viewport != nullptr && viewport->showsDocument(context.editing.document()) &&
+               (!extraPoll || extraPoll(context));
     };
     op.execute = [&viewports, run = std::move(run)](OperatorContext& context, OperatorProperties& properties) {
         ViewportPanel* viewport = viewports.active();

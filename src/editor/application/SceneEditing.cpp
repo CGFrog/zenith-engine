@@ -37,6 +37,10 @@ EditorDiagnostics& SceneEditing::diagnostics() const {
     return m_diagnostics;
 }
 
+SceneEditorData& SceneEditing::editorData() const {
+    return m_document.editorData();
+}
+
 uint64_t SceneEditing::historyRevision() const {
     return m_history.revision();
 }

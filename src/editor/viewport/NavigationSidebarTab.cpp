@@ -17,6 +17,11 @@ void drawStats(const NavigationWorld& navigation) {
 
 void drawNavigationSidebarTab(EditorContext& context, bool& showNavigationMesh) {
     ImGui::SeparatorText("Preview");
+    if (context.navigationPreview == nullptr) {
+        // A prefab window: navigation.bake bakes the level, not this view.
+        ImGui::TextDisabled("Navigation meshes are baked from the level.");
+        return;
+    }
     if (context.navigationPreview != nullptr && context.navigationPreview->baked()) {
         drawStats(*context.navigationPreview);
     } else {

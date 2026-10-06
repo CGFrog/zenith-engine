@@ -154,7 +154,8 @@ OperatorResult EditorSession::startPlay(ApplicationContext& context, PlayTarget 
     if (target == PlayTarget::Standalone) {
         return startStandalone(context);
     }
-    ViewportPanel* viewport = m_viewports.active();
+    // The game plays in a viewport of the level, never a prefab window's.
+    ViewportPanel* viewport = activeLevelViewport();
     if (target == PlayTarget::FloatingViewport) {
         Workspace& workspace = m_workspaces.active();
         const AreaResult opened = workspace.openNew(m_areaTypes, "viewport");

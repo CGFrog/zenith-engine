@@ -174,7 +174,7 @@ void EditorSession::recoverPrefabEdit(ApplicationContext& context) {
     m_document.markDirty();
     m_operatorRunner.forgetLast();
     ParkedDocument& parked = *m_documents.top();
-    for (ViewportPanel* viewport : m_viewports.openViewports()) {
+    for (ViewportPanel* viewport : levelViewports()) {
         parked.views.emplace_back(viewport->id(), viewport->takeDocumentView());
     }
     notePrefabFilesRead(context.scene, m_document.options().assetRoot, prefabWriteHooks());

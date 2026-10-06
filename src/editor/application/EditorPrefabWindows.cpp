@@ -11,6 +11,7 @@
 #include "editor/application/PrefabInstanceRefresh.hpp"
 #include "editor/theme/EditorTheme.hpp"
 #include "editor/theme/EditorWidgets.hpp"
+#include "editor/viewport/ViewFraming.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -93,8 +94,11 @@ class EditorSession::PrefabWindowActions final : public EditorSessionActions {
         return m_session.modalTransformActive();
     }
 
-    // A prefab window has no viewport, so no modal transform runs in it.
-    void updateModalTransform(ApplicationContext&, ViewportId) override {}
+    // The transform knows which document it edits (EditorSession::
+    // ActiveTransform::window), so the session's context serves.
+    void updateModalTransform(ApplicationContext&, ViewportId viewport) override {
+        m_session.updateModalTransform(m_context, viewport);
+    }
 
     uint32_t dispatchMouseChords(ApplicationContext&, KeymapRegion region, uint32_t allowedButtons) override {
         return m_session.dispatchMouseChordsOn(m_context, &m_window, region, allowedButtons);
@@ -129,19 +133,42 @@ OperatorResult EditorSession::openPrefabWindow(ApplicationContext& context, cons
     }
     PrefabWindowView* view = prefabWindowView(window->id);
     if (view == nullptr) {
-        auto created = std::make_unique<PrefabWindowView>();
-        created->id = window->id;
-        created->hierarchy = createPrefabWindowPanel("hierarchy");
-        created->inspector = createPrefabWindowPanel("inspector");
+        addPrefabWindowView(context, *window);
         notePrefabFilesRead(window->scene, m_document.options().assetRoot, prefabWriteHooks());
-        window->assetLeases = context.assets.leaseSceneAssets(window->scene);
-        view = created.get();
-        m_prefabWindowViews.push_back(std::move(created));
+        view = prefabWindowView(window->id);
     }
     // Opening a prefab that is already open brings its window to the front.
     view->focusRequest = true;
     m_focusedPrefabWindow = window->id;
     return OperatorResult::finished();
+}
+
+void EditorSession::addPrefabWindowView(ApplicationContext& context, PrefabWindowDocument& window) {
+    auto view = std::make_unique<PrefabWindowView>();
+    view->id = window.id;
+    view->hierarchy = createPrefabWindowPanel("hierarchy");
+    view->inspector = createPrefabWindowPanel("inspector");
+    view->viewport = createPrefabWindowPanel("viewport");
+    window.renderScene = context.rendering.createScene();
+    window.assetLeases = context.assets.leaseSceneAssets(window.scene);
+    if (auto* viewport = dynamic_cast<ViewportPanel*>(view->viewport.get())) {
+        // Without a free render scene the viewport shows the placeholder.
+        viewport->showDocument(&window.document, window.renderScene);
+        window.scene.updateWorldTransforms();
+        std::vector<SceneEntityId> everything;
+        for (const Entity entity : window.scene.registry().view<const TransformComponent>()) {
+            everything.push_back(window.scene.id(entity));
+        }
+        frameEntities(viewport->camera(), window.scene, context.assets, everything);
+    }
+    m_prefabWindowViews.push_back(std::move(view));
+}
+
+void EditorSession::bindPrefabWindowScenes(ApplicationContext& context) {
+    for (const std::unique_ptr<PrefabWindowDocument>& window : m_prefabWindows.windows()) {
+        window->scene.updateWorldTransforms();
+        context.rendering.setSceneContent(window->renderScene, &window->scene);
+    }
 }
 
 std::shared_ptr<EditorPanel> EditorSession::createPrefabWindowPanel(std::string_view typeId) {
@@ -179,8 +206,16 @@ void EditorSession::applyPrefabWindowCloses(ApplicationContext& context) {
         return;
     }
     for (const uint64_t id : std::exchange(m_prefabWindowCloses, {})) {
+        if (m_activeTransform && m_activeTransform->window == id) {
+            // Before the document it edits goes.
+            finishModalTransform(context, false);
+        }
+        // The panels first: the viewport releases its render view.
         std::erase_if(m_prefabWindowViews,
                       [id](const std::unique_ptr<PrefabWindowView>& view) { return view->id == id; });
+        if (const PrefabWindowDocument* window = m_prefabWindows.find(id)) {
+            context.rendering.destroyScene(window->renderScene);
+        }
         m_prefabWindows.close(id);
         if (m_focusedPrefabWindow == id) {
             m_focusedPrefabWindow = 0;
@@ -190,10 +225,16 @@ void EditorSession::applyPrefabWindowCloses(ApplicationContext& context) {
     autosavePrefabWindows(context, true);
 }
 
-void EditorSession::closeAllPrefabWindows() {
+void EditorSession::closeAllPrefabWindows(ApplicationContext& context) {
+    if (m_activeTransform && m_activeTransform->window != 0) {
+        finishModalTransform(context, false);
+    }
     m_prefabWindowCloses.clear();
     m_prefabWindowPrompt.reset();
     m_prefabWindowViews.clear();
+    for (const std::unique_ptr<PrefabWindowDocument>& window : m_prefabWindows.windows()) {
+        context.rendering.destroyScene(window->renderScene);
+    }
     m_prefabWindows.closeAll();
     m_focusedPrefabWindow = 0;
 }
@@ -308,7 +349,7 @@ void EditorSession::updatePrefabWindows(ApplicationContext& context, const Input
         ApplicationContext windowContext = windowApplicationContext(context, *window);
         PrefabWindowActions actions(*this, context, *window);
         EditorContext editor = prefabWindowEditorContext(windowContext, context, *window, actions);
-        for (const std::shared_ptr<EditorPanel>& panel : {view->hierarchy, view->inspector}) {
+        for (const std::shared_ptr<EditorPanel>& panel : {view->hierarchy, view->viewport, view->inspector}) {
             if (panel) {
                 panel->update(editor, input, deltaSeconds);
             }
@@ -401,13 +442,17 @@ void EditorSession::drawPrefabWindow(ApplicationContext& context, PrefabWindowDo
     if (!open) {
         requestClosePrefabWindow(window.id);
     }
-    if (!visible) {
-        return;
-    }
-
     ApplicationContext windowContext = windowApplicationContext(context, window);
     PrefabWindowActions actions(*this, context, window);
     EditorContext editor = prefabWindowEditorContext(windowContext, context, window, actions);
+    if (!visible) {
+        for (const std::shared_ptr<EditorPanel>& panel : {view.hierarchy, view.viewport, view.inspector}) {
+            if (panel) {
+                panel->hidden(editor);
+            }
+        }
+        return;
+    }
     const auto drawPanel = [&](const std::shared_ptr<EditorPanel>& panel, std::string_view part) {
         if (!panel) {
             return;
@@ -425,11 +470,13 @@ void EditorSession::drawPrefabWindow(ApplicationContext& context, PrefabWindowDo
         if (panelVisible) {
             m_themeChrome.paintAreaWindow();
             panel->draw(editor);
+        } else {
+            panel->hidden(editor);
         }
         ImGui::End();
     };
     drawPanel(view.hierarchy, "hierarchy");
-    drawPrefabViewportPlaceholder(window);
+    drawPanel(view.viewport, "viewport");
     drawPanel(view.inspector, "inspector");
 }
 
@@ -462,19 +509,6 @@ void EditorSession::drawPrefabWindowToolbar(ApplicationContext& context, PrefabW
     ImGui::SetItemTooltip("Close this prefab, asking about unsaved changes");
     ImGui::SameLine();
     widgets::CaptionText(window.target.reference.generic_string().c_str(), palette::inkMuted);
-}
-
-void EditorSession::drawPrefabViewportPlaceholder(const PrefabWindowDocument& window) {
-    const std::string name = windowPartName(window, "Viewport", "viewport");
-    if (ImGui::Begin(name.c_str(), nullptr, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse)) {
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
-            m_focusedPrefabWindow = window.id;
-        }
-        ImGui::TextWrapped("The 3D view of a prefab window is not available yet: the renderer draws one scene per "
-                           "frame. Edit the prefab in the Hierarchy and Inspector, and see it in the level after "
-                           "saving.");
-    }
-    ImGui::End();
 }
 
 void EditorSession::drawPrefabWindowPrompt(ApplicationContext& context) {
@@ -583,12 +617,7 @@ void EditorSession::recoverPrefabWindows(ApplicationContext& context) {
                                                               .displayName = note.displayName,
                                                               .root = note.root},
                                                              m_document);
-        auto view = std::make_unique<PrefabWindowView>();
-        view->id = window.id;
-        view->hierarchy = createPrefabWindowPanel("hierarchy");
-        view->inspector = createPrefabWindowPanel("inspector");
-        m_prefabWindowViews.push_back(std::move(view));
+        addPrefabWindowView(context, window);
         notePrefabFilesRead(window.scene, m_document.options().assetRoot, prefabWriteHooks());
-        window.assetLeases = context.assets.leaseSceneAssets(window.scene);
     }
 }

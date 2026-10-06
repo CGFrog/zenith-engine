@@ -204,7 +204,7 @@ class EditorSession final : public ApplicationScene,
     // EditorObjectModeCommands (EditorObjectCommands.cpp)
     bool modalTransformRunning() const override;
     bool viewportsShowDocument(const OperatorContext& context) const override;
-    bool beginModalTransform(ApplicationContext& context, TransformOperation operation, std::string commandName,
+    bool beginModalTransform(OperatorContext& context, TransformOperation operation, std::string commandName,
                              std::optional<SceneEditing::EntitySnapshot> before, bool commitOnCancel) override;
     void openDeleteMenu() override;
     void openRenamePopup(OperatorContext& context) override;
@@ -387,6 +387,7 @@ class EditorSession final : public ApplicationScene,
     struct PrefabWindowView {
         uint64_t id{0};
         std::shared_ptr<EditorPanel> hierarchy;
+        std::shared_ptr<EditorPanel> viewport;
         std::shared_ptr<EditorPanel> inspector;
         bool layoutBuilt{false};
         // Bring the window to the front at the next draw.
@@ -417,7 +418,13 @@ class EditorSession final : public ApplicationScene,
     // Between frames: closes the windows whose close was requested.
     void applyPrefabWindowCloses(ApplicationContext& context);
     // Drops every window with its unsaved changes (the session ending).
-    void closeAllPrefabWindows();
+    void closeAllPrefabWindows(ApplicationContext& context);
+    // Creates the panels of a window just opened or recovered, its render
+    // scene, and frames its viewport on the prefab.
+    void addPrefabWindowView(ApplicationContext& context, PrefabWindowDocument& window);
+    // Once per frame before the renderer draws: each window's world
+    // transforms, and its scene bound as its render scene's content.
+    void bindPrefabWindowScenes(ApplicationContext& context);
     // Writes window's prefab to its file and refreshes its instances in every
     // other open document; false after reporting why not.
     bool savePrefabWindow(ApplicationContext& context, PrefabWindowDocument& window);
@@ -439,7 +446,6 @@ class EditorSession final : public ApplicationScene,
     void drawPrefabWindow(ApplicationContext& context, PrefabWindowDocument& window, PrefabWindowView& view);
     void buildPrefabWindowLayout(const PrefabWindowDocument& window, unsigned int dockspaceId);
     void drawPrefabWindowToolbar(ApplicationContext& context, PrefabWindowDocument& window);
-    void drawPrefabViewportPlaceholder(const PrefabWindowDocument& window);
     void drawPrefabWindowPrompt(ApplicationContext& context);
     // Runs draw with the EditorContext of the document whose window last had
     // focus: a prefab window's (as its panels get it), or the level's.
@@ -537,6 +543,11 @@ class EditorSession final : public ApplicationScene,
     void drawProjectSettings(ApplicationContext& context);
     std::string applyProjectSettings(ApplicationContext& context, const ProjectSettingsValues& values);
     void finishModalTransform(ApplicationContext& context, bool confirm);
+    // The scene the running modal transform edits (the level's, or its
+    // prefab window's) and an editing over its document; null when that
+    // window is gone.
+    Scene* modalTransformScene(ApplicationContext& context);
+    std::optional<SceneEditing> modalTransformEditing(ApplicationContext& context);
     void drawModalTransformOverlay(const ViewportPanel& viewport, const ModalTransformResult& result) const;
 
     // Viewports (EditorViewports.cpp).
@@ -544,8 +555,12 @@ class EditorSession final : public ApplicationScene,
     // transform whose viewport closed.
     void beginViewportFrame(ApplicationContext& context);
     // After the areas are drawn: shadows and streaming follow the active
-    // viewport's render view.
+    // level viewport's render view.
     void syncActiveRenderView(ApplicationContext& context);
+    // The open viewports showing the level (not a prefab window's), and the
+    // active viewport when it is one of them, else the first.
+    std::vector<ViewportPanel*> levelViewports() const;
+    ViewportPanel* activeLevelViewport() const;
     // The bottom-left corner of the active viewport's image, or of the work
     // area when no viewport is open.
     glm::vec2 lastOperatorAnchor() const;
@@ -752,6 +767,8 @@ class EditorSession final : public ApplicationScene,
         // The viewport the transform started in; it alone advances and draws
         // the transform, which is cancelled if the viewport closes.
         ViewportId viewport;
+        // The prefab window whose document is transformed; 0 for the level.
+        uint64_t window{0};
         std::vector<SceneEntityId> entities;
         std::vector<glm::mat4> startLocal;
         // The moved entities (or the new copies) from before the command,

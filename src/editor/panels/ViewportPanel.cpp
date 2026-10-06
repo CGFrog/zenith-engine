@@ -93,6 +93,27 @@ ViewportPanel::ViewportPanel(ViewportRegistry& registry)
     : m_registry(registry)
     , m_id(registry.add(*this)) {}
 
+void ViewportPanel::showDocument(const EditorDocument* document, RenderSceneId renderScene) {
+    if (m_renderScene != renderScene) {
+        // The default view draws only the application's scene.
+        releaseRenderView();
+    }
+    m_document = document;
+    m_renderScene = renderScene;
+    if (renderScene) {
+        // Secondary scenes render with preview lighting (studio rig).
+        m_chrome.shading = ViewportShading::MaterialPreview;
+    }
+}
+
+bool ViewportPanel::showsDocument(const EditorDocument& document) const {
+    return m_document == nullptr || m_document == &document;
+}
+
+const EditorDocument* ViewportPanel::document() const {
+    return m_document;
+}
+
 ViewportPanel::~ViewportPanel() {
     releaseRenderView();
     m_registry.remove(m_id);
@@ -406,6 +427,7 @@ void ViewportPanel::update(EditorContext& context, const InputState& input, floa
 void ViewportPanel::syncRenderView(EditorContext& context) {
     RenderRuntime& rendering = context.app.rendering;
     const Scene& scene = context.app.scene;
+    rendering.setViewScene(m_view, m_renderScene);
     // A deleted camera (or one that lost its CameraComponent) ends the
     // camera view.
     if (m_cameraView && !sceneCameraLens(scene, scene.findEntity(*m_cameraView))) {
@@ -543,11 +565,11 @@ void ViewportPanel::draw(EditorContext& context) {
     m_registry.markDrawn(m_id);
     // Trade a view of its own for the free default view, which renders every
     // frame anyway and keeps GPU-driven submission.
-    if (m_view && m_view != rendering.defaultView() && m_registry.defaultViewFree()) {
+    if (!m_renderScene && m_view && m_view != rendering.defaultView() && m_registry.defaultViewFree()) {
         releaseRenderView();
     }
     if (!m_view) {
-        m_view = m_registry.acquireView(rendering, m_id);
+        m_view = m_registry.acquireView(rendering, m_id, !m_renderScene);
         if (m_view) {
             m_rendering = &rendering;
         }

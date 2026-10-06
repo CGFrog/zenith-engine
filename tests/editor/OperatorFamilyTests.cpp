@@ -111,7 +111,7 @@ class NoSessionCommands final : public EditorDocumentCommands,
         return true;
     }
 
-    bool beginModalTransform(ApplicationContext&, TransformOperation, std::string,
+    bool beginModalTransform(OperatorContext&, TransformOperation, std::string,
                              std::optional<SceneEditing::EntitySnapshot>, bool) override {
         return false;
     }
@@ -174,8 +174,7 @@ struct OperatorFamilyFixture : EditorTestFixture {
     NoSessionCommands session;
 
     EditorOperatorServices services() {
-        return {.document = document,
-                .eyedropper = eyedropper,
+        return {.eyedropper = eyedropper,
                 .componentClipboard = clipboard,
                 .componentLayout = componentLayout,
                 .menus = menus,

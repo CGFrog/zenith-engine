@@ -98,8 +98,9 @@ class ViewportRegistry {
     ViewportPanel* active() const;
 
     // A render view for a viewport: the default view while no viewport holds
-    // it, otherwise a created view. Empty when the renderer has no free view.
-    RenderViewId acquireView(RenderRuntime& rendering, ViewportId requester);
+    // it (and the viewport may use it), otherwise a created view. Empty when
+    // the renderer has no free view.
+    RenderViewId acquireView(RenderRuntime& rendering, ViewportId requester, bool mayUseDefaultView = true);
     // Destroys a created view; the default view has its per-view state
     // (camera, grid, outlines, settings, isolation, input) reset and becomes
     // free.

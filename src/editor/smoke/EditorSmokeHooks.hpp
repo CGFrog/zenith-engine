@@ -11,6 +11,7 @@
 #include <string_view>
 
 class DocumentStack;
+class PrefabWindowSet;
 class EditorDocument;
 class EditorMenus;
 class EditorPlayMode;
@@ -51,6 +52,14 @@ class EditorSmokeHooks {
     virtual EditorDocument& document() = 0;
     // The documents parked under prefab edits (prefab mode).
     virtual const DocumentStack& documents() const = 0;
+    // Prefab windows (ui.prefab_windows): the preference, the open windows,
+    // a window's viewport (null when it has none), and closing one at the
+    // next update without asking about unsaved changes.
+    virtual bool prefabWindowsEnabled() const = 0;
+    virtual void setPrefabWindowsEnabled(bool enabled) = 0;
+    virtual const PrefabWindowSet& prefabWindows() const = 0;
+    virtual ViewportPanel* prefabWindowViewport(uint64_t window) = 0;
+    virtual void closePrefabWindow(uint64_t window) = 0;
     virtual EditorMenus& menus() = 0;
     virtual ViewportRegistry& viewports() = 0;
     virtual Workspace& activeWorkspace() = 0;

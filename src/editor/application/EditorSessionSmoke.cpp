@@ -67,6 +67,27 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
         return m_session.m_documents;
     }
 
+    bool prefabWindowsEnabled() const override {
+        return m_session.prefabWindowsEnabled();
+    }
+
+    void setPrefabWindowsEnabled(bool enabled) override {
+        m_session.m_settings.appearance().prefabWindows = enabled;
+    }
+
+    const PrefabWindowSet& prefabWindows() const override {
+        return m_session.m_prefabWindows;
+    }
+
+    ViewportPanel* prefabWindowViewport(uint64_t window) override {
+        PrefabWindowView* view = m_session.prefabWindowView(window);
+        return view != nullptr ? dynamic_cast<ViewportPanel*>(view->viewport.get()) : nullptr;
+    }
+
+    void closePrefabWindow(uint64_t window) override {
+        m_session.m_prefabWindowCloses.push_back(window);
+    }
+
     EditorMenus& menus() override {
         return m_session.m_menus;
     }

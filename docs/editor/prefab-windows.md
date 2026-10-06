@@ -1,7 +1,7 @@
 # Prefab windows
 
 With **Open prefabs in their own windows** on (Preferences > Interface,
-`ui.prefab_windows`, off by default), Edit Prefab opens the prefab in a
+`ui.prefab_windows`, on by default), Edit Prefab opens the prefab in a
 floating window of its own instead of swapping it in over the level, as
 Unreal's asset editors do. The level stays open, visible, editable, and
 playable underneath, and several prefabs can be open at once, one window
@@ -10,11 +10,15 @@ each. With the preference off, prefab mode (the document stack,
 unchanged.
 
 The window hosts its own dock space with the prefab's **Hierarchy**,
-**Inspector**, and a **Viewport** slot, plus Save and Close. The viewport slot
-is a placeholder for now: the renderer draws one scene per frame
-(`Renderer::drawFrame` takes a single `Scene`, and the mesh pass caches by
-scene revision), so showing a second scene live needs per-view scene binding
-in the engine. Until then the preference stays off by default.
+**Viewport**, and **Inspector**, plus Save and Close. The viewport is a real
+`ViewportPanel` registered with the session's `ViewportRegistry`: camera,
+picking, the gizmo, G/R/S, snapping, collider handles, drops, the 3D cursor,
+and local view all edit the prefab. It draws the window's scene as a secondary
+render scene (`RenderRuntime::createScene`/`setViewScene`, see
+[Architecture](../ARCHITECTURE.md#render-views)), so it shows the prefab with
+preview lighting (the Material Preview studio rig): the prefab's own sun,
+shadows, environment, fog, and particles are not drawn there, and the
+viewport's Rendered shading falls back to Material Preview.
 
 ## Documents
 
@@ -48,11 +52,22 @@ session's own members, a window's are its document's.
   mode Edit, so it records history and stays editable while the level plays.
   Operators that mean the session's state (Play, New, Open, Save As) read the
   session's play state, not the context's mode.
-- Modal G/R/S transforms need a viewport showing the document
-  (`EditorObjectModeCommands::viewportsShowDocument`), so they are unavailable
-  in prefab windows for now. Adjust Last Operation re-runs on the level only,
-  and the eyedropper and watched fields are not offered in windows, since
-  both resolve their targets in the level.
+- Viewports know the document they show (`ViewportPanel::showDocument`):
+  level areas the level's, a window's viewport its window's. `view3d.*` and
+  3D-cursor operators run only when the active viewport shows the operator's
+  document, and the cursor they move is that document's. A modal G/R/S
+  transform records the window it edits (`ActiveTransform::window`), so it
+  restores and commits there; closing the window cancels it first.
+- Level-only work uses the level's viewports (`EditorSession::
+  levelViewports`): Play's viewport target, the render view shadows and
+  streaming follow, and prefab mode's framing. A window's viewport never takes
+  the default render view (GPU-driven, the application's scene only).
+- Each frame, after the UI is drawn, the session updates every window's world
+  transforms and binds its scene as its render scene's content; the window's
+  render scene is created with the window and destroyed with it.
+- Adjust Last Operation re-runs on the level only, and the eyedropper, watched
+  fields, and navigation baking are not offered in windows, since they resolve
+  their targets in the level.
 
 ## Saving, refreshing, closing
 
@@ -85,7 +100,7 @@ session's own members, a window's are its document's.
 
 ## Known limits
 
-- No live 3D view in the window yet (see above).
+- The window's view uses preview lighting (see above).
 - A prefab written by `prefab.apply` or `prefab.revert` in one document
   refreshes the instances in that document only, as in prefab mode; other
   open documents catch up when the prefab is saved from a window.
@@ -99,4 +114,6 @@ session's own members, a window's are its document's.
 prompt, and recovery), `PrefabEditTargets` (save and file-move helpers shared
 with prefab mode), and `DocumentBinding.hpp`.
 `src/editor/document/PrefabWindowRecovery`: the windows' autosaves.
-Tests: `tests/editor/PrefabWindowTests.cpp`.
+Tests: `tests/editor/PrefabWindowTests.cpp`; the editor smoke's
+`smoke/PrefabWindowSmokeStep.cpp` checks the window's viewport renders the
+prefab through the renderer.

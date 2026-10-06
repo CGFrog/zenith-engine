@@ -114,11 +114,12 @@ class EditorObjectModeCommands {
     // Whether the viewports show context's document, so a modal transform
     // can follow the mouse over one: the level's do; a prefab window has none.
     virtual bool viewportsShowDocument(const OperatorContext& context) const = 0;
-    // Starts a modal transform in the active viewport; false when there is
-    // none, nothing to transform, or the scene cannot be captured. before is
+    // Starts a modal transform of context's selection in the active viewport,
+    // which must show context's document; false when there is none, nothing
+    // to transform, or the scene cannot be captured. before is
     // the snapshot to undo to (taken before the copies a duplicate made), or
     // empty to capture the transformed entities now.
-    virtual bool beginModalTransform(ApplicationContext& context, TransformOperation operation, std::string commandName,
+    virtual bool beginModalTransform(OperatorContext& context, TransformOperation operation, std::string commandName,
                                      std::optional<SceneEditing::EntitySnapshot> before, bool commitOnCancel) = 0;
     virtual void openDeleteMenu() = 0;
     // Opens the rename popup for the active object of context's selection.

@@ -7,6 +7,7 @@
 #include "editor/interaction/Selection.hpp"
 #include "editor/project/AssetRelocation.hpp"
 #include "engine/assets/Assets.hpp"
+#include "engine/graphics/RenderIds.hpp"
 #include "engine/scene/Prefab.hpp"
 #include "engine/scene/Scene.hpp"
 
@@ -46,6 +47,9 @@ struct PrefabWindowDocument {
     // leased by the application, and nothing else holds a prefab window's.
     // The session renews it every frame.
     AssetLeaseSet assetLeases;
+    // The render scene the window's viewport draws the scene as
+    // (RenderRuntime::createScene); the session creates and destroys it.
+    RenderSceneId renderScene;
 };
 
 // The prefabs open in windows of their own (the editor's prefab windows), at

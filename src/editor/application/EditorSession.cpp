@@ -160,8 +160,7 @@ OperatorContext EditorSession::operatorContextOn(ApplicationContext& context, Pr
 }
 
 EditorOperatorServices EditorSession::operatorServices() {
-    return {.document = m_document,
-            .eyedropper = m_eyedropper,
+    return {.eyedropper = m_eyedropper,
             .componentClipboard = m_componentClipboard,
             .componentLayout = m_componentLayout,
             .menus = m_menus,
@@ -681,6 +680,8 @@ void EditorSession::drawUi(ApplicationContext& context) {
     drawOperatorWindows(context);
     drawStatusBar(context.rendering.stats());
     publishMouseCapture();
+    // Last, after every edit of this frame: the renderer draws next.
+    bindPrefabWindowScenes(context);
 }
 
 void EditorSession::updateEyedropper(ApplicationContext& context) {
@@ -740,7 +741,7 @@ void EditorSession::unload(ApplicationContext& context) {
     context.audio.stopSceneVoices();
     context.physics.clear();
     m_documents.unwind(activeDocument(context));
-    closeAllPrefabWindows();
+    closeAllPrefabWindows(context);
     m_moduleHost.unload(context.scene, m_document);
     context.rendering.setGridOverlay(std::nullopt);
     context.rendering.clearOutlinedObjects();

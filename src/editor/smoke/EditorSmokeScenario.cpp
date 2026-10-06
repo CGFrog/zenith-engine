@@ -26,6 +26,7 @@ EditorSmokeScenario buildEditorSmokeScenario(ApplicationContext& app, const Scen
     runner->add(makeHideSmokeStep());
     runner->add(makePrefabSmokeStep(scratchDirectory / "prefab-smoke"));
     runner->add(makePrefabEditSmokeStep());
+    runner->add(makePrefabWindowSmokeStep());
     runner->add(makeMultiViewportSmokeStep());
     runner->add(makeComponentSmokeStep());
     runner->add(makeMenuSmokeStep());

@@ -244,7 +244,7 @@ struct Fixture : EditorTestFixture {
         for (Operator& op : viewportOperators(viewports)) {
             expect(static_cast<bool>(operators.add(std::move(op))), "the viewport operators should register");
         }
-        for (Operator& op : cursorOperators(viewports, document)) {
+        for (Operator& op : cursorOperators(viewports)) {
             expect(static_cast<bool>(operators.add(std::move(op))), "the cursor operators should register");
         }
         expect(registerObjectOperators(operators).success && registerPrefabOperators(operators).success &&

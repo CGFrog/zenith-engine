@@ -77,7 +77,7 @@ OperatorResult EditorSession::editPrefab(ApplicationContext& context, const std:
     for (const Entity entity : context.scene.registry().view<const TransformComponent>()) {
         everything.push_back(context.scene.id(entity));
     }
-    for (ViewportPanel* viewport : m_viewports.openViewports()) {
+    for (ViewportPanel* viewport : levelViewports()) {
         parked.views.emplace_back(viewport->id(), viewport->takeDocumentView());
         frameEntities(viewport->camera(), context.scene, context.assets, everything);
     }

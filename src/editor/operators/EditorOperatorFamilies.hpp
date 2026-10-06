@@ -16,7 +16,6 @@
 
 class AreaRegistry;
 class ComponentInspectorLayout;
-class EditorDocument;
 class EditorDocumentCommands;
 class EditorMenus;
 class EditorObjectModeCommands;
@@ -41,7 +40,6 @@ struct NavMeshBuildSettings;
 // session from what it owns. Every reference must outlive the registered
 // operators; a family keeps what it needs in its own services.
 struct EditorOperatorServices {
-    EditorDocument& document;
     EntityEyedropper& eyedropper;
     // Where the component copy and paste operators exchange values.
     TextClipboard& componentClipboard;

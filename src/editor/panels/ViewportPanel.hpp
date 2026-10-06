@@ -99,6 +99,15 @@ class ViewportPanel final : public EditorPanel {
     void restoreAreaState(std::string_view state) override;
 
     ViewportId id() const;
+    // The document the viewport shows and edits, and the render scene its
+    // view draws (RenderRuntime::setViewScene; empty for the application's
+    // scene). A null document matches any (headless tests); the session
+    // names the level's for level areas and a prefab window's for that
+    // window's viewport, which draws the window's scene and never takes the
+    // default view (GPU-driven, the application's scene only).
+    void showDocument(const EditorDocument* document, RenderSceneId renderScene);
+    bool showsDocument(const EditorDocument& document) const;
+    const EditorDocument* document() const;
     // Empty until the viewport is first drawn, or while the renderer has no
     // free view.
     RenderViewId renderView() const;
@@ -303,6 +312,8 @@ class ViewportPanel final : public EditorPanel {
     // The runtime m_view came from, kept to return the view on destruction.
     RenderRuntime* m_rendering{nullptr};
     RenderViewId m_view;
+    const EditorDocument* m_document{nullptr};
+    RenderSceneId m_renderScene;
     EditorCamera m_camera;
     std::optional<SceneEntityId> m_cameraView;
     std::optional<RenderSettings> m_appliedViewSettings;

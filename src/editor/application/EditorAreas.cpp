@@ -99,7 +99,11 @@ void EditorSession::addAreaType(AreaType type) {
 
 void EditorSession::registerAreaTypes() {
     addAreaType({.id = "viewport", .title = "Viewport", .instancing = AreaInstancing::Multiple, .create = [this] {
-                     return std::make_unique<ViewportPanel>(m_viewports);
+                     // An area's viewport shows the level; a prefab window
+                     // points its own at the window's document.
+                     auto viewport = std::make_unique<ViewportPanel>(m_viewports);
+                     viewport->showDocument(&m_document, {});
+                     return viewport;
                  }});
     for (AreaType& type : builtInAreaTypes({.projectAssets = m_projectAssets,
                                             .renderSettings = m_renderSettings,
