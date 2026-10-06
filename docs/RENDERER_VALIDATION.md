@@ -1095,9 +1095,11 @@ recording path with a reduced feature set:
   fix exposure at 0 EV manual. Material Preview keeps decals, particles and
   temporal anti-aliasing; Solid and Wireframe drop decals and particles, and
   Wireframe swaps TAA (and TAA upsampling) for FXAA because jitter smears
-  one-pixel edges. The tone-mapping operator, anti-aliasing, the upscaler,
-  resolution, the depth prepass, GPU-driven submission and LOD stay as
-  requested, so the editor grid, selection mask and outlines work unchanged.
+  one-pixel edges, and turns off the depth prepass and GPU-driven submission
+  (no surface depth is drawn and nothing is occlusion culled, so every edge
+  shows). The tone-mapping operator, anti-aliasing, the upscaler, resolution
+  and LOD stay as requested, so the editor grid, selection mask and outlines
+  work unchanged.
 - `Renderer::recordFrame` substitutes those settings for the frame through
   `ScopedViewShadingSettings`, so the frame plan, the render-graph shape and
   every pass agree, while the editor and serialization keep seeing the request.
@@ -1111,12 +1113,12 @@ recording path with a reduced feature set:
   hemisphere and a faint rim, with no texture reads except base-colour alpha
   for cutouts and blending.
 - Wireframe also builds polygon-mode LINE overlay pipelines
-  (`mesh_wireframe.frag`) and draws every surface's edges after the blended
-  surfaces, from both the GPU-driven indirect groups and the CPU-submitted
-  items. Edges test against the shaded depth (greater-or-equal, biased toward
-  the camera) without writing it and write only scene RGB, so motion vectors
-  and the selection mask are the surface's. Line width is 1 (`wideLines` is
-  not used).
+  (`mesh_wireframe.frag`) and, like Blender's default wireframe shading, draws
+  only the edges of every surface, through each other (x-ray): no surface is
+  shaded (`drawsSurfaces`) or written to depth, and the CPU-submitted items
+  draw on the cleared scene in one light colour. The edges pass every depth
+  test, write no depth and write only scene RGB, so the selection mask and
+  outlines still work. Line width is 1 (`wideLines` is not used).
 
 Wireframe needs `fillModeNonSolid`. `RenderCapabilities::wireframe` reports
 it; `validateRenderSettings` falls back to Solid with a message, and the frame

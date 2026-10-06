@@ -128,7 +128,7 @@ default project.
    and other document-only commands stay disabled until you stop, and say so
    in the Info log.
 
-Every menu item and key runs a named operator. Press `F3` to search all
+Every menu item and key runs a named operator. Press `F3` or `Space` to search all
 operators that can run right now, with their shortcuts; use the arrow keys and
 `Enter`. **Edit > Keymap...** lists every operator: click a shortcut and press
 a new key chord to rebind it (conflicts in the same region are refused), `+`
@@ -249,10 +249,10 @@ cursor. The cursor is saved with the scene (in a small
 with **Overlays > 3D Cursor**.
 
 The **Overlays** menu also draws the scene's invisible helpers: light ranges
-and cones, camera frustums (the active camera highlighted), colliders,
+and cones, small camera icons (the active camera highlighted, dotted rays along the view when selected), colliders (faint until selected),
 reflection probe, decal, and irradiance volume bounds, selection bounds, and
-object names. Each category is Off, Selected Only, or All (colliders and names
-start with the selection); hidden objects show none. Overlays stay off while
+object names. Each category is Off, Selected Only, or All (names start with
+the selection); the sun and colliders stay faintly drawn when unselected; hidden objects show none. Overlays stay off while
 playing unless **Show in Play Mode** is ticked, and never cover a scene
 camera's view. Each viewport remembers its overlays with its area.
 

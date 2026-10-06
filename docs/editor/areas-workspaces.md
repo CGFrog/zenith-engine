@@ -50,7 +50,9 @@ workspace when the outermost prefab is left (see
 Each default area names a dock slot (left, right, lower
 right, bottom, or the central node) that `buildDefaultDockLayout` splits off
 the dockspace when the workspace has no saved layout.
-The header menu of each area switches its editor type in place (the new type
+The editor type button at the left of each area header shows the type's
+title with a down arrow in a raised frame (`editorTypeMenuLabel`,
+`editorTypeArrow`) so it reads as a dropdown. Its menu switches its editor type in place (the new type
 takes the area's dock node), opens another area of the type, or closes it.
 Area changes are the `wm.toggle_panel` (by type id), `wm.area_new`,
 `wm.area_change_type`, `wm.area_close`, `wm.workspace_activate`, and

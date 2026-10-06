@@ -203,8 +203,7 @@ void testIconPicking() {
 
     const RenderView lens = frontLens();
     const glm::vec2 viewSize(800.0f, 600.0f);
-    const SceneGizmoView view{
-        .scene = scene, .assets = fixture.assets, .selection = {}, .aspectRatio = 800.0f / 600.0f};
+    const SceneGizmoView view{.scene = scene, .assets = fixture.assets, .selection = {}};
     const std::vector<SceneGizmoAnchor> icons = pickableIcons(view, {});
     const auto listed = [&icons](SceneEntityId id) {
         return std::ranges::find(icons, id, &SceneGizmoAnchor::entity) != icons.end();

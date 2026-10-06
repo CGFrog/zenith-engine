@@ -146,8 +146,7 @@ void expectSceneLightingAndCameraEffectsOff(const RenderSettings& frame, const c
                                   !frame.vignette.enabled && !frame.filmGrain.enabled &&
                                   frame.exposure.mode == ExposureMode::Manual && frame.exposure.manualEv == 0.0f &&
                                   frame.exposure.compensationEv == 0.0f;
-    const bool geometryKept =
-        frame.depthPrepass && frame.preferGpuDrivenSubmission && frame.lodErrorThresholdPixels == 2.0f;
+    const bool geometryKept = frame.lodErrorThresholdPixels == 2.0f;
     expect(sceneLightingOff && screenSpaceOff && cameraEffectsOff && geometryKept, message);
 }
 
@@ -163,6 +162,7 @@ void testMaterialPreviewFeatureSet() {
     expect(!usesSolidSurfaceShading(frame.viewShading) && !drawsWireframeOverlay(frame.viewShading) &&
                usesStudioLighting(frame.viewShading),
            "Material Preview shades materials under the studio rig");
+    expect(frame.depthPrepass && frame.preferGpuDrivenSubmission, "Material Preview keeps the prepass and GPU culling");
 }
 
 void testSolidAndWireframeFeatureSets() {
@@ -175,14 +175,18 @@ void testSolidAndWireframeFeatureSets() {
     expect(solid.antialiasing == AntialiasingMode::Taa, "Solid keeps TAA");
     expect(usesSolidSurfaceShading(solid.viewShading) && !drawsWireframeOverlay(solid.viewShading),
            "Solid draws clay surfaces without edges");
+    expect(drawsSurfaces(solid.viewShading) && solid.depthPrepass && solid.preferGpuDrivenSubmission,
+           "Solid keeps the prepass and GPU culling");
 
     requested.viewShading = ViewShading::Wireframe;
     const RenderSettings wireframe = viewShadingFrameSettings(requested, wireframeCapabilities());
     expectSceneLightingAndCameraEffectsOff(wireframe, "Wireframe drops scene lighting and camera effects");
     expect(wireframe.antialiasing == AntialiasingMode::Fxaa && wireframe.upscaler.mode == UpscalerMode::Off,
            "Wireframe trades TAA and TAA upsampling for FXAA");
-    expect(usesSolidSurfaceShading(wireframe.viewShading) && drawsWireframeOverlay(wireframe.viewShading),
-           "Wireframe draws edges over clay surfaces");
+    expect(drawsWireframeOverlay(wireframe.viewShading) && !drawsSurfaces(wireframe.viewShading),
+           "Wireframe draws only edges, with no shaded surfaces");
+    expect(!wireframe.depthPrepass && !wireframe.preferGpuDrivenSubmission,
+           "Wireframe draws no surface depth and culls nothing by occlusion");
 
     requested.upscaler.mode = UpscalerMode::Fsr1;
     expect(viewShadingFrameSettings(requested, wireframeCapabilities()).upscaler.mode == UpscalerMode::Fsr1,
@@ -208,6 +212,13 @@ void testFramePlanSkipsScreenSpacePasses() {
     expect(solid.ambientOcclusion == AmbientOcclusionQuality::Off && !solid.screenSpaceReflections &&
                !solid.perPixelReflectionProbes,
            "Solid plans no screen-space or probe passes");
+    requested.viewShading = ViewShading::Wireframe;
+    const MeshPassFramePlan wireframe =
+        planMeshPassFrame(viewShadingFrameSettings(requested, capabilities), capabilities, {});
+    expect(!wireframe.depthPrepass && !wireframe.gpuDrivenSubmission,
+           "Wireframe plans no prepass and no occlusion-culled GPU-driven submission");
+    expect(!planMeshPassFrame(requested, capabilities, {.forceGpuDrivenSubmission = true}).gpuDrivenSubmission,
+           "Wireframe stays on CPU submission when GPU-driven submission is forced");
 }
 
 bool nearlyUnit(const glm::vec3& value) {

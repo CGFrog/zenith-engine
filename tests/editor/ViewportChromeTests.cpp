@@ -238,7 +238,7 @@ void testOverlayOperatorsAndAreaState() {
     expect(static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"colliders"})")) &&
                overlays.scene.colliders == OverlayScope::Off &&
                static_cast<bool>(fixture.invoke("view3d.overlay_toggle", R"({"overlay":"colliders"})")) &&
-               overlays.scene.colliders == OverlayScope::Selected,
+               overlays.scene.colliders == SceneGizmoOverlays{}.colliders,
            "toggling a scoped overlay back on should restore its default scope");
     expect(static_cast<bool>(fixture.invoke("view3d.overlay_scope_set", R"({"overlay":"colliders","scope":"all"})")) &&
                overlays.scene.colliders == OverlayScope::All,

@@ -1,8 +1,12 @@
 #include "BoxSelect.hpp"
 
-void BoxSelect::begin(SelectionSetMode mode) {
-    m_state = State::Waiting;
+void BoxSelect::begin(SelectionSetMode mode, std::optional<glm::vec2> dragStart) {
+    m_state = dragStart ? State::Dragging : State::Waiting;
     m_mode = mode;
+    if (dragStart) {
+        m_start = *dragStart;
+        m_current = *dragStart;
+    }
 }
 
 void BoxSelect::cancel() {

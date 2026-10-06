@@ -13,6 +13,15 @@ KeymapInvocation invocationOf(const KeymapBinding& binding) {
 }
 } // namespace
 
+bool chordReachesGame(ImGuiKeyChord chord) {
+    if ((chord & (ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiMod_Super)) != 0) {
+        return false;
+    }
+    const ImGuiKey key = chordKey(chord);
+    const bool functionKey = key >= ImGuiKey_F1 && key <= ImGuiKey_F24;
+    return !functionKey && key != ImGuiKey_Escape;
+}
+
 KeymapGesture::KeymapGesture(KeymapRegion region, ImGuiKeyChord chord, double pressSeconds, ImVec2 pressMouse)
     : m_region(region)
     , m_chord(chord)
@@ -66,8 +75,11 @@ ImGuiKeyChord KeymapGesture::chord() const {
     return m_chord;
 }
 
-std::optional<KeymapInvocation> KeymapDispatcher::pressKeys(Keymap& keymap, KeymapRegion region) {
+std::optional<KeymapInvocation> KeymapDispatcher::pressKeys(Keymap& keymap, KeymapRegion region, KeyboardOwner owner) {
     for (const ImGuiKeyChord chord : keymap.chords(region)) {
+        if (owner == KeyboardOwner::Game && chordReachesGame(chord)) {
+            continue;
+        }
         // Global routes rank below focused widgets, so text fields keep their
         // own Ctrl+Z.
         const bool pressed = region == KeymapRegion::Global ? ImGui::Shortcut(chord, ImGuiInputFlags_RouteGlobal)

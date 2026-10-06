@@ -8,10 +8,6 @@
 
 namespace {
 constexpr float rasterLineWidth = 1.0f;
-// Depth bias of wireframe overlay edges, in the units of
-// VkPipelineRasterizationStateCreateInfo (positive is toward the camera).
-constexpr float wireframeDepthBiasConstant = 1.0f;
-constexpr float wireframeDepthBiasSlope = 1.0f;
 constexpr const char* shaderEntryPoint = "main";
 
 // Shader locations: 0 position, 1 octahedral normal, 2 UV, 3 octahedral
@@ -234,14 +230,10 @@ bool GraphicsPipeline::initWireframeOverlayPipeline(VkDevice device, VkFormat co
     FixedFunctionState state{MeshVertexInputs::Shaded};
     state.raster.polygonMode = VK_POLYGON_MODE_LINE;
     state.raster.cullMode = doubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
-    // Edge pixels may land on a neighbouring triangle slightly in front, so
-    // edges move toward the camera (larger reversed-Z depth) by a depth step
-    // plus their polygon's slope.
-    state.raster.depthBiasEnable = VK_TRUE;
-    state.raster.depthBiasConstantFactor = wireframeDepthBiasConstant;
-    state.raster.depthBiasSlopeFactor = wireframeDepthBiasSlope;
+    // Wireframe shading draws edges only and shows all of them (x-ray), so
+    // edges pass every depth test and write no depth.
     state.depth.depthWriteEnable = VK_FALSE;
-    state.depth.depthCompareOp = scene_depth::compareOrEqualOp;
+    state.depth.depthCompareOp = VK_COMPARE_OP_ALWAYS;
     state.colorAttachment.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT;
     const VkPipelineColorBlendAttachmentState colorAttachments[]{state.colorAttachment, {.colorWriteMask = 0}};

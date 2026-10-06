@@ -36,6 +36,20 @@ struct AreaWindowResult {
     uint32_t dockId{0};
 };
 
+// The editor type button in an area's header: its menu label (the type's
+// title, then room for the arrow; the id after ### stays the same across
+// types) and the down arrow drawn at the right end of the button's rectangle
+// (screen pixels), sized to the font and centred vertically.
+std::string editorTypeMenuLabel(std::string_view title);
+
+struct EditorTypeArrow {
+    float x{0.0f};
+    float y{0.0f};
+    float size{0.0f};
+};
+
+EditorTypeArrow editorTypeArrow(float itemMinY, float itemMaxX, float itemMaxY, float fontSize, float artPixel);
+
 // Draws a visible area as an ImGui window named area.windowName(type.title):
 // moves it into its requested dock node, paints its themed frame with
 // chrome, draws the header (a menu bar whose editor-type dropdown lists every

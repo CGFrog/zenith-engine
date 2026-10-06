@@ -10,6 +10,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <optional>
@@ -137,6 +138,18 @@ class GizmoRecorder {
         return {.color = categoryColor, .depth = DebugDepth::Tested};
     }
 
+    // Like style(), but an unselected object stays faintly drawn in `idleDepth`
+    // so objects with no surface of their own (colliders, the sun) are never
+    // visible only while selected.
+    DebugStyle quietStyle(const glm::vec4& categoryColor, Entity entity, DebugDepth idleDepth) const {
+        DebugStyle result = style(categoryColor, entity);
+        if (role(entity) == SelectionRole::None) {
+            result.color.a *= palette::overlayIdleAlpha;
+            result.depth = idleDepth;
+        }
+        return result;
+    }
+
     const glm::mat4& world(Entity entity) const {
         return m_registry.get<TransformComponent>(entity).world;
     }
@@ -145,10 +158,16 @@ class GizmoRecorder {
         m_output.sphere(position, sceneGizmoSizes::markerRadius, lineStyle, sceneGizmoSegments::marker);
     }
 
-    void collider(const ColliderComponent& collider, const glm::mat4& entityWorld, const DebugStyle& lineStyle);
+    void cameraIcon(const glm::vec3& position, const glm::vec3& forward, const glm::vec3& up, const glm::vec3& right,
+                    const DebugStyle& lineStyle);
+    void cameraRays(const RenderView& lens, const glm::vec3& forward, const glm::vec3& up, const glm::vec3& right,
+                    const DebugStyle& lineStyle);
+    void dottedLine(const glm::vec3& from, const glm::vec3& to, const DebugStyle& lineStyle);
+    void collider(const ColliderComponent& collider, const glm::mat4& entityWorld, const DebugStyle& lineStyle,
+                  bool detailed);
     void characterCapsule(const CharacterControllerComponent& controller, const glm::mat4& entityWorld,
                           const DebugStyle& lineStyle);
-    void triangleMesh(const MeshAsset& mesh, const glm::mat4& shapeWorld, const DebugStyle& lineStyle);
+    void triangleMesh(const MeshAsset& mesh, const glm::mat4& shapeWorld, const DebugStyle& lineStyle, bool detailed);
     // Grows lower/upper by the world bounds of member's mesh drawn at
     // memberWorld, if it has a loaded mesh with vertices.
     void growMeshBounds(Entity member, const glm::mat4& memberWorld, glm::vec3& lower, glm::vec3& upper) const;
@@ -196,7 +215,7 @@ void GizmoRecorder::lights(OverlayScope scope) {
     for (const auto [entity, light, transform] :
          m_registry.view<const DirectionalLightComponent, const TransformComponent>().each()) {
         if (shown(scope, entity)) {
-            const DebugStyle lineStyle = style(m_colors.light, entity);
+            const DebugStyle lineStyle = quietStyle(m_colors.light, entity, DebugDepth::AlwaysOnTop);
             const glm::vec3 position(transform.world[3]);
             // The component points toward the light in world space; its
             // transform only places the gizmo. Arrows show the light's travel.
@@ -238,23 +257,65 @@ void GizmoRecorder::cameras(OverlayScope scope) {
         }
         const glm::vec4& color = entity == activeCamera ? m_colors.activeCamera : m_colors.camera;
         const DebugStyle lineStyle = style(color, entity);
-        const float displayDepth = std::min(lens->farPlane, lens->nearPlane + sceneGizmoSizes::cameraDisplayDepth);
-        RenderView drawn = *lens;
-        drawn.farPlane = role(entity) == SelectionRole::None ? displayDepth : lens->farPlane;
-        m_output.frustum(lensProjectionMatrix(drawn, m_view.aspectRatio) * lensViewMatrix(drawn), lineStyle);
-        // Blender's up triangle, always at the display depth so it keeps
-        // its size when a selected camera's frustum reaches its far plane.
-        const float halfHeight = displayDepth * std::tan(lens->verticalFovRadians * 0.5f);
-        const float halfWidth = halfHeight * m_view.aspectRatio;
         const glm::vec3 up = normalizedOr(lens->up, glm::vec3(0.0f, 1.0f, 0.0f));
-        const glm::vec3 right = normalizedOr(glm::cross(lens->forward, up), glm::vec3(1.0f, 0.0f, 0.0f));
-        const glm::vec3 base = lens->position + lens->forward * displayDepth + up * halfHeight * 1.1f;
-        const glm::vec3 left = base - right * halfWidth * 0.5f;
-        const glm::vec3 rightCorner = base + right * halfWidth * 0.5f;
-        const glm::vec3 apex = base + up * halfHeight * 0.5f;
-        m_output.line(left, rightCorner, lineStyle);
-        m_output.line(rightCorner, apex, lineStyle);
-        m_output.line(apex, left, lineStyle);
+        const glm::vec3 forward = normalizedOr(lens->forward, glm::vec3(0.0f, 0.0f, -1.0f));
+        const glm::vec3 right = normalizedOr(glm::cross(forward, up), glm::vec3(1.0f, 0.0f, 0.0f));
+        cameraIcon(lens->position, forward, up, right, lineStyle);
+        if (role(entity) != SelectionRole::None) {
+            cameraRays(*lens, forward, up, right, lineStyle);
+        }
+    }
+}
+
+// A small fixed-size camera body: a short pyramid with a fixed aspect and
+// Blender's up triangle above its base. It never depends on the lens or the
+// viewport, so every camera reads the same and stays easy to click.
+void GizmoRecorder::cameraIcon(const glm::vec3& position, const glm::vec3& forward, const glm::vec3& up,
+                               const glm::vec3& right, const DebugStyle& lineStyle) {
+    const float halfHeight = sceneGizmoSizes::cameraIconHalfHeight;
+    const float halfWidth = halfHeight * sceneGizmoSizes::cameraIconAspect;
+    const glm::vec3 center = position + forward * sceneGizmoSizes::cameraIconDepth;
+    const std::array<glm::vec3, 4> corners{
+        center - right * halfWidth - up * halfHeight, center + right * halfWidth - up * halfHeight,
+        center + right * halfWidth + up * halfHeight, center - right * halfWidth + up * halfHeight};
+    for (size_t corner = 0; corner < corners.size(); ++corner) {
+        m_output.line(position, corners[corner], lineStyle);
+        m_output.line(corners[corner], corners[(corner + 1) % corners.size()], lineStyle);
+    }
+    const glm::vec3 base = center + up * halfHeight * 1.2f;
+    const glm::vec3 left = base - right * halfWidth * 0.5f;
+    const glm::vec3 rightCorner = base + right * halfWidth * 0.5f;
+    const glm::vec3 apex = base + up * halfHeight * 0.6f;
+    m_output.line(left, rightCorner, lineStyle);
+    m_output.line(rightCorner, apex, lineStyle);
+    m_output.line(apex, left, lineStyle);
+}
+
+// Dotted rays from a selected camera along its view frustum's edges and
+// axis, at the lens's field of view and a fixed aspect, so the direction and
+// spread read without a large shape that follows the window.
+void GizmoRecorder::cameraRays(const RenderView& lens, const glm::vec3& forward, const glm::vec3& up,
+                               const glm::vec3& right, const DebugStyle& lineStyle) {
+    const float length = std::min(lens.farPlane, sceneGizmoSizes::cameraRayLength);
+    const float halfHeight = std::tan(lens.verticalFovRadians * 0.5f);
+    const float halfWidth = halfHeight * sceneGizmoSizes::cameraIconAspect;
+    for (const glm::vec2 corner : {glm::vec2(-1.0f, -1.0f), glm::vec2(1.0f, -1.0f), glm::vec2(1.0f, 1.0f),
+                                   glm::vec2(-1.0f, 1.0f), glm::vec2(0.0f, 0.0f)}) {
+        const glm::vec3 direction = glm::normalize(forward + right * halfWidth * corner.x + up * halfHeight * corner.y);
+        dottedLine(lens.position, lens.position + direction * length, lineStyle);
+    }
+}
+
+void GizmoRecorder::dottedLine(const glm::vec3& from, const glm::vec3& to, const DebugStyle& lineStyle) {
+    const float length = glm::length(to - from);
+    if (!(length > 1e-6f)) {
+        return;
+    }
+    const glm::vec3 direction = (to - from) / length;
+    const float period = sceneGizmoSizes::dashLength + sceneGizmoSizes::dashGap;
+    for (float start = 0.0f; start < length; start += period) {
+        const float end = std::min(start + sceneGizmoSizes::dashLength, length);
+        m_output.line(from + direction * start, from + direction * end, lineStyle);
     }
 }
 
@@ -262,7 +323,8 @@ void GizmoRecorder::colliders(OverlayScope scope) {
     for (const auto [entity, collider, transform] :
          m_registry.view<const ColliderComponent, const TransformComponent>().each()) {
         if (shown(scope, entity)) {
-            this->collider(collider, transform.world, style(m_colors.collider, entity));
+            this->collider(collider, transform.world, quietStyle(m_colors.collider, entity, DebugDepth::Tested),
+                           role(entity) != SelectionRole::None);
         }
     }
     // A character controller collides with its own capsule, not a collider
@@ -270,7 +332,7 @@ void GizmoRecorder::colliders(OverlayScope scope) {
     for (const auto [entity, controller, transform] :
          m_registry.view<const CharacterControllerComponent, const TransformComponent>().each()) {
         if (shown(scope, entity)) {
-            characterCapsule(controller, transform.world, style(m_colors.collider, entity));
+            characterCapsule(controller, transform.world, quietStyle(m_colors.collider, entity, DebugDepth::Tested));
         }
     }
 }
@@ -285,7 +347,7 @@ void GizmoRecorder::characterCapsule(const CharacterControllerComponent& control
 }
 
 void GizmoRecorder::collider(const ColliderComponent& collider, const glm::mat4& entityWorld,
-                             const DebugStyle& lineStyle) {
+                             const DebugStyle& lineStyle, bool detailed) {
     RigidTransform body = splitTransform(entityWorld);
     // The shape's own frame, as PhysicsWorld places it in the body.
     const ColliderPlacement placement = colliderLocalTransform(collider, body.scale);
@@ -310,14 +372,15 @@ void GizmoRecorder::collider(const ColliderComponent& collider, const glm::mat4&
                 if (const MeshAsset* mesh = m_view.assets.mesh(shape.mesh)) {
                     const glm::mat4 shapeWorld = glm::translate(glm::mat4(1.0f), body.translation) *
                                                  glm::mat4_cast(body.rotation) * glm::scale(glm::mat4(1.0f), scale);
-                    triangleMesh(*mesh, shapeWorld, lineStyle);
+                    triangleMesh(*mesh, shapeWorld, lineStyle, detailed);
                 }
             }
         },
         collider.shape);
 }
 
-void GizmoRecorder::triangleMesh(const MeshAsset& mesh, const glm::mat4& shapeWorld, const DebugStyle& lineStyle) {
+void GizmoRecorder::triangleMesh(const MeshAsset& mesh, const glm::mat4& shapeWorld, const DebugStyle& lineStyle,
+                                 bool detailed) {
     // The triangles PhysicsWorld collides with: the full-detail index ranges
     // (simplified LODs follow them in the same buffer), or the raw vertex
     // list when unindexed.
@@ -339,8 +402,9 @@ void GizmoRecorder::triangleMesh(const MeshAsset& mesh, const glm::mat4& shapeWo
     if (mesh.vertices.empty() || mesh.localBox.empty()) {
         return;
     }
-    if (triangles > maximumColliderWireTriangles) {
-        // The asset's cached box: dense colliders never scan their vertices.
+    if (!detailed || triangles > maximumColliderWireTriangles) {
+        // The asset's cached box: dense and unselected colliders never scan their
+        // vertices.
         const BoundingBox& box = mesh.localBox;
         m_output.box(shapeWorld * glm::translate(glm::mat4(1.0f), (box.minimum + box.maximum) * 0.5f),
                      (box.maximum - box.minimum) * 0.5f, lineStyle);

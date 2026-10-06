@@ -34,6 +34,10 @@ registers every `view3d.*` operator (chrome toggles, `shading_set`,
 `toggle_snapping`, viewpoints, orbit, framing, `view_camera`) against the
 active viewport; with none open they poll false and fail descriptively.
 
+Wireframe shading draws only the edges of every surface, through each other
+(Blender's default x-ray wireframe), on the dark scene colour: the surfaces are
+not shaded and write no depth, so selection outlines and the grid still draw.
+
 Viewport shading never touches the project's render settings: each draw hands
 the viewport's view `viewportViewSettings` (a copy of the project settings
 with the viewport's `ViewShading`, reduced by `viewShadingFrameSettings`
@@ -60,19 +64,25 @@ whole scene's (`tests/engine/IsolatedShadowSmokeTests.cpp`). `tests/editor/Viewp
 render view's debug list (`RenderRuntime::viewDebugDraw`), never the all-views
 list, so nothing reaches another view: light shapes (point range spheres, spot
 inner and outer cones along the transformed direction, directional arrows
-along the light's travel, environment markers), camera frustums at the view's
-aspect (the active primary camera highlighted, a selected one out to its far
-plane, the camera being looked through skipped), collider shapes from
+along the light's travel, environment markers), camera icons (a small
+fixed-size pyramid with Blender's up triangle, the same for every camera and
+independent of the lens and the window's aspect, so cameras stay easy to see
+and click; the active primary camera highlighted; a selected one adds dotted
+rays along its view at its field of view, up to `cameraRayLength` or its far
+plane, instead of a frustum; the camera being looked through skipped), collider shapes from
 `ColliderComponent` (physics only steps in Play, so the editor does not use
 `PhysicsWorld::drawDebug`; shapes follow the body construction with world
 scale baked in and the collider's offset applied through
 `colliderLocalTransform`), reflection probe, decal (oriented, scaled, with a -Y
 projection arrow) and irradiance volume (axis-aligned) bounds, world-space
 selection bounds, and name labels. It has no ImGui, takes `SceneGizmoOverlays`
-(each category `Off`, `Selected`, or `All`; colliders and names default to the
-selection; the Colliders category also draws each character controller's
-capsule, centred on the entity and upright, and a convex hull draws the mesh it
-wraps), skips entities `SceneVisibility` hides in the editor and, in local
+(each category `Off`, `Selected`, or `All`; names default to the selection).
+Nothing is visible only while selected: unselected colliders (a triangle mesh
+as its bounds only) and directional lights (the sun) draw faintly, at
+`palette::overlayIdleAlpha`, and a selected one takes the bright selection
+colours over the scene. The Colliders category also draws each character
+controller's capsule, centred on the entity and upright, and a convex hull
+draws the mesh it wraps. It skips entities `SceneVisibility` hides in the editor and, in local
 view, those outside the viewport's isolation (`SceneGizmoView::isolatedObjects`),
 bounds a selected collection instancer by the members it draws, reads each
 mesh's cached `MeshAsset::localBox` instead of scanning vertices, and colours
@@ -132,7 +142,10 @@ inspector, the mesh choices, the handle placement and drag maths, and a drag's
 undo and cancel headless.
 
 `src/editor/viewport/` holds the viewport's selection tools. A left click runs
-`view3d.select` (Shift extends, a miss clears unless extending; Alt runs
+`view3d.select` (Shift extends, a miss clears unless extending; dragging with
+the left button draws a box (`view3d.select_box` with `left_drag`, started
+where the press began; Shift extends, Ctrl subtracts at release), the Select
+Box behaviour of Blender's default tool; Alt runs
 `view3d.select_cycle`, stepping from the active object through the objects
 under the cursor, visible ones first, then occluded ray hits), B starts the
 modal box tool (`view3d.select_box`, `BoxSelect`), and Ctrl+RMB drags a lasso

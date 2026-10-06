@@ -424,8 +424,15 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
     const double prepassCpuMilliseconds =
         std::chrono::duration<double, std::milli>(prepassCpuEnd - opaqueCpuBegin).count();
     recordSelectionMask(draw);
+    const bool shadesSurfaces = drawsSurfaces(settings.viewShading);
     if (!gpuDrivenActive) {
-        recordShadedItems(draw, ShadedItems::OpaqueOnly);
+        if (shadesSurfaces) {
+            recordShadedItems(draw, ShadedItems::OpaqueOnly);
+        } else if (timestampQueries) {
+            // Wireframe shades nothing: close the opaque span the shading
+            // would have closed, so the frame's timestamps stay complete.
+            vkCmdWriteTimestamp2(commandBuffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT, timestampQueries, 2);
+        }
         // The GPU-driven timing above already spans the prepass.
         stats.cpuOpaqueMilliseconds += prepassCpuMilliseconds;
     }
@@ -450,9 +457,11 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
     }
     stats.reflectionBytes = view.postProcess.reflectionBytes();
     recordTransmissionBackground(draw, depthImage, depthView);
-    recordShadedItems(draw, ShadedItems::BlendedOnly);
-    // View shading: Wireframe edges go over every surface, under particles
-    // and outlines.
+    if (shadesSurfaces) {
+        recordShadedItems(draw, ShadedItems::BlendedOnly);
+    }
+    // View shading: Wireframe draws every edge of every drawn surface on the
+    // cleared scene, under particles and outlines.
     recordWireframeOverlay(draw, gpuDrivenActive);
     recordParticles(draw, depthImage, depthView);
     recordOutlines(draw);

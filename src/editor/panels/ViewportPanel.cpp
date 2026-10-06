@@ -269,9 +269,9 @@ glm::vec2 ViewportPanel::mouseInView() const {
     return m_mouseInView;
 }
 
-void ViewportPanel::beginBoxSelect(SelectionSetMode mode) {
+void ViewportPanel::beginBoxSelect(SelectionSetMode mode, bool leftDrag) {
     m_lassoSelect.cancel();
-    m_boxSelect.begin(mode);
+    m_boxSelect.begin(mode, leftDrag ? std::optional(m_mouseGestureStart.value_or(m_mouseInView)) : std::nullopt);
 }
 
 void ViewportPanel::beginLassoSelect(SelectionSetMode mode, bool rightDrag) {
@@ -460,7 +460,6 @@ void ViewportPanel::recordSceneGizmos(EditorContext& context) {
     drawSceneGizmos({.scene = scene,
                      .assets = context.app.assets,
                      .selection = context.selection.ids(),
-                     .aspectRatio = m_size.x / std::max(m_size.y, 1.0f),
                      .viewCamera = viewCamera,
                      .isolatedObjects = m_localViewObjects ? &*m_localViewObjects : nullptr},
                     m_chrome.overlays.scene, *output);
@@ -952,7 +951,6 @@ std::vector<SceneGizmoAnchor> ViewportPanel::pickableIconsHere(EditorContext& co
     return pickableIcons({.scene = scene,
                           .assets = context.app.assets,
                           .selection = context.selection.ids(),
-                          .aspectRatio = m_size.x / std::max(m_size.y, 1.0f),
                           .viewCamera = m_cameraView,
                           .isolatedObjects = m_localViewObjects ? &*m_localViewObjects : nullptr},
                          m_chrome.overlays.scene);

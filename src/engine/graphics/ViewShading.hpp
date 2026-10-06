@@ -26,12 +26,19 @@ ViewShading resolveViewShading(ViewShading requested, const RenderCapabilities& 
 //     fixed at 0 EV manual, which the studio rig is calibrated for.
 // Material Preview keeps decals and particles; Solid and Wireframe drop them
 // and, for Wireframe, trade TAA (whose jitter smears one-pixel edges) for FXAA.
+// Wireframe also turns off the depth prepass and GPU-driven submission, whose
+// occlusion culling would hide the edges of occluded objects.
 RenderSettings viewShadingFrameSettings(const RenderSettings& settings, const RenderCapabilities& capabilities);
 
 // True when surfaces draw the untextured clay variant of mesh.frag.
 bool usesSolidSurfaceShading(ViewShading shading);
 
-// True when triangle edges are drawn over the shaded surfaces.
+// False for Wireframe, which draws only edges: no surface is shaded or written
+// to the depth buffer.
+bool drawsSurfaces(ViewShading shading);
+
+// True when triangle edges are drawn: for Wireframe on their own and through
+// every surface (x-ray), as Blender's wireframe shading does by default.
 bool drawsWireframeOverlay(ViewShading shading);
 
 // True when the studio rig replaces the scene's directional and environment

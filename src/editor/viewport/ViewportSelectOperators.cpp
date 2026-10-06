@@ -17,7 +17,9 @@ struct ClickSelectProperties {
 
 struct RegionSelectProperties {
     SelectionSetMode mode{SelectionSetMode::Auto};
-    bool rightDrag{false};
+    // The gesture is a keymap drag: the box or lasso starts where the held
+    // button was pressed, with that button.
+    bool fromDrag{false};
 };
 
 Fields<ClickSelectProperties> clickSelectFields() {
@@ -27,16 +29,16 @@ Fields<ClickSelectProperties> clickSelectFields() {
                          .add("extend", &ClickSelectProperties::extend));
 }
 
-Fields<RegionSelectProperties> regionSelectFields(bool withRightDrag) {
+// dragField names the property a drag binding sets: "left_drag" for the box,
+// "right_drag" for the lasso.
+Fields<RegionSelectProperties> regionSelectFields(const char* dragField) {
     Fields<RegionSelectProperties> fields;
     fields.add("mode", &RegionSelectProperties::mode)
         .options({{"auto", "Auto", static_cast<int64_t>(SelectionSetMode::Auto)},
                   {"set", "Set", static_cast<int64_t>(SelectionSetMode::Set)},
                   {"extend", "Extend", static_cast<int64_t>(SelectionSetMode::Extend)},
                   {"subtract", "Subtract", static_cast<int64_t>(SelectionSetMode::Subtract)}});
-    if (withRightDrag) {
-        fields.add("right_drag", &RegionSelectProperties::rightDrag);
-    }
+    fields.add(dragField, &RegionSelectProperties::fromDrag);
     return fields;
 }
 
@@ -94,10 +96,11 @@ std::vector<Operator> viewportSelectOperators(ViewportRegistry& viewports) {
         {.id = "view3d.select_box",
          .label = "Box Select",
          .description = "Drag a rectangle to select the objects inside it",
-         .properties = OperatorProperties::make(RegionSelectProperties{}, regionSelectFields(false))},
+         .properties = OperatorProperties::make(RegionSelectProperties{}, regionSelectFields("left_drag"))},
         [](ViewportPanel& viewport, OperatorContext&, OperatorProperties& properties) {
             const RegionSelectProperties* values = properties.get<RegionSelectProperties>();
-            viewport.beginBoxSelect(values != nullptr ? values->mode : SelectionSetMode::Auto);
+            viewport.beginBoxSelect(values != nullptr ? values->mode : SelectionSetMode::Auto,
+                                    values != nullptr && values->fromDrag);
             return OperatorResult::finished();
         },
         noSelectTool));
@@ -106,11 +109,11 @@ std::vector<Operator> viewportSelectOperators(ViewportRegistry& viewports) {
         {.id = "view3d.select_lasso",
          .label = "Lasso Select",
          .description = "Draw an outline to select the objects inside it",
-         .properties = OperatorProperties::make(RegionSelectProperties{}, regionSelectFields(true))},
+         .properties = OperatorProperties::make(RegionSelectProperties{}, regionSelectFields("right_drag"))},
         [](ViewportPanel& viewport, OperatorContext&, OperatorProperties& properties) {
             const RegionSelectProperties* values = properties.get<RegionSelectProperties>();
             viewport.beginLassoSelect(values != nullptr ? values->mode : SelectionSetMode::Auto,
-                                      values != nullptr && values->rightDrag);
+                                      values != nullptr && values->fromDrag);
             return OperatorResult::finished();
         },
         noSelectTool));

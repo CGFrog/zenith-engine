@@ -18,8 +18,9 @@ class BoxSelect {
     };
 
     // Starts waiting for the drag; mode Auto is resolved from Shift (extend)
-    // and Ctrl (subtract) held at release.
-    void begin(SelectionSetMode mode);
+    // and Ctrl (subtract) held at release. With dragStart the left button is
+    // already down (a keymap drag binding fired): the box starts there.
+    void begin(SelectionSetMode mode, std::optional<glm::vec2> dragStart = std::nullopt);
     void cancel();
     State state() const;
     bool active() const;

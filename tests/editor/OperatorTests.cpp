@@ -435,6 +435,12 @@ void testDefaultKeymap() {
                keymap.shortcutLabel("object.isolate") == "Shift+H",
            "hide, reveal, and hide unselected should use Blender's keys");
     expect(keymap.shortcutLabel("build.run") == "Ctrl+B", "Ctrl B should build from anywhere");
+    for (const ImGuiKeyChord chord :
+         {ImGuiKeyChord(ImGuiKey_MouseLeft), ImGuiMod_Shift | ImGuiKey_MouseLeft, ImGuiMod_Ctrl | ImGuiKey_MouseLeft}) {
+        const KeymapBinding* drag = keymap.find(KeymapRegion::Viewport, chord, KeyTrigger::Drag);
+        expect(drag != nullptr && drag->operatorId == "view3d.select_box",
+               "dragging with the left button should draw a selection box");
+    }
 
     // A second A within the double-click time deselects.
     const KeymapBinding* first = keymap.resolve(KeymapRegion::Viewport, ImGuiKey_A, 10.0, 0.3);
@@ -817,6 +823,44 @@ void testKeymapGestures() {
            "a drag should not also click");
 }
 
+// Space opens operator search from anywhere, but not in a text field and not
+// while a game view with input focus owns the keyboard.
+void testSpaceOpensOperatorSearch() {
+    Keymap keymap(defaultEditorKeymap());
+    expect(keymap.resolve(KeymapRegion::Global, ImGuiKey_Space, 10.0, 0.3) != nullptr &&
+               keymap.resolve(KeymapRegion::Global, ImGuiKey_Space, 10.0, 0.3)->operatorId == "wm.search_menu",
+           "Space should open operator search by default");
+    expect(keymap.resolve(KeymapRegion::Global, ImGuiKey_F3, 10.0, 0.3) != nullptr,
+           "F3 should keep opening operator search");
+    expect(chordReachesGame(ImGuiKey_Space) && chordReachesGame(ImGuiMod_Shift | ImGuiKey_W) &&
+               !chordReachesGame(ImGuiKey_F5) && !chordReachesGame(ImGuiMod_Ctrl | ImGuiKey_S) &&
+               !chordReachesGame(ImGuiKey_Escape),
+           "the game owns plain keys, while function keys, Escape, and Ctrl and Alt chords stay the editor's");
+
+    KeymapDispatcher dispatcher;
+    HeadlessImGui imgui;
+    std::vector<KeymapInvocation> ran;
+    KeyboardOwner owner = KeyboardOwner::Editor;
+    const auto draw = [&] {
+        ImGui::Begin("Keys");
+        if (const std::optional<KeymapInvocation> pressed = dispatcher.pressKeys(keymap, KeymapRegion::Global, owner)) {
+            ran.push_back(*pressed);
+        }
+        ImGui::End();
+    };
+    imgui.frame(draw);
+    imgui.press(ImGuiKey_Space, draw);
+    expect(ran.size() == 1 && ran.front().operatorId == "wm.search_menu",
+           "pressing Space should invoke operator search");
+    ran.clear();
+    owner = KeyboardOwner::Game;
+    imgui.press(ImGuiKey_Space, draw);
+    expect(ran.empty(), "Space should reach the game, not operator search, while a game view owns the keyboard");
+    imgui.press(ImGuiKey_F3, draw);
+    expect(ran.size() == 1 && ran.front().operatorId == "wm.search_menu",
+           "F3 should still open operator search while the game owns the keyboard");
+}
+
 void testKeymapDispatcher() {
     Keymap keymap(defaultEditorKeymap());
     keymap.add({.operatorId = "test.release",
@@ -948,6 +992,7 @@ int main() {
     testAdjustLastOperation();
     testKeyChords();
     testDefaultKeymap();
+    testSpaceOpensOperatorSearch();
     testKeymapConflicts();
     testKeymapFile();
     testFuzzySearch();

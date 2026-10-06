@@ -20,14 +20,16 @@ enum class OverlayScope : uint8_t {
 };
 
 // The scene overlay categories of one viewport (its Overlays menu). Cheap
-// helpers default to every object; collider wireframes, which can be dense,
-// default to the selection.
+// helpers default to every object, and only the selection draws names.
 struct SceneGizmoOverlays {
     // Point range spheres, spot cones, directional arrows, environment markers.
     OverlayScope lights{OverlayScope::All};
-    // Frustums at the view's aspect; the active scene camera is highlighted.
+    // A small fixed-size icon, with dotted rays along the view when selected;
+    // the active scene camera is highlighted.
     OverlayScope cameras{OverlayScope::All};
-    OverlayScope colliders{OverlayScope::Selected};
+    // Unselected colliders draw faintly (a triangle mesh only as its bounds),
+    // so invisible collision objects stay findable.
+    OverlayScope colliders{OverlayScope::All};
     OverlayScope reflectionProbes{OverlayScope::All};
     OverlayScope decals{OverlayScope::All};
     OverlayScope irradianceVolumes{OverlayScope::All};
@@ -51,9 +53,16 @@ inline constexpr uint32_t marker = 16;
 namespace sceneGizmoSizes {
 inline constexpr float markerRadius = 0.2f;
 inline constexpr float directionalArrowLength = 1.5f;
-// How deep an unselected camera's frustum is drawn; a selected camera shows
-// its whole near-to-far volume.
-inline constexpr float cameraDisplayDepth = 1.5f;
+// The camera icon: a pyramid of this depth and base half height at a fixed
+// aspect, whatever the camera's lens or the viewport's size.
+inline constexpr float cameraIconDepth = 0.5f;
+inline constexpr float cameraIconHalfHeight = 0.25f;
+inline constexpr float cameraIconAspect = 1.5f;
+// How far a selected camera's dotted rays reach (at most its far plane), and
+// the dash and gap lengths of dotted overlay lines.
+inline constexpr float cameraRayLength = 6.0f;
+inline constexpr float dashLength = 0.1f;
+inline constexpr float dashGap = 0.2f;
 } // namespace sceneGizmoSizes
 
 // Triangle mesh colliders with more triangles than this draw their oriented
@@ -67,8 +76,6 @@ struct SceneGizmoView {
     const AssetManager& assets;
     // The editor selection, active entity first.
     std::span<const SceneEntityId> selection;
-    // Width over height of the view, for camera frustums.
-    float aspectRatio{1.0f};
     // The scene camera the view looks through, whose own frustum is skipped.
     std::optional<SceneEntityId> viewCamera;
     // The sorted render objects the view's local view isolates (as
@@ -84,7 +91,9 @@ struct SceneGizmoView {
 // Selection bounds cover a selected object's meshes, its descendants', and
 // the members its collection instances draw, from each mesh's cached box. Colours are the palette's overlay tokens:
 // a category colour, overlayActive for the active entity, overlaySelected for
-// the rest of the selection, which also draws over scene surfaces.
+// the rest of the selection, which also draws over scene surfaces. Objects
+// with no surface of their own, colliders and directional lights, draw
+// faintly (palette::overlayIdleAlpha) when not selected.
 //
 // Colliders are drawn from ColliderComponent, not PhysicsWorld::drawDebug:
 // the editor steps physics only in Play, so in Edit the physics world holds
