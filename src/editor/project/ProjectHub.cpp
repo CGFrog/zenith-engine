@@ -52,16 +52,6 @@ std::string formatLastOpened(std::chrono::system_clock::time_point time) {
     return text.data();
 }
 
-// Native dialogs need an existing absolute folder to start in; a trailing
-// separator marks it as a folder with no suggested file name.
-std::filesystem::path dialogFolder(const std::filesystem::path& folder) {
-    std::error_code error;
-    const std::filesystem::path absolute = std::filesystem::absolute(folder, error);
-    if (folder.empty() || error || !std::filesystem::is_directory(absolute, error)) {
-        return {};
-    }
-    return (absolute / "").make_preferred();
-}
 } // namespace
 
 EditorSourceLocation projectIdeLocation(const std::filesystem::path& projectFile) {
@@ -223,8 +213,9 @@ void ProjectHub::drawNewProject(AssetManager& assets) {
     }
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputTextWithHint("##name", "Project name", &m_newProjectName);
-    ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputTextWithHint("##location", "Folder to create the project in", &m_newProjectLocation);
+    ImGui::SameLine();
+    m_locationPicker.draw("location_picker", m_newProjectLocation);
     const std::string identifier = projectIdentifier(m_newProjectName);
     if (!identifier.empty()) {
         ImGui::TextDisabled(
@@ -263,15 +254,14 @@ void ProjectHub::drawMessage() const {
         return;
     }
     ImGui::Separator();
-    ImGui::PushStyleColor(ImGuiCol_Text, toImVec4(m_messageIsError ? palette::error : palette::success));
-    ImGui::TextWrapped("%s", m_message.c_str());
-    ImGui::PopStyleColor();
+    widgets::CopyableText(m_message, m_messageIsError ? palette::error : palette::success);
 }
 
 void ProjectHub::browseForProject() {
-    std::filesystem::path start = dialogFolder(m_config.defaultProjectLocation);
+    std::filesystem::path start = dialogStartFolder(m_config.defaultProjectLocation);
     if (!m_recentProjects.entries().empty()) {
-        if (std::filesystem::path recent = dialogFolder(m_recentProjects.entries().front().projectFile.parent_path());
+        if (std::filesystem::path recent =
+                dialogStartFolder(m_recentProjects.entries().front().projectFile.parent_path());
             !recent.empty()) {
             start = std::move(recent);
         }

@@ -133,10 +133,10 @@ std::optional<GenerateCodeProperties> NewCodeDialog::draw() {
 
     const std::string problem = this->problem();
     if (!problem.empty() && !m_name.empty()) {
-        ImGui::TextColored(toImVec4(palette::warning), "%s", problem.c_str());
+        widgets::CopyableText(problem, palette::warning);
     }
     if (!m_failure.empty()) {
-        ImGui::TextColored(toImVec4(palette::error), "%s", m_failure.c_str());
+        widgets::CopyableText(m_failure, palette::error);
     }
     ImGui::Separator();
     ImGui::BeginDisabled(!problem.empty());

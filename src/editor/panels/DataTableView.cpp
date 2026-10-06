@@ -3,6 +3,7 @@
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/project/ProjectFileOperations.hpp"
 #include "editor/theme/EditorTheme.hpp"
+#include "editor/theme/EditorWidgets.hpp"
 
 #include <imgui.h>
 #include <nlohmann/json.hpp>
@@ -181,9 +182,7 @@ void DataTableView::draw(const std::filesystem::path& file, const DefinitionSche
         ImGui::TextDisabled("Schema: %s", m_schemaName.c_str());
     }
     if (!m_error.empty()) {
-        ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextColored(toImVec4(palette::error), "%s", m_error.c_str());
-        ImGui::PopTextWrapPos();
+        widgets::CopyableText(m_error, palette::error);
     } else {
         ImGui::Text("%zu entries, valid.", m_table.rows.size());
     }

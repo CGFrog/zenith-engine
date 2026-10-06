@@ -1147,7 +1147,7 @@ void AssetBrowserPanel::drawImportSettings(const EditorAssetRecord& asset, const
     if (asset.kind == EditorAssetKind::Texture) {
         TextureImportSettings texture;
         if (const std::string problem = readTextureImportSettings(m_settings, texture); !problem.empty()) {
-            ImGui::TextColored(toImVec4(palette::error), "Import settings: %s", problem.c_str());
+            widgets::CopyableText("Import settings: " + problem, palette::error);
         }
         ImGui::SetNextItemWidth(200.0f);
         if (ImGui::BeginCombo("Usage##ImportUsage", textureUsageLabel(texture.usage))) {
@@ -1408,7 +1408,7 @@ void AssetBrowserPanel::drawMaterialInspector(const EditorAssetRecord& asset, co
         m_materialError = read ? std::string{} : read.error;
     }
     if (!m_material) {
-        ImGui::TextColored(toImVec4(palette::error), "%s", m_materialError.c_str());
+        widgets::CopyableText(m_materialError, palette::error);
         return;
     }
     const AssetReferenceFieldContext fieldContext{

@@ -80,7 +80,7 @@ void DiagnosticsPanel::drawDiagnostics(EditorDiagnostics& diagnostics) {
         ImGui::Text("%s[%s] %s", widgets::IconLabelPadding(), severityName(diagnostic.severity),
                     diagnostic.source.c_str());
         widgets::ItemIcon(severityIcon(diagnostic.severity), 0.0f);
-        ImGui::TextWrapped("%s", diagnostic.message.c_str());
+        widgets::CopyableText(diagnostic.message);
         if (diagnostic.location) {
             const EditorSourceLocation& location = *diagnostic.location;
             const std::string label = location.file.filename().string() + "(" + std::to_string(location.line) +

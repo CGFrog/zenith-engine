@@ -18,6 +18,7 @@ add_library(zenith_editor_app STATIC
     application/EditorPrefabMode.cpp
     application/EditorPlayback.cpp
     application/EditorPreferences.cpp
+    application/FolderPicker.cpp
     application/NativeFileDialog.cpp
     application/FileDropQueue.cpp
     application/PlayTargets.cpp

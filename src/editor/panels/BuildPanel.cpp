@@ -116,6 +116,8 @@ void BuildPanel::drawToolbar(EditorContext& context) {
     if (widgets::SectionHeader("Settings")) {
         ImGui::BeginDisabled(running);
         ImGui::InputTextWithHint("Directory", "Editor working directory", &m_tools.buildDirectory);
+        ImGui::SameLine();
+        m_directoryPicker.draw("directory_picker", m_tools.buildDirectory);
         ImGui::EndDisabled();
         ImGui::InputTextWithHint("IDE command", R"(code -g "{file}:{line}:{column}")", &m_tools.ideCommand);
         ImGui::TextDisabled("Placeholders: {file} {line} {column}");
@@ -144,8 +146,9 @@ void BuildPanel::drawStatus() const {
         widgets::ItemIcon(EditorIcon::Success, 0.0f);
         break;
     case BuildState::Failed:
-        ImGui::TextColored(severityColor(CompilerDiagnosticSeverity::Error), "%sBuild failed (exit code %d)",
-                           widgets::IconLabelPadding(), runner.exitCode().value_or(-1));
+        widgets::CopyableText(std::string(widgets::IconLabelPadding()) + "Build failed (exit code " +
+                                  std::to_string(runner.exitCode().value_or(-1)) + ")",
+                              palette::error);
         widgets::ItemIcon(EditorIcon::Error, 0.0f);
         break;
     case BuildState::Cancelled:
@@ -176,8 +179,8 @@ void BuildPanel::drawPackageStatus() const {
         widgets::ItemIcon(EditorIcon::Success, 0.0f);
         return;
     case PackageState::Failed:
-        ImGui::TextColored(toImVec4(palette::error), "%sPackaging failed: %s", widgets::IconLabelPadding(),
-                           m_package->failure().c_str());
+        widgets::CopyableText(std::string(widgets::IconLabelPadding()) + "Packaging failed: " + m_package->failure(),
+                              palette::error);
         widgets::ItemIcon(EditorIcon::Error, 0.0f);
         return;
     case PackageState::Cancelled:

@@ -2,6 +2,11 @@
 
 Part of the [repository guide](../REPOSITORY_GUIDE.md).
 
+Directory fields in Preferences > Build, the Build area, and the Project Hub's
+new-project location have a **Browse...** button (`application/FolderPicker`)
+that opens the operating system's folder dialog; typing still works. A package
+directory chosen inside the build directory is stored relative to it.
+
 The session owns one build, `project/ProjectBuild`. It runs the open
 project's own build or, once `build.command` or `build.directory` is edited,
 that command through the platform shell in that directory, without blocking the

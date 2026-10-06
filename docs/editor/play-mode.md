@@ -53,7 +53,8 @@ advances a paused runtime scene by one frame of the fixed time step
 (`EditorPlayMode::requestFrameStep`, the clock's `frameStepSeconds`).
 `ThemeChrome::setModeTint` washes the editor warm in Play and violet in
 Simulate (`playModeTint`). The playback toolbar after the Module menu holds
-the play buttons, the target dropdown, a Simulate dropdown whose contents are
+one Play button that becomes Stop (`play.stop`) while anything runs, the target
+dropdown (disabled while running), a Simulate dropdown whose contents are
 `EditorSession::drawSimulateOptions` (the Simulate system picker's slot), and
 the time-scale field. `tests/editor/PlayTargetsTests.cpp` and
 `EditorSessionTests` cover the targets headless; the editor smoke plays the

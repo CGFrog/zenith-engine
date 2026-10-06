@@ -5,6 +5,9 @@
 
 #include <imgui.h>
 
+#include <optional>
+#include <string>
+
 // Pixel-theme versions of common ImGui widgets. Each calls the ImGui widget
 // with the same label (so the same id, navigation, and test hooks) drawn
 // invisibly, then paints the themed look over the exact item rectangle.
@@ -54,6 +57,11 @@ void ItemIcon(EditorIcon icon, float labelOffset, IconState state = {});
 const char* IconLabelPadding();
 // A raised pill with an icon and caption, as in the status bar.
 void StatusPill(EditorIcon icon, const char* text, StatusPillStyle style = StatusPillStyle::Normal);
+// Wrapped text the user can copy: hovering it and pressing Ctrl+C, or
+// right-clicking it and choosing Copy, puts the whole text on the clipboard.
+// Use it for messages the user may need to paste elsewhere, such as errors.
+// Returns true on the frame the text was copied.
+bool CopyableText(const std::string& text, std::optional<ThemeColor> ink = std::nullopt);
 // Caption text centred on a frame-high line, for header bars.
 void CaptionText(const char* text, ThemeColor ink);
 

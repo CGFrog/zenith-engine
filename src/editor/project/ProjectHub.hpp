@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor/application/EditorDiagnostics.hpp"
+#include "editor/application/FolderPicker.hpp"
 #include "editor/application/NativeFileDialog.hpp"
 #include "editor/project/ProjectTemplate.hpp"
 #include "editor/project/RecentProjects.hpp"
@@ -90,6 +91,7 @@ class ProjectHub {
     // Index into the config's templates.
     size_t m_selectedTemplate{0};
     std::string m_newProjectLocation;
+    FolderPicker m_locationPicker;
     std::string m_message;
     bool m_messageIsError{false};
     // Set by a button or the dialog; returned and cleared by draw().

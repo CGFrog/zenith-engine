@@ -9,6 +9,8 @@
 enum class FileDialogKind {
     Open,
     Save,
+    // Chooses an existing folder; filters do not apply.
+    Folder,
 };
 
 enum class FileDialogStatus {
@@ -41,6 +43,11 @@ std::string fileDialogPattern(const std::vector<std::string>& extensions);
 // extension when the user typed a bare file name.
 std::filesystem::path normalizeSavePath(std::filesystem::path path, const std::filesystem::path& extension);
 
+// The folder a native dialog should start in: absolute, with a trailing
+// separator that marks it as a folder with no suggested file name. Empty
+// (the platform default) when folder is empty or not an existing directory.
+std::filesystem::path dialogStartFolder(const std::filesystem::path& folder);
+
 // Shows the operating system's open/save dialog for one file type. Dialogs
 // are asynchronous: the platform may report the choice from another thread,
 // so the result is handed to the owner through poll() on the main thread.
@@ -57,7 +64,7 @@ class NativeFileDialog {
     explicit NativeFileDialog(std::vector<FileDialogFilter> filters);
 
     // Returns false when a dialog is already open. allowMany lets an Open
-    // dialog choose several files.
+    // or Folder dialog choose several entries.
     bool request(FileDialogKind kind, const std::filesystem::path& defaultLocation, bool allowMany = false);
     bool pending() const;
     std::optional<FileDialogOutcome> poll();
