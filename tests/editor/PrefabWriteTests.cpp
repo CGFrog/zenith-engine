@@ -57,15 +57,19 @@ void writeText(const std::filesystem::path& path, const std::string& text) {
     output << text;
 }
 
-// The session's side of the write hooks: a ledger and a count of writes.
+// The session's side of the write hooks: a ledger, the writes, and the scene
+// each write came from.
 struct WriteRecorder {
     PrefabWriteLedger ledger;
     std::vector<std::optional<std::string>> writes;
+    std::vector<const Scene*> origins;
 
     PrefabWriteHooks hooks() {
-        return {.fileWritten = [this](const std::filesystem::path& file, const std::optional<std::string>& bytes) {
+        return {.fileWritten = [this](const std::filesystem::path& file, const std::optional<std::string>& bytes,
+                                      const Scene* origin) {
             ledger.record(file, bytes);
             writes.push_back(bytes);
+            origins.push_back(origin);
         }};
     }
 };
@@ -146,11 +150,13 @@ void testUndoableApply() {
     expect(fixture.history.size() == steps + 1, "apply should record one step for the file and the scene");
     const std::string after = readText(file);
     expect(after != before && fixture.recorder.ledger.matches(file, after), "the applied file should be in the ledger");
+    expect(fixture.recorder.origins.back() == &fixture.scene, "apply should name the scene it wrote from");
 
     fixture.editing().undo();
     expect(readText(file) == before && fixture.intensity(second) == 10.0f && fixture.intensity(first) == 30.0f,
            "undo should restore the file and the other instance");
     expect(fixture.recorder.ledger.matches(file, before), "undo's write should be in the ledger");
+    expect(fixture.recorder.origins.back() == &fixture.scene, "undo should name the scene it wrote from");
     fixture.editing().redo();
     expect(readText(file) == after && fixture.intensity(second) == 30.0f,
            "redo should write the file and refresh the other instance again");

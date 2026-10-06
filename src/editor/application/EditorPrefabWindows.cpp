@@ -249,50 +249,69 @@ bool EditorSession::savePrefabWindow(ApplicationContext& context, PrefabWindowDo
         m_diagnostics.reportError("Save failed: " + result.error);
         return false;
     }
-    refreshAfterPrefabSave(context, window.target, saved);
+    refreshAfterPrefabSave(context, window, saved);
     // The saved window no longer needs its autosave.
     autosavePrefabWindows(context, true);
     m_diagnostics.acknowledgeErrors();
     return true;
 }
 
-void EditorSession::refreshAfterPrefabSave(ApplicationContext& context, const PrefabEditTarget& target,
+void EditorSession::refreshAfterPrefabSave(ApplicationContext& context, PrefabWindowDocument& window,
                                            const SavedPrefabDocument& saved) {
     if (saved.before == saved.after) {
         return;
     }
-    PrefabDocument previousDocument;
-    const PrefabDocument* previous =
-        saved.before && deserializePrefab(*saved.before, previousDocument).success ? &previousDocument : nullptr;
-    const std::string stepName = "Refresh " + target.displayName + " instances";
-    // The level: during Play its edit scene; the running scene keeps its
-    // copies until Stop.
-    Scene* editScene = m_playMode.editScene();
-    Scene& levelScene = editScene != nullptr ? *editScene : context.scene;
-    const SceneEditing levelEditing(levelScene, context.assets, m_document, m_history, m_diagnostics);
-    size_t inLevel = 0;
-    PrefabResult result = refreshPrefabInstances(levelEditing, target.reference, previous, stepName, &inLevel);
-    if (editScene == nullptr) {
-        m_selection.removeMissing(levelScene);
+    PrefabFileChange change{.reference = window.target.reference, .displayName = window.target.displayName};
+    if (PrefabDocument previous; saved.before && deserializePrefab(*saved.before, previous).success) {
+        change.previous = std::move(previous);
     }
-    size_t inWindows = 0;
-    const PrefabResult windows = m_prefabWindows.refreshInstances(context.assets, m_diagnostics, target.reference,
-                                                                  previous, stepName, inWindows);
-    result.diagnostics.insert(result.diagnostics.end(), windows.diagnostics.begin(), windows.diagnostics.end());
-    for (const std::string& diagnostic : result.diagnostics) {
-        m_diagnostics.add(EditorDiagnosticSeverity::Warning, prefabDiagnosticSource, diagnostic);
-    }
-    if (!result || !windows) {
-        m_diagnostics.reportError("Could not refresh " + target.displayName +
-                                  " instances: " + (result ? windows.error : result.error));
-        return;
-    }
-    if (const size_t refreshed = inLevel + inWindows; refreshed > 0) {
+    if (const size_t refreshed = refreshPrefabInstancesElsewhere(context, change, &window, true); refreshed > 0) {
         m_diagnostics.add(EditorDiagnosticSeverity::Info, prefabDiagnosticSource,
-                          "Saved " + target.displayName + "; refreshed " + std::to_string(refreshed) +
+                          "Saved " + change.displayName + "; refreshed " + std::to_string(refreshed) +
                               (refreshed == 1 ? " instance" : " instances") +
                               " in the open documents. Undo there puts them back.");
     }
+}
+
+size_t EditorSession::refreshPrefabInstancesElsewhere(ApplicationContext& context, const PrefabFileChange& change,
+                                                      const PrefabWindowDocument* originWindow, bool refreshLevel) {
+    const PrefabDocument* previous = change.previous ? &*change.previous : nullptr;
+    const std::string stepName = "Refresh " + change.displayName + " instances";
+    PrefabResult result{.success = true};
+    const auto combine = [&result](const PrefabResult& part) {
+        result.diagnostics.insert(result.diagnostics.end(), part.diagnostics.begin(), part.diagnostics.end());
+        if (!part && result) {
+            result.success = false;
+            result.error = part.error;
+        }
+    };
+    size_t inLevel = 0;
+    if (refreshLevel) {
+        // During Play its edit scene; the running scene keeps its copies
+        // until Stop.
+        Scene* editScene = m_playMode.editScene();
+        Scene& levelScene = editScene != nullptr ? *editScene : context.scene;
+        const SceneEditing levelEditing(levelScene, context.assets, m_document, m_history, m_diagnostics);
+        combine(refreshPrefabInstances(levelEditing, change.reference, previous, stepName, &inLevel));
+        if (editScene == nullptr) {
+            m_selection.removeMissing(levelScene);
+        }
+    }
+    size_t inParked = 0;
+    if (!m_documents.empty()) {
+        combine(
+            m_documents.refreshParked(context.assets, m_diagnostics, change.reference, previous, stepName, inParked));
+    }
+    size_t inWindows = 0;
+    combine(m_prefabWindows.refreshInstances(context.assets, m_diagnostics, change.reference, previous, stepName,
+                                             originWindow, inWindows));
+    for (const std::string& diagnostic : result.diagnostics) {
+        m_diagnostics.add(EditorDiagnosticSeverity::Warning, prefabDiagnosticSource, diagnostic);
+    }
+    if (!result) {
+        m_diagnostics.reportError("Could not refresh " + change.displayName + " instances: " + result.error);
+    }
+    return inLevel + inParked + inWindows;
 }
 
 OperatorContext EditorSession::prefabWindowOperatorContext(ApplicationContext& context, KeymapRegion region,
@@ -390,7 +409,7 @@ void EditorSession::reconcilePrefabWindows(ApplicationContext& context, const Pr
     size_t refreshed = 0;
     const PrefabResult result = m_prefabWindows.refreshInstances(
         context.assets, m_diagnostics, change.reference, change.previous ? &*change.previous : nullptr,
-        externalPrefabRefreshStepName(change.displayName), refreshed);
+        externalPrefabRefreshStepName(change.displayName), nullptr, refreshed);
     for (const std::string& diagnostic : result.diagnostics) {
         m_diagnostics.add(EditorDiagnosticSeverity::Warning, prefabDiagnosticSource, diagnostic);
     }

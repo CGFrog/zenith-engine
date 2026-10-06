@@ -509,29 +509,73 @@ void EditorSession::invalidateGamePrefab(const std::filesystem::path& file) {
 }
 
 PrefabWriteHooks EditorSession::prefabWriteHooks() {
-    return {.fileWritten =
-                [this](const std::filesystem::path& file, const std::optional<std::string>& bytes) {
+    return {
+        .fileWritten =
+            [this](const std::filesystem::path& file, const std::optional<std::string>& bytes, const Scene* origin) {
+                queueOwnPrefabWrite(file, bytes, origin);
+                m_prefabWrites.record(file, bytes);
+                invalidateGamePrefab(file);
+            },
+        // The first content seen is what an outside change is compared
+        // with; the editor's own later writes replace it.
+        .fileRead =
+            [this](const std::filesystem::path& file, const std::optional<std::string>& bytes) {
+                if (m_prefabWrites.recorded(file) == nullptr) {
                     m_prefabWrites.record(file, bytes);
-                    invalidateGamePrefab(file);
-                },
-            // The first content seen is what an outside change is compared
-            // with; the editor's own later writes replace it.
-            .fileRead =
-                [this](const std::filesystem::path& file, const std::optional<std::string>& bytes) {
-                    if (m_prefabWrites.recorded(file) == nullptr) {
-                        m_prefabWrites.record(file, bytes);
-                    }
-                }};
+                }
+            }};
+}
+
+void EditorSession::queueOwnPrefabWrite(const std::filesystem::path& file, const std::optional<std::string>& bytes,
+                                        const Scene* origin) {
+    // Only a rewrite of a file the ledger knew: a new or removed file has no
+    // instances in the other documents.
+    const std::optional<std::string>* known = m_prefabWrites.recorded(file);
+    if (origin == nullptr || !bytes || known == nullptr || !*known || *known == bytes) {
+        return;
+    }
+    const PrefabWindowDocument* window = m_prefabWindows.owner(*origin);
+    m_ownPrefabWrites.push_back({.file = file,
+                                 .before = *known,
+                                 .after = bytes,
+                                 .originWindow = window != nullptr ? window->id : 0,
+                                 .originScene = window != nullptr ? nullptr : origin});
 }
 
 void EditorSession::reconcileChangedPrefabs(ApplicationContext& context) {
     // A modal transform's undo step diffs against the scene it started from,
     // so a refresh recorded under it would be undone twice.
-    if (m_changedPrefabFiles.empty() || m_activeTransform) {
+    if (m_activeTransform) {
         return;
     }
+    refreshAfterOwnPrefabWrites(context);
     for (const std::filesystem::path& file : std::exchange(m_changedPrefabFiles, {})) {
         reconcileChangedPrefab(context, file);
+    }
+}
+
+void EditorSession::refreshAfterOwnPrefabWrites(ApplicationContext& context) {
+    for (const OwnPrefabWrite& write : std::exchange(m_ownPrefabWrites, {})) {
+        PrefabFileChange change;
+        if (const PrefabResult described =
+                describePrefabFileChange(write.file, m_document.options().assetRoot, write.after, write.before, change);
+            !described) {
+            m_diagnostics.add(EditorDiagnosticSeverity::Warning, "Prefabs", described.error);
+            continue;
+        }
+        // A window closed since keeps no instances to skip; the level wrote
+        // it when its operator ran on the scene the level edits now.
+        const PrefabWindowDocument* originWindow =
+            write.originWindow != 0 ? m_prefabWindows.find(write.originWindow) : nullptr;
+        const bool levelWrote =
+            write.originScene != nullptr && write.originScene == &context.scene && m_playMode.editScene() == nullptr;
+        if (const size_t refreshed = refreshPrefabInstancesElsewhere(context, change, originWindow, !levelWrote);
+            refreshed > 0) {
+            m_diagnostics.add(EditorDiagnosticSeverity::Info, "Prefabs",
+                              change.displayName + " changed; refreshed " + std::to_string(refreshed) +
+                                  (refreshed == 1 ? " instance" : " instances") +
+                                  " in the other open documents. Undo there puts them back.");
+        }
     }
 }
 

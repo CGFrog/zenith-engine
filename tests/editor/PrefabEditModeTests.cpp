@@ -132,8 +132,8 @@ struct Fixture {
     }
 
     PrefabWriteHooks hooks() {
-        return {.fileWritten = [this](const fs::path& file,
-                                      const std::optional<std::string>& bytes) { ledger.record(file, bytes); },
+        return {.fileWritten = [this](const fs::path& file, const std::optional<std::string>& bytes,
+                                      const Scene*) { ledger.record(file, bytes); },
                 .fileRead =
                     [this](const fs::path& file, const std::optional<std::string>& bytes) {
                         if (ledger.recorded(file) == nullptr) {

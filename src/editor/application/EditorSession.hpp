@@ -428,11 +428,25 @@ class EditorSession final : public ApplicationScene,
     // Writes window's prefab to its file and refreshes its instances in every
     // other open document; false after reporting why not.
     bool savePrefabWindow(ApplicationContext& context, PrefabWindowDocument& window);
-    // After a prefab file was saved from a window: refreshes its instances in
-    // the level (the edit scene during Play) and the other windows, each as a
-    // step "Refresh <name> instances" on its own history.
-    void refreshAfterPrefabSave(ApplicationContext& context, const PrefabEditTarget& target,
+    // After window's prefab was saved: refreshes its instances in every other
+    // open document (refreshPrefabInstancesElsewhere).
+    void refreshAfterPrefabSave(ApplicationContext& context, PrefabWindowDocument& window,
                                 const SavedPrefabDocument& saved);
+    // The editor changed change.reference's prefab file: refreshes its
+    // instances in every open document but the one that wrote it
+    // (originWindow, and the level unless refreshLevel): the level (its edit
+    // scene during Play), the parked documents, and the windows, each as a
+    // step "Refresh <name> instances" on its own history. Reports problems
+    // and returns how many instances were refreshed.
+    size_t refreshPrefabInstancesElsewhere(ApplicationContext& context, const PrefabFileChange& change,
+                                           const PrefabWindowDocument* originWindow, bool refreshLevel);
+    // Queues a prefab file an operator or its undo step rewrote from origin
+    // (a document's scene), for refreshAfterOwnPrefabWrites.
+    void queueOwnPrefabWrite(const std::filesystem::path& file, const std::optional<std::string>& bytes,
+                             const Scene* origin);
+    // The queued writes, once per frame with the outside changes
+    // (reconcileChangedPrefabs).
+    void refreshAfterOwnPrefabWrites(ApplicationContext& context);
     OperatorContext prefabWindowOperatorContext(ApplicationContext& context, KeymapRegion region,
                                                 PrefabWindowDocument& window);
     // What a window's panels get: windowContext is the session's with the
@@ -602,6 +616,20 @@ class EditorSession final : public ApplicationScene,
     // Prefab files the asset watcher reported changed, until
     // reconcileChangedPrefabs handles them.
     std::vector<std::filesystem::path> m_changedPrefabFiles;
+
+    // A prefab file an operator, or the undo or redo of its step, rewrote in
+    // one open document: the others catch up with it once per frame
+    // (refreshAfterOwnPrefabWrites). The origin is kept as a window id, which
+    // is never reused, and the level's scene, which is only compared.
+    struct OwnPrefabWrite {
+        std::filesystem::path file;
+        std::optional<std::string> before;
+        std::optional<std::string> after;
+        uint64_t originWindow{0};
+        const Scene* originScene{nullptr};
+    };
+
+    std::vector<OwnPrefabWrite> m_ownPrefabWrites;
     EditorPlayMode m_playMode;
     // The target F5 (play.start without a target) runs: the last one used.
     PlayTarget m_lastPlayTarget{PlayTarget::ActiveViewport};

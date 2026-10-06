@@ -46,6 +46,12 @@ PrefabWindowDocument* PrefabWindowSet::owner(const EditorDocument& document) con
     return found == m_windows.end() ? nullptr : found->get();
 }
 
+PrefabWindowDocument* PrefabWindowSet::owner(const Scene& scene) const {
+    const auto found = std::ranges::find_if(
+        m_windows, [&scene](const std::unique_ptr<PrefabWindowDocument>& window) { return &window->scene == &scene; });
+    return found == m_windows.end() ? nullptr : found->get();
+}
+
 PrefabResult PrefabWindowSet::open(const std::filesystem::path& reference, const EditorDocument& level,
                                    AssetManager& assets, PrefabWindowDocument*& window) {
     const std::filesystem::path wanted = normalReference(reference);
@@ -117,14 +123,15 @@ PrefabResult PrefabWindowSet::save(PrefabWindowDocument& window, AssetManager& a
 
 PrefabResult PrefabWindowSet::refreshInstances(AssetManager& assets, EditorDiagnostics& diagnostics,
                                                const std::filesystem::path& reference, const PrefabDocument* previous,
-                                               const std::string& stepName, size_t& refreshed) {
+                                               const std::string& stepName, const PrefabWindowDocument* except,
+                                               size_t& refreshed) {
     refreshed = 0;
     const std::filesystem::path changed = normalReference(reference);
     PrefabResult combined{.success = true};
     for (const std::unique_ptr<PrefabWindowDocument>& window : m_windows) {
         // The window editing this prefab holds the prefab itself; its
         // content is the user's to save or discard.
-        if (window->target.reference == changed) {
+        if (window->target.reference == changed || window.get() == except) {
             continue;
         }
         size_t count = 0;

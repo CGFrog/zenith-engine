@@ -29,6 +29,7 @@ class NavigationWorld;
 class PackageRunner;
 class PreferencesWindow;
 class ProjectBuild;
+class Scene;
 class TextClipboard;
 class ViewportRegistry;
 class WatchList;
@@ -73,9 +74,9 @@ struct EditorOperatorServices {
     std::function<void()> simulateMaskChanged;
     // An operator wrote, removed (nullopt), or rewrote on undo or redo a
     // prefab file (absolute path): the session drops cached copies and notes
-    // the content in its PrefabWriteLedger (PrefabWriteHooks::fileWritten).
-    // May be empty.
-    std::function<void(const std::filesystem::path&, const std::optional<std::string>&)> prefabWritten;
+    // the content in its PrefabWriteLedger; origin is the scene of the
+    // document it ran on (PrefabWriteHooks::fileWritten). May be empty.
+    std::function<void(const std::filesystem::path&, const std::optional<std::string>&, const Scene*)> prefabWritten;
     // An operator built instances from a prefab file that held this content
     // (PrefabWriteHooks::fileRead). May be empty.
     std::function<void(const std::filesystem::path&, const std::optional<std::string>&)> prefabRead;

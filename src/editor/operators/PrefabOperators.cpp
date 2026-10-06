@@ -92,7 +92,7 @@ OperatorResult recordFileWrite(OperatorContext& context, const PrefabAuthoring& 
     }
     if (recorded.after == recorded.before) {
         // Rewritten with the same content: nothing to undo outside the scene.
-        hooks.notify(recorded.file, recorded.after);
+        hooks.notify(recorded.file, recorded.after, &context.editing.scene());
         return result;
     }
     result.undoStep = [recorded = std::move(recorded), hooks](std::string name, SceneChanges changes) {

@@ -127,7 +127,7 @@ struct Fixture {
     }
 
     PrefabWriteHooks hooks() {
-        return {.fileWritten = [this](const fs::path& file, const std::optional<std::string>& bytes) {
+        return {.fileWritten = [this](const fs::path& file, const std::optional<std::string>& bytes, const Scene*) {
             ledger.record(file, bytes);
         }};
     }
@@ -212,8 +212,8 @@ void testSaveRefreshesOtherWindows(const fs::path& base) {
     PrefabDocument previous;
     expect(deserializePrefab(original, previous).success, "save: the previous content parses");
     size_t refreshed = 0;
-    const PrefabResult result = fixture.windows.refreshInstances(fixture.assets, fixture.diagnostics, "lamp.prefab",
-                                                                 &previous, "Refresh Lamp instances", refreshed);
+    const PrefabResult result = fixture.windows.refreshInstances(
+        fixture.assets, fixture.diagnostics, "lamp.prefab", &previous, "Refresh Lamp instances", nullptr, refreshed);
     expect(result.success && refreshed == 1 && litLamps(shelf->scene) == 1,
            "save: the shelf's nested lamp is refreshed");
     expect(shelf->history.size() == 1 && shelf->history.canUndo(), "save: the refresh is one step of the shelf's");
@@ -285,6 +285,15 @@ class EditorHarness {
         return true;
     }
 
+    // Focuses the level's first viewport area, as a click there does, and
+    // runs a frame: global keys then act on the level again.
+    void focusLevel() {
+        if (ImGuiWindow* window = HeadlessImGuiContext::findWindow("Viewport##viewport.")) {
+            ImGui::FocusWindow(window);
+        }
+        frame();
+    }
+
     bool windowOpen(const char* name) const {
         const ImGuiWindow* window = HeadlessImGuiContext::findWindow(name);
         return window != nullptr && window->Active;
@@ -335,12 +344,16 @@ constexpr ImGuiKeyChord closeKey = ImGuiKey_F10;
 // root, whose instances then gain a light.
 constexpr ImGuiKeyChord addLightKey = ImGuiKey_F11;
 constexpr ImGuiKeyChord reloadKey = ImGuiKey_F8;
+constexpr ImGuiKeyChord editShelfKey = ImGuiMod_Shift | ImGuiKey_F9;
+// Selects every object named Lamp in the focused document.
+constexpr ImGuiKeyChord selectLampsKey = ImGuiMod_Shift | ImGuiKey_F10;
+constexpr ImGuiKeyChord applyKey = ImGuiMod_Shift | ImGuiKey_F11;
 // The lamp window's host, by its ImGui id (its title shows the dirty mark).
 constexpr const char* lampWindow = "###prefab.1";
 
-// A project under root with lamp.prefab (without a light) and a startup
-// level holding two lamp instances and a "Level marker", prefab windows on,
-// and keys bound to the prefab operators.
+// A project under root with lamp.prefab (without a light), shelf.prefab
+// (holding one lamp), and a startup level holding two lamp instances and a
+// "Level marker", prefab windows on, and keys bound to the prefab operators.
 ProjectConfig prefabProject(const fs::path& root, bool withModule = false, std::string extraSettings = {}) {
     const fs::path assetRoot = root / "assets";
     fs::create_directories(assetRoot);
@@ -353,6 +366,12 @@ ProjectConfig prefabProject(const fs::path& root, bool withModule = false, std::
     const Entity lamp = staging.createEntity("Lamp");
     staging.setParent(staging.createEntity("Shade"), lamp);
     expect(authoring.create(staging, lamp, "lamp.prefab").success, "session: the lamp prefab should be created");
+    Scene shelfStaging;
+    const Entity shelf = shelfStaging.createEntity("Shelf");
+    Entity nested = entt::null;
+    expect(authoring.instantiate(shelfStaging, "lamp.prefab", shelf, nested).success &&
+               authoring.create(shelfStaging, shelf, "shelf.prefab").success,
+           "session: the shelf prefab should be created");
     Scene level;
     level.createEntity("Level marker");
     Entity instance = entt::null;
@@ -373,6 +392,9 @@ ProjectConfig prefabProject(const fs::path& root, bool withModule = false, std::
         {"removed", nlohmann::json::array()},
         {"added",
          {binding(editLampKey, "prefab.edit", {{"asset", "lamp.prefab"}}),
+          binding(editShelfKey, "prefab.edit", {{"asset", "shelf.prefab"}}),
+          binding(selectLampsKey, "outliner.select_matching", {{"filter", "Lamp"}}),
+          binding(applyKey, "prefab.apply", nlohmann::json::object()),
           binding(closeKey, "prefab.exit_edit", nlohmann::json::object()),
           binding(addLightKey, "object.component_add", {{"component", "point_light"}}),
           binding(reloadKey, "module.reload",
@@ -456,6 +478,58 @@ void testWindowEditsThePrefabBesideTheLevel(const fs::path& root) {
            "close: Discard closes the window and leaves the saved prefab in the level");
     expect(!editor.rendering().sceneAlive(prefabScene) && !boundScene(editor.rendering()),
            "close: the window's render scene and its view go with it");
+}
+
+// prefab.apply writes the prefab from one document; the other open documents
+// catch up, each with a refresh step of its own, and the writer is never
+// refreshed by its own write.
+void testApplyReachesOtherDocuments(const fs::path& root) {
+    EditorHarness editor(root, prefabProject(root));
+    if (!editor.start()) {
+        expect(false, "apply: the editor session starts");
+        return;
+    }
+    editor.frame();
+    const fs::path file = root / "assets" / "lamp.prefab";
+    const std::string original = readText(file);
+    constexpr const char* shelfWindow = "###prefab.1";
+    editor.press(editShelfKey);
+    editor.frame();
+    expect(editor.windowOpen(shelfWindow), "apply: the shelf opens in a window");
+
+    // From the level: the shelf's nested lamp catches up.
+    editor.focusLevel();
+    editor.press(selectLampsKey);
+    editor.press(addLightKey);
+    editor.press(applyKey);
+    editor.frame();
+    expect(readText(file) != original && litLamps(editor.scene) == 2,
+           "apply: the level applies its lamp to the prefab");
+    editor.press(ImGuiMod_Ctrl | ImGuiKey_Z);
+    editor.frame();
+    expect(readText(file) == original,
+           "apply: the level's first undo undoes the apply, so the level was not refreshed by its own write");
+    editor.press(ImGuiMod_Ctrl | ImGuiKey_Z);
+    expect(litLamps(editor.scene) == 0, "apply: the level's light is undone");
+    // The shelf was refreshed (and refreshed back): steps of its own, which
+    // leave it with changes to ask about.
+    editor.press(editShelfKey);
+    editor.press(closeKey);
+    expect(editor.windowOpen("Unsaved Prefab") && editor.clickButton("Unsaved Prefab", "Cancel"),
+           "apply: the shelf window refreshed its lamp as steps of its own");
+
+    // From the window: the level catches up, as a step it can undo.
+    editor.press(selectLampsKey);
+    editor.press(addLightKey);
+    editor.press(applyKey);
+    expect(readText(file) != original && litLamps(editor.scene) == 0,
+           "apply: the window applies its lamp, and the level waits for the frame's catch-up");
+    editor.frame();
+    expect(litLamps(editor.scene) == 2, "apply: the level's lamps catch up with the window's apply");
+    editor.focusLevel();
+    editor.press(ImGuiMod_Ctrl | ImGuiKey_Z);
+    expect(litLamps(editor.scene) == 0 && readText(file) != original,
+           "apply: undo in the level undoes its refresh, not the window's apply");
 }
 
 void testPlayWithAWindowOpen(const fs::path& root) {
@@ -573,6 +647,7 @@ int main() {
     testSaveRefreshesOtherWindows(root);
     testWindowsFollowMovedFiles(root);
     testWindowEditsThePrefabBesideTheLevel(root / "window");
+    testApplyReachesOtherDocuments(root / "apply");
     testPlayWithAWindowOpen(root / "play");
     testModuleReloadWaitsForWindows(root / "reload");
     testQuitAsksAboutWindows(root / "quit");

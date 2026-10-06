@@ -83,6 +83,8 @@ class PrefabWindowSet {
     // The window whose document is document, or null (the level's, for
     // example).
     PrefabWindowDocument* owner(const EditorDocument& document) const;
+    // The window whose scene is scene, or null.
+    PrefabWindowDocument* owner(const Scene& scene) const;
 
     // Opens the prefab at reference (project-relative) in a new window whose
     // document reads with level's options, and points window at it. A prefab
@@ -107,14 +109,15 @@ class PrefabWindowSet {
     PrefabResult save(PrefabWindowDocument& window, AssetManager& assets, EditorDiagnostics& diagnostics,
                       const PrefabWriteHooks& hooks, SavedPrefabDocument& saved);
 
-    // A prefab file changed (saved from a window, or outside the editor):
-    // refreshes its instances in every window but the one editing that prefab
-    // (whose root is the prefab itself, not an instance), each as one step
-    // stepName on its own history (refreshPrefabInstances). refreshed
+    // A prefab file changed (written from a window or the level, or outside
+    // the editor): refreshes its instances in every window but the one
+    // editing that prefab (whose root is the prefab itself, not an instance)
+    // and except (the window that wrote the change, or null), each as one
+    // step stepName on its own history (refreshPrefabInstances). refreshed
     // receives how many instances.
     PrefabResult refreshInstances(AssetManager& assets, EditorDiagnostics& diagnostics,
                                   const std::filesystem::path& reference, const PrefabDocument* previous,
-                                  const std::string& stepName, size_t& refreshed);
+                                  const std::string& stepName, const PrefabWindowDocument* except, size_t& refreshed);
 
     // Follows moved project files: each window's prefab file and reference,
     // and the asset references in each window's scene (a window whose

@@ -131,7 +131,7 @@ EditorCommandResult PrefabWriteCommand::apply(EditorCommandContext& context, con
             return written;
         }
     }
-    m_hooks.notify(m_write.file, to);
+    m_hooks.notify(m_write.file, to, &context.scene);
     return {.success = true};
 }
 
@@ -172,33 +172,48 @@ void PrefabWriteLedger::clear() {
     m_contents.clear();
 }
 
-PrefabResult classifyPrefabFileChange(PrefabWriteLedger& ledger, const std::filesystem::path& file,
-                                      const std::filesystem::path& assetRoot, PrefabFileChange& output) {
+PrefabResult describePrefabFileChange(const std::filesystem::path& file, const std::filesystem::path& assetRoot,
+                                      const std::optional<std::string>& current,
+                                      const std::optional<std::string>& previous, PrefabFileChange& output) {
     std::error_code error;
-    std::filesystem::path root = std::filesystem::absolute(assetRoot, error).lexically_normal();
-    std::filesystem::path absolute = std::filesystem::absolute(file, error).lexically_normal();
+    const std::filesystem::path root = std::filesystem::absolute(assetRoot, error).lexically_normal();
+    const std::filesystem::path absolute = std::filesystem::absolute(file, error).lexically_normal();
     const std::filesystem::path reference = absolute.lexically_relative(root);
     if (reference.empty() || *reference.begin() == "..") {
         return {.error = fileLabel(file) + " is not inside the project's asset root"};
     }
+    PrefabFileChange change{.external = true, .reference = reference};
+    change.displayName = absolute.stem().generic_string();
+    PrefabDocument document;
+    if (current && deserializePrefab(*current, document).success && !document.displayName.empty()) {
+        change.displayName = document.displayName;
+    }
+    if (PrefabDocument before; previous && deserializePrefab(*previous, before).success) {
+        change.previous = std::move(before);
+    }
+    output = std::move(change);
+    return {.success = true};
+}
+
+PrefabResult classifyPrefabFileChange(PrefabWriteLedger& ledger, const std::filesystem::path& file,
+                                      const std::filesystem::path& assetRoot, PrefabFileChange& output) {
+    std::error_code error;
+    const std::filesystem::path absolute = std::filesystem::absolute(file, error).lexically_normal();
     std::optional<std::string> bytes;
     std::string readError;
     if (!readPrefabFileBytes(absolute, bytes, readError)) {
         return {.error = readError};
     }
-    PrefabFileChange change{.external = !ledger.matches(absolute, bytes), .reference = reference};
-    change.displayName = absolute.stem().generic_string();
-    PrefabDocument current;
-    if (bytes && deserializePrefab(*bytes, current).success && !current.displayName.empty()) {
-        change.displayName = current.displayName;
+    const std::optional<std::string>* known = ledger.recorded(absolute);
+    const bool external = !ledger.matches(absolute, bytes);
+    PrefabFileChange change;
+    if (PrefabResult described = describePrefabFileChange(absolute, assetRoot, bytes,
+                                                          external && known != nullptr ? *known : std::nullopt, change);
+        !described) {
+        return described;
     }
-    if (change.external) {
-        if (const std::optional<std::string>* known = ledger.recorded(absolute); known != nullptr && *known) {
-            PrefabDocument previous;
-            if (deserializePrefab(**known, previous).success) {
-                change.previous = std::move(previous);
-            }
-        }
+    change.external = external;
+    if (external) {
         ledger.record(absolute, std::move(bytes));
     }
     output = std::move(change);

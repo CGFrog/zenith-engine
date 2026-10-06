@@ -79,6 +79,14 @@ session's own members, a window's are its document's.
   scene-only step "Refresh <name> instances" on that document's own history,
   so Undo there puts the old instances back. The window editing the prefab
   itself is never refreshed.
+- **Apply** (`prefab.apply`, and the undo and redo of its step) writes the
+  prefab from one document; at the end of the frame every other open
+  document catches up: the level (its edit scene during Play), the documents
+  parked under prefab mode, and the other windows, each with a step "Refresh
+  <name> instances" on its own history
+  (`EditorSession::refreshPrefabInstancesElsewhere`, shared with Save). The
+  write hook names the scene that wrote (`PrefabWriteHooks::fileWritten`'s
+  origin), so the writer is never refreshed by its own write.
 - **Outside changes** to a prefab file refresh its instances in the windows
   too; a window editing that very prefab only warns, and its Save writes over
   the change.
@@ -101,9 +109,6 @@ session's own members, a window's are its document's.
 ## Known limits
 
 - The window's view uses preview lighting (see above).
-- A prefab written by `prefab.apply` or `prefab.revert` in one document
-  refreshes the instances in that document only, as in prefab mode; other
-  open documents catch up when the prefab is saved from a window.
 - Undo of a refresh step restores the instances in that document only, not
   the prefab file.
 

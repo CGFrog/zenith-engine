@@ -69,7 +69,7 @@ PrefabResult savePrefabDocument(Scene& scene, SceneEntityId root, const std::fil
         return {.error = error.empty() ? "The saved prefab disappeared: " + reference.generic_string() : error};
     }
     saved.after = std::move(*after);
-    hooks.notify(file, saved.after);
+    hooks.notify(file, saved.after, nullptr);
     linkPrefabCapture(scene, rootEntity, reference, capture);
     output = std::move(saved);
     return result;
