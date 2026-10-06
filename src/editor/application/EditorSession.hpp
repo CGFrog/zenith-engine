@@ -331,6 +331,9 @@ class EditorSession final : public ApplicationScene,
     void enterPrefabWorkspace();
     void applyPrefabWorkspaceRequest();
     void leavePrefabWorkspace();
+    // A copy of what panels show of the open prefab, empty when none is open;
+    // see EditorContext::prefabEdit.
+    std::optional<OpenPrefabSummary> activePrefabSummary() const;
     // Writes the active prefab to its file; false after reporting why not.
     bool savePrefabEdit(ApplicationContext& context);
     // The active document's name for the status bar and prompts: the scene's

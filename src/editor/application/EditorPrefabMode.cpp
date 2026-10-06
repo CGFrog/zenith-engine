@@ -32,6 +32,14 @@ bool EditorSession::prefabEditAvailable(const OperatorContext& context) const {
     return documentCommandsAvailable(context);
 }
 
+std::optional<OpenPrefabSummary> EditorSession::activePrefabSummary() const {
+    const PrefabEditTarget* prefab = m_documents.activePrefab();
+    if (prefab == nullptr) {
+        return std::nullopt;
+    }
+    return OpenPrefabSummary{.displayName = prefab->displayName, .root = prefab->root};
+}
+
 ActiveDocument EditorSession::activeDocument(ApplicationContext& context) {
     return {.scene = context.scene, .document = m_document, .history = m_history, .selection = m_selection};
 }

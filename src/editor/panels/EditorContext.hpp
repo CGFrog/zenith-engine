@@ -8,9 +8,11 @@
 #include "editor/panels/ViewportRegistry.hpp"
 #include "editor/project/AssetRelocation.hpp"
 #include "engine/application/Application.hpp"
+#include "engine/scene/SceneEntityId.hpp"
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -28,7 +30,12 @@ class ProjectAssets;
 struct NavMeshBuildSettings;
 class WatchList;
 struct EditorProjectNames;
-struct PrefabEditTarget;
+
+// What panels show of the prefab being edited.
+struct OpenPrefabSummary {
+    std::string displayName;
+    SceneEntityId root;
+};
 
 // Session-level workflows a panel can trigger but does not own: running
 // operators, the region keymaps, document replacement, and modal transforms.
@@ -126,8 +133,9 @@ struct EditorContext {
     // choices; null where there is none.
     const EditorProjectNames* projectNames{nullptr};
     // The prefab open as its own document (prefab mode,
-    // application/DocumentStack.hpp); null while a scene is edited.
-    const PrefabEditTarget* prefabEdit{nullptr};
+    // application/DocumentStack.hpp); empty while a scene is edited. A copy,
+    // so it stays valid when an operator leaves the prefab while panels draw.
+    std::optional<OpenPrefabSummary> prefabEdit;
     // The project's asset catalog and thumbnails, which asset fields offer
     // (interaction/AssetReferenceField); null where there is none (tests).
     ProjectAssets* projectAssets{nullptr};

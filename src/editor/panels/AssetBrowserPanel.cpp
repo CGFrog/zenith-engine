@@ -519,10 +519,15 @@ AssetBrowserActions AssetBrowserPanel::sessionActions(EditorContext& context) {
             [&context](const std::filesystem::path& path) {
                 context.invoke("module.open_source", nlohmann::json{{"file", utf8PathText(path)}}.dump());
             },
-        // The runner reports why a prefab could not open.
+        // The runner reports a failed open; a refusal (the operator is
+        // unavailable, as in Play) comes back cancelled and is reported here.
         .openPrefab =
             [&context](const std::filesystem::path& path) {
-                context.invoke("prefab.edit", nlohmann::json{{"asset", utf8PathText(path)}}.dump());
+                const OperatorResult result =
+                    context.invoke("prefab.edit", nlohmann::json{{"asset", utf8PathText(path)}}.dump());
+                if (result.status == OperatorStatus::Cancelled && !result.message.empty()) {
+                    context.diagnostics.add(EditorDiagnosticSeverity::Warning, "Prefabs", result.message);
+                }
             },
         .reloadMaterial =
             [&context](const std::filesystem::path& path) {

@@ -485,7 +485,7 @@ void HierarchyPanel::drawEntity(EditorContext& context, const OutlinerRowEntry& 
     const ImVec2 rowMin = m_rowMin;
     const ImVec2 rowMax = m_rowMax;
     // In prefab mode the document's root is the prefab itself.
-    const bool prefabRoot = context.prefabEdit != nullptr && context.prefabEdit->root == node.entity;
+    const bool prefabRoot = context.prefabEdit && context.prefabEdit->root == node.entity;
     decorateOutlinerRow(prefabRoot ? EditorIcon::Prefab : entityIcon(scene.registry(), entity), selected,
                         node.children.empty());
     const ImGuiIO& io = ImGui::GetIO();
