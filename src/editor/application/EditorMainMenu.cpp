@@ -20,7 +20,7 @@ void EditorSession::handleGlobalShortcuts(ApplicationContext& context) {
     // when the mouse has left it.
     updateKeymapGesture(context);
     // Global keys act on the document whose window last had focus.
-    dispatchKeymap(context, focusedPrefabWindow(), KeymapRegion::Global);
+    dispatchKeymap(context, m_prefabWindows.focused(), KeymapRegion::Global);
 }
 
 void EditorSession::drawDebugOverlaysMenu(ApplicationContext& context) {

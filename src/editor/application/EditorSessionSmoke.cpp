@@ -64,16 +64,15 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     }
 
     const PrefabWindowSet& prefabWindows() const override {
-        return m_session.m_prefabWindows;
+        return m_session.m_prefabWindows.windows();
     }
 
     ViewportPanel* prefabWindowViewport(uint64_t window) override {
-        PrefabWindowView* view = m_session.prefabWindowView(window);
-        return view != nullptr ? dynamic_cast<ViewportPanel*>(view->viewport.get()) : nullptr;
+        return m_session.m_prefabWindows.viewport(window);
     }
 
     std::optional<SceneEditing> prefabWindowEditing(uint64_t window) override {
-        PrefabWindowDocument* document = m_session.m_prefabWindows.find(window);
+        PrefabWindowDocument* document = m_session.m_prefabWindows.windows().find(window);
         if (document == nullptr) {
             return std::nullopt;
         }
@@ -82,12 +81,12 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     }
 
     bool savePrefabWindow(uint64_t window) override {
-        PrefabWindowDocument* document = m_session.m_prefabWindows.find(window);
-        return document != nullptr && m_session.savePrefabWindow(m_context, *document);
+        PrefabWindowDocument* document = m_session.m_prefabWindows.windows().find(window);
+        return document != nullptr && m_session.m_prefabWindows.save(m_context, *document);
     }
 
     void closePrefabWindow(uint64_t window) override {
-        m_session.m_prefabWindowCloses.push_back(window);
+        m_session.m_prefabWindows.requestClose(window);
     }
 
     EditorMenus& menus() override {

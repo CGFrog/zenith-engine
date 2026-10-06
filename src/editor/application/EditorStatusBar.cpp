@@ -60,7 +60,7 @@ void EditorSession::drawStatusBar(const RenderStats& stats) {
             ImGui::SameLine();
             widgets::StatusPill(EditorIcon::Warning, "Reload pending - stop to apply",
                                 widgets::StatusPillStyle::Warning);
-        } else if (m_moduleReloadPending && !m_prefabWindows.empty()) {
+        } else if (m_moduleReloadPending && !m_prefabWindows.windows().empty()) {
             // Prefab windows' scenes hold module storage too.
             ImGui::SameLine();
             widgets::StatusPill(EditorIcon::Warning, "Reload pending - close the prefab windows to apply",

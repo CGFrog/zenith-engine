@@ -109,7 +109,7 @@ void EditorSession::updateGameModule(ApplicationContext& context, const InputSta
         // Prefab windows hold module storage that the reload would not
         // restore, so it also waits for the windows to close.
         const bool reloadAllowed = buildState != BuildState::Running && m_playMode.mode() == EditorMode::Edit &&
-                                   !m_activeTransform && !m_fileDialog.pending() && m_prefabWindows.empty();
+                                   !m_activeTransform && !m_fileDialog.pending() && m_prefabWindows.windows().empty();
         if (m_moduleReloadPending && reloadAllowed) {
             reloadGameModule(context);
         }

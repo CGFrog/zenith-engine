@@ -52,9 +52,11 @@ process; wired in `EditorPlayback.cpp`). `EditorSession` is one class
 implemented across several files, one per domain: `EditorSession.cpp` (the
 frame loop, operators and keymaps), `EditorFileDialogs.cpp`,
 `EditorSessionRecovery.cpp` (autosave), `EditorMainMenu.cpp`, `EditorStatusBar.cpp`,
-`EditorPlayback.cpp`, `EditorPrefabWindows.cpp` (prefabs in windows of their
-own, see [Prefab windows](prefab-windows.md)),
 `EditorAreas.cpp`, `EditorObjectCommands.cpp`,
 `EditorModuleCommands.cpp`, `EditorPreferences.cpp`,
 `EditorProjectSettings.cpp`, `EditorViewports.cpp` and `EditorSessionSmoke.cpp`.
 The header tags each member group with its file.
+The session owns classes of its own for larger workflows, and forwards its
+frame hooks to them: `EditorPlayback` (Play, Simulate, and their targets) and
+`PrefabWindowController` (prefabs in windows of their own, see
+[Prefab windows](prefab-windows.md)).

@@ -334,7 +334,7 @@ void EditorSession::drawAreas(ApplicationContext& context) {
                 ImGui::EndDisabled();
                 // The main menu and global keys act on the level again.
                 if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
-                    m_focusedPrefabWindow = 0;
+                    m_prefabWindows.clearFocus();
                 }
             });
         if (AreaInstance* drawn = m_workspaces.active().find(id)) {

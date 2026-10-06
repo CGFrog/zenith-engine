@@ -227,7 +227,7 @@ void EditorSession::continuePendingAction(ApplicationContext& context) {
     // only the level; the windows stay open beside it.
     const bool endsSession =
         m_pendingAction == PendingAction::CloseEditor || m_pendingAction == PendingAction::LeaveForProjectHub;
-    if (endsSession && askAboutPrefabWindows()) {
+    if (endsSession && m_prefabWindows.askAboutUnsaved()) {
         return;
     }
     if (m_document.dirty()) {
@@ -235,6 +235,10 @@ void EditorSession::continuePendingAction(ApplicationContext& context) {
         return;
     }
     finishPendingAction(context);
+}
+
+void EditorSession::cancelPendingAction() {
+    m_pendingAction = PendingAction::None;
 }
 
 void EditorSession::finishPendingAction(ApplicationContext& context) {
@@ -268,8 +272,8 @@ void EditorSession::finishPendingAction(ApplicationContext& context) {
 }
 
 bool EditorSession::saveDocument(OperatorContext& context) {
-    if (PrefabWindowDocument* window = m_prefabWindows.owner(context.editing.document())) {
-        return savePrefabWindow(*context.app, *window);
+    if (PrefabWindowDocument* window = m_prefabWindows.windows().owner(context.editing.document())) {
+        return m_prefabWindows.save(*context.app, *window);
     }
     return saveLevelDocument(*context.app);
 }

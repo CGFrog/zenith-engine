@@ -167,7 +167,7 @@ capability. `--check` fails when the generated index is stale.
 | Viewport overlays (lights, colliders, names) | `viewport/SceneGizmoDraw.*`, `ColliderHandles.*`, `IconPicking.*` | `SceneGizmoOverlays` | `zenith_scene_gizmo`, `zenith_collider_tools` | [Viewports](editor/viewport.md) |
 | Dropping models/prefabs into the viewport | `viewport/ViewportDrop.*`, `operators/PlacementOperators.*` | `object.place_model`, `object.array`, `object.scatter` | `zenith_placement` | [Viewports](editor/viewport.md) |
 | Game UI over the game view | `viewport/GameUiOverlay.*` | – | `zenith_play_targets` | [Play mode](editor/play-mode.md) |
-| Prefab windows | `application/PrefabWindowSet.*`, `EditorPrefabWindows.cpp`, `document/PrefabEditDocument.*` | `PrefabWindowSet`, `PrefabWindowDocument`, `DocumentBinding` | `zenith_prefab_windows` | [Prefab windows](editor/prefab-windows.md) |
+| Prefab windows | `application/PrefabWindowSet.*`, `application/PrefabWindowController.*`, `document/PrefabEditDocument.*` | `PrefabWindowSet`, `PrefabWindowController`, `PrefabWindowHost`, `PrefabWindowDocument`, `DocumentBinding` | `zenith_prefab_windows` | [Prefab windows](editor/prefab-windows.md) |
 | Prefab authoring commands | `document/PrefabAuthoring.*`, `operators/PrefabOperators.*` | `PrefabAuthoring` | `zenith_prefabs`, `zenith_prefab_ui`, `zenith_prefab_writes` | [Scene editing](editor/scene-editing.md) |
 | Areas and workspaces | `src/editor/areas/`, `application/EditorAreas.cpp`, `application/EditorAreaTypes.*` | `Workspace`, `AreaRegistry`, `builtInAreaTypes` | `zenith_workspaces`, `zenith_editor_area_types` | [Areas](editor/areas-workspaces.md) |
 | Theme, palette, widgets | `src/editor/theme/` | `EditorPalette`, `widgets::Button`, `ThemeChrome` | `zenith_editor_theme`, `zenith_editor_palette` | [Theme](editor/theme-settings.md) |
@@ -358,9 +358,8 @@ The editor session: lifecycle, Play, menus, prefab windows, file and module work
 | `EditorMainMenu` .cpp |  | EditorSession's main menu bar (with the playback toolbar) and the global keymap it dispatches first. |
 | `EditorModuleCommands` .cpp |  | EditorSession's game module workflows: loading the project's module, running its systems each frame, hot reloading it, and its menu, status, and panels. |
 | `EditorObjectCommands` .cpp |  | Blender object-mode operators that need the running editor: modal G/R/S transforms and the Delete/Rename popups, and drawing the menu opened with wm.call_menu (the Add menu is defined in editor/menus). |
-| `EditorPlayback` .cpp | `PlayStartProperties` | The play operators and EditorPlayback: play targets (the active viewport, a floating viewport, or a standalone game process), entering and leaving Play and Simulate, game views and the input and Ui they route to module systems, and the mouse capture policy. |
+| `EditorPlayback` .hpp/.cpp | `EditorPlaybackServices`, `EditorPlayback` | Play targets, entering and leaving Play and Simulate, game views and the input and Ui they route, the standalone game. |
 | `EditorPlayMode` .hpp/.cpp | `EditorMode`, `EditorRuntime`, `EditorPlayMode` | Edit/Play/Simulate state: snapshot on enter, restore on stop, time scale, pause, frame step. |
-| `EditorPrefabWindows` .cpp | `EditorSession` | EditorSession's prefab windows: prefabs open in floating windows of their own (PrefabWindowSet) while the level stays open, editable, and playable underneath. |
 | `EditorPreferences` .cpp |  | EditorSession's preferences and packaging workflows: the Preferences window and its live application of the look, and Build and Package. |
 | `EditorProjectSettings` .cpp |  | EditorSession's Project Settings workflow: opening the window on the project file's values, and saving and applying what it returns. |
 | `EditorSession` .hpp/.cpp | `EditorProjectServices`, `EditorSession` | EditorSession: the per-project editor coordinator (document, history, selection, panels, Play, module host); |
@@ -378,6 +377,7 @@ The editor session: lifecycle, Play, menus, prefab windows, file and module work
 | `PlayTargets` .hpp/.cpp | `PlayTarget`, `PlayTargetInfo`, `GameViewBanner`, `GameProcess`, … | Play targets: the active viewport, a floating viewport, or a standalone game process. |
 | `PrefabEditTargets` .hpp/.cpp |  | What the prefab windows do with a prefab open as a document of its own (PrefabEditTarget): saving it, and following its file when project files move or go. |
 | `PrefabInstanceRefresh` .hpp/.cpp |  | Refreshes a prefab's instances in a scene after its file changed, keeping each instance's overrides. |
+| `PrefabWindowController` .cpp | `PrefabWindowController` | The prefab windows: prefabs open in floating windows of their own (PrefabWindowSet) while the level stays open, editable, and playable underneath. |
 | `PrefabWindowSet` .hpp/.cpp | `PrefabWindowDocument`, `PrefabWindowSet` | The prefabs open in windows of their own (the editor's prefab windows), at most one window per prefab. |
 | `SceneEditing` .hpp/.cpp | `SceneEditing` | Records changes to the edited scene as undoable document commands. |
 | `SystemClipboard` .hpp/.cpp | `SystemClipboard` | The operating system clipboard, through ImGui's platform backend. |
