@@ -10,6 +10,8 @@ In the Project Hub, under **New from Template**:
 2. Name the project, for example `Range Day`, and pick a folder.
 3. Press **Create Project**. The hub opens it.
 
+> 📷 **Screenshot needed — `TUT-FPS-01-TEMPLATE`:** *The Project Hub's New from Template section with First-Person Shooter selected and the name "Range Day" entered.*
+
 The template is `templates/fps_game/` in the Zenith source tree. Its
 `template.json` names the starter scene, the input action file, and the
 project's tags, which the new project's `.zenith-project` file records
@@ -25,6 +27,8 @@ loads `modules/range_day.zmodule` and the status bar names the module.
 Before the first build, the scene's module components (the weapon, targets,
 and exit) are kept as data and shown as "(unknown type)" sections; the load
 turns them into behaviours without losing their values.
+
+> 📷 **Screenshot needed — `TUT-FPS-01-UNKNOWN`:** *An Inspector section shown as "(unknown type)" before the first build, and the same entity after the build with the Target behaviour section.*
 
 **Build on save** (Preferences > Build) starts a build whenever you save a
 source file in `src/`.

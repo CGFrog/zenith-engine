@@ -9,6 +9,8 @@ Press F5, select a target, right click its **Health** field, and choose
 every tab with the value as the game changes it. Remove a watch with its
 `x`, or all of them with **Module > Clear Watched Fields**.
 
+> 📷 **Screenshot needed — `TUT-FPS-06-WATCH`:** *The Properties panel's Watched section showing a target's health while playing.*
+
 ## Log by category
 
 Log from game code through a named channel:
@@ -41,6 +43,8 @@ draw.channel("weapons.hits").forSeconds(2.0f).sphere(hitPoint, 0.1f);
 draw.channel("weapons.spawns").persistent().label(spawnPoint, "spawn");
 draw.clearChannel("weapons.spawns");
 ```
+
+> 📷 **Screenshot needed — `TUT-FPS-06-DEBUGDRAW`:** *Debug-drawn weapon rays and hit spheres in the game view, with the Overlays > Debug Draw channel list open.*
 
 ## Attach a debugger
 

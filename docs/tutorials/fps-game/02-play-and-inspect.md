@@ -13,6 +13,8 @@ Press **F5** (`play.start`). The active viewport becomes the game view.
   look sensitivity and invert look.
 - Walk into the exit at the far end. **Shift F5** stops.
 
+> 📷 **Screenshot needed — `TUT-FPS-02-PLAY`:** *The target range in Play mode from the player's view: crosshair, HUD counter, a target, and an impact spark.*
+
 Stopping restores the scene as it was before Play, so the destroyed targets
 come back.
 
@@ -23,6 +25,8 @@ Controller** (`CharacterControllerComponent`), which moves with the `Move`,
 `Jump`, and `Sprint` actions. Its child **Camera** has the **First Person
 Camera** (look and pitch limits) and the template's **Hitscan Weapon**
 behaviour: range, damage, cooldown, the fire action, and the impact prefab.
+
+> 📷 **Screenshot needed — `TUT-FPS-02-PLAYER`:** *The Outliner with Player and its Camera child selected, and the Inspector showing Character Controller, First Person Camera, and Hitscan Weapon sections.*
 
 Select a target. It has a model, a collider, a static rigid body, **Tags**
 (`target`), and the **Target** behaviour with its health. The **Exit** is a

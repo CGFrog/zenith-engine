@@ -280,7 +280,7 @@ Debug, seconds:
 ## Game projects outside the repository
 
 The editor's Project Hub generates C++ game projects from
-`templates/cpp_game/` (see the [editor tutorial](EDITOR_TUTORIAL.md)). A
+`templates/cpp_game/` (see the [user guide](guide/01-getting-started.md)). A
 generated project builds its game module against a configured and built
 Zenith build directory, which configuration writes two files into:
 

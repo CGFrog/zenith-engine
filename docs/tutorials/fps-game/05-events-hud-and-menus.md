@@ -43,6 +43,8 @@ ui.text({24.0f, 20.0f}, "Targets " + std::to_string(state.targetsDestroyed) + " 
 Positions are offsets from the anchor. The same system draws in the editor's
 game view and in `zenith --project`.
 
+> 📷 **Screenshot needed — `TUT-FPS-05-HUD`:** *The game view showing the HUD (crosshair and "Targets n / m") and, separately, the pause menu.*
+
 ## Effects
 
 The weapon spawns `prefabs/impact.prefab` where a shot lands:
