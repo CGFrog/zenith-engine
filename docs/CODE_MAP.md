@@ -372,6 +372,7 @@ The editor session: lifecycle, Play, menus, prefab windows, file and module work
 | `EntityCommands` .hpp/.cpp | `PastedTransform` | Create, duplicate, delete, reparent, and paste entities as undoable edits. |
 | `FileDropQueue` .hpp/.cpp | `FileDropQueue` | Files and folders dropped onto the editor window from the operating system in one frame (InputState::droppedFiles), handed to the window they landed in. |
 | `FolderPicker` .hpp/.cpp | `FolderPicker` | A "Browse..." button that fills a UTF-8 path text field from the operating system's folder dialog. |
+| `GameModuleController` .hpp/.cpp | `GameModuleServices`, `GameModuleController` | The project's game module in the editor: loading it, hot reloading it after a build, and its status. |
 | `NativeFileDialog` .hpp/.cpp | `FileDialogKind`, `FileDialogStatus`, `FileDialogOutcome`, `FileDialogFilter`, … | Shows the operating system's open/save dialog for one file type. |
 | `NewCodeDialog` .hpp/.cpp | `NewCodeDialog` | The New Behaviour, Component, and System dialog the module.new_* operators open. |
 | `PlayTargets` .hpp/.cpp | `PlayTarget`, `PlayTargetInfo`, `GameViewBanner`, `GameProcess`, … | Play targets: the active viewport, a floating viewport, or a standalone game process. |

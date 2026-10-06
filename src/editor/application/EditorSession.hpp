@@ -123,7 +123,10 @@ struct EditorProjectServices {
 // panels that hold editor-wide state, the area types and workspaces that show
 // panels, the operator registry and keymap, and the project's game module,
 // runs the frame loop, and coordinates workflows that span panels (file
-// commands, Play mode, module reloads, and modal transforms). Every menu item,
+// commands and modal transforms). Play mode, the prefab windows, and the game
+// module are classes it owns (EditorPlayback, PrefabWindowController,
+// GameModuleController), which reach it only through the interfaces they
+// declare; its frame hooks forward to them. Every menu item,
 // button, and key runs a registered operator. The runtime Scene stays owned by
 // Engine and is changed only through SceneEditing.
 class EditorSession final : public ApplicationScene,

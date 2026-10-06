@@ -32,7 +32,12 @@ depend on this subtree.
   `tests/editor/CMakeLists.txt`; editor sources are listed in
   `src/editor/CMakeLists.txt`.
 - `EditorSession` is integration code. Move reusable document or interaction
-  behavior into its focused folder rather than growing the coordinator.
+  behavior into its focused folder rather than growing the coordinator. A
+  session workflow with state of its own (Play is `EditorPlayback`, the prefab
+  windows `PrefabWindowController`, the game module `GameModuleController`)
+  is a class the session owns, given its dependencies explicitly and reaching
+  the session through a narrow interface or callbacks, never `EditorSession`
+  itself.
 - Component inspectors come from the engine's component registry. Prefer
   better field presentation hints over a custom editor; register a custom
   editor in `interaction/EntityPropertiesView` (shared by the Inspector and
