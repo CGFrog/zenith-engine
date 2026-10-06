@@ -7,25 +7,31 @@ context. This chapter is a tour of each, with the code you will actually
 write. Most of them hang off **`GameServices`** (`context.services`), which
 exists from the moment Play starts until it stops (in the game runner: from
 scene load to unload).
+`GameServices` groups its services by the question they answer:
+`world()` changes the scene (commands, prefabs, effects), `time()` says when
+things happen (timers, pause, time scale), `content()` is the session's own
+data (resources, random streams, asset paths), and `outside()` reaches
+beyond the scene (audio, navigation, saves, debug drawing). Events and
+logging (`events()`, `log()`) sit on `GameServices` itself.
 
 | You want to... | Use | Section |
 | --- | --- | --- |
 | Read the player's buttons and sticks | `context.actions` | [Input](#input-actions) |
 | Raycast, sweep, overlap | `context.physics` | [Physics queries](#physics-queries) |
-| Spawn, destroy, reparent | `services->commands()` | [Spawning and destroying](#spawning-and-destroying) |
-| One-shot visual effects | `services->effects()` | [Effects](#effects) |
+| Spawn, destroy, reparent | `services->world().commands()` | [Spawning and destroying](#spawning-and-destroying) |
+| One-shot visual effects | `services->world().effects()` | [Effects](#effects) |
 | Tell other code something happened | `services->events()` | [Events](#events) |
-| Do something later or repeatedly | `services->timers()` | [Timers](#timers) |
+| Do something later or repeatedly | `services->time().timers()` | [Timers](#timers) |
 | Draw a HUD or a menu | `context.ui` (Ui phase) | [UI](#hud-and-menus) |
-| Play sounds | `services->audio()` | [Audio](#audio) |
-| Pause or slow time | `services->setPaused`, `setTimeScale` | [Time](#time-pause-and-slow-motion) |
-| Reproducible randomness | `services->random(name)` | [Randomness](#randomness) |
+| Play sounds | `services->outside().audio()` | [Audio](#audio) |
+| Pause or slow time | `services->time().setPaused`, `setTimeScale` | [Time](#time-pause-and-slow-motion) |
+| Reproducible randomness | `services->content().random(name)` | [Randomness](#randomness) |
 | Data files (items, enemies, loot) | `DefinitionTable<T>` | [Data tables](#data-tables) |
-| Keep state for a run | registry context / `services->resource<T>()` | [Per-game state](#per-game-state) |
-| Move AI along paths | `NavAgentComponent`, `services->navigation()` | [Navigation](#navigation) |
+| Keep state for a run | registry context / `services->content().resource<T>()` | [Per-game state](#per-game-state) |
+| Move AI along paths | `NavAgentComponent`, `services->outside().navigation()` | [Navigation](#navigation) |
 | Drive animation | `AnimatorComponent` | [Animation](#animation) |
-| Save the game | `services->saveGame(...)` | [Save games](#save-games) |
-| Log and debug-draw | `services->log(name)`, `services->debugDraw()` | [Chapter 4](04-play-and-debug.md#debugging-tools) |
+| Save the game | `services->outside().saveGame(...)` | [Save games](#save-games) |
+| Log and debug-draw | `services->log(name)`, `services->outside().debugDraw()` | [Chapter 4](04-play-and-debug.md#debugging-tools) |
 
 ## Project settings
 
@@ -147,7 +153,7 @@ Never create or destroy entities while iterating; record **commands** and the
 engine applies them after the current phase:
 
 ```cpp
-EntityCommandBuffer& commands = context.services->commands();
+EntityCommandBuffer& commands = context.services->world().commands();
 
 // Spawn a prefab (project-relative path) at a place, then configure it.
 commands.spawn("prefabs/enemy.prefab",
@@ -174,7 +180,7 @@ after the longest particle lifetime of its one-shot emitters. Set
 instances are parked and reused instead of destroyed.
 
 ```cpp
-context.services->effects().spawn("prefabs/impact.prefab",
+context.services->world().effects().spawn("prefabs/impact.prefab",
                                   glm::translate(glm::mat4(1.0f), hit.position), {.pooled = true});
 ```
 
@@ -209,7 +215,7 @@ Engine events (`engine/module/GameEvents.hpp`): `SceneLoaded`,
 ## Timers
 
 ```cpp
-Timers& timers = context.services->timers();
+Timers& timers = context.services->time().timers();
 
 // Once, after 3 seconds of game time; dropped automatically if `owner` is destroyed.
 TimerHandle handle = timers.start(3.0f, TimerRepeat::Once, [](TimerContext& timer) {
@@ -278,8 +284,8 @@ first-person player gets one automatically).
 
 ```cpp
 GameServices& services = *context.services;
-if (AudioSystem* audio = services.audio()) {             // null without an audio device, e.g. tests
-    const auto clip = services.loadClip("audio/shot.wav");
+if (AudioSystem* audio = services.outside().audio()) {             // null without an audio device, e.g. tests
+    const auto clip = services.outside().loadClip("audio/shot.wav");
     if (clip) {
         AudioSpatialOptions options;
         options.position = hit.position;
@@ -297,8 +303,8 @@ inverse-distance attenuation and equal-power stereo panning; set
 ## Time: pause and slow motion
 
 ```cpp
-services.setPaused(true);       // physics, FixedUpdate, timers, animation, scene audio stop
-services.setTimeScale(0.25f);   // slow motion
+services.time().setPaused(true);       // physics, FixedUpdate, timers, animation, scene audio stop
+services.time().setTimeScale(0.25f);   // slow motion
 ```
 
 While paused, Update and LateUpdate systems still run with
@@ -308,11 +314,11 @@ animations. The editor's own pause and time scale multiply with the game's.
 
 ## Randomness
 
-`services.random("loot")` is a named, seeded random stream (PCG32) whose
+`services.content().random("loot")` is a named, seeded random stream (PCG32) whose
 results are identical on every platform, compiler, and build type:
 
 ```cpp
-RandomStream& rng = services.random("loot");
+RandomStream& rng = services.content().random("loot");
 const int roll = rng.range(1, 6);                 // both ends inclusive
 const bool crit = rng.chance(0.15f);
 const size_t pick = rng.weightedIndex(weights);
@@ -344,8 +350,8 @@ struct ItemTable {
     DefinitionTable<ItemDef> table{itemFields()};
 };
 
-ItemTable& items = services.resource<ItemTable>();
-items.table.load(services.assetPath("data/items.json"));
+ItemTable& items = services.content().resource<ItemTable>();
+items.table.load(services.content().assetPath("data/items.json"));
 if (const ItemDef* sword = items.table.find("sword")) { ... }
 ```
 
@@ -364,7 +370,7 @@ Where to keep state depends on how long it should live:
 | Per entity, saved with the scene | A component field | A door's open height. |
 | Per entity, runtime only | A behaviour's private member, or a field marked `.runtimeState()` | A cooldown timer. |
 | Per scene / per Play | The registry context: `scene.registry().ctx().emplace<T>()` | The round's score. A new Play starts fresh. |
-| Per session, shared across modules | `services.resource<T>()` (needs `static constexpr std::string_view resourceKey`) | Loaded data tables, the current run. |
+| Per session, shared across modules | `services.content().resource<T>()` (needs `static constexpr std::string_view resourceKey`) | Loaded data tables, the current run. |
 | Across sessions | Save games | Progress. |
 
 **Never** keep game state in module-level `static` variables: hot reload
@@ -391,7 +397,7 @@ FpsGameState& fpsGameState(Scene& scene) {
 3. From code, `setNavDestination(agent, position)`; the built-in
    `zenith.nav_agents` system steers it and sets `arrived`.
 
-For custom movement, `services.navigation(scene).findPath(start, end, path)`
+For custom movement, `services.outside().navigation(scene).findPath(start, end, path)`
 fills a list of corner points. In Play the mesh is baked from the scene's
 static colliders on first use. Deep dive: [Navigation](../engine/navigation.md).
 
@@ -417,8 +423,8 @@ Event markers in clips are published as `AnimationEvent`s. Deep dive:
 
 ## Save games
 
-When the host provides a save store, `services.saveGame(scene, "slot1",
-"Chapter 2")` saves the scene the session plays, and `services.saveGames()`
+When the host provides a save store, `services.outside().saveGame(scene, "slot1",
+"Chapter 2")` saves the scene the session plays, and `services.outside().saveGames()`
 lists and loads slots. Generated (transient) entities are skipped, so
 regenerate procedural levels from a saved seed. Deep dive:
 [Scene](../engine/scene.md).

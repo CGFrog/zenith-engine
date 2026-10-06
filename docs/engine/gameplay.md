@@ -60,7 +60,7 @@ and build type, so a seed replays the same run.
 - `entropySeed()` is a seed from `std::random_device`, for a run whose seed
   the player did not choose.
 
-`GameServices::random(name)` is the session's stream for that name, and
+`ContentServices::random(name)` is the session's stream for that name, and
 `randomStreams()` is the whole set. The seed starts at 0; a game reseeds it
 when a run begins. `tests/engine/RandomTests.cpp` checks PCG32's reference
 sequence and pins the named-stream derivation with golden values. Changing
@@ -98,8 +98,8 @@ struct ItemTable {
     DefinitionTable<ItemDef> table{itemFields()};
 };
 
-ItemTable& items = services.resource<ItemTable>();
-items.table.load(services.assetPath("data/items.json"));
+ItemTable& items = services.content().resource<ItemTable>();
+items.table.load(services.content().assetPath("data/items.json"));
 ```
 
 ### Definition schemas (`DefinitionSchemas.*`)
@@ -166,7 +166,7 @@ scene.markMaterialDirty(dangerWall);
 // Walkable floors without colliders can be added to the bake directly.
 NavigationGeometry geometry = gatherNavigationGeometry(scene, assets);
 appendMeshGeometry(geometry, *assets.mesh(floorMesh), floorTransform);
-services.bakeNavigation(geometry);
+services.outside().bakeNavigation(geometry);
 ```
 
 Runtime assets are immutable and unsaved: rebuild changed geometry as a new

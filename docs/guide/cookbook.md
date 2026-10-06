@@ -72,7 +72,7 @@ const glm::vec3 position(world[3]);
 PhysicsRayHit hit;
 const std::array<Entity, 1> ignored{shooter};
 if (context.physics->raycast(position, forward, 100.0f, hit, {.ignore = ignored})) {
-    context.services->debugDraw().line(position, hit.position);
+    context.services->outside().debugDraw().line(position, hit.position);
 }
 ```
 
@@ -81,7 +81,7 @@ if (context.physics->raycast(position, forward, 100.0f, hit, {.ignore = ignored}
 ### Spawn a prefab where something was hit
 
 ```cpp
-context.services->commands().spawn(
+context.services->world().commands().spawn(
     "prefabs/crate.prefab", SpawnPlacement{.localTransform = glm::translate(glm::mat4(1.0f), hit.position)});
 ```
 
@@ -91,8 +91,8 @@ context.services->commands().spawn(
 void Projectile::onStart(BehaviourContext& context) {
     const SceneEntityId self = context.scene.id(context.entity);
     GameServices* services = context.services;
-    services->timers().start(5.0f, TimerRepeat::Once,
-                             [services, self](TimerContext&) { services->commands().destroy(self); }, self);
+    services->time().timers().start(5.0f, TimerRepeat::Once,
+                             [services, self](TimerContext&) { services->world().commands().destroy(self); }, self);
 }
 ```
 
@@ -177,12 +177,12 @@ ui.progressBar({{24.0f, -48.0f}, {320.0f, 20.0f}}, health.current / health.maxim
 ```cpp
 if (context.actions != nullptr && context.actions->pressed("Pause")) {
     paused = !paused;
-    context.services->setPaused(paused);
+    context.services->time().setPaused(paused);
 }
 // In the Ui system:
 if (paused) {
     switch (drawPauseMenu(*context.ui)) {
-    case MenuAction::Resume: paused = false; context.services->setPaused(false); break;
+    case MenuAction::Resume: paused = false; context.services->time().setPaused(false); break;
     case MenuAction::Quit:   /* request quit */ break;
     default: break;
     }
@@ -192,8 +192,8 @@ if (paused) {
 ### Play a sound at a position
 
 ```cpp
-if (AudioSystem* audio = services.audio()) {
-    if (const auto clip = services.loadClip("audio/explosion.ogg")) {
+if (AudioSystem* audio = services.outside().audio()) {
+    if (const auto clip = services.outside().loadClip("audio/explosion.ogg")) {
         AudioSpatialOptions options;
         options.position = where;
         audio->playAt(clip.handle, options);
@@ -204,7 +204,7 @@ if (AudioSystem* audio = services.audio()) {
 ### Roll random loot reproducibly
 
 ```cpp
-RandomStream& loot = services.random("loot");
+RandomStream& loot = services.content().random("loot");
 const size_t index = loot.weightedIndex(dropWeights);
 ```
 

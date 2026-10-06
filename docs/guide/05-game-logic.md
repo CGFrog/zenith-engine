@@ -361,7 +361,7 @@ hooks fire.
 | `onLateUpdate` | Every frame after physics (LateUpdate phase). |
 | `onTriggerEnter` / `onTriggerExit` | A body entered or left this entity's sensor, or this entity entered another's sensor. |
 | `onCollision(context, BehaviourCollision)` | A new contact with a solid body (`other`, `otherId`, `normal`). |
-| `onDestroy` | The entity was destroyed through `services->commands()`, or the session stopped. |
+| `onDestroy` | The entity was destroyed through `services->world().commands()`, or the session stopped. |
 
 Ordering is deterministic: by phase, then by the order behaviour types were
 registered, then by entity creation order. Trigger and collision hooks run at
@@ -413,7 +413,7 @@ surprises.
    `TransformComponent` through `registry()` requires
    `scene.markTransformDirty(entity)` afterwards; the log warns if you forget.
 2. **Create and destroy entities through commands, not directly.** Use
-   `services->commands().spawn(prefab, placement, onSpawned)`,
+   `services->world().commands().spawn(prefab, placement, onSpawned)`,
    `spawnEmpty(name, ...)`, `destroy(id)`, and `reparent(child, parent)`.
    Commands apply after the current phase, so you never invalidate a view
    another system is iterating. Destroying through commands is also what
@@ -425,7 +425,7 @@ surprises.
 4. **Keep per-run state out of module statics.** Hot reload discards a
    module's statics. Keep state in components, in the scene registry's context
    (one value per scene, reset each Play), or in
-   `services->resource<T>()` (one value per session). See
+   `services->content().resource<T>()` (one value per session). See
    [Per-game state](06-gameplay-services.md#per-game-state).
 5. **Check nullable context pointers.** `services`, `actions`, `physics`,
    and `ui` are null in some modes (see the tables above).

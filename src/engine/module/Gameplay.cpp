@@ -24,7 +24,7 @@ void GameplayRunner::start(ApplicationContext& context, std::filesystem::path as
         context.assets,
         SceneDocumentOptions{.assetRoot = std::move(assetRoot), .componentTypes = m_gameplay.componentTypes},
         context.rendering.debugDraw(), &context.logger, m_gameplay.behaviours);
-    m_services->setAudio(&context.audio);
+    m_services->outside().setAudio(&context.audio);
     m_services->events().publish(SceneLoaded{});
 }
 
@@ -49,7 +49,7 @@ InputActionMap& GameplayRunner::actionMap() {
 }
 
 SimulationClock GameplayRunner::simulationClock() const {
-    return m_services ? m_services->simulationClock() : SimulationClock{};
+    return m_services ? m_services->time().simulationClock() : SimulationClock{};
 }
 
 void GameplayRunner::update(ApplicationContext& context, const InputState& input, float deltaSeconds) {

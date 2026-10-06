@@ -43,9 +43,10 @@ void drawNavigationSidebarTab(EditorContext& context, bool& showNavigationMesh) 
 
     if (context.gameServices != nullptr) {
         ImGui::SeparatorText("Game");
-        if (const NavigationWorld* game = context.gameServices->navigationIfBaked(); game != nullptr && game->baked()) {
+        if (const NavigationWorld* game = context.gameServices->outside().navigationIfBaked();
+            game != nullptr && game->baked()) {
             drawStats(*game);
-            ImGui::Text("%zu agents", context.gameServices->navigationCrowd().agentCount());
+            ImGui::Text("%zu agents", context.gameServices->outside().navigationCrowd().agentCount());
         } else {
             ImGui::TextDisabled("The game has not baked a mesh.");
         }

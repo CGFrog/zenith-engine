@@ -123,7 +123,7 @@ struct EditorContext {
     const NavMeshBuildSettings* navigationSettings{nullptr};
     // The running game's services in Play and Simulate, for tools that look
     // at its navigation mesh and crowd; null in Edit mode and without a
-    // module. Never bake through it (GameServices::navigationIfBaked).
+    // module. Never bake through it (OutsideServices::navigationIfBaked).
     const GameServices* gameServices{nullptr};
     // The game module's behaviour sources and build state, for the
     // inspector's Edit Script button and badges; null where there is none.

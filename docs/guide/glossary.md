@@ -47,7 +47,7 @@
 | **Scene** | A document of entities (`.zenith-scene`), and the runtime ECS registry holding them. | `engine/scene/Scene.hpp` |
 | **SceneEntityId** | A stable 64-bit entity id, saved in scenes; use it to remember entities. | `engine/scene/SceneEntityId.hpp` |
 | **Sensor** | A rigid body that reports trigger enter/exit instead of colliding. | `rigid_body.sensor` |
-| **Session resource** | One value per type kept for the whole Play session (`services.resource<T>()`). | `engine/module/SessionResources` |
+| **Session resource** | One value per type kept for the whole Play session (`services.content().resource<T>()`). | `engine/module/SessionResources` |
 | **Shadow copy** | The temporary copy of a module the editor loads, so the original can be rebuilt. | `engine/module/GameModule` |
 | **Simulate** | Running physics and FixedUpdate systems on a copy of the scene without player input. | `play.simulate` |
 | **System** | A function run once per phase over the scene. | `engine/module/SystemScheduler.hpp` |

@@ -31,7 +31,7 @@ The game and the editor give the table to their `PhysicsWorld`, and apply the
 action file over the module's actions (`ProjectApplication::onStart`, and
 `GameModuleHost::setProjectInputActions` in the editor); a bad action file is
 logged and the module's defaults are used. Both give the navigation settings
-to the session's `GameServices::setDefaultNavigationSettings` when gameplay
+to the session's `OutsideServices::setDefaultNavigationSettings` when gameplay
 starts, and the editor's `navigation.bake` uses them too, so the preview is
 the mesh the game bakes. Versions 1 to 6 remain readable
 and are upgraded on save. Scene references are validated against the scene root before

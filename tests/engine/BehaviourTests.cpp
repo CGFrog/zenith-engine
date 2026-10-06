@@ -57,11 +57,11 @@ template <char Tag> class Recorder : public Behaviour {
         ++updates;
         record(context, "update");
         if (destroyOnUpdate && context.services != nullptr) {
-            context.services->commands().destroy(context.scene.id(context.entity));
+            context.services->world().commands().destroy(context.scene.id(context.entity));
         }
         if (spawnOnUpdate && context.services != nullptr) {
             spawnOnUpdate = false;
-            context.services->commands().spawnEmpty(
+            context.services->world().commands().spawnEmpty(
                 "Spawned", {}, [](Scene& scene, Entity entity) { scene.registry().emplace<Recorder<'A'>>(entity); });
         }
     }

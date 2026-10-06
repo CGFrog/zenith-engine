@@ -45,10 +45,11 @@ class ProjectPlayScene final : public ApplicationScene {
         }
         m_gameplay.start(context, m_project.assetRoot);
         // Bakes as the editor previews them (navigation.bake).
-        m_gameplay.services()->setDefaultNavigationSettings(m_project.navigationSettings());
-        m_gameplay.services()->setSaveGames(SaveGameStore(userDataDirectory("Zenith", m_project.displayName) / "saves",
-                                                          m_project.projectFile.parent_path()),
-                                            m_project.startupScene);
+        m_gameplay.services()->outside().setDefaultNavigationSettings(m_project.navigationSettings());
+        m_gameplay.services()->outside().setSaveGames(
+            SaveGameStore(userDataDirectory("Zenith", m_project.displayName) / "saves",
+                          m_project.projectFile.parent_path()),
+            m_project.startupScene);
         context.logger.log(LogLevel::Info, "game",
                            "Playing " + utf8FromPath(m_project.startupScene.filename()) +
                                " with Play systems: " + playSystemList(*gameplay.systems));

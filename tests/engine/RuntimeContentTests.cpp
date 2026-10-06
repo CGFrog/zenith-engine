@@ -449,14 +449,15 @@ void testNavigationFromRuntimeGeometry() {
     DebugDraw debugDraw;
     Logger logger;
     GameServices services(assets, {}, debugDraw, &logger);
-    const NavigationResult baked = services.bakeNavigation(geometry);
+    const NavigationResult baked = services.outside().bakeNavigation(geometry);
     expect(static_cast<bool>(baked), "navigation bakes from raw geometry: " + baked.error);
     Scene scene;
     std::vector<glm::vec3> path;
-    expect(services.navigation(scene).findPath({-4.0f, 0.0f, 0.0f}, {14.0f, 0.0f, 0.0f}, path) == NavPath::Complete,
+    expect(services.outside().navigation(scene).findPath({-4.0f, 0.0f, 0.0f}, {14.0f, 0.0f, 0.0f}, path) ==
+               NavPath::Complete,
            "a path crosses both runtime tiles");
-    expect(!services.bakeNavigation(NavigationGeometry{}), "empty geometry fails to bake");
-    expect(!services.navigation(scene).baked(), "a failed bake leaves no mesh, without a lazy rebake");
+    expect(!services.outside().bakeNavigation(NavigationGeometry{}), "empty geometry fails to bake");
+    expect(!services.outside().navigation(scene).baked(), "a failed bake leaves no mesh, without a lazy rebake");
 }
 } // namespace
 

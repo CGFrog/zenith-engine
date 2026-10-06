@@ -143,7 +143,7 @@ and makes the write part of history:
   through `PrefabWriteHooks::fileWritten` (the operators get the session's
   through `EditorOperatorServices::prefabWritten`). The session records it in
   its `PrefabWriteLedger` (path to the content it last wrote or reconciled)
-  and drops the game's cached copy (`GameServices::prefabs().invalidate`).
+  and drops the game's cached copy (`WorldServices::prefabs().invalidate`).
   The hook also names the scene whose operator or undo step wrote; a rewrite
   of a file the ledger knew is queued, and at the end of the frame every
   other open document refreshes its instances as a step of its own (see

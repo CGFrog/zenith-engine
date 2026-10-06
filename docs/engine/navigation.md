@@ -87,9 +87,9 @@ Arrival and failure:
 - A destination off the mesh, or a full crowd, sets `pathFailed`.
 
 The engine's `zenith.nav_agents` system (Update, Play) runs it on the
-session's mesh and crowd (`GameServices::navigationCrowd`, with
+session's mesh and crowd (`OutsideServices::navigationCrowd`, with
 `setCrowdSettings` applied when the crowd next starts over).
-`GameServices::bakeNavigation(scene)` rebakes the mesh after a game builds or
+`OutsideServices::bakeNavigation(scene)` rebakes the mesh after a game builds or
 replaces its level, and `bakeNavigation(geometry)` bakes it from triangles the
 game assembled itself (`gatherNavigationGeometry` plus `appendMeshGeometry`).
 Without settings, both and the lazy bake use the session's
@@ -102,14 +102,14 @@ that only look, such as the editor's overlays: they never bake, and
 When the first bake happens is the session's
 `NavigationBakePolicy`:
 - `Lazy` (the default, which hand-authored levels rely on):
-  `GameServices::navigation(scene)` bakes the first time it is asked, and the
+  `OutsideServices::navigation(scene)` bakes the first time it is asked, and the
   agent system asks as soon as an agent exists.
 - `Explicit`: only `bakeNavigation` bakes. Until it has run, the agent system
   skips the agents, which keep their destinations (no `pathFailed`), and logs
   one warning; `navigation(scene)` returns the empty mesh.
 
 A game that generates its levels sets `Explicit`
-(`services.setNavigationBakePolicy`) before the first Update that sees an
+(`services.outside().setNavigationBakePolicy`) before the first Update that sees an
 agent, for example in the system that builds the floor. Under `Lazy`, enemies
 spawned before the game's own bake would make the agent system bake the
 half-built floor first, and the game's bake would be a second one. A 40-room floor (2,880 input triangles) bakes in about
