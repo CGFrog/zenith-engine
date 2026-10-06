@@ -1,5 +1,7 @@
 #pragma once
 
+// The Preferences window: interface, keymap, external IDE, saving, build.
+
 #include "editor/application/FolderPicker.hpp"
 #include "editor/settings/EditorSettings.hpp"
 

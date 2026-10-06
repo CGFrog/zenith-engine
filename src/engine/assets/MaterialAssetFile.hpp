@@ -1,5 +1,7 @@
 #pragma once
 
+// Material asset files (.zmat): one standalone metallic-roughness material as JSON.
+
 #include "AssetGuid.hpp"
 #include "Assets.hpp"
 

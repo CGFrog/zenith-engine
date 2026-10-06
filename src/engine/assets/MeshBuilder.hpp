@@ -1,5 +1,8 @@
 #pragma once
 
+// Assembles a MeshAsset in code, for AssetManager::createMesh: procedural walls, floors and stairs, merged room
+// geometry, debug or minimap meshes.
+
 #include "Assets.hpp"
 #include "MeshOptimization.hpp"
 

@@ -1,5 +1,7 @@
 #pragma once
 
+// The objects holding one open document: its scene, document state, undo history, and selection.
+
 class CommandHistory;
 class EditorDocument;
 class Scene;

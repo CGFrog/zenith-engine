@@ -1,5 +1,7 @@
 #pragma once
 
+// Reads a whole file with one sized read.
+
 #include <cstdint>
 #include <filesystem>
 #include <string>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Encoding of the depth prepass specular target (PostProcessPass::specularFormat, R8G8B8A8_SRGB).
+
 #include <glm/glm.hpp>
 
 #include <algorithm>

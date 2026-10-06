@@ -1,5 +1,7 @@
 #pragma once
 
+// Headless operators that place objects quickly: object.place_model, object.array, object.scatter.
+
 #include "editor/operators/OperatorRegistry.hpp"
 
 #include <glm/glm.hpp>

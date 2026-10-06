@@ -1,5 +1,7 @@
 #pragma once
 
+// Registers wm.preferences, which opens the Preferences window (Edit > Preferences).
+
 #include "editor/operators/OperatorRegistry.hpp"
 
 class PreferencesWindow;

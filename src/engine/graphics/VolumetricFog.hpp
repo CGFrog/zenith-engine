@@ -1,5 +1,7 @@
 #pragma once
 
+// Froxel volumetric fog math shared by VolumetricFogPass, its shaders, and the CPU tests.
+
 #include "Lighting.hpp"
 #include "Rendering.hpp"
 

@@ -1,5 +1,8 @@
 #pragma once
 
+// Chooses the internal render extent and sample jitter for each frame and decides when temporal history must be
+// discarded.
+
 #include "Rendering.hpp"
 
 #include <glm/glm.hpp>

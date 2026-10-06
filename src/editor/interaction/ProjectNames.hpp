@@ -1,5 +1,7 @@
 #pragma once
 
+// The names a project declares (physics layers, tags) that inspectors offer as choices.
+
 #include "engine/physics/PhysicsLayers.hpp"
 
 #include <string>

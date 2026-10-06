@@ -1,5 +1,7 @@
 #pragma once
 
+// The Inspector's entity reference field: names the referenced entity and offers a picker and the eyedropper.
+
 #include "engine/reflection/Reflection.hpp"
 #include "engine/scene/Scene.hpp"
 

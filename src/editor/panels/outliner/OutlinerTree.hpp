@@ -1,5 +1,7 @@
 #pragma once
 
+// Builds the outliner's tree for each display mode (View Layer, Collections, Prefabs, Orphan Data).
+
 #include "editor/panels/outliner/OrphanData.hpp"
 #include "engine/scene/Collections.hpp"
 #include "engine/scene/SceneEntityId.hpp"

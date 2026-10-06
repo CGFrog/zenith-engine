@@ -1,5 +1,7 @@
 #pragma once
 
+// Definition table schemas a game registers so tools can validate its data files without the game's types.
+
 #include "engine/gameplay/DefinitionTable.hpp"
 
 #include <functional>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Area window frames and headers, and the requests the user makes through them.
+
 #include <cstdint>
 #include <functional>
 #include <string>

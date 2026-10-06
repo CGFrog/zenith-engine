@@ -1,5 +1,8 @@
 #pragma once
 
+// Custom component editors contributed from outside EntityPropertiesView, for example by a game module, keyed by
+// component type key.
+
 #include "engine/scene/Scene.hpp"
 
 #include <functional>

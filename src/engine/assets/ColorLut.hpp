@@ -1,5 +1,7 @@
 #pragma once
 
+// A three-dimensional colour lookup table in the Adobe Cube LUT (".cube") convention, also written by DaVinci Resolve.
+
 #include <glm/glm.hpp>
 
 #include <cstdint>

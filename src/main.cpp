@@ -1,3 +1,6 @@
+// Game runner composition root: parse the command line, load the project and its module, run ProjectApplication or
+// DemoApplication.
+
 #include "engine/Engine.hpp"
 #include "engine/platform/CrashHandler.hpp"
 #include "engine/platform/PlatformServices.hpp"

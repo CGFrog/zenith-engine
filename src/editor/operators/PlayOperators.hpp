@@ -1,5 +1,7 @@
 #pragma once
 
+// Headless operators that tune how Play and Simulate run.
+
 #include "editor/operators/OperatorRegistry.hpp"
 
 #include <functional>

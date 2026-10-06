@@ -1,5 +1,7 @@
 #pragma once
 
+// Asynchronous and additive scene instances (streaming layers).
+
 #include "SceneDocument.hpp"
 #include "engine/assets/Assets.hpp"
 #include "engine/jobs/JobSystem.hpp"

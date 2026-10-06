@@ -1,5 +1,7 @@
 #pragma once
 
+// Draws DebugDraw lines and shapes into each view.
+
 #include "../DebugDraw.hpp"
 #include "../vulkan/VulkanContext.hpp"
 

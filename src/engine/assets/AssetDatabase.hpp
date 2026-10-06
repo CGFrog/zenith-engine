@@ -1,5 +1,7 @@
 #pragma once
 
+// Tracks every project file by a GUID in a .meta sidecar: scans, moves, external changes, dependencies.
+
 #include "engine/assets/AssetGuid.hpp"
 #include "engine/assets/AssetMeta.hpp"
 

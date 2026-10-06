@@ -1,5 +1,8 @@
 #pragma once
 
+// EditorSession: the per-project editor coordinator (document, history, selection, panels, Play, module host); its
+// workflows live in Editor*.cpp.
+
 #include "editor/application/DocumentBinding.hpp"
 #include "editor/application/EditorAppearance.hpp"
 #include "editor/application/EditorDiagnostics.hpp"

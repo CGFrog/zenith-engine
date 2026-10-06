@@ -1,5 +1,7 @@
 #pragma once
 
+// CPU reference for the display-referred finishing stage evaluated on the GPU by color_grade.frag (ColorGradePass).
+
 #include "Rendering.hpp"
 #include "engine/assets/ColorLut.hpp"
 

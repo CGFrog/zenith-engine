@@ -1,5 +1,8 @@
 #pragma once
 
+// What the prefab windows do with a prefab open as a document of its own (PrefabEditTarget): saving it, and following
+// its file when project files move or go.
+
 #include "editor/application/DocumentBinding.hpp"
 #include "editor/document/PrefabEditDocument.hpp"
 #include "editor/project/AssetRelocation.hpp"

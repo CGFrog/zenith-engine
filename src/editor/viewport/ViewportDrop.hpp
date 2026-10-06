@@ -1,5 +1,7 @@
 #pragma once
 
+// Model and prefab drops from the Asset Browser onto a viewport image.
+
 #include "editor/viewport/SnapQueries.hpp"
 
 #include <glm/glm.hpp>

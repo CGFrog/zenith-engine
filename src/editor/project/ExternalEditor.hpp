@@ -1,5 +1,7 @@
 #pragma once
 
+// Opens files in the user's IDE: expands {file}/{line}/{column}/{pid} command templates.
+
 #include "editor/application/EditorDiagnostics.hpp"
 #include "engine/platform/ChildProcess.hpp"
 

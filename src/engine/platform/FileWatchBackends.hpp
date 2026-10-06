@@ -2,6 +2,8 @@
 // Not part of the public engine API.
 #pragma once
 
+// Internal to the file watcher: what FileWatcher.cpp and its backends share.
+
 #include "engine/platform/FileWatcher.hpp"
 
 #include <chrono>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Window-level painting for the pixel theme: dockspace gaps, area header strips and panes, popup bevels.
+
 #include "editor/theme/ThemeParameters.hpp"
 
 #include <imgui.h>

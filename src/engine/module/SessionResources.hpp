@@ -1,5 +1,7 @@
 #pragma once
 
+// Per-session values, one per type keyed by resourceKey (GameServices::resource<T>()).
+
 #include <concepts>
 #include <cstddef>
 #include <memory>

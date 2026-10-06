@@ -1,5 +1,7 @@
 #pragma once
 
+// What the zenith executable was asked to do, from its command line.
+
 #include "engine/project/ProjectConfig.hpp"
 
 #include <filesystem>

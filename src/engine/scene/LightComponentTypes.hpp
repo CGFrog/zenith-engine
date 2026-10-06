@@ -1,5 +1,8 @@
 #pragma once
 
+// Lights and lighting environment: directional, point and spot lights, the environment light, volumetric fog,
+// reflection probes, and irradiance volumes.
+
 class ComponentType;
 
 // Lights and lighting environment: directional, point and spot lights, the

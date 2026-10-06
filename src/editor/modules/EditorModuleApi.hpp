@@ -1,5 +1,8 @@
 #pragma once
 
+// The editor extension API for game modules (ZENITH_EDITOR_MODULE_REGISTER): operators, panels, sidebar tabs,
+// inspectors, menus.
+
 #include "engine/module/EngineExport.hpp"
 #include "engine/scene/Scene.hpp"
 

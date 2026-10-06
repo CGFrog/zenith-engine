@@ -1,5 +1,8 @@
 #pragma once
 
+// Block-compressed texture containers and the cooked-texture convention shared by the offline cooker
+// (zenith_asset_build) and runtime import.
+
 #include "Assets.hpp"
 #include "ProductionAssetPipeline.hpp"
 

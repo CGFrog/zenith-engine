@@ -1,5 +1,7 @@
 #pragma once
 
+// Buffer layout and limits of GPU-driven culling.
+
 #include <array>
 #include <cstdint>
 #include <glm/glm.hpp>

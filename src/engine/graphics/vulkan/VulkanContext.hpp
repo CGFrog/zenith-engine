@@ -1,4 +1,6 @@
 #pragma once
+
+// Vulkan instance, device, queues, VMA allocator, validation layer.
 #include "../../diagnostics/Logger.hpp"
 #include "../GraphicsValidation.hpp"
 #include "../surface/Surface.hpp"

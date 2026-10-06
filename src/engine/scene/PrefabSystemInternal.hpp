@@ -3,6 +3,9 @@
 // part of the public engine API.
 #pragma once
 
+// Internal to the prefab system: what PrefabSystem.cpp and its domain files (PrefabIdRemap, PrefabOverrides,
+// PrefabNesting, PrefabQueries) share.
+
 #include "Prefab.hpp"
 
 #include "../assets/Assets.hpp"

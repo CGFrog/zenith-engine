@@ -1,5 +1,7 @@
 #pragma once
 
+// The editor types areas can switch between, in View menu order.
+
 #include <functional>
 #include <memory>
 #include <span>

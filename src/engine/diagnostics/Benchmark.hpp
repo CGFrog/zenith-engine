@@ -1,5 +1,7 @@
 #pragma once
 
+// Benchmark sampling and the JSON report (ZENITH_BENCHMARK_*).
+
 #include <cstdint>
 #include <map>
 #include <span>

@@ -1,3 +1,5 @@
+// MeshPass::record: per-view frame preparation and the frame's recording stages.
+
 #include "../IrradianceVolume.hpp"
 #include "../Lighting.hpp"
 #include "../ReflectionProbes.hpp"

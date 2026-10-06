@@ -1,5 +1,7 @@
 #pragma once
 
+// The New Behaviour, Component, and System dialog the module.new_* operators open.
+
 #include "editor/operators/CodeOperators.hpp"
 
 #include <optional>

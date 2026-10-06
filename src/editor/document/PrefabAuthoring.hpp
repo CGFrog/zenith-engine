@@ -1,5 +1,7 @@
 #pragma once
 
+// Create, instantiate, override, apply, revert, unpack, and refresh prefabs as undoable edits.
+
 #include "engine/scene/Prefab.hpp"
 
 #include <chrono>

@@ -1,4 +1,6 @@
 #pragma once
+
+// Vulkan timestamp wraparound handling.
 #include <cstdint>
 
 // Vulkan timestamps wrap at the queue family's timestampValidBits boundary.

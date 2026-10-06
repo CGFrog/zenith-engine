@@ -1,5 +1,7 @@
 #pragma once
 
+// Prefab documents: entities, overrides, nested prefabs; PrefabSystem API.
+
 #include "Scene.hpp"
 #include "SceneDocument.hpp"
 

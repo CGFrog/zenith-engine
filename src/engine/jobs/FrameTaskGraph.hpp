@@ -1,5 +1,7 @@
 #pragma once
 
+// Per-frame parallel task graph with declared resource access.
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Orphan Data mode: project assets the scene does not use.
+
 #include "editor/project/AssetCatalog.hpp"
 #include "engine/scene/Collections.hpp"
 

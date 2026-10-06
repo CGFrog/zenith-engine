@@ -1,5 +1,7 @@
 #pragma once
 
+// A menu shown as a Blender pie around the mouse, drawn in the pixel theme.
+
 #include "editor/menus/MenuPopup.hpp"
 #include "editor/menus/MenuRegistry.hpp"
 

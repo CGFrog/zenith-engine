@@ -1,5 +1,7 @@
 #pragma once
 
+// Blender-style modal G/R/S transforms with axis constraints and typed values.
+
 #include <glm/glm.hpp>
 
 #include <cstdint>

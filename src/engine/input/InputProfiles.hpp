@@ -1,5 +1,7 @@
 #pragma once
 
+// Named player rebinding profiles with conflict and hold/toggle policies.
+
 #include "engine/input/InputActions.hpp"
 
 #include <filesystem>

@@ -1,5 +1,7 @@
 #pragma once
 
+// The entity eyedropper: pick an entity in a viewport to fill an entity reference field.
+
 #include "engine/reflection/Reflection.hpp"
 #include "engine/scene/Scene.hpp"
 

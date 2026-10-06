@@ -1,5 +1,7 @@
 #pragma once
 
+// Shadows of point and spot lights share one square depth atlas packed by allocateLocalShadowAtlas.
+
 #include "engine/graphics/Lighting.hpp"
 #include "engine/graphics/Rendering.hpp"
 

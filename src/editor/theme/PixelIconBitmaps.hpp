@@ -1,5 +1,7 @@
 #pragma once
 
+// The editor's pixel-art icons, drawn by PixelIcons.
+
 #include "editor/theme/EditorPalette.hpp"
 
 #include <array>

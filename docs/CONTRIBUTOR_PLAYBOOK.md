@@ -6,7 +6,8 @@ first time. They condense rules from [`AGENTS.md`](../AGENTS.md) and the
 nested `src/*/AGENTS.md` and `tests/AGENTS.md` files; those remain the
 authority. To find the code involved, use the [code map](CODE_MAP.md).
 
-**Always:** new source files go in the explicit source list of the nearest
+**Always:** a new header opens with a one-sentence summary comment after
+`#pragma once` (a `.cpp` without a header, at its top); new source files go in the explicit source list of the nearest
 `CMakeLists.txt`; includes that cross folders are rooted at `src/`
 (`engine/scene/Scene.hpp`); every `if` has braces; run `tools/check.ps1`
 (build + CPU tests + clang-format of changed files) before handing off; update

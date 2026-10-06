@@ -1,5 +1,7 @@
 #pragma once
 
+// Scene documents reference assets by paths relative to the project asset root, written with forward slashes.
+
 #include "SceneDocument.hpp"
 
 #include <nlohmann/json_fwd.hpp>

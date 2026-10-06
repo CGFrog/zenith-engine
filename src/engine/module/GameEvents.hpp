@@ -1,5 +1,7 @@
 #pragma once
 
+// Events the engine publishes to a gameplay session's EventQueue.
+
 #include "engine/scene/SceneEntityId.hpp"
 
 #include <string_view>

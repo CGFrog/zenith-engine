@@ -17,7 +17,7 @@ jobs:
           python-version: '3.12'
       - name: Check Markdown links
         run: python tools/docs/check_links.py
-      - name: Check the code map's source index is current
+      - name: Check every source file has a summary and the code map's source index is current
         run: python tools/docs/code_index.py --check
       - name: Check the screenshot checklist is current
         run: python tools/docs/screenshot_checklist.py --check

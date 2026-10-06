@@ -1,5 +1,7 @@
 #pragma once
 
+// The demo's pickups: collectible and collector components and the collection system.
+
 #include "engine/physics/PhysicsWorld.hpp"
 #include "engine/scene/Scene.hpp"
 

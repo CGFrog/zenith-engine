@@ -1,5 +1,7 @@
 #pragma once
 
+// Batching render items into instanced draws and their sort keys.
+
 #include "Rendering.hpp"
 
 #include <compare>

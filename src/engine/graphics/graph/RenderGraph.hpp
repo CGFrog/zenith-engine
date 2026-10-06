@@ -1,5 +1,7 @@
 #pragma once
 
+// Declarative render-graph model: passes, resources, hazards, barrier statistics.
+
 #include <cstdint>
 #include <span>
 #include <string>

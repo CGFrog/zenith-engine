@@ -1,5 +1,7 @@
 #pragma once
 
+// Renders object ids and depth for GPU picking.
+
 #include "../RenderPicking.hpp"
 #include "../pipeline/GraphicsPipeline.hpp"
 #include "../resources/IdReadback.hpp"

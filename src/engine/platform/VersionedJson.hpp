@@ -1,5 +1,8 @@
 #pragma once
 
+// Reading and writing a JSON object whose top level carries its format version: the shape of the settings and state
+// files the engine, games, and editor keep.
+
 #include "engine/platform/PlatformServices.hpp"
 
 #include <nlohmann/json.hpp>

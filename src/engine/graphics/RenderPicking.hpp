@@ -1,5 +1,8 @@
 #pragma once
 
+// GPU picking: a caller asks for the object ids under a rectangle of a render view (RenderRuntime::requestPick) and
+// receives them a few frames later.
+
 #include "RenderIds.hpp"
 #include "engine/scene/SceneEntityId.hpp"
 

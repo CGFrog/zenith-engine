@@ -1,5 +1,7 @@
 #pragma once
 
+// Applies the editor's look (theme, accent, fonts, UI scale); the one owner of the font cache.
+
 #include "editor/settings/EditorSettings.hpp"
 #include "editor/theme/EditorTheme.hpp"
 

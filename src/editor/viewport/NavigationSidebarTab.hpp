@@ -1,5 +1,7 @@
 #pragma once
 
+// The viewport sidebar's Navigation tab: bake and clear the preview navigation mesh and show its stats.
+
 struct EditorContext;
 
 // The viewport sidebar's Navigation tab: Bake and Clear for the editor's

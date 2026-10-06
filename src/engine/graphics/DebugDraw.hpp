@@ -1,5 +1,7 @@
 #pragma once
 
+// DebugDraw: lines, shapes, and labels for one frame, a duration, or until cleared, in named channels.
+
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 

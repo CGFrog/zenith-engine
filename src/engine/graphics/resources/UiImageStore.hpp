@@ -1,5 +1,7 @@
 #pragma once
 
+// GPU images behind RenderRuntime's UI images.
+
 #include "../Rendering.hpp"
 #include "../passes/UiPass.hpp"
 #include "../vulkan/VulkanContext.hpp"

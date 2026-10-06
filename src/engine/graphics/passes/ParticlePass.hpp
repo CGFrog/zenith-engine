@@ -1,5 +1,7 @@
 #pragma once
 
+// GPU particles: emit, simulate, cull, sort, and draw.
+
 #include "../Lighting.hpp"
 #include "../Particles.hpp"
 #include "../Rendering.hpp"

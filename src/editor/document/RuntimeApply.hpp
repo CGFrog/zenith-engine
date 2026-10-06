@@ -1,5 +1,7 @@
 #pragma once
 
+// What Apply to Edit Scene copies from the runtime scene of Play or Simulate back into the edit scene.
+
 #include "engine/scene/SceneDocument.hpp"
 
 #include <span>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Compact, renderer-independent encoding of `Vertex` split into separately bindable streams.
+
 #include "Assets.hpp"
 
 #include <array>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Owns window, input, renderer, assets, physics, audio, scene; init(), run(Application&) frame loop, shutdown().
+
 #include "animation/AnimationSystem.hpp"
 #include "application/Application.hpp"
 #include "assets/Assets.hpp"

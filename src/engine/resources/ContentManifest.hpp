@@ -1,5 +1,7 @@
 #pragma once
 
+// content-manifest.json digests and package validation.
+
 #include <filesystem>
 #include <string>
 #include <vector>

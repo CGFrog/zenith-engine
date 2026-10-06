@@ -1,5 +1,7 @@
 #pragma once
 
+// Frame capture requests from the environment (reference captures).
+
 #include <cstdint>
 #include <filesystem>
 #include <optional>

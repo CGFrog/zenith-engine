@@ -1,5 +1,7 @@
 #pragma once
 
+// The Project Settings window: input actions, physics layers, tags, navigation.
+
 #include "engine/input/InputActions.hpp"
 #include "engine/physics/PhysicsLayers.hpp"
 #include "engine/project/ProjectConfig.hpp"

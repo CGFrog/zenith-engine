@@ -1,5 +1,7 @@
 #pragma once
 
+// AnimatorComponent state machine: parameters, states, transitions, events; updateAnimator.
+
 #include "engine/scene/SceneEntityId.hpp"
 
 #include <optional>

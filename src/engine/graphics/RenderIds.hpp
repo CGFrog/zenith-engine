@@ -1,5 +1,8 @@
 #pragma once
 
+// Identifiers shared by the render-state API (Rendering.hpp) and the picking types (RenderPicking.hpp), kept apart so
+// both can name them.
+
 #include <cstdint>
 
 // Identifiers shared by the render-state API (Rendering.hpp) and the picking

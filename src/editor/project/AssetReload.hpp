@@ -1,5 +1,8 @@
 #pragma once
 
+// Reloads of textures and sounds that changed on disk or were reimported, beside reloadProjectModel and
+// reloadProjectMaterial (ProjectAssets.hpp).
+
 #include <cstddef>
 #include <filesystem>
 #include <span>

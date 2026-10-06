@@ -1,5 +1,7 @@
 #pragma once
 
+// Scores text against a fuzzy query: every query character must appear in order, ignoring case.
+
 #include "editor/operators/Keymap.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 

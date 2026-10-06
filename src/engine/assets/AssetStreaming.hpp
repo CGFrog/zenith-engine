@@ -1,5 +1,7 @@
 #pragma once
 
+// Streaming residency for large assets: segments, priorities, budgets.
+
 #include <cstdint>
 #include <limits>
 #include <optional>

@@ -90,6 +90,10 @@ Dependencies must not point upward. Keep graphics independent of gameplay rules,
 - Do not mix unrelated cleanup, refactoring, or formatting into a focused change, but callout any needed changes when possible.
 - Match existing conventions unless intentionally improving them consistently across the affected module.
 - Always use brackets in if statements.
+- Open every header (right after `#pragma once`), and every `.cpp` without a
+  header, with a comment whose first sentence says what the file is for.
+  `tools/docs/code_index.py` builds the code map's source index from it, and
+  CI fails when a file has none.
 
 ## Adding or changing features
 

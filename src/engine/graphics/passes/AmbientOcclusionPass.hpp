@@ -1,5 +1,7 @@
 #pragma once
 
+// GTAO compute pass: trace, denoise, upsample (gtao*.comp).
+
 #include "../AmbientOcclusion.hpp"
 #include "../Rendering.hpp"
 #include "../pipeline/ComputePipeline.hpp"

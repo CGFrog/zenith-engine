@@ -1,5 +1,7 @@
 #pragma once
 
+// Play-mode debugging overlays showing what the running game's physics and navigation actually hold.
+
 #include "engine/graphics/DebugDraw.hpp"
 #include "engine/scene/Scene.hpp"
 

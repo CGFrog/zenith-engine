@@ -1,5 +1,7 @@
 #pragma once
 
+// Viewport overlays: light ranges, camera icons, colliders, probe and volume bounds, names.
+
 #include "engine/graphics/DebugDraw.hpp"
 #include "engine/graphics/RenderIds.hpp"
 #include "engine/scene/Scene.hpp"

@@ -1,5 +1,7 @@
 #pragma once
 
+// Blender-style collections: named, nested groups of entities that are independent of the transform hierarchy.
+
 #include <entt/entity/fwd.hpp>
 #include <glm/glm.hpp>
 

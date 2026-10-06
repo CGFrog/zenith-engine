@@ -1,5 +1,7 @@
 #pragma once
 
+// The editor smoke scenario: every step in order, run against the opened scene.
+
 #include "editor/smoke/SmokeRunner.hpp"
 
 #include <filesystem>

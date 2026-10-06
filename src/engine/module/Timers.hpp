@@ -1,5 +1,7 @@
 #pragma once
 
+// Callbacks that run after an amount of simulated time.
+
 #include "engine/scene/SceneEntityId.hpp"
 
 #include <cstdint>

@@ -1,5 +1,8 @@
 #pragma once
 
+// Moves camera to show the entities' bounds (each mesh's bounds sphere, or a small sphere around an entity without a
+// loaded mesh)
+
 #include "editor/interaction/EditorCamera.hpp"
 
 #include <span>

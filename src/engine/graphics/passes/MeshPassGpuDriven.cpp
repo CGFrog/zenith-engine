@@ -1,3 +1,5 @@
+// MeshPass: the GPU-driven path: per-frame preparation and indirect draw groups.
+
 #include "MeshPass.hpp"
 #include "MeshPassInternal.hpp"
 

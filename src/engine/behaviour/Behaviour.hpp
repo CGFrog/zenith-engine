@@ -1,5 +1,8 @@
 #pragma once
 
+// Per-entity game logic: derive from Behaviour, reflect the fields designers tune, and register the type with
+// ModuleRegistrar::addBehaviour.
+
 #include "engine/scene/Scene.hpp"
 
 #include <glm/glm.hpp>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Render-settings widgets shared by the Graphics and Properties panels.
+
 struct EditorContext;
 class RenderSettingsController;
 

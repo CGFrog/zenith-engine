@@ -1,5 +1,7 @@
 #pragma once
 
+// Menus as data.
+
 #include "editor/operators/Operator.hpp"
 #include "editor/theme/PixelIconBitmaps.hpp"
 

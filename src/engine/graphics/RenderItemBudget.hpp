@@ -1,5 +1,7 @@
 #pragma once
 
+// Admits render objects into a fixed per-frame item capacity in build order.
+
 #include <cstdint>
 
 // Admits render objects into a fixed per-frame item capacity in build order.

@@ -1,5 +1,8 @@
 #pragma once
 
+// Scene changes recorded while systems iterate the scene and applied together at a flush point, so a system never
+// invalidates the view it is walking.
+
 #include "engine/scene/Prefab.hpp"
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneEntityId.hpp"

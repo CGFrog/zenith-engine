@@ -1,5 +1,7 @@
 #pragma once
 
+// The transform gizmo over several selected objects and its pivot.
+
 #include "editor/interaction/ModalTransform.hpp"
 #include "engine/scene/Scene.hpp"
 

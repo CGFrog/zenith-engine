@@ -1,5 +1,7 @@
 #pragma once
 
+// Drawing helpers for outliner rows (restriction toggles: hide, select, render).
+
 #include "editor/theme/PixelIconBitmaps.hpp"
 
 #include <imgui.h>

@@ -1,5 +1,7 @@
 #pragma once
 
+// What a panel receives each frame: the scene, document, selection, actions, and services.
+
 #include "editor/application/EditorPlayMode.hpp"
 #include "editor/application/SceneEditing.hpp"
 #include "editor/interaction/Selection.hpp"

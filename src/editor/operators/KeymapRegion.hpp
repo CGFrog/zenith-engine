@@ -1,5 +1,7 @@
 #pragma once
 
+// The editor area a key binding belongs to.
+
 #include <cstdint>
 
 // The editor area a key binding belongs to. As in Blender, keys go to the

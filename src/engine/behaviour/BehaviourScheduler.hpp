@@ -1,5 +1,7 @@
 #pragma once
 
+// Runs one phase's behaviour hooks: due lifecycle hooks, physics hooks in FixedUpdate, then the update hook.
+
 #include "BehaviourRegistry.hpp"
 
 class GameServices;

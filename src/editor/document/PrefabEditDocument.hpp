@@ -1,5 +1,7 @@
 #pragma once
 
+// Opening a prefab as a document of its own and saving it back.
+
 #include "editor/document/PrefabWriteCommand.hpp"
 #include "engine/scene/Prefab.hpp"
 

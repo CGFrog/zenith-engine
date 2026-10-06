@@ -1,5 +1,7 @@
 #pragma once
 
+// Matches each frame's keys and mouse gestures against the keymap and runs the bound operators.
+
 #include "editor/operators/Keymap.hpp"
 
 #include <imgui.h>

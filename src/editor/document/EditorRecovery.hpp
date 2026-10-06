@@ -1,5 +1,7 @@
 #pragma once
 
+// Autosave and recovery files for the level and for prefab edits.
+
 #include "engine/scene/SceneDocument.hpp"
 
 #include <filesystem>

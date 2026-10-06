@@ -1,5 +1,7 @@
 #pragma once
 
+// Clustered decals: box projectors assigned to the light-cluster grid and applied in mesh.frag before lighting.
+
 #include "engine/graphics/Lighting.hpp"
 
 #include <cstdint>

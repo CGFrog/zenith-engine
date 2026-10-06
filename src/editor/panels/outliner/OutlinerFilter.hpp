@@ -1,5 +1,7 @@
 #pragma once
 
+// The outliner's search syntax.
+
 #include "engine/scene/Scene.hpp"
 
 #include <cstdint>

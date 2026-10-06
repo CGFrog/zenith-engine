@@ -1,5 +1,7 @@
 #pragma once
 
+// Undoable prefab file writes.
+
 #include "editor/document/CommandHistory.hpp"
 #include "engine/scene/Prefab.hpp"
 

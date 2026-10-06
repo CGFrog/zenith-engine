@@ -1,5 +1,7 @@
 #pragma once
 
+// Resolves one viewport pick at a time: GPU pick when available, CPU fallback otherwise.
+
 #include "editor/viewport/RegionSelect.hpp"
 #include "editor/viewport/SceneGizmoDraw.hpp"
 #include "editor/viewport/ViewportPickProvider.hpp"

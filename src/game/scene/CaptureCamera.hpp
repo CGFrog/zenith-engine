@@ -1,5 +1,7 @@
 #pragma once
 
+// A scripted camera that replaces the player for deterministic visual checks (docs/RENDERER_VALIDATION.md).
+
 #include "engine/scene/Scene.hpp"
 
 #include <glm/glm.hpp>

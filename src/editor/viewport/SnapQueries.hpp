@@ -1,5 +1,7 @@
 #pragma once
 
+// Surface and vertex snapping queries and placement on surfaces.
+
 #include "editor/interaction/EditorCamera.hpp"
 #include "editor/interaction/ModalTransform.hpp"
 #include "engine/assets/Assets.hpp"

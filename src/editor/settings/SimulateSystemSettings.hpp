@@ -1,5 +1,7 @@
 #pragma once
 
+// The systems the user chose for Simulate, kept in simulate-systems.json.
+
 #include "engine/module/SystemScheduler.hpp"
 
 #include <filesystem>

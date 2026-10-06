@@ -1,5 +1,7 @@
 #pragma once
 
+// Headless operators behind the outliner's own gestures.
+
 #include "editor/operators/OperatorRegistry.hpp"
 #include "engine/scene/SceneEntityId.hpp"
 

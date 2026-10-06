@@ -1,5 +1,8 @@
 #pragma once
 
+// Authoring state that belongs to one scene but is not scene content, so it is neither undone nor seen by the runtime:
+// today the 3D cursor.
+
 #include <glm/vec3.hpp>
 
 #include <filesystem>

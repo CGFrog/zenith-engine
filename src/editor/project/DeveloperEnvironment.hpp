@@ -1,5 +1,7 @@
 #pragma once
 
+// The environment a command-line build with the engine's compiler needs.
+
 #include <filesystem>
 #include <optional>
 #include <string>

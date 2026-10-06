@@ -1,5 +1,8 @@
 #pragma once
 
+// Scene (EnTT registry + hierarchy + transforms) and the core components (name, transform, relationship, mesh,
+// camera...).
+
 #include "../assets/Assets.hpp"
 #include "../diagnostics/Logger.hpp"
 #include "../physics/PhysicsComponents.hpp"

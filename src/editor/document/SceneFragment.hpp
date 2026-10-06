@@ -1,5 +1,7 @@
 #pragma once
 
+// Copies entity subtrees as a scene document fragment and pastes them as new entities with fresh ids.
+
 #include "engine/scene/SceneDocument.hpp"
 
 #include <glm/mat4x4.hpp>

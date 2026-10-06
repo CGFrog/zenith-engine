@@ -1,4 +1,6 @@
 #pragma once
+
+// The Vulkan Renderer: frame recording, render views, secondary scenes, picking, and the render-graph plan.
 #include "../assets/Assets.hpp"
 #include "../input/InputManager.hpp"
 #include "../jobs/FrameTaskGraph.hpp"

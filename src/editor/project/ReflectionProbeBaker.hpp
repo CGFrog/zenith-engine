@@ -1,5 +1,7 @@
 #pragma once
 
+// Deterministic reflection probe baking in the editor.
+
 #include "engine/graphics/EnvironmentLighting.hpp"
 
 #include <filesystem>

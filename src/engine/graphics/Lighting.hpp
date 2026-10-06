@@ -1,5 +1,7 @@
 #pragma once
 
+// Local lights and the clustered-lighting grid (16x9x24, logarithmic depth slices).
+
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneVisibilityMode.hpp"
 

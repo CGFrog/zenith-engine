@@ -1,5 +1,7 @@
 #pragma once
 
+// Headless selection operators (Blender's Select menu).
+
 #include "editor/operators/OperatorRegistry.hpp"
 
 #include <cstdint>

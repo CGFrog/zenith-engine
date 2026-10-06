@@ -1,5 +1,7 @@
 #pragma once
 
+// Following moved or renamed project files: updating the documents that reference them.
+
 #include "engine/scene/SceneDocument.hpp"
 
 #include <cstddef>

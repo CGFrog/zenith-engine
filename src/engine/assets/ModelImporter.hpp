@@ -1,5 +1,7 @@
 #pragma once
 
+// glTF 2.0 import (cgltf) into CPU models, meshes, and materials; model outlines for tools.
+
 #include "Assets.hpp"
 
 class ModelImporter {

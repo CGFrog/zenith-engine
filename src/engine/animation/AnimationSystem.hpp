@@ -1,5 +1,7 @@
 #pragma once
 
+// Clip sampling, pose blending, cross-fades, and morph weights; updateAnimations.
+
 #include "engine/assets/Assets.hpp"
 #include "engine/jobs/FrameTaskGraph.hpp"
 

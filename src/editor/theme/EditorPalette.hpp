@@ -1,5 +1,7 @@
 #pragma once
 
+// The theme's colours.
+
 #include <cstdint>
 
 // One sRGB-encoded colour with straight alpha, every component in [0, 1].

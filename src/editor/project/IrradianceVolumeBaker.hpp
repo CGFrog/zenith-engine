@@ -1,5 +1,7 @@
 #pragma once
 
+// Bakes irradiance volume probes from scene geometry and lights.
+
 #include "engine/assets/IrradianceVolumeAsset.hpp"
 #include "engine/graphics/IrradianceVolume.hpp"
 #include "engine/graphics/Lighting.hpp"

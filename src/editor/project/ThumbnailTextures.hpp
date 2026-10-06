@@ -1,5 +1,7 @@
 #pragma once
 
+// GPU copies of ThumbnailCache images, so ImGui can draw them.
+
 #include "editor/project/ThumbnailCache.hpp"
 #include "engine/graphics/Rendering.hpp"
 

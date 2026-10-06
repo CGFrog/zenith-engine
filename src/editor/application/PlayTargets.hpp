@@ -1,5 +1,7 @@
 #pragma once
 
+// Play targets: the active viewport, a floating viewport, or a standalone game process.
+
 #include "editor/application/EditorPlayMode.hpp"
 #include "editor/theme/ThemeParameters.hpp"
 #include "engine/input/InputManager.hpp"

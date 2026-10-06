@@ -1,5 +1,8 @@
 #pragma once
 
+// The editor Application: owns the Project Hub, appearance, and recent projects across project switches; creates an
+// EditorSession per project.
+
 #include "editor/application/EditorAppearance.hpp"
 #include "editor/application/PlayTargets.hpp"
 #include "editor/project/ProjectHub.hpp"

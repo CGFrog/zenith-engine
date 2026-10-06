@@ -1,5 +1,7 @@
 #pragma once
 
+// The fast Ninja build of a project in <project>/.zenith/build with the engine's compiler environment.
+
 #include "editor/project/BuildRunner.hpp"
 #include "editor/project/DeveloperEnvironment.hpp"
 

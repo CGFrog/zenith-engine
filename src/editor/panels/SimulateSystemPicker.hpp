@@ -1,5 +1,7 @@
 #pragma once
 
+// Chooses which module systems Simulate runs (Play menu, toolbar, profiler).
+
 #include "engine/module/SystemScheduler.hpp"
 
 #include <string>

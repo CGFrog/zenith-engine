@@ -1,5 +1,7 @@
 #pragma once
 
+// Blender's Adjust Last Operation panel: edit the last registered operator's properties and run it again.
+
 #include "editor/operators/OperatorRunner.hpp"
 
 #include <glm/glm.hpp>

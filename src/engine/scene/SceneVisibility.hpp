@@ -1,5 +1,8 @@
 #pragma once
 
+// Which entities a renderer draws and the editor may pick, from the entity VisibilityComponent and the flags of its
+// collections.
+
 #include "Scene.hpp"
 #include "SceneVisibilityMode.hpp"
 

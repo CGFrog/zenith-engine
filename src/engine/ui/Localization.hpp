@@ -1,5 +1,7 @@
 #pragma once
 
+// Message catalogs, plural selection, and text shaping fallback.
+
 #include "engine/assets/Assets.hpp"
 
 #include <cstdint>

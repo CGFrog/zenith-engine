@@ -1,5 +1,7 @@
 #pragma once
 
+// Typed events double-buffered per frame: published in frame N, read in every phase of frame N+1.
+
 #include <concepts>
 #include <cstddef>
 #include <memory>

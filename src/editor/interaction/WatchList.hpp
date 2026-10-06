@@ -1,5 +1,7 @@
 #pragma once
 
+// The fields the Properties panel shows while the game runs (debug.watch_field and debug.unwatch_field).
+
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneDocument.hpp"
 

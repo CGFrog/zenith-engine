@@ -1,5 +1,7 @@
 #pragma once
 
+// Reusable pause and settings menus (drawPauseMenu, drawSettingsMenu).
+
 #include "GameUi.hpp"
 
 #include <cstddef>

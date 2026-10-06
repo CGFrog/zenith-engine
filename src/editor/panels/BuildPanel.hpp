@@ -1,5 +1,8 @@
 #pragma once
 
+// Shows the session's build (ProjectBuild) as it streams: compiler errors are highlighted and open in the IDE when
+// clicked.
+
 #include "editor/application/FolderPicker.hpp"
 #include "editor/panels/EditorPanel.hpp"
 #include "editor/project/BuildRunner.hpp"

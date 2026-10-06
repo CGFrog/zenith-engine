@@ -1,5 +1,7 @@
 #pragma once
 
+// The stable identity of a scene entity.
+
 #include "engine/reflection/Reflection.hpp"
 
 #include <compare>

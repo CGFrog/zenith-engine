@@ -1,5 +1,7 @@
 #pragma once
 
+// input_actions.json: reading and writing a project's input actions.
+
 #include "InputActions.hpp"
 
 #include <filesystem>

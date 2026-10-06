@@ -1,5 +1,7 @@
 #pragma once
 
+// Blender's 3D cursor: a world point new objects spawn at and transforms can pivot about.
+
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/viewport/SnapQueries.hpp"
 

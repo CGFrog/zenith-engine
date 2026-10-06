@@ -1,5 +1,7 @@
 #pragma once
 
+// Which visibility flags apply when deciding what to draw (see SceneVisibility.hpp).
+
 #include <cstdint>
 
 // Which visibility flags apply when deciding what to draw (see

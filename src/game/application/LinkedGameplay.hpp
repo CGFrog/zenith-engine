@@ -1,5 +1,7 @@
 #pragma once
 
+// The demo gameplay linked into the game executable, registered exactly as its module registers it.
+
 #include "engine/module/Gameplay.hpp"
 
 // The demo gameplay statically linked into the game executable, registered

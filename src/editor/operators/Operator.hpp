@@ -1,5 +1,7 @@
 #pragma once
 
+// The Operator definition: id, label, poll, execute, properties, flags, scope.
+
 #include "editor/application/EditorPlayMode.hpp"
 #include "editor/application/SceneEditing.hpp"
 #include "editor/interaction/Selection.hpp"

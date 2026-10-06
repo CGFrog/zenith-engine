@@ -1,5 +1,7 @@
 #pragma once
 
+// Which renderer-owned GPU copy of an asset could not be created this frame.
+
 #include <array>
 #include <cstdint>
 #include <span>

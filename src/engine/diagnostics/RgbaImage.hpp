@@ -1,5 +1,7 @@
 #pragma once
 
+// An 8-bit RGBA image in row-major order, top row first, four bytes per pixel.
+
 #include <cstdint>
 #include <filesystem>
 #include <string>

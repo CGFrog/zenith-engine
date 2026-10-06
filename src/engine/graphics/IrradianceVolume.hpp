@@ -1,5 +1,7 @@
 #pragma once
 
+// Irradiance volume probe records and trilinear shading terms.
+
 #include "engine/assets/IrradianceVolumeAsset.hpp"
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneVisibilityMode.hpp"

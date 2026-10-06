@@ -1,5 +1,7 @@
 #pragma once
 
+// Thin-lens circle-of-confusion math for depth of field.
+
 #include "Rendering.hpp"
 
 #include <glm/glm.hpp>

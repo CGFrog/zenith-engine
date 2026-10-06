@@ -1,5 +1,7 @@
 #pragma once
 
+// Build and Package: configure, build, cook, and package steps run one at a time.
+
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/project/BuildRunner.hpp"
 

@@ -1,5 +1,7 @@
 #pragma once
 
+// A standalone texture's import settings, stored in its .meta sidecar.
+
 #include "engine/assets/Assets.hpp"
 
 #include <nlohmann/json_fwd.hpp>

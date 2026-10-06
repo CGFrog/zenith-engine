@@ -1,5 +1,7 @@
 #pragma once
 
+// Key bindings per region and when they fire (press, double tap, hold, release, click, drag).
+
 #include "editor/operators/KeymapRegion.hpp"
 
 #include <imgui.h>

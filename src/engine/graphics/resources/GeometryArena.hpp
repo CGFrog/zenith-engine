@@ -1,4 +1,6 @@
 #pragma once
+
+// Location of one mesh inside the shared geometry buffers.
 #include <vk_mem_alloc.h>
 
 #include <cstdint>

@@ -1,5 +1,7 @@
 #pragma once
 
+// Draws ImGui and game UI into the final image.
+
 #include "../../assets/Assets.hpp"
 #include "../../ui/GameUi.hpp"
 #include "../../window/Window.hpp"

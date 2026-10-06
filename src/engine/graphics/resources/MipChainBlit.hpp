@@ -1,5 +1,7 @@
 #pragma once
 
+// Mip chain generation by successive blits.
+
 #include <volk.h>
 
 #include <cstdint>

@@ -1,5 +1,7 @@
 #pragma once
 
+// One open scene document: path, dirty state, save/load options, asset root and database.
+
 #include "editor/document/SceneEditorData.hpp"
 #include "engine/scene/SceneDocument.hpp"
 

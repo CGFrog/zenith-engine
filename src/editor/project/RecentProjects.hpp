@@ -1,5 +1,7 @@
 #pragma once
 
+// The recent projects list, persisted as recent-projects.json in the editor settings directory.
+
 #include <chrono>
 #include <cstddef>
 #include <filesystem>

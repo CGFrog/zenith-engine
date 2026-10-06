@@ -1,5 +1,7 @@
 #pragma once
 
+// A "Browse..." button that fills a UTF-8 path text field from the operating system's folder dialog.
+
 #include "editor/application/NativeFileDialog.hpp"
 
 #include <filesystem>

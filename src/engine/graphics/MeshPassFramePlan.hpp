@@ -1,5 +1,7 @@
 #pragma once
 
+// Per-frame, per-view decisions MeshPass records with (prepass, GPU-driven, AO, SSR, probes).
+
 #include "Rendering.hpp"
 
 // Diagnostic switches that override RenderSettings for A/B measurement. The

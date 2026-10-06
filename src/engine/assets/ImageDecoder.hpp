@@ -1,5 +1,7 @@
 #pragma once
 
+// Decodes image files to CPU pixels (stb_image); Radiance HDR stays linear.
+
 #include "Assets.hpp"
 
 #include <cstddef>

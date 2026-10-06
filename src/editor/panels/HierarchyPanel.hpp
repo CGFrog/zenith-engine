@@ -1,5 +1,7 @@
 #pragma once
 
+// The Hierarchy (outliner) panel: a filterable tree in View Layer, Collections, Prefabs, or Orphan Data mode.
+
 #include "editor/panels/EditorPanel.hpp"
 #include "editor/panels/outliner/OutlinerRows.hpp"
 #include "editor/panels/outliner/OutlinerTree.hpp"

@@ -1,5 +1,7 @@
 #pragma once
 
+// Component context-menu operators: copy/paste values, copy to selected, reset, remove, reorder.
+
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/settings/ComponentInspectorLayout.hpp"
 #include "engine/scene/Scene.hpp"

@@ -1,5 +1,7 @@
 #pragma once
 
+// Edits the project's render settings, applies them live, and shows GPU pass timings.
+
 #include "editor/panels/EditorPanel.hpp"
 
 class RenderSettingsController;

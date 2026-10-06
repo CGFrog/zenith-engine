@@ -1,5 +1,7 @@
 #pragma once
 
+// Create, duplicate, delete, reparent, and paste entities as undoable edits.
+
 #include "editor/application/SceneEditing.hpp"
 #include "editor/interaction/Selection.hpp"
 

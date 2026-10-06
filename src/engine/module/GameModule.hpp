@@ -1,5 +1,7 @@
 #pragma once
 
+// A loaded game module (shadow copy or in place) and the component types, systems, and behaviours it registered.
+
 #include "ModuleShadowCopy.hpp"
 #include "SharedLibrary.hpp"
 #include "SystemScheduler.hpp"

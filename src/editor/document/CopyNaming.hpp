@@ -1,5 +1,7 @@
 #pragma once
 
+// Names for copies of entities, Blender-style: Crate, Crate_1, Crate_2.
+
 #include <cstdint>
 #include <string>
 #include <string_view>

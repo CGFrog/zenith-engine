@@ -1,5 +1,7 @@
 #pragma once
 
+// A transform split into translation, rotation, and scale.
+
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 

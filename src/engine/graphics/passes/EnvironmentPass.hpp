@@ -1,5 +1,7 @@
 #pragma once
 
+// Environment precompute: sky or equirect to cube, GGX-prefiltered specular, SH irradiance.
+
 #include "engine/assets/Assets.hpp"
 #include "engine/graphics/Rendering.hpp"
 #include "engine/graphics/pipeline/ComputePipeline.hpp"

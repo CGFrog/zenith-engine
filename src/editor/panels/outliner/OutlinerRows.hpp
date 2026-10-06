@@ -1,5 +1,7 @@
 #pragma once
 
+// The outliner's rows as a cached flat list, so the panel draws only the rows in view.
+
 #include "editor/panels/outliner/OutlinerTree.hpp"
 
 #include <imgui.h>

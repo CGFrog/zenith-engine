@@ -1,5 +1,7 @@
 #pragma once
 
+// Import limits and validation, KTX2 handling, compressed mesh decoders, derived-data cache.
+
 #include <cstdint>
 #include <filesystem>
 #include <span>

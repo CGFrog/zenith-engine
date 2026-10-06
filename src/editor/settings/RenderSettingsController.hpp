@@ -1,5 +1,7 @@
 #pragma once
 
+// The session's single owner of the render settings the editor requests.
+
 #include "editor/settings/EditorRenderSettings.hpp"
 
 #include <string>

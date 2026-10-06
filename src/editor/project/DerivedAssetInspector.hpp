@@ -1,5 +1,7 @@
 #pragma once
 
+// Inspects and invalidates derived (cooked) asset data from the editor.
+
 #include "engine/assets/ProductionAssetPipeline.hpp"
 
 class DerivedAssetInspector {

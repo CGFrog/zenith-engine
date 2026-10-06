@@ -1,5 +1,7 @@
 #pragma once
 
+// Viewport selection and local view operators (view3d.select, select_box, select_lasso, select_cycle, localview).
+
 #include "editor/operators/Operator.hpp"
 
 #include <vector>

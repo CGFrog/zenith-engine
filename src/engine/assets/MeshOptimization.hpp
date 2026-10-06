@@ -1,5 +1,7 @@
 #pragma once
 
+// Import-time tuning for GPU-friendly ordering and LOD generation.
+
 #include "Assets.hpp"
 
 #include <cstdint>

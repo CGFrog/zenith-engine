@@ -1,5 +1,7 @@
 #pragma once
 
+// SDL events to InputState: keys, mouse, gamepads, text, dropped files, mouse capture.
+
 #include <SDL3/SDL_events.h>
 #include <array>
 #include <bitset>

@@ -1,5 +1,7 @@
 #pragma once
 
+// The engine Logger and LogChannel: levels, categories, snapshots.
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>

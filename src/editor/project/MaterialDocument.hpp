@@ -1,5 +1,7 @@
 #pragma once
 
+// A .zmat material file as the editor edits it.
+
 #include "engine/assets/MaterialAssetFile.hpp"
 #include "engine/reflection/Reflection.hpp"
 

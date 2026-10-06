@@ -1,5 +1,7 @@
 #pragma once
 
+// The session's menus: the registry every menu is defined in and the one popup menu (wm.call_menu) open at a time.
+
 #include "editor/menus/MenuPopup.hpp"
 #include "editor/menus/MenuRegistry.hpp"
 #include "editor/menus/PieMenu.hpp"

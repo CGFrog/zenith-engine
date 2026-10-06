@@ -1,3 +1,5 @@
+// MeshPass: the depth prepass and shaded scene draws (CPU-submitted items).
+
 #include "../DepthConvention.hpp"
 #include "MeshPass.hpp"
 #include "MeshPassInternal.hpp"

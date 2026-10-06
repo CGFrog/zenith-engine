@@ -1,5 +1,7 @@
 #pragma once
 
+// zenith --verify-package: checks the package's assets and that every scene loads.
+
 #include "engine/module/Gameplay.hpp"
 #include "engine/project/ProjectConfig.hpp"
 

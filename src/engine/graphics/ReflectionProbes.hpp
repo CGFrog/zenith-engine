@@ -1,5 +1,8 @@
 #pragma once
 
+// Reflection probes are world-space axis-aligned boxes centered on their entity's translation (rotation and scale are
+// ignored).
+
 #include "engine/graphics/Lighting.hpp"
 
 #include <cstddef>

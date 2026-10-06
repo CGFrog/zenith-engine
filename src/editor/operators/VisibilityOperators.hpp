@@ -1,5 +1,7 @@
 #pragma once
 
+// Headless viewport-hide operators, Blender's H / Alt+H / Shift+H.
+
 #include "editor/operators/OperatorRegistry.hpp"
 
 // Headless viewport-hide operators, Blender's H / Alt+H / Shift+H. They set

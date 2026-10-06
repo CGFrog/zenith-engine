@@ -1,5 +1,7 @@
 #pragma once
 
+// The operating system clipboard, through ImGui's platform backend.
+
 #include "editor/operators/ComponentOperators.hpp"
 
 #include <string>

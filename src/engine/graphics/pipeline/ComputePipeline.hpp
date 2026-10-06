@@ -1,5 +1,7 @@
 #pragma once
 
+// A compute pipeline and its layout.
+
 #include <cstdint>
 #include <volk.h>
 

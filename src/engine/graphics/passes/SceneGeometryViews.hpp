@@ -1,5 +1,7 @@
 #pragma once
 
+// Depth-prepass outputs for screen-space effects, valid from the end of the prepass until the frame's next record().
+
 #include <volk.h>
 
 #include <cstdint>

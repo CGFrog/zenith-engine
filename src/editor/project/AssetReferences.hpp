@@ -1,5 +1,7 @@
 #pragma once
 
+// Finding what uses an asset (scenes, prefabs, materials), for Find References and safe deletes.
+
 #include "editor/project/AssetCatalog.hpp"
 #include "engine/scene/SceneEntityId.hpp"
 

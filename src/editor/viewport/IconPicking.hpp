@@ -1,5 +1,7 @@
 #pragma once
 
+// Clicking objects that have no mesh (lights, cameras, probes, decals, emitters) by the overlay marks at their origins.
+
 #include "editor/viewport/RegionSelect.hpp"
 #include "editor/viewport/SceneGizmoDraw.hpp"
 #include "engine/assets/Assets.hpp"

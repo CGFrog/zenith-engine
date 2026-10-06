@@ -1,5 +1,7 @@
 #pragma once
 
+// A bounded staging ring for GPU uploads.
+
 #include <array>
 #include <functional>
 #include <span>

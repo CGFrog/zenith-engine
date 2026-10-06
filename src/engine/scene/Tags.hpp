@@ -1,5 +1,7 @@
 #pragma once
 
+// Names an entity carries for game code to find it by: "enemy", "pickup.health".
+
 #include "engine/scene/Scene.hpp"
 
 #include <string>

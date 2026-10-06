@@ -1,5 +1,7 @@
 #pragma once
 
+// A menu shown as a popup at the mouse, Blender style, with a search field that takes focus when it opens.
+
 #include "editor/menus/MenuRegistry.hpp"
 
 #include <optional>

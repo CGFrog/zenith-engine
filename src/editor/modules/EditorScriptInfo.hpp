@@ -1,5 +1,7 @@
 #pragma once
 
+// Whether the game module's code matches its sources, for the inspector's behaviour headers.
+
 #include "editor/application/EditorDiagnostics.hpp"
 
 #include <cstdint>

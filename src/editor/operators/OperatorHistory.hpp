@@ -1,5 +1,7 @@
 #pragma once
 
+// The record of finished operator invocations (Adjust Last Operation, repeat).
+
 #include "editor/operators/Operator.hpp"
 
 #include <chrono>

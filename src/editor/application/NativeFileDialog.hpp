@@ -1,5 +1,7 @@
 #pragma once
 
+// Shows the operating system's open/save dialog for one file type.
+
 #include <filesystem>
 #include <memory>
 #include <optional>

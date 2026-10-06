@@ -1,5 +1,7 @@
 #pragma once
 
+// Validates and clamps RenderSettings against device capabilities.
+
 #include "Rendering.hpp"
 
 #include <string>

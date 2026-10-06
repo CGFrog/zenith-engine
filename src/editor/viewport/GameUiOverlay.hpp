@@ -1,5 +1,7 @@
 #pragma once
 
+// Draws a game's UI (what its Ui systems recorded) over the editor's game view.
+
 #include <glm/glm.hpp>
 
 class GameUiContext;

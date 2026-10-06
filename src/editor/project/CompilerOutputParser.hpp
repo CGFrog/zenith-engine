@@ -1,5 +1,7 @@
 #pragma once
 
+// Parses compiler, linker, and CMake output into diagnostics with file, line, and column.
+
 #include "editor/application/EditorDiagnostics.hpp"
 
 #include <optional>

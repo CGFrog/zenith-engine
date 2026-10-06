@@ -1,3 +1,6 @@
+// MeshPass: screen-space effects and particles: SSR, transmission background, volumetric fog, particle simulation and
+// draws, ambient occlusion.
+
 #include "MeshPass.hpp"
 
 #include <algorithm>

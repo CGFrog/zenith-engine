@@ -1,5 +1,7 @@
 #pragma once
 
+// Shows a game module's panel in an area.
+
 #include "editor/panels/EditorPanel.hpp"
 
 #include <string>

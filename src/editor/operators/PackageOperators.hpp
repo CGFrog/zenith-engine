@@ -1,5 +1,7 @@
 #pragma once
 
+// file.build_package: Build and Package for the open project.
+
 #include "editor/operators/OperatorRegistry.hpp"
 #include "editor/project/PackageRunner.hpp"
 

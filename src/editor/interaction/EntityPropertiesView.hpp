@@ -1,5 +1,7 @@
 #pragma once
 
+// Draws and edits entity properties: name, transform, components, and the actions on them.
+
 #include "editor/document/PrefabAuthoring.hpp"
 #include "editor/interaction/ComponentEditorOverrides.hpp"
 #include "editor/interaction/MeshRendererField.hpp"

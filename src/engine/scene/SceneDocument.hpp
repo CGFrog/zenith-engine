@@ -1,5 +1,7 @@
 #pragma once
 
+// Scene JSON documents: serialize, load, diff, applyChanges, migrations.
+
 #include "Scene.hpp"
 
 #include <nlohmann/json_fwd.hpp>

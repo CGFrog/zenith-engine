@@ -1,5 +1,7 @@
 #pragma once
 
+// The keymap editor window: lists every operator with its shortcuts per region.
+
 #include "editor/operators/Keymap.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 

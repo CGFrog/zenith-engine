@@ -1,5 +1,7 @@
 #pragma once
 
+// The editor's own menus (Add, Add Component, Select Grouped, pies) registered as data.
+
 #include "editor/menus/MenuRegistry.hpp"
 
 #include <filesystem>

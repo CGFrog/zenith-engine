@@ -1,5 +1,7 @@
 #pragma once
 
+// Shared asset service: catalog, thumbnails, change polling, file operations, reloads.
+
 #include "editor/project/AssetCatalog.hpp"
 #include "editor/project/AssetReferences.hpp"
 #include "editor/project/ProjectFileOperations.hpp"

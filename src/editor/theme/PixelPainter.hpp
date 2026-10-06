@@ -1,5 +1,7 @@
 #pragma once
 
+// Hard-edged drawing helpers for the pixel theme.
+
 #include <imgui.h>
 
 // Hard-edged drawing helpers for the pixel theme. Sizes are in screen

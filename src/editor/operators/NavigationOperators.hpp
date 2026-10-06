@@ -1,5 +1,7 @@
 #pragma once
 
+// Bakes a preview navigation mesh of the edited scene, which every viewport draws while it holds one.
+
 #include "editor/operators/OperatorRegistry.hpp"
 
 class NavigationWorld;

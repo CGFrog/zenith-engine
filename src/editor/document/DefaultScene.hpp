@@ -1,5 +1,8 @@
 #pragma once
 
+// Starter objects for new documents and the Add menu: cube, sun, environment, fog, empty, camera, colliders, and the
+// default scene.
+
 #include "engine/physics/PhysicsComponents.hpp"
 #include "engine/scene/Scene.hpp"
 

@@ -1,3 +1,5 @@
+// MeshPass: per-view state: camera sets, view targets, creation, resize, destruction.
+
 #include "../Lighting.hpp"
 #include "../ReflectionProbes.hpp"
 #include "../resources/DescriptorPoolSizes.hpp"

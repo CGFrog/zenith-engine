@@ -1,5 +1,7 @@
 #pragma once
 
+// Records changes to the edited scene as undoable document commands.
+
 #include "editor/document/CommandHistory.hpp"
 
 #include <cstddef>

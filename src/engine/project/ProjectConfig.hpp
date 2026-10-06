@@ -1,5 +1,7 @@
 #pragma once
 
+// ProjectConfig: the .zenith-project manifest (folders, startup scene, module, render, layers, tags, navigation).
+
 #include "engine/graphics/Rendering.hpp"
 #include "engine/navigation/NavMeshBuildSettings.hpp"
 #include "engine/physics/PhysicsLayers.hpp"

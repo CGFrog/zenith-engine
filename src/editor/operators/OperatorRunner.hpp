@@ -1,5 +1,7 @@
 #pragma once
 
+// Invokes operators: polls, executes, and wraps Undo operators in one undo step.
+
 #include "editor/operators/OperatorHistory.hpp"
 #include "editor/operators/OperatorRegistry.hpp"
 

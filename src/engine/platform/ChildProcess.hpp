@@ -1,5 +1,7 @@
 #pragma once
 
+// Runs child processes (builds, the standalone game) and streams their output.
+
 #include <cstdint>
 #include <filesystem>
 #include <memory>

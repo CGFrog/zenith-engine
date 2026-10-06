@@ -1,5 +1,7 @@
 #pragma once
 
+// The editor's built-in area types (Viewport, Hierarchy, Inspector, ...) and what each shows.
+
 #include "editor/areas/AreaRegistry.hpp"
 
 #include <vector>

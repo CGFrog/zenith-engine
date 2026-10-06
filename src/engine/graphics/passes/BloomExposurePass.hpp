@@ -1,5 +1,7 @@
 #pragma once
 
+// Luminance histogram, exposure adaptation, and the bloom down/upsample chain.
+
 #include "../Rendering.hpp"
 #include "../pipeline/ComputePipeline.hpp"
 #include "../vulkan/VulkanContext.hpp"

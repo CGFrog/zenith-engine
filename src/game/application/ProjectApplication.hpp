@@ -1,5 +1,8 @@
 #pragma once
 
+// The project-agnostic game: plays a project's scene with the project's render settings and runs the gameplay's Play
+// systems every frame with the player's input.
+
 #include "engine/application/Application.hpp"
 #include "engine/module/Gameplay.hpp"
 #include "engine/project/ProjectConfig.hpp"

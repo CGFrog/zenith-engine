@@ -1,5 +1,7 @@
 #pragma once
 
+// Draws the renderer's projected debug labels over the game's frame.
+
 #include "engine/graphics/Rendering.hpp"
 
 class GameUiContext;

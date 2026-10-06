@@ -1,3 +1,6 @@
+// Editor composition root: settings directory, crash handler, Engine, EditorApplication (and the Project Hub's
+// template/engine paths).
+
 #include "editor/application/EditorApplication.hpp"
 #include "editor/project/IrradianceVolumeBaker.hpp"
 #include "editor/project/ProjectTemplate.hpp"

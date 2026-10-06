@@ -1,5 +1,7 @@
 #pragma once
 
+// ParticleEmitterComponent: GPU particle emitter parameters and validation.
+
 #include "../assets/Assets.hpp"
 
 #include <glm/glm.hpp>

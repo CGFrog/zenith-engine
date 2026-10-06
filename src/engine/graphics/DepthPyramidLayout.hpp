@@ -1,5 +1,7 @@
 #pragma once
 
+// Level layout of the scene depth pyramid (see DepthPyramid).
+
 #include <glm/glm.hpp>
 
 #include <algorithm>

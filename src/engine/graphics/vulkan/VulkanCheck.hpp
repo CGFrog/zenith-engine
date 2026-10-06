@@ -1,4 +1,6 @@
 #pragma once
+
+// VkResult checking helpers.
 #include <iostream>
 #include <volk.h>
 

@@ -1,5 +1,7 @@
 #pragma once
 
+// RenderRuntime (the renderer interface the engine, games, and editor use), RenderSettings and its enums, view shading.
+
 #include "DebugDraw.hpp"
 #include "RenderIds.hpp"
 #include "RenderPicking.hpp"
