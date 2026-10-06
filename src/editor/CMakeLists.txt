@@ -38,6 +38,7 @@ add_library(zenith_editor_app STATIC
     areas/Workspace.cpp
     areas/WorkspaceFile.cpp
     document/CommandHistory.cpp
+    document/CopyNaming.cpp
     document/DefaultScene.cpp
     document/EditorDocument.cpp
     document/EditorRecovery.cpp

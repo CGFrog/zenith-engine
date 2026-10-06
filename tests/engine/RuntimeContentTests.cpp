@@ -380,6 +380,45 @@ void testShapeCache() {
     expect(physics.cachedMeshShapes() == 0, "shutdown releases the cached shapes");
 }
 
+// A convex hull collider follows its mesh and, unlike a triangle mesh, may sit
+// on a dynamic body: a 2 x 1 x 2 m block falls onto a floor and rests on it.
+void testConvexHullBody() {
+    AssetManager assets;
+    const MaterialHandle material = createGreyMaterial(assets);
+    const MeshHandle block = assets.createMesh(buildBox(material, {1.0f, 0.5f, 1.0f}), "block").handle;
+    const AssetLease<MeshHandle> lease = assets.lease(block);
+
+    Scene scene;
+    const Entity floor = scene.createEntity("Floor");
+    scene.registry().get<TransformComponent>(floor).local = glm::translate(glm::mat4(1.0f), {0.0f, -0.5f, 0.0f});
+    scene.markTransformDirty(floor);
+    scene.registry().emplace<ColliderComponent>(floor, BoxCollider{{10.0f, 0.5f, 10.0f}});
+    scene.registry().emplace<RigidBodyComponent>(floor);
+    const Entity falling = scene.createEntity("Block");
+    scene.registry().get<TransformComponent>(falling).local = glm::translate(glm::mat4(1.0f), {0.0f, 3.0f, 0.0f});
+    scene.markTransformDirty(falling);
+    scene.registry().emplace<ColliderComponent>(falling, ConvexHullCollider{block});
+    scene.registry().emplace<RigidBodyComponent>(
+        falling, RigidBodyComponent{.motionType = PhysicsMotionType::Dynamic, .layer = PhysicsLayer::Dynamic});
+
+    PhysicsWorld physics;
+    expect(static_cast<bool>(physics.init()), "physics initializes");
+    expect(static_cast<bool>(physics.refreshBody(falling, scene, assets)), "a dynamic convex hull body builds");
+    for (int step = 0; step < 240; ++step) {
+        expect(static_cast<bool>(physics.step(scene, assets, physics.config().fixedTimeStep)), "physics steps");
+    }
+    const float height = scene.registry().get<TransformComponent>(falling).local[3].y;
+    expect(near(height, 0.5f, 0.05f), "the hull comes to rest on the floor at its half height");
+    PhysicsRayHit hit;
+    expect(physics.raycast({0.4f, 5.0f, 0.4f}, {0.0f, -1.0f, 0.0f}, 10.0f, hit) && hit.entity == falling &&
+               near(hit.position.y, height + 0.5f, 0.05f),
+           "a ray hits the hull's top face");
+
+    scene.registry().get<ColliderComponent>(falling).shape = ConvexHullCollider{};
+    expect(!physics.refreshBody(falling, scene, assets), "a hull without a mesh is reported, not built");
+    physics.shutdown();
+}
+
 void testNavigationFromRuntimeGeometry() {
     AssetManager assets;
     const MaterialHandle material = createGreyMaterial(assets);
@@ -429,6 +468,7 @@ int main() {
     testMaterialOverride();
     testOverrideLeasesAndSaving();
     testShapeCache();
+    testConvexHullBody();
     testNavigationFromRuntimeGeometry();
     if (failures == 0) {
         std::cout << "Runtime content tests passed\n";

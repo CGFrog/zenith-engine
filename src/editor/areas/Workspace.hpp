@@ -99,6 +99,14 @@ class WorkspaceSet {
     Workspace& active();
     const Workspace& active() const;
     Workspace* find(std::string_view name);
+    // Appends a workspace (invalidating references to the others) and
+    // returns it. Fails, adding nothing, when the name is already used.
+    Workspace* add(Workspace workspace);
+
+    // The name of the workspace that is active.
+    const std::string& activeName() const {
+        return active().name();
+    }
 
     // Fails when no workspace has the name. Requesting the active workspace
     // cancels a pending switch.

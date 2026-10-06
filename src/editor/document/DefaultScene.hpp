@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/physics/PhysicsComponents.hpp"
 #include "engine/scene/Scene.hpp"
 
 #include <filesystem>
@@ -17,6 +18,11 @@ Entity addEmpty(Scene& scene);
 // A camera that is primary only when no camera in the scene already is, so
 // adding one never steals the game's view.
 Entity addCamera(Scene& scene);
+// An entity with a primitive collider and a rigid body of the given motion
+// type (on the Static layer when static, Dynamic otherwise), named after the
+// collider's shape, for the Add > Physics entries. Colliders with no body do
+// not take part in the simulation, so both components are added.
+Entity addCollider(Scene& scene, const ColliderShape& shape, PhysicsMotionType motion);
 // Loads assetRoot/defaultCubeModel; cube is set only on success.
 SceneResult addCube(Scene& scene, AssetManager& assets, const std::filesystem::path& assetRoot, Entity& cube);
 

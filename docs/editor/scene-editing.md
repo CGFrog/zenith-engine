@@ -93,6 +93,16 @@ root transforms (entity references inside each copy follow to that copy), so
 `object.array` and `object.scatter` paste once, however many copies they
 make.
 
+Copies are named apart from their originals (`document/CopyNaming`):
+`SceneFragment::paste` renames each pasted root whose name something in the
+scene already has. `CopyNamer` splits a name into a base and a trailing
+`_<digits>` counter and gives the copy `<base>_<n>`, where n is one more than
+the largest counter any object with that base has (the bare base counts as 0).
+Crate, Crate_1, Crate_5 gives Crate_6 for a copy of any of them; a name nothing
+else uses is kept (pasting after the original was deleted). Duplicate, array,
+scatter, and paste share the rule, and a run of copies counts up. Pasted
+descendants keep their names. `zenith_copy_naming` tests the pure function.
+
 Copy and paste cost what is copied, not the scene. `copy` serializes only
 the copied subtrees (`SceneDocument::serializeEntities`) and names the
 collections they reference, which `paste` matches by name (same id and name,
@@ -172,6 +182,18 @@ and makes the write part of history:
   without edits keeps the file byte for byte.
 
 ## Prefab mode: the document stack
+
+By default a prefab also opens in its own **Prefab workspace** tab (below the
+document stack, which is what makes it a separate document): entering the
+first prefab remembers the active workspace, switches to a workspace named
+Prefab (created from `defaultWorkspaceFor(prefabWorkspaceName)` the first time
+and saved with the others), and leaving the outermost prefab returns to the
+remembered workspace. Nested prefabs stay in the Prefab workspace. The
+`ui.prefab_workspace` preference (Preferences > Interface, on by default)
+turns this off, which edits the prefab in the workspace that was open. The
+engine renders and simulates one scene at a time, so this is a separate
+document and tab, not a second OS window: an area of the Prefab workspace
+shows the prefab, and the scene waits in the stack until Back.
 
 A prefab opens as a document of its own (`prefab.edit`, see
 [Operators](operators.md)) on top of the scene, like Blender's edit mode for

@@ -225,8 +225,9 @@ NavigationGeometry gatherNavigationGeometry(const Scene& scene, const AssetManag
             writer.capsule(sphere->radius * std::max({pose.scale.x, pose.scale.y, pose.scale.z}), 0.0f);
         } else if (const auto* capsule = std::get_if<CapsuleCollider>(&shape)) {
             writer.capsule(capsule->radius * std::max(pose.scale.x, pose.scale.z), capsule->halfHeight * pose.scale.y);
-        } else if (const auto* triangles = std::get_if<TriangleMeshCollider>(&shape)) {
-            if (const MeshAsset* mesh = assets.mesh(triangles->mesh)) {
+        } else if (const std::optional<MeshHandle> meshHandle = colliderMesh(shape)) {
+            // A hull is walked as its mesh, which it wraps.
+            if (const MeshAsset* mesh = assets.mesh(*meshHandle)) {
                 // The mesh's vertices are scaled before the pose places them.
                 const Pose unscaled{.position = pose.position, .rotation = pose.rotation};
                 GeometryWriter(geometry, unscaled).mesh(*mesh, pose.scale);

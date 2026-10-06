@@ -64,6 +64,7 @@ OperatorResult EditorSession::editPrefab(ApplicationContext& context, const std:
     }
     notePrefabFilesRead(context.scene, m_document.options().assetRoot, prefabWriteHooks());
     m_autosaveElapsed = 0.0f;
+    enterPrefabWorkspace();
     return OperatorResult::finished();
 }
 
@@ -96,6 +97,9 @@ void EditorSession::leavePrefabEdit(ApplicationContext& context) {
         m_diagnostics.reportError(recoveryError);
     }
     m_autosaveElapsed = 0.0f;
+    if (m_documents.empty()) {
+        leavePrefabWorkspace();
+    }
 }
 
 bool EditorSession::savePrefabEdit(ApplicationContext& context) {

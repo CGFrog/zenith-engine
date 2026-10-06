@@ -34,6 +34,26 @@ Entity addEmpty(Scene& scene) {
     return scene.createEntity("Empty");
 }
 
+Entity addCollider(Scene& scene, const ColliderShape& shape, PhysicsMotionType motion) {
+    const char* name = "Box Collider";
+    if (std::holds_alternative<SphereCollider>(shape)) {
+        name = "Sphere Collider";
+    } else if (std::holds_alternative<CapsuleCollider>(shape)) {
+        name = "Capsule Collider";
+    } else if (std::holds_alternative<TriangleMeshCollider>(shape)) {
+        name = "Mesh Collider";
+    } else if (std::holds_alternative<ConvexHullCollider>(shape)) {
+        name = "Convex Hull Collider";
+    }
+    const Entity entity = scene.createEntity(name);
+    scene.registry().emplace<ColliderComponent>(entity, ColliderComponent{.shape = shape});
+    scene.registry().emplace<RigidBodyComponent>(entity, RigidBodyComponent{.motionType = motion,
+                                                                            .layer = motion == PhysicsMotionType::Static
+                                                                                         ? PhysicsLayer::Static
+                                                                                         : PhysicsLayer::Dynamic});
+    return entity;
+}
+
 SceneResult addCube(Scene& scene, AssetManager& assets, const std::filesystem::path& assetRoot, Entity& cube) {
     const std::filesystem::path cubePath = assetRoot / defaultCubeModel;
     const auto model = assets.loadModel(cubePath);

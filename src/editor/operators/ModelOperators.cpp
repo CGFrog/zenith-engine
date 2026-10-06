@@ -215,11 +215,14 @@ MeshAssignOutcome assignMesh(Scene& scene, const AssetManager& assets, Entity en
     }
 
     if (auto* collider = registry.try_get<ColliderComponent>(entity); updateCollider && collider != nullptr) {
-        if (auto* triangles = std::get_if<TriangleMeshCollider>(&collider->shape);
-            triangles != nullptr && oldMesh && triangles->mesh == oldMesh) {
-            triangles->mesh = mesh.handle;
-            scene.markPhysicsDirty(entity);
-        }
+        const auto repoint = [&](auto* shape) {
+            if (shape != nullptr && oldMesh && shape->mesh == oldMesh) {
+                shape->mesh = mesh.handle;
+                scene.markPhysicsDirty(entity);
+            }
+        };
+        repoint(std::get_if<TriangleMeshCollider>(&collider->shape));
+        repoint(std::get_if<ConvexHullCollider>(&collider->shape));
     }
     return outcome;
 }

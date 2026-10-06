@@ -694,6 +694,56 @@ void testUnsavedChangesPrompts(const fs::path& root) {
            "chain: New leaves the clean prefab and replaces the level");
 }
 
+// The workspace workspaces.json names as active, which the session saves
+// when a switch is applied.
+std::string activeWorkspaceOnDisk(const fs::path& root) {
+    const nlohmann::json file = nlohmann::json::parse(readText(root / "settings" / "workspaces.json"), nullptr, false);
+    return file.is_object() ? file.value("activeWorkspace", std::string()) : std::string();
+}
+
+// Editing a prefab opens the Prefab workspace and Back returns to the
+// workspace it came from; the preference turns that off.
+void testPrefabWorkspace(const fs::path& root) {
+    {
+        EditorHarness editor(root, prefabProject(root));
+        if (!editor.start()) {
+            expect(false, "workspace: the editor session starts");
+            return;
+        }
+        editor.frame();
+        editor.frame();
+        expect(activeWorkspaceOnDisk(root) == "Layout", "workspace: the session starts in Layout");
+        editor.press(editLampKey);
+        editor.frame();
+        editor.frame();
+        expect(!inLevel(editor.scene) && activeWorkspaceOnDisk(root) == "Prefab",
+               "workspace: editing a prefab opens the Prefab workspace");
+        editor.press(backKey);
+        editor.frame();
+        editor.frame();
+        expect(inLevel(editor.scene) && activeWorkspaceOnDisk(root) == "Layout",
+               "workspace: Back returns to the workspace the prefab was opened from");
+    }
+    {
+        const fs::path off = root / "off";
+        ProjectConfig project = prefabProject(off);
+        {
+            std::ofstream(off / "settings" / "settings.ini") << "ui.prefab_workspace=false\n";
+        }
+        EditorHarness editor(off, project);
+        if (!editor.start()) {
+            expect(false, "workspace: the editor session starts with the preference off");
+            return;
+        }
+        editor.frame();
+        editor.press(editLampKey);
+        editor.frame();
+        editor.frame();
+        expect(!inLevel(editor.scene) && activeWorkspaceOnDisk(off) != "Prefab",
+               "workspace: with the preference off the prefab opens in the current workspace");
+    }
+}
+
 void testPlayWaitsForTheScene(const fs::path& root) {
     EditorHarness editor(root, prefabProject(root));
     if (!editor.start()) {
@@ -792,6 +842,7 @@ int main() {
     testMovedPrefabFollows(root);
     testLedgerSeeding(root);
     testUnsavedChangesPrompts(root / "prompts");
+    testPrefabWorkspace(root / "workspace");
     testPlayWaitsForTheScene(root / "play");
     testModuleReloadWaitsForTheScene(root / "reload");
     testRecoverAPrefabEdit(root / "recovery");

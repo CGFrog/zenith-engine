@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <optional>
 #include <type_traits>
 #include <variant>
 
@@ -57,11 +58,32 @@ struct CapsuleCollider {
     float radius{0.5f};
 };
 
+// The exact triangles of a mesh: for static bodies only.
 struct TriangleMeshCollider {
     MeshHandle mesh{};
 };
 
-using ColliderShape = std::variant<BoxCollider, SphereCollider, CapsuleCollider, TriangleMeshCollider>;
+// The smallest convex shape around a mesh's vertices: any motion type, so a
+// dynamic prop can match its mesh. Concave parts are filled in.
+struct ConvexHullCollider {
+    MeshHandle mesh{};
+};
+
+// Add new alternatives at the end: the editor's shape list follows this order.
+using ColliderShape =
+    std::variant<BoxCollider, SphereCollider, CapsuleCollider, TriangleMeshCollider, ConvexHullCollider>;
+
+// The mesh a mesh-backed shape (triangle mesh or convex hull) uses; nullopt
+// for the primitive shapes.
+inline std::optional<MeshHandle> colliderMesh(const ColliderShape& shape) {
+    if (const auto* triangles = std::get_if<TriangleMeshCollider>(&shape)) {
+        return triangles->mesh;
+    }
+    if (const auto* hull = std::get_if<ConvexHullCollider>(&shape)) {
+        return hull->mesh;
+    }
+    return std::nullopt;
+}
 
 // A collision shape and where it sits on its entity. The body is at the
 // entity's world position and rotation; the offset places the shape in the

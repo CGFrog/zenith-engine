@@ -344,6 +344,47 @@ Operator addEmptyWithOperator() {
             .scope = newEntitiesScope()};
 }
 
+// "Add > Physics": an entity with a primitive collider and a rigid body.
+Operator addColliderOperator() {
+    return {.id = "object.add_collider",
+            .label = "Add Collider",
+            .description = "Add an object with a box, sphere, or capsule collider and a rigid body",
+            .flags = OperatorFlags::Undo | OperatorFlags::Register | OperatorFlags::Internal,
+            .properties = OperatorProperties::make(
+                AddColliderProperties{},
+                std::move(Fields<AddColliderProperties>()
+                              .add("shape", &AddColliderProperties::shape)
+                              .options({{"box", "Box", static_cast<int64_t>(AddColliderShape::Box)},
+                                        {"sphere", "Sphere", static_cast<int64_t>(AddColliderShape::Sphere)},
+                                        {"capsule", "Capsule", static_cast<int64_t>(AddColliderShape::Capsule)}})
+                              .add("motion", &AddColliderProperties::motion)
+                              .options({{"static", "Static", static_cast<int64_t>(PhysicsMotionType::Static)},
+                                        {"kinematic", "Kinematic", static_cast<int64_t>(PhysicsMotionType::Kinematic)},
+                                        {"dynamic", "Dynamic", static_cast<int64_t>(PhysicsMotionType::Dynamic)}})
+                              .add("location", &AddColliderProperties::location)
+                              .drag(0.05f))),
+            .poll = addingAllowed,
+            .execute = typed<AddColliderProperties>([](OperatorContext& context, AddColliderProperties& values) {
+                ColliderShape shape = BoxCollider{};
+                switch (values.shape) {
+                case AddColliderShape::Box:
+                    break;
+                case AddColliderShape::Sphere:
+                    shape = SphereCollider{};
+                    break;
+                case AddColliderShape::Capsule:
+                    shape = CapsuleCollider{};
+                    break;
+                }
+                Scene& scene = context.editing.scene();
+                const Entity entity = addCollider(scene, shape, values.motion);
+                placeEntity(scene, entity, values.location, 1.0f);
+                return selectCreated(context, entity);
+            }),
+            .invokeDefaults = startAtCursor<AddColliderProperties>,
+            .scope = newEntitiesScope()};
+}
+
 // Removes a registered component, or the preserved data of a component type
 // that is not registered (for example from an unloaded game module), from one
 // entity. Returns whether the entity had it.
@@ -438,6 +479,7 @@ OperatorRegistrationResult registerObjectOperators(OperatorRegistry& registry) {
                                           "Add a camera, primary only when the scene has no primary camera",
                                           addCamera));
     operators.push_back(addEmptyWithOperator());
+    operators.push_back(addColliderOperator());
     operators.push_back(createEntityOperator());
     operators.push_back(duplicateOperator());
     operators.push_back(deleteOperator());

@@ -70,7 +70,9 @@ scale baked in and the collider's offset applied through
 projection arrow) and irradiance volume (axis-aligned) bounds, world-space
 selection bounds, and name labels. It has no ImGui, takes `SceneGizmoOverlays`
 (each category `Off`, `Selected`, or `All`; colliders and names default to the
-selection), skips entities `SceneVisibility` hides in the editor and, in local
+selection; the Colliders category also draws each character controller's
+capsule, centred on the entity and upright, and a convex hull draws the mesh it
+wraps), skips entities `SceneVisibility` hides in the editor and, in local
 view, those outside the viewport's isolation (`SceneGizmoView::isolatedObjects`),
 bounds a selected collection instancer by the members it draws, reads each
 mesh's cached `MeshAsset::localBox` instead of scanning vertices, and colours
@@ -110,8 +112,8 @@ Collider editing. The inspector's collider editor
 keeping its size (`convertColliderShape`: a box's largest half extent becomes
 a sphere's radius, a capsule keeps the box's height and wider side, and so
 on), edits the offset position and rotation (Euler degrees), and gives a
-triangle-mesh collider a combo of the entity's model meshes
-(`colliderMeshChoices`; Triangle Mesh is unavailable without one). While the
+triangle-mesh or convex-hull collider a combo of the entity's model meshes
+(`colliderMeshChoices`; the mesh shapes are unavailable without one). While the
 Colliders overlay is not Off, `viewport/ColliderHandles` draws handles on the
 active object's collider: a square on each box face, on a sphere's radius
 along each axis, and on a capsule's radius and the tips of its ends, placed

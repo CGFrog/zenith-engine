@@ -17,8 +17,10 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -326,6 +328,47 @@ void testAddComponentEntries() {
                                                         }),
            "a category request should list only that category's types, without a heading");
     expect(fixture.resolve(addComponentMenuId, "Nothing").items.empty(), "an unknown category should be empty");
+}
+
+// Physics is reachable from both menus: Add > Physics creates colliders with
+// a rigid body, and Add Component lists the physics component types.
+void testPhysicsEntries() {
+    MenuFixture fixture;
+    const ResolvedMenu add = fixture.resolve(addMenuId);
+    const MenuItem* physics = findItem(add.items, "Physics");
+    for (const char* label : {"Static Box", "Static Sphere", "Static Capsule", "Dynamic Box", "Dynamic Sphere",
+                              "Dynamic Capsule", "Rigid Body", "Character Controller", "Character"}) {
+        expect(physics != nullptr && findItem(physics->children, label) != nullptr,
+               "Add > Physics offers colliders, a rigid body, and characters");
+    }
+    const MenuItem* dynamicSphere = physics != nullptr ? findItem(physics->children, "Dynamic Sphere") : nullptr;
+    expect(dynamicSphere != nullptr &&
+               static_cast<bool>(fixture.invoke(dynamicSphere->operatorId, dynamicSphere->properties)),
+           "a collider entry should add an object");
+    const std::optional<SceneEntityId> sphereId = fixture.selection.active();
+    const Entity sphere = sphereId ? fixture.scene.findEntity(*sphereId) : entt::null;
+    expect(sphere != entt::null && fixture.scene.registry().all_of<ColliderComponent, RigidBodyComponent>(sphere) &&
+               std::holds_alternative<SphereCollider>(fixture.scene.registry().get<ColliderComponent>(sphere).shape) &&
+               fixture.scene.registry().get<RigidBodyComponent>(sphere).motionType == PhysicsMotionType::Dynamic &&
+               fixture.scene.registry().get<RigidBodyComponent>(sphere).layer == PhysicsLayer::Dynamic,
+           "a Dynamic Sphere is a sphere collider on a dynamic body");
+    const MenuItem* staticCapsule = physics != nullptr ? findItem(physics->children, "Static Capsule") : nullptr;
+    expect(staticCapsule != nullptr &&
+               static_cast<bool>(fixture.invoke(staticCapsule->operatorId, staticCapsule->properties)),
+           "a static collider entry should add an object");
+    const Entity capsule = fixture.scene.findEntity(fixture.selection.active().value_or(SceneEntityId{}));
+    expect(
+        capsule != entt::null &&
+            std::holds_alternative<CapsuleCollider>(fixture.scene.registry().get<ColliderComponent>(capsule).shape) &&
+            fixture.scene.registry().get<RigidBodyComponent>(capsule).motionType == PhysicsMotionType::Static,
+        "a Static Capsule is a capsule collider on a static body");
+
+    fixture.addSubject();
+    const ResolvedMenu components = fixture.resolve(addComponentMenuId, "Physics");
+    const std::vector<std::string> leaves = leafLabels(components);
+    for (const char* label : {"Collider", "Rigid Body", "Character Controller"}) {
+        expect(std::ranges::find(leaves, label) != leaves.end(), "Add Component lists the physics component types");
+    }
 }
 
 // Add menu entries create what they name; a second camera never takes the
@@ -705,6 +748,7 @@ int main() {
     testSearch();
     testAddMenuContents();
     testAddComponentEntries();
+    testPhysicsEntries();
     testAddMenuObjects();
     testAddEmptyWith();
     testCallMenuOperators();
