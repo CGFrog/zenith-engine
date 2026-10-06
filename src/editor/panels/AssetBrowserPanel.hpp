@@ -41,6 +41,12 @@ struct AssetBrowserActions {
     std::function<std::vector<SceneEntityId>(const EditorAssetRecord&)> sceneUsers;
     // Selects entities of the open scene (Find References' Select button).
     std::function<void(std::span<const SceneEntityId>)> selectEntities;
+    // Runs a registered operator by id (EditorContext::invoke), which reports
+    // its own failures, and whether it can run now (EditorContext::canInvoke).
+    // The folder menu's New Behaviour, Component, and System use them; unset
+    // leaves those items disabled.
+    std::function<void(std::string_view)> runOperator;
+    std::function<bool(std::string_view)> canRunOperator;
     // OS file drops of this frame; the browser imports those dropped on it.
     // Null takes none.
     FileDropQueue* fileDrops{nullptr};
@@ -151,6 +157,8 @@ class AssetBrowserPanel final : public EditorPanel {
     void createScene(EditorDiagnostics& diagnostics);
     // Writes "New Material.zmat" into the current folder.
     void createMaterial(EditorDiagnostics& diagnostics);
+    // Writes "New Prefab.prefab", an empty prefab, into the current folder.
+    void createPrefab(EditorDiagnostics& diagnostics);
     void renameItem(const std::filesystem::path& item, const std::string& utf8NewName, EditorDiagnostics& diagnostics);
     // Moves an item into another folder of the same root.
     void moveItem(const std::filesystem::path& item, const std::filesystem::path& folder,
@@ -188,6 +196,8 @@ class AssetBrowserPanel final : public EditorPanel {
         CreateFolder,
         CreateScene,
         CreateMaterial,
+        CreatePrefab,
+        RunOperator,
         BeginRename,
         Move,
         Duplicate,
@@ -206,6 +216,8 @@ class AssetBrowserPanel final : public EditorPanel {
         std::filesystem::path path;
         // Move only: the folder to move path into.
         std::filesystem::path destination;
+        // RunOperator only: the registered operator to invoke.
+        std::string operatorId;
     };
 
     enum class OpenModal {
@@ -225,7 +237,7 @@ class AssetBrowserPanel final : public EditorPanel {
     std::string rootLabel(const std::filesystem::path& root) const;
     bool isRoot(const std::filesystem::path& path) const;
 
-    void drawToolbar(EditorDiagnostics& diagnostics);
+    void drawToolbar(EditorDiagnostics& diagnostics, const AssetBrowserActions& actions);
     // OS drops: the folder item under a pending drop becomes the target, and
     // the drops inside this browser's window are imported there (or into
     // the current folder).
@@ -241,7 +253,7 @@ class AssetBrowserPanel final : public EditorPanel {
     void drawGrid(const std::vector<BrowserEntry>& entries, const AssetBrowserActions& actions);
     void handleEntryInteraction(const BrowserEntry& entry, bool pressed, const AssetBrowserActions& actions);
     void drawItemMenu(const std::filesystem::path& item, bool folder);
-    void drawFolderMenu();
+    void drawFolderMenu(const AssetBrowserActions& actions);
     void drawSelectedAsset(const AssetBrowserActions& actions, EditorDiagnostics& diagnostics);
     // A texture's usage or a data table's schema, applied with a reimport.
     void drawImportSettings(const EditorAssetRecord& asset, const AssetBrowserActions& actions,
@@ -255,6 +267,9 @@ class AssetBrowserPanel final : public EditorPanel {
     const char* dragVerb(bool placeable) const;
     void runDeferredCommand(const AssetBrowserActions& actions, EditorDiagnostics& diagnostics);
     void beginRename(const std::filesystem::path& item);
+    // Runs a creating command, then opens the rename dialog on what it
+    // selected so the new item is named at once.
+    void createAndRename(const std::function<void()>& create);
     void drawModals(EditorDiagnostics& diagnostics);
     std::string textureDetail(const EditorAssetRecord& asset);
 
@@ -286,7 +301,7 @@ class AssetBrowserPanel final : public EditorPanel {
     // This frame's OS drops and the folder item under them, if any.
     FileDropQueue* m_frameDrops{nullptr};
     std::optional<std::filesystem::path> m_dropFolder;
-    NativeFileDialog m_importDialog{"All files", {}};
+    NativeFileDialog m_importDialog;
     std::filesystem::path m_importFolder;
     // The import settings shown for the selected asset, edited until Apply.
     std::filesystem::path m_settingsPath;

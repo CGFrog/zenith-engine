@@ -8,7 +8,9 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 enum class EditorAssetKind {
@@ -175,6 +177,20 @@ class AssetCatalog {
 // paths the catalog reports. Falls back to a lexical result if the current
 // directory cannot be read.
 std::filesystem::path normalizedCatalogPath(const std::filesystem::path& path);
+
+// One file extension (lowercase, with its dot) the catalog lists, and the kind
+// it gives. ".json" is Data only for definition tables.
+struct EditorAssetExtension {
+    std::string_view extension;
+    EditorAssetKind kind{};
+};
+
+// Every extension the catalog recognises.
+std::span<const EditorAssetExtension> editorAssetExtensions();
+
+// The extensions an import can bring in (lowercase, with their dots): every
+// recognised extension that is an asset of the asset roots, so not code.
+std::vector<std::string> importableAssetExtensions();
 
 // The kind of asset a file is, from its extension (case-insensitive), or
 // nullopt for unsupported files. A .json file is Data only when

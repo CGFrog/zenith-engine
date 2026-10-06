@@ -1,6 +1,7 @@
 #include "AssetCatalog.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <fstream>
 #include <iterator>
@@ -17,6 +18,34 @@ struct AssetCatalog::Root {
 };
 
 namespace {
+// The one table of extensions the catalog lists; editorAssetKind and the
+// Import dialog's file filter both read it so they cannot disagree.
+constexpr std::array<EditorAssetExtension, 22> assetExtensions{{
+    {".gltf", EditorAssetKind::Model},
+    {".glb", EditorAssetKind::Model},
+    // .hdr and .ktx2 hold environment maps as well as surface textures.
+    {".png", EditorAssetKind::Texture},
+    {".jpg", EditorAssetKind::Texture},
+    {".jpeg", EditorAssetKind::Texture},
+    {".hdr", EditorAssetKind::Texture},
+    {".ktx2", EditorAssetKind::Texture},
+    {".zmat", EditorAssetKind::Material},
+    {".json", EditorAssetKind::Data},
+    {".wav", EditorAssetKind::Audio},
+    {".ogg", EditorAssetKind::Audio},
+    {".zenith-scene", EditorAssetKind::Scene},
+    {".prefab", EditorAssetKind::Prefab},
+    {".cpp", EditorAssetKind::Script},
+    {".cc", EditorAssetKind::Script},
+    {".cxx", EditorAssetKind::Script},
+    {".c", EditorAssetKind::Script},
+    {".hpp", EditorAssetKind::Script},
+    {".hh", EditorAssetKind::Script},
+    {".hxx", EditorAssetKind::Script},
+    {".h", EditorAssetKind::Script},
+    {".inl", EditorAssetKind::Script},
+}};
+
 std::string lowercaseExtension(const std::filesystem::path& path) {
     std::string extension = path.extension().string();
     std::ranges::transform(extension, extension.begin(),
@@ -135,34 +164,30 @@ std::filesystem::path normalizedCatalogPath(const std::filesystem::path& path) {
 
 std::optional<EditorAssetKind> editorAssetKind(const std::filesystem::path& path) {
     const std::string extension = lowercaseExtension(path);
-    if (extension == ".gltf" || extension == ".glb") {
-        return EditorAssetKind::Model;
+    const auto found = std::ranges::find(assetExtensions, extension, &EditorAssetExtension::extension);
+    if (found == assetExtensions.end()) {
+        return std::nullopt;
     }
-    // .hdr and .ktx2 hold environment maps as well as surface textures.
-    if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".hdr" ||
-        extension == ".ktx2") {
-        return EditorAssetKind::Texture;
+    if (found->kind == EditorAssetKind::Data && !isDefinitionTableFile(path)) {
+        return std::nullopt;
     }
-    if (extension == ".zmat") {
-        return EditorAssetKind::Material;
+    return found->kind;
+}
+
+std::span<const EditorAssetExtension> editorAssetExtensions() {
+    return assetExtensions;
+}
+
+std::vector<std::string> importableAssetExtensions() {
+    std::vector<std::string> extensions;
+    for (const EditorAssetExtension& entry : assetExtensions) {
+        // Code is not an asset of the asset roots, which are all that import
+        // writes into.
+        if (entry.kind != EditorAssetKind::Script) {
+            extensions.emplace_back(entry.extension);
+        }
     }
-    if (extension == ".json" && isDefinitionTableFile(path)) {
-        return EditorAssetKind::Data;
-    }
-    if (extension == ".wav" || extension == ".ogg") {
-        return EditorAssetKind::Audio;
-    }
-    if (extension == ".zenith-scene") {
-        return EditorAssetKind::Scene;
-    }
-    if (extension == ".prefab") {
-        return EditorAssetKind::Prefab;
-    }
-    if (extension == ".cpp" || extension == ".cc" || extension == ".cxx" || extension == ".c" || extension == ".hpp" ||
-        extension == ".hh" || extension == ".hxx" || extension == ".h" || extension == ".inl") {
-        return EditorAssetKind::Script;
-    }
-    return std::nullopt;
+    return extensions;
 }
 
 bool isDefinitionTableFile(const std::filesystem::path& path) {

@@ -2,6 +2,7 @@
 
 #include "engine/assets/AssetMeta.hpp"
 #include "engine/assets/MaterialAssetFile.hpp"
+#include "engine/scene/Prefab.hpp"
 #include "engine/scene/Scene.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
@@ -502,6 +503,20 @@ ProjectFileResult createProjectMaterial(const std::filesystem::path& folder) {
     }
     if (const MaterialFileResult written = writeMaterialFile(target.path, MaterialFile{}); !written) {
         return failure("Could not create material " + quoted(target.path) + ": " + written.error);
+    }
+    return target;
+}
+
+ProjectFileResult createProjectPrefab(const std::filesystem::path& folder) {
+    ProjectFileResult target = uniqueChildPath(folder, "New Prefab", ".prefab");
+    if (!target) {
+        return target;
+    }
+    // Every prefab document has exactly one root: an empty, untransformed one.
+    PrefabDocument document;
+    document.entities.push_back({.id = PrefabEntityId{1}, .name = "Prefab"});
+    if (const PrefabResult saved = savePrefab(target.path, document); !saved) {
+        return failure("Could not create prefab " + quoted(target.path) + ": " + saved.error);
     }
     return target;
 }

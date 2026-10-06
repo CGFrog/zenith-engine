@@ -290,6 +290,22 @@ std::optional<std::filesystem::path> ProjectAssets::createScene(const std::files
     return normalizedCatalogPath(result.path);
 }
 
+std::optional<std::filesystem::path> ProjectAssets::createPrefab(const std::filesystem::path& folder,
+                                                                 EditorDiagnostics& diagnostics) {
+    if (m_catalog.inSourceRoot(normalizedCatalogPath(folder))) {
+        diagnostics.reportError("Prefabs cannot be created in the source folder; use the asset folders.");
+        return std::nullopt;
+    }
+    const ProjectFileResult result = createProjectPrefab(folder);
+    reportOutcome(diagnostics, result.success,
+                  result ? "Created prefab '" + utf8PathText(result.path) + "'." : result.error);
+    if (!result) {
+        return std::nullopt;
+    }
+    refresh(diagnostics);
+    return normalizedCatalogPath(result.path);
+}
+
 std::optional<std::filesystem::path> ProjectAssets::createMaterial(const std::filesystem::path& folder,
                                                                    EditorDiagnostics& diagnostics) {
     if (m_catalog.inSourceRoot(normalizedCatalogPath(folder))) {

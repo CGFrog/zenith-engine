@@ -27,6 +27,16 @@ struct FileDialogOutcome {
     std::string error;
 };
 
+// One entry of a file dialog's type list. Extensions have no leading dot and
+// are matched case-insensitively by the platform; none means every file.
+struct FileDialogFilter {
+    std::string name;
+    std::vector<std::string> extensions;
+};
+
+// The platform filter pattern for extensions: "png;jpg".
+std::string fileDialogPattern(const std::vector<std::string>& extensions);
+
 // Returns the path a Save dialog should write, appending the required
 // extension when the user typed a bare file name.
 std::filesystem::path normalizeSavePath(std::filesystem::path path, const std::filesystem::path& extension);
@@ -42,6 +52,10 @@ class NativeFileDialog {
     // empty extension offers every file.
     NativeFileDialog(std::string filterName, std::filesystem::path extension);
 
+    // Offers each filter in turn (the first is selected). Open dialogs only:
+    // a Save dialog's result is not given an extension.
+    explicit NativeFileDialog(std::vector<FileDialogFilter> filters);
+
     // Returns false when a dialog is already open. allowMany lets an Open
     // dialog choose several files.
     bool request(FileDialogKind kind, const std::filesystem::path& defaultLocation, bool allowMany = false);
@@ -52,9 +66,9 @@ class NativeFileDialog {
     struct State;
     struct CallbackContext;
 
-    std::string m_filterName;
+    std::vector<FileDialogFilter> m_filters;
+    // The Save dialog's required extension; empty when built from filters.
     std::filesystem::path m_extension;
-    std::string m_filterPattern;
     std::shared_ptr<State> m_state;
     bool m_pending{false};
 };
