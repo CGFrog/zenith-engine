@@ -23,14 +23,27 @@ jobs:
       - name: Install macOS Vulkan portability runtime
         if: runner.os == 'macOS'
         run: brew install molten-vk
+      # Linux runs its Vulkan tests on lavapipe (below), several times slower
+      # than a GPU, so its test timeouts are scaled.
       - name: Configure
-        run: cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DZENITH_WINDOWS_INSTALLER=${{ runner.os == 'Windows' }}
+        run: cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DZENITH_WINDOWS_INSTALLER=${{ runner.os == 'Windows' }} -DZENITH_TEST_TIMEOUT_SCALE=${{ runner.os == 'Linux' && 4 || 1 }}
       - name: Build
         run: cmake --build build --config Release --parallel 4
       # Every GPU test carries the vulkan label, including the vulkan;validation
       # strict matrix, so runners without a GPU only run CPU coverage here.
       - name: Run CPU tests
         run: ctest --test-dir build -C Release --output-on-failure -LE vulkan
+      # Linux runners have no GPU: Mesa's lavapipe runs the Vulkan tests on the
+      # CPU under Xvfb. No validation layer is installed: Ubuntu 24.04's
+      # (1.3.275) crashes on Vulkan 1.4 core push descriptors, so the strict
+      # validation matrix stays Windows-only.
+      - name: Install Linux software Vulkan driver
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y mesa-vulkan-drivers xvfb
+      - name: Run Vulkan smoke tests on lavapipe
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: xvfb-run -a -s "-screen 0 1600x900x24" ctest --test-dir build -C Release --output-on-failure -L vulkan -LE "validation|benchmark"
       - name: Run bounded Vulkan smoke test
         if: runner.os == 'Windows'
         continue-on-error: true
