@@ -40,11 +40,11 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     }
 
     void enterPlayMode() override {
-        m_session.enterPlayMode(m_context);
+        m_session.m_playback.enter(m_context);
     }
 
     void stopPlayMode() override {
-        m_session.stopPlayMode(m_context);
+        m_session.m_playback.stop(m_context);
     }
 
     const CommandHistory& history() const override {
@@ -133,28 +133,28 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     }
 
     ViewportPanel* gameViewport() override {
-        return m_session.gameViewport();
+        return m_session.m_playback.gameViewport();
     }
 
     bool gameReceivesInput() const override {
         const InputState frameInput;
-        return &m_session.gameInput(frameInput) == &frameInput;
+        return &m_session.m_playback.gameInput(frameInput) == &frameInput;
     }
 
     MouseCapturePolicy mouseCapturePolicy() const override {
-        return m_session.mouseCapturePolicy();
+        return m_session.m_playback.mouseCapturePolicy();
     }
 
     bool playTargetActive() const override {
-        return m_session.playActive() || m_session.m_activePlayTarget.has_value();
+        return m_session.m_playback.playActive() || m_session.m_playback.activeTarget().has_value();
     }
 
     const StandalonePlayer& standalone() const override {
-        return m_session.m_standalone;
+        return m_session.m_playback.standalone();
     }
 
     const std::filesystem::path& gameExecutable() const override {
-        return m_session.m_playServices.gameExecutable;
+        return m_session.m_playback.gameExecutable();
     }
 
   private:

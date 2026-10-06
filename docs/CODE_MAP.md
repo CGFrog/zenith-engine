@@ -236,11 +236,11 @@ Function names are real; follow them in the files named.
 
 ### Pressing Play (`F5`)
 
-1. Keymap → operator `play.start` (`application/EditorPlayback.cpp`) → `EditorSession::startPlay(context, target)`.
-2. `EditorSession::enterPlayMode`: `PhysicsWorld::clear`, `EditorPlayMode::enter` (snapshot the edit scene, clone the runtime scene), `GameModuleHost::startGameplay` (new `GameServices`), set audio, navigation settings, save store, publish `SceneLoaded`; `CommandHistory::crossBoundary(EnterPlayMode)`.
+1. Keymap → operator `play.start` (`application/EditorPlayback.cpp`) → `EditorPlayback::startPlay(context, target)` (the session's `m_playback`).
+2. `EditorPlayback::enter`: `PhysicsWorld::clear`, `EditorPlayMode::enter` (snapshot the edit scene, clone the runtime scene), `GameModuleHost::startGameplay` (new `GameServices`), set audio, navigation settings, save store, publish `SceneLoaded`; `CommandHistory::crossBoundary(EnterPlayMode)`.
 3. Target: active viewport → `ViewportPanel::beginGameView`; floating → a new floating Viewport area; standalone → `StandalonePlayer` runs `zenith --project <p> --scene <temp>` as a `ChildProcess`.
-4. Each frame: `EditorSession::runGameplayStage` per stage → `GameModuleHost::runSystems(phase, ...)`; a fault → `stopFailedGameplay`.
-5. `Shift+F5` → `play.stop` → `EditorSession::stopPlay` → `stopPlayMode`: `GameModuleHost::stopGameplay` (behaviour `onDestroy`, services released), restore the edit scene.
+4. Each frame: the session's frame hooks forward to `EditorPlayback` (`update`, `fixedUpdate`, `afterPhysicsStep`, `lateUpdate`, `beginUiFrame`); `EditorPlayback::runGameplayStage` per stage → `GameModuleHost::runSystems(phase, ...)`; a fault → `stopFailedGameplay`.
+5. `Shift+F5` → `play.stop` → `EditorPlayback::stopPlay` → `stop`: `GameModuleHost::stopGameplay` (behaviour `onDestroy`, services released), restore the edit scene.
 
 ### Building and hot reloading a module (`Ctrl+B`)
 
@@ -355,10 +355,10 @@ The editor session: lifecycle, Play, menus, prefab windows, file and module work
 | `EditorAreaTypes` .hpp/.cpp | `EditorAreaServices` | The editor's built-in area types (Viewport, Hierarchy, Inspector, ...) and what each shows. |
 | `EditorDiagnostics` .hpp/.cpp | `EditorDiagnosticSeverity`, `EditorSourceLocation`, `EditorDiagnostic`, `EditorDiagnostics` | Diagnostics with severity, source location, and a suggested action (the Diagnostics panel's model). |
 | `EditorFileDialogs` .cpp |  | EditorSession's document workflow: native and typed-path file dialogs, the unsaved-changes prompt, and the actions (New, Open, Close, leaving for the Project Hub, leaving a prefab) that wait on it. |
-| `EditorMainMenu` .cpp |  | EditorSession's main menu bar and the global keymap it dispatches first. |
+| `EditorMainMenu` .cpp |  | EditorSession's main menu bar (with the playback toolbar) and the global keymap it dispatches first. |
 | `EditorModuleCommands` .cpp |  | EditorSession's game module workflows: loading the project's module, running its systems each frame, hot reloading it, and its menu, status, and panels. |
 | `EditorObjectCommands` .cpp |  | Blender object-mode operators that need the running editor: modal G/R/S transforms and the Delete/Rename popups, and drawing the menu opened with wm.call_menu (the Add menu is defined in editor/menus). |
-| `EditorPlayback` .cpp | `PlayStartProperties` | EditorSession's play workflows: the play operators and their targets (the active viewport, a floating viewport, or a standalone game process), entering and leaving Play mode, game views and the input and Ui they route to module systems, the mouse capture policy, and the playback toolbar in the main menu bar. |
+| `EditorPlayback` .cpp | `PlayStartProperties` | The play operators and EditorPlayback: play targets (the active viewport, a floating viewport, or a standalone game process), entering and leaving Play and Simulate, game views and the input and Ui they route to module systems, and the mouse capture policy. |
 | `EditorPlayMode` .hpp/.cpp | `EditorMode`, `EditorRuntime`, `EditorPlayMode` | Edit/Play/Simulate state: snapshot on enter, restore on stop, time scale, pause, frame step. |
 | `EditorPrefabWindows` .cpp | `EditorSession` | EditorSession's prefab windows: prefabs open in floating windows of their own (PrefabWindowSet) while the level stays open, editable, and playable underneath. |
 | `EditorPreferences` .cpp |  | EditorSession's preferences and packaging workflows: the Preferences window and its live application of the look, and Build and Package. |

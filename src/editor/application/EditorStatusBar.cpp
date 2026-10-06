@@ -76,7 +76,7 @@ void EditorSession::drawStatusBar(const RenderStats& stats) {
 void EditorSession::drawPlayModePill() const {
     switch (m_playMode.mode()) {
     case EditorMode::Edit:
-        if (m_standalone.running()) {
+        if (m_playback.standaloneRunning()) {
             widgets::StatusPill(EditorIcon::Play, "Standalone", widgets::StatusPillStyle::Lit);
         } else {
             widgets::StatusPill(EditorIcon::Stop, "Edit");

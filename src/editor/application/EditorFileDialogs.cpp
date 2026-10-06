@@ -208,14 +208,14 @@ void EditorSession::requestOpenScene(ApplicationContext& context, std::filesyste
 
 void EditorSession::requestClose(ApplicationContext& context) {
     m_pendingOpenPath.reset();
-    stopPlay(context);
+    m_playback.stopPlay(context);
     m_pendingAction = PendingAction::CloseEditor;
     continuePendingAction(context);
 }
 
 void EditorSession::requestProjectHub(ApplicationContext& context, ProjectHubEntry entry) {
     m_pendingOpenPath.reset();
-    stopPlay(context);
+    m_playback.stopPlay(context);
     m_pendingAction = PendingAction::LeaveForProjectHub;
     m_pendingHubEntry = entry;
     continuePendingAction(context);

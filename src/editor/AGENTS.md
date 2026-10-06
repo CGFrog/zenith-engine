@@ -99,8 +99,8 @@ depend on this subtree.
 - A viewport playing the game (`ViewportPanel::gameView`) belongs to the
   game: it shows the game camera and takes no editor input, so new viewport
   tools must skip it. Player input reaches module systems only through
-  `EditorSession::gameInput`, and game views hold the mouse only through the
-  session's `mouseCapturePolicy`.
+  `EditorPlayback::gameInput`, and game views hold the mouse only through
+  `EditorPlayback::mouseCapturePolicy`.
 - A click that picks an entity in a viewport or the outliner must first
   check `EditorContext::eyedropperArmed()` and hand the entity to
   `pickEyedropperEntity` instead of changing the selection.

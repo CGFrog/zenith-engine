@@ -80,7 +80,7 @@ class EditorSmokeHooks {
 
     // The viewport playing the game, or null.
     virtual ViewportPanel* gameViewport() = 0;
-    // Whether module systems get this frame's input (EditorSession::gameInput).
+    // Whether module systems get this frame's input (EditorPlayback::gameInput).
     virtual bool gameReceivesInput() const = 0;
     virtual MouseCapturePolicy mouseCapturePolicy() const = 0;
     // Whether Play, Simulate, or a standalone game runs, or a play target is

@@ -7,6 +7,7 @@
 #include "editor/application/EditorAppearance.hpp"
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/EditorPlayMode.hpp"
+#include "editor/application/EditorPlayback.hpp"
 #include "editor/application/EditorSessionCommands.hpp"
 #include "editor/application/FileDropQueue.hpp"
 #include "editor/application/NativeFileDialog.hpp"
@@ -127,7 +128,6 @@ struct EditorProjectServices {
 class EditorSession final : public ApplicationScene,
                             private EditorSessionActions,
                             private EditorDocumentCommands,
-                            private EditorPlayCommands,
                             private EditorObjectModeCommands,
                             private EditorWindowCommands,
                             private EditorPrefabWindowCommands,
@@ -154,12 +154,6 @@ class EditorSession final : public ApplicationScene,
     void requestQuit(ApplicationContext& context) override;
     void drawUi(ApplicationContext& context) override;
     void unload(ApplicationContext& context) override;
-
-    // Persistent while a game view (the play target's viewport) has game
-    // input focus and the mouse over it (or the cursor captured), so a click
-    // into it captures the cursor until Esc; otherwise WhileRightMouseDown
-    // for editor camera flight.
-    MouseCapturePolicy mouseCapturePolicy() const;
 
   private:
     // EditorSessionActions
@@ -192,17 +186,6 @@ class EditorSession final : public ApplicationScene,
     // Leaves the project for the Project Hub, asking about unsaved changes.
     void requestProjectHub(ApplicationContext& context, ProjectHubEntry entry) override;
     void requestClose(ApplicationContext& context) override;
-
-    // EditorPlayCommands (EditorPlayback.cpp)
-    bool standaloneRunning() const override;
-    PlayTarget lastPlayTarget() const override;
-    OperatorResult startPlay(ApplicationContext& context, PlayTarget target) override;
-    void startSimulate(ApplicationContext& context) override;
-    bool playActive() const override;
-    // Leaves Play or Simulate, or stops the standalone game, and ends the
-    // target's game view (closing a floating one).
-    void stopPlay(ApplicationContext& context) override;
-    ViewportPanel* gameViewport() const override;
 
     // EditorObjectModeCommands (EditorObjectCommands.cpp)
     bool modalTransformRunning() const override;
@@ -484,33 +467,8 @@ class EditorSession final : public ApplicationScene,
     void reportSaveWarnings(const SceneDocumentResult& result);
     void finishPendingAction(ApplicationContext& context);
 
-    // Play targets, entering and leaving Play mode, game views, the
-    // standalone game, and the playback toolbar (EditorPlayback.cpp).
-    // Runs the document on a throwaway copy as Play or Simulate; false (after
-    // reporting why) when it could not.
-    bool enterPlayMode(ApplicationContext& context, EditorRuntime runtime = EditorRuntime::Play);
-    void stopPlayMode(ApplicationContext& context);
-    // Runs one stage of Play's or Simulate's gameplay (stage names it for
-    // the report) unless an earlier stage of the run failed. A stage fails
-    // when an exception escapes it or a module system threw and was
-    // disabled in it; the failure is kept for stopFailedGameplay.
-    void runGameplayStage(std::string_view stage, const std::function<void()>& run);
-    // Leaves Play or Simulate, restoring the edit scene, when a stage failed
-    // since the last call, and reports why in the Info log. The engine calls
-    // the session between stages, so the session stops at the next safe
-    // point (drawUi) rather than inside the engine's fixed-step loop.
-    void stopFailedGameplay(ApplicationContext& context);
-    // Runs the module's Ui systems into m_gameViewUi for the game view.
-    void drawGameViewUi(ApplicationContext& context);
-    OperatorResult startStandalone(ApplicationContext& context);
-    void endGameView();
-    // The input module systems get: the frame's input while a game view has
-    // focus (or Play runs without one), otherwise none.
-    const InputState& gameInput(const InputState& input) const;
-    // Streams the standalone game's output and leaves Play when it exits.
-    void updateStandalone(ApplicationContext& context);
-    // Tells the application the mouse capture policy, once per frame.
-    void publishMouseCapture();
+    // The playback toolbar in the main menu bar (EditorMainMenu.cpp); Play
+    // itself is m_playback's.
     void drawPlaybackToolbar(ApplicationContext& context);
     // Slot in the toolbar's Simulate dropdown for the Simulate system picker
     // (Unit 18); shows a pointer to the System Profiler until then.
@@ -590,37 +548,11 @@ class EditorSession final : public ApplicationScene,
 
     std::vector<OwnPrefabWrite> m_ownPrefabWrites;
     EditorPlayMode m_playMode;
-    // The target F5 (play.start without a target) runs: the last one used.
-    PlayTarget m_lastPlayTarget{PlayTarget::ActiveViewport};
-    // The running target, while Play or Simulate runs or the standalone game
-    // does; Simulate always uses its editor cameras (ActiveViewport, with no
-    // game view).
-    std::optional<PlayTarget> m_activePlayTarget;
-    // The viewport showing the game; empty without a game view.
-    ViewportId m_gameViewport;
-    // The floating target's area and the workspace it was opened in.
-    std::string m_floatingPlayArea;
-    std::string m_floatingPlayWorkspace;
-    // What module systems get while the game view lacks focus.
-    InputState m_idleGameInput;
-    // The input the frame's Update systems saw, for its LateUpdate and Ui
-    // systems; idle outside Play.
-    InputState m_frameGameInput;
-    // The frame's wall-clock seconds, for the Ui systems.
-    float m_frameGameSeconds{0.0f};
-    // Why gameplay failed in the current Play or Simulate run, until
-    // stopFailedGameplay stops it.
-    std::optional<std::string> m_gameplayFailure;
-    // What the module's Ui systems draw over the game view, sized to it.
-    GameUiContext m_gameViewUi;
     std::filesystem::path m_projectFile;
     std::filesystem::path m_codeSnippetDirectory;
     PhysicsLayerTable m_physicsLayers;
     // The project's layer and tag names the inspector offers.
     EditorProjectNames m_projectNames;
-    EditorPlayServices m_playServices;
-    StandalonePlayer m_standalone;
-    std::function<void(MouseCapturePolicy)> m_mouseCaptureChanged;
     std::function<void(CrashRecoveryAction)> m_crashRecoveryChanged;
     bool m_crashRecoveryRegistered{false};
     NativeFileDialog m_fileDialog;
@@ -647,6 +579,12 @@ class EditorSession final : public ApplicationScene,
                                  .menus = m_menus.registry(),
                                  .viewports = m_viewports,
                                  .componentEditors = m_componentEditors}};
+    // Play and Simulate, their targets and game views, and the standalone
+    // game. Declared after the module host and the registries it uses; it
+    // binds the workspaces, area types, and navigation settings, declared
+    // later, by reference only, and outlives the areas, whose game view
+    // draws its game Ui.
+    EditorPlayback m_playback;
     // Prefab windows: declared after the module host, so their scenes, which
     // may hold module component storage, go before the module does.
     PrefabWindowSet m_prefabWindows;

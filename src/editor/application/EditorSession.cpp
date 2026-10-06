@@ -43,12 +43,24 @@ EditorSession::EditorSession(std::filesystem::path settingsDirectory, std::files
     , m_codeSnippetDirectory(projectServices.codeSnippetDirectory)
     , m_physicsLayers(projectServices.physicsLayers)
     , m_projectNames{.physicsLayers = m_physicsLayers.names, .tags = projectServices.tags}
-    , m_playServices(projectServices.play)
-    , m_standalone(m_playServices.makeGameProcess ? m_playServices.makeGameProcess() : makeGameProcess())
-    , m_mouseCaptureChanged(projectServices.mouseCaptureChanged)
     , m_crashRecoveryChanged(projectServices.crashRecoveryChanged)
     , m_fileDialog("Zenith scene", sceneExtension)
     , m_operatorRunner(m_operators, m_history)
+    , m_playback({.playMode = m_playMode,
+                  .document = m_document,
+                  .history = m_history,
+                  .selection = m_selection,
+                  .diagnostics = m_diagnostics,
+                  .viewports = m_viewports,
+                  .workspaces = m_workspaces,
+                  .areaTypes = m_areaTypes,
+                  .moduleHost = m_moduleHost,
+                  .navigationSettings = m_navigationSettings,
+                  .projectFile = m_projectFile,
+                  .play = projectServices.play,
+                  .mouseCaptureChanged = projectServices.mouseCaptureChanged,
+                  .activeLevelViewport = [this] { return activeLevelViewport(); },
+                  .workspacesChanged = [this] { m_workspacesDirty = true; }})
     , m_gameModulePath(std::move(gameModule))
     , m_simulateSystemsPath(settingsDirectory / "simulate-systems.json")
     , m_keymap(defaultEditorKeymap())
@@ -185,7 +197,7 @@ EditorOperatorServices EditorSession::operatorServices() {
             .prefabWritten = prefabWriteHooks().fileWritten,
             .prefabRead = prefabWriteHooks().fileRead,
             .documentCommands = *this,
-            .playCommands = *this,
+            .playCommands = m_playback,
             .objectModeCommands = *this,
             .windowCommands = *this,
             .prefabWindowCommands = *this};
@@ -260,7 +272,7 @@ void EditorSession::dispatchKeymap(ApplicationContext& context, PrefabWindowDocu
     // Global keys work while any panel has focus; region keys already require
     // the mouse over the region. A game view with input focus owns the keys
     // the game can use, so Space there reaches the game, not operator search.
-    const ViewportPanel* game = gameViewport();
+    const ViewportPanel* game = m_playback.gameViewport();
     const KeyboardOwner owner = game != nullptr && game->gameInputFocus() ? KeyboardOwner::Game : KeyboardOwner::Editor;
     const uint64_t followed = m_keymapDispatcher.gestureSerial();
     const std::optional<KeymapInvocation> invocation = m_keymapDispatcher.pressKeys(m_keymap, region, owner);
@@ -454,7 +466,7 @@ void EditorSession::update(ApplicationContext& context, const InputState& input,
     updateAutosave(context, deltaSeconds);
     updatePackaging();
     m_projectBuild.poll();
-    updateStandalone(context);
+    m_playback.pollStandalone(context);
     // Once per frame, however many asset browsers are open.
     m_projectAssets.pollChanges(m_diagnostics, projectAssetActions(context), deltaSeconds);
     takeFileDrops(input);
@@ -649,37 +661,15 @@ void EditorSession::reconcileChangedPrefab(ApplicationContext& context, const st
 }
 
 void EditorSession::fixedUpdate(ApplicationContext& context, const InputState& input, float deltaSeconds) {
-    // Fixed updates run only while simulating (including a paused single
-    // step); Edit mode keeps its own fixed clock in updateGameModule.
-    // Simulate passes no input; the host enforces that too.
-    if (m_playMode.mode() != EditorMode::Edit) {
-        const SimulationMode mode = m_playMode.simulationMode();
-        runGameplayStage(systemPhaseName(SystemPhase::FixedUpdate), [&] {
-            m_moduleHost.runSystems(SystemPhase::FixedUpdate, context.scene, &context, mode, deltaSeconds,
-                                    mode == SimulationMode::Simulate ? nullptr : &gameInput(input));
-        });
-    }
+    m_playback.fixedUpdate(context, input, deltaSeconds);
 }
 
 void EditorSession::afterPhysicsStep(ApplicationContext& context) {
-    if (GameServices* services = m_moduleHost.gameServices()) {
-        runGameplayStage("the physics events", [&] {
-            services->publishPhysicsEvents(context.scene, context.physics.triggerEvents(),
-                                           context.physics.contactEvents());
-        });
-    }
+    m_playback.afterPhysicsStep(context);
 }
 
 void EditorSession::lateUpdate(ApplicationContext& context, const InputState&, float deltaSeconds) {
-    if (m_playMode.mode() == EditorMode::Edit || !m_playMode.advancesThisFrame()) {
-        return;
-    }
-    const SimulationMode mode = m_playMode.simulationMode();
-    runGameplayStage(systemPhaseName(SystemPhase::LateUpdate), [&] {
-        m_moduleHost.runSystems(SystemPhase::LateUpdate, context.scene, &context, mode,
-                                simulatedSeconds(simulationClock(), deltaSeconds), &m_frameGameInput, nullptr,
-                                deltaSeconds);
-    });
+    m_playback.lateUpdate(context, deltaSeconds);
 }
 
 bool EditorSession::fixedUpdatesEnabled() const {
@@ -691,10 +681,7 @@ bool EditorSession::beginFixedUpdate() {
 }
 
 SimulationClock EditorSession::simulationClock() const {
-    // The game's own pause and time scale apply on top of the editor's.
-    const SimulationClock editorClock = m_playMode.simulationClock();
-    const GameServices* services = m_moduleHost.gameServices();
-    return services != nullptr ? services->simulationClock(editorClock) : editorClock;
+    return m_playback.simulationClock();
 }
 
 void EditorSession::requestQuit(ApplicationContext& context) {
@@ -705,14 +692,9 @@ void EditorSession::drawUi(ApplicationContext& context) {
     // Every system of this frame ran in update and fixedUpdate; publish
     // their timings for the System Profiler areas drawn below.
     m_moduleHost.finishSystemFrame();
-    // Between the frame's gameplay and the game view's UI: a run whose
-    // gameplay failed ends here, so the rest of the frame draws Edit mode.
-    stopFailedGameplay(context);
-    // The engine has run this frame's fixed steps, so a frame step is done;
-    // play.step below requests the next one.
-    m_playMode.finishFrame();
-    // Before the areas, so the game view draws this frame's game UI.
-    drawGameViewUi(context);
+    // Ends a failed run, a frame step, and draws the game view's game UI,
+    // before the areas show it.
+    m_playback.beginUiFrame(context);
     ImGuizmo::BeginFrame();
     m_themeChrome.setModeTint(playModeTint(m_playMode.mode(), m_playMode.simulating()));
     m_themeChrome.beginFrame();
@@ -738,7 +720,7 @@ void EditorSession::drawUi(ApplicationContext& context) {
     drawNewCodeDialog(context);
     drawOperatorWindows(context);
     drawStatusBar(context.rendering.stats());
-    publishMouseCapture();
+    m_playback.publishMouseCapture();
     // Last, after every edit of this frame: the renderer draws next.
     bindPrefabWindowScenes(context);
 }
@@ -799,11 +781,8 @@ void EditorSession::unload(ApplicationContext& context) {
         m_crashRecoveryChanged({});
         m_crashRecoveryRegistered = false;
     }
-    stopPlay(context);
+    m_playback.unload(context);
     m_projectAssets.releaseThumbnailTextures(context.rendering);
-    if (m_mouseCaptureChanged) {
-        m_mouseCaptureChanged(MouseCapturePolicy::WhileRightMouseDown);
-    }
     // The scene and document release module code before the module unloads;
     // prefab windows go first, unsaved prefab edits with them.
     context.audio.stopSceneVoices();
