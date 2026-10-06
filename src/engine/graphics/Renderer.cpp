@@ -301,6 +301,20 @@ void Renderer::destroySwapchainResources() {
     m_swapchain.destroySwapchain(m_context);
 }
 
+namespace {
+template <typename Lease> void appendLeases(std::vector<Lease>& into, std::vector<Lease>&& from) {
+    into.insert(into.end(), std::make_move_iterator(from.begin()), std::make_move_iterator(from.end()));
+}
+
+void appendAssetLeases(AssetLeaseSet& into, AssetLeaseSet&& from) {
+    appendLeases(into.models, std::move(from.models));
+    appendLeases(into.meshes, std::move(from.meshes));
+    appendLeases(into.textures, std::move(from.textures));
+    appendLeases(into.fonts, std::move(from.fonts));
+    appendLeases(into.materials, std::move(from.materials));
+}
+} // namespace
+
 bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager& assets) {
     // One-frame debug primitives last one frame, drawn or not.
     struct DebugDrawLifetime {
@@ -310,6 +324,15 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
             renderer.clearDebugDraw();
         }
     } debugDrawLifetime{*this};
+
+    // Secondary scenes are bound for one drawFrame, drawn or not.
+    struct SceneContentLifetime {
+        RenderRuntime& rendering;
+
+        ~SceneContentLifetime() {
+            rendering.clearSceneContents();
+        }
+    } sceneContentLifetime{*m_rendering};
 
     applyDiagnosticOverrides(*m_rendering);
     const FrameStatus surfaceStatus = prepareSurface(window);
@@ -342,6 +365,12 @@ bool Renderer::drawFrame(const Window& window, Scene& scene, const AssetManager&
     // Replacing this slot's leases is safe after its fence signals; assets used
     // by the previous submission can now be collected without a queue idle.
     m_frameAssets[m_currentFrame] = assets.leaseSceneAssets(scene);
+    // Every bound secondary scene's assets too: a view may draw it this frame.
+    for (const RenderRuntime::SceneSlot& slot : m_rendering->m_scenes) {
+        if (slot.alive && slot.content != nullptr) {
+            appendAssetLeases(m_frameAssets[m_currentFrame], assets.leaseSceneAssets(*slot.content));
+        }
+    }
     m_frameAssets[m_currentFrame].fonts.insert(m_frameAssets[m_currentFrame].fonts.end(),
                                                m_pendingUiAssets.fonts.begin(), m_pendingUiAssets.fonts.end());
     m_frameAssets[m_currentFrame].meshes.insert(m_frameAssets[m_currentFrame].meshes.end(),
@@ -705,8 +734,11 @@ void Renderer::collectViewRequests(VkImage swapchainImage, VkImageView swapchain
             continue;
         }
         const ViewTargets* targets = slot < m_viewTargets.size() ? m_viewTargets[slot].get() : nullptr;
-        const bool ready =
-            view.alive && view.renderRequested && targets != nullptr && targets->generation == view.generation;
+        // A view of a secondary scene without content this frame keeps its
+        // last texture.
+        const bool sceneBound = !view.scene || m_rendering->sceneContent(view.scene) != nullptr;
+        const bool ready = view.alive && view.renderRequested && targets != nullptr &&
+                           targets->generation == view.generation && sceneBound;
         view.renderRequested = false;
         if (ready) {
             m_renderedViews.push_back(slot);
@@ -714,6 +746,11 @@ void Renderer::collectViewRequests(VkImage swapchainImage, VkImageView swapchain
     }
     const RenderViewId active = m_rendering->activeView();
     orderRenderedViews(m_renderedViews, m_rendering->viewAlive(active) ? active.index : 0u);
+    // The frame's scene's views lead (the frame stage follows the first);
+    // each secondary scene's views follow, grouped by scene.
+    const auto secondary =
+        std::ranges::stable_partition(m_renderedViews, [&](uint32_t slot) { return !slots[slot].scene; });
+    std::ranges::stable_sort(secondary, {}, [&](uint32_t slot) { return slots[slot].scene.index; });
     const bool defaultViewOffscreen = slots.front().sizeRequested;
     m_viewRequests.clear();
     for (uint32_t slot : m_renderedViews) {
@@ -746,6 +783,19 @@ void Renderer::collectViewRequests(VkImage swapchainImage, VkImageView swapchain
             request.settings = &m_composedViewSettings[slot];
         } else {
             request.settings = &m_rendering->m_settings;
+        }
+        if (view.scene) {
+            request.scene = m_rendering->sceneContent(view.scene);
+            request.sceneId = view.scene;
+            // Preview lighting: the studio rig instead of the frame scene's
+            // lights (see RenderRuntime's secondary scenes).
+            if (request.settings->viewShading == ViewShading::Rendered) {
+                if (request.settings != &m_composedViewSettings[slot]) {
+                    m_composedViewSettings[slot] = *request.settings;
+                    request.settings = &m_composedViewSettings[slot];
+                }
+                m_composedViewSettings[slot].viewShading = ViewShading::MaterialPreview;
+            }
         }
         request.plan = m_meshPass.planFrame(*request.settings, m_rendering->capabilities());
         if (view.visibleObjects) {

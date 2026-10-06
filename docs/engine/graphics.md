@@ -51,8 +51,14 @@ override. `tests/engine/RenderViewTests.cpp` covers the registry.
 It also owns the frame's debug-draw lists (all views and per view) and each
 view's projected debug labels.
 
-`RenderIds.hpp` holds `RenderViewId` and `RenderObjectId` so the picking types
-can name them.
+It also holds the secondary render scenes (`createScene`, `setViewScene`,
+`setSceneContent`; see [Architecture](../ARCHITECTURE.md#render-views)), which
+`MeshPass` draws from per-scene packet state (`passes/MeshPassScenes.cpp`) with
+preview lighting. `tests/engine/TwoSceneSmokeTests.cpp` renders one beside the
+application's scene and picks in it.
+
+`RenderIds.hpp` holds `RenderViewId`, `RenderSceneId`, and `RenderObjectId` so
+the picking types can name them.
 
 ## `src/engine/graphics/DebugDraw.*`
 

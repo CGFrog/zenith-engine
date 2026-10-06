@@ -140,6 +140,12 @@ zenith_add_test(zenith_multi_view_vulkan_smoke EXECUTABLE zenith_multi_view_smok
     SOURCES MultiViewSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
     ENVIRONMENT ZENITH_SMOKE_FRAMES=120
     LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
+# Secondary render scenes: a created view draws a second scene with preview
+# lighting beside the application's scene.
+zenith_add_test(zenith_two_scene_vulkan_smoke EXECUTABLE zenith_two_scene_smoke_tests
+    SOURCES TwoSceneSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
+    ENVIRONMENT ZENITH_SMOKE_FRAMES=90
+    LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
 # Per-view shadow isolation: an isolated view's sun, point and spot shadows
 # cast from its isolated objects only, beside a view of the whole scene.
 zenith_add_test(zenith_isolated_shadow_vulkan_smoke EXECUTABLE zenith_isolated_shadow_smoke_tests

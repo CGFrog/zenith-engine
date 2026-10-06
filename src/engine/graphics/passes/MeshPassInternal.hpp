@@ -272,4 +272,11 @@ struct MeshPass::FrameState {
     ShadowCulling shadowCulling{ShadowCulling::Cpu};
     // Set once GPU-driven records were prepared for the default view.
     bool gpuDrivenPrepared{false};
+    // Joint matrices the frame's scene wrote to the palette buffers;
+    // secondary scenes append after them.
+    uint32_t skinMatrixCount{1};
+    // Preview lighting for views of a secondary scene: none of the frame
+    // scene's lights, shadows, environment maps, probes, irradiance volume,
+    // or fog (see RenderRuntime's secondary scenes).
+    bool previewScene{false};
 };

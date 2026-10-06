@@ -147,7 +147,9 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
     std::vector<int32_t> ownShadowTiles;
     const std::span<const LocalLight> shadowedLights(
         lights.data(), std::min<size_t>(lights.size(), view.clusteredLighting.lightCapacity()));
-    if (!updateViewShadows(commandBuffer, frameIndex, view, request, frame, shadowedLights, cameraPosition,
+    // A secondary scene's preview lighting casts no shadows.
+    if (!frame.previewScene &&
+        !updateViewShadows(commandBuffer, frameIndex, view, request, frame, shadowedLights, cameraPosition,
                            viewFrame.lodView, scene, assets, ownShadowTiles, stats)) {
         return false;
     }
@@ -463,7 +465,10 @@ bool MeshPass::recordView(VkCommandBuffer commandBuffer, uint32_t frameIndex, co
     // View shading: Wireframe draws every edge of every drawn surface on the
     // cleared scene, under particles and outlines.
     recordWireframeOverlay(draw, gpuDrivenActive);
-    recordParticles(draw, depthImage, depthView);
+    // Particles are the frame scene's.
+    if (!frame.previewScene) {
+        recordParticles(draw, depthImage, depthView);
+    }
     recordOutlines(draw);
 
     vkCmdEndRendering(commandBuffer);
