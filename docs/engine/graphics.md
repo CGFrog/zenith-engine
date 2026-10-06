@@ -31,6 +31,139 @@ Renderer
       `- ColorGradePass (3D LUT, vignette and film grain after tone mapping)
 ```
 
+[Graphics render views and picking](graphics-views.md) covers multi-view
+frames, secondary scenes, and GPU picking; [Graphics scene passes](graphics-passes.md)
+and [Graphics post-processing](graphics-post.md) cover the individual passes.
+
+## Render flow
+
+Each frame slot waits on its fence before reuse. The renderer then acquires a
+presentation image and records one command buffer:
+
+```text
+Environment precompute (compute, only when an environment source changes)
+  equirect or analytic sky -> radiance cube -> prefiltered specular + SH irradiance
+GPU culling, shadow cascades (GPU-driven only, compute)
+  every dirty cascade's orthographic frustum -> its own compacted indirect draws
+Directional shadows
+  shadow casters -> cascaded depth atlas (cached per cascade while unchanged)
+  CPU path: frustum-culled render items, instanced; GPU-driven: indirect draws
+GPU culling, early phase (GPU-driven only, compute)
+  objects visible last frame -> compacted indirect draws
+Light cluster assignment (compute, local lights enabled)
+  selected point/spot lights -> 16x9x24 cluster light lists
+Decal cluster assignment (compute, decals on and the scene has decals)
+  nearest 1024 decal boxes -> per-cluster decal lists, applied in mesh.frag
+Volumetric fog (compute, fog enabled and authored)
+Particle simulation (compute, particles enabled and the scene has emitters)
+  emit -> simulate, cull, and light -> bitonic sort back to front
+Depth/normal prepass (default on)
+  opaque + masked depth and view-space normals
+  GPU-driven: early draws -> occlusion depth pyramid -> late cull -> late draws
+Depth pyramid (compute)
+  complete opaque depth -> min/max pyramid for screen-space consumers
+  (without a prepass, GPU-driven builds it mid-shading for the late cull)
+Ambient occlusion (GTAO, compute; reads the prepass normals and depth pyramid,
+  writes unoccluded values without them) -> occlusion sampled by shading
+Scene shading
+  opaque shading (EQUAL depth after the prepass) -> HDR + motion/reactive targets
+  -> skybox where opaque depth is far
+  -> screen-space reflections (compute, when enabled and the prepass ran):
+     Hi-Z trace of the prepass normals and depth pyramid, blended into the HDR
+     target in place
+  -> blended surfaces -> particles (own rendering scope, depth read-only)
+  -> editor outlines
+Temporal resolve (TAA only, compute)
+  HDR + motion/reactive + output-resolution history -> resolved scene
+Depth of field (compute, when enabled)
+  resolved scene (else HDR) + motion-target depth -> thin-lens circle of
+  confusion -> half-resolution bokeh gather -> full-resolution composite into
+  the focused scene that exposure, bloom, and post read instead
+Motion blur (compute, when enabled)
+  resolved scene (else HDR) + motion vectors -> tile max -> neighbour max
+  -> reconstruction gather -> blurred scene read by everything below
+Exposure and bloom (compute)
+  luminance histogram -> adapted exposure buffer; bloom down/upsample chain
+Post-process and tone mapping
+  final scene (blurred, else focused, else resolved, else HDR) + editor grid,
+  FXAA (non-TAA) over that composite,
+  exposure + bloom mix + tone map
+  -> swapchain image or editor viewport, or the colour-grade display target
+Colour grade (only when a LUT, vignette or film grain is enabled)
+  display target -> 3D LUT (sRGB-encoded) -> vignette -> film grain
+  -> swapchain image or editor viewport
+Debug lines (per view that has lines; see DebugDrawPass below)
+Game or editor UI
+  -> swapchain image
+Transition to PRESENT -> submit -> present
+```
+
+The ambient-occlusion and reflection techniques, and where they sit relative
+to shading and the temporal resolve, belong to their own passes; the list
+shows their position at the time of writing. Each bracketed GPU pass has a
+timestamp pair (`FrameResources::collectTimings`, `FrameTimestamps.hpp`); the
+decoded durations reach `RenderStats`, benchmark `gpu.*` metrics, and the
+editor's Graphics panel. `Renderer::updateRenderGraphPlan` mirrors this list as
+a declarative render-graph model whose shape (`RenderGraphShape`) follows the
+settings that add or remove passes: anti-aliasing, AO and reflection quality,
+bloom, exposure mode, shadows, environment quality and background, local
+lighting, the depth prepass, depth of field, and GPU-driven submission. The
+shared passes appear once and the per-view passes (clusters onward) once per
+recorded render view (see [Render views](graphics-views.md#render-views)).
+Every choice the mesh pass makes while recording (prepass, GPU-driven
+submission, GPU shadow culling, effective AO quality, screen-space reflections,
+per-pixel probes) comes from one `MeshPassFramePlan` (`MeshPassFramePlan.*`)
+per view that `MeshPass::planFrame` computes once per frame; `MeshPass::record`
+consumes it and the Renderer copies it into `RenderGraphShape`, so the model
+never re-derives a pass decision. The model validates ordering and hazards and
+supplies barrier and transient-memory statistics; only its UI-boundary
+barriers are recorded, and the passes keep their own synchronization.
+
+The renderer uses Vulkan dynamic rendering and synchronization2 barriers for
+explicit layout/access transitions. A declarative render graph validates pass
+ordering, hazards, queue ownership, and compatible transient lifetimes; its
+compiled UI-boundary barriers are used directly during recording. Renderer
+uploads use a three-slot staging ring, a dedicated transfer queue, and timeline
+retirement when available. A full ring reports backpressure and defers the
+asset instead of waiting; waits are scoped to the consuming pipeline stages.
+Startup prewarms the fixed pipeline set through a device-compatible Vulkan
+pipeline cache persisted with an atomic user-data write. Benchmark telemetry
+separates pipeline creation from first use. The swapchain owns
+presentation-dependent resources. Resize waits for a usable surface, idles the
+device, recreates the swapchain/depth resources, and resizes dependent render
+targets, invalidating temporal history.
+
+Temporal reconstruction owns jitter, motion/reactive data, camera-cut and
+resize invalidation, and variance-clipped history. Jitter spans one internal
+pixel; motion vectors are unjittered and skinned motion uses the previous
+frame's joint palettes. History lives at output resolution and is shared by
+consecutive frames regardless of the frame slot, so dynamic-resolution changes
+keep it: the resolve upsamples each frame from its internal extent. Dynamic
+resolution is driven by smoothed retired GPU time and adjusts slowly in
+quantized steps; native resolution remains the deterministic default.
+
+Mesh-shader and hardware-ray-tracing capability bits are informational only.
+Neither path is exposed as a quality setting until the persistent GPU scene is
+stable and repeated measurements justify a separate implementation and memory
+budget; conventional rasterization therefore remains the explicit path.
+
+### Settings, capabilities, and budgets
+
+The project manifest serializes every renderer quality choice plus per-pass
+CPU/GPU budgets (see [Projects](projects.md)). Startup validates requested
+settings against device capabilities and reports each explicit fallback
+(`ValidatedRenderSettings::fallbacks`). The compatible CPU instanced draw path
+is the default; GPU-driven submission is opt-in through
+`RenderSettings::preferGpuDrivenSubmission` (or `ZENITH_FORCE_GPU_DRIVEN`) on
+devices that support it, a decision recorded in
+[Renderer validation](../RENDERER_VALIDATION.md#gpu-driven-submission-default-milestone-25).
+Benchmark JSON contains timestamp scopes and configured budgets for shadow,
+opaque, blended, bloom/post, UI, upload, depth prepass, depth pyramid, light
+clusters, and environment work, plus CPU and estimated GPU asset memory. The
+editor's Graphics panel edits every `RenderSettings` field, applies it through
+the same capability validation, and saves it to the project file (or, without
+a project, to the editor's settings directory).
+
 ## `src/engine/graphics/Renderer.*`
 
 Coordinates initialization, per-frame work, resize recovery, and shutdown. A
@@ -52,7 +185,7 @@ It also owns the frame's debug-draw lists (all views and per view) and each
 view's projected debug labels.
 
 It also holds the secondary render scenes (`createScene`, `setViewScene`,
-`setSceneContent`; see [Architecture](../ARCHITECTURE.md#render-views)), which
+`setSceneContent`; see [Secondary scenes](graphics-views.md#secondary-scenes)), which
 `MeshPass` draws from per-scene packet state (`passes/MeshPassScenes.cpp`) with
 preview lighting. `tests/engine/TwoSceneSmokeTests.cpp` renders one beside the
 application's scene and picks in it.
@@ -101,11 +234,46 @@ Draws `DebugDraw` lines (`shaders/debug_line.*`) as a LINE_LIST into every
 recorded view's post-processed output, depth testing in the fragment shader
 against the view's scene depth (which may be at render resolution). Owns a
 host-visible vertex buffer per frame in flight, grown on demand.
-`docs/ARCHITECTURE.md` (Debug drawing) explains the placement.
+
+`DebugDraw` is plain data with no graphics types, so any subsystem it is
+passed to can record. Colours are display-referred RGBA; each primitive is
+depth tested or drawn always on top. `RenderRuntime::debugDraw()` holds the
+primitives every view draws and `viewDebugDraw(view)` those of one view; there
+is no global instance. Primitives recorded during update and UI building are
+drawn by the next `Renderer::drawFrame`, which ends every list's frame
+(`DebugDraw::endFrame`) when it returns, also when the frame is skipped. The
+editor's viewport Overlays menu lists the channels.
+
+The pass draws in every recorded view after the post chain (tone mapping,
+FSR, colour grade) and before the UI, into the view's display-referred output:
+
+- Colours are exact (exposure, bloom, and the grade never touch them), and
+  lines use the unjittered projection and never enter the TAA history, so
+  they neither shimmer nor smear.
+- Depth-tested lines compare their forward distance with the view's reversed-Z
+  scene depth, fetched in the fragment shader at the texel under each output
+  pixel. The depth buffer can be at a lower render resolution than the output
+  (dynamic resolution, TAAU, FSR 1), so a depth attachment test would not
+  line up. A 0.4% relative bias keeps lines lying on surfaces visible.
+- Lines are 1 pixel wide and not anti-aliased.
+
+The render graph declares a `debug draw` pass per view (reading scene depth,
+read-writing the output) when the view has lines, so the barrier that hands an
+offscreen view to the UI comes from it. Labels are not rasterized by the
+engine: after recording, the renderer projects each view's labels with the
+camera it rendered (`projectDebugLabels`) and publishes them through
+`viewDebugLabels(view)` in view pixels for the editor or game UI to draw;
+labels behind the camera or outside the view are dropped. The editor draws
+them over each viewport; `zenith --project` draws the default view's as game
+UI text (`src/game/application/DebugLabelOverlay`, through
+`GameUiContext::pixelText`), a frame after they were recorded.
+`tests/engine/DebugDrawTests.cpp` covers tessellation, projection, and the
+Jolt adapter on the CPU; `tests/engine/DebugDrawSmokeTests.cpp` draws in three
+views under strict validation and renders the `debug_draw` reference set.
 
 ## `src/engine/graphics/RenderPicking.*`, `passes/IdBufferPass.*`, and `resources/IdReadback.*`
 
-GPU picking (see Picking in [Architecture](../ARCHITECTURE.md)). `RenderPicking`
+GPU picking (see [Picking](graphics-views.md#picking)). `RenderPicking`
 holds the CPU contract: `PickRect`, `PickTicket`, `PickResult` with its id and
 depth planes and object table, `PickRequestBook` (the ticket lifecycle
 `RenderRuntime::requestPick` and `pickResult` expose), and depth-to-world
@@ -120,7 +288,8 @@ frame's fence signals. `tests/engine/RenderPickingTests.cpp` and the Vulkan
 
 Pure multi-view decisions: the recording order that puts the active view first
 (it leads the frame's shared work) and the remap of the leading view's
-local-shadow tiles onto another view's light selection.
+local-shadow tiles onto another view's light selection. See
+[Recording order](graphics-views.md#recording-order).
 
 ## `src/engine/graphics/vulkan/VulkanContext.*`
 

@@ -14,7 +14,8 @@ add_library(zenith_editor_app STATIC
     interaction/WatchList.cpp
     application/EditorViewports.cpp
     application/EditorPlayMode.cpp
-    application/EditorPrefabWindows.cpp
+    application/PrefabWindowController.cpp
+    application/GameModuleController.cpp
     application/EditorPlayback.cpp
     application/EditorPreferences.cpp
     application/FolderPicker.cpp

@@ -6,7 +6,10 @@ Part of the [repository guide](../REPOSITORY_GUIDE.md).
 
 Resolves platform writable locations, performs atomic user-data writes and
 backup recovery, writes local-only structured diagnostics, and serializes exact
-release provenance.
+release provenance. Atomic user data retains a recovery copy in the platform
+writable directory. Crash bundles are local JSON artifacts with no upload
+mechanism, while package provenance records the exact source, dependency,
+toolchain, platform, and content-manifest revisions.
 
 ## `src/engine/platform/CrashHandler.*`
 

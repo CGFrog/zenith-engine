@@ -134,8 +134,8 @@ zenith_add_test(zenith_frame_capture SOURCES FrameCaptureTests.cpp LIBS zenith_e
 zenith_add_test(zenith_graphics_validation SOURCES GraphicsValidationTests.cpp LIBS zenith_engine)
 
 # Engine-hosted runs on a Vulkan device; they skip (77) without one.
-# Two created render views beside the default one (docs/ARCHITECTURE.md,
-# Render views).
+# Two created render views beside the default one
+# (docs/engine/graphics-views.md, Render views).
 zenith_add_test(zenith_multi_view_vulkan_smoke EXECUTABLE zenith_multi_view_smoke_tests
     SOURCES MultiViewSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
     ENVIRONMENT ZENITH_SMOKE_FRAMES=120
@@ -159,7 +159,7 @@ zenith_add_test(zenith_debug_draw_vulkan_smoke EXECUTABLE zenith_debug_draw_smok
     SOURCES DebugDrawSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
     ENVIRONMENT ZENITH_SMOKE_FRAMES=60 ZENITH_VALIDATION_STRICT=1
     LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
-# GPU picking through the id buffer (docs/ARCHITECTURE.md, Picking).
+# GPU picking through the id buffer (docs/engine/graphics-views.md, Picking).
 zenith_add_test(zenith_picking_vulkan_smoke EXECUTABLE zenith_picking_smoke_tests
     SOURCES PickingSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
     ENVIRONMENT ZENITH_SMOKE_FRAMES=80

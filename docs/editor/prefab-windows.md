@@ -14,7 +14,7 @@ The window hosts its own dock space with the prefab's **Hierarchy**,
 picking, the gizmo, G/R/S, snapping, collider handles, drops, the 3D cursor,
 and local view all edit the prefab. It draws the window's scene as a secondary
 render scene (`RenderRuntime::createScene`/`setViewScene`, see
-[Architecture](../ARCHITECTURE.md#render-views)), so it shows the prefab with
+[Secondary scenes](../engine/graphics-views.md#secondary-scenes)), so it shows the prefab with
 preview lighting (the Material Preview studio rig): the prefab's own sun,
 shadows, environment, fog, and particles are not drawn there, and the
 viewport's Rendered shading falls back to Material Preview.
@@ -40,7 +40,7 @@ session's own members, a window's are its document's.
 - **Panels in a window** get an `EditorContext` built from the window's
   document: `app` is the session's `ApplicationContext` with the window's
   scene, so panels that read `context.app.scene` show the prefab, and
-  `actions` is `EditorSession::PrefabWindowActions`, which runs operators and
+  `actions` is `PrefabWindowController::Actions`, which runs operators and
   region keys on the window's document with the session's own context.
 - **The main menu, global keys, F3, and popup menus** (Add Component, Delete,
   Rename) act on the document whose window last had keyboard focus: a prefab
@@ -125,15 +125,16 @@ session's own members, a window's are its document's.
 - The renderer draws at most `RenderRuntime::maximumScenes` (8) secondary
   scenes. A window opened beyond that edits normally but its viewport shows a
   placeholder (it never falls back to drawing the level) until another window
-  closes; `bindPrefabWindowScenes` then gives it the freed render scene.
+  closes; `PrefabWindowController::bindScenes` then gives it the freed render scene.
 - Undo of a refresh step restores the instances in that document only, not
   the prefab file.
 
 ## Folder contents
 
 `src/editor/application/`: `PrefabWindowSet` (the documents),
-`EditorPrefabWindows.cpp` (the session's windows, their panels, the close
-prompt, and recovery), `PrefabEditTargets` (save and file-move helpers), and
+`PrefabWindowController` (the windows, their panels, the close prompt, and
+recovery; it reaches the session only through `PrefabWindowHost`),
+`PrefabEditTargets` (save and file-move helpers), and
 `DocumentBinding.hpp`.
 `src/editor/document/PrefabWindowRecovery`: the windows' autosaves.
 Tests: `tests/editor/PrefabWindowTests.cpp`; the editor smoke's

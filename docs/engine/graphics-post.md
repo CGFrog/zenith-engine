@@ -2,6 +2,12 @@
 
 Part of the [repository guide](../REPOSITORY_GUIDE.md).
 
+The file sections come first. The feature contracts (settings, fallbacks, GPU
+scopes, budgets, and tests) follow them: [Upscaling](#upscaling),
+[Motion blur](#motion-blur), [Depth of field](#depth-of-field),
+[Colour grading](#colour-grading), and
+[Post-process descriptors and FXAA](#post-process-descriptors-and-fxaa).
+
 ## `src/engine/graphics/passes/PostProcessPass.*`
 
 Owns one RGBA16F HDR scene target, motion/reactive target, prepass normal
@@ -150,3 +156,147 @@ distance from reversed-Z depth, the thin-lens circle of confusion in pixels
 spiral's sample count, and the composite blend. The shaders mirror it by hand;
 `tests/engine/DepthOfFieldTests.cpp` covers it with settings serialization and
 the capability fallback.
+
+## Upscaling
+
+`RenderSettings::upscaler` selects how a frame rendered below output resolution
+reaches it (`UpscalerMode`, serialized as `upscaler.mode`):
+
+| Mode | Value | Behavior |
+| --- | ---: | --- |
+| Off | 0 | Historical behavior and the fallback: the internal resolution follows `dynamicResolution` alone, and TAA upsamples whatever it renders. Older documents without the key load as Off, so `antialiasing` 2 with dynamic resolution still means TAAU. |
+| TAAU | 1 | Renders at the preset's scale and reconstructs with `TemporalResolvePass`. Requires TAA; validation enables it. |
+| FSR 1 | 2 | Renders at the preset's scale, anti-aliases at render resolution (FXAA, or TAA resolving at render resolution), exposes, blooms, and tone maps there, then upsamples with AMD FidelityFX Super Resolution 1 EASU and sharpens with RCAS (`SpatialUpscalePass`). |
+
+`upscaler.quality` picks the per-axis ratio: Quality 1.5x (0), Balanced 1.7x
+(1), Performance 2x (2). `upscaler.sharpness` in [0, 1] sets RCAS: 1 is AMD's
+maximum (0 stops) and each 0.5 below it halves the sharpening (default 0.9,
+AMD's suggested 0.2 stops). With dynamic resolution enabled, its scale range
+applies relative to the preset (both bounds are multiplied by the preset's
+render scale), so the preset is the unloaded resolution; the internal extent
+still varies inside fixed output-sized targets.
+
+FSR 1 filters perceptual values, so it runs after tone mapping: `post.frag`
+composites into the top-left render extent of an output-sized input target in
+the output format (sRGB, which stores display values with 8-bit perceptual
+precision), `fsr_easu.comp` gamma-2 encodes the display-linear values it reads,
+upsamples, and stores them in an RGBA8 image, and `fsr_rcas.frag` sharpens that
+encoding and decodes it in the fullscreen draw into the output. RCAS is a
+fragment pass rather than compute so the swapchain needs no storage usage. HDR
+values never reach EASU, so bright highlights cannot ring. The EASU taps are
+fetched individually and clamped to the render extent, because texels beyond
+it are stale under dynamic resolution. The editor grid composites at render
+resolution and is upscaled with the scene.
+
+The capability check (`RenderCapabilities::spatialUpscaling`) requires RGBA8
+storage images and a sampled, renderable output format. Without it validation
+falls back to TAAU where TAA is available and to native resolution otherwise,
+each with a `fallbacks` message. A vendor upscaler such as DLSS would be
+another `UpscalerMode` behind its own capability check; it needs a proprietary
+SDK and is not included.
+
+GPU scopes are `gpu.fsr_easu` (timestamps 47/48) and `gpu.fsr_rcas` (49/50);
+`gpu.spatial_upscale` is their sum, checked against
+`RenderPassBudgets::spatialUpscale` (serialized as `spatialUpscale`).
+`render.spatial_upscale_bytes` reports the two targets once allocated. Both
+scopes report zero unless the frame used FSR 1. `ZENITH_FORCE_UPSCALER` and
+`ZENITH_FORCE_UPSCALER_QUALITY` select a mode and preset for diagnostics, and
+`zenith_spatial_upscale` covers the presets, EASU constants and reconstruction,
+RCAS, serialization, and fallbacks on the CPU.
+
+## Motion blur
+
+`RenderSettings::motionBlur` (`MotionBlurQuality`: Off, Low, High; JSON
+`motionBlur` 0-2) blurs the HDR scene by the existing motion vectors after the
+temporal resolve and before exposure, bloom, and tone mapping, so camera and
+object motion (including skinned meshes) blur alike. Off is the default and the
+fallback: no work is recorded, no images are allocated, and the post pass reads
+the resolved (or raw HDR) scene as before; validation also selects it, with a
+fallback message, when `RenderCapabilities::motionBlur` is false.
+`motionBlurShutterFraction` (0-1, default 0.5) is the exposure as a fraction of
+a 60 Hz frame; velocities are rescaled by the real frame time
+(`motion_blur::velocityScale`), so the blur length follows on-screen speed, not
+the frame rate. `motionBlurMaximumRadiusPixels` (1-64 output pixels, default 32)
+caps the blur on either side of a pixel and sets the tile size. All three keys
+are optional in the render-settings document.
+
+The pass reduces blur velocities to tiles (`motion_blur_tile_max.comp`), takes
+each tile's 3x3 neighbourhood maximum (`motion_blur_neighbor_max.comp`), and
+gathers 8 (Low) or 16 (High) depth-weighted samples along it
+(`motion_blur_reconstruct.comp`); pixels whose neighbourhood moves less than
+half a pixel are copied. The scope is `gpu.motion_blur` (timestamps 43-44) with
+the `motionBlur` budget; `render.motion_blur_bytes` reports the blurred scene
+and tile images (17 MB at 1920x1080). `zenith_motion_blur` covers velocity
+scaling, radius and tile math, and the settings round trip and fallback.
+
+## Depth of field
+
+`RenderSettings::depthOfField` (`DepthOfFieldSettings`, serialized as the
+optional `depthOfField` object) blurs the HDR scene with a thin-lens circle of
+confusion, after the temporal resolve and before exposure, bloom, and tone
+mapping. `quality` (`DepthOfFieldQuality`) is Off (the fallback: no work, no
+memory), Low, or High; both gather at half resolution, and Low spaces its
+golden-angle spiral twice as far apart (about half the samples). The lens is
+`focusDistance` (meters along the view axis), `fStop`, `sensorHeightMillimeters`
+(with the camera's vertical field of view it fixes the focal length), and
+`maximumCocRadiusPixels` (the blur radius limit in pixels of the blurred image,
+which bounds the gather cost). Deserialization rejects values outside the
+ranges in `DepthOfField.hpp`; validation turns depth of field Off with a
+fallback message when the device lacks the capability or settings set in code
+are out of range. `ZENITH_FORCE_HIGH_QUALITY` selects High and
+`ZENITH_DISABLE_DEPTH_OF_FIELD` forces Off.
+
+The GPU scope is `gpu.depth_of_field` (timestamps 41 and 42, zero when Off)
+against `RenderPassBudgets::depthOfField` (`depthOfField` in the budgets
+object); `render.depth_of_field_bytes` reports its targets (two half-resolution
+and one output-resolution RGBA16F image, allocated on first use).
+`zenith_depth_of_field` covers the CoC against the thin-lens formula, depth
+linearization, the gather sample count, the composite blend, settings
+serialization, and the fallbacks.
+
+## Colour grading
+
+`ColorGradePass` is a display-referred finishing stage after tone mapping. Its
+three effects are independent `RenderSettings` members, each Off by default,
+serialized under the render-settings `colorGrade` object (every object and
+field optional, so older documents load with the stage off):
+
+| Setting | JSON (`colorGrade.*`) | Range | Effect |
+| --- | --- | --- | --- |
+| `colorLut` | `colorLut.enabled`, `.path`, `.strength` | strength 0..1 | 3D `.cube` LUT applied to sRGB-encoded values, mixed over the ungraded image by `strength`. `path` is relative to the render asset root (the project's `assetRoot`) or absolute; empty applies nothing. |
+| `vignette` | `vignette.enabled`, `.intensity`, `.smoothness`, `.roundness` | 0..1, 0.01..1, 0..1 | Corners keep `1 - intensity`; `smoothness` is the falloff width as a fraction of the centre-to-corner distance; roundness 1 is circular on screen, 0 follows the frame's aspect. |
+| `filmGrain` | `filmGrain.enabled`, `.intensity`, `.size` | 0..0.5, 1..8 px | Uniform grain added in sRGB-encoded units over cells of `size` output pixels, re-seeded every frame by the frame serial, so `ZENITH_FRAME_DETERMINISTIC` captures repeat it exactly. |
+
+With every effect off (or only a LUT whose file failed to load, which is
+reported once on stderr) the post pass tone-maps straight into the output and
+the stage records nothing: the Off fallback costs nothing and leaves images
+bit-identical. Otherwise tone mapping writes an output-sized RGBA16F display
+target and one fullscreen draw (`shaders/color_grade.frag`) writes the output.
+The LUT is parsed on the CPU (`engine/assets/ColorLut`) and uploaded as an
+RGBA16F 3D texture with linear filtering only when its path or the asset root
+changes. `ColorGrading.hpp` is the CPU reference; `zenith_color_grading` covers
+the parser (sizes, domains, malformed input), sampling, the vignette, grain
+determinism and the settings document. `assets/color_grading/warm_cinematic.cube`
+(17^3, regenerated by `tools/color_grading/`) is an example grade.
+
+The grade is deliberately not part of `ZENITH_FORCE_HIGH_QUALITY`: it is an
+artistic choice of the project, not a quality tier, so forcing it would change
+every reference image rather than raise fidelity.
+
+The scope is `gpu.color_grade` (timestamps 45/46) with the budget
+`RenderPassBudgets::colorGrade` (`budgets.colorGrade`). Most of the cost is the
+extra full-screen RGBA16F write and read, so it scales with output pixels;
+`gpu.post` itself is unchanged. LUT files up to the specification's 256^3 load
+(about 130 MB as RGBA16F), but they are parsed and uploaded on the render
+thread when the path changes, so practical grades stay at 17^3 to 65^3.
+
+## Post-process descriptors and FXAA
+
+`post.frag` binds 0 HDR scene, 1 depth, 2 temporally resolved scene, 3 bloom
+mip 0 and 4 the exposure buffer; the former placeholder bindings for motion,
+ambient occlusion, reflections and previous motion are gone. FXAA operates on
+the composited image: every FXAA tap re-evaluates the same composite as the
+centre (scene plus editor grid), so grid lines are antialiased with the scene
+instead of being blended against grid-free neighbours, and taps stay one
+scene-image texel apart. With the grid off and full resolution the result is
+unchanged. TAA frames do not run FXAA.

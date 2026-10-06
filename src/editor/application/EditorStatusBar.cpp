@@ -55,19 +55,19 @@ void EditorSession::drawStatusBar(const RenderStats& stats) {
         segment(text.data(), palette::captionInk);
         ImGui::SameLine();
         drawPlayModePill();
-        if (m_moduleReloadPending && m_playMode.mode() != EditorMode::Edit) {
-            // The rebuilt module waits for Stop (EditorSession::updateGameModule).
+        if (m_modules.reloadPending() && m_playMode.mode() != EditorMode::Edit) {
+            // The rebuilt module waits for Stop (GameModuleController::pollReload).
             ImGui::SameLine();
             widgets::StatusPill(EditorIcon::Warning, "Reload pending - stop to apply",
                                 widgets::StatusPillStyle::Warning);
-        } else if (m_moduleReloadPending && !m_prefabWindows.empty()) {
+        } else if (m_modules.reloadPending() && !m_prefabWindows.windows().empty()) {
             // Prefab windows' scenes hold module storage too.
             ImGui::SameLine();
             widgets::StatusPill(EditorIcon::Warning, "Reload pending - close the prefab windows to apply",
                                 widgets::StatusPillStyle::Warning);
         }
-        if (m_moduleHost.status() != GameModuleStatus::None) {
-            segment(gameModuleStatusText().c_str(), palette::captionInk);
+        if (m_modules.host().status() != GameModuleStatus::None) {
+            segment(m_modules.statusText().c_str(), palette::captionInk);
         }
     }
     ImGui::End();
@@ -76,7 +76,7 @@ void EditorSession::drawStatusBar(const RenderStats& stats) {
 void EditorSession::drawPlayModePill() const {
     switch (m_playMode.mode()) {
     case EditorMode::Edit:
-        if (m_standalone.running()) {
+        if (m_playback.standaloneRunning()) {
             widgets::StatusPill(EditorIcon::Play, "Standalone", widgets::StatusPillStyle::Lit);
         } else {
             widgets::StatusPill(EditorIcon::Stop, "Edit");
