@@ -57,10 +57,12 @@ OperatorRegistrationResult registerPlayControlOperatorFamily(OperatorRegistry& r
                              PlayStartProperties{},
                              std::move(Fields<PlayStartProperties>().add("target", &PlayStartProperties::target))),
                          .poll =
-                             [&play, &prefabMode](const OperatorContext& context) {
-                                 return context.app != nullptr && context.mode == EditorMode::Edit &&
-                                        !play.standaloneRunning() && !prefabMode.prefabEditActive();
-                             },
+                             // The session's state, not context's: a prefab
+                             // window's document is in Edit mode while the
+                             // level plays.
+                         [&play, &prefabMode](const OperatorContext& context) {
+                             return context.app != nullptr && !play.playActive() && !prefabMode.prefabEditActive();
+                         },
                          .execute =
                              [&play, targetKeys](OperatorContext& context, OperatorProperties& properties) {
                                  const PlayStartProperties* values = properties.get<PlayStartProperties>();
@@ -82,13 +84,11 @@ OperatorRegistrationResult registerPlayControlOperatorFamily(OperatorRegistry& r
         "play.simulate", "Simulate",
         "Run physics and the systems chosen in the System Profiler on a copy of the document, keeping the editor "
         "camera and tools",
-        [&play, &prefabMode](const OperatorContext& context) {
-            return context.mode == EditorMode::Edit && !play.standaloneRunning() && !prefabMode.prefabEditActive();
-        },
+        [&play, &prefabMode](const OperatorContext&) { return !play.playActive() && !prefabMode.prefabEditActive(); },
         [&play](ApplicationContext& app) { play.startSimulate(app); }));
     operators.push_back(applicationOperator(
         "play.toggle_pause", "Pause / Resume", "Pause or resume Play or Simulate",
-        [](const OperatorContext& context) { return context.mode != EditorMode::Edit; },
+        [&playMode](const OperatorContext&) { return playMode.mode() != EditorMode::Edit; },
         [&playMode](ApplicationContext&) {
             if (playMode.running()) {
                 playMode.pause();
@@ -100,7 +100,7 @@ OperatorRegistrationResult registerPlayControlOperatorFamily(OperatorRegistry& r
         "play.step", "Step Frame",
         "Advance paused Play or Simulate by one frame of the fixed time step: Update systems, animation, and "
         "audio, plus the fixed update that frame runs",
-        [](const OperatorContext& context) { return context.mode == EditorMode::Paused; },
+        [&playMode](const OperatorContext&) { return playMode.mode() == EditorMode::Paused; },
         [&playMode](ApplicationContext& app) { playMode.requestFrameStep(app.physics.config().fixedTimeStep); }));
     operators.push_back(applicationOperator(
         "play.stop", "Stop", "Leave Play or Simulate and restore the authored scene, or stop the standalone game",

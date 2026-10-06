@@ -142,7 +142,7 @@ struct Fixture {
                     }};
     }
 
-    ActiveDocument active() {
+    DocumentBinding active() {
         return {.scene = scene, .document = document, .history = history, .selection = selection};
     }
 

@@ -165,6 +165,12 @@ zenith_add_test(zenith_prefab_edit_mode SOURCES PrefabEditModeTests.cpp LIBS zen
         ZENITH_EDITOR_FONT="${inter_SOURCE_DIR}/extras/ttf/Inter-Regular.ttf"
         ZENITH_EDITOR_TEST_MODULE_V1="$<TARGET_FILE:zenith_editor_test_module>"
     DEPENDS zenith_editor_test_module)
+# Prefab windows: PrefabWindowSet headless, then the whole session headless.
+zenith_add_test(zenith_prefab_windows SOURCES PrefabWindowTests.cpp LIBS zenith_editor_app NEEDS_ASSETS
+    DEFINITIONS
+        ZENITH_EDITOR_FONT="${inter_SOURCE_DIR}/extras/ttf/Inter-Regular.ttf"
+        ZENITH_EDITOR_TEST_MODULE_V1="$<TARGET_FILE:zenith_editor_test_module>"
+    DEPENDS zenith_editor_test_module)
 zenith_add_test(zenith_workspaces EXECUTABLE zenith_workspace_tests SOURCES WorkspaceTests.cpp LIBS zenith_editor_app)
 # The full editor session driven headlessly, as zenith_editor composes it.
 zenith_add_test(zenith_editor_session SOURCES EditorSessionTests.cpp LIBS zenith_editor_app NEEDS_ASSETS

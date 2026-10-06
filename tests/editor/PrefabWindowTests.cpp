@@ -127,8 +127,9 @@ struct Fixture {
     }
 
     PrefabWriteHooks hooks() {
-        return {.fileWritten = [this](const fs::path& file,
-                                      const std::optional<std::string>& bytes) { ledger.record(file, bytes); }};
+        return {.fileWritten = [this](const fs::path& file, const std::optional<std::string>& bytes) {
+            ledger.record(file, bytes);
+        }};
     }
 
     PrefabWindowDocument* open(const std::string& reference) {
@@ -370,7 +371,8 @@ ProjectConfig prefabProject(const fs::path& root, bool withModule = false, std::
          {binding(editLampKey, "prefab.edit", {{"asset", "lamp.prefab"}}),
           binding(closeKey, "prefab.exit_edit", nlohmann::json::object()),
           binding(addLightKey, "object.component_add", {{"component", "point_light"}}),
-          binding(reloadKey, "module.reload", nlohmann::json::object())}}}.dump();
+          binding(reloadKey, "module.reload",
+                  nlohmann::json::object())}}}.dump();
     std::ofstream(root / "settings" / "settings.ini") << "ui.prefab_windows=true\n" << extraSettings;
 
     ProjectConfig project;
@@ -402,6 +404,9 @@ void testWindowEditsThePrefabBesideTheLevel(const fs::path& root) {
     editor.frame();
     expect(inLevel(editor.scene) && editor.windowOpen(lampWindow),
            "window: the prefab opens in a window and the level stays open");
+    expect(editor.windowOpen("Hierarchy##prefab.1.hierarchy") && editor.windowOpen("Inspector##prefab.1.inspector") &&
+               editor.windowOpen("Viewport##prefab.1.viewport"),
+           "window: the window shows its own Hierarchy, Inspector, and viewport");
     editor.press(addLightKey);
     expect(litLamps(editor.scene) == 0 && readText(file) == original,
            "window: an edit in the focused window changes neither the level nor the file");

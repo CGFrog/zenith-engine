@@ -342,6 +342,14 @@ bool SceneEditing::applyToEditScene(std::string name, SceneChanges changes) cons
     return true;
 }
 
+bool SceneEditing::canUndo() const {
+    return !runtime() && m_history.canUndo();
+}
+
+bool SceneEditing::canRedo() const {
+    return !runtime() && m_history.canRedo();
+}
+
 void SceneEditing::undo() const {
     if (runtime() || !m_history.canUndo()) {
         return;

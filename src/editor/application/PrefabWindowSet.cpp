@@ -75,8 +75,7 @@ PrefabResult PrefabWindowSet::open(const std::filesystem::path& reference, const
     return result;
 }
 
-PrefabWindowDocument& PrefabWindowSet::adopt(Scene& prefabScene, PrefabEditTarget target,
-                                             const EditorDocument& level) {
+PrefabWindowDocument& PrefabWindowSet::adopt(Scene& prefabScene, PrefabEditTarget target, const EditorDocument& level) {
     PrefabWindowDocument& window = add(prefabScene, std::move(target), level);
     window.document.markDirty();
     return window;
@@ -150,8 +149,8 @@ void PrefabWindowSet::filesMoved(std::span<const ProjectFileMove> moves, const s
         if (const SceneDocumentResult result =
                 relocateSceneAssets(window->scene, assets, window->document.options(), moves, relocated);
             !result) {
-            diagnostics.reportError("Could not follow moved assets in the prefab " + window->target.displayName +
-                                    ": " + result.error);
+            diagnostics.reportError("Could not follow moved assets in the prefab " + window->target.displayName + ": " +
+                                    result.error);
         } else if (relocated > 0) {
             window->document.markDirty();
         }

@@ -15,7 +15,6 @@
 #include <string_view>
 
 class AreaRegistry;
-class CommandHistory;
 class ComponentInspectorLayout;
 class EditorDocument;
 class EditorDocumentCommands;
@@ -43,7 +42,6 @@ struct NavMeshBuildSettings;
 // operators; a family keeps what it needs in its own services.
 struct EditorOperatorServices {
     EditorDocument& document;
-    CommandHistory& history;
     EntityEyedropper& eyedropper;
     // Where the component copy and paste operators exchange values.
     TextClipboard& componentClipboard;

@@ -16,13 +16,16 @@ add_library(zenith_editor_app STATIC
     application/EditorViewports.cpp
     application/EditorPlayMode.cpp
     application/EditorPrefabMode.cpp
+    application/EditorPrefabWindows.cpp
     application/EditorPlayback.cpp
     application/EditorPreferences.cpp
     application/FolderPicker.cpp
     application/NativeFileDialog.cpp
     application/FileDropQueue.cpp
     application/PlayTargets.cpp
+    application/PrefabEditTargets.cpp
     application/PrefabInstanceRefresh.cpp
+    application/PrefabWindowSet.cpp
     application/EditorSession.cpp
     application/EditorFileDialogs.cpp
     application/EditorMainMenu.cpp
@@ -43,6 +46,7 @@ add_library(zenith_editor_app STATIC
     document/DefaultScene.cpp
     document/EditorDocument.cpp
     document/EditorRecovery.cpp
+    document/PrefabWindowRecovery.cpp
     document/PrefabAuthoring.cpp
     document/PrefabEditDocument.cpp
     document/PrefabWriteCommand.cpp

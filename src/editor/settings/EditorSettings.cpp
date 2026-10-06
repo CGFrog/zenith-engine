@@ -176,6 +176,9 @@ std::optional<std::string> readPreference(std::string_view key, std::string_view
     if (key == "ui.pie_menus") {
         return parseBoolean(value, loaded.appearance.pieMenus) ? "" : lineError(key, lineNumber, "true or false");
     }
+    if (key == "ui.prefab_windows") {
+        return parseBoolean(value, loaded.appearance.prefabWindows) ? "" : lineError(key, lineNumber, "true or false");
+    }
     if (key == "ui.prefab_workspace") {
         return parseBoolean(value, loaded.appearance.prefabWorkspace) ? ""
                                                                       : lineError(key, lineNumber, "true or false");
@@ -334,6 +337,7 @@ EditorSettingsResult EditorSettings::save() const {
            << "ui.scale=" << (uiScale == 0 ? std::string("auto") : std::to_string(uiScale)) << '\n'
            << "ui.pie_menus=" << (m_appearance.pieMenus ? "true" : "false") << '\n'
            << "ui.prefab_workspace=" << (m_appearance.prefabWorkspace ? "true" : "false") << '\n'
+           << "ui.prefab_windows=" << (m_appearance.prefabWindows ? "true" : "false") << '\n'
            << "autosave.interval=" << formatNumber(autosaveInterval) << '\n';
     if (!output) {
         return {.error = "Could not finish writing editor settings: " + m_path.string()};

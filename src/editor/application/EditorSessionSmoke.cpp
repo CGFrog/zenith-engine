@@ -23,7 +23,7 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     }
 
     OperatorContext operatorContext(KeymapRegion region) override {
-        return m_session.operatorContext(m_context, region);
+        return m_session.levelOperatorContext(m_context, region);
     }
 
     SceneEditing editing() override {
@@ -31,7 +31,8 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     }
 
     void undo() override {
-        m_session.undo(m_context);
+        OperatorContext level = m_session.levelOperatorContext(m_context, KeymapRegion::Global);
+        m_session.undo(level);
     }
 
     void undoSince(CommandHistoryMarker marker) override {

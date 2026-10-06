@@ -1,6 +1,7 @@
 #include "DocumentStack.hpp"
 
 #include "editor/application/EditorDiagnostics.hpp"
+#include "editor/application/PrefabEditTargets.hpp"
 #include "editor/application/PrefabInstanceRefresh.hpp"
 #include "editor/application/SceneEditing.hpp"
 #include "editor/document/PrefabAuthoring.hpp"
@@ -17,7 +18,7 @@ std::filesystem::path normalReference(const std::filesystem::path& reference) {
 }
 
 // Exchanges the active document's contents with parked's.
-void exchange(ActiveDocument active, ParkedDocument& parked) {
+void exchange(DocumentBinding active, ParkedDocument& parked) {
     active.scene.swap(parked.scene);
     std::swap(active.document, parked.document);
     active.history.exchangeTimeline(parked.history);
@@ -59,7 +60,7 @@ bool DocumentStack::contains(const std::filesystem::path& reference) const {
         m_frames, [&wanted](const std::unique_ptr<Frame>& frame) { return frame->prefab.reference == wanted; });
 }
 
-PrefabResult DocumentStack::push(ActiveDocument active, AssetManager& assets, const std::filesystem::path& reference) {
+PrefabResult DocumentStack::push(DocumentBinding active, AssetManager& assets, const std::filesystem::path& reference) {
     const std::filesystem::path wanted = normalReference(reference);
     if (contains(wanted)) {
         return {.error = wanted.generic_string() + " is already open; go back to it with the breadcrumbs"};
@@ -85,7 +86,7 @@ PrefabResult DocumentStack::push(ActiveDocument active, AssetManager& assets, co
     return result;
 }
 
-void DocumentStack::pushRecovered(ActiveDocument active, Scene& prefabScene, PrefabEditTarget target) {
+void DocumentStack::pushRecovered(DocumentBinding active, Scene& prefabScene, PrefabEditTarget target) {
     auto frame = std::make_unique<Frame>(active.document);
     exchange(active, frame->parent);
     // The active document is now a copy of the parked one's state (same
@@ -100,39 +101,16 @@ void DocumentStack::pushRecovered(ActiveDocument active, Scene& prefabScene, Pre
     m_frames.push_back(std::move(frame));
 }
 
-PrefabResult DocumentStack::save(ActiveDocument active, AssetManager& assets, EditorDiagnostics& diagnostics,
+PrefabResult DocumentStack::save(DocumentBinding active, AssetManager& assets, EditorDiagnostics& diagnostics,
                                  const PrefabWriteHooks& hooks) {
     if (m_frames.empty()) {
         return {.error = "No prefab is open"};
     }
-    PrefabEditTarget& target = m_frames.back()->prefab;
-    const SceneEditing editing(active.scene, assets, active.document, active.history, diagnostics);
-    std::string before;
-    if (!editing.capture(before)) {
-        return {.error = "Could not record the save of " + target.displayName};
-    }
-    PrefabSystem prefabs(assets, active.document.options());
     SavedPrefabDocument saved;
-    PrefabResult result = savePrefabDocument(active.scene, target.root, target.reference, prefabs, saved, hooks);
-    if (!result) {
-        return result;
-    }
-    // Entities added since opening now carry the ids the file gave them.
-    std::string after;
-    if (editing.capture(after)) {
-        editing.commit("Save " + target.displayName, {}, before, after);
-    }
-    active.history.crossBoundary(CommandHistoryBoundary::SaveDocument);
-    active.document.markSaved();
-    if (!target.savedThisVisit) {
-        target.before = std::move(saved.before);
-        target.savedThisVisit = true;
-    }
-    target.saved = std::move(saved.after);
-    return result;
+    return saveOpenPrefab(active, m_frames.back()->prefab, assets, diagnostics, hooks, saved);
 }
 
-DocumentStackPopResult DocumentStack::pop(ActiveDocument active, AssetManager& assets, EditorDiagnostics& diagnostics,
+DocumentStackPopResult DocumentStack::pop(DocumentBinding active, AssetManager& assets, EditorDiagnostics& diagnostics,
                                           const PrefabWriteHooks& hooks) {
     DocumentStackPopResult popped;
     if (m_frames.empty()) {
@@ -188,7 +166,7 @@ DocumentStackPopResult DocumentStack::pop(ActiveDocument active, AssetManager& a
     return popped;
 }
 
-std::vector<std::pair<ViewportId, ViewportPanel::DocumentView>> DocumentStack::unwind(ActiveDocument active) {
+std::vector<std::pair<ViewportId, ViewportPanel::DocumentView>> DocumentStack::unwind(DocumentBinding active) {
     if (m_frames.empty()) {
         return {};
     }
@@ -229,18 +207,7 @@ PrefabResult DocumentStack::refreshParked(AssetManager& assets, EditorDiagnostic
 void DocumentStack::filesMoved(std::span<const ProjectFileMove> moves, AssetManager& assets,
                                EditorDiagnostics& diagnostics) {
     for (const std::unique_ptr<Frame>& frame : m_frames) {
-        PrefabEditTarget& prefab = frame->prefab;
-        if (std::optional<std::filesystem::path> moved =
-                relocatedProjectPath(normalizedCatalogPath(prefab.file), moves)) {
-            std::error_code error;
-            const std::filesystem::path root =
-                std::filesystem::absolute(frame->parent.document.options().assetRoot, error).lexically_normal();
-            prefab.file = std::move(*moved);
-            prefab.reference = normalReference(prefab.file.lexically_relative(root));
-            diagnostics.add(EditorDiagnosticSeverity::Info, "Prefabs",
-                            "The open prefab " + prefab.displayName + " now lives at '" +
-                                prefab.reference.generic_string() + "'.");
-        }
+        followMovedPrefab(frame->prefab, frame->parent.document.options().assetRoot, moves, diagnostics);
         ParkedDocument& parked = frame->parent;
         if (parked.document.path()) {
             if (std::optional<std::filesystem::path> moved =
@@ -261,11 +228,7 @@ void DocumentStack::filesMoved(std::span<const ProjectFileMove> moves, AssetMana
 
 void DocumentStack::filesRemoved(std::span<const std::filesystem::path> removed, EditorDiagnostics& diagnostics) {
     for (const std::unique_ptr<Frame>& frame : m_frames) {
-        if (isRemovedProjectPath(normalizedCatalogPath(frame->prefab.file), removed)) {
-            diagnostics.add(EditorDiagnosticSeverity::Warning, "Prefabs",
-                            "The open prefab " + frame->prefab.displayName +
-                                "'s file was removed; save it to write the file again.");
-        }
+        warnRemovedPrefab(frame->prefab, removed, diagnostics);
         ParkedDocument& parked = frame->parent;
         if (parked.document.path() && isRemovedProjectPath(normalizedCatalogPath(*parked.document.path()), removed)) {
             diagnostics.add(EditorDiagnosticSeverity::Warning, "Editor",

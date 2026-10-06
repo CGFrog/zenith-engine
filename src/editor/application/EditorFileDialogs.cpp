@@ -147,7 +147,7 @@ void EditorSession::drawUnsavedChangesDialog(ApplicationContext& context) {
     ImGui::TextWrapped("%s has unsaved changes.", activeDocumentName().c_str());
     if (widgets::Button("Save")) {
         if (!m_documents.empty() || m_document.path()) {
-            if (saveDocument(context)) {
+            if (saveLevelDocument(context)) {
                 ImGui::CloseCurrentPopup();
                 continuePendingAction(context);
             }
@@ -234,6 +234,9 @@ void EditorSession::requestProjectHub(ApplicationContext& context, ProjectHubEnt
 
 void EditorSession::requestLeavePrefabEdit(ApplicationContext& context) {
     if (m_documents.empty()) {
+        if (const PrefabWindowDocument* window = focusedPrefabWindow()) {
+            requestClosePrefabWindow(window->id);
+        }
         return;
     }
     m_pendingOpenPath.reset();
@@ -242,6 +245,14 @@ void EditorSession::requestLeavePrefabEdit(ApplicationContext& context) {
 }
 
 void EditorSession::continuePendingAction(ApplicationContext& context) {
+    // Quitting and leaving for the Project Hub end the session, so each
+    // prefab window with unsaved changes asks first. New and Open replace
+    // only the level; the windows stay open beside it.
+    const bool endsSession =
+        m_pendingAction == PendingAction::CloseEditor || m_pendingAction == PendingAction::LeaveForProjectHub;
+    if (endsSession && askAboutPrefabWindows()) {
+        return;
+    }
     if (m_pendingAction != PendingAction::LeavePrefab) {
         // Every other action replaces or closes the scene, so the prefabs
         // open over it are left first, top down.
@@ -288,7 +299,14 @@ void EditorSession::finishPendingAction(ApplicationContext& context) {
     }
 }
 
-bool EditorSession::saveDocument(ApplicationContext& context) {
+bool EditorSession::saveDocument(OperatorContext& context) {
+    if (PrefabWindowDocument* window = m_prefabWindows.owner(context.editing.document())) {
+        return savePrefabWindow(*context.app, *window);
+    }
+    return saveLevelDocument(*context.app);
+}
+
+bool EditorSession::saveLevelDocument(ApplicationContext& context) {
     if (!m_documents.empty()) {
         return savePrefabEdit(context);
     }

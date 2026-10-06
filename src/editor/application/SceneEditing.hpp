@@ -167,6 +167,10 @@ class SceneEditing {
     // Undo and redo the edit history; they do nothing in the runtime scene.
     void undo() const;
     void redo() const;
+    // Whether undo or redo would change anything: the history has a step to
+    // take and the scene is not Play's runtime scene.
+    bool canUndo() const;
+    bool canRedo() const;
 
     // The history's revision (CommandHistory::revision): it changes with every
     // recorded edit, undo, and redo, so views can cache what they derive from

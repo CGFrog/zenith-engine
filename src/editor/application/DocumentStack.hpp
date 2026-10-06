@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/application/DocumentBinding.hpp"
 #include "editor/document/CommandHistory.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "editor/document/PrefabEditDocument.hpp"
@@ -21,17 +22,11 @@
 class AssetManager;
 class EditorDiagnostics;
 
-// The objects holding the document being edited: the session's own members.
-// Operators, panels, and the undo keys refer to them by address, so switching
+// The active document is the session's own members (a DocumentBinding):
+// operators, panels, and the undo keys refer to them by address, so switching
 // documents exchanges their contents and never the objects themselves.
-struct ActiveDocument {
-    Scene& scene;
-    EditorDocument& document;
-    CommandHistory& history;
-    Selection& selection;
-};
 
-// A document parked under a prefab edit: everything ActiveDocument holds,
+// A document parked under a prefab edit: everything a DocumentBinding names,
 // plus each viewport's view of it.
 struct ParkedDocument {
     explicit ParkedDocument(EditorDocument document)
@@ -57,7 +52,7 @@ struct DocumentStackPopResult {
 };
 
 // The documents parked under prefab edits, from the scene up (the editor's
-// prefab mode). The active document is always the session's ActiveDocument;
+// prefab mode). The active document is always the session's DocumentBinding;
 // each frame of the stack is one prefab edit: the prefab being (or, below the
 // top, waiting to be) edited, and the document it was opened over. Opening a
 // prefab from inside prefab mode (a nested instance) pushes another frame, and
@@ -111,16 +106,16 @@ class DocumentStack {
     // Fails, changing nothing, when the prefab is already open in the stack
     // or cannot be opened. The result's diagnostics list instantiation
     // problems.
-    PrefabResult push(ActiveDocument active, AssetManager& assets, const std::filesystem::path& reference);
+    PrefabResult push(DocumentBinding active, AssetManager& assets, const std::filesystem::path& reference);
     // As push, with the prefab's scene already built (an autosave being
     // recovered): prefabScene's content becomes the active scene.
-    void pushRecovered(ActiveDocument active, Scene& prefabScene, PrefabEditTarget target);
+    void pushRecovered(DocumentBinding active, Scene& prefabScene, PrefabEditTarget target);
 
     // Writes the active prefab to its file (savePrefabDocument): links that
     // saving gives entities added since opening are recorded as a step
     // "Save <name>" on the active history, the history and document become
     // clean, and the content is kept for the step pop records.
-    PrefabResult save(ActiveDocument active, AssetManager& assets, EditorDiagnostics& diagnostics,
+    PrefabResult save(DocumentBinding active, AssetManager& assets, EditorDiagnostics& diagnostics,
                       const PrefabWriteHooks& hooks);
 
     // Leaves the active prefab, dropping its unsaved changes, and makes the
@@ -131,12 +126,12 @@ class DocumentStack {
     // parked further down refresh theirs as a step "Refresh <name> instances"
     // each. A file changed outside the editor since the last save gets only
     // the scene-only refresh. Does nothing when empty.
-    DocumentStackPopResult pop(ActiveDocument active, AssetManager& assets, EditorDiagnostics& diagnostics,
+    DocumentStackPopResult pop(DocumentBinding active, AssetManager& assets, EditorDiagnostics& diagnostics,
                                const PrefabWriteHooks& hooks);
     // Drops every prefab edit with its unsaved changes, without recording
     // anything, and makes the scene document active again; returns its
     // views. For the session ending, before the game module unloads.
-    std::vector<std::pair<ViewportId, ViewportPanel::DocumentView>> unwind(ActiveDocument active);
+    std::vector<std::pair<ViewportId, ViewportPanel::DocumentView>> unwind(DocumentBinding active);
 
     // A prefab file changed outside the editor: refreshes its instances in
     // every parked document, each as one step stepName on its own history

@@ -19,7 +19,8 @@ void EditorSession::handleGlobalShortcuts(ApplicationContext& context) {
     // Before any panel, so a press followed from a region finishes even
     // when the mouse has left it.
     updateKeymapGesture(context);
-    dispatchKeymap(context, KeymapRegion::Global);
+    // Global keys act on the document whose window last had focus.
+    dispatchKeymap(context, focusedPrefabWindow(), KeymapRegion::Global);
 }
 
 void EditorSession::drawDebugOverlaysMenu(ApplicationContext& context) {

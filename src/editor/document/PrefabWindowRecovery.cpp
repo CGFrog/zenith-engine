@@ -60,8 +60,7 @@ SceneDocumentResult PrefabWindowRecovery::autosave(std::span<const PrefabWindowA
     }
     size_t number = 1;
     for (const PrefabWindowAutosave& window : windows) {
-        const PrefabEditRecovery recovery(m_directory /
-                                          (std::to_string(number++) + std::string(recoveryExtension)));
+        const PrefabEditRecovery recovery(m_directory / (std::to_string(number++) + std::string(recoveryExtension)));
         if (SceneDocumentResult saved = recovery.autosave(window.scene, assets, window.options, window.note);
             !saved && result) {
             result = std::move(saved);

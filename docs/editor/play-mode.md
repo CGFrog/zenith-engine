@@ -29,7 +29,10 @@ While a prefab is open in prefab mode (see
 [Scene editing](scene-editing.md#prefab-mode-the-document-stack)) Play and
 Simulate are disabled, their toolbar buttons saying "Return to the scene to
 play", and prefab mode cannot be entered during Play: the runtime scene is
-always built from a scene document.
+always built from a scene document. Prefab windows ([Prefab
+windows](prefab-windows.md)) do not stop Play: the level plays while they stay
+open and editable, and saving one refreshes the level's edit scene, which Stop
+restores.
 
 Play targets (`application/PlayTargets`, wired in `application/
 EditorPlayback.cpp`): `play.start {target}` runs Play in `viewport` (the

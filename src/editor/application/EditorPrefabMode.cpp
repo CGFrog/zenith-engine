@@ -28,7 +28,15 @@ bool EditorSession::prefabEditActive() const {
     return !m_documents.empty();
 }
 
+bool EditorSession::prefabCloseAvailable() const {
+    return !m_documents.empty() || focusedPrefabWindow() != nullptr;
+}
+
 bool EditorSession::prefabEditAvailable(const OperatorContext& context) const {
+    if (prefabWindowsEnabled()) {
+        // A window opens beside the level, so the level may be playing.
+        return !m_fileDialog.pending() && !m_activeTransform;
+    }
     return documentCommandsAvailable(context);
 }
 
@@ -40,11 +48,14 @@ std::optional<OpenPrefabSummary> EditorSession::activePrefabSummary() const {
     return OpenPrefabSummary{.displayName = prefab->displayName, .root = prefab->root};
 }
 
-ActiveDocument EditorSession::activeDocument(ApplicationContext& context) {
+DocumentBinding EditorSession::activeDocument(ApplicationContext& context) {
     return {.scene = context.scene, .document = m_document, .history = m_history, .selection = m_selection};
 }
 
 OperatorResult EditorSession::editPrefab(ApplicationContext& context, const std::filesystem::path& reference) {
+    if (prefabWindowsEnabled()) {
+        return openPrefabWindow(context, reference);
+    }
     if (m_playMode.mode() != EditorMode::Edit) {
         return OperatorResult::failed("Stop Play before editing a prefab");
     }

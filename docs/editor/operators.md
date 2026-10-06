@@ -148,7 +148,19 @@ file dialog or modal tool; they record nothing themselves. In prefab mode
 `file.save` writes the prefab, `file.save_as`, `play.start`, and
 `play.simulate` are disabled, and going back after saving records one
 "Edit <name>" step on the document below (see
-[Scene editing](scene-editing.md#prefab-mode-the-document-stack)).
+[Scene editing](scene-editing.md#prefab-mode-the-document-stack)). With
+`ui.prefab_windows` on, `prefab.edit` opens a floating window beside the level
+instead (also during Play), and `prefab.exit_edit` closes the prefab window
+that last had focus ([Prefab windows](prefab-windows.md)).
+
+Operators run on the document their `OperatorContext` names: the level, or a
+prefab window's document. `file.save`, `edit.undo`, `edit.redo`, `edit.copy`,
+and `edit.paste` reach the session with that context
+(`EditorDocumentCommands`), and their polls read its history through
+`SceneEditing::canUndo`/`canRedo`. A context's `mode` is its document's: a
+prefab window's is Edit even while the level plays, so operators about the
+session itself (`play.*`, `file.new`, `file.open`, `file.save_as`) poll the
+session's play state instead.
 `prefab.instantiate` also reports the files it read
 (`PrefabWriteHooks::fileRead`), which seeds the session's write ledger.
 

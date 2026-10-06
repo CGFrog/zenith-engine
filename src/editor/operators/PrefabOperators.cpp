@@ -430,7 +430,7 @@ Operator exitEditOperator(EditorPrefabModeCommands* prefabMode) {
             .description = "Leave the prefab and return to the document under it, asking about unsaved changes",
             .poll =
                 [prefabMode](const OperatorContext& context) {
-                    return prefabMode != nullptr && context.app != nullptr && prefabMode->prefabEditActive() &&
+                    return prefabMode != nullptr && context.app != nullptr && prefabMode->prefabCloseAvailable() &&
                            prefabMode->prefabEditAvailable(context);
                 },
             .execute =

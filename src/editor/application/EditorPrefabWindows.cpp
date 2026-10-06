@@ -15,6 +15,8 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include <algorithm>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -172,7 +174,10 @@ void EditorSession::requestClosePrefabWindow(uint64_t id) {
     m_prefabWindowCloses.push_back(id);
 }
 
-void EditorSession::applyPrefabWindowCloses() {
+void EditorSession::applyPrefabWindowCloses(ApplicationContext& context) {
+    if (m_prefabWindowCloses.empty()) {
+        return;
+    }
     for (const uint64_t id : std::exchange(m_prefabWindowCloses, {})) {
         std::erase_if(m_prefabWindowViews,
                       [id](const std::unique_ptr<PrefabWindowView>& view) { return view->id == id; });
@@ -181,6 +186,8 @@ void EditorSession::applyPrefabWindowCloses() {
             m_focusedPrefabWindow = 0;
         }
     }
+    // A closed window's changes are gone; so is its autosave.
+    autosavePrefabWindows(context, true);
 }
 
 void EditorSession::closeAllPrefabWindows() {
@@ -202,6 +209,8 @@ bool EditorSession::savePrefabWindow(ApplicationContext& context, PrefabWindowDo
         return false;
     }
     refreshAfterPrefabSave(context, window.target, saved);
+    // The saved window no longer needs its autosave.
+    autosavePrefabWindows(context, true);
     m_diagnostics.acknowledgeErrors();
     return true;
 }
@@ -226,8 +235,8 @@ void EditorSession::refreshAfterPrefabSave(ApplicationContext& context, const Pr
         m_selection.removeMissing(levelScene);
     }
     size_t inWindows = 0;
-    const PrefabResult windows =
-        m_prefabWindows.refreshInstances(context.assets, m_diagnostics, target.reference, previous, stepName, inWindows);
+    const PrefabResult windows = m_prefabWindows.refreshInstances(context.assets, m_diagnostics, target.reference,
+                                                                  previous, stepName, inWindows);
     result.diagnostics.insert(result.diagnostics.end(), windows.diagnostics.begin(), windows.diagnostics.end());
     for (const std::string& diagnostic : result.diagnostics) {
         m_diagnostics.add(EditorDiagnosticSeverity::Warning, prefabDiagnosticSource, diagnostic);
@@ -313,6 +322,43 @@ void EditorSession::leasePrefabWindowAssets(ApplicationContext& context) {
     }
 }
 
+void EditorSession::withFocusedEditorContext(ApplicationContext& context,
+                                             const std::function<void(EditorContext&)>& draw) {
+    PrefabWindowDocument* window = focusedPrefabWindow();
+    if (window == nullptr) {
+        EditorContext editor = editorContext(context);
+        draw(editor);
+        return;
+    }
+    ApplicationContext windowContext = windowApplicationContext(context, *window);
+    PrefabWindowActions actions(*this, context, *window);
+    EditorContext editor = prefabWindowEditorContext(windowContext, context, *window, actions);
+    draw(editor);
+}
+
+void EditorSession::reconcilePrefabWindows(ApplicationContext& context, const PrefabFileChange& change) {
+    if (m_prefabWindows.empty()) {
+        return;
+    }
+    if (m_prefabWindows.find(change.reference) != nullptr) {
+        m_diagnostics.add(EditorDiagnosticSeverity::Warning, prefabDiagnosticSource,
+                          change.displayName +
+                              " changed on disk while it is open in a window. Save there writes that window's "
+                              "version over the change; closing without saving keeps the file's.");
+    }
+    size_t refreshed = 0;
+    const PrefabResult result = m_prefabWindows.refreshInstances(
+        context.assets, m_diagnostics, change.reference, change.previous ? &*change.previous : nullptr,
+        externalPrefabRefreshStepName(change.displayName), refreshed);
+    for (const std::string& diagnostic : result.diagnostics) {
+        m_diagnostics.add(EditorDiagnosticSeverity::Warning, prefabDiagnosticSource, diagnostic);
+    }
+    if (!result) {
+        m_diagnostics.reportError("Could not refresh " + change.displayName +
+                                  " instances in the prefab windows: " + result.error);
+    }
+}
+
 void EditorSession::drawPrefabWindows(ApplicationContext& context) {
     for (const auto& [window, view] : prefabWindowSnapshot()) {
         drawPrefabWindow(context, *window, *view);
@@ -335,9 +381,9 @@ void EditorSession::drawPrefabWindow(ApplicationContext& context, PrefabWindowDo
     ImGui::SetNextWindowSize({mainViewport->WorkSize.x * 0.6f, mainViewport->WorkSize.y * 0.6f}, ImGuiCond_Appearing);
     const std::string hostName = "Prefab: " + windowLabel(window) + "###prefab." + std::to_string(window.id);
     bool open = true;
-    const bool visible = ImGui::Begin(hostName.c_str(), &open,
-                                      ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings |
-                                          ImGuiWindowFlags_NoCollapse);
+    const bool visible =
+        ImGui::Begin(hostName.c_str(), &open,
+                     ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse);
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
         m_focusedPrefabWindow = window.id;
     }
@@ -369,9 +415,9 @@ void EditorSession::drawPrefabWindow(ApplicationContext& context, PrefabWindowDo
         const std::string name = windowPartName(window, panel->title(), part);
         // The theme paints the pane in place of the window background.
         ImGui::PushStyleColor(ImGuiCol_WindowBg, toImVec4(palette::transparent));
-        const bool panelVisible = ImGui::Begin(name.c_str(), nullptr,
-                                               panel->windowFlags() | ImGuiWindowFlags_NoSavedSettings |
-                                                   ImGuiWindowFlags_NoCollapse);
+        const bool panelVisible =
+            ImGui::Begin(name.c_str(), nullptr,
+                         panel->windowFlags() | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse);
         ImGui::PopStyleColor();
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
             m_focusedPrefabWindow = window.id;

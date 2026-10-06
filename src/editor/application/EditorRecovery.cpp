@@ -2,6 +2,8 @@
 // recovery prompt shown when the previous session left an autosave behind.
 // In prefab mode the parked scene and the open prefab are saved apart
 // (m_recovery and m_prefabRecovery), and Recover reopens the prefab edit.
+// Prefab windows with unsaved changes are saved beside them
+// (m_prefabWindowRecovery), and Recover opens them again.
 
 #include "EditorSession.hpp"
 
@@ -9,18 +11,31 @@
 
 #include <imgui.h>
 
+#include <algorithm>
+#include <memory>
+
 void EditorSession::updateAutosave(ApplicationContext& context, float deltaSeconds) {
     // An interval of 0 turns autosave off (Edit > Preferences > Saving).
     const float intervalSeconds = m_settings.autosave().intervalSeconds;
     const ParkedDocument* parkedScene = m_documents.parkedScene();
-    const bool unsaved = m_document.dirty() || (parkedScene != nullptr && parkedScene->document.dirty());
-    if (intervalSeconds <= 0.0f || !unsaved || m_playMode.mode() != EditorMode::Edit) {
+    const bool levelUnsaved = m_document.dirty() || (parkedScene != nullptr && parkedScene->document.dirty());
+    const bool windowsUnsaved =
+        std::ranges::any_of(m_prefabWindows.windows(), [](const std::unique_ptr<PrefabWindowDocument>& window) {
+            return window->document.dirty();
+        });
+    if (intervalSeconds <= 0.0f || !(levelUnsaved || windowsUnsaved) || m_playMode.mode() != EditorMode::Edit) {
         m_autosaveElapsed = 0.0f;
         return;
     }
     m_autosaveElapsed += deltaSeconds;
     if (m_autosaveElapsed >= intervalSeconds) {
         m_autosaveElapsed = 0.0f;
+        if (windowsUnsaved) {
+            autosavePrefabWindows(context, true);
+        }
+        if (!levelUnsaved) {
+            return;
+        }
         if (!m_documents.empty()) {
             if (const std::string error = autosavePrefabEdit(context); !error.empty()) {
                 m_diagnostics.reportError("Autosave failed: " + error);
@@ -64,6 +79,7 @@ std::string EditorSession::autosavePrefabEdit(ApplicationContext& context) {
 }
 
 void EditorSession::saveRecoveryAfterCrash(ApplicationContext& context) {
+    autosavePrefabWindows(context, false);
     if (!m_documents.empty()) {
         // Prefab mode never runs Play, so the active scene is the prefab.
         autosavePrefabEdit(context);
@@ -91,6 +107,9 @@ void EditorSession::drawRecoveryDialog(ApplicationContext& context) {
     if (m_prefabRecovery.available()) {
         ImGui::TextWrapped("It includes an unsaved prefab edit; Recover opens the prefab again.");
     }
+    if (!m_prefabWindowRecovery.available().empty()) {
+        ImGui::TextWrapped("It includes unsaved prefab windows; Recover opens them again.");
+    }
     if (widgets::Button("Recover")) {
         bool recovered = true;
         if (m_recovery.available()) {
@@ -109,13 +128,16 @@ void EditorSession::drawRecoveryDialog(ApplicationContext& context) {
             recoverPrefabEdit(context);
         }
         if (recovered) {
+            recoverPrefabWindows(context);
+        }
+        if (recovered) {
             ImGui::CloseCurrentPopup();
         }
     }
     ImGui::SameLine();
     if (widgets::Button("Discard Recovery")) {
         std::string error;
-        if (!m_recovery.discard(error) || !m_prefabRecovery.discard(error)) {
+        if (!m_recovery.discard(error) || !m_prefabRecovery.discard(error) || !m_prefabWindowRecovery.discard(error)) {
             m_diagnostics.reportError(error);
         } else {
             ImGui::CloseCurrentPopup();

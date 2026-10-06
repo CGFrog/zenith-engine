@@ -41,25 +41,33 @@ class NoSessionCommands final : public EditorDocumentCommands,
         return false;
     }
 
+    bool editCommandsAvailable(const OperatorContext&) const override {
+        return false;
+    }
+
+    bool saveAsAvailable(const OperatorContext&) const override {
+        return false;
+    }
+
     void requestNew(ApplicationContext&) override {}
 
     void requestOpen(ApplicationContext&) override {}
 
-    bool saveDocument(ApplicationContext&) override {
+    bool saveDocument(OperatorContext&) override {
         return false;
     }
 
     void requestSaveAs() override {}
 
-    void undo(ApplicationContext&) override {}
+    void undo(OperatorContext&) override {}
 
-    void redo(ApplicationContext&) override {}
+    void redo(OperatorContext&) override {}
 
-    OperatorResult copySelection(ApplicationContext&) override {
+    OperatorResult copySelection(OperatorContext&) override {
         return OperatorResult::cancelled();
     }
 
-    OperatorResult pasteClipboard(ApplicationContext&) override {
+    OperatorResult pasteClipboard(OperatorContext&) override {
         return OperatorResult::cancelled();
     }
 
@@ -99,6 +107,10 @@ class NoSessionCommands final : public EditorDocumentCommands,
         return false;
     }
 
+    bool viewportsShowDocument(const OperatorContext&) const override {
+        return true;
+    }
+
     bool beginModalTransform(ApplicationContext&, TransformOperation, std::string,
                              std::optional<SceneEditing::EntitySnapshot>, bool) override {
         return false;
@@ -106,7 +118,7 @@ class NoSessionCommands final : public EditorDocumentCommands,
 
     void openDeleteMenu() override {}
 
-    void openRenamePopup(ApplicationContext&) override {}
+    void openRenamePopup(OperatorContext&) override {}
 
     void openOperatorSearch() override {}
 
@@ -123,6 +135,10 @@ class NoSessionCommands final : public EditorDocumentCommands,
     void openProjectSettings(ApplicationContext&, std::string_view) override {}
 
     bool prefabEditActive() const override {
+        return false;
+    }
+
+    bool prefabCloseAvailable() const override {
         return false;
     }
 
@@ -159,7 +175,6 @@ struct OperatorFamilyFixture : EditorTestFixture {
 
     EditorOperatorServices services() {
         return {.document = document,
-                .history = history,
                 .eyedropper = eyedropper,
                 .componentClipboard = clipboard,
                 .componentLayout = componentLayout,

@@ -56,13 +56,19 @@ std::optional<char> pressedNumericCharacter() {
 } // namespace
 
 void EditorSession::handleObjectKeys(ApplicationContext& context, KeymapRegion region) {
+    handleObjectKeysOn(context, nullptr, region);
+}
+
+void EditorSession::handleObjectKeysOn(ApplicationContext& context, PrefabWindowDocument* window, KeymapRegion region) {
+    // A prefab window's document stays editable while the level plays.
+    const bool documentPlaying = window == nullptr && m_playMode.mode() != EditorMode::Edit;
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.WantTextInput || m_playMode.mode() != EditorMode::Edit || m_activeTransform || m_fileDialog.pending() ||
+    if (io.WantTextInput || documentPlaying || m_activeTransform || m_fileDialog.pending() ||
         m_keymapEditor.capturing() || ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
         ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
         return;
     }
-    dispatchKeymap(context, region);
+    dispatchKeymap(context, window, region);
 }
 
 OperatorRegistrationResult registerObjectModeOperatorFamily(OperatorRegistry& registry,
@@ -70,9 +76,11 @@ OperatorRegistrationResult registerObjectModeOperatorFamily(OperatorRegistry& re
     EditorObjectModeCommands& objectMode = services.objectModeCommands;
     ViewportRegistry& viewports = services.viewports;
     const auto canTransform = [&objectMode, &viewports](const OperatorContext& context) {
-        // A modal transform follows the mouse over the active viewport.
+        // A modal transform follows the mouse over the active viewport, which
+        // must show the document the selection is in.
         return context.app != nullptr && context.editMode() && !context.selection.empty() &&
-               !objectMode.modalTransformRunning() && viewports.active() != nullptr;
+               !objectMode.modalTransformRunning() && viewports.active() != nullptr &&
+               objectMode.viewportsShowDocument(context);
     };
     const auto modalTransform = [&objectMode, canTransform](std::string id, std::string label, std::string description,
                                                             TransformOperation operation, std::string commandName) {
@@ -117,13 +125,19 @@ OperatorRegistrationResult registerObjectModeOperatorFamily(OperatorRegistry& re
         "object.delete_menu", "Delete...", "Ask before deleting the selected objects",
         [](const OperatorContext& context) { return context.editMode() && !context.selection.empty(); },
         [&objectMode](ApplicationContext&) { objectMode.openDeleteMenu(); }));
-    operators.push_back(applicationOperator(
-        "object.rename_popup", "Rename...", "Type a new name for the active object",
-        [](const OperatorContext& context) {
-            return context.editMode() && !context.selection.empty() &&
-                   context.editing.scene().findEntity(*context.selection.active()) != entt::null;
-        },
-        [&objectMode](ApplicationContext& app) { objectMode.openRenamePopup(app); }));
+    operators.push_back({.id = "object.rename_popup",
+                         .label = "Rename...",
+                         .description = "Type a new name for the active object",
+                         .poll =
+                             [](const OperatorContext& context) {
+                                 return context.app != nullptr && context.editMode() && !context.selection.empty() &&
+                                        context.editing.scene().findEntity(*context.selection.active()) != entt::null;
+                             },
+                         .execute =
+                             [&objectMode](OperatorContext& context, OperatorProperties&) {
+                                 objectMode.openRenamePopup(context);
+                                 return OperatorResult::finished();
+                             }});
     return addOperators(registry, std::move(operators));
 }
 
@@ -135,17 +149,22 @@ void EditorSession::openDeleteMenu() {
     m_openDeleteMenu = true;
 }
 
-void EditorSession::openRenamePopup(ApplicationContext& context) {
-    const Entity active = context.scene.findEntity(*m_selection.active());
-    m_renameBuffer = context.scene.registry().get<NameComponent>(active).name;
+bool EditorSession::viewportsShowDocument(const OperatorContext& context) const {
+    return m_prefabWindows.owner(context.editing.document()) == nullptr;
+}
+
+void EditorSession::openRenamePopup(OperatorContext& context) {
+    const Scene& scene = context.editing.scene();
+    const Entity active = scene.findEntity(*context.selection.active());
+    m_renameBuffer = scene.registry().get<NameComponent>(active).name;
     m_openRenamePopup = true;
     m_focusRenameField = true;
 }
 
 void EditorSession::drawObjectPopups(ApplicationContext& context) {
-    // The Add menu and any other menu opened with wm.call_menu.
-    EditorContext editor = editorContext(context);
-    m_menus.draw(editor);
+    // The Add menu and any other menu opened with wm.call_menu, on the
+    // document whose window opened it (the one last focused).
+    withFocusedEditorContext(context, [this](EditorContext& editor) { m_menus.draw(editor); });
 
     if (m_openDeleteMenu) {
         ImGui::OpenPopup(deleteMenuPopup);
@@ -174,7 +193,8 @@ void EditorSession::drawObjectPopups(ApplicationContext& context) {
                 if (RenameProperties* values = properties.get<RenameProperties>()) {
                     values->name = m_renameBuffer;
                 }
-                invokeOperator(context, "object.rename", properties);
+                OperatorContext operatorContext = this->operatorContext(context, KeymapRegion::Global);
+                m_operatorRunner.invoke("object.rename", operatorContext, &properties);
             }
             ImGui::CloseCurrentPopup();
         }
