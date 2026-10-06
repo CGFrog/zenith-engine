@@ -103,6 +103,13 @@ everything in parallel and `ctest --preset debug-cpu` skips the Vulkan,
 benchmark, and slow tests for a fast CPU-only loop. GPU tests set `PROCESSORS 2`, so
 `-j 8` runs at most four engine instances on the GPU at once.
 
+On a much slower machine, such as Linux CI running the Vulkan tests on Mesa's
+lavapipe (a CPU Vulkan driver) under Xvfb, configure with
+`-DZENITH_TEST_TIMEOUT_SCALE=4` to multiply every test's timeout. Lavapipe
+needs a Vulkan 1.4 aware validation layer (the LunarG SDK's); Ubuntu 24.04's
+packaged layer (1.3.275) crashes on core push descriptors, so CI runs the
+Linux Vulkan tests without validation.
+
 Run one test by name:
 
 ```powershell
