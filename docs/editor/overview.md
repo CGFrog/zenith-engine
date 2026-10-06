@@ -57,6 +57,7 @@ frame loop, operators and keymaps), `EditorFileDialogs.cpp`,
 `EditorProjectSettings.cpp`, `EditorViewports.cpp` and `EditorSessionSmoke.cpp`.
 The header tags each member group with its file.
 The session owns classes of its own for larger workflows, and forwards its
-frame hooks to them: `EditorPlayback` (Play, Simulate, and their targets) and
+frame hooks to them: `EditorPlayback` (Play, Simulate, and their targets),
 `PrefabWindowController` (prefabs in windows of their own, see
-[Prefab windows](prefab-windows.md)).
+[Prefab windows](prefab-windows.md)), and `GameModuleController` (the game
+module's host, loading it, and its hot reloads, see [Modules](modules.md)).

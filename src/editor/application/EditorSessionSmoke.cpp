@@ -120,15 +120,15 @@ class EditorSession::SmokeHooks final : public EditorSmokeHooks {
     }
 
     const GameModuleHost& moduleHost() const override {
-        return m_session.m_moduleHost;
+        return m_session.m_modules.host();
     }
 
     void requestModuleReload() override {
-        m_session.m_moduleReloadPending = true;
+        m_session.m_modules.requestReload();
     }
 
     bool moduleReloadPending() const override {
-        return m_session.m_moduleReloadPending;
+        return m_session.m_modules.reloadPending();
     }
 
     ViewportPanel* gameViewport() override {

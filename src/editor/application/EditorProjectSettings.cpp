@@ -11,7 +11,7 @@ void EditorSession::openProjectSettings(ApplicationContext&, std::string_view ta
         m_diagnostics.reportError("Could not open Project Settings: " + loaded.error);
         return;
     }
-    const GameModule* module = m_moduleHost.module();
+    const GameModule* module = m_modules.host().module();
     m_projectSettings.open(std::move(values), module != nullptr ? *module->inputActions() : InputActionMap{});
     if (const std::optional<ProjectSettingsTab> shown = projectSettingsTab(tab)) {
         m_projectSettings.setTab(*shown);
@@ -45,6 +45,6 @@ std::string EditorSession::applyProjectSettings(ApplicationContext& context, con
     m_projectNames = {.physicsLayers = values.layers.names, .tags = values.tags};
     // The next navigation.bake and Play use them.
     m_navigationSettings = values.navigation;
-    m_moduleHost.setProjectInputActions(values.inputActions);
+    m_modules.host().setProjectInputActions(values.inputActions);
     return {};
 }

@@ -166,7 +166,7 @@ void EditorSession::drawMainMenu(ApplicationContext& context) {
         operatorMenuItem(context, "play.apply_to_edit", "Apply Selection to Edit Scene");
         if (ImGui::BeginMenu("Simulate Systems")) {
             EditorContext editor = editorContext(context);
-            drawSimulateSystemPicker(editor, m_moduleHost);
+            drawSimulateSystemPicker(editor, m_modules.host());
             ImGui::EndMenu();
         }
         ImGui::EndMenu();
@@ -250,5 +250,5 @@ void EditorSession::drawSimulateOptions(ApplicationContext& context) {
     operatorMenuItem(context, "play.simulate", "Simulate");
     ImGui::Separator();
     EditorContext editor = editorContext(context);
-    drawSimulateSystemPicker(editor, m_moduleHost);
+    drawSimulateSystemPicker(editor, m_modules.host());
 }

@@ -10,6 +10,7 @@
 #include "editor/application/EditorPlayback.hpp"
 #include "editor/application/EditorSessionCommands.hpp"
 #include "editor/application/FileDropQueue.hpp"
+#include "editor/application/GameModuleController.hpp"
 #include "editor/application/NativeFileDialog.hpp"
 #include "editor/application/NewCodeDialog.hpp"
 #include "editor/application/PlayTargets.hpp"
@@ -130,8 +131,7 @@ class EditorSession final : public ApplicationScene,
                             private EditorDocumentCommands,
                             private EditorObjectModeCommands,
                             private EditorWindowCommands,
-                            private PrefabWindowHost,
-                            private EditorScriptInfo {
+                            private PrefabWindowHost {
   public:
     // gameModule is the project's module library, or empty for none.
     // appearance is the application's and must outlive the session.
@@ -214,10 +214,6 @@ class EditorSession final : public ApplicationScene,
     void cancelModalTransformIn(ApplicationContext& context, uint64_t window) override;
     void cancelPendingAction() override;
 
-    // EditorScriptInfo (EditorModuleCommands.cpp)
-    std::optional<EditorSourceLocation> behaviourSource(std::string_view componentKey) const override;
-    ScriptStatus scriptStatus() const override;
-
     // The level document's: what the level's areas and the session's own
     // workflows edit.
     SceneEditing editing(ApplicationContext& context);
@@ -281,14 +277,10 @@ class EditorSession final : public ApplicationScene,
     void saveComponentLayoutIfChanged();
     // Reports last frame's unclaimed OS file drops and queues this frame's.
     void takeFileDrops(const InputState& input);
-    void saveSimulateSystems();
 
-    // Game module hosting.
-    void loadGameModule();
+    // The game module's frame (EditorModuleCommands.cpp; loading and
+    // reloading it are m_modules'): its Edit-mode systems, or Play's.
     void updateGameModule(ApplicationContext& context, const InputState& input, float deltaSeconds);
-    void reloadGameModule(ApplicationContext& context);
-    void reportGameModule(const GameModuleHostResult& result);
-    std::string gameModuleStatusText() const;
     void drawModuleMenu(ApplicationContext& context);
 
     // Areas and workspaces (EditorAreas.cpp).
@@ -322,7 +314,6 @@ class EditorSession final : public ApplicationScene,
     // these hooks: they note the content in m_prefabWrites and drop the
     // game's cached copy.
     PrefabWriteHooks prefabWriteHooks() override;
-    void invalidateGamePrefab(const std::filesystem::path& file);
     // Once per frame, after the asset watcher, unless a modal transform runs:
     // handles the prefab files it reported changed.
     void reconcileChangedPrefabs(ApplicationContext& context);
@@ -509,25 +500,16 @@ class EditorSession final : public ApplicationScene,
     // Inspector overrides from the game module, shared by the Inspector and
     // Properties areas.
     ComponentEditorOverrides m_componentEditors;
-    // Declared after the registries it adds the module's editor extensions
-    // to, which it removes them from when destroyed.
-    GameModuleHost m_moduleHost{{.operators = m_operators,
-                                 .runner = m_operatorRunner,
-                                 .menus = m_menus.registry(),
-                                 .viewports = m_viewports,
-                                 .componentEditors = m_componentEditors}};
+    // The game module and its reloads. Declared after the registries its
+    // host adds the module's editor extensions to, which it removes them
+    // from when destroyed.
+    GameModuleController m_modules;
     // Play and Simulate, their targets and game views, and the standalone
     // game. Declared after the module host and the registries it uses; it
     // binds the workspaces, area types, and navigation settings, declared
     // later, by reference only, and outlives the areas, whose game view
     // draws its game Ui.
     EditorPlayback m_playback;
-    std::filesystem::path m_gameModulePath;
-    // A reload waits for Edit mode, a finished build, and no modal tool.
-    bool m_moduleReloadPending{false};
-    // The user's Simulate system choices (SimulateSystemSettings).
-    std::filesystem::path m_simulateSystemsPath;
-    BuildState m_lastBuildState{BuildState::Idle};
     Keymap m_keymap;
     std::filesystem::path m_keymapPath;
     // Turns key and mouse input into bindings to run, following a press for
