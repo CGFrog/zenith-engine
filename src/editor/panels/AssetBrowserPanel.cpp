@@ -18,6 +18,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <utility>
@@ -121,6 +122,56 @@ bool reimportable(EditorAssetKind kind) {
     return kind != EditorAssetKind::Scene && kind != EditorAssetKind::Script;
 }
 
+// The Import dialog's type list: the catalog's importable extensions first,
+// then every file, so a glTF's separate .bin and image files can be chosen.
+std::vector<FileDialogFilter> importDialogFilters() {
+    FileDialogFilter supported{.name = "Supported assets"};
+    for (const std::string& extension : importableAssetExtensions()) {
+        supported.extensions.push_back(extension.substr(1));
+    }
+    return {std::move(supported), {.name = "All files"}};
+}
+
+struct NewCodeEntry {
+    const char* label;
+    std::string_view operatorId;
+};
+
+// The New Behaviour, Component, and System operators (CodeOperators.cpp)
+// the folder menu runs.
+constexpr std::array<NewCodeEntry, 3> newCodeEntries{{
+    {"New Behaviour...", "module.new_behaviour"},
+    {"New Component...", "module.new_component"},
+    {"New System...", "module.new_system"},
+}};
+
+// "Model: .gltf, .glb" per line for every kind an import can bring in.
+std::string importTypesText() {
+    std::string text;
+    const std::vector<std::string> importable = importableAssetExtensions();
+    EditorAssetKind lastKind = EditorAssetKind::Script;
+    for (const EditorAssetExtension& entry : editorAssetExtensions()) {
+        if (std::ranges::find(importable, std::string(entry.extension)) == importable.end()) {
+            continue;
+        }
+        if (text.empty() || entry.kind != lastKind) {
+            text += (text.empty() ? "" : "\n") + std::string(kindName(entry.kind)) + ": ";
+        } else {
+            text += ", ";
+        }
+        text += entry.extension;
+        lastKind = entry.kind;
+    }
+    return text;
+}
+
+const std::string& importTooltipText() {
+    static const std::string text =
+        "Copy files into the current folder. You can also drop them here from Explorer.\n\nImportable types:\n" +
+        importTypesText();
+    return text;
+}
+
 const char* referrerLabel(EditorAssetKind kind) {
     switch (kind) {
     case EditorAssetKind::Scene:
@@ -193,6 +244,7 @@ AssetBrowserPanel::AssetBrowserPanel(ProjectAssets& project, AssetBrowserRole ro
     : m_project(project)
     , m_viewId(project.registerView())
     , m_viewMode(project.settings().viewMode)
+    , m_importDialog(importDialogFilters())
     , m_followedItemMove(project.latestItemMoveSequence()) {
     if (role == AssetBrowserRole::Primary) {
         m_project.claimPrimaryView(m_viewId);
@@ -387,6 +439,10 @@ void AssetBrowserPanel::createMaterial(EditorDiagnostics& diagnostics) {
     select(m_project.createMaterial(m_currentFolder, diagnostics));
 }
 
+void AssetBrowserPanel::createPrefab(EditorDiagnostics& diagnostics) {
+    select(m_project.createPrefab(m_currentFolder, diagnostics));
+}
+
 void AssetBrowserPanel::renameItem(const std::filesystem::path& item, const std::string& utf8NewName,
                                    EditorDiagnostics& diagnostics) {
     select(m_project.renameItem(item, utf8NewName, diagnostics));
@@ -490,6 +546,8 @@ AssetBrowserActions AssetBrowserPanel::sessionActions(EditorContext& context) {
             [&context](std::span<const SceneEntityId> entities) {
                 context.selection.assign({entities.begin(), entities.end()});
             },
+        .runOperator = [&context](std::string_view operatorId) { context.invoke(operatorId); },
+        .canRunOperator = [&context](std::string_view operatorId) { return context.canInvoke(operatorId); },
         .fileDrops = context.fileDrops,
         .definitionSchemas = context.definitionSchemas,
     };
@@ -522,7 +580,7 @@ void AssetBrowserPanel::drawBrowser(EditorDiagnostics& diagnostics, const AssetB
         refresh(diagnostics);
     }
     ImGui::SameLine();
-    drawToolbar(diagnostics);
+    drawToolbar(diagnostics, actions);
     drawBreadcrumbs();
     ImGui::Separator();
 
@@ -599,12 +657,12 @@ void AssetBrowserPanel::pollImportDialog(EditorDiagnostics& diagnostics) {
     }
 }
 
-void AssetBrowserPanel::drawToolbar(EditorDiagnostics& diagnostics) {
+void AssetBrowserPanel::drawToolbar(EditorDiagnostics& diagnostics, const AssetBrowserActions& actions) {
     if (widgets::Button("New")) {
         ImGui::OpenPopup("##NewMenu");
     }
     if (ImGui::BeginPopup("##NewMenu")) {
-        drawFolderMenu();
+        drawFolderMenu(actions);
         ImGui::EndPopup();
     }
     ImGui::SameLine();
@@ -612,7 +670,7 @@ void AssetBrowserPanel::drawToolbar(EditorDiagnostics& diagnostics) {
         m_deferred = DeferredCommand{CommandKind::Import, m_currentFolder};
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-        ImGui::SetTooltip("Copy files into the current folder. You can also drop them here from Explorer.");
+        ImGui::SetTooltip("%s", importTooltipText().c_str());
     }
     ImGui::SameLine();
     if (ImGui::RadioButton("Grid", m_viewMode == AssetBrowserViewMode::Grid)) {
@@ -797,7 +855,7 @@ void AssetBrowserPanel::drawContents(const AssetBrowserActions& actions) {
 
     if (ImGui::BeginPopupContextWindow("##FolderMenu",
                                        ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-        drawFolderMenu();
+        drawFolderMenu(actions);
         ImGui::Separator();
         if (ImGui::MenuItem(isFavourite(m_currentFolder) ? "Remove from Favourites" : "Add to Favourites")) {
             m_deferred = DeferredCommand{CommandKind::ToggleFavourite, m_currentFolder};
@@ -1020,20 +1078,36 @@ void AssetBrowserPanel::drawItemMenu(const std::filesystem::path& item, bool fol
     }
 }
 
-void AssetBrowserPanel::drawFolderMenu() {
+void AssetBrowserPanel::drawFolderMenu(const AssetBrowserActions& actions) {
+    const bool inSource = m_project.catalog().inSourceRoot(m_currentFolder);
     if (ImGui::MenuItem("New Folder")) {
         m_deferred = DeferredCommand{CommandKind::CreateFolder, m_currentFolder};
     }
     // The source folder lists only scripts, so a scene there would vanish.
-    if (ImGui::MenuItem("New Scene", nullptr, false, !m_project.catalog().inSourceRoot(m_currentFolder))) {
+    if (ImGui::MenuItem("New Scene", nullptr, false, !inSource)) {
         m_deferred = DeferredCommand{CommandKind::CreateScene, m_currentFolder};
     }
-    if (ImGui::MenuItem("New Material", nullptr, false, !m_project.catalog().inSourceRoot(m_currentFolder))) {
+    if (ImGui::MenuItem("Add Prefab", nullptr, false, !inSource)) {
+        m_deferred = DeferredCommand{CommandKind::CreatePrefab, m_currentFolder};
+    }
+    if (ImGui::MenuItem("New Material", nullptr, false, !inSource)) {
         m_deferred = DeferredCommand{CommandKind::CreateMaterial, m_currentFolder};
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Import...", nullptr, false, !m_project.catalog().inSourceRoot(m_currentFolder))) {
+    // Code generation writes into the game module whatever folder is shown;
+    // the operators' polls say whether a project is open to receive it.
+    for (const NewCodeEntry& entry : newCodeEntries) {
+        const bool runnable = actions.canRunOperator && actions.canRunOperator(entry.operatorId);
+        if (ImGui::MenuItem(entry.label, nullptr, false, runnable)) {
+            m_deferred = DeferredCommand{.kind = CommandKind::RunOperator, .operatorId = std::string(entry.operatorId)};
+        }
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Import...", nullptr, false, !inSource)) {
         m_deferred = DeferredCommand{CommandKind::Import, m_currentFolder};
+    }
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled | ImGuiHoveredFlags_DelayNormal)) {
+        ImGui::SetTooltip("%s", importTooltipText().c_str());
     }
 }
 
@@ -1182,20 +1256,22 @@ void AssetBrowserPanel::runDeferredCommand(const AssetBrowserActions& actions, E
     case CommandKind::Navigate:
         navigateTo(command.path, diagnostics);
         break;
-    case CommandKind::CreateFolder: {
-        const std::filesystem::path previousSelection = m_selected;
-        createFolder(diagnostics);
-        // A new folder starts in rename, as in most file browsers.
-        if (m_selected != previousSelection && m_project.catalog().findFolder(m_selected)) {
-            beginRename(m_selected);
-        }
+    case CommandKind::CreateFolder:
+        createAndRename([this, &diagnostics] { createFolder(diagnostics); });
         break;
-    }
     case CommandKind::CreateScene:
-        createScene(diagnostics);
+        createAndRename([this, &diagnostics] { createScene(diagnostics); });
+        break;
+    case CommandKind::CreatePrefab:
+        createAndRename([this, &diagnostics] { createPrefab(diagnostics); });
         break;
     case CommandKind::CreateMaterial:
-        createMaterial(diagnostics);
+        createAndRename([this, &diagnostics] { createMaterial(diagnostics); });
+        break;
+    case CommandKind::RunOperator:
+        if (actions.runOperator) {
+            actions.runOperator(command.operatorId);
+        }
         break;
     case CommandKind::BeginRename:
         beginRename(command.path);
@@ -1225,6 +1301,16 @@ void AssetBrowserPanel::runDeferredCommand(const AssetBrowserActions& actions, E
     case CommandKind::FindReferences:
         findReferences(command.path, actions, diagnostics);
         break;
+    }
+}
+
+void AssetBrowserPanel::createAndRename(const std::function<void()>& create) {
+    const std::filesystem::path previousSelection = m_selected;
+    create();
+    // A new item starts in rename, as in most file browsers; a failed
+    // creation leaves the selection alone and opens nothing.
+    if (m_selected != previousSelection && !m_selected.empty()) {
+        beginRename(m_selected);
     }
 }
 

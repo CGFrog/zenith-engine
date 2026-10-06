@@ -38,10 +38,27 @@ std::filesystem::path normalizeSavePath(std::filesystem::path path, const std::f
 }
 
 NativeFileDialog::NativeFileDialog(std::string filterName, std::filesystem::path extension)
-    : m_filterName(std::move(filterName))
-    , m_extension(std::move(extension))
-    , m_filterPattern(m_extension.empty() ? std::string{} : utf8FromPath(m_extension).substr(1))
+    : m_extension(std::move(extension))
+    , m_state(std::make_shared<State>()) {
+    if (!m_extension.empty()) {
+        m_filters.push_back({.name = std::move(filterName), .extensions = {utf8FromPath(m_extension).substr(1)}});
+    }
+}
+
+NativeFileDialog::NativeFileDialog(std::vector<FileDialogFilter> filters)
+    : m_filters(std::move(filters))
     , m_state(std::make_shared<State>()) {}
+
+std::string fileDialogPattern(const std::vector<std::string>& extensions) {
+    std::string pattern;
+    for (const std::string& extension : extensions) {
+        if (!pattern.empty()) {
+            pattern += ';';
+        }
+        pattern += extension;
+    }
+    return pattern;
+}
 
 bool NativeFileDialog::request(FileDialogKind kind, const std::filesystem::path& defaultLocation, bool allowMany) {
     if (m_pending) {
@@ -70,17 +87,24 @@ bool NativeFileDialog::request(FileDialogKind kind, const std::filesystem::path&
         owned->state->outcome = std::move(outcome);
     };
 
-    const SDL_DialogFileFilter filters[] = {{.name = m_filterName.c_str(), .pattern = m_filterPattern.c_str()}};
+    // An empty pattern is SDL's "every file"; it is NULL-terminated per filter.
+    std::vector<std::string> patterns;
+    patterns.reserve(m_filters.size());
+    std::vector<SDL_DialogFileFilter> filters;
+    for (const FileDialogFilter& filter : m_filters) {
+        patterns.push_back(filter.extensions.empty() ? std::string("*") : fileDialogPattern(filter.extensions));
+        filters.push_back({.name = filter.name.c_str(), .pattern = patterns.back().c_str()});
+    }
     const std::string location = utf8FromPath(defaultLocation);
     const char* locationArgument = location.empty() ? nullptr : location.c_str();
     // The focused editor window becomes the dialog's parent so it stays on top.
     SDL_Window* parent = SDL_GetKeyboardFocus();
-    const int filterCount = m_filterPattern.empty() ? 0 : 1;
+    const int filterCount = static_cast<int>(filters.size());
     if (kind == FileDialogKind::Save) {
-        SDL_ShowSaveFileDialog(callback, context, parent, filterCount > 0 ? filters : nullptr, filterCount,
+        SDL_ShowSaveFileDialog(callback, context, parent, filters.empty() ? nullptr : filters.data(), filterCount,
                                locationArgument);
     } else {
-        SDL_ShowOpenFileDialog(callback, context, parent, filterCount > 0 ? filters : nullptr, filterCount,
+        SDL_ShowOpenFileDialog(callback, context, parent, filters.empty() ? nullptr : filters.data(), filterCount,
                                locationArgument, allowMany);
     }
     return true;

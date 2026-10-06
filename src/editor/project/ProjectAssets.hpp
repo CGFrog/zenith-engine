@@ -149,6 +149,9 @@ class ProjectAssets {
                                                       EditorDiagnostics& diagnostics);
     std::optional<std::filesystem::path> createScene(const std::filesystem::path& folder,
                                                      EditorDiagnostics& diagnostics);
+    // Writes an empty "New Prefab.prefab" (or a unique variant) into folder.
+    std::optional<std::filesystem::path> createPrefab(const std::filesystem::path& folder,
+                                                      EditorDiagnostics& diagnostics);
     // Writes a default "New Material.zmat" (or a unique variant) into folder.
     std::optional<std::filesystem::path> createMaterial(const std::filesystem::path& folder,
                                                         EditorDiagnostics& diagnostics);

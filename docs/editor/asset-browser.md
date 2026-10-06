@@ -72,6 +72,15 @@ and updating one whose thumbnail was decoded again; the session releases
 them on unload. Asset field pickers use the same textures
 (`AssetBrowserActions::thumbnailTexture`).
 
+The folder menu (the **New** button, or a right click on empty space) also
+has **Add Prefab**, which writes `New Prefab.prefab` holding one empty root
+entity (`createProjectPrefab`), and **New Behaviour...**, **New Component...**,
+and **New System...**, which run `module.new_behaviour`, `module.new_component`,
+and `module.new_system` through `AssetBrowserActions::runOperator` (enabled by
+`canRunOperator`, so they follow the operators' polls); their dialog asks for
+the type's name. A new folder, scene, prefab, or material gets a unique default
+name and opens the Rename dialog at once (`createAndRename`).
+
 **New Material** in the folder menu writes a default `New Material.zmat`
 (`createProjectMaterial`). Selecting a material shows its fields below the
 listing, drawn as reflected fields over a `project/MaterialDocument` (texture
@@ -97,6 +106,14 @@ the current folder. `project/AssetImport` does the copying: a taken name gets
 another project gets its own GUID. `ProjectAssets::importFiles` then rescans,
 which writes the copies' sidecars, and the browser selects the last copy.
 Imports go only into folders of the asset and scene roots.
+
+The importable types come from the catalog's one extension table
+(`editorAssetExtensions`, which `editorAssetKind` also reads;
+`importableAssetExtensions` is its non-code entries). The Import button's and
+menu item's tooltips list them by kind, and the file dialog offers them as a
+"Supported assets" filter beside "All files" (`NativeFileDialog` takes several
+`FileDialogFilter`s), so a glTF's separate `.bin` and image files can still be
+chosen.
 
 The engine reports drops in `InputState::droppedFiles`; the session queues a
 frame's drops in a `FileDropQueue` (`EditorContext::fileDrops`), each window

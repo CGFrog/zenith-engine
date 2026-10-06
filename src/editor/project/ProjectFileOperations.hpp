@@ -54,6 +54,10 @@ ProjectFileResult createProjectScene(const std::filesystem::path& folder, const 
 // variant) into folder.
 ProjectFileResult createProjectMaterial(const std::filesystem::path& folder);
 
+// Writes a prefab document with one empty root entity named "New Prefab.prefab"
+// (or a unique variant) into folder.
+ProjectFileResult createProjectPrefab(const std::filesystem::path& folder);
+
 // Renames a file or folder in place. A file keeps its extension: when the new
 // name does not already end with it (ignoring case), it is appended. Fails if
 // another item already has the resulting name.

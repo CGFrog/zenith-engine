@@ -1,9 +1,11 @@
 #include "editor/application/EditorDiagnostics.hpp"
+#include "editor/application/NativeFileDialog.hpp"
 #include "editor/panels/AssetBrowserPanel.hpp"
 #include "editor/project/AssetCatalog.hpp"
 #include "editor/project/ProjectAssets.hpp"
 #include "editor/project/ProjectFileOperations.hpp"
 #include "editor/settings/AssetBrowserSettings.hpp"
+#include "engine/scene/Prefab.hpp"
 #include "engine/scene/SceneDocument.hpp"
 
 #include <imgui.h>
@@ -111,6 +113,41 @@ void testNameValidation() {
     expect(!invalidFileNameReason("..").empty(), "parent references should be rejected");
     expect(!invalidFileNameReason("name.").empty(), "trailing periods should be rejected");
     expect(!invalidFileNameReason("CON.png").empty(), "Windows device names should be rejected");
+}
+
+// The Import dialog's type list comes from the catalog's own extension table.
+void testImportableExtensions() {
+    const std::vector<std::string> importable = importableAssetExtensions();
+    const auto has = [&importable](const char* extension) {
+        return std::ranges::find(importable, std::string(extension)) != importable.end();
+    };
+    expect(has(".gltf") && has(".png") && has(".wav") && has(".prefab") && has(".zenith-scene") && has(".zmat"),
+           "models, textures, audio, prefabs, scenes, and materials should be importable");
+    expect(!has(".cpp") && !has(".h"), "code is not importable into the asset roots");
+    for (const EditorAssetExtension& entry : editorAssetExtensions()) {
+        const bool listed =
+            editorAssetKind(std::filesystem::path("file").replace_extension(entry.extension)).has_value() ==
+            (entry.extension != ".json");
+        expect(listed, "every table extension should classify a file the catalog lists");
+        expect(entry.extension.starts_with('.') &&
+                   has(std::string(entry.extension).c_str()) == (entry.kind != EditorAssetKind::Script),
+               "importable extensions should be the table's non-script entries");
+    }
+    expect(fileDialogPattern({"png", "jpg"}) == "png;jpg", "dialog patterns should join extensions with semicolons");
+}
+
+void testCreatePrefab(const std::filesystem::path& root) {
+    const std::filesystem::path folder = root / "prefabs";
+    std::filesystem::create_directories(folder);
+    const ProjectFileResult first = createProjectPrefab(folder);
+    const ProjectFileResult second = createProjectPrefab(folder);
+    expect(first && first.path.filename() == "New Prefab.prefab" && second.path.filename() == "New Prefab 2.prefab",
+           "created prefabs should get unique names");
+    PrefabDocument document;
+    expect(first && loadPrefab(first.path, document) && document.entities.size() == 1 &&
+               !document.entities.front().parent,
+           "a created prefab should load with exactly one root entity");
+    expect(editorAssetKind(first.path) == EditorAssetKind::Prefab, "a created prefab should list as a prefab");
 }
 
 void testFileOperations(const std::filesystem::path& root) {
@@ -271,6 +308,21 @@ void testPanel(const std::filesystem::path& content, const std::filesystem::path
         panel.createFolder(diagnostics);
         expect(panel.selectedPath().filename() == "New Folder" && panel.catalog().findFolder(panel.selectedPath()),
                "creating a folder should add and select it");
+        panel.createPrefab(diagnostics);
+        expect(panel.selectedPath().filename() == "New Prefab.prefab" &&
+                   panel.catalog().findAsset(panel.selectedPath()),
+               "creating a prefab should add it to the current folder and select it");
+        {
+            // The folder menu's code entries are wired through operators.
+            std::vector<std::string> polled;
+            AssetBrowserActions withOperators = actions;
+            withOperators.canRunOperator = [&polled](std::string_view id) {
+                polled.emplace_back(id);
+                return true;
+            };
+            withOperators.runOperator = [](std::string_view) {};
+            imgui.frame([&] { panel.drawBrowser(diagnostics, withOperators); });
+        }
         drawAllModes(imgui, panel, diagnostics, actions);
 
         panel.renameItem(materials, "surfaces", diagnostics);
@@ -537,6 +589,8 @@ int main() {
 
     testCatalogFolders(content, scenes);
     testNameValidation();
+    testImportableExtensions();
+    testCreatePrefab(directory);
     testFileOperations(directory);
     testSettings(directory);
     testPanel(content, scenes, directory / "settings");
