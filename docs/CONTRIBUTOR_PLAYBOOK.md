@@ -179,12 +179,13 @@ component it is given; the view propagates to multi-selection).
 1. `git mv` it.
 2. Update the explicit source list in the nearest `CMakeLists.txt`.
 3. Update every include (`git grep -n '<old/include/path>'`).
-4. Update [CODE_MAP.md](CODE_MAP.md) and any doc naming the path.
+4. Run `python tools/docs/code_index.py` to refresh the source index in
+   [CODE_MAP.md](CODE_MAP.md), and update any doc naming the path.
 
 ## Before handing off
 
 - [ ] `tools/check.ps1` (or `cmake --build --preset debug`, `ctest --preset debug-cpu`, clang-format on changed files) passes with no new warnings.
 - [ ] Graphics/window changes: a bounded smoke run where Vulkan is available, or state that it could not be run.
 - [ ] Engine code has no game/editor knowledge; no upward includes.
-- [ ] Subsystem doc and, if a file was added, moved, or removed, [CODE_MAP.md](CODE_MAP.md) updated.
+- [ ] Subsystem doc updated; if a file was added, moved, or removed, `python tools/docs/code_index.py` run (and a *Find it fast* row added for a new capability).
 - [ ] User-visible behaviour changed? Update the [user guide](guide/README.md) page and add a `📷 Screenshot needed` callout if the UI changed (then run `tools/docs/screenshot_checklist.py`).

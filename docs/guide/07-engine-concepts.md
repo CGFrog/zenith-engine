@@ -250,8 +250,9 @@ depth *z*, which keeps clusters roughly cube-shaped:
 
 $$\text{slice}(z) = \left\lfloor \log z \cdot \frac{N}{\log(z_f / z_n)} - \frac{N\log z_n}{\log(z_f / z_n)} \right\rfloor = \left\lfloor N\,\frac{\log(z/z_n)}{\log(z_f/z_n)} \right\rfloor,\quad N = 24,$$
 
-where $z_n$ is the near depth and $z_f$ the depth where the last slice ends
-(`Lighting.cpp`, mirrored by `fragmentCluster` in `mesh.frag`). Each slice
+where $z_n$ is the near depth and $z_f = \min(z_{\text{far}}, 500\,\text{m})$
+(`ClusterGridConfiguration::maximumSliceDepth`); the last slice extends to the
+far plane (`Lighting.cpp`, mirrored by `fragmentCluster` in `mesh.frag`). Each slice
 spans the same *ratio* of depths, $(z_f/z_n)^{1/N}$.
 
 **Cascaded shadows.** The sun's shadow map is split into cascades covering

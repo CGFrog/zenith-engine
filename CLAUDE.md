@@ -41,8 +41,9 @@ Search hygiene:
 | Everything | `docs/README.md` |
 
 When a change alters behaviour a user sees, update the matching
-`docs/guide/` page too; when it adds, moves, or removes a source file, update
-`docs/CODE_MAP.md`. UI changes that need a new image get a
+`docs/guide/` page too; when it adds, moves, or removes a source file, run
+`python tools/docs/code_index.py` (and add a *Find it fast* row to
+`docs/CODE_MAP.md` for a new capability). UI changes that need a new image get a
 `📷 Screenshot needed` callout; regenerate the checklist with
 `python tools/docs/screenshot_checklist.py`.
 

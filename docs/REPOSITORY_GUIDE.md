@@ -33,7 +33,7 @@ gaps to close before the roguelike are in
 | `src/` | Application composition and reusable engine implementation. |
 | `tests/` | CPU-side subsystem and integration tests registered with CTest. |
 | `tools/export_definitions/` | Build tool that writes the module-definition file exporting a Windows DLL's out-of-line functions and data (`cmake/WindowsExports.cmake`). |
-| `tools/docs/` | `screenshot_checklist.py` regenerates `docs/guide/SCREENSHOTS.md` from the `📷 Screenshot needed` callouts in `docs/` (`--check` fails when it is stale). |
+| `tools/docs/` | `code_index.py` regenerates the source index in `docs/CODE_MAP.md`; `screenshot_checklist.py` regenerates `docs/guide/SCREENSHOTS.md` from the `📷 Screenshot needed` callouts in `docs/`. Both take `--check`, which fails when the output is stale. |
 | `tools/showcase/` | Blender and Python scripts that regenerate the renderer showcase content. |
 | `tools/irradiance_room/` | Standard-library Python script that regenerates the irradiance-volume test interior. |
 | `tools/color_grading/` | Standard-library Python script that regenerates the example `.cube` colour grade. |
