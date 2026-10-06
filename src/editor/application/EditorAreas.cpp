@@ -200,20 +200,35 @@ void EditorSession::enterPrefabWorkspace() {
     if (!m_settings.appearance().prefabWorkspace || m_workspaceBeforePrefab || m_workspaces.empty()) {
         return;
     }
-    const std::string previous = m_workspaces.active().name();
+    // Applied between frames by updateWorkspaces: an area may be drawing now.
+    m_workspaceBeforePrefab = m_workspaces.active().name();
+    m_prefabWorkspacePending = true;
+    m_workspacesDirty = true;
+}
+
+void EditorSession::applyPrefabWorkspaceRequest() {
+    if (!m_prefabWorkspacePending) {
+        return;
+    }
+    m_prefabWorkspacePending = false;
     if (m_workspaces.find(prefabWorkspaceName) == nullptr) {
         Workspace created = defaultWorkspace(prefabWorkspaceName);
         created.sync(m_areaTypes);
         m_workspaces.add(std::move(created));
     }
-    if (m_workspaces.requestActivation(prefabWorkspaceName)) {
-        m_workspaceBeforePrefab = previous;
+    if (!m_workspaces.requestActivation(prefabWorkspaceName)) {
+        m_workspaceBeforePrefab.reset();
     }
-    m_workspacesDirty = true;
 }
 
 void EditorSession::leavePrefabWorkspace() {
     if (!m_workspaceBeforePrefab) {
+        return;
+    }
+    if (m_prefabWorkspacePending) {
+        // Left again before the Prefab workspace was ever shown.
+        m_prefabWorkspacePending = false;
+        m_workspaceBeforePrefab.reset();
         return;
     }
     // The workspace may have been removed from workspaces.json by hand; the
@@ -296,6 +311,7 @@ void EditorSession::updateWorkspaces() {
     if (m_workspaces.empty()) {
         return;
     }
+    applyPrefabWorkspaceRequest();
     if (applyRequestedWorkspace(m_workspaces)) {
         m_buildDefaultLayout = m_workspaces.active().layout().empty();
         m_workspacesDirty = true;
@@ -325,18 +341,18 @@ void EditorSession::updateAreas(ApplicationContext& context, const InputState& i
 
 void EditorSession::drawAreas(ApplicationContext& context) {
     EditorContext editor = editorContext(context);
-    Workspace& workspace = m_workspaces.active();
     // Snapshot: a panel may run an operator that closes, adds, or retypes
-    // areas while it draws, so each area is looked up again by id.
+    // areas while it draws, so each area is looked up again by id, in the
+    // active workspace fetched anew rather than held across a draw.
     std::vector<std::pair<std::string, std::shared_ptr<EditorPanel>>> areas;
-    for (const AreaInstance& area : workspace.areas()) {
+    for (const AreaInstance& area : m_workspaces.active().areas()) {
         areas.emplace_back(area.id(), area.panel);
     }
     std::vector<std::pair<std::string, AreaWindowRequest>> requests;
     for (const auto& entry : areas) {
         const std::string& id = entry.first;
         const std::shared_ptr<EditorPanel>& panel = entry.second;
-        AreaInstance* area = workspace.find(id);
+        AreaInstance* area = m_workspaces.active().find(id);
         if (area == nullptr || !panel || area->panel != panel) {
             continue;
         }
@@ -355,7 +371,7 @@ void EditorSession::drawAreas(ApplicationContext& context) {
                 panel->draw(editor);
                 ImGui::EndDisabled();
             });
-        if (AreaInstance* drawn = workspace.find(id)) {
+        if (AreaInstance* drawn = m_workspaces.active().find(id)) {
             drawn->dockId = result.dockId;
         }
         if (result.request.kind != AreaWindowRequest::Kind::None) {

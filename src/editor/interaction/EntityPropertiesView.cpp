@@ -320,7 +320,7 @@ void EntityPropertiesView::drawPrefabHeader(EditorContext& context, SceneEntityI
     }
     // In prefab mode the document root's instance is the prefab itself:
     // Apply would be Save, and Revert would discard the document's edits.
-    if (context.prefabEdit != nullptr && overrides.instanceRoot == context.prefabEdit->root) {
+    if (context.prefabEdit && overrides.instanceRoot == context.prefabEdit->root) {
         return;
     }
     ImGui::PushID("##PrefabHeader");

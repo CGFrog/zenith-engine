@@ -692,7 +692,7 @@ bool ViewportPanel::drawHeader(EditorContext& context) {
                 ImGui::EndMenu();
             }
             ImGui::TextDisabled("%s", viewportShadingLabel(m_chrome.shading));
-            if (context.prefabEdit != nullptr) {
+            if (context.prefabEdit) {
                 ImGui::TextColored(toImVec4(palette::prefabOverrideInk), "| Prefab: %s",
                                    context.prefabEdit->displayName.c_str());
             }

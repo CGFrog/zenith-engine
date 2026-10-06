@@ -329,7 +329,11 @@ class EditorSession final : public ApplicationScene,
     // ui.prefab_workspace preference is on, remembering the workspace it
     // came from; leaving the outermost prefab returns there.
     void enterPrefabWorkspace();
+    void applyPrefabWorkspaceRequest();
     void leavePrefabWorkspace();
+    // A copy of what panels show of the open prefab, empty when none is open;
+    // see EditorContext::prefabEdit.
+    std::optional<OpenPrefabSummary> activePrefabSummary() const;
     // Writes the active prefab to its file; false after reporting why not.
     bool savePrefabEdit(ApplicationContext& context);
     // The active document's name for the status bar and prompts: the scene's
@@ -599,6 +603,10 @@ class EditorSession final : public ApplicationScene,
     bool m_workspacesDirty{false};
     // The workspace that was active when the first open prefab was entered.
     std::optional<std::string> m_workspaceBeforePrefab;
+    // Entering the Prefab workspace may add it to the set, which would
+    // invalidate references into the set while an area draws; updateWorkspaces
+    // does it between frames.
+    bool m_prefabWorkspacePending{false};
 
     std::filesystem::path m_sceneRoot;
     // The gap, area headers, and panes behind every window.

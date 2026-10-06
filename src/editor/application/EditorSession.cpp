@@ -133,7 +133,7 @@ EditorContext EditorSession::editorContext(ApplicationContext& context) {
             .scripts = this,
             .watches = &m_watches,
             .projectNames = &m_projectNames,
-            .prefabEdit = m_documents.activePrefab(),
+            .prefabEdit = activePrefabSummary(),
             .projectAssets = &m_projectAssets,
             .fileDrops = &m_fileDrops,
             .definitionSchemas =
