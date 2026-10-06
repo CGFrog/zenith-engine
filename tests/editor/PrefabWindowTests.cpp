@@ -404,6 +404,15 @@ constexpr ImGuiKeyChord applyKey = ImGuiMod_Shift | ImGuiKey_F11;
 // A Click gesture (runs on release) adding a point light to the active
 // object, like addLightKey.
 constexpr ImGuiKeyChord clickLightKey = ImGuiKey_F12;
+// crate0.prefab ... crate6.prefab, each a lone Crate, and the keys editing
+// them: with the lamp and the shelf, enough windows to run out of render
+// scenes (RenderRuntime::maximumScenes).
+constexpr int extraPrefabs = 7;
+
+ImGuiKeyChord editCrateKey(int extra) {
+    return ImGuiMod_Ctrl | ImGuiMod_Alt | static_cast<ImGuiKey>(ImGuiKey_1 + extra);
+}
+
 // The lamp window's host, by its ImGui id (its title shows the dirty mark).
 constexpr const char* lampWindow = "###prefab.1";
 
@@ -428,6 +437,12 @@ ProjectConfig prefabProject(const fs::path& root, bool withModule = false, std::
     expect(authoring.instantiate(shelfStaging, "lamp.prefab", shelf, nested).success &&
                authoring.create(shelfStaging, shelf, "shelf.prefab").success,
            "session: the shelf prefab should be created");
+    for (int extra = 0; extra < extraPrefabs; ++extra) {
+        Scene extraStaging;
+        const Entity crate = extraStaging.createEntity("Crate");
+        expect(authoring.create(extraStaging, crate, "crate" + std::to_string(extra) + ".prefab").success,
+               "session: the crate prefabs should be created");
+    }
     Scene level;
     level.createEntity("Level marker");
     Entity instance = entt::null;
@@ -443,6 +458,9 @@ ProjectConfig prefabProject(const fs::path& root, bool withModule = false, std::
                               {"chord", formatKeyChord(chord)},
                               {"properties", std::move(properties)}};
     };
+    const auto editCrateBinding = [&binding](int extra) {
+        return binding(editCrateKey(extra), "prefab.edit", {{"asset", "crate" + std::to_string(extra) + ".prefab"}});
+    };
     std::ofstream(root / "settings" / "keymap.json") << nlohmann::json{
         {"version", 1},
         {"removed", nlohmann::json::array()},
@@ -450,7 +468,8 @@ ProjectConfig prefabProject(const fs::path& root, bool withModule = false, std::
          {binding(editLampKey, "prefab.edit", {{"asset", "lamp.prefab"}}),
           binding(editShelfKey, "prefab.edit", {{"asset", "shelf.prefab"}}),
           binding(selectLampsKey, "outliner.select_matching", {{"filter", "Lamp"}}),
-          binding(applyKey, "prefab.apply", nlohmann::json::object()),
+          binding(applyKey, "prefab.apply", nlohmann::json::object()), editCrateBinding(0), editCrateBinding(1),
+          editCrateBinding(2), editCrateBinding(3), editCrateBinding(4), editCrateBinding(5), editCrateBinding(6),
           [&] {
               nlohmann::json click = binding(clickLightKey, "object.component_add", {{"component", "point_light"}});
               click["trigger"] = "click";
@@ -471,6 +490,21 @@ ProjectConfig prefabProject(const fs::path& root, bool withModule = false, std::
         project.gameModule = ZENITH_EDITOR_TEST_MODULE_V1;
     }
     return project;
+}
+
+// How many created views draw a render scene of their own, and how many draw
+// the application's scene.
+std::pair<size_t, size_t> createdViews(const RenderRuntime& rendering) {
+    std::pair<size_t, size_t> counts;
+    for (uint32_t index = 1; index < RenderRuntime::maximumViews; ++index) {
+        for (uint32_t generation = 1; generation < 64; ++generation) {
+            const RenderViewId view{.index = index, .generation = generation};
+            if (rendering.viewAlive(view)) {
+                ++(rendering.viewScene(view) ? counts.first : counts.second);
+            }
+        }
+    }
+    return counts;
 }
 
 // The render scene a created view draws, or empty when no view draws one.
@@ -651,6 +685,38 @@ void testDropOnAWindowOverTheLevel(const fs::path& root) {
            "drop: the shelf gained the dropped lamp, so closing it asks about the change");
 }
 
+// A window opened while every render scene is taken shows a placeholder, never
+// the level, and gets a scene once another window closes.
+void testMoreWindowsThanRenderScenes(const fs::path& root) {
+    EditorHarness editor(root, prefabProject(root));
+    if (!editor.start()) {
+        expect(false, "scenes: the editor session starts");
+        return;
+    }
+    editor.frame();
+    editor.press(editLampKey);
+    editor.press(editShelfKey);
+    for (int extra = 0; extra < extraPrefabs; ++extra) {
+        editor.press(editCrateKey(extra));
+    }
+    editor.frame();
+    editor.frame();
+    static_assert(2 + extraPrefabs > RenderRuntime::maximumScenes);
+    expect(editor.windowOpen("###prefab.9"), "scenes: nine prefab windows are open");
+    const auto [own, application] = createdViews(editor.rendering());
+    expect(own == RenderRuntime::maximumScenes && application == 0,
+           "scenes: the window without a render scene draws no view, not the level");
+
+    editor.press(editLampKey);
+    editor.press(closeKey);
+    editor.frame();
+    editor.frame();
+    expect(!editor.windowOpen(lampWindow), "scenes: the lamp's window closes");
+    const auto [ownAfter, applicationAfter] = createdViews(editor.rendering());
+    expect(ownAfter == RenderRuntime::maximumScenes && applicationAfter == 0,
+           "scenes: the waiting window takes the freed render scene");
+}
+
 void testPlayWithAWindowOpen(const fs::path& root) {
     EditorHarness editor(root, prefabProject(root));
     if (!editor.start()) {
@@ -769,6 +835,7 @@ int main() {
     testApplyReachesOtherDocuments(root / "apply");
     testGesturesStayInTheirWindow(root / "gesture");
     testDropOnAWindowOverTheLevel(root / "drop");
+    testMoreWindowsThanRenderScenes(root / "scenes");
     testPlayWithAWindowOpen(root / "play");
     testModuleReloadWaitsForWindows(root / "reload");
     testQuitAsksAboutWindows(root / "quit");

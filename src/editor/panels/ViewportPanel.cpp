@@ -93,14 +93,16 @@ ViewportPanel::ViewportPanel(ViewportRegistry& registry)
     : m_registry(registry)
     , m_id(registry.add(*this)) {}
 
-void ViewportPanel::showDocument(const EditorDocument* document, RenderSceneId renderScene) {
-    if (m_renderScene != renderScene) {
+void ViewportPanel::showDocument(const EditorDocument* document, std::optional<RenderSceneId> renderScene) {
+    const RenderSceneId scene = renderScene.value_or(RenderSceneId{});
+    if (m_renderScene != scene || m_ownScene != renderScene.has_value()) {
         // The default view draws only the application's scene.
         releaseRenderView();
     }
     m_document = document;
-    m_renderScene = renderScene;
-    if (renderScene) {
+    m_renderScene = scene;
+    m_ownScene = renderScene.has_value();
+    if (m_ownScene) {
         // Secondary scenes render with preview lighting (studio rig).
         m_chrome.shading = ViewportShading::MaterialPreview;
     }
@@ -565,11 +567,14 @@ void ViewportPanel::draw(EditorContext& context) {
     m_registry.markDrawn(m_id);
     // Trade a view of its own for the free default view, which renders every
     // frame anyway and keeps GPU-driven submission.
-    if (!m_renderScene && m_view && m_view != rendering.defaultView() && m_registry.defaultViewFree()) {
+    if (!m_ownScene && m_view && m_view != rendering.defaultView() && m_registry.defaultViewFree()) {
         releaseRenderView();
     }
-    if (!m_view) {
-        m_view = m_registry.acquireView(rendering, m_id, !m_renderScene);
+    // A viewport of its own scene without one draws nothing rather than the
+    // application's scene.
+    const bool sceneMissing = m_ownScene && !m_renderScene;
+    if (!m_view && !sceneMissing) {
+        m_view = m_registry.acquireView(rendering, m_id, !m_ownScene);
         if (m_view) {
             m_rendering = &rendering;
         }
@@ -596,8 +601,9 @@ void ViewportPanel::draw(EditorContext& context) {
     m_position = {imagePosition.x, imagePosition.y};
     m_size = {static_cast<float>(width), static_cast<float>(height)};
     ImGui::Dummy({m_size.x, m_size.y});
-    drawViewImage(texture, m_view ? "Viewport will be available on the next rendered frame."
-                                  : "No render view is free; close another viewport.");
+    drawViewImage(texture, sceneMissing ? "Too many prefab windows are open to draw this one; close another."
+                           : m_view     ? "Viewport will be available on the next rendered frame."
+                                        : "No render view is free; close another viewport.");
     if (texture) {
         drawSceneLabels(context);
     }

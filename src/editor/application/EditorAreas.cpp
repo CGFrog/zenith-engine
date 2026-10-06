@@ -102,7 +102,7 @@ void EditorSession::registerAreaTypes() {
                      // An area's viewport shows the level; a prefab window
                      // points its own at the window's document.
                      auto viewport = std::make_unique<ViewportPanel>(m_viewports);
-                     viewport->showDocument(&m_document, {});
+                     viewport->showDocument(&m_document, std::nullopt);
                      return viewport;
                  }});
     for (AreaType& type : builtInAreaTypes({.projectAssets = m_projectAssets,

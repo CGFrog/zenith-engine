@@ -152,7 +152,8 @@ void EditorSession::addPrefabWindowView(ApplicationContext& context, PrefabWindo
     window.renderScene = context.rendering.createScene();
     window.assetLeases = context.assets.leaseSceneAssets(window.scene);
     if (auto* viewport = dynamic_cast<ViewportPanel*>(view->viewport.get())) {
-        // Without a free render scene the viewport shows the placeholder.
+        // Without a free render scene the viewport shows a placeholder until
+        // bindPrefabWindowScenes finds one.
         viewport->showDocument(&window.document, window.renderScene);
         window.scene.updateWorldTransforms();
         std::vector<SceneEntityId> everything;
@@ -166,6 +167,17 @@ void EditorSession::addPrefabWindowView(ApplicationContext& context, PrefabWindo
 
 void EditorSession::bindPrefabWindowScenes(ApplicationContext& context) {
     for (const std::unique_ptr<PrefabWindowDocument>& window : m_prefabWindows.windows()) {
+        if (!window->renderScene) {
+            // Opened while every render scene was taken: try again, since a
+            // closed window frees one.
+            window->renderScene = context.rendering.createScene();
+            const PrefabWindowView* view = prefabWindowView(window->id);
+            auto* viewport = view != nullptr ? dynamic_cast<ViewportPanel*>(view->viewport.get()) : nullptr;
+            if (!window->renderScene || viewport == nullptr) {
+                continue;
+            }
+            viewport->showDocument(&window->document, window->renderScene);
+        }
         window->scene.updateWorldTransforms();
         context.rendering.setSceneContent(window->renderScene, &window->scene);
     }

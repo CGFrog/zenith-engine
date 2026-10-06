@@ -123,6 +123,10 @@ session's own members, a window's are its document's.
 ## Known limits
 
 - The window's view uses preview lighting (see above).
+- The renderer draws at most `RenderRuntime::maximumScenes` (8) secondary
+  scenes. A window opened beyond that edits normally but its viewport shows a
+  placeholder (it never falls back to drawing the level) until another window
+  closes; `bindPrefabWindowScenes` then gives it the freed render scene.
 - Undo of a refresh step restores the instances in that document only, not
   the prefab file.
 

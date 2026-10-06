@@ -100,12 +100,14 @@ class ViewportPanel final : public EditorPanel {
 
     ViewportId id() const;
     // The document the viewport shows and edits, and the render scene its
-    // view draws (RenderRuntime::setViewScene; empty for the application's
-    // scene). A null document matches any (headless tests); the session
-    // names the level's for level areas and a prefab window's for that
-    // window's viewport, which draws the window's scene and never takes the
-    // default view (GPU-driven, the application's scene only).
-    void showDocument(const EditorDocument* document, RenderSceneId renderScene);
+    // view draws (RenderRuntime::setViewScene): nullopt for the application's
+    // scene, else a scene of its own, which is empty while the renderer has
+    // none free (the viewport then shows a placeholder and takes no view). A
+    // null document matches any (headless tests); the session names the
+    // level's for level areas and a prefab window's for that window's
+    // viewport, which draws the window's scene and never takes the default
+    // view (GPU-driven, the application's scene only).
+    void showDocument(const EditorDocument* document, std::optional<RenderSceneId> renderScene);
     bool showsDocument(const EditorDocument& document) const;
     const EditorDocument* document() const;
     // Empty until the viewport is first drawn, or while the renderer has no
@@ -314,6 +316,8 @@ class ViewportPanel final : public EditorPanel {
     RenderViewId m_view;
     const EditorDocument* m_document{nullptr};
     RenderSceneId m_renderScene;
+    // Whether it draws a scene of its own rather than the application's.
+    bool m_ownScene{false};
     EditorCamera m_camera;
     std::optional<SceneEntityId> m_cameraView;
     std::optional<RenderSettings> m_appliedViewSettings;
