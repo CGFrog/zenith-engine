@@ -16,6 +16,8 @@
 #include "engine/scene/SceneDocument.hpp"
 #include "engine/scene/Tags.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
@@ -28,6 +30,8 @@
 #include <utility>
 #include <vector>
 
+TEST_SUITE_BEGIN("Outliner");
+
 // The outliner: its display modes and filter (with the c:, t:, and p: search
 // syntax) as pure trees, the flattened row cache, orphan data, the
 // operators behind its gestures (reorder, collection rename, select
@@ -36,14 +40,6 @@
 // clipped rows and reveal, and in-place collection rename).
 
 namespace {
-int failures = 0;
-
-void expect(bool condition, const std::string& message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
 
 // A scene exercising every display mode:
 //
@@ -71,7 +67,7 @@ struct Fixture : EditorTestFixture {
     SceneEntityId rock;
 
     Fixture() {
-        expect(registerObjectOperators(operators).success, "the object operators should register");
+        CHECK_MESSAGE(registerObjectOperators(operators).success, "the object operators should register");
         SceneCollections collections;
         collections.create("Props", {}, props);
         collections.create("Crates", props, crates);
@@ -93,7 +89,7 @@ struct Fixture : EditorTestFixture {
             scene.setParent(entity, scene.findEntity(parent));
         }
         for (const SceneCollectionId collection : linked) {
-            expect(static_cast<bool>(linkToCollection(scene, entity, collection)), "linking should work");
+            CHECK_MESSAGE((static_cast<bool>(linkToCollection(scene, entity, collection))), "linking should work");
         }
         return scene.id(entity);
     }
@@ -157,57 +153,63 @@ std::string tree(const Scene& scene, OutlinerDisplayMode mode, std::string_view 
     return summary(buildOutlinerTree(scene, {.mode = mode, .filter = filter, .orphanAssets = orphans}));
 }
 
-void testDisplayModes() {
+TEST_CASE("Outliner: display modes") {
     Fixture fixture;
     const Scene& scene = fixture.scene;
-    expect(tree(scene, OutlinerDisplayMode::ViewLayer) ==
-               "Props[Crates[Bulb,Barrel],Crate[Lid],Barrel],Empty,Lamp[Bulb],Tree,Tree 2,Rock",
-           "View Layer should group hierarchies by collection: " + tree(scene, OutlinerDisplayMode::ViewLayer));
-    expect(tree(scene, OutlinerDisplayMode::Collections) ==
-               "Props[Crates[Bulb,Barrel],Crate,Barrel],Empty,Lamp,Lid,Tree,Tree 2,Rock",
-           "Collections should list members flat: " + tree(scene, OutlinerDisplayMode::Collections));
-    expect(tree(scene, OutlinerDisplayMode::Prefabs) == "prefabs/rock.prefab[Rock],prefabs/tree.prefab[Tree,Tree 2]",
-           "Prefabs should group instances by prefab: " + tree(scene, OutlinerDisplayMode::Prefabs));
+    CHECK_MESSAGE(
+        tree(scene, OutlinerDisplayMode::ViewLayer) ==
+            "Props[Crates[Bulb,Barrel],Crate[Lid],Barrel],Empty,Lamp[Bulb],Tree,Tree 2,Rock",
+        ("View Layer should group hierarchies by collection: " + tree(scene, OutlinerDisplayMode::ViewLayer)));
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::Collections) ==
+                      "Props[Crates[Bulb,Barrel],Crate,Barrel],Empty,Lamp,Lid,Tree,Tree 2,Rock",
+                  ("Collections should list members flat: " + tree(scene, OutlinerDisplayMode::Collections)));
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::Prefabs) ==
+                      "prefabs/rock.prefab[Rock],prefabs/tree.prefab[Tree,Tree 2]",
+                  ("Prefabs should group instances by prefab: " + tree(scene, OutlinerDisplayMode::Prefabs)));
     const std::vector<OrphanAsset> orphans{{.path = "textures/unused.png", .kind = EditorAssetKind::Texture}};
-    expect(tree(scene, OutlinerDisplayMode::OrphanData, {}, orphans) ==
-               "Unused Assets[textures/unused.png],Empty Collections[Empty]",
-           "Orphan Data should list unused assets and empty collections: " +
-               tree(scene, OutlinerDisplayMode::OrphanData, {}, orphans));
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::OrphanData, {}, orphans) ==
+                      "Unused Assets[textures/unused.png],Empty Collections[Empty]",
+                  ("Orphan Data should list unused assets and empty collections: " +
+                   tree(scene, OutlinerDisplayMode::OrphanData, {}, orphans)));
 
     // Each listing of an entity has its own scope, so its rows get distinct ids.
     const std::vector<OutlinerNode> viewLayer = buildOutlinerTree(scene, {.mode = OutlinerDisplayMode::ViewLayer});
     const OutlinerNode& bulbInCrates = viewLayer[0].children[0].children[0];
     const OutlinerNode& bulbUnderLamp = viewLayer[2].children[0];
-    expect(bulbInCrates.entity == fixture.bulb && bulbUnderLamp.entity == fixture.bulb &&
-               bulbInCrates.scope == fixture.crates.value && bulbUnderLamp.scope == 0,
-           "an entity listed in a collection and under its parent should have two scopes");
+    CHECK_MESSAGE((bulbInCrates.entity == fixture.bulb && bulbUnderLamp.entity == fixture.bulb &&
+                   bulbInCrates.scope == fixture.crates.value && bulbUnderLamp.scope == 0),
+                  "an entity listed in a collection and under its parent should have two scopes");
     const std::vector<OutlinerNode> prefabs = buildOutlinerTree(scene, {.mode = OutlinerDisplayMode::Prefabs});
-    expect(prefabs[0].children[0].scope != 0 && prefabs[0].children[0].scope != prefabs[1].children[0].scope,
-           "prefab groups should scope their rows apart from the top level and each other");
+    CHECK_MESSAGE((prefabs[0].children[0].scope != 0 && prefabs[0].children[0].scope != prefabs[1].children[0].scope),
+                  "prefab groups should scope their rows apart from the top level and each other");
 
     for (const OutlinerDisplayMode mode : outlinerDisplayModes) {
-        expect(parseOutlinerDisplayMode(outlinerDisplayModeKey(mode)) == mode, "display mode keys should round trip");
+        CHECK_MESSAGE(parseOutlinerDisplayMode(outlinerDisplayModeKey(mode)) == mode,
+                      "display mode keys should round trip");
     }
-    expect(!parseOutlinerDisplayMode("blender_file"), "unknown display mode keys should be rejected");
+    CHECK_MESSAGE(!parseOutlinerDisplayMode("blender_file"), "unknown display mode keys should be rejected");
 }
 
-void testFilter() {
+TEST_CASE("Outliner: filter") {
     Fixture fixture;
     const Scene& scene = fixture.scene;
-    expect(outlinerFilterMatches("Lamp Post", "") && outlinerFilterMatches("Lamp Post", "mP p") &&
-               !outlinerFilterMatches("Lamp", "lamps"),
-           "the filter should match substrings ignoring case");
+    CHECK_MESSAGE((outlinerFilterMatches("Lamp Post", "") && outlinerFilterMatches("Lamp Post", "mP p") &&
+                   !outlinerFilterMatches("Lamp", "lamps")),
+                  "the filter should match substrings ignoring case");
     // A matching child shows with its non-matching ancestors, whatever the case.
-    expect(tree(scene, OutlinerDisplayMode::ViewLayer, "BULB") == "*Props[*Crates[Bulb]],*Lamp[Bulb]",
-           "matches should appear with their ancestors: " + tree(scene, OutlinerDisplayMode::ViewLayer, "BULB"));
-    expect(tree(scene, OutlinerDisplayMode::ViewLayer, "lid") == "*Props[*Crate[Lid]]",
-           "a child row should match case-insensitively: " + tree(scene, OutlinerDisplayMode::ViewLayer, "lid"));
-    expect(tree(scene, OutlinerDisplayMode::Prefabs, "tree 2") == "*prefabs/tree.prefab[Tree 2]",
-           "filters should apply in every mode");
-    expect(tree(scene, OutlinerDisplayMode::ViewLayer, "nothing").empty(), "a filter matching nothing lists nothing");
+    CHECK_MESSAGE(
+        tree(scene, OutlinerDisplayMode::ViewLayer, "BULB") == "*Props[*Crates[Bulb]],*Lamp[Bulb]",
+        ("matches should appear with their ancestors: " + tree(scene, OutlinerDisplayMode::ViewLayer, "BULB")));
+    CHECK_MESSAGE(
+        tree(scene, OutlinerDisplayMode::ViewLayer, "lid") == "*Props[*Crate[Lid]]",
+        ("a child row should match case-insensitively: " + tree(scene, OutlinerDisplayMode::ViewLayer, "lid")));
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::Prefabs, "tree 2") == "*prefabs/tree.prefab[Tree 2]",
+                  "filters should apply in every mode");
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::ViewLayer, "nothing").empty(),
+                  "a filter matching nothing lists nothing");
 }
 
-void testOrphanData() {
+TEST_CASE("Outliner: orphan data") {
     const AssetGuid moved(1, 2);
     const nlohmann::json document{
         {"version", 3},
@@ -219,14 +221,15 @@ void testOrphanData() {
              {"name_tag", {{"text", "path"}}}}}}}}};
     SceneAssetUsage usage;
     std::string error;
-    expect(collectSceneAssetUsage(document.dump(), usage, error) && usage.paths.contains("models/crate.gltf") &&
-               usage.guids.contains(moved),
-           "asset references should be found at any depth: " + error);
-    expect(!collectSceneAssetUsage("{\"version\":3}", usage, error) && !error.empty(),
-           "a document without entities should be rejected");
+    CHECK_MESSAGE((collectSceneAssetUsage(document.dump(), usage, error) && usage.paths.contains("models/crate.gltf") &&
+                   usage.guids.contains(moved)),
+                  ("asset references should be found at any depth: " + error));
+    CHECK_MESSAGE((!collectSceneAssetUsage("{\"version\":3}", usage, error) && !error.empty()),
+                  "a document without entities should be rejected");
     collectSceneAssetUsage(document.dump(), usage, error);
 
-    const std::filesystem::path root = std::filesystem::temp_directory_path() / "zenith-outliner-tests" / "assets";
+    const testsupport::TempDirectory projectDirectory("outliner-orphans");
+    const std::filesystem::path root = projectDirectory / "assets";
     const auto record = [&root](const char* path, EditorAssetKind kind, AssetGuid guid = {}) {
         return EditorAssetRecord{.relativePath = path, .absolutePath = root / path, .kind = kind, .guid = guid};
     };
@@ -241,16 +244,16 @@ void testOrphanData() {
          .kind = EditorAssetKind::Texture},
     };
     const std::vector<OrphanAsset> orphans = findOrphanAssets(assets, root, usage);
-    expect(orphans.size() == 2 && orphans[0].path == "audio/hit.wav" && orphans[1].path == "textures/unused.png" &&
-               orphans[1].kind == EditorAssetKind::Texture,
-           "assets referenced by path or GUID, scenes, and files outside the root should not be orphans");
+    CHECK_MESSAGE((orphans.size() == 2 && orphans[0].path == "audio/hit.wav" &&
+                   orphans[1].path == "textures/unused.png" && orphans[1].kind == EditorAssetKind::Texture),
+                  "assets referenced by path or GUID, scenes, and files outside the root should not be orphans");
 
     Fixture fixture;
-    expect(findEmptyCollections(fixture.scene) == std::vector<SceneCollectionId>{fixture.empty},
-           "a collection with members in a nested collection should not be empty");
+    CHECK_MESSAGE((findEmptyCollections(fixture.scene) == std::vector<SceneCollectionId>{fixture.empty}),
+                  "a collection with members in a nested collection should not be empty");
 }
 
-void testFilterSyntax() {
+TEST_CASE("Outliner: filter syntax") {
     const OutlinerFilter parsed =
         parseOutlinerFilter(R"(  crate c:"Point Light" T:enemy prefab:door http:x "big box" )");
     const std::vector<OutlinerFilterTerm> expected{
@@ -261,48 +264,49 @@ void testFilterSyntax() {
         {.field = OutlinerFilterField::Name, .text = "http:x"},
         {.field = OutlinerFilterField::Name, .text = "big box"},
     };
-    expect(parsed.terms == expected, "the filter should split terms, read prefixes, and keep quoted spaces");
-    expect(!parsed.namesOnly() && parseOutlinerFilter("a b").namesOnly() && parseOutlinerFilter("  ").empty(),
-           "a filter should know whether it names labels only");
+    CHECK_MESSAGE(parsed.terms == expected, "the filter should split terms, read prefixes, and keep quoted spaces");
+    CHECK_MESSAGE((!parsed.namesOnly() && parseOutlinerFilter("a b").namesOnly() && parseOutlinerFilter("  ").empty()),
+                  "a filter should know whether it names labels only");
 
     Fixture fixture;
     Scene& scene = fixture.scene;
     scene.registry().emplace<PointLightComponent>(scene.findEntity(fixture.bulb));
     scene.registry().emplace<TagsComponent>(scene.findEntity(fixture.crate), TagsComponent{{"enemy", "boss"}});
-    expect(tree(scene, OutlinerDisplayMode::ViewLayer, "c:point") == "*Props[*Crates[Bulb]],*Lamp[Bulb]",
-           "c: should match a component's display name: " + tree(scene, OutlinerDisplayMode::ViewLayer, "c:point"));
-    expect(tree(scene, OutlinerDisplayMode::ViewLayer, "component:point_light") ==
-               tree(scene, OutlinerDisplayMode::ViewLayer, "c:point"),
-           "component: should match a component's key");
-    expect(tree(scene, OutlinerDisplayMode::ViewLayer, "t:ENE") == "*Props[Crate]",
-           "t: should match tags ignoring case: " + tree(scene, OutlinerDisplayMode::ViewLayer, "t:ENE"));
-    expect(tree(scene, OutlinerDisplayMode::Prefabs, "p:rock") == "*prefabs/rock.prefab[Rock]",
-           "p: should match a prefab instance's path");
-    expect(tree(scene, OutlinerDisplayMode::ViewLayer, "c:point lamp").empty() &&
-               tree(scene, OutlinerDisplayMode::ViewLayer, "c:point bulb") ==
-                   tree(scene, OutlinerDisplayMode::ViewLayer, "c:point"),
-           "terms should combine with AND");
-    expect(tree(scene, OutlinerDisplayMode::ViewLayer, "c:no_such_component").empty(),
-           "a component no type names should match nothing");
-    expect(tree(scene, OutlinerDisplayMode::ViewLayer, "props") == "Props",
-           "name terms should match collection rows too");
-    expect(tree(scene, OutlinerDisplayMode::ViewLayer, "t:").find("Crate") != std::string::npos &&
-               tree(scene, OutlinerDisplayMode::ViewLayer, "t:").find("Lamp") == std::string::npos,
-           "an empty tag term should match any tagged object");
-    expect(findOutlinerMatches(scene, parseOutlinerFilter("t:enemy"), *builtInComponentTypes()) ==
-               std::vector<SceneEntityId>{fixture.crate},
-           "matches should be found across the scene");
+    CHECK_MESSAGE(
+        tree(scene, OutlinerDisplayMode::ViewLayer, "c:point") == "*Props[*Crates[Bulb]],*Lamp[Bulb]",
+        ("c: should match a component's display name: " + tree(scene, OutlinerDisplayMode::ViewLayer, "c:point")));
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::ViewLayer, "component:point_light") ==
+                      tree(scene, OutlinerDisplayMode::ViewLayer, "c:point"),
+                  "component: should match a component's key");
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::ViewLayer, "t:ENE") == "*Props[Crate]",
+                  ("t: should match tags ignoring case: " + tree(scene, OutlinerDisplayMode::ViewLayer, "t:ENE")));
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::Prefabs, "p:rock") == "*prefabs/rock.prefab[Rock]",
+                  "p: should match a prefab instance's path");
+    CHECK_MESSAGE((tree(scene, OutlinerDisplayMode::ViewLayer, "c:point lamp").empty() &&
+                   tree(scene, OutlinerDisplayMode::ViewLayer, "c:point bulb") ==
+                       tree(scene, OutlinerDisplayMode::ViewLayer, "c:point")),
+                  "terms should combine with AND");
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::ViewLayer, "c:no_such_component").empty(),
+                  "a component no type names should match nothing");
+    CHECK_MESSAGE(tree(scene, OutlinerDisplayMode::ViewLayer, "props") == "Props",
+                  "name terms should match collection rows too");
+    CHECK_MESSAGE((tree(scene, OutlinerDisplayMode::ViewLayer, "t:").find("Crate") != std::string::npos &&
+                   tree(scene, OutlinerDisplayMode::ViewLayer, "t:").find("Lamp") == std::string::npos),
+                  "an empty tag term should match any tagged object");
+    CHECK_MESSAGE((findOutlinerMatches(scene, parseOutlinerFilter("t:enemy"), *builtInComponentTypes()) ==
+                   std::vector<SceneEntityId>{fixture.crate}),
+                  "matches should be found across the scene");
 
-    expect(static_cast<bool>(fixture.invoke("outliner.select_matching", {{"filter", "p:tree"}})) &&
-               fixture.selection.ids() == std::vector<SceneEntityId>{fixture.tree, fixture.tree2},
-           "Select All Matching should select every match");
-    expect(fixture.invoke("outliner.select_matching", {{"filter", ""}}).status == OperatorStatus::Cancelled &&
-               fixture.invoke("outliner.select_matching", {{"filter", "zzz"}}).status == OperatorStatus::Cancelled,
-           "an empty search or one without matches should select nothing");
-    expect(fixture.history.size() == 0, "selecting matches should record no undo step");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("outliner.select_matching", {{"filter", "p:tree"}})) &&
+                   fixture.selection.ids() == std::vector<SceneEntityId>{fixture.tree, fixture.tree2}),
+                  "Select All Matching should select every match");
+    CHECK_MESSAGE((fixture.invoke("outliner.select_matching", {{"filter", ""}}).status == OperatorStatus::Cancelled &&
+                   fixture.invoke("outliner.select_matching", {{"filter", "zzz"}}).status == OperatorStatus::Cancelled),
+                  "an empty search or one without matches should select nothing");
+    CHECK_MESSAGE(fixture.history.size() == 0, "selecting matches should record no undo step");
 }
 
-void testRowIndex() {
+TEST_CASE("Outliner: row index") {
     Fixture fixture;
     const std::vector<OutlinerNode> rows = buildOutlinerTree(fixture.scene, {.mode = OutlinerDisplayMode::ViewLayer});
     constexpr ImGuiID seed = 1234;
@@ -312,26 +316,27 @@ void testRowIndex() {
     for (const OutlinerRowEntry& entry : entries) {
         ids.insert(entry.id);
     }
-    expect(entries.size() == 13 && ids.size() == 13, "every node should have an entry with a unique id");
-    expect(entries[0].subtreeEnd == 7 && entries[1].parent == 0 && entries[2].depth == 2 && entries[5].parent == 4 &&
-               entries[8].parent == OutlinerRowEntry::noParent,
-           "entries should record their subtree, parent, and depth");
-    expect(entries[4].id == HierarchyPanel::entityRowId(seed, fixture.crate, fixture.props.value) &&
-               entries[0].id == HierarchyPanel::collectionRowId(seed, fixture.props),
-           "entry ids should be the panel's row ids");
+    CHECK_MESSAGE((entries.size() == 13 && ids.size() == 13), "every node should have an entry with a unique id");
+    CHECK_MESSAGE((entries[0].subtreeEnd == 7 && entries[1].parent == 0 && entries[2].depth == 2 &&
+                   entries[5].parent == 4 && entries[8].parent == OutlinerRowEntry::noParent),
+                  "entries should record their subtree, parent, and depth");
+    CHECK_MESSAGE((entries[4].id == HierarchyPanel::entityRowId(seed, fixture.crate, fixture.props.value) &&
+                   entries[0].id == HierarchyPanel::collectionRowId(seed, fixture.props)),
+                  "entry ids should be the panel's row ids");
 
     const auto closed = [](const OutlinerRowEntry&) { return false; };
     const auto open = [](const OutlinerRowEntry&) { return true; };
-    expect(visibleOutlinerRows(entries, closed) == std::vector<uint32_t>{0, 7, 8, 10, 11, 12},
-           "closed rows should hide their subtrees");
-    expect(visibleOutlinerRows(entries, open).size() == entries.size(), "open rows should show everything");
+    CHECK_MESSAGE((visibleOutlinerRows(entries, closed) == std::vector<uint32_t>{0, 7, 8, 10, 11, 12}),
+                  "closed rows should hide their subtrees");
+    CHECK_MESSAGE(visibleOutlinerRows(entries, open).size() == entries.size(), "open rows should show everything");
 
     // An entity listed twice in one scope still gets two ids.
     const std::vector<OutlinerNode> twice{{.kind = OutlinerNodeKind::Entity, .entity = fixture.lamp},
                                           {.kind = OutlinerNodeKind::Entity, .entity = fixture.lamp}};
     const std::vector<OutlinerRowEntry> repeated = indexOutlinerRows(twice, seed);
-    expect(repeated[0].id == HierarchyPanel::entityRowId(seed, fixture.lamp) && repeated[1].id != repeated[0].id,
-           "a repeated row should get a distinct id");
+    CHECK_MESSAGE(
+        (repeated[0].id == HierarchyPanel::entityRowId(seed, fixture.lamp) && repeated[1].id != repeated[0].id),
+        "a repeated row should get a distinct id");
 
     OutlinerRowCache cache;
     int builds = 0;
@@ -340,23 +345,23 @@ void testRowIndex() {
         return buildOutlinerTree(fixture.scene, {.mode = OutlinerDisplayMode::ViewLayer});
     };
     const OutlinerRowSource source{.seed = seed, .historyRevision = 1, .entityCount = 8};
-    expect(cache.update(source, fixture.scene.collections(), build) &&
-               !cache.update(source, fixture.scene.collections(), build) && builds == 1,
-           "an unchanged source should not rebuild");
-    expect(cache.updateVisible(0, closed) && !cache.updateVisible(0, closed) && cache.visible().size() == 6,
-           "visible rows should follow the open revision");
+    CHECK_MESSAGE((cache.update(source, fixture.scene.collections(), build) &&
+                   !cache.update(source, fixture.scene.collections(), build) && builds == 1),
+                  "an unchanged source should not rebuild");
+    CHECK_MESSAGE((cache.updateVisible(0, closed) && !cache.updateVisible(0, closed) && cache.visible().size() == 6),
+                  "visible rows should follow the open revision");
     OutlinerRowSource edited = source;
     edited.historyRevision = 2;
-    expect(cache.update(edited, fixture.scene.collections(), build) && cache.updateVisible(0, closed),
-           "a new history revision should rebuild the tree and its visible rows");
+    CHECK_MESSAGE((cache.update(edited, fixture.scene.collections(), build) && cache.updateVisible(0, closed)),
+                  "a new history revision should rebuild the tree and its visible rows");
     SceneCollections renamed = fixture.scene.collections();
     renamed.rename(fixture.props, "Things");
-    expect(cache.update(edited, renamed, build) && builds == 3, "changed collections should rebuild");
-    expect(cache.visibleIndex(entries[7].id) == 1u && cache.findEntity(fixture.lamp) == 8u,
-           "the cache should find rows by id and entity");
+    CHECK_MESSAGE((cache.update(edited, renamed, build) && builds == 3), "changed collections should rebuild");
+    CHECK_MESSAGE((cache.visibleIndex(entries[7].id) == 1u && cache.findEntity(fixture.lamp) == 8u),
+                  "the cache should find rows by id and entity");
 }
 
-void testReorderOperator() {
+TEST_CASE("Outliner: reorder operator") {
     Fixture fixture;
     const SceneEntityId wick = fixture.add("Wick", fixture.lamp);
     const SceneEntityId shade = fixture.add("Shade", fixture.lamp);
@@ -364,18 +369,20 @@ void testReorderOperator() {
         return fixture.invoke("outliner.reorder",
                               {{"entity", entity.value}, {"parent", parent.value}, {"index", index}});
     };
-    expect(static_cast<bool>(reorder(shade, fixture.lamp, 0)) &&
-               fixture.children(fixture.lamp) == std::vector<SceneEntityId>{shade, fixture.bulb, wick},
-           "reordering should move the object among its siblings");
-    expect(reorder(shade, fixture.lamp, 0).status == OperatorStatus::Cancelled, "an unmoved object changes nothing");
-    expect(static_cast<bool>(reorder(fixture.lid, fixture.lamp, 1)) &&
-               fixture.parent(fixture.lid) == fixture.scene.findEntity(fixture.lamp) &&
-               fixture.children(fixture.lamp) == std::vector<SceneEntityId>{shade, fixture.lid, fixture.bulb, wick},
-           "reordering under another parent should reparent at the index");
-    expect(fixture.history.size() == 2, "each reorder should be one undo step");
+    CHECK_MESSAGE((static_cast<bool>(reorder(shade, fixture.lamp, 0)) &&
+                   fixture.children(fixture.lamp) == std::vector<SceneEntityId>{shade, fixture.bulb, wick}),
+                  "reordering should move the object among its siblings");
+    CHECK_MESSAGE(reorder(shade, fixture.lamp, 0).status == OperatorStatus::Cancelled,
+                  "an unmoved object changes nothing");
+    CHECK_MESSAGE(
+        (static_cast<bool>(reorder(fixture.lid, fixture.lamp, 1)) &&
+         fixture.parent(fixture.lid) == fixture.scene.findEntity(fixture.lamp) &&
+         fixture.children(fixture.lamp) == std::vector<SceneEntityId>{shade, fixture.lid, fixture.bulb, wick}),
+        "reordering under another parent should reparent at the index");
+    CHECK_MESSAGE(fixture.history.size() == 2, "each reorder should be one undo step");
 
     std::string saved;
-    expect(fixture.editing().capture(saved), "the scene should serialize");
+    CHECK_MESSAGE(fixture.editing().capture(saved), "the scene should serialize");
     Scene loaded;
     const SceneDocumentResult load =
         SceneDocument::deserialize(saved, fixture.assets, fixture.document.options(), loaded);
@@ -383,136 +390,145 @@ void testReorderOperator() {
     for (const Entity child : loaded.registry().get<RelationshipComponent>(loaded.findEntity(fixture.lamp)).children) {
         loadedOrder.push_back(loaded.id(child));
     }
-    expect(load.success && loadedOrder == fixture.children(fixture.lamp),
-           "the sibling order should survive saving and loading: " + load.error);
+    CHECK_MESSAGE((load.success && loadedOrder == fixture.children(fixture.lamp)),
+                  ("the sibling order should survive saving and loading: " + load.error));
 
     fixture.editing().undo();
-    expect(fixture.parent(fixture.lid) == fixture.scene.findEntity(fixture.crate) &&
-               fixture.children(fixture.lamp) == std::vector<SceneEntityId>{shade, fixture.bulb, wick},
-           "undo should put the object back under its parent");
+    CHECK_MESSAGE((fixture.parent(fixture.lid) == fixture.scene.findEntity(fixture.crate) &&
+                   fixture.children(fixture.lamp) == std::vector<SceneEntityId>{shade, fixture.bulb, wick}),
+                  "undo should put the object back under its parent");
     fixture.editing().undo();
-    expect(fixture.children(fixture.lamp) == std::vector<SceneEntityId>{fixture.bulb, wick, shade},
-           "undo should restore the id order");
+    CHECK_MESSAGE((fixture.children(fixture.lamp) == std::vector<SceneEntityId>{fixture.bulb, wick, shade}),
+                  "undo should restore the id order");
     fixture.editing().redo();
-    expect(fixture.children(fixture.lamp) == std::vector<SceneEntityId>{shade, fixture.bulb, wick},
-           "redo should reorder again");
-    expect(reorder(shade, {}, 0).status == OperatorStatus::Cancelled &&
-               reorder(fixture.lamp, fixture.bulb, 0).status == OperatorStatus::Cancelled,
-           "root order and cycles should be refused");
+    CHECK_MESSAGE((fixture.children(fixture.lamp) == std::vector<SceneEntityId>{shade, fixture.bulb, wick}),
+                  "redo should reorder again");
+    CHECK_MESSAGE((reorder(shade, {}, 0).status == OperatorStatus::Cancelled &&
+                   reorder(fixture.lamp, fixture.bulb, 0).status == OperatorStatus::Cancelled),
+                  "root order and cycles should be refused");
 }
 
-void testCollectionRenameOperator() {
+TEST_CASE("Outliner: collection rename operator") {
     Fixture fixture;
     const auto name = [&fixture] { return fixture.scene.collections().find(fixture.props)->name; };
-    expect(static_cast<bool>(
-               fixture.invoke("collection.rename", {{"collection", fixture.props.value}, {"name", "  Things "}})) &&
-               name() == "Things" && fixture.history.size() == 1,
-           "renaming should trim the name and be one undo step");
-    expect(fixture.invoke("collection.rename", {{"collection", fixture.props.value}, {"name", " "}}).status ==
-                   OperatorStatus::Cancelled &&
-               fixture.invoke("collection.rename", {{"collection", fixture.props.value}, {"name", "Things"}}).status ==
-                   OperatorStatus::Cancelled,
-           "an empty or unchanged name should change nothing");
-    expect(static_cast<bool>(
-               fixture.invoke("collection.rename", {{"collection", fixture.crates.value}, {"name", "Things"}})),
-           "collection names need not be unique");
-    expect(fixture.invoke("collection.rename", {{"collection", 4242}, {"name", "X"}}).status == OperatorStatus::Failed,
-           "an unknown collection should fail");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("collection.rename",
+                                                    {{"collection", fixture.props.value}, {"name", "  Things "}})) &&
+                   name() == "Things" && fixture.history.size() == 1),
+                  "renaming should trim the name and be one undo step");
+    CHECK_MESSAGE(
+        (fixture.invoke("collection.rename", {{"collection", fixture.props.value}, {"name", " "}}).status ==
+             OperatorStatus::Cancelled &&
+         fixture.invoke("collection.rename", {{"collection", fixture.props.value}, {"name", "Things"}}).status ==
+             OperatorStatus::Cancelled),
+        "an empty or unchanged name should change nothing");
+    CHECK_MESSAGE((static_cast<bool>(
+                      fixture.invoke("collection.rename", {{"collection", fixture.crates.value}, {"name", "Things"}}))),
+                  "collection names need not be unique");
+    CHECK_MESSAGE(fixture.invoke("collection.rename", {{"collection", 4242}, {"name", "X"}}).status ==
+                      OperatorStatus::Failed,
+                  "an unknown collection should fail");
     fixture.diagnostics.acknowledgeErrors();
     fixture.editing().undo();
     fixture.editing().undo();
-    expect(name() == "Props", "undo should restore the name");
+    CHECK_MESSAGE(name() == "Props", "undo should restore the name");
 }
 
-void testSetVisibilityOperator() {
+TEST_CASE("Outliner: set visibility operator") {
     Fixture fixture;
     const auto visibility = [&fixture] {
         return fixture.scene.registry().try_get<VisibilityComponent>(fixture.scene.findEntity(fixture.rock));
     };
     fixture.selection.assign({fixture.rock, fixture.tree});
     const uint64_t renderable = fixture.scene.revisions().renderable;
-    expect(static_cast<bool>(fixture.invoke("object.set_visibility",
-                                            {{"entity", fixture.rock.value}, {"flag", "visible"}, {"value", false}})) &&
-               visibility() != nullptr && visibility()->hidden,
-           "hiding through the column should set the viewport hide");
-    expect(fixture.selection.ids() == std::vector<SceneEntityId>{fixture.tree},
-           "a hidden object should leave the selection");
-    expect(fixture.scene.revisions().renderable != renderable, "a visibility change should invalidate render caches");
-    expect(
+    CHECK_MESSAGE(
+        (static_cast<bool>(fixture.invoke("object.set_visibility",
+                                          {{"entity", fixture.rock.value}, {"flag", "visible"}, {"value", false}})) &&
+         visibility() != nullptr && visibility()->hidden),
+        "hiding through the column should set the viewport hide");
+    CHECK_MESSAGE((fixture.selection.ids() == std::vector<SceneEntityId>{fixture.tree}),
+                  "a hidden object should leave the selection");
+    CHECK_MESSAGE(fixture.scene.revisions().renderable != renderable,
+                  "a visibility change should invalidate render caches");
+    CHECK_MESSAGE(
         fixture.invoke("object.set_visibility", {{"entity", fixture.rock.value}, {"flag", "visible"}, {"value", false}})
                 .status == OperatorStatus::Cancelled,
         "setting a flag to its value should change nothing");
     fixture.invoke("object.set_visibility", {{"entity", fixture.rock.value}, {"flag", "renderable"}, {"value", false}});
-    expect(visibility() != nullptr && !visibility()->renderable, "the renderable column should set renderable");
+    CHECK_MESSAGE((visibility() != nullptr && !visibility()->renderable),
+                  "the renderable column should set renderable");
     fixture.editing().undo();
-    expect(visibility() != nullptr && visibility()->renderable && visibility()->hidden,
-           "undo should restore the renderable flag only");
+    CHECK_MESSAGE((visibility() != nullptr && visibility()->renderable && visibility()->hidden),
+                  "undo should restore the renderable flag only");
     fixture.editing().undo();
-    expect(visibility() == nullptr, "undoing the hide should leave no visibility component");
+    CHECK_MESSAGE(visibility() == nullptr, "undoing the hide should leave no visibility component");
     fixture.editing().redo();
     fixture.invoke("object.set_visibility", {{"entity", fixture.rock.value}, {"flag", "visible"}, {"value", true}});
-    expect(visibility() == nullptr, "returning every flag to its default should remove the component");
+    CHECK_MESSAGE(visibility() == nullptr, "returning every flag to its default should remove the component");
     fixture.invoke("object.set_visibility", {{"entity", fixture.rock.value}, {"flag", "selectable"}, {"value", false}});
-    expect(visibility() != nullptr && !visibility()->selectable && !visibility()->hidden,
-           "the selectable column should set selectable");
-    expect(fixture.invoke("object.set_visibility", {{"entity", 4242}, {"flag", "visible"}, {"value", false}}).status ==
-               OperatorStatus::Failed,
-           "an unknown object should fail");
+    CHECK_MESSAGE((visibility() != nullptr && !visibility()->selectable && !visibility()->hidden),
+                  "the selectable column should set selectable");
+    CHECK_MESSAGE(
+        fixture.invoke("object.set_visibility", {{"entity", 4242}, {"flag", "visible"}, {"value", false}}).status ==
+            OperatorStatus::Failed,
+        "an unknown object should fail");
     fixture.diagnostics.acknowledgeErrors();
 }
 
-void testParentDropOperator() {
+TEST_CASE("Outliner: parent drop operator") {
     Fixture fixture;
     // Crate's child Lid is selected with it, so it stays under Crate.
     fixture.selection.assign({fixture.crate, fixture.lid, fixture.rock});
     const Entity lamp = fixture.scene.findEntity(fixture.lamp);
-    expect(static_cast<bool>(fixture.invoke("outliner.parent_drop", {{"parent", fixture.lamp.value}})) &&
-               fixture.parent(fixture.crate) == lamp && fixture.parent(fixture.rock) == lamp &&
-               fixture.parent(fixture.lid) == fixture.scene.findEntity(fixture.crate),
-           "dropping should parent every selected root to the target");
-    expect(fixture.history.size() == 1, "a drop should be one undo step");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("outliner.parent_drop", {{"parent", fixture.lamp.value}})) &&
+                   fixture.parent(fixture.crate) == lamp && fixture.parent(fixture.rock) == lamp &&
+                   fixture.parent(fixture.lid) == fixture.scene.findEntity(fixture.crate)),
+                  "dropping should parent every selected root to the target");
+    CHECK_MESSAGE(fixture.history.size() == 1, "a drop should be one undo step");
     fixture.selection.assign({fixture.lamp});
-    expect(fixture.invoke("outliner.parent_drop", {{"parent", fixture.crate.value}}).status ==
-               OperatorStatus::Cancelled,
-           "an object should not become its descendant's child");
+    CHECK_MESSAGE(fixture.invoke("outliner.parent_drop", {{"parent", fixture.crate.value}}).status ==
+                      OperatorStatus::Cancelled,
+                  "an object should not become its descendant's child");
     fixture.selection.assign({fixture.crate});
-    expect(static_cast<bool>(fixture.invoke("outliner.parent_drop", {{"parent", nullptr}})) &&
-               fixture.parent(fixture.crate) == entt::null,
-           "dropping on the scene root should unparent");
+    CHECK_MESSAGE((static_cast<bool>(fixture.invoke("outliner.parent_drop", {{"parent", nullptr}})) &&
+                   fixture.parent(fixture.crate) == entt::null),
+                  "dropping on the scene root should unparent");
     fixture.editing().undo();
     fixture.editing().undo();
-    expect(fixture.parent(fixture.crate) == entt::null && fixture.parent(fixture.rock) == entt::null,
-           "undo should restore the parents");
+    CHECK_MESSAGE((fixture.parent(fixture.crate) == entt::null && fixture.parent(fixture.rock) == entt::null),
+                  "undo should restore the parents");
 }
 
 // The editor smoke's outliner step, headless: add, collect, link, undo all.
-void testCollectionWorkflowUndo() {
+TEST_CASE("Outliner: collection workflow undo") {
     Fixture fixture;
     const size_t collections = fixture.scene.collections().all().size();
     fixture.invoke("object.add_empty", nlohmann::json::object());
     const SceneEntityId added = *fixture.selection.active();
     fixture.invoke("collection.new", {{"name", "Smoke"}, {"link_selection", false}});
     fixture.invoke("collection.link", {{"collection", collections + 1}});
-    expect(fixture.history.size() == 3 && fixture.member(added, SceneCollectionId{collections + 1}),
-           "adding, creating, and linking should be three undo steps: " + std::to_string(fixture.history.size()));
+    CHECK_MESSAGE(
+        (fixture.history.size() == 3 && fixture.member(added, SceneCollectionId{collections + 1})),
+        ("adding, creating, and linking should be three undo steps: " + std::to_string(fixture.history.size())));
     for (int step = 0; step < 3; ++step) {
         fixture.editing().undo();
     }
-    expect(fixture.scene.collections().all().size() == collections && fixture.scene.findEntity(added) == entt::null,
-           "undoing the three steps should remove the collection and the empty");
+    CHECK_MESSAGE(
+        (fixture.scene.collections().all().size() == collections && fixture.scene.findEntity(added) == entt::null),
+        "undoing the three steps should remove the collection and the empty");
 }
 
-void testAreaState() {
+TEST_CASE("Outliner: area state") {
     HierarchyPanel panel;
-    expect(panel.areaState() == "view_layer", "a new outliner should show the View Layer");
+    CHECK_MESSAGE(panel.areaState() == "view_layer", "a new outliner should show the View Layer");
     panel.restoreAreaState("orphan_data");
-    expect(panel.displayMode() == OutlinerDisplayMode::OrphanData && panel.areaState() == "orphan_data",
-           "the display mode should restore from area state");
+    CHECK_MESSAGE((panel.displayMode() == OutlinerDisplayMode::OrphanData && panel.areaState() == "orphan_data"),
+                  "the display mode should restore from area state");
     panel.restoreAreaState("not a mode");
-    expect(panel.displayMode() == OutlinerDisplayMode::OrphanData, "unknown area state should be ignored");
+    CHECK_MESSAGE(panel.displayMode() == OutlinerDisplayMode::OrphanData, "unknown area state should be ignored");
     HierarchyPanel other;
     other.restoreAreaState(panel.areaState());
-    expect(other.displayMode() == OutlinerDisplayMode::OrphanData, "area state should round trip between panels");
+    CHECK_MESSAGE(other.displayMode() == OutlinerDisplayMode::OrphanData,
+                  "area state should round trip between panels");
 }
 
 const ImGuiWindow* panelWindow(const Fixture& fixture) {
@@ -609,7 +625,7 @@ bool dragRow(Fixture& fixture, ImGuiID id, ImGuiID target, float fraction = 0.5f
     return true;
 }
 
-void testClicks() {
+TEST_CASE("Outliner: clicks") {
     Fixture fixture;
     HeadlessImGuiContext imgui;
     ImGui::GetIO().ConfigInputTrickleEventQueue = false;
@@ -618,38 +634,41 @@ void testClicks() {
     // Collections open by default; entities with children start closed.
     const std::vector<SceneEntityId> order{fixture.bulb, fixture.barrel, fixture.crate, fixture.barrel,
                                            fixture.lamp, fixture.tree,   fixture.tree2, fixture.rock};
-    expect(fixture.panel.displayedEntities() == order, "the panel should draw the View Layer rows in order");
+    CHECK_MESSAGE(fixture.panel.displayedEntities() == order, "the panel should draw the View Layer rows in order");
 
-    expect(clickRow(fixture, entityRow(fixture, fixture.crate, fixture.props.value)), "Crate's row should be found");
-    expect(fixture.selection.ids() == std::vector<SceneEntityId>{fixture.crate}, "a click should select the row");
+    CHECK_MESSAGE(clickRow(fixture, entityRow(fixture, fixture.crate, fixture.props.value)),
+                  "Crate's row should be found");
+    CHECK_MESSAGE((fixture.selection.ids() == std::vector<SceneEntityId>{fixture.crate}),
+                  "a click should select the row");
     clickRow(fixture, entityRow(fixture, fixture.barrel, fixture.props.value), true);
-    expect(fixture.selection.ids() == std::vector<SceneEntityId>{fixture.barrel, fixture.crate},
-           "Ctrl click should extend the selection");
+    CHECK_MESSAGE((fixture.selection.ids() == std::vector<SceneEntityId>{fixture.barrel, fixture.crate}),
+                  "Ctrl click should extend the selection");
     clickRow(fixture, entityRow(fixture, fixture.tree), false, true);
-    expect(fixture.selection.ids() ==
-               std::vector<SceneEntityId>{fixture.barrel, fixture.crate, fixture.lamp, fixture.tree},
-           "Shift click should select the displayed range from the last clicked row");
+    CHECK_MESSAGE((fixture.selection.ids() ==
+                   std::vector<SceneEntityId>{fixture.barrel, fixture.crate, fixture.lamp, fixture.tree}),
+                  "Shift click should select the displayed range from the last clicked row");
     clickRow(fixture, entityRow(fixture, fixture.rock), true, true);
-    expect(fixture.selection.size() == 6 && fixture.selection.active() == fixture.barrel,
-           "Ctrl Shift click should add a range and keep the anchor active");
+    CHECK_MESSAGE((fixture.selection.size() == 6 && fixture.selection.active() == fixture.barrel),
+                  "Ctrl Shift click should add a range and keep the anchor active");
     clickRow(fixture, entityRow(fixture, fixture.tree2));
-    expect(fixture.selection.ids() == std::vector<SceneEntityId>{fixture.tree2},
-           "a plain click on a selected row should select it alone when released");
+    CHECK_MESSAGE((fixture.selection.ids() == std::vector<SceneEntityId>{fixture.tree2}),
+                  "a plain click on a selected row should select it alone when released");
 
     fixture.panel.setDisplayMode(OutlinerDisplayMode::Collections);
     fixture.draw();
-    expect(fixture.panel.displayedEntities() == std::vector<SceneEntityId>{fixture.bulb, fixture.barrel, fixture.crate,
-                                                                           fixture.barrel, fixture.lamp, fixture.lid,
-                                                                           fixture.tree, fixture.tree2, fixture.rock},
-           "the Collections mode should draw its rows");
+    CHECK_MESSAGE((fixture.panel.displayedEntities() ==
+                   std::vector<SceneEntityId>{fixture.bulb, fixture.barrel, fixture.crate, fixture.barrel, fixture.lamp,
+                                              fixture.lid, fixture.tree, fixture.tree2, fixture.rock}),
+                  "the Collections mode should draw its rows");
     fixture.panel.setDisplayMode(OutlinerDisplayMode::Prefabs);
     fixture.draw();
-    expect(fixture.panel.displayedEntities() == std::vector<SceneEntityId>{fixture.rock, fixture.tree, fixture.tree2},
-           "the Prefabs mode should draw its rows");
-    expect(fixture.history.size() == 0, "selecting should record no undo steps");
+    CHECK_MESSAGE(
+        (fixture.panel.displayedEntities() == std::vector<SceneEntityId>{fixture.rock, fixture.tree, fixture.tree2}),
+        "the Prefabs mode should draw its rows");
+    CHECK_MESSAGE(fixture.history.size() == 0, "selecting should record no undo steps");
 }
 
-void testRestrictionToggles() {
+TEST_CASE("Outliner: restriction toggles") {
     Fixture fixture;
     HeadlessImGuiContext imgui;
     fixture.draw();
@@ -658,64 +677,65 @@ void testRestrictionToggles() {
     fixture.draw();
     const auto* visibility =
         fixture.scene.registry().try_get<VisibilityComponent>(fixture.scene.findEntity(fixture.rock));
-    expect(visibility != nullptr && visibility->hidden && fixture.history.size() == 1,
-           "the eye column should hide the object as one undo step");
+    CHECK_MESSAGE((visibility != nullptr && visibility->hidden && fixture.history.size() == 1),
+                  "the eye column should hide the object as one undo step");
     fixture.draw();
     HeadlessImGuiContext::activateNextFrame(HierarchyPanel::restrictionToggleId(rockRow, "visible"));
     fixture.draw();
-    expect(!fixture.scene.registry().any_of<VisibilityComponent>(fixture.scene.findEntity(fixture.rock)),
-           "the eye column should show a hidden object again");
+    CHECK_MESSAGE((!fixture.scene.registry().any_of<VisibilityComponent>(fixture.scene.findEntity(fixture.rock))),
+                  "the eye column should show a hidden object again");
 
     const ImGuiID propsRow = collectionRow(fixture, fixture.props);
     fixture.draw();
     HeadlessImGuiContext::activateNextFrame(HierarchyPanel::restrictionToggleId(propsRow, "selectable"));
     fixture.draw();
-    expect(!fixture.scene.collections().find(fixture.props)->selectable && fixture.history.size() == 3,
-           "the arrow column should make a collection unselectable");
+    CHECK_MESSAGE((!fixture.scene.collections().find(fixture.props)->selectable && fixture.history.size() == 3),
+                  "the arrow column should make a collection unselectable");
     fixture.draw();
     HeadlessImGuiContext::activateNextFrame(HierarchyPanel::restrictionToggleId(propsRow, "renderable"));
     fixture.draw();
-    expect(!fixture.scene.collections().find(fixture.props)->renderable, "the camera column should stop rendering");
+    CHECK_MESSAGE(!fixture.scene.collections().find(fixture.props)->renderable,
+                  "the camera column should stop rendering");
     fixture.editing().undo();
     fixture.editing().undo();
-    expect(fixture.scene.collections().find(fixture.props)->selectable &&
-               fixture.scene.collections().find(fixture.props)->renderable,
-           "undo should restore the collection flags");
+    CHECK_MESSAGE((fixture.scene.collections().find(fixture.props)->selectable &&
+                   fixture.scene.collections().find(fixture.props)->renderable),
+                  "undo should restore the collection flags");
 }
 
-void testDrags() {
+TEST_CASE("Outliner: drags") {
     Fixture fixture;
     HeadlessImGuiContext imgui;
     ImGui::GetIO().ConfigInputTrickleEventQueue = false;
     fixture.draw();
     fixture.selection.assign({fixture.tree, fixture.tree2});
-    expect(dragRow(fixture, entityRow(fixture, fixture.tree), entityRow(fixture, fixture.lamp)),
-           "the rows to drag should be found");
+    CHECK_MESSAGE(dragRow(fixture, entityRow(fixture, fixture.tree), entityRow(fixture, fixture.lamp)),
+                  "the rows to drag should be found");
     const Entity lamp = fixture.scene.findEntity(fixture.lamp);
-    expect(fixture.parent(fixture.tree) == lamp && fixture.parent(fixture.tree2) == lamp,
-           "dragging a selected row should reparent the whole selection");
-    expect(fixture.history.size() == 1 && fixture.selection.size() == 2,
-           "the drop should be one undo step and keep the selection");
+    CHECK_MESSAGE((fixture.parent(fixture.tree) == lamp && fixture.parent(fixture.tree2) == lamp),
+                  "dragging a selected row should reparent the whole selection");
+    CHECK_MESSAGE((fixture.history.size() == 1 && fixture.selection.size() == 2),
+                  "the drop should be one undo step and keep the selection");
 
     fixture.selection.assign({fixture.crate});
-    expect(dragRow(fixture, entityRow(fixture, fixture.rock), collectionRow(fixture, fixture.empty)),
-           "the rock and the empty collection should be found");
-    expect(fixture.member(fixture.rock, fixture.empty) && !fixture.member(fixture.crate, fixture.empty),
-           "dragging an unselected row onto a collection should link that row alone");
-    expect(fixture.selection.ids() == std::vector<SceneEntityId>{fixture.rock} && fixture.history.size() == 2,
-           "the dragged row should become the selection");
+    CHECK_MESSAGE(dragRow(fixture, entityRow(fixture, fixture.rock), collectionRow(fixture, fixture.empty)),
+                  "the rock and the empty collection should be found");
+    CHECK_MESSAGE((fixture.member(fixture.rock, fixture.empty) && !fixture.member(fixture.crate, fixture.empty)),
+                  "dragging an unselected row onto a collection should link that row alone");
+    CHECK_MESSAGE((fixture.selection.ids() == std::vector<SceneEntityId>{fixture.rock} && fixture.history.size() == 2),
+                  "the dragged row should become the selection");
     fixture.editing().undo();
     fixture.editing().undo();
-    expect(!fixture.member(fixture.rock, fixture.empty) && fixture.parent(fixture.tree) == entt::null,
-           "undo should unlink and unparent");
+    CHECK_MESSAGE((!fixture.member(fixture.rock, fixture.empty) && fixture.parent(fixture.tree) == entt::null),
+                  "undo should unlink and unparent");
 }
 
-void testSearch() {
+TEST_CASE("Outliner: search") {
     Fixture fixture;
     HeadlessImGuiContext imgui;
     fixture.draw();
     const ImGuiWindow* window = panelWindow(fixture);
-    expect(window != nullptr, "the panel should draw its window");
+    CHECK_MESSAGE(window != nullptr, "the panel should draw its window");
     if (window == nullptr) {
         return;
     }
@@ -725,11 +745,12 @@ void testSearch() {
     fixture.draw();
     fixture.draw();
     // Lamp is closed, but searching opens the rows leading to a match.
-    expect(fixture.panel.displayedEntities() == std::vector<SceneEntityId>{fixture.bulb, fixture.lamp, fixture.bulb},
-           "a search should show every matching row with its ancestors");
+    CHECK_MESSAGE(
+        (fixture.panel.displayedEntities() == std::vector<SceneEntityId>{fixture.bulb, fixture.lamp, fixture.bulb}),
+        "a search should show every matching row with its ancestors");
 }
 
-void testRowCacheInvalidation() {
+TEST_CASE("Outliner: row cache invalidation") {
     Fixture fixture;
     HeadlessImGuiContext imgui;
     fixture.draw();
@@ -738,19 +759,19 @@ void testRowCacheInvalidation() {
         fixture.draw();
     }
     const OutlinerRowCache::Stats steady = fixture.panel.rowCacheStats();
-    expect(first.treeBuilds == 1 && steady.treeBuilds == 1 && steady.visibleBuilds == first.visibleBuilds,
-           "frames without changes should rebuild nothing");
+    CHECK_MESSAGE((first.treeBuilds == 1 && steady.treeBuilds == 1 && steady.visibleBuilds == first.visibleBuilds),
+                  "frames without changes should rebuild nothing");
     fixture.invoke("collection.rename", {{"collection", fixture.empty.value}, {"name", "Spare"}});
     fixture.draw();
-    expect(fixture.panel.rowCacheStats().treeBuilds == 2, "a recorded edit should rebuild the rows");
+    CHECK_MESSAGE(fixture.panel.rowCacheStats().treeBuilds == 2, "a recorded edit should rebuild the rows");
     fixture.scene.createEntity("Loose");
     fixture.draw();
-    expect(fixture.panel.rowCacheStats().treeBuilds == 3, "an entity added outside the history should rebuild");
+    CHECK_MESSAGE(fixture.panel.rowCacheStats().treeBuilds == 3, "an entity added outside the history should rebuild");
     fixture.panel.setDisplayMode(OutlinerDisplayMode::Prefabs);
     fixture.draw();
     fixture.panel.setDisplayMode(OutlinerDisplayMode::ViewLayer);
     fixture.draw();
-    expect(fixture.panel.rowCacheStats().treeBuilds == 5, "switching display modes should rebuild");
+    CHECK_MESSAGE(fixture.panel.rowCacheStats().treeBuilds == 5, "switching display modes should rebuild");
 
     // Making Lid active from outside the outliner opens Crate to show it.
     const uint64_t trees = fixture.panel.rowCacheStats().treeBuilds;
@@ -758,13 +779,14 @@ void testRowCacheInvalidation() {
     fixture.selection.assign({fixture.lid});
     fixture.draw();
     const std::vector<SceneEntityId>& shown = fixture.panel.displayedEntities();
-    expect(std::ranges::find(shown, fixture.lid) != shown.end(), "revealing should open the active object's parents");
-    expect(fixture.panel.rowCacheStats().treeBuilds == trees &&
-               fixture.panel.rowCacheStats().visibleBuilds == visible + 1,
-           "opening a row should recompute only the visible rows");
+    CHECK_MESSAGE(std::ranges::find(shown, fixture.lid) != shown.end(),
+                  "revealing should open the active object's parents");
+    CHECK_MESSAGE((fixture.panel.rowCacheStats().treeBuilds == trees &&
+                   fixture.panel.rowCacheStats().visibleBuilds == visible + 1),
+                  "opening a row should recompute only the visible rows");
 }
 
-void testClippedRowsAndReveal() {
+TEST_CASE("Outliner: clipped rows and reveal") {
     Fixture fixture;
     for (int index = 0; index < 300; ++index) {
         fixture.add(("Filler " + std::to_string(index)).c_str());
@@ -775,21 +797,23 @@ void testClippedRowsAndReveal() {
     ImGui::GetIO().ConfigInputTrickleEventQueue = false;
     fixture.draw();
     fixture.draw();
-    expect(fixture.panel.displayedEntities().size() == 309,
-           "every open row should count as displayed: " + std::to_string(fixture.panel.displayedEntities().size()));
-    expect(!rowY(fixture, entityRow(fixture, deep)), "a row far below the view should not be drawn");
+    CHECK_MESSAGE(
+        fixture.panel.displayedEntities().size() == 309,
+        ("every open row should count as displayed: " + std::to_string(fixture.panel.displayedEntities().size())));
+    CHECK_MESSAGE(!rowY(fixture, entityRow(fixture, deep)), "a row far below the view should not be drawn");
 
     fixture.selection.assign({needle});
     for (int frame = 0; frame < 3; ++frame) {
         fixture.draw();
     }
-    expect(rowY(fixture, entityRow(fixture, needle)).has_value(),
-           "an object made active elsewhere should be opened and scrolled into view");
-    expect(clickRow(fixture, entityRow(fixture, deep)) && fixture.selection.ids() == std::vector<SceneEntityId>{deep},
-           "rows scrolled into view should take clicks");
+    CHECK_MESSAGE(rowY(fixture, entityRow(fixture, needle)).has_value(),
+                  "an object made active elsewhere should be opened and scrolled into view");
+    CHECK_MESSAGE(
+        (clickRow(fixture, entityRow(fixture, deep)) && fixture.selection.ids() == std::vector<SceneEntityId>{deep}),
+        "rows scrolled into view should take clicks");
 }
 
-void testReorderDrag() {
+TEST_CASE("Outliner: reorder drag") {
     Fixture fixture;
     const SceneEntityId wick = fixture.add("Wick", fixture.lamp);
     const SceneEntityId shade = fixture.add("Shade", fixture.lamp);
@@ -799,27 +823,27 @@ void testReorderDrag() {
     fixture.selection.assign({wick});
     fixture.draw();
     fixture.draw();
-    expect(dragRow(fixture, entityRow(fixture, shade), entityRow(fixture, fixture.bulb), 0.05f),
-           "the child rows should be found");
-    expect(fixture.children(fixture.lamp) == std::vector<SceneEntityId>{shade, fixture.bulb, wick} &&
-               fixture.history.size() == 1,
-           "dropping at a row's top edge should move the dragged object before it as one undo step");
-    expect(dragRow(fixture, entityRow(fixture, wick), entityRow(fixture, shade), 0.95f) &&
-               fixture.children(fixture.lamp) == std::vector<SceneEntityId>{shade, wick, fixture.bulb},
-           "dropping at a row's bottom edge should move the dragged object after it");
-    expect(dragRow(fixture, entityRow(fixture, wick), entityRow(fixture, shade)) &&
-               fixture.parent(wick) == fixture.scene.findEntity(shade),
-           "dropping on a row's middle should still reparent");
-    expect(fixture.history.size() == 3, "each drop should be one undo step");
+    CHECK_MESSAGE(dragRow(fixture, entityRow(fixture, shade), entityRow(fixture, fixture.bulb), 0.05f),
+                  "the child rows should be found");
+    CHECK_MESSAGE((fixture.children(fixture.lamp) == std::vector<SceneEntityId>{shade, fixture.bulb, wick} &&
+                   fixture.history.size() == 1),
+                  "dropping at a row's top edge should move the dragged object before it as one undo step");
+    CHECK_MESSAGE((dragRow(fixture, entityRow(fixture, wick), entityRow(fixture, shade), 0.95f) &&
+                   fixture.children(fixture.lamp) == std::vector<SceneEntityId>{shade, wick, fixture.bulb}),
+                  "dropping at a row's bottom edge should move the dragged object after it");
+    CHECK_MESSAGE((dragRow(fixture, entityRow(fixture, wick), entityRow(fixture, shade)) &&
+                   fixture.parent(wick) == fixture.scene.findEntity(shade)),
+                  "dropping on a row's middle should still reparent");
+    CHECK_MESSAGE(fixture.history.size() == 3, "each drop should be one undo step");
 }
 
-void testCollectionRenameInPlace() {
+TEST_CASE("Outliner: collection rename in place") {
     Fixture fixture;
     HeadlessImGuiContext imgui;
     ImGui::GetIO().ConfigInputTrickleEventQueue = false;
     fixture.draw();
     const std::optional<float> y = rowY(fixture, collectionRow(fixture, fixture.props));
-    expect(y.has_value(), "the collection row should be found");
+    CHECK_MESSAGE(y.has_value(), "the collection row should be found");
     if (!y) {
         return;
     }
@@ -831,7 +855,7 @@ void testCollectionRenameInPlace() {
         io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
         fixture.draw();
     }
-    expect(fixture.panel.renamingCollection() == fixture.props, "double-clicking a collection should rename it");
+    CHECK_MESSAGE(fixture.panel.renamingCollection() == fixture.props, "double-clicking a collection should rename it");
     fixture.draw();
     HeadlessImGuiContext::typeNextFrame("Shelves");
     fixture.draw();
@@ -839,13 +863,13 @@ void testCollectionRenameInPlace() {
     fixture.draw();
     io.AddKeyEvent(ImGuiKey_Enter, false);
     fixture.draw();
-    expect(fixture.scene.collections().find(fixture.props)->name == "Shelves" && !fixture.panel.renamingCollection() &&
-               fixture.history.size() == 1,
-           "Enter should rename the collection as one undo step: " +
-               fixture.scene.collections().find(fixture.props)->name);
+    CHECK_MESSAGE((fixture.scene.collections().find(fixture.props)->name == "Shelves" &&
+                   !fixture.panel.renamingCollection() && fixture.history.size() == 1),
+                  ("Enter should rename the collection as one undo step: " +
+                   fixture.scene.collections().find(fixture.props)->name));
 }
 
-void testSelectedRowCursorFollowsTheAccent() {
+TEST_CASE("Outliner: selected row cursor follows the accent") {
     HeadlessImGuiContext imgui;
     applyEditorColors(ImGui::GetStyle(), {.accent = ThemeAccent::Violet});
     bool accentDrawn = false;
@@ -863,36 +887,9 @@ void testSelectedRowCursorFollowsTheAccent() {
             defaultDrawn = defaultDrawn || drawList->VtxBuffer[index].col == defaultAccent;
         }
     }
-    expect(accentDrawn && !defaultDrawn,
-           "a selected row's cursor should use the chosen accent, not the default accent");
+    CHECK_MESSAGE((accentDrawn && !defaultDrawn),
+                  "a selected row's cursor should use the chosen accent, not the default accent");
 }
 } // namespace
 
-int main() {
-    testDisplayModes();
-    testFilter();
-    testFilterSyntax();
-    testRowIndex();
-    testOrphanData();
-    testSetVisibilityOperator();
-    testParentDropOperator();
-    testReorderOperator();
-    testCollectionRenameOperator();
-    testCollectionWorkflowUndo();
-    testAreaState();
-    testClicks();
-    testRestrictionToggles();
-    testDrags();
-    testSearch();
-    testRowCacheInvalidation();
-    testClippedRowsAndReveal();
-    testReorderDrag();
-    testCollectionRenameInPlace();
-    testSelectedRowCursorFollowsTheAccent();
-    if (failures != 0) {
-        std::cerr << failures << " outliner test(s) failed\n";
-        return 1;
-    }
-    std::cout << "Outliner tests passed\n";
-    return 0;
-}
+TEST_SUITE_END();

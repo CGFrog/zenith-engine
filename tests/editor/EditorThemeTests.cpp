@@ -1,3 +1,7 @@
+// The editor's pixel theme: metrics on the pixel grid, palette colours and
+// accents, the chrome, icons and the pixel painter, themed widgets and their
+// ImGui ids, copyable text, entity icons, and applying appearance preferences.
+
 #include "HeadlessImGui.hpp"
 
 #include "editor/application/EditorAppearance.hpp"
@@ -10,92 +14,107 @@
 #include "engine/audio/AudioSystem.hpp"
 #include "engine/physics/PhysicsComponents.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <cmath>
 #include <filesystem>
-#include <iostream>
 #include <string>
 
 namespace {
-int failures = 0;
 
-void expect(bool condition, const std::string& message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
+// A headless ImGui context styled as the editor styles its own.
+struct ThemedImGui {
+    ThemedImGui() {
+        applyEditorMetrics(ImGui::GetStyle(), 1.0f);
+        applyEditorColors(ImGui::GetStyle());
     }
-}
+
+    HeadlessImGuiContext imgui;
+};
 
 bool whole(float value) {
     return std::floor(value) == value;
 }
 
-void testMetricsSitOnThePixelGrid() {
-    expect(artPixelForScale(0.5f) == 1.0f && artPixelForScale(1.0f) == 1.0f && artPixelForScale(1.6f) == 2.0f,
-           "display scales round to a whole art pixel of at least one");
+} // namespace
+
+TEST_SUITE_BEGIN("EditorTheme");
+
+TEST_CASE("EditorTheme: metrics sit on the pixel grid") {
+    const ThemedImGui imgui;
+    CHECK_MESSAGE((artPixelForScale(0.5f) == 1.0f && artPixelForScale(1.0f) == 1.0f && artPixelForScale(1.6f) == 2.0f),
+                  "display scales round to a whole art pixel of at least one");
     for (const float artPixel : {1.0f, 2.0f, 3.0f}) {
+        CAPTURE(artPixel);
         ImGuiStyle style;
         applyEditorMetrics(style, artPixel);
-        expect(style.FrameRounding == 0.0f && style.WindowRounding == 0.0f && style.TabRounding == 0.0f &&
-                   style.ScrollbarRounding == 0.0f && style.GrabRounding == 0.0f,
-               "the pixel theme has no rounded corners");
-        expect(!style.AntiAliasedLines && !style.AntiAliasedFill, "the pixel theme draws hard edges");
-        expect(style.FramePadding.x == 4.0f * artPixel && style.FramePadding.y == 2.0f * artPixel &&
-                   style.FrameBorderSize == artPixel,
-               "spacing and borders scale with the art pixel");
-        expect(whole(style.ItemSpacing.x) && whole(style.ItemSpacing.y) && whole(style.WindowPadding.x) &&
-                   whole(style.DockingSeparatorSize),
-               "spacing is whole screen pixels");
-        expect(editorArtPixel() == artPixel, "the theme remembers the art pixel its metrics use");
+        CHECK_MESSAGE((style.FrameRounding == 0.0f && style.WindowRounding == 0.0f && style.TabRounding == 0.0f &&
+                       style.ScrollbarRounding == 0.0f && style.GrabRounding == 0.0f),
+                      "the pixel theme has no rounded corners");
+        CHECK_MESSAGE((!style.AntiAliasedLines && !style.AntiAliasedFill), "the pixel theme draws hard edges");
+        CHECK_MESSAGE((style.FramePadding.x == 4.0f * artPixel && style.FramePadding.y == 2.0f * artPixel &&
+                       style.FrameBorderSize == artPixel),
+                      "spacing and borders scale with the art pixel");
+        CHECK_MESSAGE((whole(style.ItemSpacing.x) && whole(style.ItemSpacing.y) && whole(style.WindowPadding.x) &&
+                       whole(style.DockingSeparatorSize)),
+                      "spacing is whole screen pixels");
+        CHECK_MESSAGE(editorArtPixel() == artPixel, "the theme remembers the art pixel its metrics use");
     }
     applyEditorMetrics(ImGui::GetStyle(), 1.0f);
 }
 
-void testColorsComeFromThePalette() {
+TEST_CASE("EditorTheme: colors come from the palette") {
+    const ThemedImGui imgui;
     ImGuiStyle style;
     applyEditorColors(style);
     const ImVec4 text = style.Colors[ImGuiCol_Text];
-    expect(text.x == palette::ink.r && text.y == palette::ink.g && text.z == palette::ink.b,
-           "text uses the palette ink");
-    expect(style.Colors[ImGuiCol_DockingEmptyBg].w == 0.0f && style.Colors[ImGuiCol_MenuBarBg].w == 0.0f,
-           "empty dock space and menu bars let the painted gap and header strips show");
-    expect(style.Colors[ImGuiCol_WindowBg].w == 1.0f && style.Colors[ImGuiCol_WindowBg].x == palette::pane.r,
-           "windows are the opaque pane grey");
+    CHECK_MESSAGE((text.x == palette::ink.r && text.y == palette::ink.g && text.z == palette::ink.b),
+                  "text uses the palette ink");
+    CHECK_MESSAGE((style.Colors[ImGuiCol_DockingEmptyBg].w == 0.0f && style.Colors[ImGuiCol_MenuBarBg].w == 0.0f),
+                  "empty dock space and menu bars let the painted gap and header strips show");
+    CHECK_MESSAGE((style.Colors[ImGuiCol_WindowBg].w == 1.0f && style.Colors[ImGuiCol_WindowBg].x == palette::pane.r),
+                  "windows are the opaque pane grey");
 }
 
-void testThemeParametersApply() {
-    expect(artPixelForUiScale(0, 1.6f) == 2.0f && artPixelForUiScale(3, 1.0f) == 3.0f &&
-               artPixelForUiScale(9, 1.0f) == static_cast<float>(maximumUiScale),
-           "the UI scale follows the display unless overridden by a whole multiplier");
+TEST_CASE("EditorTheme: theme parameters apply") {
+    const ThemedImGui imgui;
+    CHECK_MESSAGE((artPixelForUiScale(0, 1.6f) == 2.0f && artPixelForUiScale(3, 1.0f) == 3.0f &&
+                   artPixelForUiScale(9, 1.0f) == static_cast<float>(maximumUiScale)),
+                  "the UI scale follows the display unless overridden by a whole multiplier");
     ImGuiStyle designed;
     applyEditorColors(designed);
     const ImVec4 designedAccent = designed.Colors[ImGuiCol_NavCursor];
-    expect(designedAccent.x == palette::accentBlue.r && designedAccent.y == palette::accentBlue.g,
-           "the default parameters keep the designed blue accent");
+    CHECK_MESSAGE((designedAccent.x == palette::accentBlue.r && designedAccent.y == palette::accentBlue.g),
+                  "the default parameters keep the designed blue accent");
 
     ImGuiStyle tuned;
     const ThemeParameters violet{.accent = ThemeAccent::Violet};
     applyEditorColors(tuned, violet);
     const ThemeColor accent = themeAccentInfo(ThemeAccent::Violet).color;
-    expect(tuned.Colors[ImGuiCol_NavCursor].x == accent.r && tuned.Colors[ImGuiCol_TabSelectedOverline].z == accent.b &&
-               tuned.Colors[ImGuiCol_SliderGrabActive].y == accent.g,
-           "the accent replaces the default everywhere it is drawn");
-    expect(tuned.Colors[ImGuiCol_Text].x == palette::ink.r && tuned.Colors[ImGuiCol_WindowBg].x == palette::pane.r,
-           "the accent leaves text and pane colours alone");
+    CHECK_MESSAGE((tuned.Colors[ImGuiCol_NavCursor].x == accent.r &&
+                   tuned.Colors[ImGuiCol_TabSelectedOverline].z == accent.b &&
+                   tuned.Colors[ImGuiCol_SliderGrabActive].y == accent.g),
+                  "the accent replaces the default everywhere it is drawn");
+    CHECK_MESSAGE(
+        (tuned.Colors[ImGuiCol_Text].x == palette::ink.r && tuned.Colors[ImGuiCol_WindowBg].x == palette::pane.r),
+        "the accent leaves text and pane colours alone");
 
     ImGui::GetStyle() = tuned;
-    expect(editorAccent() == accent.withAlpha(1.0f), "widgets read the accent from the current style");
+    CHECK_MESSAGE(editorAccent() == accent.withAlpha(1.0f), "widgets read the accent from the current style");
     applyEditorColors(ImGui::GetStyle());
 }
 
-void testChromeClampsParameters() {
+TEST_CASE("EditorTheme: chrome clamps parameters") {
+    const ThemedImGui imgui;
     ThemeChrome chrome;
     chrome.setParameters({.accent = ThemeAccent::Teal});
-    expect(chrome.parameters().accent == ThemeAccent::Teal, "the chrome keeps a supported accent");
+    CHECK_MESSAGE(chrome.parameters().accent == ThemeAccent::Teal, "the chrome keeps a supported accent");
     chrome.setParameters({.accent = static_cast<ThemeAccent>(99)});
-    expect(chrome.parameters().accent == ThemeAccent::Blue, "the chrome keeps its parameters clamped");
+    CHECK_MESSAGE(chrome.parameters().accent == ThemeAccent::Blue, "the chrome keeps its parameters clamped");
 }
 
-void testIconsAndPainterDraw() {
+TEST_CASE("EditorTheme: icons and painter draw") {
+    const ThemedImGui imgui;
     HeadlessImGuiFrame frame("Icons");
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     for (size_t index = 0; index < editorIconCount; ++index) {
@@ -103,7 +122,7 @@ void testIconsAndPainterDraw() {
             for (const bool disabled : {false, true}) {
                 const int before = drawList->VtxBuffer.Size;
                 drawIcon(drawList, static_cast<EditorIcon>(index), {10.0f, 10.0f}, pixelSize, {.disabled = disabled});
-                expect(drawList->VtxBuffer.Size > before, "every icon draws at every size and state");
+                CHECK_MESSAGE(drawList->VtxBuffer.Size > before, "every icon draws at every size and state");
             }
         }
     }
@@ -112,12 +131,13 @@ void testIconsAndPainterDraw() {
     pixel::rect(drawList, {40.0f, 40.0f}, {10.0f, 10.0f}, IM_COL32_WHITE);
     pixel::outline(drawList, {5.0f, 5.0f}, {5.0f, 9.0f}, IM_COL32_WHITE, 1.0f);
     pixel::bevel(drawList, {0.0f, 0.0f}, {0.0f, 0.0f}, IM_COL32_WHITE, IM_COL32_BLACK, 1.0f);
-    expect(drawList->VtxBuffer.Size == before, "empty and inverted rectangles draw nothing");
+    CHECK_MESSAGE(drawList->VtxBuffer.Size == before, "empty and inverted rectangles draw nothing");
     pixel::outline(drawList, {0.0f, 0.0f}, {3.0f, 3.0f}, IM_COL32_WHITE, 10.0f);
-    expect(drawList->VtxBuffer.Size > before, "an outline thicker than its rectangle still fills it");
+    CHECK_MESSAGE(drawList->VtxBuffer.Size > before, "an outline thicker than its rectangle still fills it");
 }
 
-void testWidgetsKeepImGuiIds() {
+TEST_CASE("EditorTheme: widgets keep ImGui ids") {
+    const ThemedImGui imgui;
     ImGuiID buttonId = 0;
     {
         HeadlessImGuiFrame frame("Widgets");
@@ -131,8 +151,8 @@ void testWidgetsKeepImGuiIds() {
         widgets::CaptionText("Ready", palette::captionInk);
     }
     const ImGuiWindow* window = HeadlessImGuiContext::findWindow("Widgets");
-    expect(window != nullptr && buttonId == HeadlessImGuiContext::itemId(*window, "Add Fog"),
-           "a themed button has ImGui::Button's id");
+    CHECK_MESSAGE((window != nullptr && buttonId == HeadlessImGuiContext::itemId(*window, "Add Fog")),
+                  "a themed button has ImGui::Button's id");
     HeadlessImGuiContext::activateNextFrame(buttonId);
     bool pressed = false;
     bool toolPressed = false;
@@ -141,10 +161,11 @@ void testWidgetsKeepImGuiIds() {
         pressed = widgets::Button("Add Fog");
         toolPressed = widgets::ToolButton("Move", EditorIcon::ToolMove, true, {24.0f, 24.0f});
     }
-    expect(pressed && !toolPressed, "activating a themed button's id presses it");
+    CHECK_MESSAGE((pressed && !toolPressed), "activating a themed button's id presses it");
 }
 
-void testCopyableText() {
+TEST_CASE("EditorTheme: copyable text") {
+    const ThemedImGui imgui;
     const std::string message = "Build failed: error C2065";
     ImGuiIO& io = ImGui::GetIO();
     ImVec2 center{};
@@ -159,15 +180,15 @@ void testCopyableText() {
     draw(copied);
     io.AddMousePosEvent(center.x, center.y);
     draw(copied);
-    expect(!copied, "hovering error text alone copies nothing");
+    CHECK_MESSAGE(!copied, "hovering error text alone copies nothing");
     io.AddKeyEvent(ImGuiMod_Ctrl, true);
     io.AddKeyEvent(ImGuiKey_C, true);
     draw(copied);
     io.AddKeyEvent(ImGuiKey_C, false);
     io.AddKeyEvent(ImGuiMod_Ctrl, false);
-    expect(copied, "Ctrl+C over error text copies it");
+    CHECK_MESSAGE(copied, "Ctrl+C over error text copies it");
     const char* clipboard = ImGui::GetClipboardText();
-    expect(clipboard != nullptr && message == clipboard, "the clipboard holds the whole message");
+    CHECK_MESSAGE((clipboard != nullptr && message == clipboard), "the clipboard holds the whole message");
 
     // Empty text has nothing to copy.
     bool emptyCopied = true;
@@ -175,10 +196,10 @@ void testCopyableText() {
         HeadlessImGuiFrame frame("Copyable empty");
         emptyCopied = widgets::CopyableText("");
     }
-    expect(!emptyCopied, "empty text is never copied");
+    CHECK_MESSAGE(!emptyCopied, "empty text is never copied");
 }
 
-void testEntityIcons() {
+TEST_CASE("EditorTheme: entity icons") {
     Scene scene;
     const Entity camera = scene.createEntity("Camera");
     scene.registry().emplace<CameraComponent>(camera);
@@ -192,16 +213,17 @@ void testEntityIcons() {
     scene.registry().emplace<RigidBodyComponent>(crate);
     const Entity empty = scene.createEntity("Empty");
     const entt::registry& registry = scene.registry();
-    expect(entityIcon(registry, camera) == EditorIcon::Camera, "cameras show the camera icon");
-    expect(entityIcon(registry, sun) == EditorIcon::Sun, "directional lights show the sun");
-    expect(entityIcon(registry, lamp) == EditorIcon::PointLight, "point lights show a bulb");
-    expect(entityIcon(registry, speaker) == EditorIcon::AudioEmitter, "audio emitters show a speaker");
-    expect(entityIcon(registry, crate) == EditorIcon::Physics, "physics bodies show the physics icon");
-    expect(entityIcon(registry, empty) == EditorIcon::Empty, "a bare entity is empty");
-    expect(entityIcon(registry, entt::null) == EditorIcon::Empty, "an invalid entity is empty");
+    CHECK_MESSAGE(entityIcon(registry, camera) == EditorIcon::Camera, "cameras show the camera icon");
+    CHECK_MESSAGE(entityIcon(registry, sun) == EditorIcon::Sun, "directional lights show the sun");
+    CHECK_MESSAGE(entityIcon(registry, lamp) == EditorIcon::PointLight, "point lights show a bulb");
+    CHECK_MESSAGE(entityIcon(registry, speaker) == EditorIcon::AudioEmitter, "audio emitters show a speaker");
+    CHECK_MESSAGE(entityIcon(registry, crate) == EditorIcon::Physics, "physics bodies show the physics icon");
+    CHECK_MESSAGE(entityIcon(registry, empty) == EditorIcon::Empty, "a bare entity is empty");
+    CHECK_MESSAGE((entityIcon(registry, entt::null) == EditorIcon::Empty), "an invalid entity is empty");
 }
 
-void testChromeOverSeveralFrames() {
+TEST_CASE("EditorTheme: chrome over several frames") {
+    const ThemedImGui imgui;
     ThemeChrome chrome;
     ThemeChrome::installPopupBevels(*ImGui::GetCurrentContext());
     ThemeChrome::installPopupBevels(*ImGui::GetCurrentContext());
@@ -209,7 +231,7 @@ void testChromeOverSeveralFrames() {
     for (const ImGuiContextHook& hook : ImGui::GetCurrentContext()->Hooks) {
         bevelHooks += hook.Type == ImGuiContextHookType_EndFramePre ? 1 : 0;
     }
-    expect(bevelHooks == 1, "installing popup bevels twice adds one hook");
+    CHECK_MESSAGE(bevelHooks == 1, "installing popup bevels twice adds one hook");
     for (int frame = 0; frame < 4; ++frame) {
         // Later frames run with the Play tint, which also paints the edge.
         chrome.setModeTint(frame >= 2 ? ThemeModeTint::Play : ThemeModeTint::None);
@@ -228,37 +250,40 @@ void testChromeOverSeveralFrames() {
         ImGui::End();
         ImGui::Render();
     }
-    expect(ImGui::GetDrawData() != nullptr && ImGui::GetDrawData()->CmdListsCount > 0, "the chrome frames render");
+    CHECK_MESSAGE((ImGui::GetDrawData() != nullptr && ImGui::GetDrawData()->CmdListsCount > 0),
+                  "the chrome frames render");
 }
 
 // Fonts are added between frames, as the application and sessions do.
-void testAppearanceAppliesPreferences() {
+TEST_CASE("EditorTheme: appearance applies preferences") {
+    const ThemedImGui imgui;
     ImGuiIO& io = ImGui::GetIO();
     EditorAppearance appearance(ZENITH_EDITOR_FONT, 1.0f);
-    expect(appearance.current() == EditorAppearanceSettings{}, "before any apply the look is the default");
+    CHECK_MESSAGE(appearance.current() == EditorAppearanceSettings{}, "before any apply the look is the default");
     const EditorAppearanceSettings tuned{.theme = {.accent = ThemeAccent::Violet}, .uiScale = 2};
     const EditorAppearanceResult applied = appearance.apply(tuned);
-    expect(static_cast<bool>(applied) && editorArtPixel() == 2.0f &&
-               editorAccent() == themeAccentInfo(ThemeAccent::Violet).color.withAlpha(1.0f),
-           "applying preferences sets the UI scale's metrics and the accent");
-    expect(appearance.current() == tuned && appearance.theme().accent == ThemeAccent::Violet,
-           "the applied look becomes the current one");
+    CHECK_MESSAGE((static_cast<bool>(applied) && editorArtPixel() == 2.0f &&
+                   editorAccent() == themeAccentInfo(ThemeAccent::Violet).color.withAlpha(1.0f)),
+                  "applying preferences sets the UI scale's metrics and the accent");
+    CHECK_MESSAGE((appearance.current() == tuned && appearance.theme().accent == ThemeAccent::Violet),
+                  "the applied look becomes the current one");
     ImFont* scaledFont = io.FontDefault;
-    expect(scaledFont != nullptr, "the UI scale's fonts become the default");
+    CHECK_MESSAGE(scaledFont != nullptr, "the UI scale's fonts become the default");
 
-    expect(static_cast<bool>(appearance.apply({})) && editorArtPixel() == 1.0f &&
-               editorAccent() == palette::accentBlue.withAlpha(1.0f),
-           "applying the defaults restores the designed look");
+    CHECK_MESSAGE((static_cast<bool>(appearance.apply({})) && editorArtPixel() == 1.0f &&
+                   editorAccent() == palette::accentBlue.withAlpha(1.0f)),
+                  "applying the defaults restores the designed look");
     const int fontCount = io.Fonts->Fonts.Size;
-    expect(static_cast<bool>(appearance.apply(tuned)) && io.FontDefault == scaledFont &&
-               io.Fonts->Fonts.Size == fontCount,
-           "returning to a UI scale reuses its fonts instead of loading them again");
+    CHECK_MESSAGE((static_cast<bool>(appearance.apply(tuned)) && io.FontDefault == scaledFont &&
+                   io.Fonts->Fonts.Size == fontCount),
+                  "returning to a UI scale reuses its fonts instead of loading them again");
 
     EditorAppearance missingFonts(std::filesystem::path(ZENITH_EDITOR_FONT).parent_path() / "missing.ttf", 1.0f);
     const EditorAppearanceResult failed = missingFonts.apply({.uiScale = 3});
-    expect(!failed && !failed.error.empty() && editorArtPixel() == 3.0f,
-           "a font that cannot load is reported while the metrics still apply");
-    expect(static_cast<bool>(missingFonts.apply({.uiScale = 3})), "applying the current look again does nothing");
+    CHECK_MESSAGE((!failed && !failed.error.empty() && editorArtPixel() == 3.0f),
+                  "a font that cannot load is reported while the metrics still apply");
+    CHECK_MESSAGE(static_cast<bool>(missingFonts.apply({.uiScale = 3})),
+                  "applying the current look again does nothing");
 
     // Later frames need the grown atlas built, as a renderer would upload it.
     unsigned char* pixels = nullptr;
@@ -268,26 +293,5 @@ void testAppearanceAppliesPreferences() {
     applyEditorMetrics(ImGui::GetStyle(), 1.0f);
     applyEditorColors(ImGui::GetStyle());
 }
-} // namespace
 
-int main() {
-    HeadlessImGuiContext imgui;
-    applyEditorMetrics(ImGui::GetStyle(), 1.0f);
-    applyEditorColors(ImGui::GetStyle());
-    testMetricsSitOnThePixelGrid();
-    testColorsComeFromThePalette();
-    testThemeParametersApply();
-    testChromeClampsParameters();
-    testIconsAndPainterDraw();
-    testWidgetsKeepImGuiIds();
-    testCopyableText();
-    testEntityIcons();
-    testChromeOverSeveralFrames();
-    testAppearanceAppliesPreferences();
-    if (failures != 0) {
-        std::cerr << failures << " editor theme test(s) failed\n";
-        return 1;
-    }
-    std::cout << "Editor theme tests passed\n";
-    return 0;
-}
+TEST_SUITE_END();

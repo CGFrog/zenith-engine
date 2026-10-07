@@ -1,8 +1,14 @@
+// Scene edits through SceneEditing and EntityCommands: recording, coalescing,
+// undo and redo of entity commands, diff undo matching full snapshots, entity
+// capture guards, and a long history on a large scene.
+
 #include "editor/application/EditorDiagnostics.hpp"
 #include "editor/application/EntityCommands.hpp"
 #include "editor/application/SceneEditing.hpp"
 #include "editor/document/EditorDocument.hpp"
 #include "engine/assets/Assets.hpp"
+
+#include "support/Doctest.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,15 +21,9 @@
 #include <string>
 #include <vector>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("SceneEditing");
 
-void expect(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 size_t entityCount(const Scene& scene) {
     return scene.registry().view<const SceneEntityIdComponent>().size();
@@ -32,7 +32,7 @@ size_t entityCount(const Scene& scene) {
 std::string serialize(const Scene& scene, const AssetManager& assets, const SceneDocumentOptions& options) {
     std::string output;
     const SceneDocumentResult result = SceneDocument::serialize(scene, assets, options, output);
-    expect(result.success, "scene should serialize");
+    CHECK_MESSAGE(result.success, "scene should serialize");
     return output;
 }
 
@@ -53,7 +53,7 @@ std::map<uint64_t, std::vector<uint64_t>> hierarchy(const Scene& scene) {
 std::map<uint64_t, std::vector<uint64_t>> snapshotHierarchy(const std::string& document, AssetManager& assets,
                                                             const SceneDocumentOptions& options) {
     Scene restored;
-    expect(SceneDocument::deserialize(document, assets, options, restored).success, "snapshot should load");
+    CHECK_MESSAGE(SceneDocument::deserialize(document, assets, options, restored).success, "snapshot should load");
     return hierarchy(restored);
 }
 
@@ -162,13 +162,26 @@ void randomEdit(const SceneEditing& editing, std::mt19937& random, int step, Edi
     }
 }
 
+// A scene edited through SceneEditing, its document rooted in a directory of
+// its own.
+struct EditingFixture {
+    const testsupport::TempDirectory root{"scene-editing"};
+    AssetManager assets;
+    Scene scene;
+    EditorDocument document{root.path()};
+    CommandHistory history;
+    EditorDiagnostics diagnostics;
+    const SceneEditing editing{scene, assets, document, history, diagnostics};
+};
+
 // Diff-based undo must give exactly what restoring full snapshots gives: the
 // same serialized document and the same child order, at every step, whether
 // the field edits capture the whole scene or only their entity.
-void testRandomizedEquivalence(EditCapture capture) {
+void checkRandomizedEquivalence(EditCapture capture) {
+    const testsupport::TempDirectory root("scene-editing-randomized");
     AssetManager assets;
     Scene scene;
-    EditorDocument document(std::filesystem::temp_directory_path());
+    EditorDocument document(root.path());
     CommandHistory history(1024);
     EditorDiagnostics diagnostics;
     const SceneEditing editing(scene, assets, document, history, diagnostics);
@@ -190,33 +203,36 @@ void testRandomizedEquivalence(EditCapture capture) {
         }
         liveMatches = liveMatches && hierarchy(scene) == snapshotHierarchy(current, assets, options);
     }
-    expect(!diagnostics.hasUnacknowledgedError(), "valid randomized edits should not report errors");
-    expect(timeline.size() > 100 && history.size() == timeline.size() - 1,
-           "randomized edits should record one command per change");
-    expect(liveMatches, "recording an edit should leave the hierarchy a snapshot restore would produce");
+    CHECK_MESSAGE(!diagnostics.hasUnacknowledgedError(), "valid randomized edits should not report errors");
+    CHECK_MESSAGE((timeline.size() > 100 && history.size() == timeline.size() - 1),
+                  "randomized edits should record one command per change");
+    CHECK_MESSAGE(liveMatches, "recording an edit should leave the hierarchy a snapshot restore would produce");
 
     bool undoMatches = true;
     for (size_t index = timeline.size() - 1; index > 0; --index) {
         editing.undo();
         undoMatches = undoMatches && matchesSnapshot(scene, timeline[index - 1], assets, options);
     }
-    expect(undoMatches && !history.canUndo(), "every undo should match the full snapshot before that edit");
+    CHECK_MESSAGE((undoMatches && !history.canUndo()), "every undo should match the full snapshot before that edit");
     bool redoMatches = true;
     for (size_t index = 1; index < timeline.size(); ++index) {
         editing.redo();
         redoMatches = redoMatches && matchesSnapshot(scene, timeline[index], assets, options);
     }
-    expect(redoMatches && !history.canRedo(), "every redo should match the full snapshot after that edit");
-    expect(!diagnostics.hasUnacknowledgedError(), "randomized undo and redo should not report errors");
+    CHECK_MESSAGE((redoMatches && !history.canRedo()), "every redo should match the full snapshot after that edit");
+    CHECK_MESSAGE(!diagnostics.hasUnacknowledgedError(), "randomized undo and redo should not report errors");
 }
+
+} // namespace
 
 // An edit that captured only some entities still records the entities it
 // created, reports destroying one it did not capture, and edits the runtime
 // scene live without recording.
-void testEntityCaptureGuards() {
+TEST_CASE("SceneEditing: entity capture guards") {
+    const testsupport::TempDirectory root("scene-editing-capture-guards");
     AssetManager assets;
     Scene scene;
-    EditorDocument document(std::filesystem::temp_directory_path());
+    EditorDocument document(root.path());
     CommandHistory history;
     EditorDiagnostics diagnostics;
     const SceneEditing editing(scene, assets, document, history, diagnostics);
@@ -226,21 +242,23 @@ void testEntityCaptureGuards() {
     const std::string original = serialize(scene, assets, options);
 
     SceneEditing::EntitySnapshot before;
-    expect(editing.captureEntities(std::span(&parent, 1), before), "the parent should be captured");
+    CHECK_MESSAGE(editing.captureEntities(std::span(&parent, 1), before), "the parent should be captured");
     scene.setParent(scene.createEntity("Child"), parent);
     editing.commit("Add Child", {}, std::move(before));
     const std::string withChild = serialize(scene, assets, options);
-    expect(history.size() == 1 && withChild != original, "an entity created by a captured edit should be recorded");
+    CHECK_MESSAGE((history.size() == 1 && withChild != original),
+                  "an entity created by a captured edit should be recorded");
     editing.undo();
-    expect(serialize(scene, assets, options) == original, "undo should remove the entity the edit created");
+    CHECK_MESSAGE(serialize(scene, assets, options) == original, "undo should remove the entity the edit created");
     editing.redo();
-    expect(serialize(scene, assets, options) == withChild, "redo should create it again");
-    expect(!diagnostics.hasUnacknowledgedError(), "a captured edit that creates an entity is valid");
+    CHECK_MESSAGE(serialize(scene, assets, options) == withChild, "redo should create it again");
+    CHECK_MESSAGE(!diagnostics.hasUnacknowledgedError(), "a captured edit that creates an entity is valid");
 
-    expect(editing.captureEntities(std::span(&parent, 1), before), "the parent should be captured again");
+    CHECK_MESSAGE(editing.captureEntities(std::span(&parent, 1), before), "the parent should be captured again");
     scene.destroyEntity(bystander);
     editing.commit("Destroy", {}, std::move(before));
-    expect(diagnostics.hasUnacknowledgedError(), "destroying an entity the edit did not capture should be reported");
+    CHECK_MESSAGE(diagnostics.hasUnacknowledgedError(),
+                  "destroying an entity the edit did not capture should be reported");
 
     Scene runtimeScene;
     const Entity light = runtimeScene.createEntity("Light");
@@ -249,19 +267,21 @@ void testEntityCaptureGuards() {
     EditorDiagnostics runtimeDiagnostics;
     const SceneEditing live(runtimeScene, assets, document, runtimeHistory, runtimeDiagnostics, &scene);
     SceneEditing::EntitySnapshot liveBefore;
-    expect(live.captureEntities(std::span(&light, 1), liveBefore), "a runtime entity should be captured");
+    CHECK_MESSAGE(live.captureEntities(std::span(&light, 1), liveBefore), "a runtime entity should be captured");
     runtimeScene.registry().get<PointLightComponent>(light).range = 9.0f;
     live.commit("Edit Light", {}, std::move(liveBefore));
-    expect(runtimeHistory.size() == 0 && runtimeScene.registry().get<PointLightComponent>(light).range == 9.0f &&
-               !runtimeDiagnostics.hasUnacknowledgedError(),
-           "a captured runtime edit should stay applied and record nothing");
+    CHECK_MESSAGE((runtimeHistory.size() == 0 &&
+                   runtimeScene.registry().get<PointLightComponent>(light).range == 9.0f &&
+                   !runtimeDiagnostics.hasUnacknowledgedError()),
+                  "a captured runtime edit should stay applied and record nothing");
 }
 
 // A long history on a large scene stores only the edited entities.
-void testLargeSceneHistory() {
+TEST_CASE("SceneEditing: large scene history") {
+    const testsupport::TempDirectory root("scene-editing-large-history");
     AssetManager assets;
     Scene scene;
-    EditorDocument document(std::filesystem::temp_directory_path());
+    EditorDocument document(root.path());
     CommandHistory history;
     EditorDiagnostics diagnostics;
     const SceneEditing editing(scene, assets, document, history, diagnostics);
@@ -293,7 +313,7 @@ void testLargeSceneHistory() {
     for (int edit = 0; edit < editCount; ++edit) {
         const Entity target = entities[100 + static_cast<size_t>(edit) * editStride];
         SceneEditing::EntitySnapshot before;
-        expect(editing.captureEntities(std::span(&target, 1), before), "the edited entity should be captured");
+        CHECK_MESSAGE(editing.captureEntities(std::span(&target, 1), before), "the edited entity should be captured");
         if (edit % 3 == 0) {
             scene.registry().get<NameComponent>(target).name = "Edited " + std::to_string(edit);
         } else if (edit % 3 == 1) {
@@ -314,49 +334,56 @@ void testLargeSceneHistory() {
     const size_t snapshotBytes = commands * 2 * original.size();
     std::cout << "Large scene history: " << commands << " commands store " << stored << " bytes; full snapshots ("
               << original.size() << " bytes each, two per command) would store " << snapshotBytes << " bytes\n";
-    expect(commands == editCount + 2, "every large-scene edit should be recorded");
-    expect(stored * 100 < commands * original.size(),
-           "diff history should store far less than one full snapshot per command");
+    CHECK_MESSAGE(commands == editCount + 2, "every large-scene edit should be recorded");
+    CHECK_MESSAGE(stored * 100 < commands * original.size(),
+                  "diff history should store far less than one full snapshot per command");
 
     const auto undoStart = std::chrono::steady_clock::now();
     while (history.canUndo()) {
         editing.undo();
     }
     const auto undoTime = std::chrono::steady_clock::now() - undoStart;
-    expect(serialize(scene, assets, options) == original,
-           "undoing every large-scene edit should reproduce the original document byte for byte");
-    expect(scene.findEntity(scene.id(untouched)) == untouched && scene.registry().valid(untouched),
-           "entities no edit touched should keep their EnTT handles through undo");
+    CHECK_MESSAGE(serialize(scene, assets, options) == original,
+                  "undoing every large-scene edit should reproduce the original document byte for byte");
+    CHECK_MESSAGE((scene.findEntity(scene.id(untouched)) == untouched && scene.registry().valid(untouched)),
+                  "entities no edit touched should keep their EnTT handles through undo");
     while (history.canRedo()) {
         editing.redo();
     }
-    expect(serialize(scene, assets, options) == edited, "redoing every large-scene edit should reproduce the edits");
-    expect(!diagnostics.hasUnacknowledgedError(), "large-scene undo and redo should not report errors");
+    CHECK_MESSAGE(serialize(scene, assets, options) == edited,
+                  "redoing every large-scene edit should reproduce the edits");
+    CHECK_MESSAGE(!diagnostics.hasUnacknowledgedError(), "large-scene undo and redo should not report errors");
     using Milliseconds = std::chrono::duration<double, std::milli>;
     std::cout << "Undoing " << commands << " commands took " << Milliseconds(undoTime).count() << " ms\n";
 }
-} // namespace
 
-int main() {
-    AssetManager assets;
-    Scene scene;
-    EditorDocument document(std::filesystem::temp_directory_path());
-    CommandHistory history;
-    EditorDiagnostics diagnostics;
-    const SceneEditing editing(scene, assets, document, history, diagnostics);
-    Selection selection;
+TEST_CASE("SceneEditing: creating an entity records an undoable edit") {
+    EditingFixture fixture;
+    Scene& scene = fixture.scene;
+    const SceneEditing& editing = fixture.editing;
 
     const SceneEntityId root = EntityCommands::createEntity(editing, entt::null);
-    expect(static_cast<bool>(root) && entityCount(scene) == 1, "creating an entity should add it to the scene");
-    expect(history.canUndo() && document.dirty(), "creating an entity should record an undoable, dirtying edit");
+    CHECK_MESSAGE((static_cast<bool>(root) && entityCount(scene) == 1),
+                  "creating an entity should add it to the scene");
+    CHECK_MESSAGE((fixture.history.canUndo() && fixture.document.dirty()),
+                  "creating an entity should record an undoable, dirtying edit");
 
     const SceneEntityId child = EntityCommands::createEntity(editing, scene.findEntity(root));
     const Entity childEntity = scene.findEntity(child);
-    expect(childEntity != entt::null &&
-               scene.registry().get<RelationshipComponent>(childEntity).parent == scene.findEntity(root),
-           "creating an entity with a parent should parent it");
+    CHECK_MESSAGE((childEntity != entt::null &&
+                   scene.registry().get<RelationshipComponent>(childEntity).parent == scene.findEntity(root)),
+                  "creating an entity with a parent should parent it");
+}
 
-    // Coalesced edits merge into one undo step; unchanged commits record nothing.
+// Coalesced edits merge into one undo step; unchanged commits record nothing.
+TEST_CASE("SceneEditing: coalesced edits merge and unchanged edits record nothing") {
+    EditingFixture fixture;
+    Scene& scene = fixture.scene;
+    const SceneEditing& editing = fixture.editing;
+    const CommandHistory& history = fixture.history;
+    const SceneEntityId root = EntityCommands::createEntity(editing, entt::null);
+    EntityCommands::createEntity(editing, scene.findEntity(root));
+
     const size_t before = history.size();
     for (const char* name : {"First", "Second"}) {
         editing.perform("Rename Entity", "name:root", [&] {
@@ -364,48 +391,65 @@ int main() {
             return SceneResult{.success = true};
         });
     }
-    expect(history.size() == before + 1, "edits sharing a coalesce key should merge into one command");
+    CHECK_MESSAGE(history.size() == before + 1, "edits sharing a coalesce key should merge into one command");
     editing.perform("No-op", {}, [] { return SceneResult{.success = true}; });
-    expect(history.size() == before + 1, "an edit that changes nothing should not be recorded");
+    CHECK_MESSAGE(history.size() == before + 1, "an edit that changes nothing should not be recorded");
     editing.undo();
-    expect(scene.registry().get<NameComponent>(scene.findEntity(root)).name == "Entity",
-           "undoing a coalesced edit should restore the value before the first edit");
+    CHECK_MESSAGE(scene.registry().get<NameComponent>(scene.findEntity(root)).name == "Entity",
+                  "undoing a coalesced edit should restore the value before the first edit");
     editing.redo();
-    expect(scene.registry().get<NameComponent>(scene.findEntity(root)).name == "Second",
-           "redoing a coalesced edit should apply the last edit");
+    CHECK_MESSAGE(scene.registry().get<NameComponent>(scene.findEntity(root)).name == "Second",
+                  "redoing a coalesced edit should apply the last edit");
+}
+
+TEST_CASE("SceneEditing: duplicating and deleting undo as one step") {
+    EditingFixture fixture;
+    Scene& scene = fixture.scene;
+    const SceneEditing& editing = fixture.editing;
+    Selection selection;
+    const SceneEntityId root = EntityCommands::createEntity(editing, entt::null);
+    const SceneEntityId child = EntityCommands::createEntity(editing, scene.findEntity(root));
 
     selection.selectOnly(root);
     EntityCommands::duplicateSelection(editing, selection);
-    expect(entityCount(scene) == 4 && selection.size() == 1 && selection.active() != root,
-           "duplicating should copy the subtree and select the copy");
+    CHECK_MESSAGE((entityCount(scene) == 4 && selection.size() == 1 && selection.active() != root),
+                  "duplicating should copy the subtree and select the copy");
     editing.undo();
     selection.removeMissing(scene);
-    expect(entityCount(scene) == 2 && selection.empty(), "one undo should remove the whole duplicate");
+    CHECK_MESSAGE((entityCount(scene) == 2 && selection.empty()), "one undo should remove the whole duplicate");
 
     selection.selectOnly(root);
     EntityCommands::deleteSelection(editing, selection);
-    expect(entityCount(scene) == 0 && selection.empty(), "deleting a parent should delete its children");
+    CHECK_MESSAGE((entityCount(scene) == 0 && selection.empty()), "deleting a parent should delete its children");
     editing.undo();
-    expect(entityCount(scene) == 2 && scene.findEntity(child) != entt::null,
-           "undoing a delete should restore the subtree with its stable ids");
-
-    expect(!diagnostics.hasUnacknowledgedError(), "successful edits should not report errors");
-    editing.perform("Failing edit", {}, [] { return SceneResult{.error = "deliberate failure"}; });
-    expect(diagnostics.hasUnacknowledgedError() && !diagnostics.entries().empty() &&
-               diagnostics.entries().back().message == "deliberate failure",
-           "a failed edit should be reported to diagnostics");
-    diagnostics.acknowledgeErrors();
-    expect(!diagnostics.hasUnacknowledgedError() && !diagnostics.entries().empty(),
-           "acknowledging errors should keep the diagnostic entries");
-
-    testRandomizedEquivalence(EditCapture::WholeScene);
-    testRandomizedEquivalence(EditCapture::Entities);
-    testEntityCaptureGuards();
-    testLargeSceneHistory();
-
-    if (failures != 0) {
-        std::cerr << failures << " scene editing test(s) failed\n";
-        return 1;
-    }
-    return 0;
+    CHECK_MESSAGE((entityCount(scene) == 2 && scene.findEntity(child) != entt::null),
+                  "undoing a delete should restore the subtree with its stable ids");
 }
+
+TEST_CASE("SceneEditing: failed edits are reported to diagnostics") {
+    EditingFixture fixture;
+    const SceneEditing& editing = fixture.editing;
+    EditorDiagnostics& diagnostics = fixture.diagnostics;
+    const SceneEntityId root = EntityCommands::createEntity(editing, entt::null);
+    EntityCommands::createEntity(editing, fixture.scene.findEntity(root));
+
+    CHECK_MESSAGE(!diagnostics.hasUnacknowledgedError(), "successful edits should not report errors");
+    editing.perform("Failing edit", {}, [] { return SceneResult{.error = "deliberate failure"}; });
+    CHECK_MESSAGE((diagnostics.hasUnacknowledgedError() && !diagnostics.entries().empty() &&
+                   diagnostics.entries().back().message == "deliberate failure"),
+                  "a failed edit should be reported to diagnostics");
+    diagnostics.acknowledgeErrors();
+    CHECK_MESSAGE((!diagnostics.hasUnacknowledgedError() && !diagnostics.entries().empty()),
+                  "acknowledging errors should keep the diagnostic entries");
+}
+
+TEST_CASE("SceneEditing: randomized equivalence") {
+    SUBCASE("whole-scene capture") {
+        checkRandomizedEquivalence(EditCapture::WholeScene);
+    }
+    SUBCASE("entity capture") {
+        checkRandomizedEquivalence(EditCapture::Entities);
+    }
+}
+
+TEST_SUITE_END();

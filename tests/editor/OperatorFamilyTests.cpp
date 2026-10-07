@@ -15,20 +15,16 @@
 #include "editor/settings/EditorSettings.hpp"
 #include "engine/navigation/NavigationWorld.hpp"
 
+#include "support/Doctest.hpp"
+
 #include <iostream>
 #include <set>
 #include <string>
 #include <string_view>
 
-namespace {
-int failures = 0;
+TEST_SUITE_BEGIN("OperatorFamily");
 
-void expect(bool condition, const std::string& message) {
-    if (!condition) {
-        std::cerr << "FAILED: " << message << '\n';
-        ++failures;
-    }
-}
+namespace {
 
 // The session's workflows, doing nothing: registration only stores them.
 class NoSessionCommands final : public EditorDocumentCommands,
@@ -197,15 +193,15 @@ struct OperatorFamilyFixture : EditorTestFixture {
     }
 };
 
-void testEveryFamilyRegisters() {
+TEST_CASE("OperatorFamily: every family registers") {
     OperatorFamilyFixture fixture;
     const EditorOperatorServices services = fixture.services();
     std::set<std::string_view> names;
     for (const OperatorFamily& family : editorOperatorFamilies()) {
         const std::string name(family.name);
-        expect(!family.name.empty(), "every family has a name");
-        expect(names.insert(family.name).second, "family name '" + name + "' is unique");
-        expect(family.registerOperators != nullptr, "family '" + name + "' has a register function");
+        CHECK_MESSAGE(!family.name.empty(), "every family has a name");
+        CHECK_MESSAGE(names.insert(family.name).second, ("family name '" + name + "' is unique"));
+        CHECK_MESSAGE(family.registerOperators != nullptr, ("family '" + name + "' has a register function"));
         if (family.registerOperators == nullptr) {
             continue;
         }
@@ -213,13 +209,13 @@ void testEveryFamilyRegisters() {
         // A duplicate id across families fails here, as the registry
         // rejects it.
         const OperatorRegistrationResult result = family.registerOperators(fixture.operators, services);
-        expect(result.success, "family '" + name + "' registers: " + result.error);
-        expect(fixture.operators.size() > before, "family '" + name + "' registers at least one operator");
+        CHECK_MESSAGE(result.success, ("family '" + name + "' registers: " + result.error));
+        CHECK_MESSAGE(fixture.operators.size() > before, ("family '" + name + "' registers at least one operator"));
     }
 
     std::set<std::string> ids;
     for (const Operator* op : fixture.operators.operators()) {
-        expect(ids.insert(op->id).second, "operator '" + op->id + "' is registered once");
+        CHECK_MESSAGE(ids.insert(op->id).second, ("operator '" + op->id + "' is registered once"));
     }
     // A sample from each kind of family, as menus and keymaps name them.
     for (const char* id : {"file.save",
@@ -243,27 +239,19 @@ void testEveryFamilyRegisters() {
                            "module.generate_code",
                            "debug.attach",
                            "debug.watch_field"}) {
-        expect(fixture.operators.find(id) != nullptr, std::string("operator '") + id + "' is registered");
+        CHECK_MESSAGE(fixture.operators.find(id) != nullptr, (std::string("operator '") + id + "' is registered"));
     }
 }
 
-void testDuplicateFamilyFails() {
+TEST_CASE("OperatorFamily: duplicate family fails") {
     OperatorFamilyFixture fixture;
     const EditorOperatorServices services = fixture.services();
     const OperatorFamily& first = editorOperatorFamilies().front();
-    expect(first.registerOperators(fixture.operators, services).success, "the first family registers");
+    CHECK_MESSAGE(first.registerOperators(fixture.operators, services).success, "the first family registers");
     const OperatorRegistrationResult again = first.registerOperators(fixture.operators, services);
-    expect(!again.success && again.error.find("already registered") != std::string::npos,
-           "registering a family twice reports the duplicate id: " + again.error);
+    CHECK_MESSAGE((!again.success && again.error.find("already registered") != std::string::npos),
+                  ("registering a family twice reports the duplicate id: " + again.error));
 }
 } // namespace
 
-int main() {
-    testEveryFamilyRegisters();
-    testDuplicateFamilyFails();
-    if (failures != 0) {
-        std::cerr << failures << " operator family test(s) failed\n";
-        return 1;
-    }
-    return 0;
-}
+TEST_SUITE_END();
