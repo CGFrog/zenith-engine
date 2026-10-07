@@ -9,7 +9,12 @@ mode", which swapped the prefab in over the level, and its
 settings files still load, the keys are ignored.)
 
 The window hosts its own dock space with the prefab's **Hierarchy**,
-**Viewport**, and **Inspector**, plus Save and Close. The viewport is a real
+**Viewport**, and **Inspector**, plus Save and Close. The panels are docked
+in the window as one piece: they can be resized there but not torn out, and
+nothing else docks into the window (each window's dock space and panels share
+an `ImGuiWindowClass` of their own, and the dock space sets `NoUndocking`).
+The panels are placed with `SetNextWindowDockID` on their first frame, since
+they keep no saved settings for `DockBuilderDockWindow` to write to. The viewport is a real
 `ViewportPanel` registered with the session's `ViewportRegistry`: camera,
 picking, the gizmo, G/R/S, snapping, collider handles, drops, the 3D cursor,
 and local view all edit the prefab. It draws the window's scene as a secondary

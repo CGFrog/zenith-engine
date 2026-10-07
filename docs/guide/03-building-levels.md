@@ -272,7 +272,8 @@ instance can still **override** individual fields.
 | Unpack | **Object > Prefab > Unpack** turns an instance into plain objects. |
 
 **Prefab windows.** Edit Prefab opens the prefab in a floating window with its
-own Hierarchy, Viewport, Inspector, **Save**, and **Close**. The level stays
+own Hierarchy, Viewport, Inspector, **Save**, and **Close**, all docked together
+in that one window. The level stays
 open, editable, and even playable underneath, and you can have several prefab
 windows open at once. Undo, `Ctrl+S`, and the main menu act on whichever
 window last had focus. Saving refreshes every instance in the level as an
