@@ -134,8 +134,8 @@ TEST_CASE("EnvironmentLighting: hdr decode") {
                       "HDR decoding keeps radiance above one unclamped");
     }
 
-    const testsupport::TempDirectory pathDirectory("zenith_environment_lighting_test");
-    const std::filesystem::path path = pathDirectory / "zenith_environment_lighting_test.hdr";
+    const testsupport::TempDirectory scratch("environment-lighting-test");
+    const std::filesystem::path path = scratch / "zenith_environment_lighting_test.hdr";
     {
         std::ofstream output(path, std::ios::binary);
         output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));

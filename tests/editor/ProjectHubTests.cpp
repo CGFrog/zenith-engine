@@ -85,8 +85,8 @@ TEST_CASE("ProjectHub: project identifier") {
 }
 
 TEST_CASE("ProjectHub: recent projects") {
-    const testsupport::TempDirectory rootDirectory("project-hub-recent");
-    const fs::path root = rootDirectory.path();
+    const testsupport::TempDirectory scratch("project-hub-recent");
+    const fs::path root = scratch.path();
     const fs::path existing = root / "existing" / "existing.zenith-project";
     writeText(existing, "{}");
     const fs::path listFile = root / "settings" / "recent-projects.json";
@@ -138,8 +138,8 @@ TEST_CASE("ProjectHub: recent projects") {
 }
 
 TEST_CASE("ProjectHub: generate project") {
-    const testsupport::TempDirectory rootDirectory("project-hub-generate");
-    const fs::path root = rootDirectory.path();
+    const testsupport::TempDirectory scratch("project-hub-generate");
+    const fs::path root = scratch.path();
     AssetManager assets;
     const ProjectTemplateResult created = generateProjectFromTemplate(templateRequest("Space Race", root), assets);
     CHECK_MESSAGE((static_cast<bool>(created)), "template: the C++ game project generates");
@@ -245,8 +245,8 @@ TEST_CASE("ProjectHub: generate project") {
 }
 
 TEST_CASE("ProjectHub: generate failures") {
-    const testsupport::TempDirectory rootDirectory("project-hub-generate-errors");
-    const fs::path root = rootDirectory.path();
+    const testsupport::TempDirectory scratch("project-hub-generate-errors");
+    const fs::path root = scratch.path();
     AssetManager assets;
     const fs::path occupied = root / "occupied";
     writeText(occupied / "keep.txt", "mine");
@@ -289,8 +289,8 @@ ImGuiID hubItem(std::initializer_list<const char*> path) {
 }
 
 TEST_CASE("ProjectHub: hub draw") {
-    const testsupport::TempDirectory rootDirectory("project-hub-draw");
-    const fs::path root = rootDirectory.path();
+    const testsupport::TempDirectory scratch("project-hub-draw");
+    const fs::path root = scratch.path();
     HeadlessImGuiContext imgui;
     AssetManager assets;
     const fs::path existing = root / "listed" / "listed.zenith-project";

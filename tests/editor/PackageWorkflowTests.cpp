@@ -279,8 +279,8 @@ struct OperatorFixture {
 };
 
 TEST_CASE("PackageWorkflow: build package operator") {
-    const testsupport::TempDirectory rootDirectory("zenith_package_workflow_tests");
-    const std::filesystem::path root = rootDirectory.path();
+    const testsupport::TempDirectory scratch("package-workflow-tests");
+    const std::filesystem::path root = scratch.path();
     const std::filesystem::path source = root / "engine source";
     std::filesystem::create_directories(source / "projects");
     std::ofstream(source / "CMakeLists.txt") << "project(Fake)\n";

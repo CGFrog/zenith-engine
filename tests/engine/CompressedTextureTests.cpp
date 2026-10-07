@@ -6,13 +6,13 @@
 #include "engine/assets/TextureCooker.hpp"
 
 #include "support/Doctest.hpp"
+#include "support/Files.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -84,16 +84,6 @@ std::vector<uint8_t> rgbaKtx2(const TextureAsset& texture) {
     write32(88, static_cast<uint32_t>(texture.rgba.size()));
     std::copy(texture.rgba.begin(), texture.rgba.end(), bytes.begin() + 104);
     return bytes;
-}
-
-void writeFile(const std::filesystem::path& path, const std::vector<uint8_t>& bytes) {
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-}
-
-void writeText(const std::filesystem::path& path, const std::string& text) {
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    output << text;
 }
 
 TEST_CASE("CompressedTexture: mip chain layout") {
@@ -234,14 +224,14 @@ ImportedTextures importTextures(AssetManager& assets, const std::filesystem::pat
 }
 
 TEST_CASE("CompressedTexture: cooked texture import") {
-    const testsupport::TempDirectory rootDirectory("zenith-compressed-texture-tests");
-    const std::filesystem::path root = rootDirectory.path();
+    const testsupport::TempDirectory scratch("compressed-texture-tests");
+    const std::filesystem::path root = scratch.path();
     const std::filesystem::path derived = root / "derived";
     const std::filesystem::path model = root / "model.gltf";
-    writeFile(root / "base.ktx2", rgbaKtx2(gradientTexture(8, 8)));
-    writeFile(root / "normal.ktx2", rgbaKtx2(bumpNormalTexture(8)));
-    writeFile(root / "orm.ktx2", rgbaKtx2(gradientTexture(8, 4)));
-    writeText(model, modelWithTextures());
+    testsupport::writeBytes(root / "base.ktx2", rgbaKtx2(gradientTexture(8, 8)));
+    testsupport::writeBytes(root / "normal.ktx2", rgbaKtx2(bumpNormalTexture(8)));
+    testsupport::writeBytes(root / "orm.ktx2", rgbaKtx2(gradientTexture(8, 4)));
+    testsupport::writeText(model, modelWithTextures());
 
     const ModelTextureSourcesResult sources = collectModelTextureSources(model);
     CHECK_MESSAGE((sources && sources.sources.size() == 3 && sources.sources[0].usage == TextureUsage::Color &&
@@ -311,7 +301,7 @@ TEST_CASE("CompressedTexture: cooked texture import") {
         const std::string normalSlot = R"("normalTexture": { "index": 1 })";
         mixed.replace(mixed.find(normalSlot), normalSlot.size(), normalSlot + R"(, "emissiveTexture": { "index": 1 })");
         const std::filesystem::path mixedModel = root / "mixed.gltf";
-        writeText(mixedModel, mixed);
+        testsupport::writeText(mixedModel, mixed);
         const ModelTextureSourcesResult mixedSources = collectModelTextureSources(mixedModel);
         CHECK_MESSAGE((mixedSources && mixedSources.sources.size() == 2),
                       "normal maps shared with color slots are not offered for cooking");
@@ -324,7 +314,7 @@ TEST_CASE("CompressedTexture: cooked texture import") {
     }
     {
         const TextureCookResult cooked = cookBlockCompressedTexture(gradientTexture(8, 8), TextureUsage::Color);
-        writeFile(root / "standalone-bc7.ktx2", writeBlockCompressedKtx2(cooked.texture));
+        testsupport::writeBytes(root / "standalone-bc7.ktx2", writeBlockCompressedKtx2(cooked.texture));
         AssetManager assets;
         CHECK_MESSAGE((static_cast<bool>(assets.loadTexture(root / "orm.ktx2"))), "standalone RGBA8 KTX2 still loads");
         CHECK_MESSAGE(!assets.loadTexture(root / "standalone-bc7.ktx2"),
@@ -336,7 +326,7 @@ TEST_CASE("CompressedTexture: cooked texture import") {
     CHECK_MESSAGE((cache.key(cookedTextureRequest(root / "normal.ktx2", TextureUsage::Normal), normalKey) &&
                    cache.inspect(normalKey, normalRecord)),
                   "cooked entries are addressed by source bytes and cook settings");
-    writeText(normalRecord.path, "not a ktx2 file");
+    testsupport::writeText(normalRecord.path, "not a ktx2 file");
     {
         AssetManager assets;
         assets.setCookedTextureRoot(derived);
@@ -346,7 +336,7 @@ TEST_CASE("CompressedTexture: cooked texture import") {
                       "a corrupt cooked entry falls back to the source image");
     }
 
-    writeFile(root / "base.ktx2", rgbaKtx2(gradientTexture(4, 4)));
+    testsupport::writeBytes(root / "base.ktx2", rgbaKtx2(gradientTexture(4, 4)));
     {
         AssetManager assets;
         assets.setCookedTextureRoot(derived);

@@ -142,8 +142,8 @@ TEST_CASE("GameServices: commands run in phases") {
 }
 
 TEST_CASE("GameServices: prefab spawn") {
-    const testsupport::TempDirectory rootDirectory("zenith_game_services_tests");
-    const std::filesystem::path root = rootDirectory.path();
+    const testsupport::TempDirectory scratch("game-services-tests");
+    const std::filesystem::path root = scratch.path();
     {
         ServicesFixture authoring(root);
         const Entity crate = authoring.scene.createEntity("Crate");
@@ -179,8 +179,8 @@ void writeEffectPrefab(const std::filesystem::path& root, const std::string& nam
 }
 
 TEST_CASE("GameServices: effects") {
-    const testsupport::TempDirectory rootDirectory("zenith_game_services_effects");
-    const std::filesystem::path root = rootDirectory.path();
+    const testsupport::TempDirectory scratch("game-services-effects");
+    const std::filesystem::path root = scratch.path();
     writeEffectPrefab(root, "Spark", {.spawnRate = 0.0f, .burstCount = 10, .lifetimeMin = 0.25f, .lifetimeMax = 0.5f});
     writeEffectPrefab(root, "Smoke", {.spawnRate = 10.0f, .lifetimeMax = 2.0f});
 
@@ -530,8 +530,8 @@ struct ItemTable {
 };
 
 TEST_CASE("GameServices: asset paths") {
-    const testsupport::TempDirectory rootDirectory("zenith_game_services_asset_paths");
-    const std::filesystem::path root = rootDirectory.path();
+    const testsupport::TempDirectory scratch("game-services-asset-paths");
+    const std::filesystem::path root = scratch.path();
     std::filesystem::create_directories(root / "data");
     {
         std::ofstream output(root / "data" / "items.json");
@@ -564,8 +564,8 @@ TEST_CASE("GameServices: asset paths") {
 // outside draws on the host's DebugDraw; the content resolves against the
 // session's asset root).
 TEST_CASE("GameServices: service groups") {
-    const testsupport::TempDirectory rootDirectory("zenith_game_service_groups");
-    const std::filesystem::path root = rootDirectory.path();
+    const testsupport::TempDirectory scratch("game-service-groups");
+    const std::filesystem::path root = scratch.path();
     ServicesFixture fixture(root);
     GameServices& services = fixture.services;
     const GameServices& constServices = services;

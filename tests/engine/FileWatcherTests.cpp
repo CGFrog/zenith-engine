@@ -4,6 +4,7 @@
 
 #include "engine/platform/FileWatcher.hpp"
 
+#include "support/Files.hpp"
 #include "support/StandaloneChecks.hpp"
 #include "support/TempDirectory.hpp"
 
@@ -83,11 +84,6 @@ Events collectFor(FileWatcher& watcher, std::chrono::milliseconds duration) {
         std::this_thread::sleep_for(10ms);
     }
     return events;
-}
-
-void writeFile(const fs::path& path, const std::string& contents) {
-    std::ofstream output(path, std::ios::binary | std::ios::trunc);
-    output << contents;
 }
 
 void appendFile(const fs::path& path, const std::string& contents) {
@@ -215,7 +211,7 @@ void testCreateFailures(const fs::path& base) {
     checks.check(!missing && !watcher, "watching a missing root fails");
     checks.check(missing.error.find("does_not_exist") != std::string::npos, "missing root error names the path");
 
-    writeFile(base / "plain_file.txt", "x");
+    testsupport::writeText(base / "plain_file.txt", "x");
     const FileWatcherResult notDirectory = FileWatcher::create(base / "plain_file.txt", {}, watcher);
     checks.check(!notDirectory && !watcher, "watching a file instead of a directory fails");
 
@@ -228,7 +224,7 @@ void testWatcher(const fs::path& base, FileWatchBackendPreference preference, co
     const std::string label = name + ": ";
     const fs::path root = base / name;
     fs::create_directories(root);
-    writeFile(root / "existing.txt", "before the watcher started");
+    testsupport::writeText(root / "existing.txt", "before the watcher started");
 
     FileWatcherOptions options;
     options.debounce = 150ms;
@@ -253,7 +249,7 @@ void testWatcher(const fs::path& base, FileWatchBackendPreference preference, co
     }
     checks.check(collectFor(*watcher, 250ms).empty(), label + "pre-existing files are not reported");
 
-    writeFile(root / "a.txt", "first");
+    testsupport::writeText(root / "a.txt", "first");
     Events events =
         collectUntil(*watcher, [](const Events& all) { return contains(all, FileWatchEventKind::Added, "a.txt"); });
     const Events settled = collectFor(*watcher, 300ms);
@@ -270,7 +266,7 @@ void testWatcher(const fs::path& base, FileWatchBackendPreference preference, co
                  label + "changed file is Modified" + describe(events));
 
     fs::create_directories(root / "sub" / "deeper");
-    writeFile(root / "sub" / "deeper" / "b.txt", "nested");
+    testsupport::writeText(root / "sub" / "deeper" / "b.txt", "nested");
     events = collectUntil(*watcher, [](const Events& all) {
         return contains(all, FileWatchEventKind::Added, "sub") &&
                contains(all, FileWatchEventKind::Added, "sub/deeper") &&
@@ -308,16 +304,16 @@ void testWatcher(const fs::path& base, FileWatchBackendPreference preference, co
                      label + "directory rename is reported once" + describe(events));
     }
 
-    writeFile(root / "scratch.tmp", "ignored by suffix");
+    testsupport::writeText(root / "scratch.tmp", "ignored by suffix");
     fs::create_directories(root / "skipped" / "inner");
-    writeFile(root / "skipped" / "inner" / "x.txt", "ignored by predicate");
+    testsupport::writeText(root / "skipped" / "inner" / "x.txt", "ignored by predicate");
     events = collectFor(*watcher, 400ms);
     checks.check(!mentions(events, "scratch") && !mentions(events, "skipped"),
                  label + "ignored paths are not reported" + describe(events));
 
-    writeFile(root / "doc.txt", "version 1");
+    testsupport::writeText(root / "doc.txt", "version 1");
     collectUntil(*watcher, [](const Events& all) { return contains(all, FileWatchEventKind::Added, "doc.txt"); });
-    writeFile(root / "doc.txt.tmp", "version 2, longer");
+    testsupport::writeText(root / "doc.txt.tmp", "version 2, longer");
     renamePath(root / "doc.txt.tmp", root / "doc.txt");
     events = collectUntil(*watcher, [](const Events& all) {
         return contains(all, FileWatchEventKind::Modified, "doc.txt") ||
@@ -329,7 +325,7 @@ void testWatcher(const fs::path& base, FileWatchBackendPreference preference, co
     checks.check(!mentions(events, ".tmp") && !contains(events, FileWatchEventKind::Removed, "doc.txt"),
                  label + "the temporary file of a save is hidden" + describe(events));
 
-    writeFile(root / "transient.txt", "short lived");
+    testsupport::writeText(root / "transient.txt", "short lived");
     removePath(root / "transient.txt");
     events = collectFor(*watcher, 400ms);
     checks.check(!mentions(events, "transient"),

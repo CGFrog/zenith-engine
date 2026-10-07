@@ -132,8 +132,8 @@ TEST_CASE("ChildProcess: environment") {
 }
 
 TEST_CASE("ChildProcess: working directory") {
-    const testsupport::TempDirectory directoryDirectory("zenith_child_process_tests");
-    const std::filesystem::path directory = directoryDirectory.path();
+    const testsupport::TempDirectory scratch("child-process-tests");
+    const std::filesystem::path directory = scratch.path();
     std::error_code error;
 #ifdef _WIN32
     const std::string command = "cd";
