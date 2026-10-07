@@ -3,6 +3,7 @@
 // StandaloneChecks: the checks of a test executable with its own main() (a GPU smoke, a benchmark), reported like
 // doctest's.
 
+#include <cstdint>
 #include <source_location>
 #include <string_view>
 
@@ -16,6 +17,9 @@ class StandaloneChecks {
   public:
     // Returns condition, so a caller can stop when a check it depends on fails.
     bool check(bool condition, std::string_view what, std::source_location location = std::source_location::current());
+    // The same, for a frame loop: the failure names the frame it happened on.
+    bool check(bool condition, uint32_t frame, std::string_view what,
+               std::source_location location = std::source_location::current());
     int failures() const;
     // 0 when every check passed, otherwise 1; prints a one-line summary.
     int exitCode(std::string_view name) const;

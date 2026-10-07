@@ -117,7 +117,7 @@ zenith_add_test(zenith_milestones_19_21 EXECUTABLE zenith_milestone_19_21_tests
 
 # One CTest per backend: each half waits on real file-system latency, so
 # they run in parallel rather than back to back.
-zenith_add_test_executable(zenith_file_watcher_tests SOURCES FileWatcherTests.cpp LIBS zenith_engine)
+zenith_add_test_executable(zenith_file_watcher_tests SOURCES FileWatcherTests.cpp LIBS zenith_engine zenith_test_support)
 foreach(file_watcher_backend IN ITEMS native polling)
     zenith_add_test(zenith_file_watcher_${file_watcher_backend}
         EXECUTABLE zenith_file_watcher_tests COMMAND_ARGS ${file_watcher_backend} TIMEOUT 60)
@@ -125,7 +125,7 @@ endforeach()
 
 # Reads the asset directory's path only, so it does not build zenith_assets first.
 # Skips (77) where SDL's offscreen video driver cannot create a window.
-zenith_add_test(zenith_input_manager SOURCES InputManagerTests.cpp LIBS zenith_engine SKIP_RETURN_CODE 77)
+zenith_add_test(zenith_input_manager SOURCES InputManagerTests.cpp LIBS zenith_engine zenith_test_support SKIP_RETURN_CODE 77)
 
 # Game modules for zenith_game_module_tests: a working module, one built for
 # another module API version, and a library without module entry points.
@@ -140,44 +140,44 @@ zenith_add_test(zenith_input_manager SOURCES InputManagerTests.cpp LIBS zenith_e
 # Two created render views beside the default one
 # (docs/engine/graphics-views.md, Render views).
 zenith_add_test(zenith_multi_view_vulkan_smoke EXECUTABLE zenith_multi_view_smoke_tests
-    SOURCES MultiViewSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
+    SOURCES MultiViewSmokeTests.cpp LIBS zenith_engine zenith_test_support zenith_test_vulkan_probe DEPENDS zenith_assets
     ENVIRONMENT ZENITH_SMOKE_FRAMES=120
     LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
 # Secondary render scenes: a created view draws a second scene with preview
 # lighting beside the application's scene.
 zenith_add_test(zenith_two_scene_vulkan_smoke EXECUTABLE zenith_two_scene_smoke_tests
-    SOURCES TwoSceneSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
+    SOURCES TwoSceneSmokeTests.cpp LIBS zenith_engine zenith_test_support zenith_test_vulkan_probe DEPENDS zenith_assets
     ENVIRONMENT ZENITH_SMOKE_FRAMES=90
     LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
 # Per-view shadow isolation: an isolated view's sun, point and spot shadows
 # cast from its isolated objects only, beside a view of the whole scene.
 zenith_add_test(zenith_isolated_shadow_vulkan_smoke EXECUTABLE zenith_isolated_shadow_smoke_tests
-    SOURCES IsolatedShadowSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
+    SOURCES IsolatedShadowSmokeTests.cpp LIBS zenith_engine zenith_test_support zenith_test_vulkan_probe DEPENDS zenith_assets
     ENVIRONMENT ZENITH_SMOKE_FRAMES=80 ZENITH_DISABLE_SHADOW_CACHE=1 ZENITH_VALIDATION_STRICT=1
     LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
 # Debug lines in the default view and two created views under strict
 # validation, plus the fixed primitive set the debug_draw reference set
 # captures (tests/references/debug_draw).
 zenith_add_test(zenith_debug_draw_vulkan_smoke EXECUTABLE zenith_debug_draw_smoke_tests
-    SOURCES DebugDrawSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
+    SOURCES DebugDrawSmokeTests.cpp LIBS zenith_engine zenith_test_support zenith_test_vulkan_probe DEPENDS zenith_assets
     ENVIRONMENT ZENITH_SMOKE_FRAMES=60 ZENITH_VALIDATION_STRICT=1
     LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
 # GPU picking through the id buffer (docs/engine/graphics-views.md, Picking).
 zenith_add_test(zenith_picking_vulkan_smoke EXECUTABLE zenith_picking_smoke_tests
-    SOURCES PickingSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
+    SOURCES PickingSmokeTests.cpp LIBS zenith_engine zenith_test_support zenith_test_vulkan_probe DEPENDS zenith_assets
     ENVIRONMENT ZENITH_SMOKE_FRAMES=80
     LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
 # More renderables and particle emitters than the per-frame capacities: the
 # excess is clamped, counted and logged once instead of ending the run.
 zenith_add_test(zenith_render_capacity_vulkan_smoke EXECUTABLE zenith_render_capacity_smoke_tests
-    SOURCES RenderCapacitySmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
+    SOURCES RenderCapacitySmokeTests.cpp LIBS zenith_engine zenith_test_support zenith_test_vulkan_probe DEPENDS zenith_assets
     ENVIRONMENT ZENITH_SMOKE_FRAMES=20
     LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 180 PROCESSORS 2)
 # A runtime-created mesh, material and texture drawn with a material override
 # tint and a replacement material, checked in a captured frame; once on the
 # CPU-submitted path and once on the GPU-driven one.
 zenith_add_test(zenith_runtime_content_vulkan_smoke EXECUTABLE zenith_runtime_content_smoke_tests
-    SOURCES RuntimeContentSmokeTests.cpp LIBS zenith_engine DEPENDS zenith_assets
+    SOURCES RuntimeContentSmokeTests.cpp LIBS zenith_engine zenith_test_support zenith_test_vulkan_probe DEPENDS zenith_assets
     ENVIRONMENT ZENITH_CAPTURE_FRAME=12 ZENITH_WINDOW_SIZE=480x270
     "ZENITH_CAPTURE_PATH=${PROJECT_BINARY_DIR}/test-temp/runtime_content_cpu.png"
     LABELS vulkan smoke SKIP_RETURN_CODE 77 TIMEOUT 120 PROCESSORS 2)
@@ -195,9 +195,9 @@ zenith_add_test(zenith_simulation_benchmark_run EXECUTABLE zenith_simulation_ben
 zenith_add_test(zenith_scene_scaling_benchmark_run EXECUTABLE zenith_scene_scaling_benchmark
     SOURCES SceneScalingBenchmark.cpp LIBS zenith_engine LABELS benchmark)
 zenith_add_test(zenith_prefab_benchmark_run EXECUTABLE zenith_prefab_benchmark
-    SOURCES PrefabBenchmark.cpp LIBS zenith_engine LABELS benchmark TIMEOUT 600)
+    SOURCES PrefabBenchmark.cpp LIBS zenith_engine zenith_test_support LABELS benchmark TIMEOUT 600)
 zenith_add_test(zenith_floor_benchmark_run EXECUTABLE zenith_floor_benchmark
-    SOURCES FloorBenchmark.cpp LIBS zenith_engine LABELS benchmark TIMEOUT 600)
+    SOURCES FloorBenchmark.cpp LIBS zenith_engine zenith_test_support LABELS benchmark TIMEOUT 600)
 # Secondary render scenes (the editor's prefab windows) per scene count; a
 # Vulkan run, so it needs a GPU. CTest runs a few small frames to check it
 # completes.

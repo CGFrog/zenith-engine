@@ -13,6 +13,16 @@ bool StandaloneChecks::check(bool condition, std::string_view what, std::source_
     return condition;
 }
 
+bool StandaloneChecks::check(bool condition, uint32_t frame, std::string_view what, std::source_location location) {
+    ++m_checks;
+    if (!condition) {
+        ++m_failures;
+        std::cerr << location.file_name() << ':' << location.line() << ": FAILED: frame " << frame << ": " << what
+                  << '\n';
+    }
+    return condition;
+}
+
 int StandaloneChecks::failures() const {
     return m_failures;
 }

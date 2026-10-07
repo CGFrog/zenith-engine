@@ -191,7 +191,7 @@ capability. `--check` fails when the generated index is stale.
 | Third-party dependency pins | `cmake/Dependencies.cmake` | FetchContent; `ZENITH_SHARED_DEPS_DIR` reuses another checkout's sources. |
 | Warnings and exports | `cmake/CompilerSettings.cmake`, `cmake/WindowsExports.cmake`, `tools/export_definitions/` | `zenith_target_warnings`, `zenith_export_defined_symbols`. |
 | Registering tests | `cmake/ZenithTesting.cmake`, `tests/*/CMakeLists.txt` | `zenith_add_test_suite` (doctest unit binaries), `zenith_add_test` (standalone), `zenith_add_test_executable`, `zenith_add_test_module`; tier defaults ([Testing](TESTING.md)). |
-| Test helpers | `tests/support/` | `support/Doctest.hpp`, `testsupport::TempDirectory`, `readText`/`writeText`, `approxEqual`, `skipExitCode`, `zenith_test_main`. |
+| Test helpers | `tests/support/` | `support/Doctest.hpp`, `testsupport::TempDirectory`, `readText`/`writeText`, `failureArtifactPath`, `approxEqual`, `skipExitCode`, `StandaloneChecks`, `vulkanDeviceAvailable`, `zenith_test_main`. |
 | Test rules check | `tools/tests/check_tests.py`, `tools/tests/legacy_tests.txt` | Enforces [Testing](TESTING.md); CI's `docs` job and `tools/check.ps1` run it. |
 | Game modules built outside the tree | `cmake/ZenithEngineConfig.cmake.in`, `templates/*/CMakeLists.txt` | Templates `include("${ZENITH_ROOT}/ZenithEngineConfig.cmake")` written by the engine build. |
 | Packaging | `cmake/PackageProject.cmake`, root `CMakeLists.txt` (CPack) | [Releasing](RELEASING.md). |
